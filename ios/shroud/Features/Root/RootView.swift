@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Root navigation shell — routes between onboarding and the main tab placeholder.
+/// Root navigation shell — routes between onboarding and the main tab shell.
 struct RootView: View {
     @State private var sessionController = SessionController()
     @State private var serverConfig = ServerConfigurationController()
@@ -41,7 +41,7 @@ struct RootView: View {
         case .logIn:
             LogInFlowView(router: router)
         case .main:
-            MainTabPlaceholderView(router: router)
+            MainTabView(router: router)
         }
     }
 }
