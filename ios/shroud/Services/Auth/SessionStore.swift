@@ -1,0 +1,121 @@
+import Foundation
+import Security
+
+/// Persists session token + device id in the Keychain (never logs secrets).
+/// Human: Survives app restarts so the user stays logged in like Signal.
+/// Agent: READS/WRITES Keychain; never stores encryption phrase here.
+struct SessionStore: Sendable {
+    private let service: String
+
+    init(service: String = "com.shroud.session") {
+        self.service = service
+    }
+
+    /// In-memory snapshot of the signed-in session (token never printed).
+    struct Session: Equatable, Sendable {
+        let token: String
+        let userID: UUID
+        let username: String
+        let deviceID: UUID
+        let deviceName: String?
+    }
+
+    func load() -> Session? {
+        guard
+            let token = read(key: Key.token),
+            let userIDString = read(key: Key.userID),
+            let userID = UUID(uuidString: userIDString),
+            let username = read(key: Key.username),
+            let deviceIDString = read(key: Key.deviceID),
+            let deviceID = UUID(uuidString: deviceIDString)
+        else {
+            return nil
+        }
+        let deviceName = read(key: Key.deviceName)
+        return Session(
+            token: token,
+            userID: userID,
+            username: username,
+            deviceID: deviceID,
+            deviceName: deviceName
+        )
+    }
+
+    func save(_ session: Session) throws {
+        try write(key: Key.token, value: session.token)
+        try write(key: Key.userID, value: session.userID.uuidString)
+        try write(key: Key.username, value: session.username)
+        try write(key: Key.deviceID, value: session.deviceID.uuidString)
+        if let deviceName = session.deviceName {
+            try write(key: Key.deviceName, value: deviceName)
+        } else {
+            delete(key: Key.deviceName)
+        }
+    }
+
+    func clear() {
+        delete(key: Key.token)
+        delete(key: Key.userID)
+        delete(key: Key.username)
+        delete(key: Key.deviceID)
+        delete(key: Key.deviceName)
+    }
+
+    // MARK: - Keychain
+
+    private enum Key {
+        static let token = "session_token"
+        static let userID = "user_id"
+        static let username = "username"
+        static let deviceID = "device_id"
+        static let deviceName = "device_name"
+    }
+
+    private func read(key: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess, let data = item as? Data else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private func write(key: String, value: String) throws {
+        delete(key: key)
+        guard let data = value.data(using: .utf8) else {
+            throw SessionStoreError.encodingFailed
+        }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key,
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+        let status = SecItemAdd(query as CFDictionary, nil)
+        guard status == errSecSuccess else {
+            throw SessionStoreError.keychain(status)
+        }
+    }
+
+    private func delete(key: String) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key,
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+}
+
+enum SessionStoreError: Error, Equatable {
+    case encodingFailed
+    case keychain(OSStatus)
+}

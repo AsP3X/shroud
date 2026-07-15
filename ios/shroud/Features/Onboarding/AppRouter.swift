@@ -10,9 +10,15 @@ enum AppRoute: Hashable {
 
 /// Central navigation state for the pre-auth onboarding flow.
 @Observable
+@MainActor
 final class AppRouter {
     var path: [AppRoute] = []
-    var isUnlocked = false
+    /// Injected session; when set, drives unlock + logout.
+    var sessionController: SessionController?
+
+    var isUnlocked: Bool {
+        sessionController?.isSignedIn == true
+    }
 
     var rootRoute: AppRoute {
         if isUnlocked {
@@ -23,7 +29,6 @@ final class AppRouter {
 
     func showWelcome() {
         path = []
-        isUnlocked = false
     }
 
     func showSignUp() {
@@ -48,13 +53,16 @@ final class AppRouter {
         }
     }
 
+    /// After successful register/login, leave onboarding for the main shell.
     func unlockMessages() {
-        isUnlocked = true
         path = []
     }
 
-    /// Ends the session and returns to Welcome — keys would be wiped here in production.
+    /// Ends the session and returns to Welcome.
     func logOut() {
-        showWelcome()
+        Task {
+            await sessionController?.logout()
+            path = []
+        }
     }
 }

@@ -4,15 +4,26 @@ import SwiftUI
 struct MainTabPlaceholderView: View {
     let router: AppRouter
 
+    @Environment(SessionController.self) private var sessionController
+
     var body: some View {
         VStack(spacing: 16) {
             BrandLogoMark(size: 64)
             Text("Chats")
                 .font(.system(size: 32, weight: .bold))
                 .foregroundStyle(Theme.textPrimary)
-            Text("Main tab shell coming soon.")
+
+            if let username = sessionController.username {
+                Text("@\(username)")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+            }
+
+            Text("Signed in against the local API. Chats UI coming soon.")
                 .font(.system(size: 16))
                 .foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
 
             SecondaryButton(title: "Log Out") {
                 router.logOut()
@@ -27,4 +38,5 @@ struct MainTabPlaceholderView: View {
 
 #Preview {
     MainTabPlaceholderView(router: AppRouter())
+        .environment(SessionController())
 }

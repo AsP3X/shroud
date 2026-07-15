@@ -2,6 +2,7 @@ import SwiftUI
 
 /// Root navigation shell — routes between onboarding and the main tab placeholder.
 struct RootView: View {
+    @State private var sessionController = SessionController()
     @State private var router = AppRouter()
     @Namespace private var onboardingNamespace
 
@@ -13,6 +14,16 @@ struct RootView: View {
                 }
         }
         .environment(\.onboardingNamespace, onboardingNamespace)
+        .environment(sessionController)
+        .onAppear {
+            router.sessionController = sessionController
+        }
+        // Re-evaluate root when session appears/disappears after async auth.
+        .onChange(of: sessionController.isSignedIn) { _, signedIn in
+            if signedIn {
+                router.unlockMessages()
+            }
+        }
     }
 
     @ViewBuilder

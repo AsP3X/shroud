@@ -2,7 +2,7 @@ import Foundation
 
 /// Minimal HTTP client for the Shroud REST API (`/api/v1`).
 /// Human: Views never call this directly — feature services wrap it.
-/// Agent: HTTP GET/POST only; never sends key material or message plaintext.
+/// Agent: HTTP JSON only; never sends key material or message plaintext.
 final class APIClient: Sendable {
     private let baseURL: URL
     private let session: URLSession
@@ -13,35 +13,148 @@ final class APIClient: Sendable {
     }
 
     /// Debug factory — simulator reaches host loopback.
-    static func makeDebugClient() -> APIClient? {
+    static func makeDebugClient() -> APIClient {
         guard let url = URL(string: "http://127.0.0.1:8080/api/v1") else {
-            return nil
+            preconditionFailure("Invalid debug API base URL")
         }
         return APIClient(baseURL: url)
     }
 
     /// Performs a GET and decodes JSON on success.
-    func get<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
-        let url = baseURL.appendingPathComponent(path.trimmingCharacters(in: CharacterSet(charactersIn: "/")))
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
+    func get<T: Decodable>(
+        _ path: String,
+        as type: T.Type,
+        bearerToken: String? = nil
+    ) async throws -> T {
+        let (data, http) = try await perform(path, method: "GET", bodyData: nil, bearerToken: bearerToken)
+        try Self.throwIfNeeded(data: data, status: http.statusCode)
+        return try Self.decode(T.self, from: data)
+    }
 
-        let (data, response) = try await session.data(for: request)
+    /// Performs a POST with a JSON body and decodes the response.
+    func post<Body: Encodable, T: Decodable>(
+        _ path: String,
+        body: Body,
+        as type: T.Type,
+        bearerToken: String? = nil
+    ) async throws -> T {
+        let bodyData = try JSONEncoder.api.encode(body)
+        let (data, http) = try await perform(path, method: "POST", bodyData: bodyData, bearerToken: bearerToken)
+        try Self.throwIfNeeded(data: data, status: http.statusCode)
+        return try Self.decode(T.self, from: data)
+    }
+
+    /// Performs a POST that expects 2xx with no meaningful body (e.g. 204).
+    func postNoContent(path: String, bearerToken: String? = nil) async throws {
+        let (data, http) = try await perform(path, method: "POST", bodyData: nil, bearerToken: bearerToken)
+        try Self.throwIfNeeded(data: data, status: http.statusCode)
+    }
+
+    /// Performs a DELETE that expects 2xx with no meaningful body.
+    func deleteNoContent(path: String, bearerToken: String? = nil) async throws {
+        let (data, http) = try await perform(path, method: "DELETE", bodyData: nil, bearerToken: bearerToken)
+        try Self.throwIfNeeded(data: data, status: http.statusCode)
+    }
+
+    // MARK: - Internals
+
+    private func perform(
+        _ path: String,
+        method: String,
+        bodyData: Data?,
+        bearerToken: String?
+    ) async throws -> (Data, HTTPURLResponse) {
+        var request = URLRequest(url: resolveURL(path))
+        request.httpMethod = method
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let bearerToken, !bearerToken.isEmpty {
+            request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
+        }
+        if let bodyData {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = bodyData
+        }
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw APIError.transport(error.localizedDescription)
+        }
+
         guard let http = response as? HTTPURLResponse else {
             throw APIError.transport("Invalid response")
         }
+        return (data, http)
+    }
 
-        guard (200 ..< 300).contains(http.statusCode) else {
-            throw APIError.from(data: data, statusCode: http.statusCode)
+    private func resolveURL(_ path: String) -> URL {
+        let trimmed = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if trimmed.isEmpty {
+            return baseURL
         }
+        return baseURL.appending(path: trimmed)
+    }
 
+    private static func throwIfNeeded(data: Data, status: Int) throws {
+        guard (200 ..< 300).contains(status) else {
+            throw APIError.from(data: data, statusCode: status)
+        }
+    }
+
+    private static func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
         do {
-            return try JSONDecoder().decode(T.self, from: data)
+            return try JSONDecoder.api.decode(T.self, from: data)
         } catch {
             throw APIError.decoding
         }
     }
+}
+
+// MARK: - Coders
+
+extension JSONDecoder {
+    /// Shared API decoder (ISO-8601 dates with fractional seconds when present).
+    static let api: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let string = try container.decode(String.self)
+            if let date = ISO8601DateFormatter.apiFractional.date(from: string)
+                ?? ISO8601DateFormatter.api.date(from: string)
+            {
+                return date
+            }
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Invalid ISO-8601 date: \(string)"
+            )
+        }
+        return decoder
+    }()
+}
+
+extension JSONEncoder {
+    static let api: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }()
+}
+
+private extension ISO8601DateFormatter {
+    static let api: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    static let apiFractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 }
 
 /// Health probe payload matching the server route.

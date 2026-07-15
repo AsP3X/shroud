@@ -4,6 +4,8 @@ import SwiftUI
 struct LogInFlowView: View {
     let router: AppRouter
 
+    @Environment(SessionController.self) private var sessionController
+
     @State private var phase: Phase = .credentials
     @State private var username = ""
     @State private var password = ""
@@ -11,6 +13,8 @@ struct LogInFlowView: View {
     @State private var phraseWords: [String] = Array(repeating: "", count: 12)
     @State private var revealedWordCount = EncryptionPhraseGenerator.wordCount
     @State private var revealTask: Task<Void, Never>?
+    @State private var isSubmitting = false
+    @State private var errorMessage: String?
 
     private enum Phase {
         case credentials
@@ -21,8 +25,17 @@ struct LogInFlowView: View {
     private var activeStep: Int { isCredentialsPhase ? 1 : 2 }
 
     private var signedInUsername: String {
+        if let name = sessionController.username, !name.isEmpty {
+            return name
+        }
         let trimmed = username.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "alex" : trimmed
+        return trimmed.isEmpty ? "user" : trimmed
+    }
+
+    private var canSubmitCredentials: Bool {
+        !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !password.isEmpty
+            && !isSubmitting
     }
 
     var body: some View {
@@ -177,13 +190,27 @@ struct LogInFlowView: View {
 
     private var bottomSection: some View {
         VStack(spacing: 12) {
-            PrimaryButton(title: isCredentialsPhase ? "Log In" : "Unlock Messages") {
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.danger)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            PrimaryButton(
+                title: isCredentialsPhase
+                    ? (isSubmitting ? "Signing in…" : "Log In")
+                    : "Unlock Messages"
+            ) {
                 if isCredentialsPhase {
-                    phase = .encryptionPhrase
+                    Task { await submitCredentials() }
                 } else {
+                    // Human: Phrase unlock is local crypto; server session already established.
                     router.unlockMessages()
                 }
             }
+            .opacity(isCredentialsPhase && !canSubmitCredentials ? 0.45 : 1)
+            .disabled(isCredentialsPhase && !canSubmitCredentials)
 
             ZStack {
                 VStack(spacing: 12) {
@@ -380,10 +407,27 @@ struct LogInFlowView: View {
         .padding(.horizontal, 14)
         .frame(height: 50)
     }
+
+    // Human: Server session first; phrase step stays local for decrypt later.
+    // Agent: CALLS SessionController.login; never sends phraseWords.
+    private func submitCredentials() async {
+        guard canSubmitCredentials else { return }
+        isSubmitting = true
+        errorMessage = nil
+        defer { isSubmitting = false }
+
+        do {
+            try await sessionController.login(username: username, password: password)
+            phase = .encryptionPhrase
+        } catch {
+            errorMessage = SessionController.userMessage(for: error)
+        }
+    }
 }
 
 #Preview {
     NavigationStack {
         LogInFlowView(router: AppRouter())
+            .environment(SessionController())
     }
 }

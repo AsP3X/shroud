@@ -5,6 +5,8 @@ import UIKit
 struct SignUpView: View {
     let router: AppRouter
 
+    @Environment(SessionController.self) private var sessionController
+
     @State private var username = ""
     @State private var password = ""
     @State private var wroteDownPhrase = false
@@ -13,13 +15,18 @@ struct SignUpView: View {
     @State private var revealTask: Task<Void, Never>?
     @State private var toastMessage: String?
     @State private var toastDismissTask: Task<Void, Never>?
+    @State private var isSubmitting = false
+    @State private var errorMessage: String?
 
     private var passwordEvaluation: PasswordStrengthEvaluation {
         PasswordStrengthEvaluator.evaluate(password)
     }
 
     private var canCreateAccount: Bool {
-        wroteDownPhrase && passwordEvaluation.meetsRequirements
+        wroteDownPhrase
+            && passwordEvaluation.meetsRequirements
+            && !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !isSubmitting
     }
 
     var body: some View {
@@ -53,9 +60,15 @@ struct SignUpView: View {
                 }
 
                 VStack(spacing: 12) {
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(Theme.danger)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                     confirmRow
-                    PrimaryButton(title: "Create Account") {
-                        router.unlockMessages()
+                    PrimaryButton(title: isSubmitting ? "Creating…" : "Create Account") {
+                        Task { await createAccount() }
                     }
                     .opacity(canCreateAccount ? 1 : 0.45)
                     .disabled(!canCreateAccount)
@@ -253,10 +266,30 @@ struct SignUpView: View {
         .padding(.horizontal, 14)
         .frame(height: 50)
     }
+
+    // Human: Phrase stays on device only; only username/password go to the API.
+    // Agent: CALLS SessionController.register; never sends phraseWords.
+    private func createAccount() async {
+        guard canCreateAccount else { return }
+        isSubmitting = true
+        errorMessage = nil
+        defer { isSubmitting = false }
+
+        // Local-only: user confirmed they wrote the phrase; persistence of phrase is a later crypto step.
+        _ = phraseWords
+
+        do {
+            try await sessionController.register(username: username, password: password)
+            router.unlockMessages()
+        } catch {
+            errorMessage = SessionController.userMessage(for: error)
+        }
+    }
 }
 
 #Preview {
     NavigationStack {
         SignUpView(router: AppRouter())
+            .environment(SessionController())
     }
 }
