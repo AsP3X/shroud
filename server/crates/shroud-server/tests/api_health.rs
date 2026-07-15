@@ -68,7 +68,7 @@ async fn health_returns_ok_when_database_is_available() {
 #[tokio::test]
 async fn health_error_envelope_shape() {
     // Human: Verifies the canonical `{ "error": { "code", "message" } }` contract without DB.
-    let err = AppError::NotFound("resource missing".into());
+    let err = AppError::not_found("resource missing");
     let response = err.into_response();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
@@ -79,6 +79,6 @@ async fn health_error_envelope_shape() {
         .expect("body")
         .to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
-    assert_eq!(json["error"]["code"], "not_found");
+    assert_eq!(json["error"]["code"], "NOT_FOUND");
     assert_eq!(json["error"]["message"], "resource missing");
 }

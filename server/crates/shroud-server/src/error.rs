@@ -22,46 +22,134 @@ pub struct ErrorDetail {
 }
 
 /// Application-wide error type; maps to HTTP status and JSON body.
+///
+/// Human: `code` values match `docs/server-plan.md` (SCREAMING_SNAKE).
+/// Agent: RETURNS { error: { code, message } }; never put secrets in message.
 #[derive(Debug, Error)]
 pub enum AppError {
-    #[error("{0}")]
-    BadRequest(String),
-
-    #[error("{0}")]
-    Unauthorized(String),
-
-    #[error("{0}")]
-    NotFound(String),
+    #[error("{message}")]
+    Api {
+        status: StatusCode,
+        code: &'static str,
+        message: String,
+    },
 
     #[error("{0}")]
     Internal(String),
 }
 
 impl AppError {
+    pub fn validation(message: impl Into<String>) -> Self {
+        Self::Api {
+            status: StatusCode::BAD_REQUEST,
+            code: "VALIDATION_ERROR",
+            message: message.into(),
+        }
+    }
+
+    pub fn username_taken() -> Self {
+        Self::Api {
+            status: StatusCode::CONFLICT,
+            code: "USERNAME_TAKEN",
+            message: "That username is already taken.".into(),
+        }
+    }
+
+    pub fn username_reserved() -> Self {
+        Self::Api {
+            status: StatusCode::BAD_REQUEST,
+            code: "USERNAME_RESERVED",
+            message: "That username is not available.".into(),
+        }
+    }
+
+    pub fn password_too_short() -> Self {
+        Self::Api {
+            status: StatusCode::BAD_REQUEST,
+            code: "PASSWORD_TOO_SHORT",
+            message: "Password must be at least 8 characters.".into(),
+        }
+    }
+
+    pub fn password_too_common() -> Self {
+        Self::Api {
+            status: StatusCode::BAD_REQUEST,
+            code: "PASSWORD_TOO_COMMON",
+            message: "Password is too common. Choose a stronger password.".into(),
+        }
+    }
+
+    pub fn invalid_credentials() -> Self {
+        Self::Api {
+            status: StatusCode::UNAUTHORIZED,
+            code: "INVALID_CREDENTIALS",
+            message: "Invalid username or password.".into(),
+        }
+    }
+
+    pub fn device_limit() -> Self {
+        Self::Api {
+            status: StatusCode::CONFLICT,
+            code: "DEVICE_LIMIT",
+            message: "This account already has the maximum number of devices (5). Remove a device and try again.".into(),
+        }
+    }
+
+    pub fn unauthorized() -> Self {
+        Self::Api {
+            status: StatusCode::UNAUTHORIZED,
+            code: "UNAUTHORIZED",
+            message: "Authentication required.".into(),
+        }
+    }
+
+    pub fn forbidden(message: impl Into<String>) -> Self {
+        Self::Api {
+            status: StatusCode::FORBIDDEN,
+            code: "FORBIDDEN",
+            message: message.into(),
+        }
+    }
+
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self::Api {
+            status: StatusCode::NOT_FOUND,
+            code: "NOT_FOUND",
+            message: message.into(),
+        }
+    }
+
+    pub fn rate_limited() -> Self {
+        Self::Api {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            code: "RATE_LIMITED",
+            message: "Too many requests. Try again later.".into(),
+        }
+    }
+
+    /// Legacy-friendly constructors used by existing routes/tests.
+    pub fn bad_request(message: impl Into<String>) -> Self {
+        Self::validation(message)
+    }
+
     fn status(&self) -> StatusCode {
         match self {
-            Self::BadRequest(_) => StatusCode::BAD_REQUEST,
-            Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
-            Self::NotFound(_) => StatusCode::NOT_FOUND,
+            Self::Api { status, .. } => *status,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
     fn code(&self) -> &'static str {
         match self {
-            Self::BadRequest(_) => "bad_request",
-            Self::Unauthorized(_) => "unauthorized",
-            Self::NotFound(_) => "not_found",
-            Self::Internal(_) => "internal_error",
+            Self::Api { code, .. } => code,
+            Self::Internal(_) => "INTERNAL_ERROR",
         }
     }
 
     /// Client-safe message derived from the error variant.
     fn client_message(&self) -> String {
         match self {
-            Self::BadRequest(message) => message.clone(),
-            Self::Unauthorized(message) => message.clone(),
-            Self::NotFound(message) => message.clone(),
+            Self::Api { message, .. } => message.clone(),
             // Human: Internal errors get a generic message; details stay in server logs only.
             Self::Internal(_) => "An unexpected error occurred.".into(),
         }

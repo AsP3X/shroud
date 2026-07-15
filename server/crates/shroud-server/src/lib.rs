@@ -3,6 +3,7 @@
 //! Human: Boots Axum, runs Postgres migrations, and serves the `/api/v1` surface.
 //! Agent: READS env config, DB migrate on startup, HTTP router; never handles message plaintext.
 
+pub mod auth;
 pub mod config;
 pub mod error;
 pub mod routes;
