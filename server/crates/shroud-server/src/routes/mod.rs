@@ -8,9 +8,12 @@ use axum::{
 use crate::state::AppState;
 
 pub mod auth;
+pub mod blocks;
+pub mod contacts;
 pub mod devices;
 pub mod health;
 pub mod keys;
+pub mod users;
 
 /// Builds the versioned API router mounted at `/api/v1`.
 pub fn router() -> Router<AppState> {
@@ -28,6 +31,26 @@ pub fn router() -> Router<AppState> {
             .route("/keys/bundle", axum::routing::put(keys::put_bundle))
             .route("/keys/bundle/{user_id}", get(keys::get_bundle))
             .route("/keys/status", get(keys::keys_status))
-            .route("/keys/otpk", post(keys::post_otpk)),
+            .route("/keys/otpk", post(keys::post_otpk))
+            .route("/users/{user_id}", get(users::get_user))
+            .route("/contacts/requests", post(contacts::create_request))
+            .route("/contacts/requests", get(contacts::list_requests))
+            .route(
+                "/contacts/requests/{id}/accept",
+                post(contacts::accept_request),
+            )
+            .route(
+                "/contacts/requests/{id}/reject",
+                post(contacts::reject_request),
+            )
+            .route(
+                "/contacts/requests/{id}/cancel",
+                post(contacts::cancel_request),
+            )
+            .route("/contacts", get(contacts::list_contacts))
+            .route("/contacts/{user_id}", delete(contacts::delete_contact))
+            .route("/blocks", post(blocks::create_block))
+            .route("/blocks", get(blocks::list_blocks))
+            .route("/blocks/{user_id}", delete(blocks::delete_block)),
     )
 }

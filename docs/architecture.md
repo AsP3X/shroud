@@ -70,7 +70,7 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 
 1. **Auth** — **done** (register/login, multi-device, opaque tokens, argon2id)  
 2. **Key bundles** — **done** (per-device identity/SPK/OTPK, PUT/GET/status, atomic consume)  
-3. **Contacts** — plan locked: UUID requests, mutual auto-accept, directed contacts, blocks (see server-plan)  
+3. **Contacts** — **done** (UUID requests, mutual auto-accept, directed contacts, blocks)  
 4. **Messages** — 1:1 conversations, ciphertext store, WebSocket/Redis fan-out  
 5. **Media** — Nebular (`shroud-media` / `{user_id}/{object_id}`), 25 MiB, 15m presign  
 6. **Presence / receipts** — typing, online/last-seen (contacts only), optional read receipts  

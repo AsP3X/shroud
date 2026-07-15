@@ -143,6 +143,14 @@ impl AppError {
         }
     }
 
+    pub fn already_exists(message: impl Into<String>) -> Self {
+        Self::Api {
+            status: StatusCode::CONFLICT,
+            code: "ALREADY_EXISTS",
+            message: message.into(),
+        }
+    }
+
     /// Legacy-friendly constructors used by existing routes/tests.
     pub fn bad_request(message: impl Into<String>) -> Self {
         Self::validation(message)

@@ -4,7 +4,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 
 | | |
 | --- | --- |
-| **Status** | Milestones 1–2 **implemented**. Milestone 3 (Contacts) **API + schema locked** — ready to implement |
+| **Status** | Milestones 1–3 **implemented** (Auth, Keys, Contacts). Next: Messages |
 | **Last updated** | 2026-07-15 |
 | **Related** | [architecture.md](./architecture.md) · [thought-collection.md](../thought-collection.md) · [README.md](../README.md) |
 
@@ -402,7 +402,7 @@ Env-tunable later. Key pattern: `rl:{scope}:{id}`.
 | --- | --- | --- |
 | **1** | **Auth** | **Done** — register/login/logout/me/password, devices, sessions, migration 002, tests |
 | **2** | **Key bundles** | **Done** — migration 003; PUT/GET/status/otpk; atomic OTPK consume; tests |
-| **3** | **Contacts** | Schema + routes below; requests; auto-mutual accept; blocks; user card |
+| **3** | **Contacts** | **Done** — migration 004; user card; requests; mutual accept; contacts; blocks |
 | 4 | Messages | Conversations; envelopes; WS + Redis fan-out; sender sync; delivery receipts; cursors |
 | 5 | Media | Nebular presign; 25 MiB; attachments |
 | 6 | Receipts & presence | Read receipts; typing; online/last-seen |
