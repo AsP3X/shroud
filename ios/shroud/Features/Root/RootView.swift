@@ -1,0 +1,35 @@
+import SwiftUI
+
+/// Root navigation shell — routes between onboarding and the main tab placeholder.
+struct RootView: View {
+    @State private var router = AppRouter()
+
+    var body: some View {
+        NavigationStack(path: $router.path) {
+            destination(for: router.rootRoute)
+                .navigationDestination(for: AppRoute.self) { route in
+                    destination(for: route)
+                }
+        }
+    }
+
+    @ViewBuilder
+    private func destination(for route: AppRoute) -> some View {
+        switch route {
+        case .welcome:
+            WelcomeView(router: router)
+        case .signUp:
+            SignUpView(router: router)
+        case .logIn:
+            LogInView(router: router)
+        case .enterEncryptionPhrase(let username):
+            EnterEncryptionPhraseView(router: router, username: username)
+        case .main:
+            MainTabPlaceholderView(router: router)
+        }
+    }
+}
+
+#Preview {
+    RootView()
+}

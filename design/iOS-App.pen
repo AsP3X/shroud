@@ -5670,6 +5670,7 @@
               "width": "fill_container",
               "fill": "$bg",
               "cornerRadius": 14,
+              "layout": "vertical",
               "padding": [
                 6,
                 0
@@ -5677,14 +5678,15 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "tRuna",
-                  "name": "Col 1",
+                  "id": "Y5FCtr",
+                  "name": "Word Row 1",
                   "width": "fill_container",
-                  "layout": "vertical",
+                  "gap": 8,
+                  "alignItems": "center",
                   "children": [
                     {
                       "type": "frame",
-                      "id": "uITL7",
+                      "id": "Yb33s",
                       "name": "Word 1",
                       "width": "fill_container",
                       "gap": 9,
@@ -5696,18 +5698,19 @@
                       "children": [
                         {
                           "type": "frame",
-                          "id": "kmwVa",
-                          "name": "Num Badge",
+                          "id": "tHY9G",
+                          "name": "Num Badge 1",
                           "width": 20,
                           "height": 20,
                           "fill": "$accent-soft",
                           "cornerRadius": 6,
+                          "layout": "vertical",
                           "justifyContent": "center",
                           "alignItems": "center",
                           "children": [
                             {
                               "type": "text",
-                              "id": "QRzw2",
+                              "id": "QI4qO",
                               "name": "Num",
                               "fill": "$accent",
                               "content": "1",
@@ -5719,7 +5722,7 @@
                         },
                         {
                           "type": "text",
-                          "id": "f6MtNI",
+                          "id": "GWSCC",
                           "name": "Word",
                           "fill": "$text-primary",
                           "content": "ember",
@@ -5731,7 +5734,7 @@
                     },
                     {
                       "type": "frame",
-                      "id": "K4GPb",
+                      "id": "wAURG",
                       "name": "Word 2",
                       "width": "fill_container",
                       "gap": 9,
@@ -5743,18 +5746,19 @@
                       "children": [
                         {
                           "type": "frame",
-                          "id": "OW0jO",
-                          "name": "Num Badge",
+                          "id": "aoKIA",
+                          "name": "Num Badge 2",
                           "width": 20,
                           "height": 20,
                           "fill": "$accent-soft",
                           "cornerRadius": 6,
+                          "layout": "vertical",
                           "justifyContent": "center",
                           "alignItems": "center",
                           "children": [
                             {
                               "type": "text",
-                              "id": "ElSxp",
+                              "id": "f30T2",
                               "name": "Num",
                               "fill": "$accent",
                               "content": "2",
@@ -5766,7 +5770,7 @@
                         },
                         {
                           "type": "text",
-                          "id": "y7yuI",
+                          "id": "XFzWX",
                           "name": "Word",
                           "fill": "$text-primary",
                           "content": "canyon",
@@ -5775,10 +5779,37 @@
                           "fontWeight": "500"
                         }
                       ]
-                    },
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Ts7d4",
+                  "name": "Sep Wrap 1",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "hMXG5",
+                      "name": "Line",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "vUuJA",
+                  "name": "Word Row 2",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
                     {
                       "type": "frame",
-                      "id": "iRwST",
+                      "id": "o2LJy2",
                       "name": "Word 3",
                       "width": "fill_container",
                       "gap": 9,
@@ -5790,18 +5821,19 @@
                       "children": [
                         {
                           "type": "frame",
-                          "id": "QShqZ",
-                          "name": "Num Badge",
+                          "id": "U5suzS",
+                          "name": "Num Badge 3",
                           "width": 20,
                           "height": 20,
                           "fill": "$accent-soft",
                           "cornerRadius": 6,
+                          "layout": "vertical",
                           "justifyContent": "center",
                           "alignItems": "center",
                           "children": [
                             {
                               "type": "text",
-                              "id": "u5aOI",
+                              "id": "SRspF",
                               "name": "Num",
                               "fill": "$accent",
                               "content": "3",
@@ -5813,7 +5845,7 @@
                         },
                         {
                           "type": "text",
-                          "id": "n0FZ2",
+                          "id": "D3ZYd",
                           "name": "Word",
                           "fill": "$text-primary",
                           "content": "velvet",
@@ -5825,7 +5857,7 @@
                     },
                     {
                       "type": "frame",
-                      "id": "iOeoR",
+                      "id": "yxUcT",
                       "name": "Word 4",
                       "width": "fill_container",
                       "gap": 9,
@@ -5837,18 +5869,19 @@
                       "children": [
                         {
                           "type": "frame",
-                          "id": "o26or",
-                          "name": "Num Badge",
+                          "id": "kaQ52",
+                          "name": "Num Badge 4",
                           "width": 20,
                           "height": 20,
                           "fill": "$accent-soft",
                           "cornerRadius": 6,
+                          "layout": "vertical",
                           "justifyContent": "center",
                           "alignItems": "center",
                           "children": [
                             {
                               "type": "text",
-                              "id": "Hrnpz",
+                              "id": "QC0VO",
                               "name": "Num",
                               "fill": "$accent",
                               "content": "4",
@@ -5860,7 +5893,7 @@
                         },
                         {
                           "type": "text",
-                          "id": "XF2e3",
+                          "id": "tcw2m",
                           "name": "Word",
                           "fill": "$text-primary",
                           "content": "orbit",
@@ -5869,10 +5902,37 @@
                           "fontWeight": "500"
                         }
                       ]
-                    },
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "OGme0",
+                  "name": "Sep Wrap 2",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "ZpU5W",
+                      "name": "Line",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "xdIjf",
+                  "name": "Word Row 3",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
                     {
                       "type": "frame",
-                      "id": "O1Q2yA",
+                      "id": "QrIji",
                       "name": "Word 5",
                       "width": "fill_container",
                       "gap": 9,
@@ -5884,18 +5944,19 @@
                       "children": [
                         {
                           "type": "frame",
-                          "id": "Wo4Vd",
-                          "name": "Num Badge",
+                          "id": "mktjX",
+                          "name": "Num Badge 5",
                           "width": 20,
                           "height": 20,
                           "fill": "$accent-soft",
                           "cornerRadius": 6,
+                          "layout": "vertical",
                           "justifyContent": "center",
                           "alignItems": "center",
                           "children": [
                             {
                               "type": "text",
-                              "id": "Isv9U",
+                              "id": "EdMzO",
                               "name": "Num",
                               "fill": "$accent",
                               "content": "5",
@@ -5907,7 +5968,7 @@
                         },
                         {
                           "type": "text",
-                          "id": "wVQCK",
+                          "id": "jr6a9",
                           "name": "Word",
                           "fill": "$text-primary",
                           "content": "thistle",
@@ -5919,7 +5980,7 @@
                     },
                     {
                       "type": "frame",
-                      "id": "Xapth",
+                      "id": "ExLzA",
                       "name": "Word 6",
                       "width": "fill_container",
                       "gap": 9,
@@ -5931,18 +5992,19 @@
                       "children": [
                         {
                           "type": "frame",
-                          "id": "bzeeX",
-                          "name": "Num Badge",
+                          "id": "qSBjT",
+                          "name": "Num Badge 6",
                           "width": 20,
                           "height": 20,
                           "fill": "$accent-soft",
                           "cornerRadius": 6,
+                          "layout": "vertical",
                           "justifyContent": "center",
                           "alignItems": "center",
                           "children": [
                             {
                               "type": "text",
-                              "id": "r2B1U1",
+                              "id": "O3C2ez",
                               "name": "Num",
                               "fill": "$accent",
                               "content": "6",
@@ -5954,7 +6016,7 @@
                         },
                         {
                           "type": "text",
-                          "id": "GGRY0",
+                          "id": "VAIfO",
                           "name": "Word",
                           "fill": "$text-primary",
                           "content": "quartz",
@@ -5968,36 +6030,32 @@
                 },
                 {
                   "type": "frame",
-                  "id": "Bi3CQ",
-                  "name": "Col Divider",
-                  "width": 1,
-                  "height": "fill_container",
+                  "id": "fCJdJ",
+                  "name": "Sep Wrap 3",
+                  "width": "fill_container",
                   "layout": "vertical",
-                  "padding": [
-                    8,
-                    0
-                  ],
                   "children": [
                     {
                       "type": "rectangle",
-                      "id": "cEfCU",
-                      "name": "VLine",
+                      "id": "RDCgi",
+                      "name": "Line",
                       "fill": "$separator",
-                      "width": 1,
-                      "height": "fill_container"
+                      "width": "fill_container",
+                      "height": 1
                     }
                   ]
                 },
                 {
                   "type": "frame",
-                  "id": "Pkd7e",
-                  "name": "Col 2",
+                  "id": "hrzJY",
+                  "name": "Word Row 4",
                   "width": "fill_container",
-                  "layout": "vertical",
+                  "gap": 8,
+                  "alignItems": "center",
                   "children": [
                     {
                       "type": "frame",
-                      "id": "NQ8j4",
+                      "id": "lXCFj",
                       "name": "Word 7",
                       "width": "fill_container",
                       "gap": 9,
@@ -6009,18 +6067,19 @@
                       "children": [
                         {
                           "type": "frame",
-                          "id": "RCJSa",
-                          "name": "Num Badge",
+                          "id": "gW0La",
+                          "name": "Num Badge 7",
                           "width": 20,
                           "height": 20,
                           "fill": "$accent-soft",
                           "cornerRadius": 6,
+                          "layout": "vertical",
                           "justifyContent": "center",
                           "alignItems": "center",
                           "children": [
                             {
                               "type": "text",
-                              "id": "x3PcTG",
+                              "id": "eXO0v",
                               "name": "Num",
                               "fill": "$accent",
                               "content": "7",
@@ -6032,7 +6091,7 @@
                         },
                         {
                           "type": "text",
-                          "id": "Z7hsv",
+                          "id": "V7mNd",
                           "name": "Word",
                           "fill": "$text-primary",
                           "content": "meadow",
@@ -6044,7 +6103,7 @@
                     },
                     {
                       "type": "frame",
-                      "id": "s3TY7f",
+                      "id": "t8gsty",
                       "name": "Word 8",
                       "width": "fill_container",
                       "gap": 9,
@@ -6056,18 +6115,19 @@
                       "children": [
                         {
                           "type": "frame",
-                          "id": "e1cWR",
-                          "name": "Num Badge",
+                          "id": "wPmz0",
+                          "name": "Num Badge 8",
                           "width": 20,
                           "height": 20,
                           "fill": "$accent-soft",
                           "cornerRadius": 6,
+                          "layout": "vertical",
                           "justifyContent": "center",
                           "alignItems": "center",
                           "children": [
                             {
                               "type": "text",
-                              "id": "yjlWj",
+                              "id": "a3grq",
                               "name": "Num",
                               "fill": "$accent",
                               "content": "8",
@@ -6079,7 +6139,7 @@
                         },
                         {
                           "type": "text",
-                          "id": "nHRpn",
+                          "id": "W8QBj",
                           "name": "Word",
                           "fill": "$text-primary",
                           "content": "cipher",
@@ -6088,10 +6148,37 @@
                           "fontWeight": "500"
                         }
                       ]
-                    },
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "S4YA9",
+                  "name": "Sep Wrap 4",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "EjfSE",
+                      "name": "Line",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "beIyk",
+                  "name": "Word Row 5",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
                     {
                       "type": "frame",
-                      "id": "RO6qu",
+                      "id": "ZV2Ds",
                       "name": "Word 9",
                       "width": "fill_container",
                       "gap": 9,
@@ -6103,18 +6190,19 @@
                       "children": [
                         {
                           "type": "frame",
-                          "id": "Cm0T3",
-                          "name": "Num Badge",
+                          "id": "tGXH1",
+                          "name": "Num Badge 9",
                           "width": 20,
                           "height": 20,
                           "fill": "$accent-soft",
                           "cornerRadius": 6,
+                          "layout": "vertical",
                           "justifyContent": "center",
                           "alignItems": "center",
                           "children": [
                             {
                               "type": "text",
-                              "id": "ysbaP",
+                              "id": "VtVYq",
                               "name": "Num",
                               "fill": "$accent",
                               "content": "9",
@@ -6126,7 +6214,7 @@
                         },
                         {
                           "type": "text",
-                          "id": "taWBu",
+                          "id": "BTQy9",
                           "name": "Word",
                           "fill": "$text-primary",
                           "content": "lantern",
@@ -6138,7 +6226,7 @@
                     },
                     {
                       "type": "frame",
-                      "id": "A3k6Z2",
+                      "id": "KRXg9",
                       "name": "Word 10",
                       "width": "fill_container",
                       "gap": 9,
@@ -6150,18 +6238,19 @@
                       "children": [
                         {
                           "type": "frame",
-                          "id": "w6HYx",
-                          "name": "Num Badge",
+                          "id": "IsVzo",
+                          "name": "Num Badge 10",
                           "width": 20,
                           "height": 20,
                           "fill": "$accent-soft",
                           "cornerRadius": 6,
+                          "layout": "vertical",
                           "justifyContent": "center",
                           "alignItems": "center",
                           "children": [
                             {
                               "type": "text",
-                              "id": "ySMHq",
+                              "id": "i8WI8",
                               "name": "Num",
                               "fill": "$accent",
                               "content": "10",
@@ -6173,7 +6262,7 @@
                         },
                         {
                           "type": "text",
-                          "id": "k1rcng",
+                          "id": "V9xj1h",
                           "name": "Word",
                           "fill": "$text-primary",
                           "content": "drift",
@@ -6182,10 +6271,37 @@
                           "fontWeight": "500"
                         }
                       ]
-                    },
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "XdkVJ",
+                  "name": "Sep Wrap 5",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "LdtWI",
+                      "name": "Line",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ZwuvN",
+                  "name": "Word Row 6",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
                     {
                       "type": "frame",
-                      "id": "cokdP",
+                      "id": "V9KNi",
                       "name": "Word 11",
                       "width": "fill_container",
                       "gap": 9,
@@ -6197,18 +6313,19 @@
                       "children": [
                         {
                           "type": "frame",
-                          "id": "a06Ytf",
-                          "name": "Num Badge",
+                          "id": "GXwMY",
+                          "name": "Num Badge 11",
                           "width": 20,
                           "height": 20,
                           "fill": "$accent-soft",
                           "cornerRadius": 6,
+                          "layout": "vertical",
                           "justifyContent": "center",
                           "alignItems": "center",
                           "children": [
                             {
                               "type": "text",
-                              "id": "EHkVf",
+                              "id": "YBQdB",
                               "name": "Num",
                               "fill": "$accent",
                               "content": "11",
@@ -6220,7 +6337,7 @@
                         },
                         {
                           "type": "text",
-                          "id": "cEELO",
+                          "id": "dX9bN",
                           "name": "Word",
                           "fill": "$text-primary",
                           "content": "sable",
@@ -6232,7 +6349,7 @@
                     },
                     {
                       "type": "frame",
-                      "id": "BrSga",
+                      "id": "vZuTj",
                       "name": "Word 12",
                       "width": "fill_container",
                       "gap": 9,
@@ -6244,18 +6361,19 @@
                       "children": [
                         {
                           "type": "frame",
-                          "id": "sYt8L",
-                          "name": "Num Badge",
+                          "id": "HrERf",
+                          "name": "Num Badge 12",
                           "width": 20,
                           "height": 20,
                           "fill": "$accent-soft",
                           "cornerRadius": 6,
+                          "layout": "vertical",
                           "justifyContent": "center",
                           "alignItems": "center",
                           "children": [
                             {
                               "type": "text",
-                              "id": "EknG2",
+                              "id": "QHcPC",
                               "name": "Num",
                               "fill": "$accent",
                               "content": "12",
@@ -6267,7 +6385,7 @@
                         },
                         {
                           "type": "text",
-                          "id": "pVauF",
+                          "id": "w3reK",
                           "name": "Word",
                           "fill": "$text-primary",
                           "content": "harbor",
