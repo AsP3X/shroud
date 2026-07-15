@@ -3,6 +3,7 @@ import SwiftUI
 /// Root navigation shell — routes between onboarding and the main tab placeholder.
 struct RootView: View {
     @State private var sessionController = SessionController()
+    @State private var serverConfig = ServerConfigurationController()
     @State private var router = AppRouter()
     @Namespace private var onboardingNamespace
 
@@ -15,6 +16,7 @@ struct RootView: View {
         }
         .environment(\.onboardingNamespace, onboardingNamespace)
         .environment(sessionController)
+        .environment(serverConfig)
         .onAppear {
             router.sessionController = sessionController
         }

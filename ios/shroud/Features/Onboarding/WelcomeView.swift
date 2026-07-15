@@ -4,16 +4,22 @@ import SwiftUI
 struct WelcomeView: View {
     let router: AppRouter
 
+    @Environment(ServerConfigurationController.self) private var serverConfig
+    @State private var showServerSettings = false
+
     var body: some View {
         GroupedScreen {
             VStack(spacing: 0) {
+                navRow
+
                 ScrollView {
                     VStack(spacing: 28) {
                         hero
                         featureTiles
+                        connectionHint
                     }
                     .screenContent()
-                    .padding(.top, 24)
+                    .padding(.top, 8)
                 }
 
                 VStack(spacing: 12) {
@@ -29,6 +35,31 @@ struct WelcomeView: View {
             }
         }
         .navigationBarHidden(true)
+        .sheet(isPresented: $showServerSettings) {
+            ServerSettingsSheet()
+                .environment(serverConfig)
+        }
+    }
+
+    private var navRow: some View {
+        HStack {
+            Spacer(minLength: 0)
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                showServerSettings = true
+            } label: {
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+                    .frame(width: 44, height: 44)
+                    .background(Theme.backgroundGrouped)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Server settings")
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 4)
     }
 
     private var hero: some View {
@@ -56,6 +87,33 @@ struct WelcomeView: View {
             featureTile(icon: "lock.fill", title: "End-to-end encrypted", subtitle: "Messages decrypt only on your devices")
             featureTile(icon: "waveform", title: "Voice messages", subtitle: "Encrypted audio with on-device transcription")
             featureTile(icon: "phone.fill", title: "Secure calls", subtitle: "Voice and video with WebRTC encryption")
+        }
+    }
+
+    private var connectionHint: some View {
+        HStack(spacing: 8) {
+            Image(systemName: serverConfig.configuration.mode == .official ? "checkmark.seal.fill" : "externaldrive.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.accent)
+            Text(connectionLabel)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Theme.textSecondary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Theme.background)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .accessibilityLabel("Current server \(connectionLabel)")
+    }
+
+    private var connectionLabel: String {
+        switch serverConfig.configuration.mode {
+        case .official:
+            return "Official Shroud server"
+        case .selfHosted:
+            return serverConfig.configuration.selfHostedPreviewString
         }
     }
 
@@ -88,5 +146,6 @@ struct WelcomeView: View {
 #Preview {
     NavigationStack {
         WelcomeView(router: AppRouter())
+            .environment(ServerConfigurationController())
     }
 }

@@ -12,12 +12,18 @@ final class APIClient: Sendable {
         self.session = session
     }
 
-    /// Debug factory — simulator reaches host loopback.
-    static func makeDebugClient() -> APIClient {
-        guard let url = URL(string: "http://127.0.0.1:8080/api/v1") else {
-            preconditionFailure("Invalid debug API base URL")
-        }
+    /// Builds a client from the user's saved server configuration.
+    static func makeConfiguredClient(
+        configuration: ServerConfiguration = ServerConfigurationStore().load()
+    ) -> APIClient {
+        let fallback = URL(string: "http://127.0.0.1:8080/api/v1")!
+        let url = configuration.resolvedBaseURL ?? fallback
         return APIClient(baseURL: url)
+    }
+
+    /// Debug factory — local Docker Compose default.
+    static func makeDebugClient() -> APIClient {
+        makeConfiguredClient(configuration: .default)
     }
 
     /// Performs a GET and decodes JSON on success.

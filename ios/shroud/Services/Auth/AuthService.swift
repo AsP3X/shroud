@@ -3,14 +3,17 @@ import UIKit
 
 /// Talks to `/auth/*` and persists sessions.
 /// Human: Encryption phrase stays on-device only — never sent here.
-/// Agent: CALLS APIClient; WRITES SessionStore; no phrase on wire.
+/// Agent: CALLS APIClient from ServerConfigurationStore; WRITES SessionStore; no phrase on wire.
 struct AuthService: Sendable {
-    private let client: APIClient
     private let sessionStore: SessionStore
 
-    init(client: APIClient = .makeDebugClient(), sessionStore: SessionStore = SessionStore()) {
-        self.client = client
+    init(sessionStore: SessionStore = SessionStore()) {
         self.sessionStore = sessionStore
+    }
+
+    /// Always builds from the latest saved server configuration.
+    private var client: APIClient {
+        .makeConfiguredClient()
     }
 
     func restoreSession() -> SessionStore.Session? {
