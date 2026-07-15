@@ -1,5 +1,5 @@
-# Local development Postgres for the Shroud API.
-# Agent: READS env defaults below; WRITES volume shroud_pg_data; no production use.
+# Local development infrastructure for the Shroud API.
+# Agent: READS env defaults below; WRITES volumes; no production use.
 services:
   postgres:
     image: postgres:16-alpine
@@ -18,5 +18,19 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: shroud-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - shroud_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
 volumes:
   shroud_pg_data:
+  shroud_redis_data:

@@ -4,7 +4,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 
 | | |
 | --- | --- |
-| **Status** | Milestones through **deletes + WS** **implemented**. Next: APNs push or Redis multi-replica |
+| **Status** | Core API **implemented**. Redis multi-replica WS **plan locked** — ready to implement |
 | **Last updated** | 2026-07-15 |
 | **Related** | [architecture.md](./architecture.md) · [thought-collection.md](../thought-collection.md) · [README.md](../README.md) |
 
@@ -96,7 +96,8 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Max ciphertext | **64 KiB** decoded |
 | Multi-device store | **One message row** + `message_deliveries` per device |
 | Real-time m4 | HTTP send + history (done) |
-| Real-time 4b | **WebSocket** in-process fan-out; Redis multi-replica later |
+| Real-time 4b | **WebSocket** in-process fan-out (**done**) |
+| Redis fan-out | **Optional** when `REDIS_URL` set: local hub + pub/sub on `shroud:user:{user_id}` |
 | WS events | `message.new`, `message.delivered` |
 | WS recipients | Peer devices + sender’s **other** devices (not the sending device for new) |
 | Delivery receipts | `POST /messages/:id/delivered` for current device (m4); read later |
@@ -1041,7 +1042,7 @@ Add optional:
 | --- | --- |
 | `DATABASE_URL` | Postgres |
 | `DATABASE_POOL_MAX` | Pool size per instance |
-| `REDIS_URL` | Pub/sub, limits, presence |
+| `REDIS_URL` | Optional; enables multi-replica WS fan-out (+ future limits/presence) |
 | `HOST` / `PORT` | Bind (default localhost:8080) |
 | `RUN_MIGRATIONS` | Prefer single migrator when scaled |
 | `NEBULAR_URL` | Nebular base URL |
