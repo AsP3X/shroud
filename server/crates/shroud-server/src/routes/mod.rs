@@ -13,6 +13,7 @@ pub mod contacts;
 pub mod devices;
 pub mod health;
 pub mod keys;
+pub mod media;
 pub mod messages;
 pub mod users;
 
@@ -56,6 +57,8 @@ pub fn router() -> Router<AppState> {
             .route("/messages", post(messages::send_message))
             .route("/messages", get(messages::list_messages))
             .route("/messages/{id}/delivered", post(messages::mark_delivered))
-            .route("/conversations", get(messages::list_conversations)),
+            .route("/conversations", get(messages::list_conversations))
+            .route("/media/uploads", post(media::create_upload))
+            .route("/media/{id}/download", post(media::create_download)),
     )
 }

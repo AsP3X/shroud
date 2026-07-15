@@ -26,6 +26,8 @@ pub struct SendMessageRequest {
     pub client_message_id: Uuid,
     pub content_type: String,
     pub ciphertext: String,
+    /// Required when `content_type` is `media`.
+    pub media_object_id: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -45,6 +47,8 @@ pub struct MessageResponse {
     pub client_message_id: Uuid,
     pub content_type: String,
     pub ciphertext: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media_object_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -83,6 +87,7 @@ struct MessageRow {
     client_message_id: Uuid,
     content_type: String,
     ciphertext: Vec<u8>,
+    media_object_id: Option<Uuid>,
     created_at: DateTime<Utc>,
 }
 
@@ -100,6 +105,16 @@ pub async fn send_message(
     if content_type != "text" && content_type != "media" {
         return Err(AppError::validation(
             "content_type must be 'text' or 'media'.",
+        ));
+    }
+    if content_type == "media" && body.media_object_id.is_none() {
+        return Err(AppError::validation(
+            "media_object_id is required when content_type is media.",
+        ));
+    }
+    if content_type == "text" && body.media_object_id.is_some() {
+        return Err(AppError::validation(
+            "media_object_id is only allowed when content_type is media.",
         ));
     }
 
@@ -134,6 +149,38 @@ pub async fn send_message(
         .await
         .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
 
+    if let Some(media_id) = body.media_object_id {
+        #[derive(FromRow)]
+        struct MediaLock {
+            uploader_user_id: Uuid,
+            message_id: Option<Uuid>,
+        }
+        let media = sqlx::query_as::<_, MediaLock>(
+            r#"
+            SELECT uploader_user_id, message_id
+            FROM media_objects
+            WHERE id = $1
+            FOR UPDATE
+            "#,
+        )
+        .bind(media_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|err| AppError::Internal(format!("load media for message failed: {err}")))?
+        .ok_or_else(|| AppError::not_found("Media not found."))?;
+
+        if media.uploader_user_id != auth.user_id {
+            return Err(AppError::forbidden(
+                "You can only attach media you uploaded.",
+            ));
+        }
+        if media.message_id.is_some() {
+            return Err(AppError::already_exists(
+                "Media is already linked to a message.",
+            ));
+        }
+    }
+
     let conversation_id = ensure_conversation(&mut tx, auth.user_id, body.peer_user_id).await?;
     let message_id = Uuid::new_v4();
     let now = Utc::now();
@@ -142,9 +189,9 @@ pub async fn send_message(
         r#"
         INSERT INTO messages (
             id, conversation_id, sender_user_id, sender_device_id,
-            client_message_id, content_type, ciphertext, created_at
+            client_message_id, content_type, ciphertext, media_object_id, created_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         "#,
     )
     .bind(message_id)
@@ -154,6 +201,7 @@ pub async fn send_message(
     .bind(body.client_message_id)
     .bind(content_type)
     .bind(&ciphertext)
+    .bind(body.media_object_id)
     .bind(now)
     .execute(&mut *tx)
     .await;
@@ -175,6 +223,21 @@ pub async fn send_message(
         Err(err) => {
             return Err(AppError::Internal(format!("insert message failed: {err}")));
         }
+    }
+
+    if let Some(media_id) = body.media_object_id {
+        sqlx::query(
+            r#"
+            UPDATE media_objects
+            SET message_id = $1
+            WHERE id = $2 AND message_id IS NULL
+            "#,
+        )
+        .bind(message_id)
+        .bind(media_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| AppError::Internal(format!("link media to message failed: {err}")))?;
     }
 
     // Delivery rows: all devices of both users; sender device already delivered.
@@ -225,6 +288,7 @@ pub async fn send_message(
             client_message_id: body.client_message_id,
             content_type: content_type.into(),
             ciphertext: BASE64.encode(&ciphertext),
+            media_object_id: body.media_object_id,
             created_at: now,
         }),
     ))
@@ -256,7 +320,7 @@ pub async fn list_messages(
             sqlx::query_as::<_, MessageRow>(
                 r#"
             SELECT id, conversation_id, sender_user_id, sender_device_id,
-                   client_message_id, content_type, ciphertext, created_at
+                   client_message_id, content_type, ciphertext, media_object_id, created_at
             FROM messages
             WHERE conversation_id = $1
               AND (created_at, id) < ($2, $3)
@@ -274,7 +338,7 @@ pub async fn list_messages(
             sqlx::query_as::<_, MessageRow>(
                 r#"
             SELECT id, conversation_id, sender_user_id, sender_device_id,
-                   client_message_id, content_type, ciphertext, created_at
+                   client_message_id, content_type, ciphertext, media_object_id, created_at
             FROM messages
             WHERE conversation_id = $1
             ORDER BY created_at DESC, id DESC
@@ -474,7 +538,7 @@ async fn load_by_client_id(
     sqlx::query_as::<_, MessageRow>(
         r#"
         SELECT id, conversation_id, sender_user_id, sender_device_id,
-               client_message_id, content_type, ciphertext, created_at
+               client_message_id, content_type, ciphertext, media_object_id, created_at
         FROM messages
         WHERE sender_user_id = $1 AND client_message_id = $2
         "#,
@@ -510,6 +574,7 @@ fn message_to_response(row: MessageRow) -> MessageResponse {
         client_message_id: row.client_message_id,
         content_type: row.content_type,
         ciphertext: BASE64.encode(&row.ciphertext),
+        media_object_id: row.media_object_id,
         created_at: row.created_at,
     }
 }

@@ -28,7 +28,11 @@ async fn test_app() -> Option<axum::Router> {
     Some(
         axum::Router::new()
             .merge(routes::router())
-            .with_state(AppState { pool }),
+            .with_state(AppState {
+                pool,
+                nebular_url: None,
+                media_bucket: "shroud-media".into(),
+            }),
     )
 }
 

@@ -42,13 +42,22 @@ pub async fn run() -> Result<(), AppError> {
         .await
         .map_err(|err| AppError::Internal(format!("migration failed: {err}")))?;
 
-    let state = AppState { pool };
+    let state = AppState {
+        pool,
+        nebular_url: config.nebular_url.clone(),
+        media_bucket: config.nebular_media_bucket.clone(),
+    };
     let app = Router::new()
         .merge(routes::router())
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
     let addr: SocketAddr = config.socket_addr()?;
+    if config.nebular_url.is_some() {
+        tracing::info!("media presign: Nebular");
+    } else {
+        tracing::info!("media presign: stub (set NEBULAR_URL for real object storage)");
+    }
     tracing::info!(%addr, "shroud-server listening");
     let listener = tokio::net::TcpListener::bind(addr)
         .await

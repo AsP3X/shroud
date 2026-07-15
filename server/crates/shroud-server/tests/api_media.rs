@@ -1,4 +1,4 @@
-//! Integration tests for HTTP message relay.
+//! Integration tests for media upload authorization and linking.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
@@ -45,7 +45,7 @@ async fn json_body(response: axum::response::Response) -> Value {
 
 fn unique_user() -> (String, String) {
     let id = &Uuid::new_v4().simple().to_string()[..12];
-    (format!("m_{id}"), "correct-horse-battery".into())
+    (format!("md_{id}"), "correct-horse-battery".into())
 }
 
 async fn register(app: &axum::Router) -> (String, String) {
@@ -108,9 +108,9 @@ async fn become_contacts(
 }
 
 #[tokio::test]
-async fn send_list_idempotent_and_delivered() {
+async fn upload_link_download_for_peer() {
     let Some(app) = test_app().await else {
-        eprintln!("skipping send_list_idempotent_and_delivered: no DATABASE_URL");
+        eprintln!("skipping upload_link_download_for_peer: no DATABASE_URL");
         return;
     };
 
@@ -118,117 +118,44 @@ async fn send_list_idempotent_and_delivered() {
     let (token_b, user_b) = register(&app).await;
     become_contacts(&app, &token_a, &user_a, &token_b, &user_b).await;
 
-    let client_message_id = Uuid::new_v4();
-    let ciphertext = BASE64.encode(b"sealed-hello");
-
-    let send = app
+    let upload = app
         .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/v1/messages")
+                .uri("/api/v1/media/uploads")
                 .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
-                    json!({
-                        "peer_user_id": user_b,
-                        "client_message_id": client_message_id,
-                        "content_type": "text",
-                        "ciphertext": ciphertext
-                    })
-                    .to_string(),
+                    json!({ "size_bytes": 1024, "content_type": "application/octet-stream" })
+                        .to_string(),
                 ))
                 .expect("request"),
         )
         .await
         .expect("response");
-    assert_eq!(send.status(), StatusCode::CREATED);
-    let msg = json_body(send).await;
-    let message_id = msg["id"].as_str().unwrap().to_string();
-    assert_eq!(msg["ciphertext"], ciphertext);
+    assert_eq!(upload.status(), StatusCode::CREATED);
+    let up = json_body(upload).await;
+    let media_id = up["media_object_id"].as_str().unwrap();
+    assert!(up["upload_url"].as_str().unwrap().starts_with("stub://"));
 
-    // Idempotent replay
-    let send2 = app
+    // Peer cannot download unlinked media.
+    let denied = app
         .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/v1/messages")
-                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(
-                    json!({
-                        "peer_user_id": user_b,
-                        "client_message_id": client_message_id,
-                        "content_type": "text",
-                        "ciphertext": ciphertext
-                    })
-                    .to_string(),
-                ))
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(send2.status(), StatusCode::OK);
-    let msg2 = json_body(send2).await;
-    assert_eq!(msg2["id"], message_id);
-
-    let list = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/api/v1/messages?peer_user_id={user_a}"))
+                .uri(format!("/api/v1/media/{media_id}/download"))
                 .header(header::AUTHORIZATION, format!("Bearer {token_b}"))
                 .body(Body::empty())
                 .expect("request"),
         )
         .await
         .expect("response");
-    assert_eq!(list.status(), StatusCode::OK);
-    let history = json_body(list).await;
-    assert_eq!(history["messages"].as_array().unwrap().len(), 1);
-
-    let delivered = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/api/v1/messages/{message_id}/delivered"))
-                .header(header::AUTHORIZATION, format!("Bearer {token_b}"))
-                .body(Body::empty())
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(delivered.status(), StatusCode::NO_CONTENT);
-
-    let convos = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/conversations")
-                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
-                .body(Body::empty())
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(convos.status(), StatusCode::OK);
-    let c = json_body(convos).await;
-    assert_eq!(c["conversations"].as_array().unwrap().len(), 1);
-    assert_eq!(c["conversations"][0]["peer"]["id"], user_b);
-}
-
-#[tokio::test]
-async fn cannot_message_non_contact() {
-    let Some(app) = test_app().await else {
-        eprintln!("skipping cannot_message_non_contact: no DATABASE_URL");
-        return;
-    };
-
-    let (token_a, _) = register(&app).await;
-    let (_, user_b) = register(&app).await;
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
 
     let send = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -239,8 +166,9 @@ async fn cannot_message_non_contact() {
                     json!({
                         "peer_user_id": user_b,
                         "client_message_id": Uuid::new_v4(),
-                        "content_type": "text",
-                        "ciphertext": BASE64.encode(b"nope")
+                        "content_type": "media",
+                        "ciphertext": BASE64.encode(b"envelope"),
+                        "media_object_id": media_id
                     })
                     .to_string(),
                 ))
@@ -248,5 +176,22 @@ async fn cannot_message_non_contact() {
         )
         .await
         .expect("response");
-    assert_eq!(send.status(), StatusCode::FORBIDDEN);
+    assert_eq!(send.status(), StatusCode::CREATED);
+    let msg = json_body(send).await;
+    assert_eq!(msg["media_object_id"], media_id);
+
+    let download = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/media/{media_id}/download"))
+                .header(header::AUTHORIZATION, format!("Bearer {token_b}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(download.status(), StatusCode::OK);
+    let dl = json_body(download).await;
+    assert!(dl["download_url"].as_str().unwrap().contains("stub://"));
 }

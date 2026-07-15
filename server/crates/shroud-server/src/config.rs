@@ -11,6 +11,9 @@ pub struct Config {
     pub database_url: String,
     pub host: IpAddr,
     pub port: u16,
+    /// Optional Nebular OS base URL; when unset, media uses stub presign URLs.
+    pub nebular_url: Option<String>,
+    pub nebular_media_bucket: String,
 }
 
 impl Config {
@@ -29,10 +32,20 @@ impl Config {
             .and_then(|value| value.parse().ok())
             .unwrap_or(8080);
 
+        let nebular_url = std::env::var("NEBULAR_URL")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+
+        let nebular_media_bucket =
+            std::env::var("NEBULAR_MEDIA_BUCKET").unwrap_or_else(|_| "shroud-media".into());
+
         Ok(Self {
             database_url,
             host,
             port,
+            nebular_url,
+            nebular_media_bucket,
         })
     }
 

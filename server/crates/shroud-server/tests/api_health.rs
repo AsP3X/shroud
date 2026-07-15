@@ -40,7 +40,11 @@ async fn health_returns_ok_when_database_is_available() {
 
     let app = axum::Router::new()
         .merge(routes::router())
-        .with_state(AppState { pool });
+        .with_state(AppState {
+            pool,
+            nebular_url: None,
+            media_bucket: "shroud-media".into(),
+        });
 
     let response = app
         .oneshot(

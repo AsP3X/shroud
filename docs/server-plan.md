@@ -4,7 +4,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 
 | | |
 | --- | --- |
-| **Status** | Milestones 1–4 **implemented**. Milestone 5 (Media) **API + schema locked** — ready to implement |
+| **Status** | Milestones 1–5 **implemented** (through Media). Next: WS real-time, deletes, or push |
 | **Last updated** | 2026-07-15 |
 | **Related** | [architecture.md](./architecture.md) · [thought-collection.md](../thought-collection.md) · [README.md](../README.md) |
 
@@ -477,7 +477,7 @@ Env-tunable later. Key pattern: `rl:{scope}:{id}`.
 | **3** | **Contacts** | **Done** — migration 004; user card; requests; mutual accept; contacts; blocks |
 | **4** | **Messages (HTTP)** | **Done** — migration 005; send/list/conversations/delivered |
 | 4b | Real-time | WebSocket + Redis fan-out |
-| **5** | **Media** | Schema + routes below; stub/Nebular presign; link on message send |
+| **5** | **Media** | **Done** — migration 006; upload/download presign (stub/Nebular); media on messages |
 | 6 | Receipts & presence | Read receipts; typing; online/last-seen |
 | 7 | Deletes | for me / everyone; account hard-delete |
 | 8 | APNs | Tokens; opaque data push |
