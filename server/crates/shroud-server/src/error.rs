@@ -127,6 +127,22 @@ impl AppError {
         }
     }
 
+    pub fn keys_required() -> Self {
+        Self::Api {
+            status: StatusCode::NOT_FOUND,
+            code: "KEYS_REQUIRED",
+            message: "No pre-key bundle is available for this user.".into(),
+        }
+    }
+
+    pub fn prekey_pool_full() -> Self {
+        Self::Api {
+            status: StatusCode::CONFLICT,
+            code: "PREKEY_POOL_FULL",
+            message: "One-time pre-key pool is full for this device (max 200).".into(),
+        }
+    }
+
     /// Legacy-friendly constructors used by existing routes/tests.
     pub fn bad_request(message: impl Into<String>) -> Self {
         Self::validation(message)
