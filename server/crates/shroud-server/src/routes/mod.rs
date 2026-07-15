@@ -2,7 +2,7 @@
 
 use axum::{
     Router,
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
 };
 
 use crate::state::AppState;
@@ -15,6 +15,7 @@ pub mod health;
 pub mod keys;
 pub mod media;
 pub mod messages;
+pub mod push;
 pub mod users;
 pub mod ws;
 
@@ -63,6 +64,7 @@ pub fn router() -> Router<AppState> {
             .route("/conversations", get(messages::list_conversations))
             .route("/media/uploads", post(media::create_upload))
             .route("/media/{id}/download", post(media::create_download))
-            .route("/ws", get(ws::ws_upgrade)),
+            .route("/ws", get(ws::ws_upgrade))
+            .route("/push/token", put(push::put_token)),
     )
 }

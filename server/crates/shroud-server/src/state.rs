@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use sqlx::PgPool;
 
+use crate::push::PushService;
 use crate::realtime::RealtimeHub;
 
 /// State injected into every API handler.
@@ -17,4 +18,6 @@ pub struct AppState {
     pub media_bucket: String,
     /// In-process WebSocket fan-out hub (single instance).
     pub realtime: Arc<RealtimeHub>,
+    /// APNs data-push dispatcher (no-ops send when credentials missing).
+    pub push: PushService,
 }

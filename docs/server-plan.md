@@ -4,7 +4,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 
 | | |
 | --- | --- |
-| **Status** | Core API + Redis WS **implemented**. Milestone 8 (APNs) **plan locked** — ready to implement |
+| **Status** | Server vertical slice through **APNs registration + offline push gate** **implemented**. Live HTTP/2 APNs client still log-backed until .p8 wired in ops |
 | **Last updated** | 2026-07-15 |
 | **Related** | [architecture.md](./architecture.md) · [thought-collection.md](../thought-collection.md) · [README.md](../README.md) |
 

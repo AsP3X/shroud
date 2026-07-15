@@ -9,10 +9,21 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use shroud_server::routes;
-use shroud_server::state::AppState;
 use sqlx::postgres::PgPoolOptions;
 use tower::ServiceExt;
 use uuid::Uuid;
+
+fn test_state(pool: sqlx::PgPool) -> shroud_server::state::AppState {
+    let realtime = std::sync::Arc::new(shroud_server::realtime::RealtimeHub::new());
+    let push = shroud_server::push::PushService::new(pool.clone(), realtime.clone(), None);
+    shroud_server::state::AppState {
+        pool,
+        nebular_url: None,
+        media_bucket: "shroud-media".into(),
+        realtime,
+        push,
+    }
+}
 
 async fn test_app() -> Option<axum::Router> {
     let database_url = std::env::var("DATABASE_URL").ok()?;
@@ -28,12 +39,7 @@ async fn test_app() -> Option<axum::Router> {
     Some(
         axum::Router::new()
             .merge(routes::router())
-            .with_state(AppState {
-                pool,
-                nebular_url: None,
-                media_bucket: "shroud-media".into(),
-                realtime: std::sync::Arc::new(shroud_server::realtime::RealtimeHub::new()),
-            }),
+            .with_state(test_state(pool)),
     )
 }
 

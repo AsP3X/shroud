@@ -7,6 +7,7 @@ pub mod auth;
 pub mod config;
 pub mod error;
 pub mod keys;
+pub mod push;
 pub mod realtime;
 pub mod routes;
 pub mod state;
@@ -21,6 +22,7 @@ use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitEx
 
 use crate::config::Config;
 use crate::error::AppError;
+use crate::push::{PushService, apns_config_from_env};
 use crate::realtime::RealtimeHub;
 use crate::state::AppState;
 
@@ -72,11 +74,20 @@ pub async fn run() -> Result<(), AppError> {
         tracing::info!("realtime fan-out: in-process only (set REDIS_URL for multi-replica)");
     }
 
+    let apns = apns_config_from_env();
+    if apns.is_some() {
+        tracing::info!("apns: token auth configured");
+    } else {
+        tracing::info!("apns: credentials not set (token register works; send is log-only)");
+    }
+    let push = PushService::new(pool.clone(), realtime.clone(), apns);
+
     let state = AppState {
         pool,
         nebular_url: config.nebular_url.clone(),
         media_bucket: config.nebular_media_bucket.clone(),
         realtime,
+        push,
     };
     let app = Router::new()
         .merge(routes::router())

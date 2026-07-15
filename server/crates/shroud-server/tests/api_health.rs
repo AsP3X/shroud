@@ -6,9 +6,22 @@
 use axum::http::{Request, StatusCode};
 use axum::{body::Body, response::IntoResponse};
 use http_body_util::BodyExt;
-use shroud_server::{error::AppError, routes, state::AppState};
+use shroud_server::error::AppError;
+use shroud_server::routes;
 use sqlx::postgres::PgPoolOptions;
 use tower::ServiceExt;
+
+fn test_state(pool: sqlx::PgPool) -> shroud_server::state::AppState {
+    let realtime = std::sync::Arc::new(shroud_server::realtime::RealtimeHub::new());
+    let push = shroud_server::push::PushService::new(pool.clone(), realtime.clone(), None);
+    shroud_server::state::AppState {
+        pool,
+        nebular_url: None,
+        media_bucket: "shroud-media".into(),
+        realtime,
+        push,
+    }
+}
 
 async fn test_pool() -> Result<sqlx::PgPool, AppError> {
     let database_url = std::env::var("DATABASE_URL")
@@ -40,12 +53,7 @@ async fn health_returns_ok_when_database_is_available() {
 
     let app = axum::Router::new()
         .merge(routes::router())
-        .with_state(AppState {
-            pool,
-            nebular_url: None,
-            media_bucket: "shroud-media".into(),
-            realtime: std::sync::Arc::new(shroud_server::realtime::RealtimeHub::new()),
-        });
+        .with_state(test_state(pool));
 
     let response = app
         .oneshot(

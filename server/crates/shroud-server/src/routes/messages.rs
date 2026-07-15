@@ -316,6 +316,12 @@ pub async fn send_message(
             .await;
     }
 
+    // Opaque APNs data push when the peer has no online WebSocket device.
+    state
+        .push
+        .notify_new_message_if_offline(body.peer_user_id, message_id, conversation_id, auth.user_id)
+        .await;
+
     Ok((StatusCode::CREATED, Json(response)))
 }
 
