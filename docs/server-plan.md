@@ -4,7 +4,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 
 | | |
 | --- | --- |
-| **Status** | Core API + optional **Redis WS fan-out** **implemented**. Next: APNs push or presence/typing |
+| **Status** | Core API + Redis WS **implemented**. Milestone 8 (APNs) **plan locked** — ready to implement |
 | **Last updated** | 2026-07-15 |
 | **Related** | [architecture.md](./architecture.md) · [thought-collection.md](../thought-collection.md) · [README.md](../README.md) |
 
@@ -414,13 +414,24 @@ Extend `messages` (or keep ciphertext as envelope that may contain media keys; s
 
 History `GET /messages` excludes rows hidden for the caller; for-everyone rows return with empty/null ciphertext and a deleted flag.
 
+### Milestone 8 — Push schema (locked)
+
+#### `push_tokens`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `device_id` | `UUID` PK FK → `devices` CASCADE | One token per device |
+| `apns_token` | `TEXT` NOT NULL | Hex device token |
+| `environment` | `TEXT` NOT NULL | `sandbox` \| `production` |
+| `updated_at` | `TIMESTAMPTZ` NOT NULL | |
+
 ### Later entities (sketch)
 
 | Entity | Role |
 | --- | --- |
-| `push_tokens` | APNs per device |
+| (presence/typing keys) | Redis TTLs later |
 
-Redis: pub/sub, `rl:{scope}:{id}`, presence/typing keys.
+Redis: pub/sub fan-out, online sets, future rate limits.
 
 ---
 
