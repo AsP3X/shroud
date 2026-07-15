@@ -4,7 +4,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 
 | | |
 | --- | --- |
-| **Status** | Milestones 1–2 **implemented** (Auth + Key bundles). Next: Contacts |
+| **Status** | Milestones 1–2 **implemented**. Milestone 3 (Contacts) **API + schema locked** — ready to implement |
 | **Last updated** | 2026-07-15 |
 | **Related** | [architecture.md](./architecture.md) · [thought-collection.md](../thought-collection.md) · [README.md](../README.md) |
 
@@ -273,11 +273,51 @@ Indexes: `(device_id)` on OTPK for count/consume. Consume: `DELETE … WHERE dev
 
 **Eligible device for GET:** has rows in `device_identity_keys` and `device_signed_prekeys`; order by `devices.last_seen_at DESC NULLS LAST`, then `devices.created_at DESC`.
 
+### Milestone 3 — Contacts schema (locked)
+
+#### `contact_requests`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `UUID` PK | |
+| `from_user_id` | `UUID` NOT NULL FK → `users` CASCADE | Requester |
+| `to_user_id` | `UUID` NOT NULL FK → `users` CASCADE | Target |
+| `status` | `TEXT` NOT NULL | `pending` \| `accepted` \| `rejected` \| `cancelled` |
+| `created_at` | `TIMESTAMPTZ` NOT NULL | |
+| `responded_at` | `TIMESTAMPTZ` NULL | Set on accept/reject/cancel/block cleanup |
+
+Constraints:
+
+- `from_user_id <> to_user_id`
+- **Partial unique:** at most one `pending` pair `(from_user_id, to_user_id)` where `status = 'pending'`
+- Indexes: `(to_user_id, status)`, `(from_user_id, status)`
+
+#### `contacts`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `user_id` | `UUID` NOT NULL FK → `users` CASCADE | Owner of this edge |
+| `contact_user_id` | `UUID` NOT NULL FK → `users` CASCADE | Peer |
+| `created_at` | `TIMESTAMPTZ` NOT NULL | |
+| PK | `(user_id, contact_user_id)` | Directed; always insert **both** directions on accept |
+
+#### `blocks`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `blocker_id` | `UUID` NOT NULL FK → `users` CASCADE | |
+| `blocked_id` | `UUID` NOT NULL FK → `users` CASCADE | |
+| `created_at` | `TIMESTAMPTZ` NOT NULL | |
+| PK | `(blocker_id, blocked_id)` | |
+| Check | `blocker_id <> blocked_id` | |
+
+On **block**: delete both `contacts` rows for the pair; set any `pending` requests either way to `cancelled`; upsert block row.  
+On **unblock**: delete block row only.
+
 ### Later entities (sketch)
 
 | Entity | Role |
 | --- | --- |
-| `contact_requests` / `contacts` / `blocks` | Social graph |
 | `conversations` | One row per 1:1 pair |
 | `messages` | Envelope metadata + ciphertext |
 | `message_receipts` / `message_deletions` | Delivered/read; for_me / for_everyone |
@@ -309,8 +349,11 @@ Redis: pub/sub, `rl:{scope}:{id}`, presence/typing keys.
 
 ### Contacts
 
-- Share `users.id`; optional rate-limited exact username lookup.
-- Messaging requires accepted contact; requests accept/reject; blocks stop spam.
+- Share `users.id`; open link → `GET /users/:id` → `POST /contacts/requests` with `user_id`.
+- Reject self-request, existing contact, existing pending (idempotent or conflict), and if **either** direction is blocked.
+- Mutual pending → auto-accept: both `contacts` rows + mark requests `accepted`.
+- Accept/reject only by **to_user**; cancel only by **from_user**.
+- Messaging (later) requires a `contacts` edge and no block either way.
 
 ### Messages
 
@@ -354,7 +397,7 @@ Env-tunable later. Key pattern: `rl:{scope}:{id}`.
 | --- | --- | --- |
 | **1** | **Auth** | **Done** — register/login/logout/me/password, devices, sessions, migration 002, tests |
 | **2** | **Key bundles** | **Done** — migration 003; PUT/GET/status/otpk; atomic OTPK consume; tests |
-| 3 | Contacts | UUID share; requests; block; messaging gate |
+| **3** | **Contacts** | Schema + routes below; requests; auto-mutual accept; blocks; user card |
 | 4 | Messages | Conversations; envelopes; WS + Redis fan-out; sender sync; delivery receipts; cursors |
 | 5 | Media | Nebular presign; 25 MiB; attachments |
 | 6 | Receipts & presence | Read receipts; typing; online/last-seen |
@@ -581,13 +624,124 @@ Replenish OTPKs only for current device (merge by `key_id`). Max **100** keys pe
 
 **Enumeration:** unknown `user_id` and “no keys” both return `404` + `KEYS_REQUIRED` (identical body).
 
+### Milestone 3 — Contacts (locked)
+
+All routes require Bearer auth.
+
+#### `GET /users/:user_id` → `200`
+
+```json
+{ "id": "<uuid>", "username": "alice" }
+```
+
+- `404` + `NOT_FOUND` if user does not exist.
+- Still returns card if blocked (block only affects requests/messaging); optional harden later.
+
+#### `POST /contacts/requests` → `201` (or `200` if auto-accepted)
+
+```json
+{ "user_id": "<uuid>" }
+```
+
+Response:
+
+```json
+{
+  "id": "<request-uuid>",
+  "from_user_id": "<uuid>",
+  "to_user_id": "<uuid>",
+  "status": "pending",
+  "created_at": "..."
+}
+```
+
+If mutual auto-accept: `status` is `accepted` and contacts exist both ways.
+
+Errors: `VALIDATION_ERROR` (self), `NOT_FOUND`, `FORBIDDEN` (blocked either way), `CONFLICT` / `ALREADY_EXISTS` if already contacts or pending outbound.
+
+#### `GET /contacts/requests` → `200`
+
+Query: `?box=incoming|outgoing` (default `incoming`), optional `status=pending` (default pending only).
+
+```json
+{
+  "requests": [
+    {
+      "id": "<uuid>",
+      "from_user_id": "<uuid>",
+      "to_user_id": "<uuid>",
+      "status": "pending",
+      "created_at": "...",
+      "user": { "id": "<peer-uuid>", "username": "bob" }
+    }
+  ]
+}
+```
+
+#### `POST /contacts/requests/:id/accept` → `200`
+
+Only `to_user`. Creates both contact edges; sets request `accepted`.
+
+#### `POST /contacts/requests/:id/reject` → `200`
+
+Only `to_user`. Sets `rejected`.
+
+#### `POST /contacts/requests/:id/cancel` → `200`
+
+Only `from_user`. Sets `cancelled`.
+
+#### `GET /contacts` → `200`
+
+```json
+{
+  "contacts": [
+    { "user_id": "<uuid>", "username": "bob", "created_at": "..." }
+  ]
+}
+```
+
+#### `DELETE /contacts/:user_id` → `204`
+
+Remove both directed edges (unfriend). Does not create a block.
+
+#### `POST /blocks` → `204`
+
+```json
+{ "user_id": "<uuid>" }
+```
+
+Block side effects as in schema section.
+
+#### `DELETE /blocks/:user_id` → `204`
+
+Unblock only.
+
+#### `GET /blocks` → `200`
+
+```json
+{
+  "blocks": [
+    { "user_id": "<uuid>", "username": "mallory", "created_at": "..." }
+  ]
+}
+```
+
+#### Contact error codes
+
+| Code | When |
+| --- | --- |
+| `VALIDATION_ERROR` | Self-target, bad body |
+| `NOT_FOUND` | User or request not found / not yours |
+| `FORBIDDEN` | Blocked either way; not allowed to accept others’ requests |
+| `ALREADY_EXISTS` | Already contacts or pending request |
+| `UNAUTHORIZED` | No bearer |
+| `RATE_LIMITED` | Contact request budget |
+
 ### Later routes (outline)
 
 | Area | Routes |
 | --- | --- |
-| Health | `GET /health`; readiness (DB + Redis) |
-| Users | `GET /users/:user_id`; optional exact username lookup |
-| Contacts | requests, accept/reject, list, blocks |
+| Health | readiness (DB + Redis) |
 | Messages | send, list (cursor), receipts, delete |
 | Media | presign upload/download |
 | Push | `PUT /push/token` |
