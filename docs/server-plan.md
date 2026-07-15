@@ -4,7 +4,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 
 | | |
 | --- | --- |
-| **Status** | Milestones 1–5 + **4b WebSocket** **implemented**. Next: deletes, push, or Redis scale-out |
+| **Status** | Core path through WS **implemented**. Milestone 7 (Deletes) **API + schema locked** — ready to implement |
 | **Last updated** | 2026-07-15 |
 | **Related** | [architecture.md](./architecture.md) · [thought-collection.md](../thought-collection.md) · [README.md](../README.md) |
 
@@ -109,7 +109,9 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Mutual request | If reverse pending exists → **auto-accept** both ways |
 | Contacts storage | **Two directed rows** A→B and B→A |
 | Block | Drop contact edges + cancel pending either way; store block; unblock does not re-friend |
-| Message delete | Delete-for-me; delete-for-everyone **anytime** (messages milestone) |
+| Message delete | Delete-for-me via `message_hides`; delete-for-everyone **anytime** (tombstone + clear ciphertext) |
+| Delete WS | `message.deleted` fan-out for for-everyone |
+| Account delete | Hard delete user cascade; **tombstone** messages they sent for peers |
 | Receipts | Delivery + optional read |
 | Multi-device send | Server fan-out to sender’s other devices |
 | History page | Keyset cursor `(created_at, id)` |
@@ -391,14 +393,33 @@ Extend `messages` (or keep ciphertext as envelope that may contain media keys; s
 
 - Optional `media_object_id UUID NULL REFERENCES media_objects` on `messages` via new migration — link server-side for ACL.
 
+### Milestone 7 — Deletes schema (locked)
+
+#### `messages` columns (add)
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `deleted_for_everyone_at` | `TIMESTAMPTZ` NULL | Set on unsend |
+| `ciphertext` | `BYTEA` NULL | **Become nullable**; cleared on for-everyone |
+
+#### `message_hides`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `user_id` | `UUID` NOT NULL FK → `users` CASCADE | |
+| `message_id` | `UUID` NOT NULL FK → `messages` CASCADE | |
+| `created_at` | `TIMESTAMPTZ` NOT NULL | |
+| PK | `(user_id, message_id)` | |
+
+History `GET /messages` excludes rows hidden for the caller; for-everyone rows return with empty/null ciphertext and a deleted flag.
+
 ### Later entities (sketch)
 
 | Entity | Role |
 | --- | --- |
-| `message_deletions` | for_me / for_everyone |
 | `push_tokens` | APNs per device |
 
-Redis: pub/sub, `rl:{scope}:{id}`, presence/typing keys (post-m4).
+Redis: pub/sub, `rl:{scope}:{id}`, presence/typing keys.
 
 ---
 
@@ -482,7 +503,7 @@ Env-tunable later. Key pattern: `rl:{scope}:{id}`.
 | **4b** | **WebSocket** | **Done** — `/ws`, in-process hub, message.new + message.delivered |
 | **5** | **Media** | **Done** — migration 006; upload/download presign (stub/Nebular); media on messages |
 | 6 | Receipts & presence | Read receipts; typing; online/last-seen |
-| 7 | Deletes | for me / everyone; account hard-delete |
+| **7** | **Deletes** | Schema + routes below; tombstone; hides; account delete |
 | 8 | APNs | Tokens; opaque data push |
 | 9 | Calls | Signaling + coturn; VoIP push |
 
@@ -972,13 +993,44 @@ Optional field: `"media_object_id": "<uuid>"` required when `content_type` is `m
 - Typing / presence
 - Client→server messages beyond `auth` (ignore or nack unknown types)
 
+### Milestone 7 — Deletes (locked)
+
+#### `DELETE /messages/:id?scope=me|everyone` → `204`
+
+- **me** (default): insert `message_hides` for caller if participant; no WS required (optional multi-device later).
+- **everyone**: only **sender** may call; set `deleted_for_everyone_at`, set `ciphertext = NULL`, unlink media (`media_objects.message_id` null / message.media_object_id null). WS:
+
+```json
+{
+  "type": "message.deleted",
+  "message_id": "<uuid>",
+  "conversation_id": "<uuid>",
+  "scope": "everyone"
+}
+```
+
+Fan-out: both conversation users' online devices.
+
+#### Message response fields
+
+Add optional:
+
+- `deleted_for_everyone`: bool
+- `ciphertext`: null when deleted for everyone
+
+#### `DELETE /auth/account` → `204`
+
+- Authenticated; optional body `{ "password": "..." }` verify.
+- Tombstone all messages where `sender_user_id = me` (clear ciphertext, set deleted_for_everyone_at).
+- `DELETE FROM users WHERE id = me` (cascades devices, sessions, keys, contacts, blocks, media ownership, hides, deliveries via FKs).
+- Remaining conversation rows may still exist for peer with tombstoned messages.
+
 ### Later routes (outline)
 
 | Area | Routes |
 | --- | --- |
 | Push | `PUT /push/token` |
 | Real-time | Redis multi-replica fan-out |
-| Deletes | for me / everyone |
 | Calls | signaling |
 
 ---
