@@ -1,0 +1,515 @@
+//! HTTP message send, history, conversations list, delivery acks.
+
+use axum::{
+    Json,
+    extract::{Path, Query, State},
+    http::StatusCode,
+};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
+use uuid::Uuid;
+
+use crate::auth::session::AuthContext;
+use crate::error::AppError;
+use crate::routes::contacts::is_blocked_either_way;
+use crate::state::AppState;
+
+const MAX_CIPHERTEXT_BYTES: usize = 64 * 1024;
+const DEFAULT_LIMIT: i64 = 50;
+const MAX_LIMIT: i64 = 100;
+
+#[derive(Debug, Deserialize)]
+pub struct SendMessageRequest {
+    pub peer_user_id: Uuid,
+    pub client_message_id: Uuid,
+    pub content_type: String,
+    pub ciphertext: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListMessagesQuery {
+    pub peer_user_id: Uuid,
+    pub limit: Option<i64>,
+    pub before_created_at: Option<DateTime<Utc>>,
+    pub before_id: Option<Uuid>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MessageResponse {
+    pub id: Uuid,
+    pub conversation_id: Uuid,
+    pub sender_user_id: Uuid,
+    pub sender_device_id: Uuid,
+    pub client_message_id: Uuid,
+    pub content_type: String,
+    pub ciphertext: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ListMessagesResponse {
+    pub conversation_id: Option<Uuid>,
+    pub messages: Vec<MessageResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ConversationsResponse {
+    pub conversations: Vec<ConversationItem>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ConversationItem {
+    pub id: Uuid,
+    pub peer: PeerCard,
+    pub created_at: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_message_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PeerCard {
+    pub id: Uuid,
+    pub username: String,
+}
+
+#[derive(Debug, FromRow)]
+struct MessageRow {
+    id: Uuid,
+    conversation_id: Uuid,
+    sender_user_id: Uuid,
+    sender_device_id: Uuid,
+    client_message_id: Uuid,
+    content_type: String,
+    ciphertext: Vec<u8>,
+    created_at: DateTime<Utc>,
+}
+
+/// `POST /messages`
+pub async fn send_message(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Json(body): Json<SendMessageRequest>,
+) -> Result<(StatusCode, Json<MessageResponse>), AppError> {
+    if body.peer_user_id == auth.user_id {
+        return Err(AppError::validation("Cannot message yourself."));
+    }
+
+    let content_type = body.content_type.as_str();
+    if content_type != "text" && content_type != "media" {
+        return Err(AppError::validation(
+            "content_type must be 'text' or 'media'.",
+        ));
+    }
+
+    let ciphertext = BASE64
+        .decode(body.ciphertext.trim().as_bytes())
+        .map_err(|_| AppError::validation("ciphertext must be valid standard Base64."))?;
+    if ciphertext.is_empty() || ciphertext.len() > MAX_CIPHERTEXT_BYTES {
+        return Err(AppError::validation(format!(
+            "ciphertext must decode to 1–{MAX_CIPHERTEXT_BYTES} bytes."
+        )));
+    }
+
+    // Idempotent replay.
+    if let Some(existing) =
+        load_by_client_id(&state.pool, auth.user_id, body.client_message_id).await?
+    {
+        return Ok((StatusCode::OK, Json(message_to_response(existing))));
+    }
+
+    if !are_contacts(&state.pool, auth.user_id, body.peer_user_id).await? {
+        return Err(AppError::forbidden(
+            "You can only message accepted contacts.",
+        ));
+    }
+    if is_blocked_either_way(&state.pool, auth.user_id, body.peer_user_id).await? {
+        return Err(AppError::forbidden("Cannot message while blocked."));
+    }
+
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
+
+    let conversation_id = ensure_conversation(&mut tx, auth.user_id, body.peer_user_id).await?;
+    let message_id = Uuid::new_v4();
+    let now = Utc::now();
+
+    let insert = sqlx::query(
+        r#"
+        INSERT INTO messages (
+            id, conversation_id, sender_user_id, sender_device_id,
+            client_message_id, content_type, ciphertext, created_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        "#,
+    )
+    .bind(message_id)
+    .bind(conversation_id)
+    .bind(auth.user_id)
+    .bind(auth.device_id)
+    .bind(body.client_message_id)
+    .bind(content_type)
+    .bind(&ciphertext)
+    .bind(now)
+    .execute(&mut *tx)
+    .await;
+
+    match insert {
+        Ok(_) => {}
+        Err(sqlx::Error::Database(db))
+            if db.constraint() == Some("messages_sender_client_unique") =>
+        {
+            // Race: load existing outside tx.
+            drop(tx);
+            let existing = load_by_client_id(&state.pool, auth.user_id, body.client_message_id)
+                .await?
+                .ok_or_else(|| {
+                    AppError::Internal("idempotent message missing after conflict".into())
+                })?;
+            return Ok((StatusCode::OK, Json(message_to_response(existing))));
+        }
+        Err(err) => {
+            return Err(AppError::Internal(format!("insert message failed: {err}")));
+        }
+    }
+
+    // Delivery rows: all devices of both users; sender device already delivered.
+    let device_ids: Vec<Uuid> = sqlx::query_scalar(
+        r#"
+        SELECT id FROM devices
+        WHERE user_id = $1 OR user_id = $2
+        "#,
+    )
+    .bind(auth.user_id)
+    .bind(body.peer_user_id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("list devices for delivery failed: {err}")))?;
+
+    for device_id in device_ids {
+        let delivered_at = if device_id == auth.device_id {
+            Some(now)
+        } else {
+            None
+        };
+        sqlx::query(
+            r#"
+            INSERT INTO message_deliveries (message_id, device_id, delivered_at)
+            VALUES ($1, $2, $3)
+            ON CONFLICT DO NOTHING
+            "#,
+        )
+        .bind(message_id)
+        .bind(device_id)
+        .bind(delivered_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| AppError::Internal(format!("insert delivery failed: {err}")))?;
+    }
+
+    tx.commit()
+        .await
+        .map_err(|err| AppError::Internal(format!("commit message failed: {err}")))?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(MessageResponse {
+            id: message_id,
+            conversation_id,
+            sender_user_id: auth.user_id,
+            sender_device_id: auth.device_id,
+            client_message_id: body.client_message_id,
+            content_type: content_type.into(),
+            ciphertext: BASE64.encode(&ciphertext),
+            created_at: now,
+        }),
+    ))
+}
+
+/// `GET /messages`
+pub async fn list_messages(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Query(query): Query<ListMessagesQuery>,
+) -> Result<Json<ListMessagesResponse>, AppError> {
+    if query.peer_user_id == auth.user_id {
+        return Err(AppError::validation("peer_user_id cannot be yourself."));
+    }
+
+    let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
+
+    let conversation_id = find_conversation(&state.pool, auth.user_id, query.peer_user_id).await?;
+    let Some(conversation_id) = conversation_id else {
+        return Ok(Json(ListMessagesResponse {
+            conversation_id: None,
+            messages: vec![],
+        }));
+    };
+
+    // Ensure requester is a participant (always true if find matched).
+    let rows =
+        if let (Some(before_at), Some(before_id)) = (query.before_created_at, query.before_id) {
+            sqlx::query_as::<_, MessageRow>(
+                r#"
+            SELECT id, conversation_id, sender_user_id, sender_device_id,
+                   client_message_id, content_type, ciphertext, created_at
+            FROM messages
+            WHERE conversation_id = $1
+              AND (created_at, id) < ($2, $3)
+            ORDER BY created_at DESC, id DESC
+            LIMIT $4
+            "#,
+            )
+            .bind(conversation_id)
+            .bind(before_at)
+            .bind(before_id)
+            .bind(limit)
+            .fetch_all(&state.pool)
+            .await
+        } else {
+            sqlx::query_as::<_, MessageRow>(
+                r#"
+            SELECT id, conversation_id, sender_user_id, sender_device_id,
+                   client_message_id, content_type, ciphertext, created_at
+            FROM messages
+            WHERE conversation_id = $1
+            ORDER BY created_at DESC, id DESC
+            LIMIT $2
+            "#,
+            )
+            .bind(conversation_id)
+            .bind(limit)
+            .fetch_all(&state.pool)
+            .await
+        }
+        .map_err(|err| AppError::Internal(format!("list messages failed: {err}")))?;
+
+    Ok(Json(ListMessagesResponse {
+        conversation_id: Some(conversation_id),
+        messages: rows.into_iter().map(message_to_response).collect(),
+    }))
+}
+
+/// `GET /conversations`
+pub async fn list_conversations(
+    State(state): State<AppState>,
+    auth: AuthContext,
+) -> Result<Json<ConversationsResponse>, AppError> {
+    #[derive(FromRow)]
+    struct Row {
+        id: Uuid,
+        user_a_id: Uuid,
+        user_b_id: Uuid,
+        created_at: DateTime<Utc>,
+        last_message_at: Option<DateTime<Utc>>,
+    }
+
+    let rows = sqlx::query_as::<_, Row>(
+        r#"
+        SELECT c.id, c.user_a_id, c.user_b_id, c.created_at,
+               (
+                 SELECT MAX(m.created_at) FROM messages m
+                 WHERE m.conversation_id = c.id
+               ) AS last_message_at
+        FROM conversations c
+        WHERE c.user_a_id = $1 OR c.user_b_id = $1
+        ORDER BY last_message_at DESC NULLS LAST, c.created_at DESC
+        "#,
+    )
+    .bind(auth.user_id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("list conversations failed: {err}")))?;
+
+    let mut conversations = Vec::with_capacity(rows.len());
+    for row in rows {
+        let peer_id = if row.user_a_id == auth.user_id {
+            row.user_b_id
+        } else {
+            row.user_a_id
+        };
+        let username: String = sqlx::query_scalar(r#"SELECT username FROM users WHERE id = $1"#)
+            .bind(peer_id)
+            .fetch_one(&state.pool)
+            .await
+            .map_err(|err| AppError::Internal(format!("peer username failed: {err}")))?;
+
+        conversations.push(ConversationItem {
+            id: row.id,
+            peer: PeerCard {
+                id: peer_id,
+                username,
+            },
+            created_at: row.created_at,
+            last_message_at: row.last_message_at,
+        });
+    }
+
+    Ok(Json(ConversationsResponse { conversations }))
+}
+
+/// `POST /messages/:id/delivered`
+pub async fn mark_delivered(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path(message_id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    let result = sqlx::query(
+        r#"
+        UPDATE message_deliveries d
+        SET delivered_at = now()
+        FROM messages m
+        WHERE d.message_id = m.id
+          AND d.message_id = $1
+          AND d.device_id = $2
+          AND d.delivered_at IS NULL
+        "#,
+    )
+    .bind(message_id)
+    .bind(auth.device_id)
+    .execute(&state.pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("mark delivered failed: {err}")))?;
+
+    if result.rows_affected() == 0 {
+        // Already delivered or not for this device.
+        let exists: bool = sqlx::query_scalar(
+            r#"
+            SELECT EXISTS(
+                SELECT 1 FROM message_deliveries
+                WHERE message_id = $1 AND device_id = $2
+            )
+            "#,
+        )
+        .bind(message_id)
+        .bind(auth.device_id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|err| AppError::Internal(format!("delivery exists check failed: {err}")))?;
+
+        if !exists {
+            return Err(AppError::not_found("Message delivery not found."));
+        }
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn ensure_conversation(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user_x: Uuid,
+    user_y: Uuid,
+) -> Result<Uuid, AppError> {
+    let (user_a, user_b) = if user_x < user_y {
+        (user_x, user_y)
+    } else {
+        (user_y, user_x)
+    };
+
+    let existing: Option<Uuid> = sqlx::query_scalar(
+        r#"
+        SELECT id FROM conversations
+        WHERE user_a_id = $1 AND user_b_id = $2
+        "#,
+    )
+    .bind(user_a)
+    .bind(user_b)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("find conversation failed: {err}")))?;
+
+    if let Some(id) = existing {
+        return Ok(id);
+    }
+
+    let id = Uuid::new_v4();
+    sqlx::query(
+        r#"
+        INSERT INTO conversations (id, user_a_id, user_b_id)
+        VALUES ($1, $2, $3)
+        "#,
+    )
+    .bind(id)
+    .bind(user_a)
+    .bind(user_b)
+    .execute(&mut **tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("insert conversation failed: {err}")))?;
+
+    Ok(id)
+}
+
+async fn find_conversation(
+    pool: &sqlx::PgPool,
+    user_x: Uuid,
+    user_y: Uuid,
+) -> Result<Option<Uuid>, AppError> {
+    let (user_a, user_b) = if user_x < user_y {
+        (user_x, user_y)
+    } else {
+        (user_y, user_x)
+    };
+    sqlx::query_scalar(
+        r#"
+        SELECT id FROM conversations
+        WHERE user_a_id = $1 AND user_b_id = $2
+        "#,
+    )
+    .bind(user_a)
+    .bind(user_b)
+    .fetch_optional(pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("find conversation failed: {err}")))
+}
+
+async fn load_by_client_id(
+    pool: &sqlx::PgPool,
+    sender_user_id: Uuid,
+    client_message_id: Uuid,
+) -> Result<Option<MessageRow>, AppError> {
+    sqlx::query_as::<_, MessageRow>(
+        r#"
+        SELECT id, conversation_id, sender_user_id, sender_device_id,
+               client_message_id, content_type, ciphertext, created_at
+        FROM messages
+        WHERE sender_user_id = $1 AND client_message_id = $2
+        "#,
+    )
+    .bind(sender_user_id)
+    .bind(client_message_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("load by client_message_id failed: {err}")))
+}
+
+async fn are_contacts(pool: &sqlx::PgPool, a: Uuid, b: Uuid) -> Result<bool, AppError> {
+    sqlx::query_scalar(
+        r#"
+        SELECT EXISTS(
+            SELECT 1 FROM contacts WHERE user_id = $1 AND contact_user_id = $2
+        )
+        "#,
+    )
+    .bind(a)
+    .bind(b)
+    .fetch_one(pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("contacts check failed: {err}")))
+}
+
+fn message_to_response(row: MessageRow) -> MessageResponse {
+    MessageResponse {
+        id: row.id,
+        conversation_id: row.conversation_id,
+        sender_user_id: row.sender_user_id,
+        sender_device_id: row.sender_device_id,
+        client_message_id: row.client_message_id,
+        content_type: row.content_type,
+        ciphertext: BASE64.encode(&row.ciphertext),
+        created_at: row.created_at,
+    }
+}

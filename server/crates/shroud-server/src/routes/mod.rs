@@ -13,6 +13,7 @@ pub mod contacts;
 pub mod devices;
 pub mod health;
 pub mod keys;
+pub mod messages;
 pub mod users;
 
 /// Builds the versioned API router mounted at `/api/v1`.
@@ -51,6 +52,10 @@ pub fn router() -> Router<AppState> {
             .route("/contacts/{user_id}", delete(contacts::delete_contact))
             .route("/blocks", post(blocks::create_block))
             .route("/blocks", get(blocks::list_blocks))
-            .route("/blocks/{user_id}", delete(blocks::delete_block)),
+            .route("/blocks/{user_id}", delete(blocks::delete_block))
+            .route("/messages", post(messages::send_message))
+            .route("/messages", get(messages::list_messages))
+            .route("/messages/{id}/delivered", post(messages::mark_delivered))
+            .route("/conversations", get(messages::list_conversations)),
     )
 }
