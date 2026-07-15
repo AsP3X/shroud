@@ -58,11 +58,16 @@ Later: **coturn** for WebRTC TURN (calls). Call media does not flow through the 
 
 ## Local development
 
-Target Compose stack (as features land): **Postgres + Redis + Nebular OS + API**.
+Compose stack: **Postgres + Redis + API** (Nebular optional later).
 
-1. `docker compose up -d` — infrastructure (Postgres today; Redis/Nebular as milestones need them)
-2. `cp server/.env.example server/.env` && `cd server && cargo run -p shroud-server`
-3. Open `ios/shroud.xcodeproj` — Debug API base URL `http://127.0.0.1:8080/api/v1`
+```bash
+docker compose up -d --build   # from repo root
+curl http://127.0.0.1:8080/api/v1/health
+```
+
+Optional native API: `docker compose up -d postgres redis` then `cd server && cargo run -p shroud-server`.
+
+Open `ios/shroud.xcodeproj` — Debug API base URL `http://127.0.0.1:8080/api/v1`.
 
 ## Implementation milestones
 

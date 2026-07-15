@@ -28,6 +28,10 @@ use crate::state::AppState;
 
 /// Application entrypoint: configure tracing, connect to Postgres, serve HTTP.
 pub async fn run() -> Result<(), AppError> {
+    // Human: Local dev uses server/.env; production injects real env vars (dotenv is a no-op if missing).
+    // Agent: CALLS dotenvy::dotenv before Config::from_env; never logs secret values.
+    let _ = dotenvy::dotenv();
+
     tracing_subscriber::registry()
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
         .with(tracing_subscriber::fmt::layer())

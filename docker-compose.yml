@@ -1,4 +1,4 @@
-# Local development infrastructure for the Shroud API.
+# Full local stack: Postgres, Redis, and shroud-server API.
 # Agent: READS env defaults below; WRITES volumes; no production use.
 services:
   postgres:
@@ -30,6 +30,39 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  api:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: shroud-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Docker network hostnames (not localhost).
+      DATABASE_URL: postgres://shroud:shroud@postgres:5432/shroud
+      REDIS_URL: redis://redis:6379
+      HOST: 0.0.0.0
+      PORT: "8080"
+      RUST_LOG: shroud_server=info,tower_http=info,sqlx=warn
+    ports:
+      - "8080:8080"
+    healthcheck:
+      # No curl in slim image — use the binary bind check via /dev/tcp if available,
+      # or install nothing and rely on depends_on; prefer wget from busybox alternative.
+      test:
+        [
+          "CMD-SHELL",
+          "timeout 2 bash -c 'cat < /dev/null > /dev/tcp/127.0.0.1/8080' || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    restart: unless-stopped
 
 volumes:
   shroud_pg_data:

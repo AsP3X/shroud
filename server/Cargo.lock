@@ -1495,6 +1495,7 @@ dependencies = [
  "axum",
  "base64",
  "chrono",
+ "dotenvy",
  "futures-util",
  "http-body-util",
  "password-hash",

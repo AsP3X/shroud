@@ -13,37 +13,77 @@ End-to-end encrypted messenger: **Rust + PostgreSQL** server and a **native iOS*
 
 ## Prerequisites
 
-- **Rust** (stable) — [rustup](https://rustup.rs/)
-- **Docker** — local PostgreSQL via Compose
+- **Docker** + Docker Compose — full API stack (Postgres, Redis, API)
 - **Xcode 16+** — iOS app (full Xcode, not Command Line Tools only)
+- **Rust** (optional) — native `cargo run` / tests without rebuilding the API image
 
-## Server (local dev)
+## Server (Docker Compose — recommended)
+
+From the **repository root**:
 
 ```bash
-# Start Postgres
-docker compose up -d
+# Build and start Postgres + Redis + API
+docker compose up -d --build
 
-# Copy env and run migrations + API
+# Follow API logs
+docker compose logs -f api
+
+# Health check (host)
+curl http://127.0.0.1:8080/api/v1/health
+# {"status":"ok","database":"ok"}
+```
+
+| Service | Host port | Notes |
+| --- | --- | --- |
+| `api` | `8080` | Axum `/api/v1`; migrations run on startup |
+| `postgres` | `5432` | User/db/password: `shroud` |
+| `redis` | `6379` | Multi-replica WS fan-out |
+
+Stop:
+
+```bash
+docker compose down          # keep data volumes
+docker compose down -v       # wipe Postgres/Redis data
+```
+
+Rebuild after server code changes:
+
+```bash
+docker compose up -d --build api
+```
+
+## Server (native Cargo — optional)
+
+Useful for fast iteration without rebuilding the image. Keep Compose infra running:
+
+```bash
+docker compose up -d postgres redis
+
 cp server/.env.example server/.env
+# Point at host-mapped ports (defaults already do):
+# DATABASE_URL=postgres://shroud:shroud@127.0.0.1:5432/shroud
+# REDIS_URL=redis://127.0.0.1:6379
+
 cd server && cargo run -p shroud-server
 ```
 
-Health check: `GET http://localhost:8080/api/v1/health`
-
 ## iOS
 
-Open `ios/Shroud.xcodeproj` in Xcode, select the **Shroud** scheme, and run on a simulator.
+Open `ios/shroud.xcodeproj` in Xcode, select the **shroud** scheme, and run on a simulator.
+
+Debug API base URL: `http://127.0.0.1:8080/api/v1` (requires the Compose `api` service or a local `cargo run`).
 
 ## Tests
 
 ```bash
-# Server (requires Postgres — see server/.env.example)
+# Server (requires Postgres — start compose infra or full stack)
+docker compose up -d postgres
 cd server && cargo test --workspace
 cd server && cargo clippy --all-targets -- -D warnings
 cd server && cargo fmt --check
 
 # iOS
-xcodebuild test -scheme Shroud -destination 'platform=iOS Simulator,name=iPhone 16' -project ios/Shroud.xcodeproj
+xcodebuild test -scheme shroud -destination 'platform=iOS Simulator,name=iPhone 17' -project ios/shroud.xcodeproj
 ```
 
 ## Security
