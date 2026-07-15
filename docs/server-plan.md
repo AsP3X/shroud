@@ -93,8 +93,13 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Retention | Indefinite until user delete |
 | History recovery | Login + encryption phrase on client → download ciphertext |
 | Discovery | Share **`users.id` (UUID)** + deep link; username for login/display |
-| First contact | **Contact request** required before full messaging |
-| Block / delete | Block list; delete-for-me; delete-for-everyone **anytime** |
+| Profile lookup | `GET /users/:user_id` → `{ id, username }` (auth, rate-limited) |
+| First contact | **Contact request by target UUID only** before full messaging |
+| Contact request | No expiry in v1; pending until accept / reject / cancel / block |
+| Mutual request | If reverse pending exists → **auto-accept** both ways |
+| Contacts storage | **Two directed rows** A→B and B→A |
+| Block | Drop contact edges + cancel pending either way; store block; unblock does not re-friend |
+| Message delete | Delete-for-me; delete-for-everyone **anytime** (messages milestone) |
 | Receipts | Delivery + optional read |
 | Multi-device send | Server fan-out to sender’s other devices |
 | History page | Keyset cursor `(created_at, id)` |
