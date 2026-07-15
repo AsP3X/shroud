@@ -4,7 +4,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 
 | | |
 | --- | --- |
-| **Status** | Ready for **milestone 1 (Auth)** implementation |
+| **Status** | Auth API + Postgres schema locked; ready to implement **milestone 1** |
 | **Last updated** | 2026-07-15 |
 | **Related** | [architecture.md](./architecture.md) · [thought-collection.md](../thought-collection.md) · [README.md](../README.md) |
 
@@ -16,7 +16,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 2. [Decision log](#decision-log)
 3. [Security invariants](#security-invariants-server)
 4. [Runtime topology](#runtime-topology)
-5. [Domain model](#domain-model-sketch)
+5. [Domain model](#domain-model) (includes locked Auth SQL)
 6. [Feature behavior](#feature-behavior)
 7. [Implementation milestones](#implementation-milestones)
 8. [API surface](#api-surface)
@@ -175,22 +175,67 @@ Calls phase adds **coturn** (TURN). Media bytes do not transit the Rust API.
 
 ---
 
-## Domain model (sketch)
+## Domain model
 
-Exact columns land in sqlx migrations.
+### Milestone 1 — Auth schema (locked)
+
+Forward-only sqlx migrations under `server/migrations/postgres/`. Do not edit applied migrations; add `002_…` (or replace `001` only if no environment has applied it yet).
+
+#### `users`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `UUID` PK | `gen_random_uuid()`; shareable public id |
+| `username` | `TEXT` NOT NULL UNIQUE | Case-folded form only |
+| `password_hash` | `TEXT` NOT NULL | argon2id PHC string |
+| `created_at` | `TIMESTAMPTZ` NOT NULL | `now()` |
+
+Indexes: unique on `username` (constraint). Optional non-unique not required.
+
+#### `devices`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `UUID` PK | Client may send this back on login |
+| `user_id` | `UUID` NOT NULL FK → `users(id)` **ON DELETE CASCADE** | |
+| `name` | `TEXT` NULL | Optional display name |
+| `created_at` | `TIMESTAMPTZ` NOT NULL | `now()` |
+| `last_seen_at` | `TIMESTAMPTZ` NULL | Updated on authenticated activity |
+
+Indexes: `(user_id)`. Max 5 devices enforced in application code (not a DB CHECK).
+
+#### `sessions`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `UUID` PK | |
+| `device_id` | `UUID` NOT NULL FK → `devices(id)` **ON DELETE CASCADE** | |
+| `token_hash` | `BYTEA` NOT NULL UNIQUE | SHA-256 of opaque token (raw 32 bytes) |
+| `created_at` | `TIMESTAMPTZ` NOT NULL | `now()` |
+| `revoked_at` | `TIMESTAMPTZ` NULL | Set on logout / device delete / superseded login / password-change (others) |
+| `last_used_at` | `TIMESTAMPTZ` NULL | Optional touch on auth |
+
+Indexes:
+
+- Unique on `token_hash`
+- `(device_id)`
+- **Partial unique:** `UNIQUE (device_id) WHERE revoked_at IS NULL` — one live session per device
+
+**Retention:** keep revoked rows; purge job deletes where `revoked_at < now() - interval '30 days'`.
+
+Auth lookup: `SELECT … FROM sessions JOIN devices … JOIN users … WHERE token_hash = $1 AND revoked_at IS NULL`.
+
+### Later entities (sketch)
 
 | Entity | Role |
 | --- | --- |
-| `users` | `id` (UUID, shareable), case-folded `username`, `password_hash`, `created_at` |
-| `devices` | Per-user; optional name; `created_at`, `last_seen_at` |
-| `sessions` | Token hash, `device_id`, `created_at`, `revoked_at`, `last_used_at` (no expiry column) |
 | `identity_keys` / `signed_prekeys` / `onetime_prekeys` | Public keys per device; OTPK consume-on-fetch |
 | `contact_requests` / `contacts` / `blocks` | Social graph |
 | `conversations` | One row per 1:1 pair |
-| `messages` | Envelope metadata + ciphertext; `conversation_id`, `client_message_id` |
+| `messages` | Envelope metadata + ciphertext |
 | `message_receipts` / `message_deletions` | Delivered/read; for_me / for_everyone |
-| `media_objects` | Nebular bucket/key, size, owner, message link |
-| `push_tokens` | APNs token per device |
+| `media_objects` | Nebular refs |
+| `push_tokens` | APNs per device |
 
 Redis: pub/sub, `rl:{scope}:{id}`, presence/typing keys.
 
