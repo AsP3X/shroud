@@ -4375,10 +4375,54 @@
         },
         {
           "type": "frame",
+          "id": "PiOBe",
+          "name": "Nav Row",
+          "width": "fill_container",
+          "padding": [
+            4,
+            16
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "ekKDo",
+              "name": "Nav Spacer",
+              "width": 44,
+              "height": 44
+            },
+            {
+              "type": "frame",
+              "id": "cAwdu",
+              "name": "Settings Button",
+              "width": 44,
+              "height": 44,
+              "fill": "$bg-grouped",
+              "cornerRadius": 22,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "w0DMm",
+                  "name": "Settings Icon",
+                  "width": 22,
+                  "height": 22,
+                  "icon": "settings",
+                  "library": "lucide",
+                  "fill": "$accent"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
           "id": "GXE4Z",
           "name": "Hero Stage",
           "width": "fill_container",
-          "height": 280,
+          "height": 250,
           "layout": "none",
           "children": [
             {
@@ -13141,8 +13185,8 @@
     {
       "type": "frame",
       "id": "B5SO6S",
-      "x": 1940,
-      "y": 944,
+      "x": 2400,
+      "y": 1851,
       "name": "Conversation — Own Message Menu",
       "clip": true,
       "width": 390,
@@ -21375,6 +21419,678 @@
               "fill": "$text-primary",
               "width": 140,
               "height": 5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "hYV7H",
+      "x": 1940,
+      "y": 949,
+      "name": "Server Settings",
+      "clip": true,
+      "width": 390,
+      "height": 844,
+      "fill": "$bg",
+      "layout": "vertical",
+      "children": [
+        {
+          "id": "xb3pJ",
+          "type": "ref",
+          "ref": "ohoDT",
+          "name": "Status Bar"
+        },
+        {
+          "type": "frame",
+          "id": "V1637C",
+          "layoutPosition": "absolute",
+          "x": 0,
+          "y": 0,
+          "name": "Scrim",
+          "width": 390,
+          "height": 844,
+          "fill": "#0B0B1299",
+          "layout": "none"
+        },
+        {
+          "type": "frame",
+          "id": "R5Hobq",
+          "layoutPosition": "absolute",
+          "x": 0,
+          "y": 100,
+          "name": "Settings Sheet",
+          "width": 390,
+          "height": 744,
+          "fill": "$bg",
+          "cornerRadius": [
+            22,
+            22,
+            0,
+            0
+          ],
+          "effect": {
+            "type": "shadow",
+            "shadowType": "outer",
+            "color": "#0B0B1240",
+            "offset": {
+              "x": 0,
+              "y": -12
+            },
+            "blur": 40
+          },
+          "layout": "vertical",
+          "gap": 12,
+          "padding": [
+            8,
+            20,
+            12,
+            20
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "c9waan",
+              "name": "Handle Wrap",
+              "width": "fill_container",
+              "layout": "vertical",
+              "padding": [
+                2,
+                0,
+                4,
+                0
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 3,
+                  "id": "AceTt",
+                  "name": "Handle",
+                  "fill": "#D8D8DC",
+                  "width": 36,
+                  "height": 5
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "Z0jHy",
+              "name": "Sheet Header",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "F3msb",
+                  "name": "Sheet Title",
+                  "fill": "$text-primary",
+                  "content": "Server",
+                  "fontFamily": "$font",
+                  "fontSize": 28,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "y4Nur",
+                  "name": "Sheet Subtitle",
+                  "fill": "$text-secondary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Use the official Shroud network or connect to your own self-hosted server.",
+                  "lineHeight": 1.4,
+                  "fontFamily": "$font",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "Aaqmg",
+              "name": "Server Mode",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 10,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "adV41",
+                  "name": "Mode Label",
+                  "fill": "$text-secondary",
+                  "content": "CONNECTION",
+                  "fontFamily": "$font",
+                  "fontSize": 11,
+                  "fontWeight": "600",
+                  "letterSpacing": 0.8
+                },
+                {
+                  "type": "frame",
+                  "id": "eYhsM",
+                  "name": "Mode Options",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "H7GON",
+                      "name": "Option Official",
+                      "width": "fill_container",
+                      "fill": "$bg-grouped",
+                      "cornerRadius": 14,
+                      "gap": 12,
+                      "padding": 14,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "f7qGV6",
+                          "name": "Radio Official",
+                          "width": 22,
+                          "height": 22,
+                          "fill": "#FFFFFF00",
+                          "cornerRadius": 11,
+                          "stroke": "$separator",
+                          "strokeWidth": 2,
+                          "justifyContent": "center",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "uerM9",
+                          "name": "Official Text",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 2,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "KTuwN",
+                              "name": "Official Title",
+                              "fill": "$text-primary",
+                              "content": "Official Shroud server",
+                              "fontFamily": "$font",
+                              "fontSize": 15,
+                              "fontWeight": "600"
+                            },
+                            {
+                              "type": "text",
+                              "id": "OGUeR",
+                              "name": "Official Sub",
+                              "fill": "$text-secondary",
+                              "content": "Managed by Shroud · always up to date",
+                              "fontFamily": "$font",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "icon",
+                          "id": "X4LyJ",
+                          "name": "Official Badge",
+                          "width": 20,
+                          "height": 20,
+                          "icon": "badge-check",
+                          "library": "lucide",
+                          "fill": "$text-secondary"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "A871sq",
+                      "name": "Option Selfhosted",
+                      "width": "fill_container",
+                      "fill": "$accent-soft",
+                      "cornerRadius": 14,
+                      "gap": 12,
+                      "padding": 14,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "zENll",
+                          "name": "Radio Selfhosted",
+                          "width": 22,
+                          "height": 22,
+                          "fill": "$accent",
+                          "cornerRadius": 11,
+                          "stroke": "$separator",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "D7jTn",
+                              "name": "Radio Selfhosted Dot",
+                              "fill": "#FFFFFF",
+                              "width": 8,
+                              "height": 8
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "hRG3Y",
+                          "name": "Selfhosted Text",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 2,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "YSaVC",
+                              "name": "Selfhosted Title",
+                              "fill": "$text-primary",
+                              "content": "Self-hosted",
+                              "fontFamily": "$font",
+                              "fontSize": 15,
+                              "fontWeight": "600"
+                            },
+                            {
+                              "type": "text",
+                              "id": "vELJO",
+                              "name": "Selfhosted Sub",
+                              "fill": "$text-secondary",
+                              "content": "Your Docker / private server",
+                              "fontFamily": "$font",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "icon",
+                          "id": "S5JRO",
+                          "name": "Selfhosted Badge",
+                          "width": 20,
+                          "height": 20,
+                          "icon": "hard-drive",
+                          "library": "lucide",
+                          "fill": "$accent"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "XMt2j",
+              "name": "Selfhosted Fields",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 10,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "FwfNs",
+                  "name": "Fields Caption",
+                  "fill": "$text-secondary",
+                  "content": "SELF-HOSTED DETAILS",
+                  "fontFamily": "$font",
+                  "fontSize": 11,
+                  "fontWeight": "600",
+                  "letterSpacing": 0.8
+                },
+                {
+                  "type": "frame",
+                  "id": "UCJMB",
+                  "name": "Address Field",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 6,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "ZSYrY",
+                      "name": "Address Label",
+                      "fill": "$text-primary",
+                      "content": "Address / host",
+                      "fontFamily": "$font",
+                      "fontSize": 13,
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "l23bwV",
+                      "name": "Address Card",
+                      "width": "fill_container",
+                      "height": 48,
+                      "fill": "$bg-grouped",
+                      "cornerRadius": 12,
+                      "gap": 10,
+                      "padding": [
+                        0,
+                        14
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "okSO8",
+                          "name": "Address Icon",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "globe",
+                          "library": "lucide",
+                          "fill": "$accent"
+                        },
+                        {
+                          "type": "text",
+                          "id": "slbiJ",
+                          "name": "Address Value",
+                          "fill": "$text-primary",
+                          "content": "127.0.0.1",
+                          "fontFamily": "$font",
+                          "fontSize": 15,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "R1i5TW",
+                  "name": "Port Path Row",
+                  "width": "fill_container",
+                  "gap": 10,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "xVLNA",
+                      "name": "Port Field",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 6,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "yA9Hg",
+                          "name": "Port Label",
+                          "fill": "$text-primary",
+                          "content": "Port",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "500"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "jt1ND",
+                          "name": "Port Card",
+                          "width": "fill_container",
+                          "height": 48,
+                          "fill": "$bg-grouped",
+                          "cornerRadius": 12,
+                          "gap": 8,
+                          "padding": [
+                            0,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "xOdWr",
+                              "name": "Port Icon",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "hash",
+                              "library": "lucide",
+                              "fill": "$accent"
+                            },
+                            {
+                              "type": "text",
+                              "id": "dnG4S",
+                              "name": "Port Value",
+                              "fill": "$text-primary",
+                              "content": "8080",
+                              "fontFamily": "$font",
+                              "fontSize": 15,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "SEwSo",
+                      "name": "Path Field",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 6,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Uvm7x",
+                          "name": "Path Label",
+                          "fill": "$text-primary",
+                          "content": "API path",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "500"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "y45uK",
+                          "name": "Path Card",
+                          "width": "fill_container",
+                          "height": 48,
+                          "fill": "$bg-grouped",
+                          "cornerRadius": 12,
+                          "gap": 8,
+                          "padding": [
+                            0,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "q14AVF",
+                              "name": "Path Icon",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "folder",
+                              "library": "lucide",
+                              "fill": "$accent"
+                            },
+                            {
+                              "type": "text",
+                              "id": "tsKpL",
+                              "name": "Path Value",
+                              "fill": "$text-primary",
+                              "content": "/api/v1",
+                              "fontFamily": "$font",
+                              "fontSize": 15,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "gwsvi",
+                  "name": "URL Preview",
+                  "width": "fill_container",
+                  "fill": "$bg-grouped",
+                  "cornerRadius": 12,
+                  "gap": 8,
+                  "padding": [
+                    10,
+                    12
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "v2GfBP",
+                      "name": "Preview Icon",
+                      "width": 14,
+                      "height": 14,
+                      "icon": "link",
+                      "library": "lucide",
+                      "fill": "$text-secondary"
+                    },
+                    {
+                      "type": "text",
+                      "id": "l0fw1c",
+                      "name": "Preview Value",
+                      "fill": "$text-secondary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "http://127.0.0.1:8080/api/v1",
+                      "fontFamily": "$font",
+                      "fontSize": 12,
+                      "fontWeight": "500"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "Je50O",
+              "name": "Info Card",
+              "width": "fill_container",
+              "fill": "$accent-soft",
+              "cornerRadius": 14,
+              "gap": 10,
+              "padding": [
+                10,
+                12
+              ],
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "DiwsS",
+                  "name": "Info Icon",
+                  "width": 16,
+                  "height": 16,
+                  "icon": "info",
+                  "library": "lucide",
+                  "fill": "$accent"
+                },
+                {
+                  "type": "text",
+                  "id": "m8cSp",
+                  "name": "Info Text",
+                  "fill": "$accent",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Official uses Shroud’s managed infrastructure. Self-hosted never leaves your network except as you configure.",
+                  "lineHeight": 1.4,
+                  "fontFamily": "$font",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "bvWQG",
+              "name": "Actions",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 8,
+              "padding": [
+                4,
+                0,
+                0,
+                0
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "unqOI",
+                  "name": "Save Button",
+                  "width": "fill_container",
+                  "height": 50,
+                  "fill": "$accent",
+                  "cornerRadius": 27,
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#5E5CE640",
+                    "offset": {
+                      "x": 0,
+                      "y": 8
+                    },
+                    "blur": 20
+                  },
+                  "gap": 8,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "WtGA3",
+                      "name": "Save Label",
+                      "fill": "#FFFFFF",
+                      "content": "Save",
+                      "fontFamily": "$font",
+                      "fontSize": 17,
+                      "fontWeight": "600"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "m2JvXE",
+                  "name": "Cancel Button",
+                  "width": "fill_container",
+                  "height": 46,
+                  "fill": "$bg-grouped",
+                  "cornerRadius": 25,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "WK9aN",
+                      "name": "Cancel Label",
+                      "fill": "$accent",
+                      "content": "Cancel",
+                      "fontFamily": "$font",
+                      "fontSize": 17,
+                      "fontWeight": "600"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "FD7si",
+              "name": "Home Indicator Wrap",
+              "width": "fill_container",
+              "layout": "vertical",
+              "padding": [
+                8,
+                0,
+                0,
+                0
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 3,
+                  "id": "i7nHg",
+                  "name": "Home Indicator",
+                  "fill": "#0B0B12",
+                  "width": 134,
+                  "height": 5
+                }
+              ]
             }
           ]
         }
