@@ -2,17 +2,24 @@ import SwiftUI
 
 /// Post-auth shell — Chats / Contacts / Calls / Settings from `iOS-App.pen`.
 ///
-/// Liquid-glass floating tab bar (`glassEffect`) plus a soft **directional crossfade**
-/// when switching tabs (parallel destinations, not a navigation stack).
+/// Liquid-glass floating tab bar plus a soft directional crossfade when switching tabs.
+/// Settings can push full-screen destinations (e.g. Server); the tab bar hides while those are open.
 struct MainTabView: View {
     let router: AppRouter
 
     @State private var selection: MainTab = .chats
+    @State private var settingsPath: [SettingsRoute] = []
     /// Drives insertion offset: higher index → enter from the right, lower → from the left.
     @State private var movesForward = true
 
-    /// Soft spring — short enough to feel snappy, damped enough to avoid bounce noise.
     private let tabAnimation = Animation.spring(response: 0.38, dampingFraction: 0.9)
+
+    private var showsTabBar: Bool {
+        if selection == .settings, !settingsPath.isEmpty {
+            return false
+        }
+        return true
+    }
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -20,19 +27,27 @@ struct MainTabView: View {
                 .id(selection)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .transition(tabContentTransition)
-                // Clearance for the floating glass tab bar.
                 .safeAreaInset(edge: .bottom, spacing: 0) {
-                    Color.clear.frame(height: 72)
+                    Color.clear.frame(height: showsTabBar ? 72 : 0)
                 }
 
-            FloatingTabBar(selection: selectionBinding)
+            if showsTabBar {
+                FloatingTabBar(selection: selectionBinding)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
         .animation(tabAnimation, value: selection)
+        .animation(.spring(response: 0.32, dampingFraction: 0.9), value: showsTabBar)
         .ignoresSafeArea(.keyboard)
         .navigationBarHidden(true)
+        .onChange(of: selection) { _, newValue in
+            // Leaving Settings pops any pushed server screen so state stays clean.
+            if newValue != .settings {
+                settingsPath = []
+            }
+        }
     }
 
-    /// Binding that records direction before applying the selection change.
     private var selectionBinding: Binding<MainTab> {
         Binding(
             get: { selection },
@@ -44,8 +59,6 @@ struct MainTabView: View {
         )
     }
 
-    /// Opacity + micro scale + slight horizontal drift following tab order.
-    /// Avoid full-width slides — those read as push/pop, not peer tabs.
     private var tabContentTransition: AnyTransition {
         let insertX: CGFloat = movesForward ? 14 : -14
         let removeX: CGFloat = movesForward ? -10 : 10
@@ -69,7 +82,7 @@ struct MainTabView: View {
         case .calls:
             CallsView()
         case .settings:
-            SettingsView(router: router)
+            SettingsView(router: router, navigationPath: $settingsPath)
         }
     }
 }

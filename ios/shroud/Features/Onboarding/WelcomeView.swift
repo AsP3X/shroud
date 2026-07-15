@@ -35,10 +35,11 @@ struct WelcomeView: View {
             }
         }
         .navigationBarHidden(true)
-        .sheet(isPresented: $showServerSettings) {
-            ServerSettingsSheet()
-                .environment(serverConfig)
-        }
+        .serverSettingsSheet(
+            isPresented: $showServerSettings,
+            context: .onboarding,
+            serverConfig: serverConfig
+        )
     }
 
     private var navRow: some View {
