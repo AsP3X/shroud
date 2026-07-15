@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Encryption phrase card with paired rows (1–2, 3–4, …) and staggered shimmer reveal.
+/// Encryption phrase card with paired rows (1–2, 3–4, …) and staggered spring reveal.
 struct EncryptionPhraseCard: View {
     let words: [String]
     let revealedCount: Int
@@ -34,23 +34,17 @@ struct EncryptionPhraseCard: View {
         let isRevealed = number <= revealedCount
 
         return HStack(spacing: 9) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Theme.accentSoft)
-                    .frame(width: 20, height: 20)
-                Text("\(number)")
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Theme.accent)
-            }
+            PhraseWordNumberBadge(number: number, isRevealed: isRevealed)
 
             Group {
                 if isRevealed {
                     Text(word)
                         .font(.system(size: 14, weight: .medium, design: .monospaced))
                         .foregroundStyle(Theme.textPrimary)
-                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                        .transition(Self.wordPopTransition)
                 } else {
                     ShimmerPlaceholder(height: 14, width: 92)
+                        .transition(.opacity)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -60,6 +54,53 @@ struct EncryptionPhraseCard: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 7)
         .frame(maxWidth: .infinity)
-        .animation(.easeOut(duration: EncryptionPhraseReveal.wordRevealAnimationDuration), value: isRevealed)
+        .animation(EncryptionPhraseReveal.wordRevealSpring, value: isRevealed)
+    }
+
+    // Human: Springy pop from slightly underscale + fade so each word lands with a premium overshoot.
+    private static var wordPopTransition: AnyTransition {
+        .asymmetric(
+            insertion: .opacity.combined(with: .scale(scale: 0.86, anchor: .leading)),
+            removal: .opacity
+        )
+    }
+}
+
+/// Number badge that briefly pulses accent when its word reveals.
+struct PhraseWordNumberBadge: View {
+    let number: Int
+    let isRevealed: Bool
+
+    @State private var isPulsing = false
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(isPulsing ? Theme.accent : Theme.accentSoft)
+                .frame(width: 20, height: 20)
+            Text("\(number)")
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(isPulsing ? Color.white : Theme.accent)
+        }
+        .scaleEffect(isPulsing ? 1.12 : 1)
+        .onChange(of: isRevealed) { _, revealed in
+            guard revealed else {
+                isPulsing = false
+                return
+            }
+            // Human: One-shot accent flash when this badge's word unlocks; settles back to soft fill.
+            // Agent: Animates isPulsing true→false with spring; no side effects beyond local UI state.
+            withAnimation(EncryptionPhraseReveal.wordRevealSpring) {
+                isPulsing = true
+            }
+            Task { @MainActor in
+                try? await Task.sleep(
+                    nanoseconds: UInt64(EncryptionPhraseReveal.badgePulseDuration * 1_000_000_000)
+                )
+                withAnimation(.easeOut(duration: 0.18)) {
+                    isPulsing = false
+                }
+            }
+        }
     }
 }

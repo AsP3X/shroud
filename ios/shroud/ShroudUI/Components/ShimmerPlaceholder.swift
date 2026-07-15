@@ -28,7 +28,8 @@ struct ShimmerPlaceholder: View {
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
             .onAppear {
-                withAnimation(.linear(duration: 1.1).repeatForever(autoreverses: false)) {
+                // Human: Faster shimmer sweep so placeholders feel energetic while pairs unlock.
+                withAnimation(.linear(duration: 0.85).repeatForever(autoreverses: false)) {
                     phase = 1
                 }
             }

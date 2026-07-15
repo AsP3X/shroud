@@ -309,9 +309,7 @@ struct LogInFlowView: View {
         let isRevealed = index < revealedWordCount
 
         return HStack(spacing: 6) {
-            Text("\(index + 1).")
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundStyle(Theme.textSecondary)
+            PhraseWordNumberBadge(number: index + 1, isRevealed: isRevealed)
 
             Group {
                 if isRevealed {
@@ -322,9 +320,15 @@ struct LogInFlowView: View {
                     .font(.system(size: 14, weight: .medium, design: .monospaced))
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                    .transition(
+                        .asymmetric(
+                            insertion: .opacity.combined(with: .scale(scale: 0.86, anchor: .leading)),
+                            removal: .opacity
+                        )
+                    )
                 } else {
                     ShimmerPlaceholder(height: 14, width: 72)
+                        .transition(.opacity)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -333,7 +337,7 @@ struct LogInFlowView: View {
         .frame(height: 40)
         .background(Theme.backgroundGrouped)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .animation(.easeOut(duration: EncryptionPhraseReveal.wordRevealAnimationDuration), value: isRevealed)
+        .animation(EncryptionPhraseReveal.wordRevealSpring, value: isRevealed)
     }
 
     private var privacyHint: some View {
