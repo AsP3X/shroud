@@ -68,8 +68,8 @@ Target Compose stack (as features land): **Postgres + Redis + Nebular OS + API**
 
 Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 
-1. **Auth** — register/login, multi-device (max 5), opaque tokens, argon2id, reserved usernames  
-2. **Key bundles** — Signal-style pre-keys (100 OTPKs; refill under 25)  
+1. **Auth** — **done** (register/login, multi-device, opaque tokens, argon2id)  
+2. **Key bundles** — plan locked: per-device identity/SPK/OTPK, PUT/GET/status, atomic consume (see server-plan)  
 3. **Contacts** — UUID share links, contact requests, block  
 4. **Messages** — 1:1 conversations, ciphertext store, WebSocket/Redis fan-out  
 5. **Media** — Nebular (`shroud-media` / `{user_id}/{object_id}`), 25 MiB, 15m presign  

@@ -4,7 +4,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 
 | | |
 | --- | --- |
-| **Status** | Auth API + Postgres schema locked; ready to implement **milestone 1** |
+| **Status** | Milestone 1 (Auth) **implemented**. Milestone 2 (Key bundles) **API + schema locked** — ready to implement |
 | **Last updated** | 2026-07-15 |
 | **Related** | [architecture.md](./architecture.md) · [thought-collection.md](../thought-collection.md) · [README.md](../README.md) |
 
@@ -69,9 +69,15 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Area | Decision |
 | --- | --- |
 | Protocol | Signal-style **X3DH + Double Ratchet**; server stores public material only |
+| Key scope | **Per device** (identity, signed pre-key, OTPK pool each tied to `devices.id`) |
 | Key upload | Separate authenticated call after register/login |
-| Keys gate | Session OK without keys; messaging / recipient key fetch needs bundle (`KEYS_REQUIRED`) |
-| OTPKs | Upload **100**; client refills when remaining under **25** |
+| Keys gate | Session OK without keys; messaging / being fetchable as recipient needs bundle (`KEYS_REQUIRED`) |
+| PUT semantics | Upsert **identity + signed pre-key**; **merge/add** OTPKs by `(device_id, key_id)` (do not wipe unconsumed OTPKs) |
+| GET target | Single bundle for user: device with keys, prefer **most recently `last_seen_at`** among devices that have identity+SPK |
+| OTPK on GET | **Atomically consume** one OTPK if available; omit field if pool empty (still return identity + SPK) |
+| OTPKs | Client uploads batches of **100**; refills when remaining under **25** (`GET /keys/status`) |
+| Encoding | Public keys / signatures as **standard Base64** of raw bytes; `key_id` / `registration_id` as integers |
+| Fetch ACL (m2) | **Any authenticated user** may fetch (rate-limited); contact gate deferred to contacts/messaging |
 | History crypto (client) | Phrase → account backup key wraps history; server sees opaque blobs only |
 
 ### Messaging and social
@@ -225,11 +231,48 @@ Indexes:
 
 Auth lookup: `SELECT … FROM sessions JOIN devices … JOIN users … WHERE token_hash = $1 AND revoked_at IS NULL`.
 
+### Milestone 2 — Key bundle schema (locked)
+
+All public material only. Cascade delete with `devices`.
+
+#### `device_identity_keys`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `device_id` | `UUID` PK FK → `devices(id)` **ON DELETE CASCADE** | One identity row per device |
+| `registration_id` | `INT` NOT NULL | Client Signal registration id (0–16380 typical) |
+| `public_key` | `BYTEA` NOT NULL | Identity public key raw bytes |
+| `created_at` | `TIMESTAMPTZ` NOT NULL | `now()` |
+| `updated_at` | `TIMESTAMPTZ` NOT NULL | Bumped on PUT replace |
+
+#### `device_signed_prekeys`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `device_id` | `UUID` PK FK → `devices(id)` **ON DELETE CASCADE** | One **current** SPK per device (replace on PUT) |
+| `key_id` | `INT` NOT NULL | Client-assigned SPK id |
+| `public_key` | `BYTEA` NOT NULL | |
+| `signature` | `BYTEA` NOT NULL | Signature over SPK by identity key |
+| `uploaded_at` | `TIMESTAMPTZ` NOT NULL | `now()` on each replace |
+
+#### `device_one_time_prekeys`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `device_id` | `UUID` NOT NULL FK → `devices(id)` **ON DELETE CASCADE** | |
+| `key_id` | `INT` NOT NULL | Client-assigned; unique per device |
+| `public_key` | `BYTEA` NOT NULL | |
+| `created_at` | `TIMESTAMPTZ` NOT NULL | `now()` |
+| PK | `(device_id, key_id)` | Merge insert: conflict skip or update public_key |
+
+Indexes: `(device_id)` on OTPK for count/consume. Consume: `DELETE … WHERE device_id = $1 LIMIT 1 RETURNING *` (or `FOR UPDATE SKIP LOCKED` pattern).
+
+**Eligible device for GET:** has rows in `device_identity_keys` and `device_signed_prekeys`; order by `devices.last_seen_at DESC NULLS LAST`, then `devices.created_at DESC`.
+
 ### Later entities (sketch)
 
 | Entity | Role |
 | --- | --- |
-| `identity_keys` / `signed_prekeys` / `onetime_prekeys` | Public keys per device; OTPK consume-on-fetch |
 | `contact_requests` / `contacts` / `blocks` | Social graph |
 | `conversations` | One row per 1:1 pair |
 | `messages` | Envelope metadata + ciphertext |
@@ -251,6 +294,14 @@ Redis: pub/sub, `rl:{scope}:{id}`, presence/typing keys.
 - **Delete device** — revoke all sessions for that device; free a slot.
 - **Password change** — validate current; set new hash; revoke all sessions except current.
 - Client: store `token` + `device.id` in Keychain.
+
+### Key bundles
+
+- After auth, client `PUT /keys/bundle` for the **current device** (identity + SPK + OTPK batch).
+- Replenish OTPKs via `PUT /keys/bundle` (merge) or `POST /keys/otpk`; poll `GET /keys/status` and refill when `otpk_count < 25`.
+- Peer `GET /keys/bundle/:user_id` (authenticated): pick most recently active device with keys; attach one consumed OTPK if any.
+- Server never validates cryptographic correctness of signatures beyond size/presence checks (optional later); stores bytes only.
+- Messaging (later) may need **per-device** fetches for multi-device fan-out; m2 ships single-device GET only.
 
 ### Contacts
 
@@ -296,8 +347,8 @@ Env-tunable later. Key pattern: `rl:{scope}:{id}`.
 
 | # | Milestone | Deliverables |
 | --- | --- | --- |
-| **1** | **Auth** | Routes in [API surface](#milestone-1--auth-locked); username rules + reserved list; argon2id; password policy; devices (max 5, names, reuse); opaque sessions; password change; middleware; tests. Redis rate limits for auth if Redis is available in Compose. |
-| 2 | Key bundles | PUT/GET bundle; OTPK 100 / refill under 25; atomic consume; `KEYS_REQUIRED` |
+| **1** | **Auth** | **Done** — register/login/logout/me/password, devices, sessions, migration 002, tests |
+| **2** | **Key bundles** | Schema + routes in [Milestone 2](#milestone-2--key-bundles-locked); PUT/GET/status/otpk; atomic OTPK consume; tests |
 | 3 | Contacts | UUID share; requests; block; messaging gate |
 | 4 | Messages | Conversations; envelopes; WS + Redis fan-out; sender sync; delivery receipts; cursors |
 | 5 | Media | Nebular presign; 25 MiB; attachments |
@@ -430,14 +481,106 @@ Revokes sessions for that device. Deleting the current device invalidates the ca
 | `NOT_FOUND` | Device not found for user |
 | `RATE_LIMITED` | Budget exceeded |
 
-Later (keys milestone): `KEYS_REQUIRED`.
+### Milestone 2 — Key bundles (locked)
+
+All routes require `Authorization: Bearer` unless noted. Key material fields are **standard Base64** strings of raw bytes.
+
+#### `PUT /keys/bundle` → `204`
+
+Uploads/replaces keys for the **authenticated current device**.
+
+```json
+{
+  "registration_id": 12345,
+  "identity_key": "<base64>",
+  "signed_pre_key": {
+    "key_id": 1,
+    "public_key": "<base64>",
+    "signature": "<base64>"
+  },
+  "one_time_pre_keys": [
+    { "key_id": 1, "public_key": "<base64>" }
+  ]
+}
+```
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `registration_id` | yes | Integer |
+| `identity_key` | yes | Base64 public key |
+| `signed_pre_key` | yes | Replaces current SPK for device |
+| `one_time_pre_keys` | no | Array; merge by `key_id` (insert if new). Client typically sends ~100 |
+
+#### `GET /keys/bundle/:user_id` → `200`
+
+Fetch a pre-key bundle to start a session with that user (any authenticated caller in m2).
+
+```json
+{
+  "user_id": "<uuid>",
+  "device_id": "<uuid>",
+  "registration_id": 12345,
+  "identity_key": "<base64>",
+  "signed_pre_key": {
+    "key_id": 1,
+    "public_key": "<base64>",
+    "signature": "<base64>"
+  },
+  "one_time_pre_key": {
+    "key_id": 42,
+    "public_key": "<base64>"
+  }
+}
+```
+
+- `one_time_pre_key` **omitted** if pool empty (not an error).
+- If user has **no** device with identity+SPK → `404` + `KEYS_REQUIRED`.
+- OTPK row deleted in the same transaction as the read when present.
+
+#### `GET /keys/status` → `200`
+
+Status for the **current device** (for refill logic).
+
+```json
+{
+  "device_id": "<uuid>",
+  "has_identity": true,
+  "signed_pre_key_id": 1,
+  "otpk_count": 87
+}
+```
+
+`signed_pre_key_id` null / omitted if no SPK yet. Client refills when `otpk_count < 25`.
+
+#### `POST /keys/otpk` → `204`
+
+Replenish OTPKs only for current device (merge by `key_id`).
+
+```json
+{
+  "one_time_pre_keys": [
+    { "key_id": 101, "public_key": "<base64>" }
+  ]
+}
+```
+
+#### Key error codes
+
+| Code | When |
+| --- | --- |
+| `VALIDATION_ERROR` | Missing fields, bad base64, empty keys, invalid ranges |
+| `KEYS_REQUIRED` | Target user has no publishable bundle (GET bundle) |
+| `UNAUTHORIZED` | No/invalid bearer |
+| `NOT_FOUND` | Unknown `user_id` on GET (optional: same as KEYS_REQUIRED to avoid enumeration — prefer **KEYS_REQUIRED** for both missing user and no keys, or `NOT_FOUND` only for malformed UUID) |
+| `RATE_LIMITED` | Budget exceeded |
+
+**Enumeration:** unknown user_id and “no keys” both return `404` + `KEYS_REQUIRED` (same body) so callers cannot distinguish.
 
 ### Later routes (outline)
 
 | Area | Routes |
 | --- | --- |
 | Health | `GET /health`; readiness (DB + Redis) |
-| Keys | `PUT /keys/bundle`, `GET /keys/bundle/:user_id`, `POST /keys/otpk` |
 | Users | `GET /users/:user_id`; optional exact username lookup |
 | Contacts | requests, accept/reject, list, blocks |
 | Messages | send, list (cursor), receipts, delete |
@@ -476,10 +619,10 @@ Later (keys milestone): `KEYS_REQUIRED`.
 
 ## Still open
 
-Deferred until the relevant milestone (not blocking Auth):
-
-1. **Envelope ciphertext encoding** — client crypto; server stores opaque bytes.
-2. **Nebular presign wire format** — exact signing API mapping when media lands.
+1. **Envelope ciphertext encoding** — client crypto; server stores opaque bytes (messaging milestone).
+2. **Nebular presign wire format** — when media lands.
+3. **Multi-device key fetch for send** — m2 is single best-device GET; messaging will likely add list/fetch-all-device bundles for fan-out.
+4. **Max OTPK pool size** — optional soft cap (e.g. reject if count would exceed 200) at implement time.
 
 ---
 
