@@ -1,0 +1,32 @@
+# Rust
+/server/target/
+**/*.rs.bk
+
+# iOS / Xcode
+/ios/DerivedData/
+/ios/**/*.xcuserstate
+/ios/**/*.xcuserdata
+/ios/**/xcuserdata/
+/ios/**/*.xcarchive
+/ios/build/
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log

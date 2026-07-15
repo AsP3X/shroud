@@ -1,0 +1,22 @@
+# Local development Postgres for the Shroud API.
+# Agent: READS env defaults below; WRITES volume shroud_pg_data; no production use.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: shroud-postgres
+    environment:
+      POSTGRES_USER: shroud
+      POSTGRES_PASSWORD: shroud
+      POSTGRES_DB: shroud
+    ports:
+      - "5432:5432"
+    volumes:
+      - shroud_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shroud -d shroud"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  shroud_pg_data:
