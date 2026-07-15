@@ -3,6 +3,7 @@ import SwiftUI
 /// Root navigation shell — routes between onboarding and the main tab placeholder.
 struct RootView: View {
     @State private var router = AppRouter()
+    @Namespace private var onboardingNamespace
 
     var body: some View {
         NavigationStack(path: $router.path) {
@@ -11,6 +12,7 @@ struct RootView: View {
                     destination(for: route)
                 }
         }
+        .environment(\.onboardingNamespace, onboardingNamespace)
     }
 
     @ViewBuilder

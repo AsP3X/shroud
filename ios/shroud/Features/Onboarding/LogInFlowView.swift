@@ -58,6 +58,7 @@ struct LogInFlowView: View {
             }
         }
         .navigationBarHidden(true)
+        .onboardingHeroDestination()
         .animation(.spring(response: 0.42, dampingFraction: 0.86), value: phase)
         .onDisappear {
             revealTask?.cancel()
@@ -68,7 +69,7 @@ struct LogInFlowView: View {
         HStack {
             Button {
                 if isCredentialsPhase {
-                    router.showWelcome()
+                    router.pop()
                 } else {
                     phase = .credentials
                 }
@@ -116,28 +117,27 @@ struct LogInFlowView: View {
         .clipped()
     }
 
-    // Human: Persistent 64pt gradient mark whose glyph crossfades shield→key; title and subtitle text morph in place.
-    // Agent: The container never moves between states — only the glyph, title, and subtitle change, so the morph reads as one element.
+    // Human: Persistent brand mark that morphs shield→key; matches Welcome logo for the zoom transition landing.
+    // Agent: The container never moves between login phases — only the glyph, title, and subtitle change.
     private var heroSection: some View {
         VStack(spacing: 10) {
             ZStack {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Theme.brandGradient)
-                    .frame(width: 64, height: 64)
-                    .shadow(color: Theme.accent.opacity(0.25), radius: 10, y: 8)
-
-                Image(systemName: "shield.fill")
-                    .font(.system(size: 28, weight: .semibold))
-                    .foregroundStyle(Color.white)
-                    .scaleEffect(isCredentialsPhase ? 1 : 0.6)
+                BrandLogoMark(size: 64)
+                    .scaleEffect(isCredentialsPhase ? 1 : 0.82)
                     .opacity(isCredentialsPhase ? 1 : 0)
 
-                Image(systemName: "key.fill")
-                    .font(.system(size: 28, weight: .semibold))
-                    .foregroundStyle(Color.white)
-                    .rotationEffect(.degrees(-45))
-                    .scaleEffect(isCredentialsPhase ? 0.6 : 1)
-                    .opacity(isCredentialsPhase ? 0 : 1)
+                ZStack {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(Theme.brandGradient)
+                        .frame(width: 64, height: 64)
+                    Image(systemName: "key.fill")
+                        .font(.system(size: 28, weight: .semibold))
+                        .foregroundStyle(Color.white)
+                        .rotationEffect(.degrees(-45))
+                }
+                .shadow(color: Theme.accent.opacity(0.25), radius: 10, y: 8)
+                .scaleEffect(isCredentialsPhase ? 0.82 : 1)
+                .opacity(isCredentialsPhase ? 0 : 1)
             }
 
             VStack(spacing: 6) {

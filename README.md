@@ -9,7 +9,7 @@ End-to-end encrypted messenger: **Rust + PostgreSQL** server and a **native iOS*
 | `design/iOS-App.pen` | Design source of truth (Pencil) |
 | `server/` | Rust workspace — Axum API, migrations, integration tests |
 | `ios/` | Native iOS app — SwiftUI, ShroudUI component library |
-| `docs/` | Architecture, protocol notes, API contracts |
+| `docs/` | Architecture + [server plan](docs/server-plan.md) (API decisions, milestones) |
 
 ## Prerequisites
 
@@ -48,4 +48,4 @@ xcodebuild test -scheme Shroud -destination 'platform=iOS Simulator,name=iPhone 
 
 ## Security
 
-Message plaintext and private keys **never** leave the device. The server stores and relays ciphertext only. See `.cursor/rules/security-crypto.mdc` and `docs/architecture.md`.
+Message plaintext and private keys **never** leave the device. The server stores and relays ciphertext only. See `.cursor/rules/security-crypto.mdc`, [`docs/architecture.md`](docs/architecture.md), and [`docs/server-plan.md`](docs/server-plan.md).

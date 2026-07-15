@@ -5132,6 +5132,57 @@
           ],
           "children": [
             {
+              "type": "frame",
+              "id": "S1XYiF",
+              "name": "Brand Mark",
+              "width": 48,
+              "height": 48,
+              "fill": {
+                "type": "gradient",
+                "gradientType": "linear",
+                "enabled": true,
+                "rotation": 180,
+                "size": {
+                  "height": 1
+                },
+                "colors": [
+                  {
+                    "color": "#7C7AFF",
+                    "position": 0
+                  },
+                  {
+                    "color": "#5E5CE6",
+                    "position": 1
+                  }
+                ]
+              },
+              "cornerRadius": 13,
+              "effect": {
+                "type": "shadow",
+                "shadowType": "outer",
+                "color": "#5E5CE640",
+                "offset": {
+                  "x": 0,
+                  "y": 6
+                },
+                "blur": 14
+              },
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "bxp1Z",
+                  "name": "Brand Glyph",
+                  "width": 22,
+                  "height": 22,
+                  "icon": "shield",
+                  "library": "lucide",
+                  "fill": "#FFFFFF"
+                }
+              ]
+            },
+            {
               "type": "text",
               "id": "U3v2OD",
               "name": "Title",

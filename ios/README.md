@@ -20,6 +20,8 @@ Native SwiftUI client for the E2E encrypted messenger.
 
 ## Onboarding flow (implemented)
 
-`Welcome` → `Sign Up` or `Log In Flow` (single screen; hero, content slot, and actions morph in place) → main shell placeholder
+`Welcome` → `Sign Up` or `Log In Flow` (Zoom transition from the Welcome brand mark) → main shell placeholder.
+
+`Log In Flow` is a single screen: hero, content slot, and actions morph between credentials and phrase steps.
 
 Design reference: `Log In Flow — Credentials Step` and `Log In Flow — Phrase Step` in `design/iOS-App.pen` (two state variants of one morphing screen).

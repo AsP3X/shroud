@@ -34,6 +34,8 @@ struct WelcomeView: View {
     private var hero: some View {
         VStack(spacing: 16) {
             BrandLogoMark(size: 80)
+                .onboardingHeroSource()
+                .shadow(color: Theme.accent.opacity(0.22), radius: 16, y: 10)
             VStack(spacing: 8) {
                 Text("Private messaging,\nfully encrypted")
                     .font(.system(size: 32, weight: .bold))

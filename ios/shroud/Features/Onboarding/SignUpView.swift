@@ -29,6 +29,9 @@ struct SignUpView: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
+                        BrandLogoMark(size: 48)
+                            .padding(.bottom, 4)
+
                         Text("Create Account")
                             .font(.system(size: 32, weight: .bold))
                             .foregroundStyle(Theme.textPrimary)
@@ -62,6 +65,7 @@ struct SignUpView: View {
             }
         }
         .navigationBarHidden(true)
+        .onboardingHeroDestination()
         .toast($toastMessage)
         .task {
             await startPhraseGeneration()

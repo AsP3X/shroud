@@ -27,16 +27,24 @@ final class AppRouter {
     }
 
     func showSignUp() {
-        path = [.signUp]
+        // Human: Spring path change pairs with the Zoom navigation transition from the Welcome logo.
+        // Agent: WRITES path = [.signUp] inside spring animation.
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
+            path = [.signUp]
+        }
     }
 
     func showLogIn() {
-        path = [.logIn]
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
+            path = [.logIn]
+        }
     }
 
     func pop() {
-        if !path.isEmpty {
-            path.removeLast()
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
+            if !path.isEmpty {
+                path.removeLast()
+            }
         }
     }
 
