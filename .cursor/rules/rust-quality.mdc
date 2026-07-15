@@ -1,0 +1,41 @@
+---
+description: Rust quality bar—no panics in non-test paths, no unjustified unsafe, proper error handling, no blocking in async
+globs: "**/*.rs"
+alwaysApply: false
+---
+
+# Rust quality
+
+Applies to all crates in the `server/` workspace.
+
+## Error handling (no panics in production paths)
+
+- **No `unwrap()`, `expect()`, `panic!`, `unreachable!`, indexing that can panic, or `unwrap_or_default()` that hides errors** in non-test code. Return `Result` and propagate with `?`.
+- API errors flow through **`AppError`** (`api-error-shape.mdc`); use `thiserror` for typed error enums and `From` conversions rather than stringly-typed errors.
+- `expect()` is acceptable only for genuine start-up invariants that should crash loudly (e.g. missing required config at boot); prefer validated config structs.
+- In tests, `unwrap`/`expect` are fine.
+
+## Dead code
+
+- **Do not use `#[allow(dead_code)]`** or similar suppressions. Use the value, remove the code, or prefix with `_` only when required by an API/schema.
+
+## Concurrency & async
+
+- **Never block the async runtime.** No blocking I/O, `std::thread::sleep`, or CPU-heavy loops on executor threads — use async APIs or `spawn_blocking`.
+- Message relay and WebSocket paths are latency-sensitive; document non-obvious task/channel lifetimes (`inline-documentation.mdc`).
+
+## Unsafe & lints
+
+- **`unsafe` requires a written justification** comment explaining the invariant upheld; prefer safe alternatives. Crypto code uses vetted crates, never hand-rolled primitives (`security-crypto.mdc`).
+- **Do not silence lints** with broad `#[allow(...)]`. New `cargo clippy -- -D warnings` failures must be fixed, not suppressed.
+- Run `cargo fmt`; do not hand-format against rustfmt.
+
+## Types & API design
+
+- Prefer strong types over primitives (newtypes for `UserId`, `DeviceId`, `MessageId`; enums for closed sets).
+- Validate external input at handler boundaries into typed values before use.
+- Public items in library crates need rustdoc.
+
+## Before "done"
+
+- `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `cargo test --workspace` pass (`regression-testing.mdc`).

@@ -1,0 +1,76 @@
+---
+description: Shroud design system—tokens, typography, component recipes, and screen composition for Pencil and SwiftUI work
+alwaysApply: true
+---
+
+# Shroud design system
+
+`iOS-App.pen` is the design source of truth (edit via Pencil MCP tools only; design new screens there **before** implementing them in SwiftUI). Everything below is binding for both `.pen` edits and SwiftUI code so the app looks like one product, not a collection of screens.
+
+## Design language
+
+Modern, clean, iOS-native (Telegram-class polish): white surfaces, one confident accent, generous whitespace, capsule primary actions, grouped cards, hairline separators. Effects are **intentional and rare** — no decorative blurs/gradients on backgrounds, no drop shadows on flat list content, never more than one "hero" effect per screen.
+
+## Tokens (never hardcode alternatives)
+
+| Token | Value | Use |
+| --- | --- | --- |
+| `accent` | `#5E5CE6` | Primary actions, links, active states, sent bubbles |
+| `accent-soft` | `#ECECFC` | Selected-tab pill, soft icon circles, chips |
+| accent gradient | `#7C7AFF → #5E5CE6` (vertical) | Logo mark, avatars, brand moments only |
+| `bg` | `#FFFFFF` | Plain screens, cards on grouped screens |
+| `bg-grouped` | `#F2F2F7` | Grouped/settings/forms screen background, input fields |
+| `bg-chat` | `#F5F4FA` | Conversation background |
+| `bubble-in` | `#FFFFFF` | Incoming message bubbles |
+| `text-primary` | `#0B0B12` | Headings, body |
+| `text-secondary` | `#8E8E93` | Captions, metadata, placeholders |
+| `separator` | `#E5E5EA` | Hairlines (1 px) |
+| `online` | `#34C759` | Presence, success, strength meter |
+| danger | `#FF3B30` (`#E0342C` on white) | Destructive rows, recording, end call |
+| warning | bg `#FDF1DC`, icon `#B97D10`, text `#8A5E0C` | Warning callouts |
+
+In SwiftUI these become a single `Theme` (asset catalog colors named after the tokens). Feature code references `Theme.accent`, never hex literals.
+
+## Typography (Inter; SF Pro acceptable in SwiftUI)
+
+| Role | Size/weight | Notes |
+| --- | --- | --- |
+| Screen title | 32 / bold | Same size on every screen |
+| Section/card title | 15–16 / semibold | |
+| Body & list rows | 16 / regular | Names 16 semibold |
+| Secondary/preview | 13–14 / regular, `text-secondary` | |
+| Caption/labels | 11–12; uppercase labels 11–13 semibold + letter-spacing | e.g. `PASSWORD STRENGTH` |
+| Code/fingerprints/phrase words/timers | JetBrains Mono 12–15 | Never proportional fonts for key material |
+
+## Component recipes
+
+- **Primary button**: full-width capsule, height 52–54, `accent` fill, white 17 semibold label, optional trailing `arrow-right`; hero CTAs may add shadow `y8 blur20 #5E5CE640`. Secondary: `accent-soft` fill + accent label, or white + 1 px `separator` stroke.
+- **Input field / grouped row**: `bg-grouped` fill (or white row on grouped screens), radius 10–12, height 48–50, side padding 14, leading 18 pt icon, 16 pt value. Rows in a card are separated by 1 px hairlines inset to align with text (skip past the icon).
+- **Card**: white, radius 14, no shadow on grouped backgrounds. Settings rows: 30 pt icon square (radius 8, white glyph on colored fill), 16 pt label, chevron `#C7C7CC`.
+- **Avatar**: circle, accent gradient (or per-contact gradient), white initials at ~36 % of diameter, semibold.
+- **Message bubbles**: radius `[18,18,4,18]` outgoing / `[18,18,18,4]` incoming; outgoing `accent` + white text, incoming `bubble-in` + shadow `y1 blur2 #0B0B120F`; 15 pt text, 11 pt meta (time + `check-check` on sent) bottom-trailing inside the bubble.
+- **Voice message**: 34 pt circular play button (`accent-soft`/translucent white), waveform of 2.5×h rounded bars gap 2 (played = accent/white, rest muted), duration 12 pt; transcription expands below with an accent side-rule + `TRANSCRIPT` mono-caption header.
+- **Tab bar**: floating capsule inset 16 side / 12 bottom, height 56, `#FFFFFFE6` + soft shadow; active tab = `accent-soft` pill + accent icon/label, inactive `text-secondary`. Last child of the screen stack, never absolutely positioned.
+- **Sheets/overlays**: scrim `#0B0B1247` (+ background blur for context menus), sheet radius 20 top corners, 36×5 grab handle; context menus 250 wide, 42 pt rows, label left / icon right, destructive row red.
+- **Badges/chips**: capsule `accent-soft` + accent 11–12 semibold text (info) or `#E6F7EC` + `online` (success, e.g. "Available", "Verified").
+
+## Screen composition
+
+- Frame 390×844: status bar (62) → content → optional tab bar wrap with 12 bottom padding → home indicator. One horizontal padding (16–20) applied by the content wrapper, never per-section.
+- Vertical rhythm via stack gaps: 24–32 between sections, 12–16 between related items — no spacer views.
+- One primary intent per screen; the first two elements answer "where am I / what can I do".
+- Every list/grid that can scroll must signal it (content cut at the edge, scroll indicator, or count link like "All Photos ›").
+- E2E encryption is brand-visible: lock pills, key fingerprints (mono), verification badges appear wherever trust is relevant.
+
+## SwiftUI implementation rules
+
+- Build `ShroudUI` as a small component library mirroring the recipes above (`PrimaryButton`, `GroupedCard`, `SettingsRow`, `Avatar`, `MessageBubble`, `WaveformView`, `TabBarCapsule`…). Feature screens compose these — **no bespoke one-off styling in feature views**.
+- Any new visual pattern gets designed in `iOS-App.pen` (and screenshot-verified via MCP) first, then added to `ShroudUI`, then used.
+- Support dark mode by re-mapping tokens (not per-view overrides) when dark palette is added to the `.pen` file.
+
+## Quality gate (before "done" on UI work)
+
+1. Screenshot the `.pen` screen (MCP) or SwiftUI preview and compare against these recipes: paddings, radii, fonts, colors from tokens only.
+2. No clipped/overflowing content; layout verified at 390×844 and with longer text.
+3. Interactive elements ≥ 44 pt hit targets; contrast ≥ 4.5:1 for text.
+4. Screen names and structure match between `.pen` and code.

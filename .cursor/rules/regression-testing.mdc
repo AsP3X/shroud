@@ -1,0 +1,51 @@
+---
+description: Regression and backtesting requirements when adding or changing features
+alwaysApply: true
+---
+
+# Regression testing & backtesting
+
+New features and refactors must **not break existing behavior**. Treat regression protection as part of the feature, not optional cleanup.
+
+## Mindset
+
+- **Preserve contracts**: HTTP status codes, JSON envelopes (`api-error-shape.mdc`), the encrypted message envelope format, auth/registration flows, migration behavior, and push notification payloads must still work after your change — unless the task explicitly documents a breaking change and updates all consumers (server + iOS) in the same work.
+- **Test the blast radius, not just the diff**: ask what existing paths your change touches (auth, key exchange, message relay, media upload, presence, push).
+- **Add a guardrail when you fix a bug**: add or extend a test so the same regression cannot return silently.
+
+## Backtesting (protocol & data compatibility)
+
+"Backtesting" here means **replaying historical data and old client behavior against new code**:
+
+- **Envelope fixtures**: keep serialized message envelopes, key bundles, and API payloads from every released protocol version under `server/tests/fixtures/`. New server code must still accept/decrypt-route every archived fixture (or the task documents a versioned break + client migration).
+- **Migration backtests**: `server/tests/` must include a test that runs all migrations from empty and from a seeded previous-release schema dump. Never edit applied migrations (`api-sqlx-migrations.mdc`).
+- **Old-client simulation**: when changing an endpoint, add/extend a test that sends the previous request shape and asserts it still succeeds or fails with the documented, versioned error.
+- When adding a new protocol/envelope version, **archive a fixture for it in the same PR**.
+
+## Test inventory
+
+| Area | Automated checks | Notes |
+| --- | --- | --- |
+| **Server (`server/`)** | `cargo test --workspace`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check` | Integration tests under `server/tests/` for HTTP-visible behavior (spin up Postgres via `DATABASE_URL`). |
+| **iOS (`ios/`)** | `xcodebuild test -scheme Shroud -destination 'platform=iOS Simulator,name=iPhone 16'` | Unit tests for crypto/session/store; snapshot tests for key screens. |
+| **Migrations** | Server test suite startup | New forward migrations only. |
+
+## Verification matrix (by change type)
+
+| You changed… | Required checks |
+| --- | --- |
+| **API handler, middleware, auth** | `cargo test`; extend integration test when behavior is HTTP-visible; old-client fixture check |
+| **Message envelope / crypto protocol** | Envelope fixture backtests for **all** archived versions; new fixture archived; iOS + server tests |
+| **SQL schema or queries** | New migration file only; migration backtest from seeded dump; `cargo test` |
+| **Error responses or status codes** | API tests; confirm iOS client error mapping still parses |
+| **SwiftUI views / view models** | iOS unit + snapshot tests; manual smoke of affected flows |
+| **Cross-cutting refactor** | Full server suite + full iOS suite + clippy |
+
+## Manual smoke paths
+
+1. **Onboarding** — create account, encryption phrase shown, confirm, land in chats.
+2. **Messaging** — send/receive text and voice message between two simulators; transcription expand/collapse.
+3. **Calls** — start voice call, verify E2E badge, end call.
+4. **Restore** — log out, restore with encryption phrase, history decrypts.
+
+Report which commands and smokes you ran when claiming completion.

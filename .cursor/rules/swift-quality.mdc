@@ -1,0 +1,32 @@
+---
+description: Swift/SwiftUI quality bar for the native iOS app
+globs: "**/*.swift"
+alwaysApply: false
+---
+
+# Swift quality
+
+Applies to all Swift code under `ios/`.
+
+## Language & safety
+
+- **No force unwraps (`!`), force casts (`as!`), or `try!`** outside tests. Use `guard let`, `if let`, optional chaining, and typed `throw`s.
+- Model domain values with **structs and enums**, not dictionaries or stringly-typed data. IDs get dedicated types (`UserID`, `MessageID`).
+- All server DTOs are `Codable` structs that mirror the Rust definitions; when one side changes, update the other in the same change set.
+- Use `async/await` and structured concurrency; UI state mutations happen on `@MainActor`. No `DispatchQueue` sprinkling in new code.
+
+## Architecture
+
+- **MVVM**: SwiftUI views are declarative and dumb; logic lives in `ObservableObject`/`@Observable` view models; services (crypto, network, storage) are protocol-backed so they can be mocked in tests.
+- Views never talk to the network or database directly.
+- Crypto/key material is only touched through the dedicated crypto service (`security-crypto.mdc`); it never appears in view or view-model code.
+
+## SwiftUI
+
+- Build screens from the shared design-system components (`design-system.mdc`); no ad-hoc paddings, colors, or font sizes in feature views.
+- Every screen supports Dynamic Type, dark mode, and VoiceOver labels on interactive elements.
+- Previews (`#Preview`) are required for every new view and must render without network access.
+
+## Before "done"
+
+- Project builds without warnings; `xcodebuild test` passes; SwiftFormat/SwiftLint (when configured) clean (`regression-testing.mdc`).

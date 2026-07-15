@@ -1,0 +1,24 @@
+---
+description: Single pre-completion checklist the agent must satisfy with evidence before claiming work is done
+alwaysApply: true
+---
+
+# Definition of done
+
+Do not claim work is complete, fixed, or passing until **every applicable item below is satisfied with evidence**. State the evidence (commands run + outcomes); if something is blocked, say so explicitly with the exact command the user must run. Evidence before assertions — always.
+
+## Checklist (apply what's relevant to the change)
+
+1. **Builds** — `cargo build` for server changes; the Xcode project builds for iOS changes.
+2. **Rust quality** — `cargo fmt --check` clean; `cargo clippy --all-targets -- -D warnings` clean, no new suppressions; no panics in non-test paths (`rust-quality.mdc`).
+3. **Swift quality** — no force unwraps/casts introduced; previews render; Dynamic Type and dark mode unaffected (`swift-quality.mdc`).
+4. **Tests** — the regression matrix rows for your change type pass; new behavior has tests; bug fixes have a guarding test; protocol changes have archived fixtures and passing backtests (`regression-testing.mdc`). Report counts.
+5. **Migrations** — schema changes are new forward migration files only (`api-sqlx-migrations.mdc`).
+6. **Security** — crypto review checklist passed; no plaintext/key material crosses the device boundary; no secrets in logs or error bodies (`security-crypto.mdc`, `api-error-shape.mdc`).
+7. **Design fidelity** — new/changed screens match `iOS-App.pen` and use design-system tokens/components; the `.pen` file was updated first for new screens and verified with a screenshot (`design-system.mdc`).
+8. **Docs** — inline `// Human:`/`// Agent:` comments added; public items documented; protocol/API docs updated when contracts changed (`inline-documentation.mdc`).
+9. **No data-loss side effects** — nothing destructive was run without explicit permission (`data-safety.mdc`).
+
+## Reporting
+
+End substantive work with a short evidence summary: commands run and results (e.g. `cargo test --workspace`: 87 passed; clippy: clean; `xcodebuild test`: 42 passed), plus any blocked items and how to unblock them. Do not say "done" without this.

@@ -1,0 +1,31 @@
+---
+description: HTTP error JSON envelope, logging vs client messages for server and iOS client
+alwaysApply: true
+---
+
+# API responses, errors, and logging
+
+The HTTP API contract and observability patterns are **fixed by convention** for `server/` (Rust/Axum) and the iOS API client.
+
+## Canonical error JSON (`/api/v1`)
+
+- **Error HTTP bodies** must be JSON matching the envelope produced by **`AppError`** in `server/`:
+  `{ "error": { "code": string, "message": string } }`
+  Status code comes from the same error type (`IntoResponse` on `AppError`).
+- **Handlers** return **`Result<..., AppError>`**. Do not introduce alternate error shapes for the same API surface unless the user explicitly approves a breaking contract change — and then **update the Swift client's error decoding in the same work**.
+
+## What clients see vs what logs contain
+
+- **Responses**: `message` and `code` must stay **safe for end users** — no stack traces, SQL fragments, internal hostnames, tokens, key material, or secrets in JSON bodies.
+- **Server logs**: use **`tracing`** with enough detail to debug; map to generic `AppError` text for the HTTP body.
+- **Never log message plaintext, key material, credentials, or session tokens** (`security-crypto.mdc`). The server never has plaintext; ensure it stays that way.
+
+## iOS client alignment
+
+- The Swift API client decodes the `error.message`/`error.code` envelope into a typed `APIError`. If the Rust error schema changes, update the Swift decoding in the same change set and extend the old-client fixture tests (`regression-testing.mdc`).
+
+## Anti-patterns
+
+- Mixing the JSON error envelope with plain-text error bodies on the same base path.
+- Returning 500 with detailed internal causes in the JSON `message` field.
+- Logging PII at error level without redaction.

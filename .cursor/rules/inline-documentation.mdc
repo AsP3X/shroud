@@ -1,0 +1,39 @@
+---
+description: Mandatory inline comments (human + optional AI-digestible line) on Rust and Swift
+globs: "**/*.{rs,swift}"
+alwaysApply: true
+---
+
+# Inline documentation (required)
+
+**Applies to `*.rs` and `*.swift` only.**
+
+**All new or modified code in these files must include clean, human-readable inline comments.** Where behavior is non-trivial, **each such comment must also include an `// Agent:` line** unless redundant.
+
+## What to comment
+
+- **Every non-trivial module, function, actor, view, or view model**: purpose and side effects.
+- **Non-obvious logic**: why something is done, edge cases, ordering constraints.
+- **Crypto-sensitive code**: which keys/material are touched and where they are allowed to flow (`security-crypto.mdc`).
+- **Sections in longer files**: short header comments before logical blocks.
+
+## AI-oriented line (when applicable)
+
+Use paired lines in both Rust and Swift:
+
+```
+// Human: Re-derives the session key after a device change so old devices cannot decrypt new messages.
+// Agent: READS keychain(identity_key), CALLS ratchet.advance(), WRITES session_store; never sends key material over network.
+```
+
+On the **Agent** line, prefer structured phrasing: `READS`, `WRITES`, `CALLS`, `RETURNS`, `HTTP`, `DB`, env vars, failure modes.
+
+## Style
+
+- Place comments **above** the code they describe.
+- Keep comments **up to date** when behavior changes.
+- Public Rust items use rustdoc (`///`); public Swift APIs use `///` doc comments. The `// Human:`/`// Agent:` pair applies to implementation bodies.
+
+## Out of scope
+
+- Do not comment every trivial line. **Do** comment anything another developer would need to edit safely.

@@ -1,0 +1,27 @@
+---
+description: sqlx migrations are immutable once applied; add new numbered files instead of editing old ones
+globs: server/migrations/**/*
+alwaysApply: true
+---
+
+# sqlx migrations (immutable after apply)
+
+The server uses **sqlx** migrations under `server/migrations/postgres/`. The API runs them at startup; a modified applied migration causes a checksum mismatch and the server exits before serving traffic.
+
+## Rule
+
+**Never edit a migration file that has already been applied** (locally, in Docker, CI, or production) — **unless the user explicitly instructs you to do so**. Schema changes after ship must be a **new** sequentially numbered file (e.g. `002_….sql`, `003_….sql`).
+
+- **Do:** add `ALTER TABLE …`, new tables, indexes, seeds in a new migration.
+- **Do not:** change SQL in `001_…` etc. after any environment has run it.
+
+## Agent behavior
+
+1. Check existing files in `server/migrations/postgres/` and pick the **next** number.
+2. Create a new `.sql` file only; leave prior migrations untouched.
+3. On checksum mismatch reports, explain the cause and recommend resetting the dev database (with explicit permission, `data-safety.mdc`) or forward-fixing with a new migration — never rewriting applied history.
+4. Extend the migration backtest (empty DB + seeded previous-release dump) when schema semantics change (`regression-testing.mdc`).
+
+## Production
+
+Do not edit old migrations without an explicit ops plan; add a forward migration instead.

@@ -1,0 +1,13 @@
+---
+alwaysApply: true
+---
+
+# Agent non-negotiables
+
+- Treat rules in `.cursor/rules/` as binding requirements, not suggestions.
+- **Shroud is an end-to-end encrypted messenger.** Every change must respect `security-crypto.mdc`: plaintext message content and private keys never reach the server, logs, or analytics.
+- **`iOS-App.pen` is the design source of truth.** It is an encrypted Pencil file — access it only through the Pencil MCP tools, never with file read/grep/edit tools. UI work (design or SwiftUI) must follow `design-system.mdc`.
+- **Data-destructive actions must strictly follow `data-safety.mdc`.** Never wipe volumes, databases, migrations, or bulk-delete files without explicit user permission for that action.
+- **Git operations must strictly follow `git-commits.mdc` exactly.** If any instruction conflicts with convenience, speed, or habit, follow `git-commits.mdc`.
+- If a requested git action is ambiguous (commit/push/merge/rebase intent is not explicit), stop and ask before running the command.
+- Do not claim completion without satisfying `definition-of-done.mdc` and reporting evidence.

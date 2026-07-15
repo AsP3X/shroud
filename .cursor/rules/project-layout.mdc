@@ -1,0 +1,22 @@
+---
+description: Repository layout and where new code belongs
+alwaysApply: true
+---
+
+# Project layout
+
+Shroud is an end-to-end encrypted chat app: **Rust + PostgreSQL server** and a **native iOS app (Swift/SwiftUI)**.
+
+| Path | Role |
+| --- | --- |
+| `iOS-App.pen` | Design source of truth (Pencil file — MCP tools only). |
+| `emoji/` | Apple emoji PNG assets referenced by the design file. Do not delete or rename. |
+| `server/` | Rust workspace (Axum API, message relay, push, migrations under `server/migrations/postgres/`). |
+| `ios/` | Native iOS app (Swift/SwiftUI, Xcode project). |
+| `docs/` | Architecture decisions, protocol notes, API contracts. |
+
+## Rules
+
+- Create `server/` and `ios/` following this layout when backend/app code is first added; do not invent parallel top-level folders (`backend/`, `app/`, `mobile/`).
+- Shared protocol definitions (message envelope, API DTOs) live in `server/` and are mirrored in Swift by hand — when one side changes, update the other in the same change set (`regression-testing.mdc`).
+- Screens in the iOS app must map 1:1 to screens in `iOS-App.pen`; new screens are designed in the `.pen` file first, then implemented.

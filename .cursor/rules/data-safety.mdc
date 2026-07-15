@@ -1,0 +1,48 @@
+---
+description: Forbid destructive or data-loss actions without explicit user permission
+alwaysApply: true
+---
+
+# Data safety (mandatory)
+
+**Do not run, recommend, or chain commands that can destroy, wipe, or irreversibly alter user data** unless the user **clearly and explicitly** asked for that specific destructive outcome in the current request.
+
+When in doubt, **stop**, explain the risk, and ask before proceeding.
+
+## What counts as explicit permission
+
+The user must **name the destructive action** or clearly accept data loss, for example:
+
+- "Run `docker compose down -v`"
+- "Wipe the local Postgres volume"
+- "Drop this table / truncate the database"
+- "Force-push and overwrite remote history"
+
+**Not sufficient on their own:** "fix it", "clean up", "reset", "start fresh", "make it work", or proceeding because a previous step failed. Treat those as **non-destructive** troubleshooting unless the user confirms data loss is OK.
+
+## Forbidden without explicit permission
+
+### Containers, volumes, and local databases
+
+- `docker compose down -v`, `docker volume rm`, `docker system prune` (especially with volumes)
+- Dropping or recreating Postgres data directories or volumes
+- Editing already-applied SQL migrations or rewriting migration history (`api-sqlx-migrations.mdc`)
+- `DROP DATABASE`, `TRUNCATE`, bulk `DELETE` without a scoped `WHERE`
+
+### Files and repositories
+
+- `rm -rf` on project trees, user home paths, or anything outside clearly disposable temp/cache dirs
+- Mass deletion of files the user did not name
+- Deleting or overwriting `iOS-App.pen` or the `emoji/` assets it references
+- `git reset --hard`, `git clean -fdx`, force-push, history rewrite — follow `git-commits.mdc`; ask when intent is unclear
+
+### Production and shared environments
+
+- Never assume dev Compose volumes or local Postgres are disposable; users may store important data there.
+- Never run destructive fixes against production or shared databases without explicit approval.
+
+## When blocked
+
+1. State **what** would be destroyed or changed.
+2. Offer **non-destructive** next steps (logs, read-only checks, backup, new migration).
+3. Ask the user to confirm explicitly if they want the destructive path.

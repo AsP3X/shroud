@@ -1,0 +1,49 @@
+---
+description: Git commits only on explicit user request; TASK/FIX/BUGFIX/DOCS/CHORE message format
+alwaysApply: true
+---
+
+# Git commits
+
+## Enforcement (strict)
+
+- This rule is **mandatory** for all agent-authored git actions in this repository.
+- If a git command would violate any section below, **do not run it**. Stop, explain the exact rule conflict, and ask for explicit user confirmation.
+
+## When commits are allowed
+
+- **Create a git commit only when the user explicitly asks.** Do not commit to "helpfully" save progress.
+- **Do not** `git push`, merge, rebase, or amend unless the user **explicitly** asks.
+
+### Branch model (this project)
+
+| Branch | Role |
+|--------|------|
+| **`master`** | **Root / release line.** Stable, production-ready history. |
+| **`dev`** | **Integration branch.** Collects completed work from feature branches. |
+| **`feature/<name>`** | **Feature development.** Open from up-to-date **`dev`**. |
+
+**Intended flow:** `feature/...` → **`dev`** → **`master`** (via pull request).
+
+## Staging scope
+
+- **Stage only** paths the user named, or changes that clearly belong to the requested commit.
+- Before committing, run **`git status`** so staged vs unstaged is intentional.
+- When committing design changes, include `iOS-App.pen` **and** any assets it references (e.g. `emoji/`).
+
+## Safety (never commit)
+
+- **Secrets:** API keys, passwords, tokens, or full `.env` files.
+- **Generated artifacts:** `target/`, `DerivedData/`, `*.xcarchive`, `node_modules/`, etc. unless explicitly requested.
+
+## Commit message structure (required)
+
+Every agent-authored commit message must begin with exactly one of:
+
+- **`TASK:`** — New work or refactors
+- **`FIX:`** — Regression from an earlier intentional change
+- **`BUGFIX:`** — Pre-existing incorrect behavior
+- **`DOCS:`** — Documentation-only changes
+- **`CHORE:`** — Tooling and maintenance only
+
+Use a blank line before the body when more detail is needed. Merge/revert commits may use Git's default message.

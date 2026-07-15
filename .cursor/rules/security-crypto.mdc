@@ -1,0 +1,40 @@
+---
+description: End-to-end encryption invariants—key handling, plaintext boundaries, no hand-rolled crypto
+alwaysApply: true
+---
+
+# Security & crypto invariants
+
+Shroud's core promise is end-to-end encryption. These invariants are **non-negotiable**; a change that violates one is wrong even if it "works".
+
+## Plaintext boundary
+
+- **Message plaintext exists only on devices.** The server stores and relays ciphertext envelopes; it must never gain a decryption path, "debug mode", or plaintext logging.
+- **Private keys and the 12-word encryption phrase never leave the device.** They live in the iOS Keychain / Secure Enclave; they are never sent over the network, written to server DB, logged, or put in analytics/crash reports.
+- Voice message transcription happens **on-device** (Speech framework). Do not add server-side transcription of decrypted audio.
+
+## Crypto implementation
+
+- **Never hand-roll cryptographic primitives.** Use vetted libraries (e.g. libsignal, `ring`, RustCrypto crates on the server; CryptoKit on iOS). No custom AES modes, padding, or key derivation.
+- Key exchange, ratcheting, and envelope formats are versioned protocol surfaces — changes require archived fixtures and backtests (`regression-testing.mdc`).
+- Random material comes from the platform CSPRNG only.
+- Constant-time comparison for MACs/fingerprints; no early-exit equality on secret material.
+
+## Server rules
+
+- Auth tokens are opaque, hashed at rest, and expiring; passwords use a memory-hard KDF (argon2id).
+- No endpoint may return another user's key bundle without an authenticated, rate-limited request; log key-bundle fetches for abuse detection (metadata only).
+- Store the **minimum metadata** needed for delivery. Adding a new stored field requires stating why it cannot be encrypted or omitted.
+
+## iOS rules
+
+- Key material access goes through the single crypto service; views/view models never see raw keys.
+- Screens showing the encryption phrase or key fingerprints must block screenshots where feasible and never cache their contents.
+- Pasteboard writes of sensitive data (phrase copy) must use expiring, local-only pasteboard options.
+
+## Review checklist for any crypto-adjacent change
+
+1. Does plaintext or key material cross the device boundary anywhere (network, logs, analytics, crash reports)? Must be **no**.
+2. Is a protocol/envelope version bumped with fixtures archived?
+3. Are error messages free of secret material (`api-error-shape.mdc`)?
+4. Did you add `// Human:`/`// Agent:` comments documenting key flows (`inline-documentation.mdc`)?
