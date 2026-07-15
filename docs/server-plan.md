@@ -75,9 +75,13 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | PUT semantics | Upsert **identity + signed pre-key**; **merge/add** OTPKs by `(device_id, key_id)` (do not wipe unconsumed OTPKs) |
 | GET target | Single bundle for user: device with keys, prefer **most recently `last_seen_at`** among devices that have identity+SPK |
 | OTPK on GET | **Atomically consume** one OTPK if available; omit field if pool empty (still return identity + SPK) |
-| OTPKs | Client uploads batches of **100**; refills when remaining under **25** (`GET /keys/status`) |
+| OTPKs | Client uploads batches of up to **100** per request; refills when remaining under **25** (`GET /keys/status`) |
+| OTPK pool max | **200** per device; reject uploads that would exceed |
+| Key field sizes | After base64 decode: public keys **32–64** bytes; signatures **64–128** bytes; reject empty/oversized |
+| ID ranges | `registration_id` **0–16383**; `key_id` **0–0xFFFFFF** (non-negative) |
 | Encoding | Public keys / signatures as **standard Base64** of raw bytes; `key_id` / `registration_id` as integers |
-| Fetch ACL (m2) | **Any authenticated user** may fetch (rate-limited); contact gate deferred to contacts/messaging |
+| Fetch ACL (m2) | **Any authenticated user** may fetch; contact gate deferred to contacts/messaging |
+| Key fetch rate limit | **60/min per user** + **120/min per IP** (when Redis limits land; document now) |
 | History crypto (client) | Phrase → account backup key wraps history; server sees opaque blobs only |
 
 ### Messaging and social
@@ -325,6 +329,7 @@ Redis: pub/sub, `rl:{scope}:{id}`, presence/typing keys.
 | --- | --- |
 | Auth (register/login) | 10/min per IP; 5/min per username |
 | User lookup | 30/min per IP |
+| Key bundle GET | 60/min per user; 120/min per IP |
 | Contact requests | 10/hour per user |
 | Media presign | 60/min per user |
 | WebSocket connect | 30/min per IP |
@@ -509,7 +514,7 @@ Uploads/replaces keys for the **authenticated current device**.
 | `registration_id` | yes | Integer |
 | `identity_key` | yes | Base64 public key |
 | `signed_pre_key` | yes | Replaces current SPK for device |
-| `one_time_pre_keys` | no | Array; merge by `key_id` (insert if new). Client typically sends ~100 |
+| `one_time_pre_keys` | no | Array max **100** items; merge by `key_id`. Reject if resulting pool would exceed **200** |
 
 #### `GET /keys/bundle/:user_id` → `200`
 
@@ -554,7 +559,7 @@ Status for the **current device** (for refill logic).
 
 #### `POST /keys/otpk` → `204`
 
-Replenish OTPKs only for current device (merge by `key_id`).
+Replenish OTPKs only for current device (merge by `key_id`). Max **100** keys per request; pool cap **200**.
 
 ```json
 {
@@ -568,13 +573,13 @@ Replenish OTPKs only for current device (merge by `key_id`).
 
 | Code | When |
 | --- | --- |
-| `VALIDATION_ERROR` | Missing fields, bad base64, empty keys, invalid ranges |
-| `KEYS_REQUIRED` | Target user has no publishable bundle (GET bundle) |
+| `VALIDATION_ERROR` | Missing fields, bad base64, wrong byte lengths, invalid `registration_id`/`key_id`, array &gt; 100 |
+| `PREKEY_POOL_FULL` | Upload would exceed **200** OTPKs on the device |
+| `KEYS_REQUIRED` | Target user missing or has no publishable bundle (GET) |
 | `UNAUTHORIZED` | No/invalid bearer |
-| `NOT_FOUND` | Unknown `user_id` on GET (optional: same as KEYS_REQUIRED to avoid enumeration — prefer **KEYS_REQUIRED** for both missing user and no keys, or `NOT_FOUND` only for malformed UUID) |
 | `RATE_LIMITED` | Budget exceeded |
 
-**Enumeration:** unknown user_id and “no keys” both return `404` + `KEYS_REQUIRED` (same body) so callers cannot distinguish.
+**Enumeration:** unknown `user_id` and “no keys” both return `404` + `KEYS_REQUIRED` (identical body).
 
 ### Later routes (outline)
 
@@ -622,7 +627,7 @@ Replenish OTPKs only for current device (merge by `key_id`).
 1. **Envelope ciphertext encoding** — client crypto; server stores opaque bytes (messaging milestone).
 2. **Nebular presign wire format** — when media lands.
 3. **Multi-device key fetch for send** — m2 is single best-device GET; messaging will likely add list/fetch-all-device bundles for fan-out.
-4. **Max OTPK pool size** — optional soft cap (e.g. reject if count would exceed 200) at implement time.
+4. **Redis rate-limit wiring** — budgets documented; enforce when Redis is in the stack (auth/keys can ship without Redis first).
 
 ---
 
