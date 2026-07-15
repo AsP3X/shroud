@@ -5,7 +5,6 @@ enum AppRoute: Hashable {
     case welcome
     case signUp
     case logIn
-    case enterEncryptionPhrase(username: String)
     case main
 }
 
@@ -39,10 +38,6 @@ final class AppRouter {
         if !path.isEmpty {
             path.removeLast()
         }
-    }
-
-    func completeLogIn(username: String) {
-        path.append(.enterEncryptionPhrase(username: username))
     }
 
     func unlockMessages() {

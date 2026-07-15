@@ -6578,8 +6578,8 @@
       "id": "jkzna",
       "x": 2860,
       "y": 40,
-      "name": "Log In",
-      "context": "Post-logout re-login step 1. Tapping Log In navigates to Enter Encryption Phrase (scuHZ). Phrase entry is mandatory and cannot be skipped.",
+      "name": "Log In Flow — Credentials Step",
+      "context": "Log In Flow, credentials state — single morphing screen. Persistent scaffolding across states: nav row, 64pt gradient Morph Icon (glyph shield→key), title/subtitle (text morphs), Flow Stepper (active chip slides 1→2), content slot (credentials card ↔ phrase card), bottom CTA (label morphs). Sign Up link and Face ID only in this state.",
       "clip": true,
       "width": 390,
       "height": 844,
@@ -6587,14 +6587,14 @@
       "layout": "vertical",
       "children": [
         {
-          "id": "tJjbL",
+          "id": "aYeRH",
           "type": "ref",
           "ref": "ohoDT",
           "name": "Status Bar"
         },
         {
           "type": "frame",
-          "id": "HfRwt",
+          "id": "KDjFF",
           "name": "Nav Row",
           "width": "fill_container",
           "padding": [
@@ -6606,24 +6606,24 @@
           "children": [
             {
               "type": "frame",
-              "id": "E9uni",
+              "id": "Jusay",
               "name": "Back Group",
               "gap": 2,
               "alignItems": "center",
               "children": [
                 {
                   "type": "icon",
-                  "id": "FxqYX",
+                  "id": "jt7qI",
                   "name": "Back",
-                  "width": 24,
-                  "height": 24,
+                  "width": 22,
+                  "height": 22,
                   "icon": "chevron-left",
                   "library": "lucide",
                   "fill": "$accent"
                 },
                 {
                   "type": "text",
-                  "id": "AaidQ",
+                  "id": "WkwNt",
                   "name": "Back Label",
                   "fill": "$accent",
                   "content": "Back",
@@ -6635,7 +6635,7 @@
             },
             {
               "type": "text",
-              "id": "SJJ9s",
+              "id": "VYSAv",
               "name": "Signup Link",
               "fill": "$accent",
               "content": "Sign Up",
@@ -6647,15 +6647,15 @@
         },
         {
           "type": "frame",
-          "id": "b4rlN",
+          "id": "tsCok",
           "name": "Body",
           "clip": true,
           "width": "fill_container",
           "height": "fill_container",
           "layout": "vertical",
-          "gap": 16,
+          "gap": 14,
           "padding": [
-            8,
+            10,
             20,
             0,
             20
@@ -6663,141 +6663,76 @@
           "children": [
             {
               "type": "frame",
-              "id": "FwhT0",
+              "id": "tWsT9",
               "name": "Hero",
               "width": "fill_container",
               "layout": "vertical",
               "gap": 10,
-              "padding": [
-                8,
-                0,
-                0,
-                0
-              ],
               "alignItems": "center",
               "children": [
                 {
                   "type": "frame",
-                  "id": "CrIQy",
-                  "name": "Logo Stage",
-                  "width": 160,
-                  "height": 108,
-                  "layout": "none",
+                  "id": "Su8Nj",
+                  "name": "Morph Icon",
+                  "width": 64,
+                  "height": 64,
+                  "fill": {
+                    "type": "gradient",
+                    "gradientType": "linear",
+                    "enabled": true,
+                    "rotation": 180,
+                    "size": {
+                      "height": 1
+                    },
+                    "colors": [
+                      {
+                        "color": "#7C7AFF",
+                        "position": 0
+                      },
+                      {
+                        "color": "#5E5CE6",
+                        "position": 1
+                      }
+                    ]
+                  },
+                  "cornerRadius": 18,
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#5E5CE640",
+                    "offset": {
+                      "x": 0,
+                      "y": 8
+                    },
+                    "blur": 20
+                  },
+                  "justifyContent": "center",
+                  "alignItems": "center",
                   "children": [
                     {
-                      "type": "ellipse",
-                      "id": "yV87x",
-                      "x": 20,
-                      "y": 0,
-                      "name": "Ring",
-                      "fill": "#FFFFFF00",
-                      "width": 108,
-                      "height": 108,
-                      "stroke": "#5E5CE626",
-                      "strokeWidth": 1.5
-                    },
-                    {
-                      "type": "frame",
-                      "id": "rnJAE",
-                      "x": 41,
-                      "y": 21,
-                      "name": "Logo Mark",
-                      "width": 78,
-                      "height": 78,
-                      "fill": {
-                        "type": "gradient",
-                        "gradientType": "linear",
-                        "enabled": true,
-                        "rotation": 180,
-                        "size": {
-                          "height": 1
-                        },
-                        "colors": [
-                          {
-                            "color": "#7C7AFF",
-                            "position": 0
-                          },
-                          {
-                            "color": "#5E5CE6",
-                            "position": 1
-                          }
-                        ]
-                      },
-                      "cornerRadius": 24,
-                      "effect": {
-                        "type": "shadow",
-                        "shadowType": "outer",
-                        "color": "#5E5CE64D",
-                        "offset": {
-                          "x": 0,
-                          "y": 10
-                        },
-                        "blur": 26
-                      },
-                      "justifyContent": "center",
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "VGkQS",
-                          "name": "Shield",
-                          "width": 38,
-                          "height": 38,
-                          "icon": "shield",
-                          "library": "lucide",
-                          "fill": "#FFFFFF"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "Vl5NP",
-                      "x": 104,
-                      "y": 78,
-                      "name": "Lock Badge",
-                      "width": 32,
-                      "height": 32,
-                      "fill": "#FFFFFF",
-                      "cornerRadius": 16,
-                      "effect": {
-                        "type": "shadow",
-                        "shadowType": "outer",
-                        "color": "#0B0B1226",
-                        "offset": {
-                          "x": 0,
-                          "y": 4
-                        },
-                        "blur": 12
-                      },
-                      "justifyContent": "center",
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "OM5jf",
-                          "name": "Badge Lock",
-                          "width": 16,
-                          "height": 16,
-                          "icon": "lock-keyhole",
-                          "library": "lucide",
-                          "fill": "$accent"
-                        }
-                      ]
+                      "type": "icon",
+                      "id": "SRI4X",
+                      "name": "Glyph",
+                      "width": 30,
+                      "height": 30,
+                      "icon": "shield",
+                      "library": "lucide",
+                      "fill": "#FFFFFF"
                     }
                   ]
                 },
                 {
                   "type": "frame",
-                  "id": "KkUoP",
+                  "id": "Cvriv",
                   "name": "Head",
                   "width": "fill_container",
                   "layout": "vertical",
-                  "gap": 4,
+                  "gap": 6,
                   "alignItems": "center",
                   "children": [
                     {
                       "type": "text",
-                      "id": "vPfCa",
+                      "id": "p3z57",
                       "name": "Title",
                       "fill": "$text-primary",
                       "content": "Welcome Back",
@@ -6807,41 +6742,137 @@
                     },
                     {
                       "type": "text",
-                      "id": "ttC8X",
+                      "id": "a5CHrL",
                       "name": "Subtitle",
                       "fill": "$text-secondary",
                       "textGrowth": "fixed-width",
-                      "width": 280,
-                      "content": "Step 1 of 2 — log in with your account. You'll enter your encryption phrase next to unlock messages on this device.",
+                      "width": 300,
+                      "content": "Log in with your account to continue. You'll unlock your messages in the next step.",
                       "lineHeight": 1.45,
                       "textAlign": "center",
                       "fontFamily": "$font",
                       "fontSize": 14,
                       "fontWeight": "normal"
-                    },
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "CQJ1o",
+              "name": "Stepper Wrap",
+              "width": "fill_container",
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "g0DnP",
+                  "name": "Flow Stepper",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
                     {
                       "type": "frame",
-                      "id": "QW20N",
-                      "name": "Step Pill",
+                      "id": "urAGK",
+                      "name": "Step 1 Chip",
                       "fill": "$accent-soft",
-                      "cornerRadius": 14,
+                      "cornerRadius": 15,
+                      "gap": 6,
                       "padding": [
-                        6,
-                        12
+                        5,
+                        10
                       ],
-                      "justifyContent": "center",
                       "alignItems": "center",
                       "children": [
                         {
-                          "type": "text",
-                          "id": "kyuyJ",
-                          "name": "Step Label",
+                          "type": "frame",
+                          "id": "A7UHN",
+                          "name": "Step 1 Badge",
+                          "width": 20,
+                          "height": 20,
                           "fill": "$accent",
-                          "content": "STEP 1 OF 2",
+                          "cornerRadius": 10,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "XNku7",
+                              "name": "Step 1 Num",
+                              "fill": "#FFFFFF",
+                              "content": "1",
+                              "fontFamily": "$font",
+                              "fontSize": 11,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "tKsI9",
+                          "name": "Step 1 Label",
+                          "fill": "$accent",
+                          "content": "Account",
                           "fontFamily": "$font",
-                          "fontSize": 11,
-                          "fontWeight": "600",
-                          "letterSpacing": 0.8
+                          "fontSize": 12,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 1,
+                      "id": "MYVC8",
+                      "name": "Connector",
+                      "fill": "$separator",
+                      "width": 24,
+                      "height": 2
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Ptmsj",
+                      "name": "Step 2 Chip",
+                      "gap": 6,
+                      "padding": [
+                        5,
+                        10
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "sqadI",
+                          "name": "Step 2 Badge",
+                          "width": 20,
+                          "height": 20,
+                          "fill": "#FFFFFF",
+                          "cornerRadius": 10,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "LdMVO",
+                              "name": "Step 2 Num",
+                              "fill": "$text-secondary",
+                              "content": "2",
+                              "fontFamily": "$font",
+                              "fontSize": 11,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "bD2xi",
+                          "name": "Step 2 Label",
+                          "fill": "$text-secondary",
+                          "content": "Phrase",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "600"
                         }
                       ]
                     }
@@ -6851,9 +6882,8 @@
             },
             {
               "type": "frame",
-              "id": "gDNv9",
+              "id": "lC8Wr",
               "name": "Credentials Card",
-              "clip": true,
               "width": "fill_container",
               "fill": "$bg",
               "cornerRadius": 14,
@@ -6861,7 +6891,7 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "JvyW3",
+                  "id": "U6SXc",
                   "name": "Username Row",
                   "width": "fill_container",
                   "height": 50,
@@ -6874,38 +6904,30 @@
                   "children": [
                     {
                       "type": "icon",
-                      "id": "MUO1v",
-                      "name": "At Icon",
+                      "id": "InNvh",
+                      "name": "User Icon",
                       "width": 18,
                       "height": 18,
                       "icon": "at-sign",
                       "library": "lucide",
-                      "fill": "$accent"
+                      "fill": "$text-secondary"
                     },
                     {
-                      "type": "frame",
-                      "id": "kXW7k",
-                      "name": "Value Wrap",
-                      "width": "fill_container",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "yHKhB",
-                          "name": "Username Value",
-                          "fill": "$text-primary",
-                          "content": "noah",
-                          "fontFamily": "$font",
-                          "fontSize": 16,
-                          "fontWeight": "normal"
-                        }
-                      ]
+                      "type": "text",
+                      "id": "Z7ZXR",
+                      "name": "Username Value",
+                      "fill": "$text-primary",
+                      "content": "noah",
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
                     }
                   ]
                 },
                 {
                   "type": "frame",
-                  "id": "BBga9",
-                  "name": "Sep Wrap",
+                  "id": "YTZUG",
+                  "name": "Row Sep",
                   "width": "fill_container",
                   "padding": [
                     0,
@@ -6916,8 +6938,8 @@
                   "children": [
                     {
                       "type": "rectangle",
-                      "id": "B3FXPk",
-                      "name": "Line",
+                      "id": "VlMfD",
+                      "name": "Hairline",
                       "fill": "$separator",
                       "width": "fill_container",
                       "height": 1
@@ -6926,7 +6948,7 @@
                 },
                 {
                   "type": "frame",
-                  "id": "MBVDf",
+                  "id": "DF3kk",
                   "name": "Password Row",
                   "width": "fill_container",
                   "height": 50,
@@ -6939,37 +6961,28 @@
                   "children": [
                     {
                       "type": "icon",
-                      "id": "nJT4W",
+                      "id": "P02fbV",
                       "name": "Lock Icon",
                       "width": 18,
                       "height": 18,
                       "icon": "lock",
                       "library": "lucide",
-                      "fill": "$accent"
+                      "fill": "$text-secondary"
                     },
                     {
-                      "type": "frame",
-                      "id": "UAF24",
-                      "name": "Value Wrap",
-                      "width": "fill_container",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "SdCUe",
-                          "name": "Password Value",
-                          "fill": "$text-primary",
-                          "content": "••••••••••",
-                          "fontFamily": "$font",
-                          "fontSize": 16,
-                          "fontWeight": "normal",
-                          "letterSpacing": 2
-                        }
-                      ]
+                      "type": "text",
+                      "id": "PO3WD",
+                      "name": "Password Value",
+                      "fill": "$text-primary",
+                      "content": "••••••••••••",
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
                     },
                     {
                       "type": "icon",
-                      "id": "MMjA8",
-                      "name": "Eye",
+                      "id": "dMn3e",
+                      "name": "Eye Icon",
                       "width": 18,
                       "height": 18,
                       "icon": "eye-off",
@@ -6981,209 +6994,25 @@
               ]
             },
             {
-              "type": "frame",
-              "id": "Yqxv3",
-              "name": "Flow Steps Card",
-              "width": "fill_container",
-              "fill": "$bg",
-              "cornerRadius": 14,
-              "layout": "vertical",
-              "gap": 6,
-              "padding": [
-                8,
-                12
-              ],
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "F5pp7",
-                  "name": "Step 1 Row",
-                  "width": "fill_container",
-                  "gap": 8,
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "frame",
-                      "id": "zdLFm",
-                      "name": "Key Square",
-                      "width": 24,
-                      "height": 24,
-                      "fill": "$accent",
-                      "cornerRadius": 6,
-                      "justifyContent": "center",
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "SNyYS",
-                          "name": "Step 1 Num",
-                          "fill": "#FFFFFF",
-                          "content": "1",
-                          "fontFamily": "$font",
-                          "fontSize": 12,
-                          "fontWeight": "600"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "bKkLd",
-                      "name": "Restore Text",
-                      "width": "fill_container",
-                      "layout": "vertical",
-                      "gap": 1,
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "srNGA",
-                          "name": "Restore Title",
-                          "fill": "$text-primary",
-                          "content": "Log in with account",
-                          "fontFamily": "$font",
-                          "fontSize": 14,
-                          "fontWeight": "600"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "g40ZL2",
-                      "name": "Current Chip",
-                      "fill": "$accent-soft",
-                      "cornerRadius": 10,
-                      "padding": [
-                        3,
-                        7
-                      ],
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "NQ11L",
-                          "name": "Current Label",
-                          "fill": "$accent",
-                          "content": "Current",
-                          "fontFamily": "$font",
-                          "fontSize": 10,
-                          "fontWeight": "600"
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "IOBDs",
-                  "name": "Step 2 Row",
-                  "width": "fill_container",
-                  "gap": 8,
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "frame",
-                      "id": "MNu4m",
-                      "name": "Step 2 Icon",
-                      "width": 24,
-                      "height": 24,
-                      "fill": "#F2F2F7",
-                      "cornerRadius": 6,
-                      "justifyContent": "center",
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "VUBlO",
-                          "name": "Step 2 Num",
-                          "fill": "$text-secondary",
-                          "content": "2",
-                          "fontFamily": "$font",
-                          "fontSize": 12,
-                          "fontWeight": "600"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "zKC90",
-                      "name": "Step 2 Text",
-                      "width": "fill_container",
-                      "layout": "vertical",
-                      "gap": 1,
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "xWZfh",
-                          "name": "Step 2 Title",
-                          "fill": "$text-primary",
-                          "content": "Enter encryption phrase",
-                          "fontFamily": "$font",
-                          "fontSize": 14,
-                          "fontWeight": "600"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "qjI3V",
-                      "name": "Required Chip",
-                      "fill": "#FDF1DC",
-                      "cornerRadius": 10,
-                      "padding": [
-                        3,
-                        7
-                      ],
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "uV68C",
-                          "name": "Required Label",
-                          "fill": "#8A5E0C",
-                          "content": "Required",
-                          "fontFamily": "$font",
-                          "fontSize": 10,
-                          "fontWeight": "600"
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "rfYSA",
-                  "name": "Flow Footer",
-                  "width": "fill_container",
-                  "padding": [
-                    2,
-                    0,
-                    0,
-                    32
-                  ],
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "zPOKq",
-                      "name": "Flow Hint",
-                      "fill": "$text-secondary",
-                      "textGrowth": "fixed-width",
-                      "width": "fill_container",
-                      "content": "Encryption phrase is required when returning from logout.",
-                      "lineHeight": 1.35,
-                      "fontFamily": "$font",
-                      "fontSize": 11,
-                      "fontWeight": "normal"
-                    }
-                  ]
-                }
-              ]
+              "type": "text",
+              "id": "GaNXR",
+              "name": "Step Caption",
+              "fill": "$text-secondary",
+              "textGrowth": "fixed-width",
+              "width": 350,
+              "content": "You'll enter your encryption phrase in the next step.",
+              "lineHeight": 1.4,
+              "textAlign": "center",
+              "fontFamily": "$font",
+              "fontSize": 12,
+              "fontWeight": "normal"
             }
           ]
         },
         {
           "type": "frame",
-          "id": "OxrYb",
-          "name": "Bottom",
+          "id": "owwz9",
+          "name": "Bottom Section",
           "width": "fill_container",
           "layout": "vertical",
           "gap": 12,
@@ -7193,12 +7022,11 @@
             0,
             20
           ],
-          "alignItems": "center",
           "children": [
             {
               "type": "frame",
-              "id": "kdnbt",
-              "name": "Primary Button",
+              "id": "z52id",
+              "name": "Log In Button",
               "width": "fill_container",
               "height": 54,
               "fill": "$accent",
@@ -7219,8 +7047,8 @@
               "children": [
                 {
                   "type": "text",
-                  "id": "OGuVA",
-                  "name": "Button Label",
+                  "id": "dxVUw",
+                  "name": "CTA Label",
                   "fill": "#FFFFFF",
                   "content": "Log In",
                   "fontFamily": "$font",
@@ -7229,8 +7057,8 @@
                 },
                 {
                   "type": "icon",
-                  "id": "z7Qbj",
-                  "name": "Button Arrow",
+                  "id": "lFlwE",
+                  "name": "CTA Arrow",
                   "width": 18,
                   "height": 18,
                   "icon": "arrow-right",
@@ -7241,35 +7069,35 @@
             },
             {
               "type": "frame",
-              "id": "oH5RZ",
-              "name": "Or Divider",
+              "id": "wqNxC",
+              "name": "Or Row",
               "width": "fill_container",
               "gap": 10,
               "alignItems": "center",
               "children": [
                 {
                   "type": "rectangle",
-                  "id": "WoI5m",
-                  "name": "Line L",
-                  "fill": "#DBDBE0",
+                  "id": "sR2lQ",
+                  "name": "Or Line L",
+                  "fill": "$separator",
                   "width": "fill_container",
                   "height": 1
                 },
                 {
                   "type": "text",
-                  "id": "FdaZh",
-                  "name": "Or",
+                  "id": "xdQaf",
+                  "name": "Or Label",
                   "fill": "$text-secondary",
                   "content": "or",
                   "fontFamily": "$font",
-                  "fontSize": 12,
-                  "fontWeight": "500"
+                  "fontSize": 13,
+                  "fontWeight": "normal"
                 },
                 {
                   "type": "rectangle",
-                  "id": "xdYlr",
-                  "name": "Line R",
-                  "fill": "#DBDBE0",
+                  "id": "I8PqE",
+                  "name": "Or Line R",
+                  "fill": "$separator",
                   "width": "fill_container",
                   "height": 1
                 }
@@ -7277,11 +7105,11 @@
             },
             {
               "type": "frame",
-              "id": "ZzXAz",
+              "id": "jiek1",
               "name": "Face ID Button",
               "width": "fill_container",
               "height": 54,
-              "fill": "#FFFFFF",
+              "fill": "$bg",
               "cornerRadius": 27,
               "stroke": "$separator",
               "strokeWidth": 1,
@@ -7291,7 +7119,7 @@
               "children": [
                 {
                   "type": "icon",
-                  "id": "dVFfn",
+                  "id": "xlBDR",
                   "name": "Face ID Icon",
                   "width": 20,
                   "height": 20,
@@ -7301,12 +7129,12 @@
                 },
                 {
                   "type": "text",
-                  "id": "xguha",
+                  "id": "G4Sqc",
                   "name": "Face ID Label",
                   "fill": "$accent",
-                  "content": "Unlock with Face ID",
+                  "content": "Use Face ID",
                   "fontFamily": "$font",
-                  "fontSize": 17,
+                  "fontSize": 16,
                   "fontWeight": "600"
                 }
               ]
@@ -7315,25 +7143,20 @@
         },
         {
           "type": "frame",
-          "id": "GLdYo",
-          "name": "Home Indicator Wrap",
+          "id": "XS9mZ",
+          "name": "Home Indicator",
           "width": "fill_container",
-          "layout": "vertical",
-          "padding": [
-            10,
-            0,
-            8,
-            0
-          ],
+          "height": 23,
+          "justifyContent": "center",
           "alignItems": "center",
           "children": [
             {
               "type": "rectangle",
               "cornerRadius": 3,
-              "id": "X6nEj",
-              "name": "Home Indicator",
-              "fill": "#0B0B12",
-              "width": 134,
+              "id": "G3W8v",
+              "name": "Indicator",
+              "fill": "$text-primary",
+              "width": 140,
               "height": 5
             }
           ]
@@ -19525,903 +19348,11 @@
     },
     {
       "type": "frame",
-      "id": "scuHZ",
-      "x": 2860,
-      "y": 944,
-      "name": "Enter Encryption Phrase",
-      "context": "Post-logout re-login step 2. Shown immediately after successful account login when keys were wiped at logout. Required before entering Chats.",
-      "clip": true,
-      "width": 390,
-      "height": 844,
-      "fill": "$bg-grouped",
-      "layout": "vertical",
-      "children": [
-        {
-          "id": "DrcmD",
-          "type": "ref",
-          "ref": "ohoDT",
-          "name": "Status Bar"
-        },
-        {
-          "type": "frame",
-          "id": "wwrWe",
-          "name": "Nav Row",
-          "width": "fill_container",
-          "padding": [
-            4,
-            12
-          ],
-          "justifyContent": "space_between",
-          "alignItems": "center",
-          "children": [
-            {
-              "type": "frame",
-              "id": "KebDd",
-              "name": "Back Group",
-              "gap": 2,
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "icon",
-                  "id": "TFtp1",
-                  "name": "Back Chevron",
-                  "width": 22,
-                  "height": 22,
-                  "icon": "chevron-left",
-                  "library": "lucide",
-                  "fill": "$accent"
-                },
-                {
-                  "type": "text",
-                  "id": "k7CLb3",
-                  "name": "Back Label",
-                  "fill": "$accent",
-                  "content": "Back",
-                  "fontFamily": "$font",
-                  "fontSize": 16,
-                  "fontWeight": "normal"
-                }
-              ]
-            }
-          ]
-        },
-        {
-          "type": "frame",
-          "id": "CCBDN",
-          "name": "Body",
-          "clip": true,
-          "width": "fill_container",
-          "height": "fill_container",
-          "layout": "vertical",
-          "gap": 16,
-          "padding": [
-            8,
-            20,
-            0,
-            20
-          ],
-          "children": [
-            {
-              "type": "frame",
-              "id": "fhasp",
-              "name": "Signed In Banner",
-              "width": "fill_container",
-              "fill": "#E6F7EC",
-              "cornerRadius": 10,
-              "gap": 8,
-              "padding": [
-                7,
-                12
-              ],
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "efcDu",
-                  "name": "Signed Icon",
-                  "width": 22,
-                  "height": 22,
-                  "fill": "#FFFFFF",
-                  "cornerRadius": 6,
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "icon",
-                      "id": "Kfxll",
-                      "name": "Check Icon",
-                      "width": 13,
-                      "height": 13,
-                      "icon": "check",
-                      "library": "lucide",
-                      "fill": "$online"
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "msOKc",
-                  "name": "Signed Text",
-                  "width": "fill_container",
-                  "layout": "vertical",
-                  "gap": 1,
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "uHYp1",
-                      "name": "Signed Title",
-                      "fill": "$text-primary",
-                      "content": "Logged in as @alex",
-                      "fontFamily": "$font",
-                      "fontSize": 13,
-                      "fontWeight": "600"
-                    }
-                  ]
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "oPy7I",
-              "name": "Hero",
-              "width": "fill_container",
-              "layout": "vertical",
-              "gap": 12,
-              "padding": [
-                6,
-                0,
-                2,
-                0
-              ],
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "EghJZ",
-                  "name": "Head",
-                  "width": "fill_container",
-                  "layout": "vertical",
-                  "gap": 6,
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "dWaxY",
-                      "name": "Title",
-                      "fill": "$text-primary",
-                      "content": "Enter Encryption Phrase",
-                      "fontFamily": "$font",
-                      "fontSize": 30,
-                      "fontWeight": "700"
-                    },
-                    {
-                      "type": "text",
-                      "id": "w1sve6",
-                      "name": "Subtitle",
-                      "fill": "$text-secondary",
-                      "textGrowth": "fixed-width",
-                      "width": 310,
-                      "content": "Step 2 of 2 — you logged back in, but your keys were removed when you logged out. Enter your 12-word phrase to decrypt your messages. This step is required.",
-                      "lineHeight": 1.45,
-                      "textAlign": "center",
-                      "fontFamily": "$font",
-                      "fontSize": 14,
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "type": "frame",
-                      "id": "Rc3Hx",
-                      "name": "Step Pill",
-                      "fill": "$accent-soft",
-                      "cornerRadius": 14,
-                      "padding": [
-                        6,
-                        12
-                      ],
-                      "justifyContent": "center",
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "pFeUK",
-                          "name": "Step Label",
-                          "fill": "$accent",
-                          "content": "STEP 2 OF 2",
-                          "fontFamily": "$font",
-                          "fontSize": 11,
-                          "fontWeight": "600",
-                          "letterSpacing": 0.8
-                        }
-                      ]
-                    }
-                  ]
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "tk03j",
-              "name": "Phrase Card",
-              "clip": true,
-              "width": "fill_container",
-              "fill": "$bg",
-              "cornerRadius": 14,
-              "layout": "vertical",
-              "gap": 10,
-              "padding": 14,
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "ICi9d",
-                  "name": "Card Head",
-                  "width": "fill_container",
-                  "justifyContent": "space_between",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "Q1WOHb",
-                      "name": "Phrase Label",
-                      "fill": "$text-secondary",
-                      "content": "ENCRYPTION PHRASE",
-                      "fontFamily": "$font",
-                      "fontSize": 11,
-                      "fontWeight": "600",
-                      "letterSpacing": 0.8
-                    },
-                    {
-                      "type": "frame",
-                      "id": "wbgkC",
-                      "name": "Paste Chip",
-                      "fill": "$accent-soft",
-                      "cornerRadius": 12,
-                      "gap": 5,
-                      "padding": [
-                        5,
-                        10
-                      ],
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "aVMW3",
-                          "name": "Paste Icon",
-                          "width": 12,
-                          "height": 12,
-                          "icon": "clipboard",
-                          "library": "lucide",
-                          "fill": "$accent"
-                        },
-                        {
-                          "type": "text",
-                          "id": "affSf",
-                          "name": "Paste Label",
-                          "fill": "$accent",
-                          "content": "Paste",
-                          "fontFamily": "$font",
-                          "fontSize": 12,
-                          "fontWeight": "600"
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "i2AGoK",
-                  "name": "Word Grid",
-                  "width": "fill_container",
-                  "layout": "vertical",
-                  "gap": 8,
-                  "children": [
-                    {
-                      "type": "frame",
-                      "id": "EGi90",
-                      "name": "Word Row 1",
-                      "width": "fill_container",
-                      "gap": 8,
-                      "children": [
-                        {
-                          "type": "frame",
-                          "id": "p2v4Lv",
-                          "name": "Word 1",
-                          "width": "fill_container",
-                          "height": 44,
-                          "fill": "#F2F2F7",
-                          "cornerRadius": 10,
-                          "gap": 6,
-                          "padding": [
-                            0,
-                            12
-                          ],
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "GX0uD",
-                              "name": "Num 1",
-                              "fill": "$text-secondary",
-                              "content": "1",
-                              "fontFamily": "JetBrains Mono",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
-                            {
-                              "type": "text",
-                              "id": "FYzop",
-                              "name": "Val 1",
-                              "fill": "$text-primary",
-                              "content": "ember",
-                              "fontFamily": "JetBrains Mono",
-                              "fontSize": 14,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        },
-                        {
-                          "type": "frame",
-                          "id": "l0qDSD",
-                          "name": "Word 2",
-                          "width": "fill_container",
-                          "height": 44,
-                          "fill": "#F2F2F7",
-                          "cornerRadius": 10,
-                          "gap": 6,
-                          "padding": [
-                            0,
-                            12
-                          ],
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "d8bal7",
-                              "name": "Num 2",
-                              "fill": "$text-secondary",
-                              "content": "2",
-                              "fontFamily": "JetBrains Mono",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
-                            {
-                              "type": "text",
-                              "id": "zCC7r",
-                              "name": "Val 2",
-                              "fill": "$text-primary",
-                              "content": "canyon",
-                              "fontFamily": "JetBrains Mono",
-                              "fontSize": 14,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "z59n5",
-                      "name": "Word Row 2",
-                      "width": "fill_container",
-                      "gap": 8,
-                      "children": [
-                        {
-                          "type": "frame",
-                          "id": "SzERs",
-                          "name": "Word 3",
-                          "width": "fill_container",
-                          "height": 44,
-                          "fill": "#F2F2F7",
-                          "cornerRadius": 10,
-                          "gap": 6,
-                          "padding": [
-                            0,
-                            12
-                          ],
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "pjn1Y",
-                              "name": "Num 3",
-                              "fill": "$text-secondary",
-                              "content": "3",
-                              "fontFamily": "JetBrains Mono",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
-                            {
-                              "type": "text",
-                              "id": "tFSCD",
-                              "name": "Val 3",
-                              "fill": "$text-primary",
-                              "content": "velvet",
-                              "fontFamily": "JetBrains Mono",
-                              "fontSize": 14,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        },
-                        {
-                          "type": "frame",
-                          "id": "dVAPK",
-                          "name": "Word 4",
-                          "width": "fill_container",
-                          "height": 44,
-                          "fill": "#F2F2F7",
-                          "cornerRadius": 10,
-                          "gap": 6,
-                          "padding": [
-                            0,
-                            12
-                          ],
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "KrLXt",
-                              "name": "Num 4",
-                              "fill": "$text-secondary",
-                              "content": "4",
-                              "fontFamily": "JetBrains Mono",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
-                            {
-                              "type": "text",
-                              "id": "M4K00",
-                              "name": "Val 4",
-                              "fill": "$text-primary",
-                              "content": "august",
-                              "fontFamily": "JetBrains Mono",
-                              "fontSize": 14,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "lJSGn",
-                      "name": "Word Row 3",
-                      "width": "fill_container",
-                      "gap": 8,
-                      "children": [
-                        {
-                          "type": "frame",
-                          "id": "W5SWl",
-                          "name": "Word 5",
-                          "width": "fill_container",
-                          "height": 44,
-                          "fill": "#F2F2F7",
-                          "cornerRadius": 10,
-                          "gap": 6,
-                          "padding": [
-                            0,
-                            12
-                          ],
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "eNd4g",
-                              "name": "Num 5",
-                              "fill": "$text-secondary",
-                              "content": "5",
-                              "fontFamily": "JetBrains Mono",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
-                            {
-                              "type": "text",
-                              "id": "ypVu0",
-                              "name": "Val 5",
-                              "fill": "$text-primary",
-                              "content": "marble",
-                              "fontFamily": "JetBrains Mono",
-                              "fontSize": 14,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        },
-                        {
-                          "type": "frame",
-                          "id": "XKSPK",
-                          "name": "Word 6",
-                          "width": "fill_container",
-                          "height": 44,
-                          "fill": "#F2F2F7",
-                          "cornerRadius": 10,
-                          "gap": 6,
-                          "padding": [
-                            0,
-                            12
-                          ],
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "xHjUV",
-                              "name": "Num 6",
-                              "fill": "$text-secondary",
-                              "content": "6",
-                              "fontFamily": "JetBrains Mono",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
-                            {
-                              "type": "text",
-                              "id": "ncXIa",
-                              "name": "Val 6",
-                              "fill": "$text-primary",
-                              "content": "quiver",
-                              "fontFamily": "JetBrains Mono",
-                              "fontSize": 14,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "fPcc4",
-                      "name": "Word Row 4",
-                      "width": "fill_container",
-                      "gap": 8,
-                      "children": [
-                        {
-                          "type": "frame",
-                          "id": "F61QCC",
-                          "name": "Word 7",
-                          "width": "fill_container",
-                          "height": 44,
-                          "fill": "#F2F2F7",
-                          "cornerRadius": 10,
-                          "gap": 6,
-                          "padding": [
-                            0,
-                            12
-                          ],
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "qcy6F",
-                              "name": "Num 7",
-                              "fill": "$text-secondary",
-                              "content": "7",
-                              "fontFamily": "JetBrains Mono",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
-                            {
-                              "type": "text",
-                              "id": "l7iBo9",
-                              "name": "Val 7",
-                              "fill": "$text-primary",
-                              "content": "fable",
-                              "fontFamily": "JetBrains Mono",
-                              "fontSize": 14,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        },
-                        {
-                          "type": "frame",
-                          "id": "lzLtX",
-                          "name": "Word 8",
-                          "width": "fill_container",
-                          "height": 44,
-                          "fill": "#F2F2F7",
-                          "cornerRadius": 10,
-                          "gap": 6,
-                          "padding": [
-                            0,
-                            12
-                          ],
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "KnBou",
-                              "name": "Num 8",
-                              "fill": "$text-secondary",
-                              "content": "8",
-                              "fontFamily": "JetBrains Mono",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
-                            {
-                              "type": "text",
-                              "id": "ZAncv",
-                              "name": "Val 8",
-                              "fill": "$text-primary",
-                              "content": "onyx",
-                              "fontFamily": "JetBrains Mono",
-                              "fontSize": 14,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "DqXP2",
-                      "name": "Word Row 5",
-                      "width": "fill_container",
-                      "gap": 8,
-                      "children": [
-                        {
-                          "type": "frame",
-                          "id": "vNpbs",
-                          "name": "Word 9",
-                          "width": "fill_container",
-                          "height": 44,
-                          "fill": "#F2F2F7",
-                          "cornerRadius": 10,
-                          "gap": 6,
-                          "padding": [
-                            0,
-                            12
-                          ],
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "Z4k93R",
-                              "name": "Num 9",
-                              "fill": "$text-secondary",
-                              "content": "9",
-                              "fontFamily": "JetBrains Mono",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
-                            {
-                              "type": "rectangle",
-                              "id": "iIn55",
-                              "name": "Caret",
-                              "fill": "$accent",
-                              "width": 2,
-                              "height": 16
-                            }
-                          ]
-                        },
-                        {
-                          "type": "frame",
-                          "id": "kdCbB",
-                          "name": "Word 10",
-                          "width": "fill_container",
-                          "height": 44,
-                          "fill": "#F2F2F7",
-                          "cornerRadius": 10,
-                          "gap": 6,
-                          "padding": [
-                            0,
-                            12
-                          ],
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "iAI5C",
-                              "name": "Num 10",
-                              "fill": "$text-secondary",
-                              "content": "10",
-                              "fontFamily": "JetBrains Mono",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "fjlpa",
-                      "name": "Word Row 6",
-                      "width": "fill_container",
-                      "gap": 8,
-                      "children": [
-                        {
-                          "type": "frame",
-                          "id": "etJf8",
-                          "name": "Word 11",
-                          "width": "fill_container",
-                          "height": 44,
-                          "fill": "#F2F2F7",
-                          "cornerRadius": 10,
-                          "gap": 6,
-                          "padding": [
-                            0,
-                            12
-                          ],
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "bxsLO",
-                              "name": "Num 11",
-                              "fill": "$text-secondary",
-                              "content": "11",
-                              "fontFamily": "JetBrains Mono",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        },
-                        {
-                          "type": "frame",
-                          "id": "ytytT",
-                          "name": "Word 12",
-                          "width": "fill_container",
-                          "height": 44,
-                          "fill": "#F2F2F7",
-                          "cornerRadius": 10,
-                          "gap": 6,
-                          "padding": [
-                            0,
-                            12
-                          ],
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "EhasY",
-                              "name": "Num 12",
-                              "fill": "$text-secondary",
-                              "content": "12",
-                              "fontFamily": "JetBrains Mono",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        }
-                      ]
-                    }
-                  ]
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "cSsdl",
-              "name": "Privacy Hint",
-              "width": "fill_container",
-              "gap": 6,
-              "justifyContent": "center",
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "icon",
-                  "id": "K33nb9",
-                  "name": "Lock Icon",
-                  "width": 13,
-                  "height": 13,
-                  "icon": "lock",
-                  "library": "lucide",
-                  "fill": "$text-secondary"
-                },
-                {
-                  "type": "text",
-                  "id": "bX8Yn",
-                  "name": "Hint Text",
-                  "fill": "$text-secondary",
-                  "content": "Your phrase never leaves this device",
-                  "fontFamily": "$font",
-                  "fontSize": 12,
-                  "fontWeight": "normal"
-                }
-              ]
-            }
-          ]
-        },
-        {
-          "type": "frame",
-          "id": "d9Vicc",
-          "name": "Bottom",
-          "width": "fill_container",
-          "layout": "vertical",
-          "gap": 12,
-          "padding": [
-            8,
-            20,
-            0,
-            20
-          ],
-          "alignItems": "center",
-          "children": [
-            {
-              "type": "frame",
-              "id": "Rre0e",
-              "name": "Primary Button",
-              "width": "fill_container",
-              "height": 54,
-              "fill": "$accent",
-              "cornerRadius": 27,
-              "effect": {
-                "type": "shadow",
-                "shadowType": "outer",
-                "color": "#5E5CE640",
-                "offset": {
-                  "x": 0,
-                  "y": 8
-                },
-                "blur": 20
-              },
-              "gap": 8,
-              "justifyContent": "center",
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "text",
-                  "id": "YUm1Q",
-                  "name": "Button Label",
-                  "fill": "#FFFFFF",
-                  "content": "Unlock Messages",
-                  "fontFamily": "$font",
-                  "fontSize": 17,
-                  "fontWeight": "600"
-                },
-                {
-                  "type": "icon",
-                  "id": "lcEId",
-                  "name": "Button Arrow",
-                  "width": 18,
-                  "height": 18,
-                  "icon": "arrow-right",
-                  "library": "lucide",
-                  "fill": "#FFFFFF"
-                }
-              ]
-            },
-            {
-              "type": "text",
-              "id": "AOoJn",
-              "name": "Lost Phrase Link",
-              "fill": "$accent",
-              "content": "I lost my encryption phrase",
-              "fontFamily": "$font",
-              "fontSize": 14,
-              "fontWeight": "normal"
-            }
-          ]
-        },
-        {
-          "type": "frame",
-          "id": "TvnTE",
-          "name": "Home Indicator Wrap",
-          "width": "fill_container",
-          "layout": "vertical",
-          "padding": [
-            10,
-            0,
-            8,
-            0
-          ],
-          "alignItems": "center",
-          "children": [
-            {
-              "type": "rectangle",
-              "cornerRadius": 3,
-              "id": "dbWUB",
-              "name": "Home Indicator",
-              "fill": "#0B0B12",
-              "width": 134,
-              "height": 5
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "type": "frame",
       "id": "BZkLe",
       "x": 3290,
       "y": 40,
-      "name": "Log In — Step 1",
-      "context": "Variant: post-logout re-login, step 1 of 2. Flow Steps Card shows step 1 as Current.",
+      "name": "Log In Flow — Phase 1 (expanded steps)",
+      "context": "Variant of Phase 1 in the combined Log In Flow screen. Flow Steps Card shows step 1 expanded.",
       "clip": true,
       "width": 390,
       "height": 844,
@@ -21392,6 +20323,1007 @@
                   "fontWeight": "normal"
                 }
               ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "YJ8Ua",
+      "x": 2860,
+      "y": 944,
+      "name": "Log In Flow — Phrase Step",
+      "context": "Log In Flow, phrase state — same single morphing screen as Credentials Step. Banner grows in below nav; Morph Icon glyph crossfades shield→key; title/subtitle text morph; Flow Stepper active chip slides to step 2; credentials card morphs into phrase card; CTA label morphs Log In→Unlock Messages; Face ID swaps for lost-phrase link.",
+      "clip": true,
+      "width": 390,
+      "height": 844,
+      "fill": "$bg-grouped",
+      "layout": "vertical",
+      "children": [
+        {
+          "id": "FdCnM",
+          "type": "ref",
+          "ref": "ohoDT",
+          "name": "Status Bar"
+        },
+        {
+          "type": "frame",
+          "id": "shB4J",
+          "name": "Nav Row",
+          "width": "fill_container",
+          "padding": [
+            4,
+            12
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "XiqRy",
+              "name": "Back Group",
+              "gap": 2,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "S82geu",
+                  "name": "Back",
+                  "width": 22,
+                  "height": 22,
+                  "icon": "chevron-left",
+                  "library": "lucide",
+                  "fill": "$accent"
+                },
+                {
+                  "type": "text",
+                  "id": "R64Eif",
+                  "name": "Back Label",
+                  "fill": "$accent",
+                  "content": "Back",
+                  "fontFamily": "$font",
+                  "fontSize": 16,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "PYSNy",
+          "name": "Body",
+          "clip": true,
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "gap": 14,
+          "padding": [
+            10,
+            20,
+            0,
+            20
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "dG1sk",
+              "name": "Signed In Banner",
+              "width": "fill_container",
+              "fill": "#E6F7EC",
+              "cornerRadius": 10,
+              "gap": 8,
+              "padding": [
+                8,
+                12
+              ],
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "l5bqfs",
+                  "name": "Banner Check",
+                  "width": 16,
+                  "height": 16,
+                  "icon": "circle-check",
+                  "library": "lucide",
+                  "fill": "$online"
+                },
+                {
+                  "type": "text",
+                  "id": "TTtmZ",
+                  "name": "Banner Label",
+                  "fill": "#1D7A3E",
+                  "content": "Signed in as @noah",
+                  "fontFamily": "$font",
+                  "fontSize": 13,
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "i8S5E",
+              "name": "Hero",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 10,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "n8nzN",
+                  "name": "Morph Icon",
+                  "width": 64,
+                  "height": 64,
+                  "fill": {
+                    "type": "gradient",
+                    "gradientType": "linear",
+                    "enabled": true,
+                    "rotation": 180,
+                    "size": {
+                      "height": 1
+                    },
+                    "colors": [
+                      {
+                        "color": "#7C7AFF",
+                        "position": 0
+                      },
+                      {
+                        "color": "#5E5CE6",
+                        "position": 1
+                      }
+                    ]
+                  },
+                  "cornerRadius": 18,
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#5E5CE640",
+                    "offset": {
+                      "x": 0,
+                      "y": 8
+                    },
+                    "blur": 20
+                  },
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "ltald",
+                      "name": "Glyph",
+                      "width": 30,
+                      "height": 30,
+                      "icon": "key-round",
+                      "library": "lucide",
+                      "fill": "#FFFFFF"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "hOS1w",
+                  "name": "Head",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 6,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "mR6PJ",
+                      "name": "Title",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": 350,
+                      "content": "Enter Encryption Phrase",
+                      "textAlign": "center",
+                      "fontFamily": "$font",
+                      "fontSize": 30,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "text",
+                      "id": "IK9nI",
+                      "name": "Subtitle",
+                      "fill": "$text-secondary",
+                      "textGrowth": "fixed-width",
+                      "width": 300,
+                      "content": "Enter your 12-word phrase to decrypt your message history on this device.",
+                      "lineHeight": 1.45,
+                      "textAlign": "center",
+                      "fontFamily": "$font",
+                      "fontSize": 14,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "SZSgM",
+              "name": "Stepper Wrap",
+              "width": "fill_container",
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "d56SBH",
+                  "name": "Flow Stepper",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "mcIam",
+                      "name": "Step 1 Chip",
+                      "fill": "#FFFFFF00",
+                      "gap": 6,
+                      "padding": [
+                        5,
+                        10
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "rzR7Y",
+                          "name": "Step 1 Badge",
+                          "width": 20,
+                          "height": 20,
+                          "fill": "$accent",
+                          "cornerRadius": 10,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "LuOuI",
+                              "name": "Step 1 Check",
+                              "width": 12,
+                              "height": 12,
+                              "icon": "check",
+                              "library": "lucide",
+                              "fill": "#FFFFFF"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "MmaeM",
+                          "name": "Step 1 Label",
+                          "fill": "$text-secondary",
+                          "content": "Account",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 1,
+                      "id": "f08YY5",
+                      "name": "Connector",
+                      "fill": "$accent",
+                      "width": 24,
+                      "height": 2
+                    },
+                    {
+                      "type": "frame",
+                      "id": "YMees",
+                      "name": "Step 2 Chip",
+                      "fill": "$accent-soft",
+                      "cornerRadius": 15,
+                      "gap": 6,
+                      "padding": [
+                        5,
+                        10
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "zAUTI",
+                          "name": "Step 2 Badge",
+                          "width": 20,
+                          "height": 20,
+                          "fill": "$accent",
+                          "cornerRadius": 10,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "ZK9X9",
+                              "name": "Step 2 Num",
+                              "fill": "#FFFFFF",
+                              "content": "2",
+                              "fontFamily": "$font",
+                              "fontSize": 11,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "gd2vI",
+                          "name": "Step 2 Label",
+                          "fill": "$accent",
+                          "content": "Phrase",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "jKqcJ",
+              "name": "Phrase Card",
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "gap": 10,
+              "padding": 12,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "hgQRY",
+                  "name": "Card Head",
+                  "width": "fill_container",
+                  "justifyContent": "space_between",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "N01nmC",
+                      "name": "Card Label",
+                      "fill": "$text-secondary",
+                      "content": "ENCRYPTION PHRASE",
+                      "fontFamily": "$font",
+                      "fontSize": 11,
+                      "fontWeight": "600",
+                      "letterSpacing": 0.8
+                    },
+                    {
+                      "type": "frame",
+                      "id": "P1aHxV",
+                      "name": "Paste Chip",
+                      "fill": "$accent-soft",
+                      "cornerRadius": 12,
+                      "gap": 5,
+                      "padding": [
+                        4,
+                        10
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "HmiSI",
+                          "name": "Paste Icon",
+                          "width": 12,
+                          "height": 12,
+                          "icon": "clipboard",
+                          "library": "lucide",
+                          "fill": "$accent"
+                        },
+                        {
+                          "type": "text",
+                          "id": "z7sy4A",
+                          "name": "Paste Label",
+                          "fill": "$accent",
+                          "content": "Paste",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "qFEpL",
+                  "name": "Word Grid",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "n1C6u1",
+                      "name": "Row 1",
+                      "width": "fill_container",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "P01bH",
+                          "name": "Cell 1",
+                          "width": "fill_container",
+                          "height": 40,
+                          "fill": "$bg-grouped",
+                          "cornerRadius": 10,
+                          "gap": 8,
+                          "padding": [
+                            0,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "Wu02Y",
+                              "name": "Num 1",
+                              "fill": "$text-secondary",
+                              "content": "1.",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "iiFoP",
+                              "name": "Word 1",
+                              "fill": "$text-primary",
+                              "content": "ember",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 14,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "EWB4W",
+                          "name": "Cell 2",
+                          "width": "fill_container",
+                          "height": 40,
+                          "fill": "$bg-grouped",
+                          "cornerRadius": 10,
+                          "gap": 8,
+                          "padding": [
+                            0,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "a8FY2",
+                              "name": "Num 2",
+                              "fill": "$text-secondary",
+                              "content": "2.",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "OeX5A",
+                              "name": "Word 2",
+                              "fill": "$text-primary",
+                              "content": "copper",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 14,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "jtxbz",
+                      "name": "Row 2",
+                      "width": "fill_container",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "OKykV",
+                          "name": "Cell 3",
+                          "width": "fill_container",
+                          "height": 40,
+                          "fill": "$bg-grouped",
+                          "cornerRadius": 10,
+                          "gap": 8,
+                          "padding": [
+                            0,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "JP4Mq",
+                              "name": "Num 3",
+                              "fill": "$text-secondary",
+                              "content": "3.",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "a6Spfk",
+                              "name": "Word 3",
+                              "fill": "$text-primary",
+                              "content": "lyric",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 14,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "FLt9V",
+                          "name": "Cell 4",
+                          "width": "fill_container",
+                          "height": 40,
+                          "fill": "$bg-grouped",
+                          "cornerRadius": 10,
+                          "gap": 8,
+                          "padding": [
+                            0,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "vyULK",
+                              "name": "Num 4",
+                              "fill": "$text-secondary",
+                              "content": "4.",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "r4tPsc",
+                              "name": "Word 4",
+                              "fill": "$text-primary",
+                              "content": "marble",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 14,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "h4UEVr",
+                      "name": "Row 3",
+                      "width": "fill_container",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "kQonU",
+                          "name": "Cell 5",
+                          "width": "fill_container",
+                          "height": 40,
+                          "fill": "$bg-grouped",
+                          "cornerRadius": 10,
+                          "gap": 8,
+                          "padding": [
+                            0,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "dXls1",
+                              "name": "Num 5",
+                              "fill": "$text-secondary",
+                              "content": "5.",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "J7TyIT",
+                              "name": "Word 5",
+                              "fill": "$text-primary",
+                              "content": "frost",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 14,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "N4G3LV",
+                          "name": "Cell 6",
+                          "width": "fill_container",
+                          "height": 40,
+                          "fill": "$bg-grouped",
+                          "cornerRadius": 10,
+                          "gap": 8,
+                          "padding": [
+                            0,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "CX1vv",
+                              "name": "Num 6",
+                              "fill": "$text-secondary",
+                              "content": "6.",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "zVYhI",
+                              "name": "Word 6",
+                              "fill": "$text-primary",
+                              "content": "anchor",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 14,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "UJFN7",
+                      "name": "Row 4",
+                      "width": "fill_container",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "L0VRX",
+                          "name": "Cell 7",
+                          "width": "fill_container",
+                          "height": 40,
+                          "fill": "$bg-grouped",
+                          "cornerRadius": 10,
+                          "gap": 8,
+                          "padding": [
+                            0,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "WqcoZ",
+                              "name": "Num 7",
+                              "fill": "$text-secondary",
+                              "content": "7.",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "WxXg7",
+                              "name": "Word 7",
+                              "fill": "$text-primary",
+                              "content": "velvet",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 14,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "W1i3jP",
+                          "name": "Cell 8",
+                          "width": "fill_container",
+                          "height": 40,
+                          "fill": "$bg-grouped",
+                          "cornerRadius": 10,
+                          "gap": 8,
+                          "padding": [
+                            0,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "Fedjn",
+                              "name": "Num 8",
+                              "fill": "$text-secondary",
+                              "content": "8.",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "gxX9I",
+                              "name": "Word 8",
+                              "fill": "$text-primary",
+                              "content": "orbit",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 14,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ySCw8",
+                      "name": "Row 5",
+                      "width": "fill_container",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "x9CvV",
+                          "name": "Cell 9",
+                          "width": "fill_container",
+                          "height": 40,
+                          "fill": "$bg-grouped",
+                          "cornerRadius": 10,
+                          "gap": 8,
+                          "padding": [
+                            0,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "i1nRdk",
+                              "name": "Num 9",
+                              "fill": "$text-secondary",
+                              "content": "9.",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "T5pSX",
+                          "name": "Cell 10",
+                          "width": "fill_container",
+                          "height": 40,
+                          "fill": "$bg-grouped",
+                          "cornerRadius": 10,
+                          "gap": 8,
+                          "padding": [
+                            0,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "C7Mr1",
+                              "name": "Num 10",
+                              "fill": "$text-secondary",
+                              "content": "10.",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "eFzGf",
+                      "name": "Row 6",
+                      "width": "fill_container",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "s50Qj",
+                          "name": "Cell 11",
+                          "width": "fill_container",
+                          "height": 40,
+                          "fill": "$bg-grouped",
+                          "cornerRadius": 10,
+                          "gap": 8,
+                          "padding": [
+                            0,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "Ri86x",
+                              "name": "Num 11",
+                              "fill": "$text-secondary",
+                              "content": "11.",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "M7QXrV",
+                          "name": "Cell 12",
+                          "width": "fill_container",
+                          "height": 40,
+                          "fill": "$bg-grouped",
+                          "cornerRadius": 10,
+                          "gap": 8,
+                          "padding": [
+                            0,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "KtWuA",
+                              "name": "Num 12",
+                              "fill": "$text-secondary",
+                              "content": "12.",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "ACVfG",
+              "name": "Privacy Hint",
+              "width": "fill_container",
+              "gap": 6,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "DxfLw",
+                  "name": "Hint Lock",
+                  "width": 12,
+                  "height": 12,
+                  "icon": "lock-keyhole",
+                  "library": "lucide",
+                  "fill": "$text-secondary"
+                },
+                {
+                  "type": "text",
+                  "id": "sZRTE",
+                  "name": "Hint Label",
+                  "fill": "$text-secondary",
+                  "content": "Your phrase never leaves this device.",
+                  "fontFamily": "$font",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "NLunC",
+          "name": "Bottom Section",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": [
+            8,
+            20,
+            0,
+            20
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "DKlgH",
+              "name": "Unlock Button",
+              "width": "fill_container",
+              "height": 54,
+              "fill": "$accent",
+              "cornerRadius": 27,
+              "effect": {
+                "type": "shadow",
+                "shadowType": "outer",
+                "color": "#5E5CE640",
+                "offset": {
+                  "x": 0,
+                  "y": 8
+                },
+                "blur": 20
+              },
+              "gap": 8,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "S7ptY",
+                  "name": "CTA Label",
+                  "fill": "#FFFFFF",
+                  "content": "Unlock Messages",
+                  "fontFamily": "$font",
+                  "fontSize": 17,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "icon",
+                  "id": "bpSui",
+                  "name": "CTA Arrow",
+                  "width": 18,
+                  "height": 18,
+                  "icon": "arrow-right",
+                  "library": "lucide",
+                  "fill": "#FFFFFF"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "bw48Q",
+              "name": "Lost Phrase Link",
+              "fill": "$accent",
+              "content": "I lost my encryption phrase",
+              "fontFamily": "$font",
+              "fontSize": 15,
+              "fontWeight": "600"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "ctu5k",
+          "name": "Home Indicator",
+          "width": "fill_container",
+          "height": 23,
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "rectangle",
+              "cornerRadius": 3,
+              "id": "l82bjy",
+              "name": "Indicator",
+              "fill": "$text-primary",
+              "width": 140,
+              "height": 5
             }
           ]
         }

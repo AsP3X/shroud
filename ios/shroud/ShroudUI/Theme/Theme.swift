@@ -18,6 +18,7 @@ enum Theme {
     static let warningText = Color(red: 138 / 255, green: 94 / 255, blue: 12 / 255)
     static let warningIcon = Color(red: 185 / 255, green: 125 / 255, blue: 16 / 255)
     static let successBackground = Color(red: 230 / 255, green: 247 / 255, blue: 236 / 255)
+    static let successText = Color(red: 29 / 255, green: 122 / 255, blue: 62 / 255)
     static let strengthPanelBackground = Color(red: 250 / 255, green: 250 / 255, blue: 252 / 255)
     static let strengthTrackBackground = Color(red: 236 / 255, green: 236 / 255, blue: 239 / 255)
 

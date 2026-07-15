@@ -11,8 +11,8 @@ struct SignUpView: View {
     @State private var phraseWords: [String] = Array(repeating: "", count: 12)
     @State private var revealedWordCount = 0
     @State private var revealTask: Task<Void, Never>?
-
-    private let wordRevealDelayNanoseconds: UInt64 = 180_000_000
+    @State private var toastMessage: String?
+    @State private var toastDismissTask: Task<Void, Never>?
 
     private var passwordEvaluation: PasswordStrengthEvaluation {
         PasswordStrengthEvaluator.evaluate(password)
@@ -62,11 +62,13 @@ struct SignUpView: View {
             }
         }
         .navigationBarHidden(true)
+        .toast($toastMessage)
         .task {
             await startPhraseGeneration()
         }
         .onDisappear {
             revealTask?.cancel()
+            toastDismissTask?.cancel()
         }
     }
 
@@ -149,18 +151,11 @@ struct SignUpView: View {
         let generated = EncryptionPhraseGenerator.generate()
         phraseWords = generated
 
-        revealTask = Task {
-            for index in 0 ..< generated.count {
-                if Task.isCancelled { return }
-                try? await Task.sleep(nanoseconds: wordRevealDelayNanoseconds)
-                if Task.isCancelled { return }
-                await MainActor.run {
-                    withAnimation(.easeOut(duration: 0.28)) {
-                        revealedWordCount = index + 1
-                    }
-                }
-            }
-        }
+        EncryptionPhraseReveal.start(
+            wordCount: generated.count,
+            setRevealedCount: { revealedWordCount = $0 },
+            existingTask: &revealTask
+        )
 
         await revealTask?.value
     }
@@ -169,13 +164,21 @@ struct SignUpView: View {
         guard revealedWordCount == EncryptionPhraseGenerator.wordCount else { return }
 
         let phrase = phraseWords.joined(separator: " ")
-        UIPasteboard.general.setItems(
-            [["shroud.encryptionPhrase": phrase]],
-            options: [
-                .expirationDate: Date().addingTimeInterval(60),
-                .localOnly: true,
-            ]
-        )
+        guard EncryptionPhrasePasteboard.copy(phrase) else { return }
+
+        showToast("Encryption phrase copied")
+    }
+
+    private func showToast(_ message: String) {
+        toastDismissTask?.cancel()
+        toastMessage = message
+        toastDismissTask = Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            if Task.isCancelled { return }
+            await MainActor.run {
+                toastMessage = nil
+            }
+        }
     }
 
     private var warningCard: some View {

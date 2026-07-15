@@ -21,9 +21,7 @@ struct RootView: View {
         case .signUp:
             SignUpView(router: router)
         case .logIn:
-            LogInView(router: router)
-        case .enterEncryptionPhrase(let username):
-            EnterEncryptionPhraseView(router: router, username: username)
+            LogInFlowView(router: router)
         case .main:
             MainTabPlaceholderView(router: router)
         }

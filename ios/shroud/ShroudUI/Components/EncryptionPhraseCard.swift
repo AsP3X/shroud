@@ -60,6 +60,6 @@ struct EncryptionPhraseCard: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 7)
         .frame(maxWidth: .infinity)
-        .animation(.easeOut(duration: 0.28), value: isRevealed)
+        .animation(.easeOut(duration: EncryptionPhraseReveal.wordRevealAnimationDuration), value: isRevealed)
     }
 }
