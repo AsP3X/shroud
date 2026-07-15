@@ -4,7 +4,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 
 | | |
 | --- | --- |
-| **Status** | Milestones 1–3 **implemented** (Auth, Keys, Contacts). Next: Messages |
+| **Status** | Milestones 1–3 **implemented**. Milestone 4 (Messages HTTP) **API + schema locked** — ready to implement |
 | **Last updated** | 2026-07-15 |
 | **Related** | [architecture.md](./architecture.md) · [thought-collection.md](../thought-collection.md) · [README.md](../README.md) |
 
@@ -89,7 +89,14 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Area | Decision |
 | --- | --- |
 | Topology | **1:1 only** |
-| Conversations | Explicit `conversations` row; messages reference `conversation_id` |
+| Conversations | Explicit `conversations` row; **lazy-create on first message** |
+| Message address | `POST /messages` with **`peer_user_id`** (not conversation_id required) |
+| Ciphertext wire | **Base64** in JSON → `BYTEA` in DB |
+| content_type | `text` \| `media` |
+| Max ciphertext | **64 KiB** decoded |
+| Multi-device store | **One message row** + `message_deliveries` per device |
+| Real-time m4 | **HTTP only** (send + history); WS/Redis later |
+| Delivery receipts | `POST /messages/:id/delivered` for current device (m4); read later |
 | Retention | Indefinite until user delete |
 | History recovery | Login + encryption phrase on client → download ciphertext |
 | Discovery | Share **`users.id` (UUID)** + deep link; username for login/display |
@@ -319,17 +326,56 @@ Constraints:
 On **block**: delete both `contacts` rows for the pair; set any `pending` requests either way to `cancelled`; upsert block row.  
 On **unblock**: delete block row only.
 
+### Milestone 4 — Messages schema (locked)
+
+#### `conversations`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `UUID` PK | |
+| `user_a_id` | `UUID` NOT NULL FK → `users` | Store **ordered** pair: `user_a_id < user_b_id` |
+| `user_b_id` | `UUID` NOT NULL FK → `users` | |
+| `created_at` | `TIMESTAMPTZ` NOT NULL | |
+| UNIQUE | `(user_a_id, user_b_id)` | One 1:1 conversation per pair |
+
+#### `messages`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `UUID` PK | Server id |
+| `conversation_id` | `UUID` NOT NULL FK → `conversations` CASCADE | |
+| `sender_user_id` | `UUID` NOT NULL FK → `users` | |
+| `sender_device_id` | `UUID` NOT NULL FK → `devices` | |
+| `client_message_id` | `UUID` NOT NULL | Idempotency key from client |
+| `content_type` | `TEXT` NOT NULL | `text` \| `media` |
+| `ciphertext` | `BYTEA` NOT NULL | Decoded envelope; max 64 KiB |
+| `created_at` | `TIMESTAMPTZ` NOT NULL | |
+
+Constraints:
+
+- UNIQUE `(sender_user_id, client_message_id)` — idempotent POST
+- Indexes: `(conversation_id, created_at DESC, id DESC)` for cursor pagination
+
+#### `message_deliveries`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `message_id` | `UUID` NOT NULL FK → `messages` CASCADE | |
+| `device_id` | `UUID` NOT NULL FK → `devices` CASCADE | Recipient (or sender’s other) device |
+| `delivered_at` | `TIMESTAMPTZ` NULL | Set when device acks |
+| PK | `(message_id, device_id)` | |
+
+On send: insert delivery rows for **all devices of peer** + **all other devices of sender** (not the sending device, or include with delivered_at=now for sender device — prefer create rows for all devices of both users except mark sender device delivered immediately).
+
 ### Later entities (sketch)
 
 | Entity | Role |
 | --- | --- |
-| `conversations` | One row per 1:1 pair |
-| `messages` | Envelope metadata + ciphertext |
-| `message_receipts` / `message_deletions` | Delivered/read; for_me / for_everyone |
+| `message_deletions` | for_me / for_everyone |
 | `media_objects` | Nebular refs |
 | `push_tokens` | APNs per device |
 
-Redis: pub/sub, `rl:{scope}:{id}`, presence/typing keys.
+Redis: pub/sub, `rl:{scope}:{id}`, presence/typing keys (post-m4).
 
 ---
 
@@ -360,11 +406,17 @@ Redis: pub/sub, `rl:{scope}:{id}`, presence/typing keys.
 - Accept/reject only by **to_user**; cancel only by **from_user**.
 - Messaging (later) requires a `contacts` edge and no block either way.
 
-### Messages
+### Messages (m4 HTTP)
 
-- Durable ciphertext; fan-out to recipient devices + sender’s other devices.
-- Online: WS; offline: paginated catch-up + later APNs.
-- Minimal metadata; delete-for-me / delete-for-everyone (unlimited window).
+- Require **accepted contact** and no block either way.
+- `POST` with `peer_user_id` + `client_message_id` + `content_type` + base64 `ciphertext`.
+- Lazy-create conversation (ordered user pair).
+- Idempotent on `(sender_user_id, client_message_id)` → return existing message.
+- Create `message_deliveries` for peer devices + sender’s other devices; sending device marked delivered at insert.
+- History: `GET /messages?peer_user_id=&before_created_at=&before_id=&limit=` keyset page.
+- `POST /messages/:id/delivered` marks current device delivery.
+- WS / Redis push deferred after m4.
+- **Note:** one ciphertext blob shared across devices is a server simplification; true per-device sealed ciphertext can upgrade later.
 
 ### Media
 
@@ -403,7 +455,8 @@ Env-tunable later. Key pattern: `rl:{scope}:{id}`.
 | **1** | **Auth** | **Done** — register/login/logout/me/password, devices, sessions, migration 002, tests |
 | **2** | **Key bundles** | **Done** — migration 003; PUT/GET/status/otpk; atomic OTPK consume; tests |
 | **3** | **Contacts** | **Done** — migration 004; user card; requests; mutual accept; contacts; blocks |
-| 4 | Messages | Conversations; envelopes; WS + Redis fan-out; sender sync; delivery receipts; cursors |
+| **4** | **Messages (HTTP)** | Schema + routes below; lazy conversations; idempotent send; history cursor; delivery acks (no WS yet) |
+| 4b | Real-time | WebSocket + Redis fan-out (after m4) |
 | 5 | Media | Nebular presign; 25 MiB; attachments |
 | 6 | Receipts & presence | Read receipts; typing; online/last-seen |
 | 7 | Deletes | for me / everyone; account hard-delete |
@@ -742,16 +795,79 @@ Unblock only.
 | `UNAUTHORIZED` | No bearer |
 | `RATE_LIMITED` | Contact request budget |
 
+### Milestone 4 — Messages (locked)
+
+#### `POST /messages` → `201` (or `200` if idempotent replay)
+
+```json
+{
+  "peer_user_id": "<uuid>",
+  "client_message_id": "<uuid>",
+  "content_type": "text",
+  "ciphertext": "<base64>"
+}
+```
+
+Success:
+
+```json
+{
+  "id": "<uuid>",
+  "conversation_id": "<uuid>",
+  "sender_user_id": "<uuid>",
+  "sender_device_id": "<uuid>",
+  "client_message_id": "<uuid>",
+  "content_type": "text",
+  "ciphertext": "<base64>",
+  "created_at": "..."
+}
+```
+
+Errors: `FORBIDDEN` (not contacts / blocked), `VALIDATION_ERROR` (size, content_type, base64), `UNAUTHORIZED`.
+
+#### `GET /messages` → `200`
+
+Query: `peer_user_id` (required), `limit` (default 50, max 100), optional `before_created_at` + `before_id` cursor.
+
+```json
+{
+  "conversation_id": "<uuid>|null",
+  "messages": [ /* same fields as POST, newest or oldest first — **descending by created_at, id** */ ]
+}
+```
+
+Empty conversation (no messages yet / no row) → `messages: []`, `conversation_id: null`.
+
+#### `GET /conversations` → `200`
+
+List conversations for me with peer card + last message preview metadata (optional thin):
+
+```json
+{
+  "conversations": [
+    {
+      "id": "<uuid>",
+      "peer": { "id": "<uuid>", "username": "bob" },
+      "created_at": "...",
+      "last_message_at": "..."
+    }
+  ]
+}
+```
+
+#### `POST /messages/:id/delivered` → `204`
+
+Marks `message_deliveries.delivered_at = now()` for **current device**. `404` if message not addressed to this user/device.
+
 ### Later routes (outline)
 
 | Area | Routes |
 | --- | --- |
-| Health | readiness (DB + Redis) |
-| Messages | send, list (cursor), receipts, delete |
 | Media | presign upload/download |
 | Push | `PUT /push/token` |
-| Real-time | `WS /ws` |
-| Calls | signaling (post-messaging) |
+| Real-time | `WS /ws` + Redis |
+| Deletes | for me / everyone |
+| Calls | signaling |
 
 ---
 
