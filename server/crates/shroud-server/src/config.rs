@@ -14,6 +14,8 @@ pub struct Config {
     /// Optional Nebular OS base URL; when unset, media uses stub presign URLs.
     pub nebular_url: Option<String>,
     pub nebular_media_bucket: String,
+    /// Optional Redis URL for multi-replica WebSocket fan-out.
+    pub redis_url: Option<String>,
 }
 
 impl Config {
@@ -40,12 +42,18 @@ impl Config {
         let nebular_media_bucket =
             std::env::var("NEBULAR_MEDIA_BUCKET").unwrap_or_else(|_| "shroud-media".into());
 
+        let redis_url = std::env::var("REDIS_URL")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+
         Ok(Self {
             database_url,
             host,
             port,
             nebular_url,
             nebular_media_bucket,
+            redis_url,
         })
     }
 

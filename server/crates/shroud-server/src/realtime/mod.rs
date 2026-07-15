@@ -1,24 +1,52 @@
-//! In-process WebSocket fan-out (single API instance).
+//! WebSocket fan-out: in-process hub, optional Redis multi-replica pub/sub.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use redis::AsyncCommands;
+use redis::aio::ConnectionManager;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
 
 /// Per-device outbound event channel (JSON text frames).
 type DeviceTx = mpsc::UnboundedSender<String>;
 
+const USER_CHANNEL_PREFIX: &str = "shroud:user:";
+
 /// Shared connection hub keyed by device (and indexed by user).
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct RealtimeHub {
     by_device: RwLock<HashMap<Uuid, DeviceTx>>,
     devices_by_user: RwLock<HashMap<Uuid, HashSet<Uuid>>>,
+    /// When set, cross-instance fan-out uses Redis pub/sub.
+    redis: RwLock<Option<ConnectionManager>>,
+}
+
+impl std::fmt::Debug for RealtimeHub {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RealtimeHub")
+            .field("redis_enabled", &"<async>")
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct RedisFanout {
+    user_id: Uuid,
+    except_device_id: Option<Uuid>,
+    event: Value,
 }
 
 impl RealtimeHub {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Attaches a Redis connection manager for multi-replica publish.
+    pub async fn set_redis(&self, manager: ConnectionManager) {
+        *self.redis.write().await = Some(manager);
     }
 
     /// Registers a device connection; returns the receiver for WS write loop.
@@ -54,22 +82,8 @@ impl RealtimeHub {
         }
     }
 
-    /// Sends a JSON text event to specific devices if they are online.
-    pub async fn publish_to_devices(
-        &self,
-        device_ids: impl IntoIterator<Item = Uuid>,
-        payload: &str,
-    ) {
-        let by_device = self.by_device.read().await;
-        for device_id in device_ids {
-            if let Some(tx) = by_device.get(&device_id) {
-                let _ = tx.send(payload.to_string());
-            }
-        }
-    }
-
-    /// Sends to all online devices of the given users, optionally skipping one device.
-    pub async fn publish_to_users(
+    /// Delivers a JSON text event to local sockets for the given users.
+    pub async fn publish_local_to_users(
         &self,
         user_ids: impl IntoIterator<Item = Uuid>,
         except_device: Option<Uuid>,
@@ -90,4 +104,106 @@ impl RealtimeHub {
             }
         }
     }
+
+    /// Fan-out entry point used by HTTP handlers.
+    ///
+    /// Human: Without Redis, deliver locally. With Redis, publish only — every
+    /// instance (including this one) receives via subscriber and delivers locally
+    /// once, avoiding double delivery.
+    pub async fn publish_to_users(
+        &self,
+        user_ids: impl IntoIterator<Item = Uuid>,
+        except_device: Option<Uuid>,
+        payload: &str,
+    ) {
+        let users: Vec<Uuid> = user_ids.into_iter().collect();
+        let redis = self.redis.read().await.clone();
+
+        let Some(mut conn) = redis else {
+            self.publish_local_to_users(users, except_device, payload)
+                .await;
+            return;
+        };
+
+        let event: Value = match serde_json::from_str(payload) {
+            Ok(value) => value,
+            Err(_) => {
+                // Fallback: wrap raw string if payload is not JSON object.
+                Value::String(payload.to_string())
+            }
+        };
+
+        for user_id in users {
+            let envelope = RedisFanout {
+                user_id,
+                except_device_id: except_device,
+                event: event.clone(),
+            };
+            let body = match serde_json::to_string(&envelope) {
+                Ok(s) => s,
+                Err(err) => {
+                    tracing::warn!(error = %err, "redis fanout serialize failed");
+                    continue;
+                }
+            };
+            let channel = format!("{USER_CHANNEL_PREFIX}{user_id}");
+            if let Err(err) = conn.publish::<_, _, ()>(&channel, body).await {
+                tracing::warn!(error = %err, %user_id, "redis publish failed");
+            }
+        }
+    }
+}
+
+/// Spawns a background task that pattern-subscribes and fans out to the local hub.
+///
+/// Agent: CALLS redis PSUBSCRIBE shroud:user:*; delivers via publish_local_to_users.
+pub fn spawn_redis_subscriber(hub: Arc<RealtimeHub>, redis_url: String) {
+    tokio::spawn(async move {
+        loop {
+            if let Err(err) = run_subscriber(hub.clone(), &redis_url).await {
+                tracing::error!(error = %err, "redis subscriber stopped; reconnecting in 2s");
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+        }
+    });
+}
+
+async fn run_subscriber(hub: Arc<RealtimeHub>, redis_url: &str) -> Result<(), redis::RedisError> {
+    let client = redis::Client::open(redis_url)?;
+    let mut pubsub = client.get_async_pubsub().await?;
+    pubsub.psubscribe(format!("{USER_CHANNEL_PREFIX}*")).await?;
+    tracing::info!("redis realtime subscriber listening on shroud:user:*");
+
+    let mut stream = pubsub.on_message();
+    use futures_util::StreamExt;
+    while let Some(msg) = stream.next().await {
+        let payload: String = match msg.get_payload() {
+            Ok(p) => p,
+            Err(err) => {
+                tracing::warn!(error = %err, "redis message payload decode failed");
+                continue;
+            }
+        };
+        let envelope: RedisFanout = match serde_json::from_str(&payload) {
+            Ok(e) => e,
+            Err(err) => {
+                tracing::warn!(error = %err, "redis fanout envelope invalid");
+                continue;
+            }
+        };
+        let event_text = match serde_json::to_string(&envelope.event) {
+            Ok(s) => s,
+            Err(err) => {
+                tracing::warn!(error = %err, "redis event reserialize failed");
+                continue;
+            }
+        };
+        hub.publish_local_to_users([envelope.user_id], envelope.except_device_id, &event_text)
+            .await;
+    }
+
+    Err(redis::RedisError::from((
+        redis::ErrorKind::IoError,
+        "redis pubsub stream ended",
+    )))
 }

@@ -4,7 +4,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 
 | | |
 | --- | --- |
-| **Status** | Core API **implemented**. Redis multi-replica WS **plan locked** — ready to implement |
+| **Status** | Core API + optional **Redis WS fan-out** **implemented**. Next: APNs push or presence/typing |
 | **Last updated** | 2026-07-15 |
 | **Related** | [architecture.md](./architecture.md) · [thought-collection.md](../thought-collection.md) · [README.md](../README.md) |
 

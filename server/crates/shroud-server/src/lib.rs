@@ -45,11 +45,38 @@ pub async fn run() -> Result<(), AppError> {
         .await
         .map_err(|err| AppError::Internal(format!("migration failed: {err}")))?;
 
+    let realtime = Arc::new(RealtimeHub::new());
+    if let Some(redis_url) = config.redis_url.clone() {
+        match redis::Client::open(redis_url.as_str()) {
+            Ok(client) => match redis::aio::ConnectionManager::new(client).await {
+                Ok(manager) => {
+                    realtime.set_redis(manager).await;
+                    crate::realtime::spawn_redis_subscriber(realtime.clone(), redis_url);
+                    tracing::info!("realtime fan-out: Redis pub/sub enabled");
+                }
+                Err(err) => {
+                    tracing::error!(
+                        error = %err,
+                        "REDIS_URL set but connection manager failed; using in-process only"
+                    );
+                }
+            },
+            Err(err) => {
+                tracing::error!(
+                    error = %err,
+                    "REDIS_URL invalid; using in-process realtime only"
+                );
+            }
+        }
+    } else {
+        tracing::info!("realtime fan-out: in-process only (set REDIS_URL for multi-replica)");
+    }
+
     let state = AppState {
         pool,
         nebular_url: config.nebular_url.clone(),
         media_bucket: config.nebular_media_bucket.clone(),
-        realtime: Arc::new(RealtimeHub::new()),
+        realtime,
     };
     let app = Router::new()
         .merge(routes::router())
