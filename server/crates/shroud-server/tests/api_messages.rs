@@ -29,6 +29,7 @@ async fn test_app() -> Option<axum::Router> {
                 pool,
                 nebular_url: None,
                 media_bucket: "shroud-media".into(),
+                realtime: std::sync::Arc::new(shroud_server::realtime::RealtimeHub::new()),
             }),
     )
 }

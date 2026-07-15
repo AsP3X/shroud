@@ -7,10 +7,12 @@ pub mod auth;
 pub mod config;
 pub mod error;
 pub mod keys;
+pub mod realtime;
 pub mod routes;
 pub mod state;
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use axum::Router;
 use sqlx::postgres::PgPoolOptions;
@@ -19,6 +21,7 @@ use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitEx
 
 use crate::config::Config;
 use crate::error::AppError;
+use crate::realtime::RealtimeHub;
 use crate::state::AppState;
 
 /// Application entrypoint: configure tracing, connect to Postgres, serve HTTP.
@@ -46,6 +49,7 @@ pub async fn run() -> Result<(), AppError> {
         pool,
         nebular_url: config.nebular_url.clone(),
         media_bucket: config.nebular_media_bucket.clone(),
+        realtime: Arc::new(RealtimeHub::new()),
     };
     let app = Router::new()
         .merge(routes::router())

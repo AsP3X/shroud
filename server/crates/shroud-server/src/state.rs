@@ -1,6 +1,10 @@
 //! Shared Axum application state.
 
+use std::sync::Arc;
+
 use sqlx::PgPool;
+
+use crate::realtime::RealtimeHub;
 
 /// State injected into every API handler.
 #[derive(Clone)]
@@ -11,4 +15,6 @@ pub struct AppState {
     pub nebular_url: Option<String>,
     /// Object storage bucket name for encrypted media.
     pub media_bucket: String,
+    /// In-process WebSocket fan-out hub (single instance).
+    pub realtime: Arc<RealtimeHub>,
 }

@@ -44,6 +44,7 @@ async fn health_returns_ok_when_database_is_available() {
             pool,
             nebular_url: None,
             media_bucket: "shroud-media".into(),
+            realtime: std::sync::Arc::new(shroud_server::realtime::RealtimeHub::new()),
         });
 
     let response = app

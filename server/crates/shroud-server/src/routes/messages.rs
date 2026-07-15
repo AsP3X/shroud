@@ -278,20 +278,35 @@ pub async fn send_message(
         .await
         .map_err(|err| AppError::Internal(format!("commit message failed: {err}")))?;
 
-    Ok((
-        StatusCode::CREATED,
-        Json(MessageResponse {
-            id: message_id,
-            conversation_id,
-            sender_user_id: auth.user_id,
-            sender_device_id: auth.device_id,
-            client_message_id: body.client_message_id,
-            content_type: content_type.into(),
-            ciphertext: BASE64.encode(&ciphertext),
-            media_object_id: body.media_object_id,
-            created_at: now,
-        }),
-    ))
+    let response = MessageResponse {
+        id: message_id,
+        conversation_id,
+        sender_user_id: auth.user_id,
+        sender_device_id: auth.device_id,
+        client_message_id: body.client_message_id,
+        content_type: content_type.into(),
+        ciphertext: BASE64.encode(&ciphertext),
+        media_object_id: body.media_object_id,
+        created_at: now,
+    };
+
+    // Human: Notify online peer devices and sender's other devices (not this sender device).
+    let event = serde_json::json!({
+        "type": "message.new",
+        "message": &response,
+    });
+    if let Ok(payload) = serde_json::to_string(&event) {
+        state
+            .realtime
+            .publish_to_users(
+                [auth.user_id, body.peer_user_id],
+                Some(auth.device_id),
+                &payload,
+            )
+            .await;
+    }
+
+    Ok((StatusCode::CREATED, Json(response)))
 }
 
 /// `GET /messages`
@@ -457,6 +472,44 @@ pub async fn mark_delivered(
 
         if !exists {
             return Err(AppError::not_found("Message delivery not found."));
+        }
+        return Ok(StatusCode::NO_CONTENT);
+    }
+
+    // Notify both conversation participants' online devices except the acking device.
+    #[derive(FromRow)]
+    struct Pair {
+        user_a_id: Uuid,
+        user_b_id: Uuid,
+    }
+    if let Ok(Some(pair)) = sqlx::query_as::<_, Pair>(
+        r#"
+        SELECT c.user_a_id, c.user_b_id
+        FROM messages m
+        INNER JOIN conversations c ON c.id = m.conversation_id
+        WHERE m.id = $1
+        "#,
+    )
+    .bind(message_id)
+    .fetch_optional(&state.pool)
+    .await
+    {
+        let delivered_at = Utc::now();
+        let event = serde_json::json!({
+            "type": "message.delivered",
+            "message_id": message_id,
+            "device_id": auth.device_id,
+            "delivered_at": delivered_at,
+        });
+        if let Ok(payload) = serde_json::to_string(&event) {
+            state
+                .realtime
+                .publish_to_users(
+                    [pair.user_a_id, pair.user_b_id],
+                    Some(auth.device_id),
+                    &payload,
+                )
+                .await;
         }
     }
 

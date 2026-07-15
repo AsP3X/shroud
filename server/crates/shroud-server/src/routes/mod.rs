@@ -16,6 +16,7 @@ pub mod keys;
 pub mod media;
 pub mod messages;
 pub mod users;
+pub mod ws;
 
 /// Builds the versioned API router mounted at `/api/v1`.
 pub fn router() -> Router<AppState> {
@@ -59,6 +60,7 @@ pub fn router() -> Router<AppState> {
             .route("/messages/{id}/delivered", post(messages::mark_delivered))
             .route("/conversations", get(messages::list_conversations))
             .route("/media/uploads", post(media::create_upload))
-            .route("/media/{id}/download", post(media::create_download)),
+            .route("/media/{id}/download", post(media::create_download))
+            .route("/ws", get(ws::ws_upgrade)),
     )
 }

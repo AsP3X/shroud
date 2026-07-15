@@ -72,7 +72,7 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 2. **Key bundles** — **done** (per-device identity/SPK/OTPK, PUT/GET/status, atomic consume)  
 3. **Contacts** — **done** (UUID requests, mutual auto-accept, directed contacts, blocks)  
 4. **Messages** — **done** (HTTP send/history; lazy conversations; delivery acks)  
-4b. **WebSocket** — plan locked: in-process fan-out; `message.new` + `message.delivered`  
+4b. **WebSocket** — **done** (in-process fan-out; `message.new` + `message.delivered`)  
 5. **Media** — **done** (presign upload → message link; stub without Nebular; 25 MiB)  
 6. **Presence / receipts** — typing, online/last-seen (contacts only), optional read receipts  
 7. **Deletes** — for me / for everyone; hard account cascade  
