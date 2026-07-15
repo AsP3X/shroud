@@ -4,7 +4,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 
 | | |
 | --- | --- |
-| **Status** | Milestones 1–4 **implemented** (Auth, Keys, Contacts, Messages HTTP). Next: Media or WS |
+| **Status** | Milestones 1–4 **implemented**. Milestone 5 (Media) **API + schema locked** — ready to implement |
 | **Last updated** | 2026-07-15 |
 | **Related** | [architecture.md](./architecture.md) · [thought-collection.md](../thought-collection.md) · [README.md](../README.md) |
 
@@ -367,12 +367,32 @@ Constraints:
 
 On send: insert delivery rows for **all devices of peer** + **all other devices of sender** (not the sending device, or include with delivered_at=now for sender device — prefer create rows for all devices of both users except mark sender device delivered immediately).
 
+### Milestone 5 — Media schema (locked)
+
+#### `media_objects`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `UUID` PK | |
+| `uploader_user_id` | `UUID` NOT NULL FK → `users` | |
+| `uploader_device_id` | `UUID` NOT NULL FK → `devices` | |
+| `bucket` | `TEXT` NOT NULL | Default `shroud-media` |
+| `object_key` | `TEXT` NOT NULL | `{uploader_user_id}/{id}` |
+| `size_bytes` | `BIGINT` NULL | Declared size at presign; optional verify later |
+| `content_type` | `TEXT` NULL | Client-declared opaque type (e.g. `application/octet-stream`) |
+| `message_id` | `UUID` NULL FK → `messages` | Set when message posts with this media |
+| `created_at` | `TIMESTAMPTZ` NOT NULL | |
+| UNIQUE | `(bucket, object_key)` | |
+
+Extend `messages` (or keep ciphertext as envelope that may contain media keys; server also accepts):
+
+- Optional `media_object_id UUID NULL REFERENCES media_objects` on `messages` via new migration — link server-side for ACL.
+
 ### Later entities (sketch)
 
 | Entity | Role |
 | --- | --- |
 | `message_deletions` | for_me / for_everyone |
-| `media_objects` | Nebular refs |
 | `push_tokens` | APNs per device |
 
 Redis: pub/sub, `rl:{scope}:{id}`, presence/typing keys (post-m4).
@@ -456,8 +476,8 @@ Env-tunable later. Key pattern: `rl:{scope}:{id}`.
 | **2** | **Key bundles** | **Done** — migration 003; PUT/GET/status/otpk; atomic OTPK consume; tests |
 | **3** | **Contacts** | **Done** — migration 004; user card; requests; mutual accept; contacts; blocks |
 | **4** | **Messages (HTTP)** | **Done** — migration 005; send/list/conversations/delivered |
-| 4b | Real-time | WebSocket + Redis fan-out (after m4) |
-| 5 | Media | Nebular presign; 25 MiB; attachments |
+| 4b | Real-time | WebSocket + Redis fan-out |
+| **5** | **Media** | Schema + routes below; stub/Nebular presign; link on message send |
 | 6 | Receipts & presence | Read receipts; typing; online/last-seen |
 | 7 | Deletes | for me / everyone; account hard-delete |
 | 8 | APNs | Tokens; opaque data push |
@@ -859,11 +879,54 @@ List conversations for me with peer card + last message preview metadata (option
 
 Marks `message_deliveries.delivered_at = now()` for **current device**. `404` if message not addressed to this user/device.
 
+### Milestone 5 — Media (locked)
+
+#### `POST /media/uploads` → `201`
+
+```json
+{
+  "size_bytes": 12345,
+  "content_type": "application/octet-stream"
+}
+```
+
+`size_bytes` required, 1…25 MiB. Response:
+
+```json
+{
+  "media_object_id": "<uuid>",
+  "upload_url": "https://…",
+  "object_key": "<user_id>/<media_object_id>",
+  "expires_at": "…"
+}
+```
+
+#### `POST /media/:id/download` → `200`
+
+```json
+{
+  "download_url": "https://…",
+  "expires_at": "…"
+}
+```
+
+#### `POST /messages` extension
+
+Optional field: `"media_object_id": "<uuid>"` required when `content_type` is `media`.
+
+#### Media error codes
+
+| Code | When |
+| --- | --- |
+| `VALIDATION_ERROR` | size/type |
+| `FORBIDDEN` | not allowed to download / not owner of media |
+| `NOT_FOUND` | media missing |
+| `ALREADY_EXISTS` | media already linked to a message |
+
 ### Later routes (outline)
 
 | Area | Routes |
 | --- | --- |
-| Media | presign upload/download |
 | Push | `PUT /push/token` |
 | Real-time | `WS /ws` + Redis |
 | Deletes | for me / everyone |
