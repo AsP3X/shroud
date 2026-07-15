@@ -4,7 +4,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 
 | | |
 | --- | --- |
-| **Status** | Milestones 1–5 **implemented** (through Media). Next: WS real-time, deletes, or push |
+| **Status** | Milestones 1–5 **implemented**. Milestone 4b (WebSocket) **API locked** — ready to implement |
 | **Last updated** | 2026-07-15 |
 | **Related** | [architecture.md](./architecture.md) · [thought-collection.md](../thought-collection.md) · [README.md](../README.md) |
 
@@ -95,7 +95,10 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | content_type | `text` \| `media` |
 | Max ciphertext | **64 KiB** decoded |
 | Multi-device store | **One message row** + `message_deliveries` per device |
-| Real-time m4 | **HTTP only** (send + history); WS/Redis later |
+| Real-time m4 | HTTP send + history (done) |
+| Real-time 4b | **WebSocket** in-process fan-out; Redis multi-replica later |
+| WS events | `message.new`, `message.delivered` |
+| WS recipients | Peer devices + sender’s **other** devices (not the sending device for new) |
 | Delivery receipts | `POST /messages/:id/delivered` for current device (m4); read later |
 | Retention | Indefinite until user delete |
 | History recovery | Login + encryption phrase on client → download ciphertext |
@@ -476,7 +479,7 @@ Env-tunable later. Key pattern: `rl:{scope}:{id}`.
 | **2** | **Key bundles** | **Done** — migration 003; PUT/GET/status/otpk; atomic OTPK consume; tests |
 | **3** | **Contacts** | **Done** — migration 004; user card; requests; mutual accept; contacts; blocks |
 | **4** | **Messages (HTTP)** | **Done** — migration 005; send/list/conversations/delivered |
-| 4b | Real-time | WebSocket + Redis fan-out |
+| **4b** | **WebSocket** | In-process hub; auth first message (10s); push message.new + message.delivered |
 | **5** | **Media** | **Done** — migration 006; upload/download presign (stub/Nebular); media on messages |
 | 6 | Receipts & presence | Read receipts; typing; online/last-seen |
 | 7 | Deletes | for me / everyone; account hard-delete |
@@ -923,12 +926,58 @@ Optional field: `"media_object_id": "<uuid>"` required when `content_type` is `m
 | `NOT_FOUND` | media missing |
 | `ALREADY_EXISTS` | media already linked to a message |
 
+### Milestone 4b — WebSocket (locked)
+
+#### `GET /api/v1/ws` → WebSocket upgrade
+
+1. Client connects (no auth header required; optional).
+2. Within **10 seconds**, client sends text JSON:
+   ```json
+   { "type": "auth", "token": "<session token>" }
+   ```
+3. Server validates token (same as Bearer), binds socket to `(user_id, device_id)`, replies:
+   ```json
+   { "type": "auth.ok", "user_id": "<uuid>", "device_id": "<uuid>" }
+   ```
+4. On failure or timeout: close connection.
+
+#### Server → client events
+
+```json
+{
+  "type": "message.new",
+  "message": { /* same fields as POST /messages response */ }
+}
+```
+
+```json
+{
+  "type": "message.delivered",
+  "message_id": "<uuid>",
+  "device_id": "<uuid>",
+  "delivered_at": "..."
+}
+```
+
+#### Fan-out (in-process)
+
+- Keep `HashMap<device_id, mpsc::Sender<Event>>` (or user→devices) behind `tokio::sync::RwLock` on `AppState`.
+- On `POST /messages` success: notify all online devices of peer + sender except `sender_device_id`.
+- On `POST /messages/:id/delivered`: notify online devices of the **message sender** (other devices / peer may care — notify **sender_user**’s online devices and peer’s other devices; minimum: notify **sender’s devices** so ticks update).
+- **Recommended delivered notify:** all online devices of both conversation users except the device that just acked.
+
+#### Not in 4b
+
+- Redis pub/sub
+- Typing / presence
+- Client→server messages beyond `auth` (ignore or nack unknown types)
+
 ### Later routes (outline)
 
 | Area | Routes |
 | --- | --- |
 | Push | `PUT /push/token` |
-| Real-time | `WS /ws` + Redis |
+| Real-time | Redis multi-replica fan-out |
 | Deletes | for me / everyone |
 | Calls | signaling |
 
