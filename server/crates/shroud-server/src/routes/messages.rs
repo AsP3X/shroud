@@ -46,10 +46,18 @@ pub struct MessageResponse {
     pub sender_device_id: Uuid,
     pub client_message_id: Uuid,
     pub content_type: String,
-    pub ciphertext: String,
+    /// Null when deleted for everyone.
+    pub ciphertext: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub media_object_id: Option<Uuid>,
+    pub deleted_for_everyone: bool,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeleteMessageQuery {
+    /// `me` (default) or `everyone`.
+    pub scope: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -86,8 +94,9 @@ struct MessageRow {
     sender_device_id: Uuid,
     client_message_id: Uuid,
     content_type: String,
-    ciphertext: Vec<u8>,
+    ciphertext: Option<Vec<u8>>,
     media_object_id: Option<Uuid>,
+    deleted_for_everyone_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
 }
 
@@ -285,8 +294,9 @@ pub async fn send_message(
         sender_device_id: auth.device_id,
         client_message_id: body.client_message_id,
         content_type: content_type.into(),
-        ciphertext: BASE64.encode(&ciphertext),
+        ciphertext: Some(BASE64.encode(&ciphertext)),
         media_object_id: body.media_object_id,
+        deleted_for_everyone: false,
         created_at: now,
     };
 
@@ -334,12 +344,17 @@ pub async fn list_messages(
         if let (Some(before_at), Some(before_id)) = (query.before_created_at, query.before_id) {
             sqlx::query_as::<_, MessageRow>(
                 r#"
-            SELECT id, conversation_id, sender_user_id, sender_device_id,
-                   client_message_id, content_type, ciphertext, media_object_id, created_at
-            FROM messages
-            WHERE conversation_id = $1
-              AND (created_at, id) < ($2, $3)
-            ORDER BY created_at DESC, id DESC
+            SELECT m.id, m.conversation_id, m.sender_user_id, m.sender_device_id,
+                   m.client_message_id, m.content_type, m.ciphertext, m.media_object_id,
+                   m.deleted_for_everyone_at, m.created_at
+            FROM messages m
+            WHERE m.conversation_id = $1
+              AND (m.created_at, m.id) < ($2, $3)
+              AND NOT EXISTS (
+                SELECT 1 FROM message_hides h
+                WHERE h.message_id = m.id AND h.user_id = $5
+              )
+            ORDER BY m.created_at DESC, m.id DESC
             LIMIT $4
             "#,
             )
@@ -347,21 +362,28 @@ pub async fn list_messages(
             .bind(before_at)
             .bind(before_id)
             .bind(limit)
+            .bind(auth.user_id)
             .fetch_all(&state.pool)
             .await
         } else {
             sqlx::query_as::<_, MessageRow>(
                 r#"
-            SELECT id, conversation_id, sender_user_id, sender_device_id,
-                   client_message_id, content_type, ciphertext, media_object_id, created_at
-            FROM messages
-            WHERE conversation_id = $1
-            ORDER BY created_at DESC, id DESC
+            SELECT m.id, m.conversation_id, m.sender_user_id, m.sender_device_id,
+                   m.client_message_id, m.content_type, m.ciphertext, m.media_object_id,
+                   m.deleted_for_everyone_at, m.created_at
+            FROM messages m
+            WHERE m.conversation_id = $1
+              AND NOT EXISTS (
+                SELECT 1 FROM message_hides h
+                WHERE h.message_id = m.id AND h.user_id = $3
+              )
+            ORDER BY m.created_at DESC, m.id DESC
             LIMIT $2
             "#,
             )
             .bind(conversation_id)
             .bind(limit)
+            .bind(auth.user_id)
             .fetch_all(&state.pool)
             .await
         }
@@ -591,7 +613,8 @@ async fn load_by_client_id(
     sqlx::query_as::<_, MessageRow>(
         r#"
         SELECT id, conversation_id, sender_user_id, sender_device_id,
-               client_message_id, content_type, ciphertext, media_object_id, created_at
+               client_message_id, content_type, ciphertext, media_object_id,
+               deleted_for_everyone_at, created_at
         FROM messages
         WHERE sender_user_id = $1 AND client_message_id = $2
         "#,
@@ -619,6 +642,7 @@ async fn are_contacts(pool: &sqlx::PgPool, a: Uuid, b: Uuid) -> Result<bool, App
 }
 
 fn message_to_response(row: MessageRow) -> MessageResponse {
+    let deleted = row.deleted_for_everyone_at.is_some();
     MessageResponse {
         id: row.id,
         conversation_id: row.conversation_id,
@@ -626,8 +650,171 @@ fn message_to_response(row: MessageRow) -> MessageResponse {
         sender_device_id: row.sender_device_id,
         client_message_id: row.client_message_id,
         content_type: row.content_type,
-        ciphertext: BASE64.encode(&row.ciphertext),
-        media_object_id: row.media_object_id,
+        ciphertext: row
+            .ciphertext
+            .as_ref()
+            .filter(|_| !deleted)
+            .map(|bytes| BASE64.encode(bytes)),
+        media_object_id: if deleted { None } else { row.media_object_id },
+        deleted_for_everyone: deleted,
         created_at: row.created_at,
     }
+}
+
+/// `DELETE /messages/:id?scope=me|everyone`
+pub async fn delete_message(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path(message_id): Path<Uuid>,
+    Query(query): Query<DeleteMessageQuery>,
+) -> Result<StatusCode, AppError> {
+    let scope = query.scope.as_deref().unwrap_or("me");
+    match scope {
+        "me" => delete_for_me(&state, auth.user_id, message_id).await,
+        "everyone" => delete_for_everyone(&state, &auth, message_id).await,
+        _ => Err(AppError::validation("scope must be 'me' or 'everyone'.")),
+    }
+}
+
+async fn delete_for_me(
+    state: &AppState,
+    user_id: Uuid,
+    message_id: Uuid,
+) -> Result<StatusCode, AppError> {
+    let allowed: bool = sqlx::query_scalar(
+        r#"
+        SELECT EXISTS(
+            SELECT 1
+            FROM messages m
+            INNER JOIN conversations c ON c.id = m.conversation_id
+            WHERE m.id = $1
+              AND (c.user_a_id = $2 OR c.user_b_id = $2)
+        )
+        "#,
+    )
+    .bind(message_id)
+    .bind(user_id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("delete-for-me ACL failed: {err}")))?;
+
+    if !allowed {
+        return Err(AppError::not_found("Message not found."));
+    }
+
+    sqlx::query(
+        r#"
+        INSERT INTO message_hides (user_id, message_id)
+        VALUES ($1, $2)
+        ON CONFLICT DO NOTHING
+        "#,
+    )
+    .bind(user_id)
+    .bind(message_id)
+    .execute(&state.pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("hide message failed: {err}")))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn delete_for_everyone(
+    state: &AppState,
+    auth: &AuthContext,
+    message_id: Uuid,
+) -> Result<StatusCode, AppError> {
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
+
+    #[derive(FromRow)]
+    struct MsgMeta {
+        sender_user_id: Uuid,
+        conversation_id: Uuid,
+        deleted_for_everyone_at: Option<DateTime<Utc>>,
+    }
+
+    let meta = sqlx::query_as::<_, MsgMeta>(
+        r#"
+        SELECT sender_user_id, conversation_id, deleted_for_everyone_at
+        FROM messages
+        WHERE id = $1
+        FOR UPDATE
+        "#,
+    )
+    .bind(message_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("load message for delete failed: {err}")))?
+    .ok_or_else(|| AppError::not_found("Message not found."))?;
+
+    if meta.sender_user_id != auth.user_id {
+        return Err(AppError::forbidden(
+            "Only the sender can delete a message for everyone.",
+        ));
+    }
+
+    let now = Utc::now();
+    if meta.deleted_for_everyone_at.is_none() {
+        sqlx::query(
+            r#"
+            UPDATE messages
+            SET ciphertext = NULL,
+                media_object_id = NULL,
+                deleted_for_everyone_at = $1
+            WHERE id = $2
+            "#,
+        )
+        .bind(now)
+        .bind(message_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| AppError::Internal(format!("tombstone message failed: {err}")))?;
+
+        sqlx::query(
+            r#"
+            UPDATE media_objects
+            SET message_id = NULL
+            WHERE message_id = $1
+            "#,
+        )
+        .bind(message_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| AppError::Internal(format!("unlink media on delete failed: {err}")))?;
+    }
+
+    #[derive(FromRow)]
+    struct Pair {
+        user_a_id: Uuid,
+        user_b_id: Uuid,
+    }
+    let pair = sqlx::query_as::<_, Pair>(
+        r#"SELECT user_a_id, user_b_id FROM conversations WHERE id = $1"#,
+    )
+    .bind(meta.conversation_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("load conversation for delete failed: {err}")))?;
+
+    tx.commit()
+        .await
+        .map_err(|err| AppError::Internal(format!("commit delete everyone failed: {err}")))?;
+
+    let event = serde_json::json!({
+        "type": "message.deleted",
+        "message_id": message_id,
+        "conversation_id": meta.conversation_id,
+        "scope": "everyone",
+    });
+    if let Ok(payload) = serde_json::to_string(&event) {
+        state
+            .realtime
+            .publish_to_users([pair.user_a_id, pair.user_b_id], None, &payload)
+            .await;
+    }
+
+    Ok(StatusCode::NO_CONTENT)
 }

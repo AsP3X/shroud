@@ -147,6 +147,7 @@ async fn send_list_idempotent_and_delivered() {
     let msg = json_body(send).await;
     let message_id = msg["id"].as_str().unwrap().to_string();
     assert_eq!(msg["ciphertext"], ciphertext);
+    assert_eq!(msg["deleted_for_everyone"], false);
 
     // Idempotent replay
     let send2 = app
@@ -217,6 +218,98 @@ async fn send_list_idempotent_and_delivered() {
     let c = json_body(convos).await;
     assert_eq!(c["conversations"].as_array().unwrap().len(), 1);
     assert_eq!(c["conversations"][0]["peer"]["id"], user_b);
+}
+
+#[tokio::test]
+async fn delete_for_me_and_everyone() {
+    let Some(app) = test_app().await else {
+        eprintln!("skipping delete_for_me_and_everyone: no DATABASE_URL");
+        return;
+    };
+
+    let (token_a, user_a) = register(&app).await;
+    let (token_b, user_b) = register(&app).await;
+    become_contacts(&app, &token_a, &user_a, &token_b, &user_b).await;
+
+    let send = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/messages")
+                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "peer_user_id": user_b,
+                        "client_message_id": Uuid::new_v4(),
+                        "content_type": "text",
+                        "ciphertext": BASE64.encode(b"secret")
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let msg = json_body(send).await;
+    let message_id = msg["id"].as_str().unwrap().to_string();
+
+    let hide = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/messages/{message_id}?scope=me"))
+                .header(header::AUTHORIZATION, format!("Bearer {token_b}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(hide.status(), StatusCode::NO_CONTENT);
+
+    let list_b = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/messages?peer_user_id={user_a}"))
+                .header(header::AUTHORIZATION, format!("Bearer {token_b}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let history_b = json_body(list_b).await;
+    assert_eq!(history_b["messages"].as_array().unwrap().len(), 0);
+
+    let unsend = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/messages/{message_id}?scope=everyone"))
+                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(unsend.status(), StatusCode::NO_CONTENT);
+
+    let list_a = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/messages?peer_user_id={user_b}"))
+                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let history_a = json_body(list_a).await;
+    assert_eq!(history_a["messages"][0]["deleted_for_everyone"], true);
+    assert!(history_a["messages"][0]["ciphertext"].is_null());
 }
 
 #[tokio::test]

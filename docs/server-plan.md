@@ -4,7 +4,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 
 | | |
 | --- | --- |
-| **Status** | Core path through WS **implemented**. Milestone 7 (Deletes) **API + schema locked** — ready to implement |
+| **Status** | Milestones through **deletes + WS** **implemented**. Next: APNs push or Redis multi-replica |
 | **Last updated** | 2026-07-15 |
 | **Related** | [architecture.md](./architecture.md) · [thought-collection.md](../thought-collection.md) · [README.md](../README.md) |
 
@@ -503,7 +503,7 @@ Env-tunable later. Key pattern: `rl:{scope}:{id}`.
 | **4b** | **WebSocket** | **Done** — `/ws`, in-process hub, message.new + message.delivered |
 | **5** | **Media** | **Done** — migration 006; upload/download presign (stub/Nebular); media on messages |
 | 6 | Receipts & presence | Read receipts; typing; online/last-seen |
-| **7** | **Deletes** | Schema + routes below; tombstone; hides; account delete |
+| **7** | **Deletes** | **Done** — migration 007; for me / everyone; account delete; message.deleted WS |
 | 8 | APNs | Tokens; opaque data push |
 | 9 | Calls | Signaling + coturn; VoIP push |
 

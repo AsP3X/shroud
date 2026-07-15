@@ -256,6 +256,75 @@ pub async fn me(auth: AuthContext) -> Result<Json<MeResponse>, AppError> {
     }))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct DeleteAccountRequest {
+    pub password: String,
+}
+
+/// `DELETE /auth/account` — hard-delete account after password check.
+pub async fn delete_account(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Json(body): Json<DeleteAccountRequest>,
+) -> Result<StatusCode, AppError> {
+    let password_hash: String =
+        sqlx::query_scalar(r#"SELECT password_hash FROM users WHERE id = $1"#)
+            .bind(auth.user_id)
+            .fetch_one(&state.pool)
+            .await
+            .map_err(|err| AppError::Internal(format!("load user for delete failed: {err}")))?;
+
+    if !verify_password(&body.password, &password_hash)? {
+        return Err(AppError::invalid_credentials());
+    }
+
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
+
+    // Human: Tombstone sent messages so peers keep conversation history without ciphertext.
+    sqlx::query(
+        r#"
+        UPDATE messages
+        SET ciphertext = NULL,
+            media_object_id = NULL,
+            deleted_for_everyone_at = COALESCE(deleted_for_everyone_at, now())
+        WHERE sender_user_id = $1
+        "#,
+    )
+    .bind(auth.user_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("tombstone sent messages failed: {err}")))?;
+
+    sqlx::query(
+        r#"
+        UPDATE media_objects mo
+        SET message_id = NULL
+        FROM messages m
+        WHERE mo.message_id = m.id AND m.sender_user_id = $1
+        "#,
+    )
+    .bind(auth.user_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("unlink media on account delete failed: {err}")))?;
+
+    sqlx::query(r#"DELETE FROM users WHERE id = $1"#)
+        .bind(auth.user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| AppError::Internal(format!("delete user failed: {err}")))?;
+
+    tx.commit()
+        .await
+        .map_err(|err| AppError::Internal(format!("commit account delete failed: {err}")))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// `POST /auth/password` — change password; revoke other sessions.
 pub async fn change_password(
     State(state): State<AppState>,
