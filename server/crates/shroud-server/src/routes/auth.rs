@@ -127,6 +127,13 @@ pub async fn register(
         .await
         .map_err(|err| AppError::Internal(format!("commit register failed: {err}")))?;
 
+    tracing::info!(
+        user_id = %user_id,
+        username = %username,
+        device_id = %device_id,
+        "auth.register ok"
+    );
+
     Ok((
         StatusCode::CREATED,
         Json(AuthSessionResponse {
@@ -211,6 +218,13 @@ pub async fn login(
         .await
         .map_err(|err| AppError::Internal(format!("load device name failed: {err}")))?;
 
+    tracing::info!(
+        user_id = %user.id,
+        username = %user.username,
+        device_id = %device_id,
+        "auth.login ok"
+    );
+
     Ok(Json(AuthSessionResponse {
         token,
         user: UserDto {
@@ -238,6 +252,13 @@ pub async fn logout(
     .execute(&state.pool)
     .await
     .map_err(|err| AppError::Internal(format!("logout failed: {err}")))?;
+
+    tracing::info!(
+        user_id = %auth.user_id,
+        device_id = %auth.device_id,
+        session_id = %auth.session_id,
+        "auth.logout ok"
+    );
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -321,6 +342,12 @@ pub async fn delete_account(
     tx.commit()
         .await
         .map_err(|err| AppError::Internal(format!("commit account delete failed: {err}")))?;
+
+    tracing::info!(
+        user_id = %auth.user_id,
+        username = %auth.username,
+        "auth.account_delete ok"
+    );
 
     Ok(StatusCode::NO_CONTENT)
 }

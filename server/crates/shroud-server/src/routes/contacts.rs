@@ -216,6 +216,13 @@ pub async fn create_request(
         .await
         .map_err(|err| AppError::Internal(format!("commit contact request failed: {err}")))?;
 
+    tracing::info!(
+        request_id = %request_id,
+        from_user_id = %auth.user_id,
+        to_user_id = %body.user_id,
+        "contacts.request_create ok"
+    );
+
     Ok((
         StatusCode::CREATED,
         Json(ContactRequestResponse {
@@ -369,6 +376,14 @@ pub async fn accept_request(
     tx.commit()
         .await
         .map_err(|err| AppError::Internal(format!("commit accept failed: {err}")))?;
+
+    tracing::info!(
+        request_id = %row.id,
+        from_user_id = %row.from_user_id,
+        to_user_id = %row.to_user_id,
+        accepter_user_id = %auth.user_id,
+        "contacts.request_accept ok"
+    );
 
     Ok(Json(ContactRequestResponse {
         id: row.id,

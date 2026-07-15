@@ -35,7 +35,9 @@ COPY --from=builder /app/target/release/shroud-server /usr/local/bin/shroud-serv
 
 ENV HOST=0.0.0.0
 ENV PORT=8080
+# Overridden by compose to debug for local; keep info as image default for prod-like runs.
 ENV RUST_LOG=shroud_server=info,tower_http=info,sqlx=warn
+
 
 EXPOSE 8080
 

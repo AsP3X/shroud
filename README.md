@@ -22,11 +22,12 @@ End-to-end encrypted messenger: **Rust + PostgreSQL** server and a **native iOS*
 From the **repository root**:
 
 ```bash
-# Build and start Postgres + Redis + API
+# Build and start Postgres + Redis + Nebular + API
+# Nebular is built from ../ownly/nebular-os (override with NEBULAR_CONTEXT=...)
 docker compose up -d --build
 
-# Follow API logs
-docker compose logs -f api
+# Follow API + Nebular logs (Ownly-style RUST_LOG=debug by default)
+docker compose logs -f api nebular
 
 # Health check (host)
 curl http://127.0.0.1:8080/api/v1/health
@@ -35,9 +36,12 @@ curl http://127.0.0.1:8080/api/v1/health
 
 | Service | Host port | Notes |
 | --- | --- | --- |
-| `api` | `8080` | Axum `/api/v1`; migrations run on startup |
+| `api` | `8080` | Axum `/api/v1`; migrations run on startup; `x-request-id` on every response |
+| `nebular` | `9000` | Nebular OS object storage (media); needs sibling Ownly checkout or `NEBULAR_CONTEXT` |
 | `postgres` | `5432` | User/db/password: `shroud` |
 | `redis` | `6379` | Multi-replica WS fan-out |
+
+Logging: compose sets `RUST_LOG=debug` for `api` and `nebular` (same idea as Ownly). Override with `RUST_LOG=info docker compose up`.
 
 Stop:
 
@@ -57,12 +61,13 @@ docker compose up -d --build api
 Useful for fast iteration without rebuilding the image. Keep Compose infra running:
 
 ```bash
-docker compose up -d postgres redis
+docker compose up -d postgres redis nebular
 
 cp server/.env.example server/.env
 # Point at host-mapped ports (defaults already do):
 # DATABASE_URL=postgres://shroud:shroud@127.0.0.1:5432/shroud
 # REDIS_URL=redis://127.0.0.1:6379
+# NEBULAR_URL=http://127.0.0.1:9000
 
 cd server && cargo run -p shroud-server
 ```

@@ -161,6 +161,13 @@ pub async fn put_bundle(
         .await
         .map_err(|err| AppError::Internal(format!("commit key bundle failed: {err}")))?;
 
+    tracing::info!(
+        user_id = %auth.user_id,
+        device_id = %auth.device_id,
+        otpk_added = otpk.len(),
+        "keys.bundle_put ok"
+    );
+
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -188,6 +195,13 @@ pub async fn post_otpk(
     tx.commit()
         .await
         .map_err(|err| AppError::Internal(format!("commit otpk failed: {err}")))?;
+
+    tracing::info!(
+        user_id = %auth.user_id,
+        device_id = %auth.device_id,
+        otpk_added = otpk.len(),
+        "keys.otpk_replenish ok"
+    );
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -231,7 +245,7 @@ pub async fn keys_status(
 /// `GET /keys/bundle/:user_id` — fetch + optionally consume one OTPK.
 pub async fn get_bundle(
     State(state): State<AppState>,
-    _auth: AuthContext,
+    auth: AuthContext,
     Path(user_id): Path<Uuid>,
 ) -> Result<Json<BundleResponse>, AppError> {
     // Human: Unknown user and “no keys” share KEYS_REQUIRED to avoid account enumeration.
@@ -308,6 +322,14 @@ pub async fn get_bundle(
     tx.commit()
         .await
         .map_err(|err| AppError::Internal(format!("commit get bundle failed: {err}")))?;
+
+    tracing::info!(
+        requester_user_id = %auth.user_id,
+        target_user_id = %user_id,
+        device_id = %device_id,
+        otpk_consumed = otpk.is_some(),
+        "keys.bundle_get ok"
+    );
 
     Ok(Json(BundleResponse {
         user_id,

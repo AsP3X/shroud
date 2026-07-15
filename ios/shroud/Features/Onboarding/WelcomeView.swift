@@ -45,7 +45,7 @@ struct WelcomeView: View {
         HStack {
             Spacer(minLength: 0)
             Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                Haptics.impact(.light)
                 showServerSettings = true
             } label: {
                 Image(systemName: "gearshape.fill")

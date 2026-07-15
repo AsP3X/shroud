@@ -38,6 +38,12 @@ struct LogInFlowView: View {
             && !isSubmitting
     }
 
+    /// All 12 words present (local unlock only — never sent to the server).
+    private var canUnlockWithPhrase: Bool {
+        guard !isSubmitting else { return false }
+        return phraseWords.allSatisfy { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
     var body: some View {
         GroupedScreen {
             VStack(spacing: 0) {
@@ -205,12 +211,11 @@ struct LogInFlowView: View {
                 if isCredentialsPhase {
                     Task { await submitCredentials() }
                 } else {
-                    // Human: Phrase unlock is local crypto; server session already established.
-                    router.unlockMessages()
+                    submitPhraseUnlock()
                 }
             }
-            .opacity(isCredentialsPhase && !canSubmitCredentials ? 0.45 : 1)
-            .disabled(isCredentialsPhase && !canSubmitCredentials)
+            .opacity(primaryButtonDimmed ? 0.45 : 1)
+            .disabled(primaryButtonDisabled)
 
             ZStack {
                 VStack(spacing: 12) {
@@ -408,8 +413,22 @@ struct LogInFlowView: View {
         .frame(height: 50)
     }
 
+    private var primaryButtonDimmed: Bool {
+        if isCredentialsPhase {
+            return !canSubmitCredentials
+        }
+        return !canUnlockWithPhrase
+    }
+
+    private var primaryButtonDisabled: Bool {
+        if isCredentialsPhase {
+            return !canSubmitCredentials
+        }
+        return !canUnlockWithPhrase
+    }
+
     // Human: Server session first; phrase step stays local for decrypt later.
-    // Agent: CALLS SessionController.login; never sends phraseWords.
+    // Agent: CALLS SessionController.login; never sends phraseWords; does NOT unlock main yet.
     private func submitCredentials() async {
         guard canSubmitCredentials else { return }
         isSubmitting = true
@@ -418,10 +437,25 @@ struct LogInFlowView: View {
 
         do {
             try await sessionController.login(username: username, password: password)
-            phase = .encryptionPhrase
+            // Stay on this screen — RootView must not treat session alone as messaging unlock.
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
+                phase = .encryptionPhrase
+            }
         } catch {
             errorMessage = SessionController.userMessage(for: error)
         }
+    }
+
+    // Human: Phrase unlock is local crypto; server session already established.
+    // Agent: WRITES router.unlockMessages only; never uploads phraseWords.
+    private func submitPhraseUnlock() {
+        guard canUnlockWithPhrase else {
+            errorMessage = "Enter all 12 words of your encryption phrase."
+            return
+        }
+        errorMessage = nil
+        // Future: derive local identity keys from phrase before unlocking.
+        router.unlockMessages()
     }
 }
 

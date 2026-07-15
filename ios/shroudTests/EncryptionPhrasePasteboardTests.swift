@@ -1,4 +1,5 @@
 import Testing
+import UIKit
 @testable import shroud
 
 struct EncryptionPhrasePasteboardTests {
@@ -10,6 +11,15 @@ struct EncryptionPhrasePasteboardTests {
 
         #expect(copied)
         #expect(EncryptionPhrasePasteboard.read() == phrase)
+    }
+
+    @Test
+    @MainActor
+    func copyIsReadableAsGeneralPasteboardString() {
+        // Human: Users paste into Notes / password managers via the system plain-text payload.
+        let phrase = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima"
+        #expect(EncryptionPhrasePasteboard.copy(phrase))
+        #expect(UIPasteboard.general.string == phrase)
     }
 
     @Test

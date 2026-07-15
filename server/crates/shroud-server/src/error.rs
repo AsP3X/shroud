@@ -191,7 +191,20 @@ impl IntoResponse for AppError {
         };
 
         if status.is_server_error() {
-            tracing::error!(error = %self, "internal API error");
+            tracing::error!(
+                status = %status,
+                code = self.code(),
+                error = %self,
+                "internal API error"
+            );
+        } else if status.is_client_error() {
+            // Human: 4xx are expected (auth, validation); keep info-level so local stacks stay readable.
+            tracing::info!(
+                status = %status,
+                code = self.code(),
+                message = %self.client_message(),
+                "client API error"
+            );
         }
 
         (status, Json(body)).into_response()

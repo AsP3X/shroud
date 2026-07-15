@@ -16,8 +16,13 @@ final class AppRouter {
     /// Injected session; when set, drives unlock + logout.
     var sessionController: SessionController?
 
+    /// Human: Server session ≠ messaging unlock. Login must enter the 12-word phrase before main.
+    /// Agent: Only true after unlockMessages() or cold-start restore of an existing session.
+    var hasUnlockedMessaging = false
+
+    /// Ready for the main shell: API session present **and** local phrase unlock completed.
     var isUnlocked: Bool {
-        sessionController?.isSignedIn == true
+        hasUnlockedMessaging && sessionController?.isSignedIn == true
     }
 
     var rootRoute: AppRoute {
@@ -53,8 +58,17 @@ final class AppRouter {
         }
     }
 
-    /// After successful register/login, leave onboarding for the main shell.
+    /// After phrase step (login) or account create (sign up), leave onboarding for the main shell.
     func unlockMessages() {
+        hasUnlockedMessaging = true
+        path = []
+    }
+
+    /// Cold start: Keychain already has a session — treat as previously unlocked on this device.
+    /// Fresh login still requires the encryption-phrase step before calling `unlockMessages()`.
+    func restoreUnlockedSessionIfNeeded() {
+        guard sessionController?.isSignedIn == true else { return }
+        hasUnlockedMessaging = true
         path = []
     }
 
@@ -62,6 +76,7 @@ final class AppRouter {
     func logOut() {
         Task {
             await sessionController?.logout()
+            hasUnlockedMessaging = false
             path = []
         }
     }

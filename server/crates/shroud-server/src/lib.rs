@@ -7,18 +7,23 @@ pub mod auth;
 pub mod config;
 pub mod error;
 pub mod keys;
+pub mod logging;
 pub mod push;
 pub mod realtime;
+pub mod request_tracking;
 pub mod routes;
 pub mod state;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
-use axum::Router;
+use axum::{Router, extract::Request, middleware};
 use sqlx::postgres::PgPoolOptions;
-use tower_http::trace::TraceLayer;
-use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
+use tower_http::classify::ServerErrorsFailureClass;
+use tower_http::trace::{DefaultOnResponse, TraceLayer};
+use tower_http::LatencyUnit;
+use tracing::{Level, Span};
 
 use crate::config::Config;
 use crate::error::AppError;
@@ -26,30 +31,56 @@ use crate::push::{PushService, apns_config_from_env};
 use crate::realtime::RealtimeHub;
 use crate::state::AppState;
 
+/// Structured span per HTTP request — correlates with `x-request-id` (Ownly-style).
+fn make_request_span(request: &Request) -> Span {
+    let request_id = request
+        .headers()
+        .get(&request_tracking::REQUEST_ID_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("missing");
+    tracing::info_span!(
+        "http.request",
+        request_id = %request_id,
+        method = %request.method(),
+        uri = %request.uri(),
+        version = ?request.version(),
+    )
+}
+
 /// Application entrypoint: configure tracing, connect to Postgres, serve HTTP.
 pub async fn run() -> Result<(), AppError> {
     // Human: Local dev uses server/.env; production injects real env vars (dotenv is a no-op if missing).
     // Agent: CALLS dotenvy::dotenv before Config::from_env; never logs secret values.
     let _ = dotenvy::dotenv();
 
-    tracing_subscriber::registry()
-        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    logging::init_subscriber();
 
     let config = Config::from_env()?;
+    tracing::info!(
+        host = %config.host,
+        port = config.port,
+        redis = config.redis_url.is_some(),
+        nebular = config.nebular_url.is_some(),
+        media_bucket = %config.nebular_media_bucket,
+        "configuration loaded"
+    );
+
+    tracing::info!("connecting to postgres");
     let pool = PgPoolOptions::new()
         .max_connections(10)
         .connect(&config.database_url)
         .await
         .map_err(|err| AppError::Internal(format!("database connection failed: {err}")))?;
+    tracing::info!("postgres connection pool ready");
 
     // Human: Migrations run automatically at startup so every instance shares schema version.
     // Agent: CALLS sqlx::migrate! against server/migrations/postgres; DB DDL only.
+    tracing::info!("running database migrations");
     sqlx::migrate!("../../migrations/postgres")
         .run(&pool)
         .await
         .map_err(|err| AppError::Internal(format!("migration failed: {err}")))?;
+    tracing::info!("database migrations applied");
 
     let realtime = Arc::new(RealtimeHub::new());
     if let Some(redis_url) = config.redis_url.clone() {
@@ -93,14 +124,37 @@ pub async fn run() -> Result<(), AppError> {
         realtime,
         push,
     };
+
+    // Human: Last `.layer` is outermost — request-id runs first, then TraceLayer sees the header.
+    // Agent: OUTER request_id_middleware → TraceLayer → routes.
     let app = Router::new()
         .merge(routes::router())
-        .layer(TraceLayer::new_for_http())
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(make_request_span)
+                .on_response(
+                    DefaultOnResponse::new()
+                        .level(Level::INFO)
+                        .latency_unit(LatencyUnit::Millis),
+                )
+                .on_failure(
+                    |error: ServerErrorsFailureClass, latency: Duration, _span: &Span| {
+                        tracing::error!(
+                            error = %error,
+                            latency_ms = latency.as_millis() as u64,
+                            "http request failed"
+                        );
+                    },
+                ),
+        )
+        .layer(middleware::from_fn(
+            request_tracking::request_id_middleware,
+        ))
         .with_state(state);
 
     let addr: SocketAddr = config.socket_addr()?;
-    if config.nebular_url.is_some() {
-        tracing::info!("media presign: Nebular");
+    if let Some(ref url) = config.nebular_url {
+        tracing::info!(nebular_url = %url, bucket = %config.nebular_media_bucket, "media presign: Nebular");
     } else {
         tracing::info!("media presign: stub (set NEBULAR_URL for real object storage)");
     }

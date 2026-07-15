@@ -90,6 +90,22 @@ pub async fn create_upload(
     .map_err(|err| AppError::Internal(format!("insert media object failed: {err}")))?;
 
     let upload_url = presign_url(&state, "upload", &bucket, &object_key, media_id, expires_at);
+    let backend = if state.nebular_url.is_some() {
+        "nebular"
+    } else {
+        "stub"
+    };
+
+    tracing::info!(
+        user_id = %auth.user_id,
+        media_object_id = %media_id,
+        size_bytes = body.size_bytes,
+        bucket = %bucket,
+        object_key = %object_key,
+        backend,
+        expires_at = %expires_at,
+        "media.upload_presign ok"
+    );
 
     Ok((
         StatusCode::CREATED,
@@ -131,6 +147,21 @@ pub async fn create_download(
         &media.object_key,
         media.id,
         expires_at,
+    );
+    let backend = if state.nebular_url.is_some() {
+        "nebular"
+    } else {
+        "stub"
+    };
+
+    tracing::info!(
+        user_id = %auth.user_id,
+        media_object_id = %media.id,
+        bucket = %media.bucket,
+        object_key = %media.object_key,
+        backend,
+        expires_at = %expires_at,
+        "media.download_presign ok"
     );
 
     Ok(Json(DownloadResponse {
@@ -193,11 +224,27 @@ fn presign_url(
     if let Some(base) = &state.nebular_url {
         let base = base.trim_end_matches('/');
         // Human: Real Nebular signing can replace this path once wired; shape is S3-like.
-        format!(
+        let url = format!(
             "{base}/{bucket}/{object_key}?shroud_media_id={media_id}&expires={}",
             expires_at.timestamp()
-        )
+        );
+        tracing::debug!(
+            kind,
+            bucket,
+            object_key,
+            media_id = %media_id,
+            nebular_base = %base,
+            "media.presign nebular url built"
+        );
+        url
     } else {
+        tracing::debug!(
+            kind,
+            bucket,
+            object_key,
+            media_id = %media_id,
+            "media.presign stub url built"
+        );
         format!(
             "stub://{bucket}/{object_key}?op={kind}&media_id={media_id}&expires={}",
             expires_at.timestamp()

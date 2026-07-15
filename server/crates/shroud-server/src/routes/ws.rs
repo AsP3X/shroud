@@ -47,7 +47,23 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
     let (user_id, device_id) = match auth {
         Ok(Ok(ids)) => ids,
-        Ok(Err(_)) | Err(_) => {
+        Ok(Err(err)) => {
+            tracing::warn!(error = %err, "ws.auth failed");
+            let _ = sink
+                .send(Message::Text(
+                    json!({
+                        "type": "auth.error",
+                        "error": { "code": "UNAUTHORIZED", "message": "Authentication required." }
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await;
+            let _ = sink.close().await;
+            return;
+        }
+        Err(_) => {
+            tracing::warn!("ws.auth timeout");
             let _ = sink
                 .send(Message::Text(
                     json!({
@@ -63,6 +79,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         }
     };
 
+    tracing::info!(%user_id, %device_id, "ws.connected");
+
     let ok = json!({
         "type": "auth.ok",
         "user_id": user_id,
@@ -73,6 +91,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         .await
         .is_err()
     {
+        tracing::warn!(%user_id, %device_id, "ws.auth.ok send failed");
         return;
     }
 
@@ -106,6 +125,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     }
 
     state.realtime.unsubscribe(user_id, device_id).await;
+    tracing::info!(%user_id, %device_id, "ws.disconnected");
 }
 
 async fn authenticate_text(

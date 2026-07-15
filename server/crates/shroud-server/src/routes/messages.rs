@@ -322,6 +322,18 @@ pub async fn send_message(
         .notify_new_message_if_offline(body.peer_user_id, message_id, conversation_id, auth.user_id)
         .await;
 
+    tracing::info!(
+        message_id = %message_id,
+        conversation_id = %conversation_id,
+        sender_user_id = %auth.user_id,
+        sender_device_id = %auth.device_id,
+        peer_user_id = %body.peer_user_id,
+        content_type,
+        media_object_id = ?body.media_object_id,
+        ciphertext_bytes = ciphertext.len(),
+        "messages.send ok"
+    );
+
     Ok((StatusCode::CREATED, Json(response)))
 }
 

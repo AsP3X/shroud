@@ -178,12 +178,28 @@ struct SignUpView: View {
     }
 
     private func copyPhraseToPasteboard() {
-        guard revealedWordCount == EncryptionPhraseGenerator.wordCount else { return }
+        guard revealedWordCount == EncryptionPhraseGenerator.wordCount else {
+            showToast("Wait until all 12 words appear")
+            return
+        }
 
-        let phrase = phraseWords.joined(separator: " ")
-        guard EncryptionPhrasePasteboard.copy(phrase) else { return }
+        let phrase = phraseWords
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
 
-        showToast("Encryption phrase copied")
+        guard phrase.split(separator: " ").count == EncryptionPhraseGenerator.wordCount else {
+            showToast("Phrase isn’t ready to copy yet")
+            return
+        }
+
+        if EncryptionPhrasePasteboard.copy(phrase) {
+            Haptics.notification(.success)
+            showToast("Encryption phrase copied")
+        } else {
+            Haptics.notification(.error)
+            showToast("Couldn’t copy phrase — try again")
+        }
     }
 
     private func showToast(_ message: String) {

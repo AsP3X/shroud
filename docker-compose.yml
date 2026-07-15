@@ -1,5 +1,13 @@
-# Full local stack: Postgres, Redis, and shroud-server API.
+# Full local stack: Postgres, Redis, Nebular OS (object storage), and shroud-server API.
 # Agent: READS env defaults below; WRITES volumes; no production use.
+#
+# Nebular build context defaults to the sibling Ownly checkout (`../ownly/nebular-os`).
+# Override with NEBULAR_CONTEXT=/path/to/nebular-os if needed.
+x-shroud-logging: &shroud-logging
+  # Ownly-style verbose defaults for local compose; override with RUST_LOG=...
+  RUST_LOG: ${RUST_LOG:-debug}
+  RUST_LOG_FORMAT: ${RUST_LOG_FORMAT:-text}
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -31,6 +39,33 @@ services:
       timeout: 5s
       retries: 5
 
+  # Nebular OS object storage (same binary Ownly uses). Media bytes never hit the API.
+  nebular:
+    build:
+      context: ${NEBULAR_CONTEXT:-../ownly/nebular-os}
+      dockerfile: Dockerfile
+    container_name: shroud-nebular
+    environment:
+      <<: *shroud-logging
+      NOS_BIND_ADDR: 0.0.0.0:9000
+      NOS_DATA_DIR: /data/blobs
+      NOS_META_PATH: /data/meta/metadata.db
+      # Local-only secrets — not for production.
+      NOS_JWT_SECRET: shroud-compose-local-dev-nos-jwt-secret-not-for-production
+      NOS_SIGNING_SECRET: shroud-compose-local-dev-nos-signing-secret-not-for-production
+      JWT_SECRET: shroud-compose-local-dev-nos-jwt-secret-not-for-production
+      SIGNING_SECRET: shroud-compose-local-dev-nos-signing-secret-not-for-production
+    ports:
+      - "9000:9000"
+    volumes:
+      - shroud_nebular_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/health/ready >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 120s
+
   api:
     build:
       context: ./server
@@ -41,13 +76,17 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      nebular:
+        condition: service_healthy
     environment:
+      <<: *shroud-logging
       # Docker network hostnames (not localhost).
       DATABASE_URL: postgres://shroud:shroud@postgres:5432/shroud
       REDIS_URL: redis://redis:6379
+      NEBULAR_URL: http://nebular:9000
+      NEBULAR_MEDIA_BUCKET: shroud-media
       HOST: 0.0.0.0
       PORT: "8080"
-      RUST_LOG: shroud_server=info,tower_http=info,sqlx=warn
     ports:
       - "8080:8080"
     healthcheck:
@@ -67,3 +106,4 @@ services:
 volumes:
   shroud_pg_data:
   shroud_redis_data:
+  shroud_nebular_data:

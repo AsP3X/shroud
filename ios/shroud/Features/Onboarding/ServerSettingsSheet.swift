@@ -41,12 +41,28 @@ struct ServerSettingsSheet: View {
                 .animation(spring, value: draft.mode)
             }
             .background(Theme.background)
+            .scrollDismissesKeyboard(.interactively)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Close") { dismiss() }
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(Theme.accent)
+                }
+                // Number pad has no Return key; Done avoids stuck focus and reduces
+                // simulator keyboard accessory constraint thrash when switching fields.
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") {
+                        UIApplication.shared.sendAction(
+                            #selector(UIResponder.resignFirstResponder),
+                            to: nil,
+                            from: nil,
+                            for: nil
+                        )
+                    }
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
                 }
             }
         }
@@ -316,7 +332,7 @@ struct ServerSettingsSheet: View {
 
     private func selectMode(_ mode: ServerConnectionMode) {
         guard draft.mode != mode else { return }
-        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+        Haptics.impact(.soft)
         withAnimation(spring) {
             draft.mode = mode
             errorMessage = nil
@@ -327,7 +343,7 @@ struct ServerSettingsSheet: View {
         errorMessage = nil
         do {
             try serverConfig.save(draft)
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            Haptics.notification(.success)
             withAnimation(.spring(response: 0.28, dampingFraction: 0.7)) {
                 savePulse = true
             }
@@ -336,7 +352,7 @@ struct ServerSettingsSheet: View {
                 dismiss()
             }
         } catch {
-            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            Haptics.notification(.error)
             withAnimation(spring) {
                 errorMessage = error.localizedDescription
             }

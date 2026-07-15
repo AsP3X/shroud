@@ -19,11 +19,14 @@ struct RootView: View {
         .environment(serverConfig)
         .onAppear {
             router.sessionController = sessionController
+            // Human: Persisted session resumes main; a new login still shows the phrase step.
+            // Agent: Must NOT unlock on every isSignedIn flip — that skipped encryption phrase on login.
+            router.restoreUnlockedSessionIfNeeded()
         }
-        // Re-evaluate root when session appears/disappears after async auth.
         .onChange(of: sessionController.isSignedIn) { _, signedIn in
-            if signedIn {
-                router.unlockMessages()
+            if !signedIn {
+                // Session cleared (logout / revoke) — drop unlock so Welcome is root again.
+                router.hasUnlockedMessaging = false
             }
         }
     }
