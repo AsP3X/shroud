@@ -9,6 +9,7 @@ use crate::state::AppState;
 
 pub mod auth;
 pub mod blocks;
+pub mod calls;
 pub mod contacts;
 pub mod devices;
 pub mod health;
@@ -68,6 +69,13 @@ pub fn router() -> Router<AppState> {
             .route("/media/uploads", post(media::create_upload))
             .route("/media/{id}/download", post(media::create_download))
             .route("/presence/{user_id}", get(presence::get_presence))
+            .route("/calls/ice-servers", get(calls::ice_servers))
+            .route("/calls", post(calls::create_call))
+            .route("/calls/{id}", get(calls::get_call))
+            .route("/calls/{id}/accept", post(calls::accept_call))
+            .route("/calls/{id}/reject", post(calls::reject_call))
+            .route("/calls/{id}/hangup", post(calls::hangup_call))
+            .route("/calls/{id}/signal", post(calls::signal_call))
             .route("/ws", get(ws::ws_upgrade))
             .route("/push/token", put(push::put_token)),
     )

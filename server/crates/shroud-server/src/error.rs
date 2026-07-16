@@ -151,6 +151,22 @@ impl AppError {
         }
     }
 
+    pub fn call_busy() -> Self {
+        Self::Api {
+            status: StatusCode::CONFLICT,
+            code: "CALL_BUSY",
+            message: "The other party is busy on another call.".into(),
+        }
+    }
+
+    pub fn conflict(code: &'static str, message: impl Into<String>) -> Self {
+        Self::Api {
+            status: StatusCode::CONFLICT,
+            code,
+            message: message.into(),
+        }
+    }
+
     /// Legacy-friendly constructors used by existing routes/tests.
     pub fn bad_request(message: impl Into<String>) -> Self {
         Self::validation(message)

@@ -21,6 +21,7 @@ fn test_state(pool: sqlx::PgPool) -> shroud_server::state::AppState {
         media_bucket: "shroud-media".into(),
         realtime,
         push,
+        ice_servers: vec![],
     }
 }
 

@@ -1,8 +1,7 @@
-//! Integration tests for HTTP message relay.
+//! Integration tests for call signaling (milestone 9).
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use shroud_server::routes;
@@ -53,7 +52,7 @@ async fn json_body(response: axum::response::Response) -> Value {
 
 fn unique_user() -> (String, String) {
     let id = &Uuid::new_v4().simple().to_string()[..12];
-    (format!("m_{id}"), "correct-horse-battery".into())
+    (format!("c_{id}"), "correct-horse-battery".into())
 }
 
 async fn register(app: &axum::Router) -> (String, String) {
@@ -116,9 +115,34 @@ async fn become_contacts(
 }
 
 #[tokio::test]
-async fn send_list_idempotent_and_delivered() {
+async fn ice_servers_requires_auth() {
     let Some(app) = test_app().await else {
-        eprintln!("skipping send_list_idempotent_and_delivered: no DATABASE_URL");
+        eprintln!("skipping ice_servers_requires_auth: no DATABASE_URL");
+        return;
+    };
+
+    let (token, _) = register(&app).await;
+    let ok = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/calls/ice-servers")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(ok.status(), StatusCode::OK);
+    let body = json_body(ok).await;
+    assert!(body["ice_servers"].is_array());
+}
+
+#[tokio::test]
+async fn call_ring_accept_hangup_flow() {
+    let Some(app) = test_app().await else {
+        eprintln!("skipping call_ring_accept_hangup_flow: no DATABASE_URL");
         return;
     };
 
@@ -126,23 +150,19 @@ async fn send_list_idempotent_and_delivered() {
     let (token_b, user_b) = register(&app).await;
     become_contacts(&app, &token_a, &user_a, &token_b, &user_b).await;
 
-    let client_message_id = Uuid::new_v4();
-    let ciphertext = BASE64.encode(b"sealed-hello");
-
-    let send = app
+    let create = app
         .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/v1/messages")
+                .uri("/api/v1/calls")
                 .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     json!({
                         "peer_user_id": user_b,
-                        "client_message_id": client_message_id,
-                        "content_type": "text",
-                        "ciphertext": ciphertext
+                        "modality": "voice",
+                        "sdp_offer": "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\n"
                     })
                     .to_string(),
                 ))
@@ -150,27 +170,61 @@ async fn send_list_idempotent_and_delivered() {
         )
         .await
         .expect("response");
-    assert_eq!(send.status(), StatusCode::CREATED);
-    let msg = json_body(send).await;
-    let message_id = msg["id"].as_str().unwrap().to_string();
-    assert_eq!(msg["ciphertext"], ciphertext);
-    assert_eq!(msg["deleted_for_everyone"], false);
+    assert_eq!(create.status(), StatusCode::CREATED);
+    let created = json_body(create).await;
+    assert_eq!(created["status"], "ringing");
+    let call_id = created["id"].as_str().unwrap();
 
-    // Idempotent replay
-    let send2 = app
+    // Second call while ringing → busy.
+    let busy = app
         .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/v1/messages")
+                .uri("/api/v1/calls")
+                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "peer_user_id": user_b, "modality": "voice" }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(busy.status(), StatusCode::CONFLICT);
+
+    let accept = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/calls/{call_id}/accept"))
+                .header(header::AUTHORIZATION, format!("Bearer {token_b}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "sdp_answer": "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\n" }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(accept.status(), StatusCode::OK);
+    let accepted = json_body(accept).await;
+    assert_eq!(accepted["status"], "active");
+
+    // Signal ICE from A → B.
+    let signal = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/calls/{call_id}/signal"))
                 .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     json!({
-                        "peer_user_id": user_b,
-                        "client_message_id": client_message_id,
-                        "content_type": "text",
-                        "ciphertext": ciphertext
+                        "signal_type": "ice_candidate",
+                        "payload": "{\"candidate\":\"candidate:1 1 UDP 1 127.0.0.1 9 typ host\"}"
                     })
                     .to_string(),
                 ))
@@ -178,176 +232,88 @@ async fn send_list_idempotent_and_delivered() {
         )
         .await
         .expect("response");
-    assert_eq!(send2.status(), StatusCode::OK);
-    let msg2 = json_body(send2).await;
-    assert_eq!(msg2["id"], message_id);
+    assert_eq!(signal.status(), StatusCode::NO_CONTENT);
 
-    let list = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/api/v1/messages?peer_user_id={user_a}"))
-                .header(header::AUTHORIZATION, format!("Bearer {token_b}"))
-                .body(Body::empty())
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(list.status(), StatusCode::OK);
-    let history = json_body(list).await;
-    assert_eq!(history["messages"].as_array().unwrap().len(), 1);
-
-    let delivered = app
+    let hangup = app
         .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(format!("/api/v1/messages/{message_id}/delivered"))
-                .header(header::AUTHORIZATION, format!("Bearer {token_b}"))
-                .body(Body::empty())
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(delivered.status(), StatusCode::NO_CONTENT);
-
-    let convos = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/conversations")
+                .uri(format!("/api/v1/calls/{call_id}/hangup"))
                 .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
                 .body(Body::empty())
                 .expect("request"),
         )
         .await
         .expect("response");
-    assert_eq!(convos.status(), StatusCode::OK);
-    let c = json_body(convos).await;
-    assert_eq!(c["conversations"].as_array().unwrap().len(), 1);
-    assert_eq!(c["conversations"][0]["peer"]["id"], user_b);
+    assert_eq!(hangup.status(), StatusCode::OK);
+    let ended = json_body(hangup).await;
+    assert_eq!(ended["status"], "ended");
 }
 
 #[tokio::test]
-async fn delete_for_me_and_everyone() {
+async fn reject_and_non_contact() {
     let Some(app) = test_app().await else {
-        eprintln!("skipping delete_for_me_and_everyone: no DATABASE_URL");
+        eprintln!("skipping reject_and_non_contact: no DATABASE_URL");
         return;
     };
 
     let (token_a, user_a) = register(&app).await;
     let (token_b, user_b) = register(&app).await;
+    let (token_c, user_c) = register(&app).await;
+
+    // Non-contact.
+    let denied = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/calls")
+                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "peer_user_id": user_c }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+
     become_contacts(&app, &token_a, &user_a, &token_b, &user_b).await;
 
-    let send = app
+    let create = app
         .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/v1/messages")
+                .uri("/api/v1/calls")
                 .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
-                    json!({
-                        "peer_user_id": user_b,
-                        "client_message_id": Uuid::new_v4(),
-                        "content_type": "text",
-                        "ciphertext": BASE64.encode(b"secret")
-                    })
-                    .to_string(),
+                    json!({ "peer_user_id": user_b }).to_string(),
                 ))
                 .expect("request"),
         )
         .await
         .expect("response");
-    let msg = json_body(send).await;
-    let message_id = msg["id"].as_str().unwrap().to_string();
+    assert_eq!(create.status(), StatusCode::CREATED);
+    let call_id = json_body(create).await["id"].as_str().unwrap().to_string();
 
-    let hide = app
+    let reject = app
         .clone()
         .oneshot(
             Request::builder()
-                .method("DELETE")
-                .uri(format!("/api/v1/messages/{message_id}?scope=me"))
+                .method("POST")
+                .uri(format!("/api/v1/calls/{call_id}/reject"))
                 .header(header::AUTHORIZATION, format!("Bearer {token_b}"))
                 .body(Body::empty())
                 .expect("request"),
         )
         .await
         .expect("response");
-    assert_eq!(hide.status(), StatusCode::NO_CONTENT);
+    assert_eq!(reject.status(), StatusCode::OK);
+    assert_eq!(json_body(reject).await["status"], "rejected");
 
-    let list_b = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/api/v1/messages?peer_user_id={user_a}"))
-                .header(header::AUTHORIZATION, format!("Bearer {token_b}"))
-                .body(Body::empty())
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    let history_b = json_body(list_b).await;
-    assert_eq!(history_b["messages"].as_array().unwrap().len(), 0);
-
-    let unsend = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("DELETE")
-                .uri(format!("/api/v1/messages/{message_id}?scope=everyone"))
-                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
-                .body(Body::empty())
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(unsend.status(), StatusCode::NO_CONTENT);
-
-    let list_a = app
-        .oneshot(
-            Request::builder()
-                .uri(format!("/api/v1/messages?peer_user_id={user_b}"))
-                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
-                .body(Body::empty())
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    let history_a = json_body(list_a).await;
-    assert_eq!(history_a["messages"][0]["deleted_for_everyone"], true);
-    assert!(history_a["messages"][0]["ciphertext"].is_null());
-}
-
-#[tokio::test]
-async fn cannot_message_non_contact() {
-    let Some(app) = test_app().await else {
-        eprintln!("skipping cannot_message_non_contact: no DATABASE_URL");
-        return;
-    };
-
-    let (token_a, _) = register(&app).await;
-    let (_, user_b) = register(&app).await;
-
-    let send = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/messages")
-                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(
-                    json!({
-                        "peer_user_id": user_b,
-                        "client_message_id": Uuid::new_v4(),
-                        "content_type": "text",
-                        "ciphertext": BASE64.encode(b"nope")
-                    })
-                    .to_string(),
-                ))
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(send.status(), StatusCode::FORBIDDEN);
+    let _ = token_c;
 }

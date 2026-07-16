@@ -134,12 +134,18 @@ pub async fn run() -> Result<(), AppError> {
     };
     let push = PushService::new(pool.clone(), realtime.clone(), apns);
 
+    tracing::info!(
+        ice_server_count = config.ice_servers.len(),
+        "webrtc ice servers loaded"
+    );
+
     let state = AppState {
         pool,
         nebular_url: config.nebular_url.clone(),
         media_bucket: config.nebular_media_bucket.clone(),
         realtime,
         push,
+        ice_servers: config.ice_servers.clone(),
     };
 
     // Human: Last `.layer` is outermost — request-id runs first, then TraceLayer sees the header.

@@ -4,7 +4,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 
 | | |
 | --- | --- |
-| **Status** | Server vertical slice through **m8 APNs** (register + offline gate + live HTTP/2 token-auth client when `APNS_*` set). Next: **m9 Calls** |
+| **Status** | Server vertical slice through **m9 Calls** (1:1 signaling + ICE config + optional coturn profile). VoIP-priority APNs still uses data push; dedicated VoIP cert optional later |
 | **Last updated** | 2026-07-16 |
 | **Related** | [architecture.md](./architecture.md) · [thought-collection.md](../thought-collection.md) · [README.md](../README.md) |
 
@@ -513,9 +513,14 @@ Env-tunable later. Key pattern: `rl:{scope}:{id}`.
 - WS must auth within 10s.
 - **Data APNs** when recipient has **no** online WS: silent `content-available` payload with opaque `message_id` / `conversation_id` / `peer_user_id` only. Requires `APNS_KEY_PATH` or `APNS_KEY_PEM` + `APNS_KEY_ID` + `APNS_TEAM_ID` + `APNS_TOPIC`. Per-device host from `push_tokens.environment`. Permanent APNs token errors delete the row.
 
-### Calls (later)
+### Calls (m9)
 
-- Signaling in API; coturn; VoIP push.
+- **1:1 only**; contacts required; one ringing/active call per user.
+- State machine: `ringing` → `active` | `rejected` | `cancelled` | `missed`; `active` → `ended`.
+- SDP/ICE are **opaque client blobs** (relayed, not stored).
+- `GET /calls/ice-servers` returns STUN (default) + optional TURN from env.
+- Compose: `docker compose --profile calls up` starts **coturn** (host network, local-only credentials).
+- Offline callee: opaque APNs data push with `call_id` / `peer_user_id` / `modality` (VoIP cert path later).
 
 ---
 
@@ -532,7 +537,7 @@ Env-tunable later. Key pattern: `rl:{scope}:{id}`.
 | **6** | **Receipts & presence** | **Done** — migration 009 `message_reads`; `POST /messages/:id/read` + bulk; `GET /presence/:user_id`; WS `typing` + `presence.update` + `message.read` |
 | **7** | **Deletes** | **Done** — migration 007; for me / everyone; account delete; message.deleted WS |
 | **8** | **APNs** | **Done** — migration 008; `PUT /push/token`; offline WS gate; HTTP/2 ES256 JWT client (`.p8` / `APNS_KEY_PEM`); drop invalid tokens |
-| 9 | Calls | Signaling + coturn; VoIP push |
+| **9** | **Calls** | **Done** — migration 010; ring/accept/reject/hangup/signal; `GET /calls/ice-servers`; WS events; coturn compose profile; opaque call data push |
 
 **Compose:** Postgres + Redis + Nebular + API → later + coturn.
 
@@ -1101,6 +1106,37 @@ Server → peer only (contacts required):
 
 Offline fan-out only when the user has **no** remaining online devices.
 
+### Milestone 9 — Calls (locked)
+
+#### Schema `calls`
+
+| Column | Notes |
+| --- | --- |
+| `id` | UUID |
+| `caller_user_id` / `caller_device_id` | Originator |
+| `callee_user_id` / `callee_device_id` | Target; device set on accept |
+| `modality` | `voice` \| `video` |
+| `status` | `ringing` \| `active` \| `ended` \| `rejected` \| `busy` \| `missed` \| `cancelled` |
+| `ended_reason` / timestamps | Minimal metadata only |
+
+#### Routes
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/calls/ice-servers` | Auth; STUN/TURN for WebRTC |
+| POST | `/calls` | `{ peer_user_id, modality?, sdp_offer? }` → `201` ringing |
+| GET | `/calls/:id` | Participant only |
+| POST | `/calls/:id/accept` | Callee; `{ sdp_answer? }` |
+| POST | `/calls/:id/reject` | Callee while ringing |
+| POST | `/calls/:id/hangup` | Cancel / end |
+| POST | `/calls/:id/signal` | `{ signal_type, payload }` relay to peer |
+
+#### WebSocket events
+
+- `call.ring`, `call.accepted`, `call.ended`, `call.signal`
+
+Errors: `CALL_BUSY` (409) when peer or self already in ringing/active call; `FORBIDDEN` non-contacts.
+
 ### Milestone 8 — Push (locked)
 
 #### `PUT /push/token` → `204`
@@ -1161,7 +1197,7 @@ Add optional:
 
 | Area | Routes |
 | --- | --- |
-| Calls | signaling |
+
 
 ---
 
@@ -1181,6 +1217,8 @@ Add optional:
 | `APNS_KEY_ID` | Key ID from Apple developer |
 | `APNS_TEAM_ID` | Apple Team ID (JWT `iss`) |
 | `APNS_TOPIC` | App bundle id (`apns-topic`) |
+| `TURN_URLS` / `TURN_USERNAME` / `TURN_CREDENTIAL` | Optional TURN for ICE response |
+| `ICE_SERVERS_JSON` | Full ICE server JSON array (overrides TURN_* defaults) |
 
 ---
 
@@ -1200,7 +1238,8 @@ Add optional:
 2. **Nebular presign wire format** — real signing when not stub; Nebular in Compose for local.
 3. **Multi-device key fetch for send** — m2 is single best-device GET; messaging will likely add list/fetch-all-device bundles for fan-out.
 4. **Redis rate-limit wiring** — budgets documented; not fully enforced yet.
-5. **Calls** — signaling + coturn (milestone 9); VoIP push for CallKit.
+5. **VoIP / CallKit push** — dedicated PushKit cert path (currently same data-push channel as messages).
+6. **iOS client** — wire tabs, crypto, messaging, and WebRTC UI to the live API.
 
 ---
 

@@ -94,6 +94,11 @@ services:
       APNS_TEAM_ID: ${APNS_TEAM_ID:-}
       APNS_TOPIC: ${APNS_TOPIC:-}
       APNS_ENVIRONMENT: ${APNS_ENVIRONMENT:-sandbox}
+      # WebRTC ICE (default public STUN; set TURN_* when coturn profile is enabled).
+      TURN_URLS: ${TURN_URLS:-}
+      TURN_USERNAME: ${TURN_USERNAME:-}
+      TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
+      ICE_SERVERS_JSON: ${ICE_SERVERS_JSON:-}
     ports:
       - "8080:8080"
     healthcheck:
@@ -108,6 +113,28 @@ services:
       timeout: 5s
       retries: 6
       start_period: 15s
+    restart: unless-stopped
+
+  # Optional TURN for WebRTC when P2P fails. Enable with:
+  #   docker compose --profile calls up -d
+  # Then set TURN_URLS=turn:127.0.0.1:3478 TURN_USERNAME=shroud TURN_CREDENTIAL=shroud
+  # (or use host-reachable coturn hostname) and restart api.
+  coturn:
+    profiles: ["calls"]
+    image: coturn/coturn:4.6
+    container_name: shroud-coturn
+    network_mode: host
+    command:
+      - -n
+      - --log-file=stdout
+      - --listening-port=3478
+      - --fingerprint
+      - --lt-cred-mech
+      - --user=shroud:shroud
+      - --realm=shroud.local
+      - --no-cli
+      - --no-tls
+      - --no-dtls
     restart: unless-stopped
 
 volumes:

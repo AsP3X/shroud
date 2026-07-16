@@ -142,6 +142,108 @@ impl PushService {
             }
         }
     }
+
+    /// Opaque incoming-call data push when callee has no online WebSocket.
+    ///
+    /// VoIP / CallKit push can replace this later; payload stays id-only.
+    pub async fn notify_incoming_call_if_offline(
+        &self,
+        recipient_user_id: Uuid,
+        call_id: Uuid,
+        peer_user_id: Uuid,
+        modality: &str,
+    ) {
+        if self.realtime.is_user_online(recipient_user_id).await {
+            tracing::debug!(%recipient_user_id, "skip apns call: user has online websocket");
+            return;
+        }
+
+        #[derive(sqlx::FromRow)]
+        struct TokenRow {
+            device_id: Uuid,
+            apns_token: String,
+            environment: String,
+        }
+
+        let tokens: Vec<TokenRow> = match sqlx::query_as(
+            r#"
+            SELECT pt.device_id, pt.apns_token, pt.environment
+            FROM push_tokens pt
+            INNER JOIN devices d ON d.id = pt.device_id
+            WHERE d.user_id = $1
+            "#,
+        )
+        .bind(recipient_user_id)
+        .fetch_all(&self.pool)
+        .await
+        {
+            Ok(rows) => rows,
+            Err(err) => {
+                tracing::warn!(error = %err, "load push tokens for call failed");
+                return;
+            }
+        };
+
+        if tokens.is_empty() {
+            tracing::debug!(%recipient_user_id, "skip apns call: no device tokens");
+            return;
+        }
+
+        let payload = serde_json::json!({
+            "aps": { "content-available": 1 },
+            "call_id": call_id,
+            "peer_user_id": peer_user_id,
+            "modality": modality,
+        });
+
+        let Some(client) = &self.apns else {
+            tracing::info!(
+                %recipient_user_id,
+                token_count = tokens.len(),
+                %call_id,
+                "apns call push (not configured)"
+            );
+            return;
+        };
+
+        for row in tokens {
+            let env = ApnsEnvironment::parse(&row.environment);
+            match client
+                .send_data_push(&row.apns_token, env, &payload)
+                .await
+            {
+                ApnsSendOutcome::Accepted { apns_id } => {
+                    tracing::info!(
+                        %recipient_user_id,
+                        %call_id,
+                        device_id = %row.device_id,
+                        ?apns_id,
+                        "apns call push accepted"
+                    );
+                }
+                ApnsSendOutcome::InvalidToken { reason, status } => {
+                    tracing::warn!(
+                        device_id = %row.device_id,
+                        %reason,
+                        status,
+                        "apns invalid token on call push — removing"
+                    );
+                    if let Err(err) = delete_push_token(&self.pool, row.device_id).await {
+                        tracing::warn!(error = %err, "delete push token failed");
+                    }
+                }
+                ApnsSendOutcome::Failed { reason, status } => {
+                    tracing::warn!(
+                        %call_id,
+                        device_id = %row.device_id,
+                        %reason,
+                        status,
+                        "apns call push failed"
+                    );
+                }
+            }
+        }
+    }
 }
 
 async fn delete_push_token(pool: &PgPool, device_id: Uuid) -> Result<(), sqlx::Error> {

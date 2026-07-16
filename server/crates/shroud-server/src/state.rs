@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use sqlx::PgPool;
 
+use crate::config::IceServer;
 use crate::push::PushService;
 use crate::realtime::RealtimeHub;
 
@@ -20,4 +21,6 @@ pub struct AppState {
     pub realtime: Arc<RealtimeHub>,
     /// APNs data-push dispatcher (no-ops send when credentials missing).
     pub push: PushService,
+    /// STUN/TURN servers advertised to clients for WebRTC.
+    pub ice_servers: Vec<IceServer>,
 }
