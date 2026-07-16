@@ -25,6 +25,54 @@ enum MessageReceiptStatus: Equatable, Sendable, Comparable {
 
 // Note: `failed` is used for outbound media that stayed local after a send error.
 
+/// Shared Telegram-style receipt ticks for text and image bubbles.
+struct MessageReceiptIcon: View {
+    let receipt: MessageReceiptStatus
+    /// Muted color for sent / delivered (and sending spinner).
+    var metaColor: Color
+    /// Brighter color for read double-checks.
+    var readColor: Color
+    /// Failed glyph color (text bubbles use danger; image chips may use white).
+    var failedColor: Color = Theme.danger
+
+    var body: some View {
+        switch receipt {
+        case .failed:
+            Image(systemName: "exclamationmark.circle.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(failedColor)
+        case .sending:
+            ProgressView()
+                .controlSize(.mini)
+                .tint(metaColor)
+                .scaleEffect(0.65)
+                .frame(width: 12, height: 11)
+        case .sent:
+            // Single thin check — Telegram “sent to server”
+            Image(systemName: "checkmark")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(metaColor)
+        case .delivered:
+            telegramDoubleCheck(color: metaColor)
+        case .read:
+            telegramDoubleCheck(color: readColor)
+        }
+    }
+
+    /// Overlapped double check, closer to Telegram’s glyph than two spaced SF symbols.
+    private func telegramDoubleCheck(color: Color) -> some View {
+        ZStack(alignment: .leading) {
+            Image(systemName: "checkmark")
+                .font(.system(size: 9, weight: .semibold))
+            Image(systemName: "checkmark")
+                .font(.system(size: 9, weight: .semibold))
+                .offset(x: 4)
+        }
+        .foregroundStyle(color)
+        .frame(width: 14, height: 10, alignment: .leading)
+    }
+}
+
 /// Message bubble styled close to Telegram iOS:
 /// - Content-hugging width for short text
 /// - Wraps long text at a max width
@@ -186,42 +234,12 @@ struct MessageBubbleView: View {
         .system(size: 16)
     }
 
-    @ViewBuilder
     private var receiptIcon: some View {
-        switch receipt {
-        case .failed:
-            Image(systemName: "exclamationmark.circle.fill")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Theme.danger)
-        case .sending:
-            ProgressView()
-                .controlSize(.mini)
-                .tint(metaColor)
-                .scaleEffect(0.65)
-                .frame(width: 12, height: 11)
-        case .sent:
-            // Single thin check — Telegram “sent to server”
-            Image(systemName: "checkmark")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(metaColor)
-        case .delivered:
-            telegramDoubleCheck(color: metaColor)
-        case .read:
-            telegramDoubleCheck(color: readTickColor)
-        }
-    }
-
-    /// Overlapped double check, closer to Telegram’s glyph than two spaced SF symbols.
-    private func telegramDoubleCheck(color: Color) -> some View {
-        ZStack(alignment: .leading) {
-            Image(systemName: "checkmark")
-                .font(.system(size: 9, weight: .semibold))
-            Image(systemName: "checkmark")
-                .font(.system(size: 9, weight: .semibold))
-                .offset(x: 4)
-        }
-        .foregroundStyle(color)
-        .frame(width: 14, height: 10, alignment: .leading)
+        MessageReceiptIcon(
+            receipt: receipt,
+            metaColor: metaColor,
+            readColor: readTickColor
+        )
     }
 
     private var accessibilityLabel: String {

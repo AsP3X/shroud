@@ -89,16 +89,26 @@ struct ImageMessageBubble: View {
         .frame(maxWidth: .infinity, alignment: isMine ? .trailing : .leading)
     }
 
+    /// Match text bubbles: muted meta for time/sent/delivered; brighter ticks when read.
+    private var metaColor: Color { Color.white.opacity(0.75) }
+    private var readTickColor: Color { Color.white.opacity(0.95) }
+
     private var timeChip: some View {
         HStack(spacing: 3) {
             Text(time)
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: 11, weight: .regular))
+                .foregroundStyle(metaColor)
                 .monospacedDigit()
+                .fixedSize()
             if isMine, !message.deleted {
-                receiptIcon
+                MessageReceiptIcon(
+                    receipt: message.receipt,
+                    metaColor: metaColor,
+                    readColor: readTickColor,
+                    failedColor: Color.white
+                )
             }
         }
-        .foregroundStyle(Color.white.opacity(0.95))
         .padding(.horizontal, 7)
         .padding(.vertical, 3)
         .background(Color.black.opacity(0.35))
@@ -159,29 +169,4 @@ struct ImageMessageBubble: View {
         .frame(width: displaySize.width, height: 120)
     }
 
-    @ViewBuilder
-    private var receiptIcon: some View {
-        switch message.receipt {
-        case .failed:
-            Image(systemName: "exclamationmark.circle.fill")
-                .font(.system(size: 11, weight: .semibold))
-        case .sending:
-            ProgressView()
-                .controlSize(.mini)
-                .tint(.white)
-                .scaleEffect(0.65)
-                .frame(width: 12, height: 11)
-        case .sent:
-            Image(systemName: "checkmark")
-                .font(.system(size: 9, weight: .semibold))
-        case .delivered, .read:
-            HStack(spacing: -3) {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 9, weight: .semibold))
-                Image(systemName: "checkmark")
-                    .font(.system(size: 9, weight: .semibold))
-            }
-            .opacity(message.receipt == .read ? 1 : 0.75)
-        }
-    }
 }

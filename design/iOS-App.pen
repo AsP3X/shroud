@@ -429,36 +429,15 @@
               "id": "TZM7T",
               "name": "Nav Row",
               "width": "fill_container",
-              "justifyContent": "space_between",
+              "justifyContent": "end",
               "alignItems": "center",
               "children": [
-                {
-                  "type": "text",
-                  "id": "v5e900",
-                  "name": "Edit",
-                  "fill": "$accent",
-                  "content": "Edit",
-                  "fontFamily": "$font",
-                  "fontSize": 16,
-                  "fontWeight": "normal"
-                },
                 {
                   "type": "frame",
                   "id": "vjKpt",
                   "name": "Nav Icons",
-                  "gap": 18,
                   "alignItems": "center",
                   "children": [
-                    {
-                      "type": "icon",
-                      "id": "nj9D7",
-                      "name": "Camera",
-                      "width": 22,
-                      "height": 22,
-                      "icon": "camera",
-                      "library": "lucide",
-                      "fill": "$accent"
-                    },
                     {
                       "type": "icon",
                       "id": "D8RY0T",
@@ -1118,7 +1097,7 @@
           "id": "zI9xs",
           "name": "Top Chrome",
           "width": "fill_container",
-          "fill": "#FFFFFFF2",
+          "fill": "$bg",
           "layout": "vertical",
           "children": [
             {
@@ -1202,7 +1181,7 @@
                           "type": "text",
                           "id": "M7yBE",
                           "name": "Presence",
-                          "fill": "$text-secondary",
+                          "fill": "$accent",
                           "content": "online",
                           "fontFamily": "$font",
                           "fontSize": 12,
@@ -1252,7 +1231,7 @@
           "width": "fill_container",
           "height": "fill_container",
           "layout": "vertical",
-          "gap": 10,
+          "gap": 3,
           "padding": [
             12,
             16
@@ -1339,10 +1318,10 @@
                   "name": "Bubble In",
                   "fill": "$bubble-in",
                   "cornerRadius": [
-                    18,
-                    18,
-                    18,
-                    4
+                    17.5,
+                    17.5,
+                    17.5,
+                    5
                   ],
                   "effect": {
                     "type": "shadow",
@@ -1354,11 +1333,12 @@
                     },
                     "blur": 2
                   },
-                  "layout": "vertical",
-                  "gap": 2,
+                  "gap": 7,
                   "padding": [
-                    8,
-                    12
+                    6,
+                    9,
+                    6,
+                    11
                   ],
                   "alignItems": "end",
                   "children": [
@@ -1368,9 +1348,9 @@
                       "name": "Msg",
                       "fill": "$text-primary",
                       "content": "Hey! Are we still on for tomorrow?",
-                      "lineHeight": 1.35,
+                      "lineHeight": 1.25,
                       "fontFamily": "$font",
-                      "fontSize": 15,
+                      "fontSize": 16,
                       "fontWeight": "normal"
                     },
                     {
@@ -1410,10 +1390,10 @@
                   "name": "Bubble Out",
                   "fill": "$accent",
                   "cornerRadius": [
-                    18,
-                    18,
-                    4,
-                    18
+                    17.5,
+                    17.5,
+                    5,
+                    17.5
                   ],
                   "effect": {
                     "type": "shadow",
@@ -1425,11 +1405,12 @@
                     },
                     "blur": 2
                   },
-                  "layout": "vertical",
-                  "gap": 2,
+                  "gap": 7,
                   "padding": [
-                    8,
-                    12
+                    6,
+                    9,
+                    6,
+                    11
                   ],
                   "alignItems": "end",
                   "children": [
@@ -1439,9 +1420,9 @@
                       "name": "Msg",
                       "fill": "#FFFFFF",
                       "content": "Yes! 10am at the trailhead",
-                      "lineHeight": 1.35,
+                      "lineHeight": 1.25,
                       "fontFamily": "$font",
-                      "fontSize": 15,
+                      "fontSize": 16,
                       "fontWeight": "normal"
                     },
                     {
@@ -1456,7 +1437,7 @@
                           "type": "text",
                           "id": "rwIMG",
                           "name": "Time",
-                          "fill": "#FFFFFFB3",
+                          "fill": "#FFFFFFA6",
                           "content": "11:05",
                           "fontFamily": "$font",
                           "fontSize": 11,
@@ -1467,10 +1448,254 @@
                           "id": "q8SvE",
                           "name": "Read",
                           "width": 14,
-                          "height": 14,
+                          "height": 10,
                           "icon": "check-check",
                           "library": "lucide",
-                          "fill": "#FFFFFFB3"
+                          "fill": "#FFFFFFF2"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "DqMQ9",
+              "name": "Image Msg Out",
+              "width": "fill_container",
+              "justifyContent": "end",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "zUpD0",
+                  "name": "Image Bubble Out",
+                  "clip": true,
+                  "width": 180,
+                  "height": 220,
+                  "fill": {
+                    "type": "image",
+                    "enabled": true,
+                    "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
+                    "mode": "fill"
+                  },
+                  "cornerRadius": [
+                    17.5,
+                    17.5,
+                    5,
+                    17.5
+                  ],
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#0B0B1214",
+                    "offset": {
+                      "x": 0,
+                      "y": 1
+                    },
+                    "blur": 3
+                  },
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "rNa85",
+                      "x": 98,
+                      "y": 192,
+                      "name": "Time Chip",
+                      "fill": "#00000059",
+                      "cornerRadius": 999,
+                      "gap": 3,
+                      "padding": [
+                        3,
+                        7
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "tE3Bn",
+                          "name": "Time",
+                          "fill": "#FFFFFFBF",
+                          "content": "12:12",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "Tn1l6",
+                          "name": "Read",
+                          "width": 14,
+                          "height": 10,
+                          "icon": "check-check",
+                          "library": "lucide",
+                          "fill": "#FFFFFFF2"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "kwfhb",
+              "name": "Msg Row Long Out",
+              "width": "fill_container",
+              "justifyContent": "end",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "inspT",
+                  "name": "Bubble Out Long",
+                  "width": 260,
+                  "fill": "$accent",
+                  "cornerRadius": [
+                    17.5,
+                    17.5,
+                    5,
+                    17.5
+                  ],
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#0B0B120F",
+                    "offset": {
+                      "x": 0,
+                      "y": 1
+                    },
+                    "blur": 2
+                  },
+                  "layout": "vertical",
+                  "gap": 4,
+                  "padding": [
+                    7,
+                    11,
+                    6,
+                    11
+                  ],
+                  "alignItems": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "H7qwkb",
+                      "name": "Msg",
+                      "fill": "#FFFFFF",
+                      "textGrowth": "fixed-width",
+                      "width": 238,
+                      "content": "Hey! Are we still on for tomorrow? Parking near the trailhead fills up fast on weekends so let's leave early.",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "vOOP1",
+                      "name": "Meta",
+                      "gap": 3,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Y4bK3c",
+                          "name": "Time",
+                          "fill": "#FFFFFFA6",
+                          "content": "12:15",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "vf6Dk",
+                          "name": "Delivered",
+                          "width": 14,
+                          "height": 10,
+                          "icon": "check-check",
+                          "library": "lucide",
+                          "fill": "#FFFFFFA6"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "WHlKX",
+              "name": "Msg Row Short Out",
+              "width": "fill_container",
+              "justifyContent": "end",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "FbjX6",
+                  "name": "Bubble Out Short",
+                  "fill": "$accent",
+                  "cornerRadius": [
+                    17.5,
+                    17.5,
+                    5,
+                    17.5
+                  ],
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#0B0B120F",
+                    "offset": {
+                      "x": 0,
+                      "y": 1
+                    },
+                    "blur": 2
+                  },
+                  "gap": 7,
+                  "padding": [
+                    6,
+                    9,
+                    6,
+                    11
+                  ],
+                  "alignItems": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "VrndI",
+                      "name": "Msg",
+                      "fill": "#FFFFFF",
+                      "content": "Ok",
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "A6p2HO",
+                      "name": "Meta",
+                      "gap": 3,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "PlMSK",
+                          "name": "Time",
+                          "fill": "#FFFFFFA6",
+                          "content": "12:16",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "RsKk9",
+                          "name": "Sent",
+                          "width": 9,
+                          "height": 9,
+                          "icon": "check",
+                          "library": "lucide",
+                          "fill": "#FFFFFFA6"
                         }
                       ]
                     }
@@ -1490,10 +1715,10 @@
                   "name": "Bubble In",
                   "fill": "$bubble-in",
                   "cornerRadius": [
-                    18,
-                    18,
-                    18,
-                    4
+                    17.5,
+                    17.5,
+                    17.5,
+                    5
                   ],
                   "effect": {
                     "type": "shadow",
@@ -1505,11 +1730,12 @@
                     },
                     "blur": 2
                   },
-                  "layout": "vertical",
-                  "gap": 2,
+                  "gap": 7,
                   "padding": [
-                    8,
-                    12
+                    6,
+                    9,
+                    6,
+                    11
                   ],
                   "alignItems": "end",
                   "children": [
@@ -1519,9 +1745,9 @@
                       "name": "Msg",
                       "fill": "$text-primary",
                       "content": "Sounds good, see you tomorrow!",
-                      "lineHeight": 1.35,
+                      "lineHeight": 1.25,
                       "fontFamily": "$font",
-                      "fontSize": 15,
+                      "fontSize": 16,
                       "fontWeight": "normal"
                     },
                     {
@@ -2705,7 +2931,7 @@
           "id": "bLljH",
           "name": "Composer",
           "width": "fill_container",
-          "fill": "#FFFFFFF2",
+          "fill": "$bg",
           "layout": "vertical",
           "children": [
             {
@@ -2853,20 +3079,39 @@
                   "id": "NhbaH",
                   "name": "Sort",
                   "fill": "$accent",
-                  "content": "Sort",
+                  "content": "A–Z",
                   "fontFamily": "$font",
                   "fontSize": 16,
                   "fontWeight": "normal"
                 },
                 {
-                  "type": "icon",
-                  "id": "L6g3xz",
-                  "name": "Add Contact",
-                  "width": 22,
-                  "height": 22,
-                  "icon": "user-plus",
-                  "library": "lucide",
-                  "fill": "$accent"
+                  "type": "frame",
+                  "id": "IgAmb",
+                  "name": "Nav Trailing",
+                  "gap": 14,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "xyzkr",
+                      "name": "My QR",
+                      "width": 22,
+                      "height": 22,
+                      "icon": "qr-code",
+                      "library": "lucide",
+                      "fill": "$accent"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "L6g3xz",
+                      "name": "Add Contact",
+                      "width": 22,
+                      "height": 22,
+                      "icon": "user-plus",
+                      "library": "lucide",
+                      "fill": "$accent"
+                    }
+                  ]
                 }
               ]
             },
@@ -7651,7 +7896,7 @@
           "id": "N2UNsL",
           "name": "Top Chrome",
           "width": "fill_container",
-          "fill": "#FFFFFFF2",
+          "fill": "$bg",
           "layout": "vertical",
           "children": [
             {
@@ -7735,7 +7980,7 @@
                           "type": "text",
                           "id": "Iy41X",
                           "name": "Presence",
-                          "fill": "$text-secondary",
+                          "fill": "$accent",
                           "content": "online",
                           "fontFamily": "$font",
                           "fontSize": 12,
@@ -7785,7 +8030,7 @@
           "width": "fill_container",
           "height": "fill_container",
           "layout": "vertical",
-          "gap": 10,
+          "gap": 3,
           "padding": [
             12,
             16
@@ -7872,10 +8117,10 @@
                   "name": "Bubble In",
                   "fill": "$bubble-in",
                   "cornerRadius": [
-                    18,
-                    18,
-                    18,
-                    4
+                    17.5,
+                    17.5,
+                    17.5,
+                    5
                   ],
                   "effect": {
                     "type": "shadow",
@@ -7887,11 +8132,12 @@
                     },
                     "blur": 2
                   },
-                  "layout": "vertical",
-                  "gap": 2,
+                  "gap": 7,
                   "padding": [
-                    8,
-                    12
+                    6,
+                    9,
+                    6,
+                    11
                   ],
                   "alignItems": "end",
                   "children": [
@@ -7901,9 +8147,9 @@
                       "name": "Msg",
                       "fill": "$text-primary",
                       "content": "Hey! Are we still on for tomorrow?",
-                      "lineHeight": 1.35,
+                      "lineHeight": 1.25,
                       "fontFamily": "$font",
-                      "fontSize": 15,
+                      "fontSize": 16,
                       "fontWeight": "normal"
                     },
                     {
@@ -7943,10 +8189,10 @@
                   "name": "Bubble Out",
                   "fill": "$accent",
                   "cornerRadius": [
-                    18,
-                    18,
-                    4,
-                    18
+                    17.5,
+                    17.5,
+                    5,
+                    17.5
                   ],
                   "effect": {
                     "type": "shadow",
@@ -7958,11 +8204,12 @@
                     },
                     "blur": 2
                   },
-                  "layout": "vertical",
-                  "gap": 2,
+                  "gap": 7,
                   "padding": [
-                    8,
-                    12
+                    6,
+                    9,
+                    6,
+                    11
                   ],
                   "alignItems": "end",
                   "children": [
@@ -7972,9 +8219,9 @@
                       "name": "Msg",
                       "fill": "#FFFFFF",
                       "content": "Yes! 10am at the trailhead",
-                      "lineHeight": 1.35,
+                      "lineHeight": 1.25,
                       "fontFamily": "$font",
-                      "fontSize": 15,
+                      "fontSize": 16,
                       "fontWeight": "normal"
                     },
                     {
@@ -7989,7 +8236,7 @@
                           "type": "text",
                           "id": "ZmjMH",
                           "name": "Time",
-                          "fill": "#FFFFFFB3",
+                          "fill": "#FFFFFFA6",
                           "content": "11:05",
                           "fontFamily": "$font",
                           "fontSize": 11,
@@ -8000,10 +8247,10 @@
                           "id": "TaAjf",
                           "name": "Read",
                           "width": 14,
-                          "height": 14,
+                          "height": 10,
                           "icon": "check-check",
                           "library": "lucide",
-                          "fill": "#FFFFFFB3"
+                          "fill": "#FFFFFFF2"
                         }
                       ]
                     }
@@ -8023,10 +8270,10 @@
                   "name": "Bubble In",
                   "fill": "$bubble-in",
                   "cornerRadius": [
-                    18,
-                    18,
-                    18,
-                    4
+                    17.5,
+                    17.5,
+                    17.5,
+                    5
                   ],
                   "effect": {
                     "type": "shadow",
@@ -8038,11 +8285,12 @@
                     },
                     "blur": 2
                   },
-                  "layout": "vertical",
-                  "gap": 2,
+                  "gap": 7,
                   "padding": [
-                    8,
-                    12
+                    6,
+                    9,
+                    6,
+                    11
                   ],
                   "alignItems": "end",
                   "children": [
@@ -8052,9 +8300,9 @@
                       "name": "Msg",
                       "fill": "$text-primary",
                       "content": "Perfect. Should I bring anything?",
-                      "lineHeight": 1.35,
+                      "lineHeight": 1.25,
                       "fontFamily": "$font",
-                      "fontSize": 15,
+                      "fontSize": 16,
                       "fontWeight": "normal"
                     },
                     {
@@ -8094,10 +8342,10 @@
                   "name": "Bubble Out",
                   "fill": "$accent",
                   "cornerRadius": [
-                    18,
-                    18,
-                    4,
-                    18
+                    17.5,
+                    17.5,
+                    5,
+                    17.5
                   ],
                   "effect": {
                     "type": "shadow",
@@ -8110,10 +8358,12 @@
                     "blur": 2
                   },
                   "layout": "vertical",
-                  "gap": 2,
+                  "gap": 4,
                   "padding": [
-                    8,
-                    12
+                    7,
+                    11,
+                    6,
+                    11
                   ],
                   "alignItems": "end",
                   "children": [
@@ -8125,9 +8375,9 @@
                       "textGrowth": "fixed-width",
                       "width": 240,
                       "content": "Just water and good shoes. I will pack snacks for both of us",
-                      "lineHeight": 1.35,
+                      "lineHeight": 1.25,
                       "fontFamily": "$font",
-                      "fontSize": 15,
+                      "fontSize": 16,
                       "fontWeight": "normal"
                     },
                     {
@@ -8142,7 +8392,7 @@
                           "type": "text",
                           "id": "YoN4u",
                           "name": "Time",
-                          "fill": "#FFFFFFB3",
+                          "fill": "#FFFFFFA6",
                           "content": "11:08",
                           "fontFamily": "$font",
                           "fontSize": 11,
@@ -8153,10 +8403,10 @@
                           "id": "H6rsV",
                           "name": "Read",
                           "width": 14,
-                          "height": 14,
+                          "height": 10,
                           "icon": "check-check",
                           "library": "lucide",
-                          "fill": "#FFFFFFB3"
+                          "fill": "#FFFFFFA6"
                         }
                       ]
                     }
@@ -8176,10 +8426,10 @@
                   "name": "Bubble In",
                   "fill": "$bubble-in",
                   "cornerRadius": [
-                    18,
-                    18,
-                    18,
-                    4
+                    17.5,
+                    17.5,
+                    17.5,
+                    5
                   ],
                   "effect": {
                     "type": "shadow",
@@ -8191,11 +8441,12 @@
                     },
                     "blur": 2
                   },
-                  "layout": "vertical",
-                  "gap": 2,
+                  "gap": 7,
                   "padding": [
-                    8,
-                    12
+                    6,
+                    9,
+                    6,
+                    11
                   ],
                   "alignItems": "end",
                   "children": [
@@ -8205,9 +8456,9 @@
                       "name": "Msg",
                       "fill": "$text-primary",
                       "content": "Sounds good, see you tomorrow!",
-                      "lineHeight": 1.35,
+                      "lineHeight": 1.25,
                       "fontFamily": "$font",
-                      "fontSize": 15,
+                      "fontSize": 16,
                       "fontWeight": "normal"
                     },
                     {
@@ -8241,7 +8492,7 @@
           "id": "oDicP",
           "name": "Composer",
           "width": "fill_container",
-          "fill": "#FFFFFFF2",
+          "fill": "$bg",
           "layout": "vertical",
           "children": [
             {
@@ -12234,7 +12485,7 @@
           "id": "N9MIRY",
           "name": "Top Chrome",
           "width": "fill_container",
-          "fill": "#FFFFFFF2",
+          "fill": "$bg",
           "layout": "vertical",
           "children": [
             {
@@ -12371,7 +12622,7 @@
           "width": "fill_container",
           "height": "fill_container",
           "layout": "vertical",
-          "gap": 10,
+          "gap": 3,
           "padding": [
             12,
             16
@@ -12458,10 +12709,10 @@
                   "name": "Bubble In",
                   "fill": "$bubble-in",
                   "cornerRadius": [
-                    18,
-                    18,
-                    18,
-                    4
+                    17.5,
+                    17.5,
+                    17.5,
+                    5
                   ],
                   "effect": {
                     "type": "shadow",
@@ -12473,11 +12724,12 @@
                     },
                     "blur": 2
                   },
-                  "layout": "vertical",
-                  "gap": 2,
+                  "gap": 7,
                   "padding": [
-                    8,
-                    12
+                    6,
+                    9,
+                    6,
+                    11
                   ],
                   "alignItems": "end",
                   "children": [
@@ -12487,9 +12739,9 @@
                       "name": "Msg",
                       "fill": "$text-primary",
                       "content": "Hey! Are we still on for tomorrow?",
-                      "lineHeight": 1.35,
+                      "lineHeight": 1.25,
                       "fontFamily": "$font",
-                      "fontSize": 15,
+                      "fontSize": 16,
                       "fontWeight": "normal"
                     },
                     {
@@ -12529,10 +12781,10 @@
                   "name": "Bubble Out",
                   "fill": "$accent",
                   "cornerRadius": [
-                    18,
-                    18,
-                    4,
-                    18
+                    17.5,
+                    17.5,
+                    5,
+                    17.5
                   ],
                   "effect": {
                     "type": "shadow",
@@ -12544,11 +12796,12 @@
                     },
                     "blur": 2
                   },
-                  "layout": "vertical",
-                  "gap": 2,
+                  "gap": 7,
                   "padding": [
-                    8,
-                    12
+                    6,
+                    9,
+                    6,
+                    11
                   ],
                   "alignItems": "end",
                   "children": [
@@ -12558,9 +12811,9 @@
                       "name": "Msg",
                       "fill": "#FFFFFF",
                       "content": "Yes! 10am at the trailhead",
-                      "lineHeight": 1.35,
+                      "lineHeight": 1.25,
                       "fontFamily": "$font",
-                      "fontSize": 15,
+                      "fontSize": 16,
                       "fontWeight": "normal"
                     },
                     {
@@ -12575,7 +12828,7 @@
                           "type": "text",
                           "id": "FEaUI",
                           "name": "Time",
-                          "fill": "#FFFFFFB3",
+                          "fill": "#FFFFFFA6",
                           "content": "11:05",
                           "fontFamily": "$font",
                           "fontSize": 11,
@@ -12586,10 +12839,10 @@
                           "id": "ZY2EF",
                           "name": "Read",
                           "width": 14,
-                          "height": 14,
+                          "height": 10,
                           "icon": "check-check",
                           "library": "lucide",
-                          "fill": "#FFFFFFB3"
+                          "fill": "#FFFFFFF2"
                         }
                       ]
                     }
@@ -12609,10 +12862,10 @@
                   "name": "Bubble In",
                   "fill": "$bubble-in",
                   "cornerRadius": [
-                    18,
-                    18,
-                    18,
-                    4
+                    17.5,
+                    17.5,
+                    17.5,
+                    5
                   ],
                   "effect": {
                     "type": "shadow",
@@ -12624,11 +12877,12 @@
                     },
                     "blur": 2
                   },
-                  "layout": "vertical",
-                  "gap": 2,
+                  "gap": 7,
                   "padding": [
-                    8,
-                    12
+                    6,
+                    9,
+                    6,
+                    11
                   ],
                   "alignItems": "end",
                   "children": [
@@ -12638,9 +12892,9 @@
                       "name": "Msg",
                       "fill": "$text-primary",
                       "content": "Sounds good, see you tomorrow!",
-                      "lineHeight": 1.35,
+                      "lineHeight": 1.25,
                       "fontFamily": "$font",
-                      "fontSize": 15,
+                      "fontSize": 16,
                       "fontWeight": "normal"
                     },
                     {
@@ -13455,7 +13709,7 @@
           "id": "ko4GO",
           "name": "Composer",
           "width": "fill_container",
-          "fill": "#FFFFFFF2",
+          "fill": "$bg",
           "layout": "vertical",
           "children": [
             {
@@ -13575,7 +13829,7 @@
           "id": "WERYa",
           "name": "Top Chrome",
           "width": "fill_container",
-          "fill": "#FFFFFFF2",
+          "fill": "$bg",
           "layout": "vertical",
           "children": [
             {
@@ -13709,7 +13963,7 @@
           "width": "fill_container",
           "height": "fill_container",
           "layout": "vertical",
-          "gap": 10,
+          "gap": 3,
           "padding": [
             12,
             16
@@ -13796,10 +14050,10 @@
                   "name": "Bubble In",
                   "fill": "$bubble-in",
                   "cornerRadius": [
-                    18,
-                    18,
-                    18,
-                    4
+                    17.5,
+                    17.5,
+                    17.5,
+                    5
                   ],
                   "effect": {
                     "type": "shadow",
@@ -13811,11 +14065,12 @@
                     },
                     "blur": 2
                   },
-                  "layout": "vertical",
-                  "gap": 2,
+                  "gap": 7,
                   "padding": [
-                    8,
-                    12
+                    6,
+                    9,
+                    6,
+                    11
                   ],
                   "alignItems": "end",
                   "children": [
@@ -13825,9 +14080,9 @@
                       "name": "Msg",
                       "fill": "$text-primary",
                       "content": "Hey! Are we still on for tomorrow?",
-                      "lineHeight": 1.35,
+                      "lineHeight": 1.25,
                       "fontFamily": "$font",
-                      "fontSize": 15,
+                      "fontSize": 16,
                       "fontWeight": "normal"
                     },
                     {
@@ -13867,10 +14122,10 @@
                   "name": "Bubble Out",
                   "fill": "$accent",
                   "cornerRadius": [
-                    18,
-                    18,
-                    4,
-                    18
+                    17.5,
+                    17.5,
+                    5,
+                    17.5
                   ],
                   "effect": {
                     "type": "shadow",
@@ -13882,11 +14137,12 @@
                     },
                     "blur": 2
                   },
-                  "layout": "vertical",
-                  "gap": 2,
+                  "gap": 7,
                   "padding": [
-                    8,
-                    12
+                    6,
+                    9,
+                    6,
+                    11
                   ],
                   "alignItems": "end",
                   "children": [
@@ -13896,9 +14152,9 @@
                       "name": "Msg",
                       "fill": "#FFFFFF",
                       "content": "Yes! 10am at the trailhead",
-                      "lineHeight": 1.35,
+                      "lineHeight": 1.25,
                       "fontFamily": "$font",
-                      "fontSize": 15,
+                      "fontSize": 16,
                       "fontWeight": "normal"
                     },
                     {
@@ -13913,7 +14169,7 @@
                           "type": "text",
                           "id": "V5y8gw",
                           "name": "Time",
-                          "fill": "#FFFFFFB3",
+                          "fill": "#FFFFFFA6",
                           "content": "11:05",
                           "fontFamily": "$font",
                           "fontSize": 11,
@@ -13924,10 +14180,10 @@
                           "id": "CxCZr",
                           "name": "Read",
                           "width": 14,
-                          "height": 14,
+                          "height": 10,
                           "icon": "check-check",
                           "library": "lucide",
-                          "fill": "#FFFFFFB3"
+                          "fill": "#FFFFFFF2"
                         }
                       ]
                     }
@@ -13947,10 +14203,10 @@
                   "name": "Bubble In",
                   "fill": "$bubble-in",
                   "cornerRadius": [
-                    18,
-                    18,
-                    18,
-                    4
+                    17.5,
+                    17.5,
+                    17.5,
+                    5
                   ],
                   "effect": {
                     "type": "shadow",
@@ -13962,11 +14218,12 @@
                     },
                     "blur": 2
                   },
-                  "layout": "vertical",
-                  "gap": 2,
+                  "gap": 7,
                   "padding": [
-                    8,
-                    12
+                    6,
+                    9,
+                    6,
+                    11
                   ],
                   "alignItems": "end",
                   "children": [
@@ -13976,9 +14233,9 @@
                       "name": "Msg",
                       "fill": "$text-primary",
                       "content": "Sounds good, see you tomorrow!",
-                      "lineHeight": 1.35,
+                      "lineHeight": 1.25,
                       "fontFamily": "$font",
-                      "fontSize": 15,
+                      "fontSize": 16,
                       "fontWeight": "normal"
                     },
                     {
@@ -15162,7 +15419,7 @@
           "id": "k7Mj2",
           "name": "Composer",
           "width": "fill_container",
-          "fill": "#FFFFFFF2",
+          "fill": "$bg",
           "layout": "vertical",
           "children": [
             {
@@ -15422,10 +15679,10 @@
               "name": "Focused Bubble",
               "fill": "$accent",
               "cornerRadius": [
-                18,
-                18,
-                4,
-                18
+                17.5,
+                17.5,
+                5,
+                17.5
               ],
               "effect": {
                 "type": "shadow",
@@ -15437,11 +15694,12 @@
                 },
                 "blur": 18
               },
-              "layout": "vertical",
-              "gap": 2,
+              "gap": 7,
               "padding": [
-                8,
-                12
+                6,
+                9,
+                6,
+                11
               ],
               "alignItems": "end",
               "children": [
@@ -15451,9 +15709,9 @@
                   "name": "Msg",
                   "fill": "#FFFFFF",
                   "content": "Yes! 10am at the trailhead",
-                  "lineHeight": 1.35,
+                  "lineHeight": 1.25,
                   "fontFamily": "$font",
-                  "fontSize": 15,
+                  "fontSize": 16,
                   "fontWeight": "normal"
                 },
                 {
@@ -15467,7 +15725,7 @@
                       "type": "text",
                       "id": "za2bH",
                       "name": "Time",
-                      "fill": "#FFFFFFB3",
+                      "fill": "#FFFFFFA6",
                       "content": "11:05",
                       "fontFamily": "$font",
                       "fontSize": 11,
@@ -15478,10 +15736,10 @@
                       "id": "V6l5l",
                       "name": "Read",
                       "width": 14,
-                      "height": 14,
+                      "height": 10,
                       "icon": "check-check",
                       "library": "lucide",
-                      "fill": "#FFFFFFB3"
+                      "fill": "#FFFFFFF2"
                     }
                   ]
                 }
@@ -15780,7 +16038,7 @@
           "id": "pbHWT",
           "name": "Top Chrome",
           "width": "fill_container",
-          "fill": "#FFFFFFF2",
+          "fill": "$bg",
           "layout": "vertical",
           "children": [
             {
@@ -15914,7 +16172,7 @@
           "width": "fill_container",
           "height": "fill_container",
           "layout": "vertical",
-          "gap": 10,
+          "gap": 3,
           "padding": [
             12,
             16
@@ -16001,10 +16259,10 @@
                   "name": "Bubble In",
                   "fill": "$bubble-in",
                   "cornerRadius": [
-                    18,
-                    18,
-                    18,
-                    4
+                    17.5,
+                    17.5,
+                    17.5,
+                    5
                   ],
                   "effect": {
                     "type": "shadow",
@@ -16016,11 +16274,12 @@
                     },
                     "blur": 2
                   },
-                  "layout": "vertical",
-                  "gap": 2,
+                  "gap": 7,
                   "padding": [
-                    8,
-                    12
+                    6,
+                    9,
+                    6,
+                    11
                   ],
                   "alignItems": "end",
                   "children": [
@@ -16030,9 +16289,9 @@
                       "name": "Msg",
                       "fill": "$text-primary",
                       "content": "Hey! Are we still on for tomorrow?",
-                      "lineHeight": 1.35,
+                      "lineHeight": 1.25,
                       "fontFamily": "$font",
-                      "fontSize": 15,
+                      "fontSize": 16,
                       "fontWeight": "normal"
                     },
                     {
@@ -16072,10 +16331,10 @@
                   "name": "Bubble Out",
                   "fill": "$accent",
                   "cornerRadius": [
-                    18,
-                    18,
-                    4,
-                    18
+                    17.5,
+                    17.5,
+                    5,
+                    17.5
                   ],
                   "effect": {
                     "type": "shadow",
@@ -16087,11 +16346,12 @@
                     },
                     "blur": 2
                   },
-                  "layout": "vertical",
-                  "gap": 2,
+                  "gap": 7,
                   "padding": [
-                    8,
-                    12
+                    6,
+                    9,
+                    6,
+                    11
                   ],
                   "alignItems": "end",
                   "children": [
@@ -16101,9 +16361,9 @@
                       "name": "Msg",
                       "fill": "#FFFFFF",
                       "content": "Yes! 10am at the trailhead",
-                      "lineHeight": 1.35,
+                      "lineHeight": 1.25,
                       "fontFamily": "$font",
-                      "fontSize": 15,
+                      "fontSize": 16,
                       "fontWeight": "normal"
                     },
                     {
@@ -16118,7 +16378,7 @@
                           "type": "text",
                           "id": "rIbkQ",
                           "name": "Time",
-                          "fill": "#FFFFFFB3",
+                          "fill": "#FFFFFFA6",
                           "content": "11:05",
                           "fontFamily": "$font",
                           "fontSize": 11,
@@ -16129,10 +16389,10 @@
                           "id": "LR14r",
                           "name": "Read",
                           "width": 14,
-                          "height": 14,
+                          "height": 10,
                           "icon": "check-check",
                           "library": "lucide",
-                          "fill": "#FFFFFFB3"
+                          "fill": "#FFFFFFF2"
                         }
                       ]
                     }
@@ -16152,10 +16412,10 @@
                   "name": "Bubble In",
                   "fill": "$bubble-in",
                   "cornerRadius": [
-                    18,
-                    18,
-                    18,
-                    4
+                    17.5,
+                    17.5,
+                    17.5,
+                    5
                   ],
                   "effect": {
                     "type": "shadow",
@@ -16167,11 +16427,12 @@
                     },
                     "blur": 2
                   },
-                  "layout": "vertical",
-                  "gap": 2,
+                  "gap": 7,
                   "padding": [
-                    8,
-                    12
+                    6,
+                    9,
+                    6,
+                    11
                   ],
                   "alignItems": "end",
                   "children": [
@@ -16181,9 +16442,9 @@
                       "name": "Msg",
                       "fill": "$text-primary",
                       "content": "Sounds good, see you tomorrow!",
-                      "lineHeight": 1.35,
+                      "lineHeight": 1.25,
                       "fontFamily": "$font",
-                      "fontSize": 15,
+                      "fontSize": 16,
                       "fontWeight": "normal"
                     },
                     {
@@ -17367,7 +17628,7 @@
           "id": "wtNES",
           "name": "Composer",
           "width": "fill_container",
-          "fill": "#FFFFFFF2",
+          "fill": "$bg",
           "layout": "vertical",
           "children": [
             {
@@ -17626,10 +17887,10 @@
               "name": "Focused Bubble",
               "fill": "#FFFFFF",
               "cornerRadius": [
-                18,
-                18,
-                18,
-                4
+                17.5,
+                17.5,
+                17.5,
+                5
               ],
               "effect": {
                 "type": "shadow",
@@ -17641,11 +17902,12 @@
                 },
                 "blur": 18
               },
-              "layout": "vertical",
-              "gap": 2,
+              "gap": 7,
               "padding": [
-                8,
-                12
+                6,
+                9,
+                6,
+                11
               ],
               "alignItems": "end",
               "children": [
@@ -17655,9 +17917,9 @@
                   "name": "Msg",
                   "fill": "$text-primary",
                   "content": "Hey! Are we still on for tomorrow?",
-                  "lineHeight": 1.35,
+                  "lineHeight": 1.25,
                   "fontFamily": "$font",
-                  "fontSize": 15,
+                  "fontSize": 16,
                   "fontWeight": "normal"
                 },
                 {
@@ -23155,6 +23417,1226 @@
               "fill": "$text-primary",
               "width": 134,
               "height": 5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "GSq4s",
+      "x": 1020,
+      "y": 1851,
+      "name": "Conversation — Image Viewer",
+      "context": "Telegram iOS media viewer (reference: design/image_viewer.PNG). Black canvas, circular glass chrome, title pill, icon-only bottom actions.",
+      "clip": true,
+      "width": 390,
+      "height": 844,
+      "fill": "#000000",
+      "layout": "none",
+      "children": [
+        {
+          "type": "frame",
+          "id": "a6ce9t",
+          "x": 0,
+          "y": 0,
+          "name": "Media Stage",
+          "width": 390,
+          "height": 844,
+          "fill": "#000000",
+          "layout": "vertical",
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "oIQSl",
+              "name": "Photo",
+              "width": 390,
+              "height": 620,
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "https://images.unsplash.com/photo-1629203851122-3726ecdf080e?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=900&q=80",
+                "mode": "fill"
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "RHJJi",
+          "x": 0,
+          "y": 0,
+          "name": "Top Chrome",
+          "width": 390,
+          "height": 118,
+          "fill": "#000000",
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "D7vuy",
+              "name": "Status Bar",
+              "width": "fill_container",
+              "height": 54,
+              "padding": [
+                12,
+                28,
+                0,
+                28
+              ],
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "r1pD8t",
+                  "name": "Time",
+                  "fill": "#FFFFFF",
+                  "content": "14:52",
+                  "fontFamily": "$font",
+                  "fontSize": 15,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "frame",
+                  "id": "S90BD",
+                  "name": "Status Icons",
+                  "gap": 6,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "mpnx9",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "signal",
+                      "library": "lucide",
+                      "fill": "#FFFFFF"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "jJe8o",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "wifi",
+                      "library": "lucide",
+                      "fill": "#FFFFFF"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "XKqLo",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "battery-full",
+                      "library": "lucide",
+                      "fill": "#34C759"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "jA00u",
+              "name": "Nav Row",
+              "width": "fill_container",
+              "height": 56,
+              "padding": [
+                0,
+                16
+              ],
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "wJtlB",
+                  "name": "Back Button",
+                  "width": 40,
+                  "height": 40,
+                  "fill": "#2C2C2E",
+                  "cornerRadius": 20,
+                  "layout": "vertical",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "U46OLI",
+                      "name": "Back",
+                      "width": 22,
+                      "height": 22,
+                      "icon": "chevron-left",
+                      "library": "lucide",
+                      "fill": "#FFFFFF"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "fQxwW",
+                  "name": "Title Pill",
+                  "fill": "#2C2C2E",
+                  "cornerRadius": 22,
+                  "layout": "vertical",
+                  "padding": [
+                    7,
+                    22
+                  ],
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "zgSau",
+                      "name": "Sender",
+                      "fill": "#FFFFFF",
+                      "content": "You",
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "TXnmg",
+                      "name": "Date",
+                      "fill": "#FFFFFF99",
+                      "content": "26.06.26",
+                      "fontFamily": "$font",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "RBEuv",
+                  "name": "More Button",
+                  "width": 40,
+                  "height": 40,
+                  "fill": "#2C2C2E",
+                  "cornerRadius": 20,
+                  "layout": "vertical",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "zOp2e",
+                      "name": "More",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "ellipsis",
+                      "library": "lucide",
+                      "fill": "#FFFFFF"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "Q4Xv7b",
+          "x": 0,
+          "y": 736,
+          "name": "Bottom Chrome",
+          "width": 390,
+          "height": 108,
+          "fill": "#000000",
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "MVKQk",
+              "name": "Action Bar",
+              "width": "fill_container",
+              "height": 58,
+              "padding": [
+                4,
+                24,
+                0,
+                24
+              ],
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "A9JP6m",
+                  "name": "Left Actions",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "w8CjRD",
+                      "name": "Share",
+                      "width": 50,
+                      "height": 50,
+                      "fill": "#2C2C2E",
+                      "cornerRadius": 25,
+                      "layout": "vertical",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "BkCIf",
+                          "name": "Share Icon",
+                          "width": 22,
+                          "height": 22,
+                          "icon": "share",
+                          "library": "lucide",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "htUZn",
+                  "name": "Mid Actions",
+                  "gap": 16,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "iEhBA",
+                      "name": "Text Scan",
+                      "width": 50,
+                      "height": 50,
+                      "fill": "#2C2C2E",
+                      "cornerRadius": 25,
+                      "layout": "vertical",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "DLgBH",
+                          "name": "Details Icon",
+                          "width": 22,
+                          "height": 22,
+                          "icon": "type",
+                          "library": "lucide",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "g7LIs9",
+                      "name": "All Media",
+                      "width": 50,
+                      "height": 50,
+                      "fill": "#2C2C2E",
+                      "cornerRadius": 25,
+                      "layout": "vertical",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "p01iq",
+                          "name": "All Media Icon",
+                          "width": 22,
+                          "height": 22,
+                          "icon": "copy",
+                          "library": "lucide",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "cHSkr",
+                  "name": "Right Actions",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "pKJXc",
+                      "name": "Delete",
+                      "width": 50,
+                      "height": 50,
+                      "fill": "#2C2C2E",
+                      "cornerRadius": 25,
+                      "layout": "vertical",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "XIBBd",
+                          "name": "Delete Icon",
+                          "width": 22,
+                          "height": 22,
+                          "icon": "trash-2",
+                          "library": "lucide",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "LIllg",
+              "name": "Home Indicator Wrap",
+              "width": "fill_container",
+              "layout": "vertical",
+              "padding": [
+                10,
+                0,
+                8,
+                0
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 3,
+                  "id": "otvNA",
+                  "name": "Home Indicator",
+                  "fill": "#FFFFFF",
+                  "width": 134,
+                  "height": 5
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "yb9mV",
+      "x": 1020,
+      "y": 944,
+      "name": "Conversation — Image Viewer",
+      "context": "Telegram iOS media viewer (reference: design/image_viewer.PNG). Black canvas, circular glass chrome, title pill, icon-only bottom actions.",
+      "clip": true,
+      "width": 390,
+      "height": 844,
+      "fill": "#000000",
+      "layout": "none",
+      "children": [
+        {
+          "type": "frame",
+          "id": "D8h5s",
+          "x": 0,
+          "y": 0,
+          "name": "Media Stage",
+          "width": 390,
+          "height": 844,
+          "fill": "#000000",
+          "layout": "vertical",
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "diZMC",
+              "name": "Photo",
+              "width": 390,
+              "height": 620,
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "https://images.unsplash.com/photo-1629203851122-3726ecdf080e?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=900&q=80",
+                "mode": "fill"
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "NoFlS",
+          "x": 0,
+          "y": 0,
+          "name": "Top Chrome",
+          "width": 390,
+          "height": 118,
+          "fill": "#000000",
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "CrGc8",
+              "name": "Status Bar",
+              "width": "fill_container",
+              "height": 54,
+              "padding": [
+                12,
+                28,
+                0,
+                28
+              ],
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "lOHwN",
+                  "name": "Time",
+                  "fill": "#FFFFFF",
+                  "content": "14:52",
+                  "fontFamily": "$font",
+                  "fontSize": 15,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "frame",
+                  "id": "Ud45T",
+                  "name": "Status Icons",
+                  "gap": 6,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "pfKWv",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "signal",
+                      "library": "lucide",
+                      "fill": "#FFFFFF"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "XWdnx",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "wifi",
+                      "library": "lucide",
+                      "fill": "#FFFFFF"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "eeVkM",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "battery-full",
+                      "library": "lucide",
+                      "fill": "#34C759"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "D8t7a",
+              "name": "Nav Row",
+              "width": "fill_container",
+              "height": 56,
+              "padding": [
+                0,
+                16
+              ],
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "fsvFU",
+                  "name": "Back Button",
+                  "width": 40,
+                  "height": 40,
+                  "fill": "#2C2C2E",
+                  "cornerRadius": 20,
+                  "layout": "vertical",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "XybBC",
+                      "name": "Back",
+                      "width": 22,
+                      "height": 22,
+                      "icon": "chevron-left",
+                      "library": "lucide",
+                      "fill": "#FFFFFF"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "tpFOf",
+                  "name": "Title Pill",
+                  "fill": "#2C2C2E",
+                  "cornerRadius": 22,
+                  "layout": "vertical",
+                  "padding": [
+                    7,
+                    22
+                  ],
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lSX9p",
+                      "name": "Sender",
+                      "fill": "#FFFFFF",
+                      "content": "You",
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "kol3X",
+                      "name": "Date",
+                      "fill": "#FFFFFF99",
+                      "content": "26.06.26",
+                      "fontFamily": "$font",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "wjMZT",
+                  "name": "More Button",
+                  "width": 40,
+                  "height": 40,
+                  "fill": "#2C2C2E",
+                  "cornerRadius": 20,
+                  "layout": "vertical",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "eRQ3R",
+                      "name": "More",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "ellipsis",
+                      "library": "lucide",
+                      "fill": "#FFFFFF"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "KAyae",
+          "x": 0,
+          "y": 736,
+          "name": "Bottom Chrome",
+          "width": 390,
+          "height": 108,
+          "fill": "#000000",
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "PEOjx",
+              "name": "Action Bar",
+              "width": "fill_container",
+              "height": 58,
+              "padding": [
+                4,
+                24,
+                0,
+                24
+              ],
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "H6DYNC",
+                  "name": "Left Actions",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "O2vMMy",
+                      "name": "Share",
+                      "width": 50,
+                      "height": 50,
+                      "fill": "#2C2C2E",
+                      "cornerRadius": 25,
+                      "layout": "vertical",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "aclLL",
+                          "name": "Share Icon",
+                          "width": 22,
+                          "height": 22,
+                          "icon": "share",
+                          "library": "lucide",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "r4WGEx",
+                  "name": "Mid Actions",
+                  "gap": 16,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "FDMu7",
+                      "name": "Text Scan",
+                      "width": 50,
+                      "height": 50,
+                      "fill": "#2C2C2E",
+                      "cornerRadius": 25,
+                      "layout": "vertical",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "DIuS2",
+                          "name": "Details Icon",
+                          "width": 22,
+                          "height": 22,
+                          "icon": "type",
+                          "library": "lucide",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "t60qW",
+                      "name": "All Media",
+                      "width": 50,
+                      "height": 50,
+                      "fill": "#2C2C2E",
+                      "cornerRadius": 25,
+                      "layout": "vertical",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "Kljha",
+                          "name": "All Media Icon",
+                          "width": 22,
+                          "height": 22,
+                          "icon": "copy",
+                          "library": "lucide",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "r4L4T1",
+                  "name": "Right Actions",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "d73b2c",
+                      "name": "Delete",
+                      "width": 50,
+                      "height": 50,
+                      "fill": "#2C2C2E",
+                      "cornerRadius": 25,
+                      "layout": "vertical",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "ZcaRB",
+                          "name": "Delete Icon",
+                          "width": 22,
+                          "height": 22,
+                          "icon": "trash-2",
+                          "library": "lucide",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "qdwE4",
+              "name": "Home Indicator Wrap",
+              "width": "fill_container",
+              "layout": "vertical",
+              "padding": [
+                10,
+                0,
+                8,
+                0
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 3,
+                  "id": "SAlMY",
+                  "name": "Home Indicator",
+                  "fill": "#FFFFFF",
+                  "width": 134,
+                  "height": 5
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "N4Oth",
+      "x": 1470,
+      "y": 1851,
+      "name": "Conversation — Image Viewer Full Bleed",
+      "context": "Full-bleed Telegram media viewer (screenshots / same-device captures). Image fills entire screen; top/bottom chrome and circular actions float over the photo.",
+      "clip": true,
+      "width": 390,
+      "height": 844,
+      "fill": "#000000",
+      "layout": "none",
+      "children": [
+        {
+          "type": "frame",
+          "id": "jlsyS",
+          "x": 0,
+          "y": 0,
+          "name": "Media Stage",
+          "width": 390,
+          "height": 844,
+          "fill": "#000000",
+          "layout": "none",
+          "children": [
+            {
+              "type": "frame",
+              "id": "N8SmMx",
+              "x": 0,
+              "y": 0,
+              "name": "Photo",
+              "width": 390,
+              "height": 844,
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "https://images.unsplash.com/photo-1629203851122-3726ecdf080e?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=900&q=80",
+                "mode": "fill"
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "OM5Xa",
+          "x": 0,
+          "y": 0,
+          "name": "Top Chrome",
+          "width": 390,
+          "height": 118,
+          "fill": {
+            "type": "gradient",
+            "gradientType": "linear",
+            "enabled": true,
+            "rotation": 180,
+            "size": {
+              "height": 1
+            },
+            "colors": [
+              {
+                "color": "#000000D9",
+                "position": 0
+              },
+              {
+                "color": "#00000080",
+                "position": 0.5
+              },
+              {
+                "color": "#00000000",
+                "position": 1
+              }
+            ]
+          },
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "HOmJf",
+              "name": "Status Bar",
+              "width": "fill_container",
+              "height": 54,
+              "padding": [
+                12,
+                28,
+                0,
+                28
+              ],
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ACw5L",
+                  "name": "Time",
+                  "fill": "#FFFFFF",
+                  "content": "14:52",
+                  "fontFamily": "$font",
+                  "fontSize": 15,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "frame",
+                  "id": "B5UdY0",
+                  "name": "Status Icons",
+                  "gap": 6,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "RsQD4",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "signal",
+                      "library": "lucide",
+                      "fill": "#FFFFFF"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "G0anvK",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "wifi",
+                      "library": "lucide",
+                      "fill": "#FFFFFF"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "CULLG",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "battery-full",
+                      "library": "lucide",
+                      "fill": "#34C759"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "pyGlM",
+              "name": "Nav Row",
+              "width": "fill_container",
+              "height": 56,
+              "padding": [
+                0,
+                16
+              ],
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "d451m",
+                  "name": "Back Button",
+                  "width": 40,
+                  "height": 40,
+                  "fill": "#2C2C2ECC",
+                  "cornerRadius": 20,
+                  "layout": "vertical",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "O9hcz9",
+                      "name": "Back",
+                      "width": 22,
+                      "height": 22,
+                      "icon": "chevron-left",
+                      "library": "lucide",
+                      "fill": "#FFFFFF"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "E0Zcu",
+                  "name": "Title Pill",
+                  "fill": "#2C2C2ECC",
+                  "cornerRadius": 22,
+                  "layout": "vertical",
+                  "padding": [
+                    7,
+                    22
+                  ],
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "O7UO7t",
+                      "name": "Sender",
+                      "fill": "#FFFFFF",
+                      "content": "You",
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "sRXg1",
+                      "name": "Date",
+                      "fill": "#FFFFFF99",
+                      "content": "26.06.26",
+                      "fontFamily": "$font",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "iFxqM",
+                  "name": "More Button",
+                  "width": 40,
+                  "height": 40,
+                  "fill": "#2C2C2ECC",
+                  "cornerRadius": 20,
+                  "layout": "vertical",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "NfEWL",
+                      "name": "More",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "ellipsis",
+                      "library": "lucide",
+                      "fill": "#FFFFFF"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "Pii3j",
+          "x": 0,
+          "y": 736,
+          "name": "Bottom Chrome",
+          "width": 390,
+          "height": 108,
+          "fill": {
+            "type": "gradient",
+            "gradientType": "linear",
+            "enabled": true,
+            "rotation": 180,
+            "size": {
+              "height": 1
+            },
+            "colors": [
+              {
+                "color": "#00000000",
+                "position": 0
+              },
+              {
+                "color": "#00000080",
+                "position": 0.65
+              },
+              {
+                "color": "#000000E6",
+                "position": 1
+              }
+            ]
+          },
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "oVutI",
+              "name": "Action Bar",
+              "width": "fill_container",
+              "height": 58,
+              "padding": [
+                4,
+                24,
+                0,
+                24
+              ],
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "R9TkF",
+                  "name": "Left Actions",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "ehfet",
+                      "name": "Share",
+                      "width": 50,
+                      "height": 50,
+                      "fill": "#2C2C2ECC",
+                      "cornerRadius": 25,
+                      "layout": "vertical",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "aDHXJ",
+                          "name": "Share Icon",
+                          "width": 22,
+                          "height": 22,
+                          "icon": "corner-up-left",
+                          "library": "lucide",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "SJHLr",
+                  "name": "Mid Actions",
+                  "gap": 16,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "BSUQj",
+                      "name": "Text Scan",
+                      "width": 50,
+                      "height": 50,
+                      "fill": "#2C2C2ECC",
+                      "cornerRadius": 25,
+                      "layout": "vertical",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "sL7Hf",
+                          "name": "Details Icon",
+                          "width": 22,
+                          "height": 22,
+                          "icon": "type",
+                          "library": "lucide",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "K86EEs",
+                      "name": "All Media",
+                      "width": 50,
+                      "height": 50,
+                      "fill": "#2C2C2ECC",
+                      "cornerRadius": 25,
+                      "layout": "vertical",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "J616pq",
+                          "name": "All Media Icon",
+                          "width": 22,
+                          "height": 22,
+                          "icon": "copy",
+                          "library": "lucide",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "spTvK",
+                  "name": "Right Actions",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "udHJ5",
+                      "name": "Delete",
+                      "width": 50,
+                      "height": 50,
+                      "fill": "#2C2C2ECC",
+                      "cornerRadius": 25,
+                      "layout": "vertical",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "ZwHHu",
+                          "name": "Delete Icon",
+                          "width": 22,
+                          "height": 22,
+                          "icon": "trash-2",
+                          "library": "lucide",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "KIP89",
+              "name": "Home Indicator Wrap",
+              "width": "fill_container",
+              "layout": "vertical",
+              "padding": [
+                10,
+                0,
+                8,
+                0
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 3,
+                  "id": "qfNPK",
+                  "name": "Home Indicator",
+                  "fill": "#FFFFFF",
+                  "width": 134,
+                  "height": 5
+                }
+              ]
             }
           ]
         }
