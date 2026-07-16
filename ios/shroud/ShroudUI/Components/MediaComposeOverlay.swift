@@ -1,6 +1,27 @@
 import SwiftUI
 import UIKit
 
+/// Send-quality for media compose (maps to design **SD** badge / Telegram quality).
+enum MediaComposeQuality: String, CaseIterable, Sendable {
+    case sd
+    case hd
+
+    var label: String {
+        switch self {
+        case .sd: "SD"
+        case .hd: "HD"
+        }
+    }
+
+    /// JPEG max edge + compression for `MediaCrypto.jpegData`.
+    var encodeParams: (maxEdge: CGFloat, quality: CGFloat) {
+        switch self {
+        case .sd: (1280, 0.72)
+        case .hd: (2560, 0.88)
+        }
+    }
+}
+
 /// Telegram-style media send screen — maps to `Conversation — Media Compose` in `iOS-App.pen`.
 ///
 /// Full-screen overlay (not a pushed route): photo preview, caption field, tools, blue send.
@@ -9,14 +30,18 @@ struct MediaComposeOverlay: View {
     /// Recipient shown in the header (peer username).
     let peerUsername: String
     var onCancel: () -> Void
-    var onSend: (_ caption: String) -> Void
+    /// Caption + encode quality chosen in the compose UI.
+    var onSend: (_ caption: String, _ quality: MediaComposeQuality) -> Void
     var onComingSoon: ((String) -> Void)?
 
     @State private var caption = ""
+    @State private var quality: MediaComposeQuality = .sd
+    @State private var multiSelectHint = false
+    @State private var toolBanner: String?
     @FocusState private var captionFocused: Bool
 
     private let chrome = Color(red: 44 / 255, green: 44 / 255, blue: 46 / 255)
-    /// Telegram blue send (design token in pen: `#3390EC`).
+    /// Telegram blue send (design: `#3390EC`).
     private let telegramBlue = Color(red: 51 / 255, green: 144 / 255, blue: 236 / 255)
 
     private var windowTopInset: CGFloat {
@@ -42,18 +67,42 @@ struct MediaComposeOverlay: View {
             ZStack {
                 Color.black.ignoresSafeArea()
 
-                // Centered letterboxed photo (matches pen Media Stage).
+                // Centered letterboxed photo (pen Media Stage ~420pt tall).
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFit()
                     .frame(maxWidth: geo.size.width)
-                    .frame(maxHeight: geo.size.height * 0.55)
+                    .frame(maxHeight: min(420, geo.size.height * 0.52))
                     .clipped()
 
                 VStack(spacing: 0) {
                     topChrome(topInset: topInset)
+                    // EDIT chip over the letterbox (design Tool Chip at y≈132).
+                    HStack {
+                        editChip
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+
                     Spacer(minLength: 0)
                     bottomChrome(bottomInset: bottomInset)
+                }
+
+                if let toolBanner {
+                    VStack {
+                        Spacer()
+                        Text(toolBanner)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Color.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(chrome.opacity(0.95))
+                            .clipShape(Capsule())
+                            .padding(.bottom, 220)
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .allowsHitTesting(false)
                 }
             }
         }
@@ -61,7 +110,6 @@ struct MediaComposeOverlay: View {
         .preferredColorScheme(.dark)
         .accessibilityAddTraits(.isModal)
         .onAppear {
-            // Focus caption after present for Telegram-like flow.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                 captionFocused = true
             }
@@ -84,20 +132,61 @@ struct MediaComposeOverlay: View {
                         .foregroundStyle(Color.white)
                         .lineLimit(1)
                 }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Sending to \(peerUsername)")
 
                 Spacer(minLength: 8)
 
-                // Multi-select circle (Telegram)
-                Circle()
-                    .stroke(Color.white.opacity(0.6), lineWidth: 1.5)
-                    .frame(width: 28, height: 28)
-                    .accessibilityHidden(true)
+                // Multi-select (Telegram) — visual stub for now.
+                Button {
+                    multiSelectHint.toggle()
+                    Haptics.impact(.light)
+                    flashToolBanner("Multi-select coming soon")
+                    onComingSoon?("Multi-select")
+                } label: {
+                    Circle()
+                        .stroke(Color.white.opacity(multiSelectHint ? 1 : 0.6), lineWidth: 1.5)
+                        .frame(width: 28, height: 28)
+                        .overlay {
+                            if multiSelectHint {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(Color.white)
+                            }
+                        }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Select multiple")
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 10)
         }
         .frame(maxWidth: .infinity)
         .background(Color.black)
+    }
+
+    private var editChip: some View {
+        Button {
+            Haptics.impact(.light)
+            flashToolBanner("Edit tools coming soon")
+            onComingSoon?("Edit")
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "pencil.slash")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("EDIT")
+                    .font(.system(size: 11, weight: .semibold))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .foregroundStyle(Color.white.opacity(0.85))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(chrome.opacity(0.9))
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Edit")
     }
 
     // MARK: - Bottom
@@ -107,30 +196,35 @@ struct MediaComposeOverlay: View {
             captionField
 
             HStack(spacing: 0) {
-                HStack(spacing: 8) {
-                    toolCircle(systemName: "chevron.left", label: "Back") {
-                        captionFocused = false
-                        onCancel()
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        toolCircle(systemName: "chevron.left", label: "Back") {
+                            captionFocused = false
+                            onCancel()
+                        }
+                        toolCircle(systemName: "crop", label: "Crop") {
+                            flashToolBanner("Crop coming soon")
+                            onComingSoon?("Crop")
+                        }
+                        toolCircle(systemName: "textformat", label: "Text") {
+                            flashToolBanner("Text stickers coming soon")
+                            onComingSoon?("Text")
+                        }
+                        toolCircle(systemName: "slider.horizontal.3", label: "Filters") {
+                            flashToolBanner("Filters coming soon")
+                            onComingSoon?("Filters")
+                        }
+                        qualityBadge
                     }
-                    toolCircle(systemName: "crop", label: "Crop") {
-                        onComingSoon?("Crop")
-                    }
-                    toolCircle(systemName: "textformat", label: "Text") {
-                        onComingSoon?("Text")
-                    }
-                    toolCircle(systemName: "slider.horizontal.3", label: "Filters") {
-                        onComingSoon?("Filters")
-                    }
-                    qualityBadge
                 }
 
-                Spacer(minLength: 8)
+                Spacer(minLength: 10)
 
-                // Same arrow.up as chat composer send, Telegram blue per design.
+                // Same arrow.up as chat composer; Telegram blue per design.
                 Button {
                     captionFocused = false
-                    Haptics.impact(.light)
-                    onSend(caption)
+                    Haptics.impact(.medium)
+                    onSend(caption, quality)
                 } label: {
                     Image(systemName: "arrow.up")
                         .font(.system(size: 18, weight: .bold))
@@ -142,7 +236,6 @@ struct MediaComposeOverlay: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Send")
             }
-            .padding(.horizontal, 2)
 
             Color.clear.frame(height: max(bottomInset, 8))
         }
@@ -161,7 +254,6 @@ struct MediaComposeOverlay: View {
                 .focused($captionFocused)
                 .tint(telegramBlue)
 
-            // Media count badge (single selection for now).
             Text("1")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Color.white)
@@ -181,21 +273,33 @@ struct MediaComposeOverlay: View {
 
     private var qualityBadge: some View {
         Button {
-            onComingSoon?("Quality")
+            Haptics.impact(.light)
+            withAnimation(.easeInOut(duration: 0.15)) {
+                quality = quality == .sd ? .hd : .sd
+            }
+            flashToolBanner(quality == .hd ? "High quality" : "Standard quality")
         } label: {
-            Text("SD")
+            Text(quality.label)
                 .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(Color.white)
+                .foregroundStyle(quality == .hd ? telegramBlue : Color.white)
                 .frame(width: 44, height: 44)
                 .background(chrome)
                 .clipShape(Circle())
+                .overlay {
+                    Circle()
+                        .stroke(quality == .hd ? telegramBlue.opacity(0.8) : Color.clear, lineWidth: 1.5)
+                }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Quality SD")
+        .accessibilityLabel("Quality \(quality.label)")
+        .accessibilityHint("Double tap to toggle SD and HD")
     }
 
     private func toolCircle(systemName: String, label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        Button {
+            Haptics.impact(.light)
+            action()
+        } label: {
             Image(systemName: systemName)
                 .font(.system(size: 17, weight: .medium))
                 .foregroundStyle(Color.white)
@@ -206,6 +310,20 @@ struct MediaComposeOverlay: View {
         .buttonStyle(.plain)
         .accessibilityLabel(label)
     }
+
+    private func flashToolBanner(_ text: String) {
+        withAnimation(.easeOut(duration: 0.15)) {
+            toolBanner = text
+        }
+        Task {
+            try? await Task.sleep(nanoseconds: 1_600_000_000)
+            await MainActor.run {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    if toolBanner == text { toolBanner = nil }
+                }
+            }
+        }
+    }
 }
 
 #Preview("Media compose") {
@@ -213,6 +331,6 @@ struct MediaComposeOverlay: View {
         image: UIImage(systemName: "photo")!,
         peerUsername: "Jane Cooper",
         onCancel: {},
-        onSend: { _ in }
+        onSend: { _, _ in }
     )
 }

@@ -170,12 +170,14 @@ struct ConversationView: View {
                                 self.composeDraft = nil
                             }
                         },
-                        onSend: { caption in
+                        onSend: { caption, quality in
                             let image = composeDraft.image
                             withAnimation(.easeOut(duration: 0.15)) {
                                 self.composeDraft = nil
                             }
-                            Task { await sendUIImage(image, caption: caption) }
+                            Task {
+                                await sendUIImage(image, caption: caption, quality: quality)
+                            }
                         },
                         onComingSoon: { feature in
                             toast = "\(feature) coming soon"
@@ -556,9 +558,18 @@ struct ConversationView: View {
         }
     }
 
-    private func sendUIImage(_ image: UIImage, caption: String = "") async {
+    private func sendUIImage(
+        _ image: UIImage,
+        caption: String = "",
+        quality: MediaComposeQuality = .sd
+    ) async {
         isSendingMedia = true
-        let error = await messaging.sendImage(image, to: peerUserID, caption: caption)
+        let error = await messaging.sendImage(
+            image,
+            to: peerUserID,
+            caption: caption,
+            quality: quality
+        )
         isSendingMedia = false
         if let error {
             // Bubble stays in the thread with Retry; also surface the reason.

@@ -407,7 +407,12 @@ final class MessagingController {
     /// Compresses, encrypts, uploads, and sends an image message to `peerUserID`.
     /// Optional `caption` is sealed in the media payload (Telegram-style).
     /// Returns a user-facing error string, or `nil` on success.
-    func sendImage(_ image: UIImage, to peerUserID: UUID, caption: String = "") async -> String? {
+    func sendImage(
+        _ image: UIImage,
+        to peerUserID: UUID,
+        caption: String = "",
+        quality: MediaComposeQuality = .sd
+    ) async -> String? {
         guard let token = sessionController?.bearerToken,
               let me = sessionController?.userID,
               let material = cryptoController?.material
@@ -419,7 +424,12 @@ final class MessagingController {
         let optimisticID = UUID()
         let jpeg: (data: Data, width: Int, height: Int)
         do {
-            jpeg = try MediaCrypto.jpegData(from: image)
+            let params = quality.encodeParams
+            jpeg = try MediaCrypto.jpegData(
+                from: image,
+                maxEdge: params.maxEdge,
+                quality: params.quality
+            )
         } catch {
             return "Could not prepare that photo."
         }
