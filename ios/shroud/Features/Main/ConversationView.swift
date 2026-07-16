@@ -214,15 +214,17 @@ struct ConversationView: View {
     private var messageList: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 10) {
+                // Telegram-like density: tighter gaps between bubbles.
+                LazyVStack(spacing: 3) {
                     headerChips
+                        .padding(.bottom, 6)
 
                     ForEach(groupedTimeline, id: \.id) { item in
                         switch item {
                         case let .date(label, id):
                             ChatDateChip(label: label)
                                 .id(id)
-                                .padding(.top, 4)
+                                .padding(.vertical, 8)
                         case let .message(message):
                             MessageBubbleView(
                                 text: message.text,
