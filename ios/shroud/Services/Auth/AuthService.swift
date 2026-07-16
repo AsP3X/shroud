@@ -4,10 +4,10 @@ import UIKit
 /// Talks to `/auth/*` and persists sessions.
 /// Human: Encryption phrase stays on-device only — never sent here.
 /// Agent: CALLS APIClient from ServerConfigurationStore; WRITES SessionStore; no phrase on wire.
-struct AuthService: Sendable {
+nonisolated struct AuthService: Sendable {
     private let sessionStore: SessionStore
 
-    init(sessionStore: SessionStore = SessionStore()) {
+    nonisolated init(sessionStore: SessionStore = SessionStore()) {
         self.sessionStore = sessionStore
     }
 

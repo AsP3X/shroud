@@ -56,6 +56,17 @@ final class APIClient: Sendable {
         try Self.throwIfNeeded(data: data, status: http.statusCode)
     }
 
+    /// Performs a PUT with a JSON body and expects 2xx with no meaningful body (e.g. 204).
+    func putNoContent<Body: Encodable>(
+        path: String,
+        body: Body,
+        bearerToken: String? = nil
+    ) async throws {
+        let bodyData = try JSONEncoder.api.encode(body)
+        let (data, http) = try await perform(path, method: "PUT", bodyData: bodyData, bearerToken: bearerToken)
+        try Self.throwIfNeeded(data: data, status: http.statusCode)
+    }
+
     /// Performs a DELETE that expects 2xx with no meaningful body.
     func deleteNoContent(path: String, bearerToken: String? = nil) async throws {
         let (data, http) = try await perform(path, method: "DELETE", bodyData: nil, bearerToken: bearerToken)

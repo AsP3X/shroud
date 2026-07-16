@@ -15,14 +15,18 @@ final class AppRouter {
     var path: [AppRoute] = []
     /// Injected session; when set, drives unlock + logout.
     var sessionController: SessionController?
+    /// Injected crypto; messaging unlock requires identity material.
+    var cryptoController: CryptoController?
 
-    /// Human: Server session ≠ messaging unlock. Login must enter the 12-word phrase before main.
-    /// Agent: Only true after unlockMessages() or cold-start restore of an existing session.
+    /// Human: Server session ≠ messaging unlock. Need phrase-derived keys (or Keychain restore).
+    /// Agent: True only after unlockMessages() / cold-start crypto restore.
     var hasUnlockedMessaging = false
 
-    /// Ready for the main shell: API session present **and** local phrase unlock completed.
+    /// Ready for the main shell: API session present **and** local crypto unlocked.
     var isUnlocked: Bool {
-        hasUnlockedMessaging && sessionController?.isSignedIn == true
+        hasUnlockedMessaging
+            && sessionController?.isSignedIn == true
+            && cryptoController?.isUnlocked == true
     }
 
     var rootRoute: AppRoute {
@@ -37,8 +41,6 @@ final class AppRouter {
     }
 
     func showSignUp() {
-        // Human: Spring path change pairs with the Zoom navigation transition from the Welcome logo.
-        // Agent: WRITES path = [.signUp] inside spring animation.
         withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
             path = [.signUp]
         }
@@ -58,24 +60,29 @@ final class AppRouter {
         }
     }
 
-    /// After phrase step (login) or account create (sign up), leave onboarding for the main shell.
+    /// After phrase setup (login) or account create (sign up), leave onboarding for the main shell.
     func unlockMessages() {
+        guard cryptoController?.isUnlocked == true else { return }
         hasUnlockedMessaging = true
         path = []
     }
 
-    /// Cold start: Keychain already has a session — treat as previously unlocked on this device.
-    /// Fresh login still requires the encryption-phrase step before calling `unlockMessages()`.
+    /// Cold start: session + Keychain identity for same user → main without re-entering phrase.
     func restoreUnlockedSessionIfNeeded() {
-        guard sessionController?.isSignedIn == true else { return }
+        guard let session = sessionController?.session else { return }
+        guard cryptoController?.restoreIfPossible(for: session.userID) == true else {
+            hasUnlockedMessaging = false
+            return
+        }
         hasUnlockedMessaging = true
         path = []
     }
 
-    /// Ends the session and returns to Welcome.
+    /// Ends the server session, locks crypto (keeps Keychain keys for re-login), returns to Welcome.
     func logOut() {
         Task {
             await sessionController?.logout()
+            cryptoController?.lock(wipeStore: false)
             hasUnlockedMessaging = false
             path = []
         }

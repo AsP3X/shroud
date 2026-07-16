@@ -5,10 +5,14 @@ import Foundation
 @Observable
 final class SessionController {
     private(set) var session: SessionStore.Session?
+    /// True after a successful `/auth/me` probe (or fresh login/register) this process.
+    private(set) var sessionValidated = false
     private let authService: AuthService
 
     var isSignedIn: Bool { session != nil }
     var username: String? { session?.username }
+    var userID: UUID? { session?.userID }
+    var bearerToken: String? { session?.token }
 
     init(authService: AuthService = AuthService()) {
         self.authService = authService
@@ -17,15 +21,39 @@ final class SessionController {
 
     func register(username: String, password: String) async throws {
         session = try await authService.register(username: username, password: password)
+        sessionValidated = true
     }
 
     func login(username: String, password: String) async throws {
         session = try await authService.login(username: username, password: password)
+        sessionValidated = true
     }
 
     func logout() async {
         await authService.logout()
         session = nil
+        sessionValidated = false
+    }
+
+    /// Probes `/auth/me`; clears Keychain session on 401/unauthorized.
+    func validateSessionIfNeeded() async {
+        guard let session else {
+            sessionValidated = false
+            return
+        }
+        do {
+            _ = try await authService.fetchMe(session: session)
+            sessionValidated = true
+        } catch let api as APIError {
+            if case let .server(_, _, status) = api, status == 401 {
+                await logout()
+            } else {
+                // Offline / server blip — keep session; treat as not yet validated.
+                sessionValidated = false
+            }
+        } catch {
+            sessionValidated = false
+        }
     }
 
     /// Maps API errors to a short user-facing string.

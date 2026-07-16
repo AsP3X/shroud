@@ -4,7 +4,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 
 | | |
 | --- | --- |
-| **Status** | Server vertical slice through **m9 Calls** (1:1 signaling + ICE config + optional coturn profile). VoIP-priority APNs still uses data push; dedicated VoIP cert optional later |
+| **Status** | Server m1–m9 **done**. iOS: auth session solid + real on-device identity crypto (phrase → keys → `PUT /keys/bundle`). Next: live chats/contacts wiring |
 | **Last updated** | 2026-07-16 |
 | **Related** | [architecture.md](./architecture.md) · [thought-collection.md](../thought-collection.md) · [README.md](../README.md) |
 
@@ -1234,12 +1234,13 @@ Add optional:
 
 ## Still open
 
-1. **Envelope ciphertext encoding** — client crypto; server stores opaque bytes.
-2. **Nebular presign wire format** — real signing when not stub; Nebular in Compose for local.
-3. **Multi-device key fetch for send** — m2 is single best-device GET; messaging will likely add list/fetch-all-device bundles for fan-out.
-4. **Redis rate-limit wiring** — budgets documented; not fully enforced yet.
-5. **VoIP / CallKit push** — dedicated PushKit cert path (currently same data-push channel as messages).
-6. **iOS client** — wire tabs, crypto, messaging, and WebRTC UI to the live API.
+1. **Nebular presign wire format** — harden real signing when not stub (Compose Nebular works for local).
+2. **Multi-device key fetch for send** — m2 is single best-device GET; list/fetch-all-device bundles for true multi-device fan-out.
+3. **Redis rate-limit wiring** — budgets documented; not fully enforced yet.
+4. **VoIP / CallKit push** — dedicated PushKit cert path (currently same data-push channel as messages).
+5. **iOS live feature wiring** — chats list, conversation, contacts, presence, media, calls against the API (auth + identity crypto **done**).
+6. **Double Ratchet** — client sealed ECDH+AES-GCM envelopes ship first; upgrade sessions to Signal-style DR later.
+7. **Envelope ciphertext encoding** — server stores opaque bytes; client currently uses JSON sealed envelope inside Base64 ciphertext field.
 
 ---
 

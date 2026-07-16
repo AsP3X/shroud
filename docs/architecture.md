@@ -73,6 +73,8 @@ Open `ios/shroud.xcodeproj` — Debug API base URL `http://127.0.0.1:8080/api/v1
 
 Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 
+### Server
+
 1. **Auth** — **done** (register/login, multi-device, opaque tokens, argon2id)  
 2. **Key bundles** — **done** (per-device identity/SPK/OTPK, PUT/GET/status, atomic consume)  
 3. **Contacts** — **done** (UUID requests, mutual auto-accept, directed contacts, blocks)  
@@ -82,4 +84,16 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 6. **Presence / receipts** — **done** (typing WS; online/last-seen contacts-only; read receipts)  
 7. **Deletes** — for me / for everyone; hard account cascade  
 8. **Push** — **done** (token register; offline gate; live HTTP/2 APNs with .p8 JWT when configured)  
-9. **Calls** — **done** (1:1 signaling ring/accept/reject/hangup/signal; ICE servers; coturn compose profile)  
+9. **Calls** — **done** (1:1 signaling ring/accept/reject/hangup/signal; ICE servers; coturn compose profile)
+
+### iOS client
+
+| Area | Status |
+| --- | --- |
+| Onboarding UI + server settings | **done** |
+| Auth session (Keychain + `/auth/me` validate) | **done** |
+| Encryption phrase (BIP39 generate/validate) | **done** |
+| Identity keys + `PUT /keys/bundle` | **done** (CryptoKit X25519/Ed25519 + AES-GCM seal) |
+| Session ≠ messaging unlock | **done** (phrase or Keychain identity restore) |
+| Live chats / contacts / calls UI | **mock data** — next wiring pass |
+| Full Signal Double Ratchet | **not yet** — sealed ECDH envelopes ready for upgrade |

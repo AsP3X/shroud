@@ -5,6 +5,7 @@ struct LogInFlowView: View {
     let router: AppRouter
 
     @Environment(SessionController.self) private var sessionController
+    @Environment(CryptoController.self) private var cryptoController
 
     @State private var phase: Phase = .credentials
     @State private var username = ""
@@ -206,12 +207,12 @@ struct LogInFlowView: View {
             PrimaryButton(
                 title: isCredentialsPhase
                     ? (isSubmitting ? "Signing in…" : "Log In")
-                    : "Unlock Messages"
+                    : (isSubmitting ? "Unlocking…" : "Unlock Messages")
             ) {
                 if isCredentialsPhase {
                     Task { await submitCredentials() }
                 } else {
-                    submitPhraseUnlock()
+                    Task { await submitPhraseUnlock() }
                 }
             }
             .opacity(primaryButtonDimmed ? 0.45 : 1)
@@ -447,15 +448,38 @@ struct LogInFlowView: View {
     }
 
     // Human: Phrase unlock is local crypto; server session already established.
-    // Agent: WRITES router.unlockMessages only; never uploads phraseWords.
-    private func submitPhraseUnlock() {
+    // Agent: CALLS CryptoController.unlockWithPhrase then unlockMessages; never uploads phraseWords.
+    private func submitPhraseUnlock() async {
         guard canUnlockWithPhrase else {
             errorMessage = "Enter all 12 words of your encryption phrase."
             return
         }
+        guard let userID = sessionController.userID,
+              let token = sessionController.bearerToken
+        else {
+            errorMessage = "Session expired. Log in again."
+            phase = .credentials
+            return
+        }
+
+        isSubmitting = true
         errorMessage = nil
-        // Future: derive local identity keys from phrase before unlocking.
-        router.unlockMessages()
+        defer { isSubmitting = false }
+
+        let words = phraseWords
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
+
+        do {
+            try await cryptoController.unlockWithPhrase(
+                mnemonicWords: words,
+                userID: userID,
+                bearerToken: token
+            )
+            router.unlockMessages()
+        } catch {
+            errorMessage = CryptoController.userMessage(for: error)
+        }
     }
 }
 
@@ -463,5 +487,6 @@ struct LogInFlowView: View {
     NavigationStack {
         LogInFlowView(router: AppRouter())
             .environment(SessionController())
+            .environment(CryptoController())
     }
 }

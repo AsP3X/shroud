@@ -6,6 +6,7 @@ struct SignUpView: View {
     let router: AppRouter
 
     @Environment(SessionController.self) private var sessionController
+    @Environment(CryptoController.self) private var cryptoController
 
     @State private var username = ""
     @State private var password = ""
@@ -284,21 +285,42 @@ struct SignUpView: View {
     }
 
     // Human: Phrase stays on device only; only username/password go to the API.
-    // Agent: CALLS SessionController.register; never sends phraseWords.
+    // Agent: CALLS register → CryptoController.establishFromSignup → unlock; never sends phraseWords.
     private func createAccount() async {
         guard canCreateAccount else { return }
         isSubmitting = true
         errorMessage = nil
         defer { isSubmitting = false }
 
-        // Local-only: user confirmed they wrote the phrase; persistence of phrase is a later crypto step.
-        _ = phraseWords
+        let words = phraseWords
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
+        guard words.count == EncryptionPhraseGenerator.wordCount else {
+            errorMessage = "Wait until all 12 words are ready."
+            return
+        }
 
         do {
+            _ = try BIP39Seed.validateMnemonic(words)
             try await sessionController.register(username: username, password: password)
+            guard let userID = sessionController.userID,
+                  let token = sessionController.bearerToken
+            else {
+                errorMessage = "Account created but session is missing. Try logging in."
+                return
+            }
+            try await cryptoController.establishFromSignup(
+                mnemonicWords: words,
+                userID: userID,
+                bearerToken: token
+            )
             router.unlockMessages()
         } catch {
-            errorMessage = SessionController.userMessage(for: error)
+            if error is BIP39Seed.SeedError || error is CryptoControllerError {
+                errorMessage = CryptoController.userMessage(for: error)
+            } else {
+                errorMessage = SessionController.userMessage(for: error)
+            }
         }
     }
 }
@@ -307,5 +329,6 @@ struct SignUpView: View {
     NavigationStack {
         SignUpView(router: AppRouter())
             .environment(SessionController())
+            .environment(CryptoController())
     }
 }
