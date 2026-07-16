@@ -2,6 +2,7 @@ import SwiftUI
 
 /// Receipt state for outbound bubbles (Telegram-style ticks).
 enum MessageReceiptStatus: Equatable, Sendable, Comparable {
+    case failed
     case sending
     case sent
     case delivered
@@ -9,6 +10,7 @@ enum MessageReceiptStatus: Equatable, Sendable, Comparable {
 
     var rank: Int {
         switch self {
+        case .failed: -1
         case .sending: 0
         case .sent: 1
         case .delivered: 2
@@ -20,6 +22,8 @@ enum MessageReceiptStatus: Equatable, Sendable, Comparable {
         lhs.rank < rhs.rank
     }
 }
+
+// Note: `failed` is used for outbound media that stayed local after a send error.
 
 /// Message bubble styled close to Telegram iOS:
 /// - Content-hugging width for short text
@@ -185,6 +189,10 @@ struct MessageBubbleView: View {
     @ViewBuilder
     private var receiptIcon: some View {
         switch receipt {
+        case .failed:
+            Image(systemName: "exclamationmark.circle.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.danger)
         case .sending:
             ProgressView()
                 .controlSize(.mini)
@@ -220,6 +228,7 @@ struct MessageBubbleView: View {
         var parts = [isMine ? "You" : "Them", displayText, time]
         if isMine {
             switch receipt {
+            case .failed: parts.append("Failed")
             case .sending: parts.append("Sending")
             case .sent: parts.append("Sent")
             case .delivered: parts.append("Delivered")

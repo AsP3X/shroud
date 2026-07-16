@@ -74,6 +74,10 @@ pub fn router() -> Router<AppState> {
             .route("/conversations", get(messages::list_conversations))
             .route("/media/uploads", post(media::create_upload))
             .route("/media/{id}/download", post(media::create_download))
+            .route(
+                "/media/{id}/content",
+                axum::routing::put(media::put_content).get(media::get_content),
+            )
             .route("/presence/{user_id}", get(presence::get_presence))
             .route("/calls/ice-servers", get(calls::ice_servers))
             .route("/calls", post(calls::create_call))

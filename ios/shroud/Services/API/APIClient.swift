@@ -90,6 +90,36 @@ final class APIClient: Sendable {
         try Self.throwIfNeeded(data: data, status: http.statusCode)
     }
 
+    /// PUT raw bytes (e.g. encrypted media) with an explicit Content-Type.
+    func putRaw(
+        path: String,
+        body: Data,
+        contentType: String,
+        bearerToken: String? = nil
+    ) async throws {
+        let (data, http) = try await perform(
+            path,
+            method: "PUT",
+            bodyData: body,
+            bearerToken: bearerToken,
+            contentType: contentType
+        )
+        try Self.throwIfNeeded(data: data, status: http.statusCode)
+    }
+
+    /// GET raw bytes (e.g. encrypted media).
+    func getRaw(path: String, bearerToken: String? = nil) async throws -> Data {
+        let (data, http) = try await perform(
+            path,
+            method: "GET",
+            bodyData: nil,
+            bearerToken: bearerToken,
+            contentType: nil
+        )
+        try Self.throwIfNeeded(data: data, status: http.statusCode)
+        return data
+    }
+
     // MARK: - Internals
 
     private func perform(
@@ -97,16 +127,19 @@ final class APIClient: Sendable {
         method: String,
         bodyData: Data?,
         bearerToken: String?,
-        query: [String: String]? = nil
+        query: [String: String]? = nil,
+        contentType: String? = "application/json"
     ) async throws -> (Data, HTTPURLResponse) {
         var request = URLRequest(url: resolveURL(path, query: query))
         request.httpMethod = method
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json, application/octet-stream, */*", forHTTPHeaderField: "Accept")
         if let bearerToken, !bearerToken.isEmpty {
             request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
         }
         if let bodyData {
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            if let contentType {
+                request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+            }
             request.httpBody = bodyData
         }
 

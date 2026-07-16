@@ -1,9 +1,16 @@
+import Photos
 import SwiftUI
+import UIKit
 
 /// Bottom attach tray — maps to `Attach Sheet` in `Conversation — Attach Open`.
 struct ChatAttachSheet: View {
     var onSelect: (ChatAttachOption) -> Void
     var onCancel: () -> Void
+    /// Called when the user taps a recent thumbnail (image already loaded).
+    var onPickImage: ((UIImage) -> Void)? = nil
+
+    @State private var recentImages: [UIImage] = []
+    @State private var photoAccessDenied = false
 
     private let row1: [ChatAttachOption] = [.camera, .photos, .file, .location]
     private let row2: [ChatAttachOption] = [.contact, .music, .gift, .stickers]
@@ -11,11 +18,10 @@ struct ChatAttachSheet: View {
     var body: some View {
         VStack(spacing: 14) {
             Capsule()
-                .fill(Color(red: 0.847, green: 0.847, blue: 0.863))
+                .fill(Theme.separator)
                 .frame(width: 36, height: 5)
                 .padding(.top, 4)
 
-            // Photo strip placeholder (media library wiring later).
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("RECENTS")
@@ -36,19 +42,45 @@ struct ChatAttachSheet: View {
                     .buttonStyle(.plain)
                 }
 
-                HStack(spacing: 8) {
-                    ForEach(0 ..< 4, id: \.self) { index in
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(Theme.backgroundGrouped)
-                            .frame(width: 96, height: 96)
-                            .overlay {
-                                Image(systemName: index == 0 ? "photo.fill" : "photo")
-                                    .font(.system(size: 22))
-                                    .foregroundStyle(Theme.textSecondary.opacity(0.55))
-                            }
-                            .onTapGesture { onSelect(.photos) }
+                if photoAccessDenied {
+                    Text("Allow Photos access in Settings to see recent images here.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 12)
+                } else if recentImages.isEmpty {
+                    HStack(spacing: 8) {
+                        ForEach(0 ..< 4, id: \.self) { _ in
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Theme.backgroundGrouped)
+                                .frame(width: 96, height: 96)
+                                .overlay {
+                                    ProgressView()
+                                }
+                        }
+                        Spacer(minLength: 0)
                     }
-                    Spacer(minLength: 0)
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(Array(recentImages.enumerated()), id: \.offset) { _, image in
+                                Button {
+                                    if let onPickImage {
+                                        onPickImage(image)
+                                    } else {
+                                        onSelect(.photos)
+                                    }
+                                } label: {
+                                    Image(uiImage: image)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 96, height: 96)
+                                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
                 }
             }
 
@@ -70,7 +102,7 @@ struct ChatAttachSheet: View {
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
         .background(
-            Color(red: 0.984, green: 0.984, blue: 0.992)
+            Theme.background
                 .clipShape(UnevenRoundedRectangle(
                     topLeadingRadius: 20,
                     bottomLeadingRadius: 0,
@@ -79,6 +111,9 @@ struct ChatAttachSheet: View {
                     style: .continuous
                 ))
         )
+        .task {
+            await loadRecentPhotos()
+        }
     }
 
     private func optionRow(_ options: [ChatAttachOption]) -> some View {
@@ -106,6 +141,63 @@ struct ChatAttachSheet: View {
                 .buttonStyle(.plain)
             }
         }
+    }
+
+    @MainActor
+    private func loadRecentPhotos() async {
+        let status = await requestPhotoAccess()
+        guard status == .authorized || status == .limited else {
+            photoAccessDenied = true
+            recentImages = []
+            return
+        }
+        photoAccessDenied = false
+
+        let images: [UIImage] = await Task.detached(priority: .userInitiated) {
+            let options = PHFetchOptions()
+            options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+            options.fetchLimit = 12
+            let result = PHAsset.fetchAssets(with: .image, options: options)
+            guard result.count > 0 else { return [] }
+
+            let manager = PHImageManager.default()
+            let requestOptions = PHImageRequestOptions()
+            requestOptions.deliveryMode = .opportunistic
+            requestOptions.resizeMode = .fast
+            requestOptions.isNetworkAccessAllowed = true
+            requestOptions.isSynchronous = true
+
+            var out: [UIImage] = []
+            let target = CGSize(width: 192, height: 192)
+            result.enumerateObjects { asset, _, stop in
+                manager.requestImage(
+                    for: asset,
+                    targetSize: target,
+                    contentMode: .aspectFill,
+                    options: requestOptions
+                ) { image, _ in
+                    if let image {
+                        out.append(image)
+                    }
+                }
+                if out.count >= 12 { stop.pointee = true }
+            }
+            return out
+        }.value
+
+        recentImages = images
+    }
+
+    private func requestPhotoAccess() async -> PHAuthorizationStatus {
+        let current = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        if current == .notDetermined {
+            return await withCheckedContinuation { cont in
+                PHPhotoLibrary.requestAuthorization(for: .readWrite) { status in
+                    cont.resume(returning: status)
+                }
+            }
+        }
+        return current
     }
 }
 

@@ -100,7 +100,11 @@ struct ConversationView: View {
                         showAttach = false
                         handleAttach(option)
                     },
-                    onCancel: { showAttach = false }
+                    onCancel: { showAttach = false },
+                    onPickImage: { image in
+                        showAttach = false
+                        Task { await sendUIImage(image) }
+                    }
                 )
                 .presentationDetents([.height(420)])
                 .presentationDragIndicator(.hidden)
@@ -410,10 +414,28 @@ struct ConversationView: View {
         case .image:
             ImageMessageBubble(
                 message: message,
-                time: messaging.clockTimeLabel(for: message.createdAt)
-            ) {
-                Task { await messaging.ensureImageLoaded(for: message) }
-            }
+                time: messaging.clockTimeLabel(for: message.createdAt),
+                onAppearLoad: {
+                    Task { await messaging.ensureImageLoaded(for: message) }
+                },
+                onRetry: {
+                    Task {
+                        isSendingMedia = true
+                        let error = await messaging.retryFailedImage(
+                            messageID: message.id,
+                            peerUserID: peerUserID
+                        )
+                        isSendingMedia = false
+                        if let error {
+                            toast = error
+                            Haptics.notification(.error)
+                            scheduleToastClear()
+                        } else {
+                            Haptics.notification(.success)
+                        }
+                    }
+                }
+            )
         case .text:
             MessageBubbleView(
                 text: message.text,
@@ -463,9 +485,14 @@ struct ConversationView: View {
         let error = await messaging.sendImage(image, to: peerUserID)
         isSendingMedia = false
         if let error {
+            // Bubble stays in the thread with Retry; also surface the reason.
             toast = error
             Haptics.notification(.error)
-            scheduleToastClear()
+            // Keep error visible longer so it can be read.
+            Task {
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                if toast == error { toast = nil }
+            }
         } else {
             Haptics.notification(.success)
         }

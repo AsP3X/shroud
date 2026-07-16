@@ -60,6 +60,8 @@ final class MessagingController {
         var imageWidth: Int?
         var imageHeight: Int?
         var imageData: Data?
+        /// Set when an outbound send failed; bubble stays for retry.
+        var sendError: String?
 
         init(
             id: UUID,
@@ -74,7 +76,8 @@ final class MessagingController {
             mediaObjectId: UUID? = nil,
             imageWidth: Int? = nil,
             imageHeight: Int? = nil,
-            imageData: Data? = nil
+            imageData: Data? = nil,
+            sendError: String? = nil
         ) {
             self.id = id
             self.peerUserID = peerUserID
@@ -89,6 +92,7 @@ final class MessagingController {
             self.imageWidth = imageWidth
             self.imageHeight = imageHeight
             self.imageData = imageData
+            self.sendError = sendError
         }
     }
 
@@ -435,73 +439,144 @@ final class MessagingController {
         threads[peerUserID] = list
 
         do {
-            let (fileKey, sealedFile) = try MediaCrypto.sealFile(jpeg.data)
-            let upload = try await mediaService.createUpload(
-                sizeBytes: sealedFile.count,
-                contentType: "application/octet-stream",
-                token: token
-            )
-            try await mediaService.upload(data: sealedFile, to: upload.uploadUrl)
-
-            let payload = MediaMessagePayload(
-                t: MediaMessagePayload.kindImage,
-                mime: "image/jpeg",
-                w: jpeg.width,
-                h: jpeg.height,
-                k: fileKey.base64EncodedString()
-            )
-            let payloadData = try JSONEncoder().encode(payload)
-            let peerPub = try await resolvePeerIdentityPublicKey(peerUserID: peerUserID, token: token)
-            let sealed = try MessageCrypto.seal(
-                plaintext: payloadData,
-                toPeerIdentityPublicKey: peerPub,
-                ourIdentityPublicKey: material.identityPublicKeyData
-            )
-            let dto = try await messagesService.send(
-                SendMessageRequest(
-                    peerUserId: peerUserID,
-                    contentType: "media",
-                    ciphertext: sealed.base64EncodedString(),
-                    mediaObjectId: upload.mediaObjectId
-                ),
-                token: token
-            )
-            mediaCache.save(messageID: dto.id, data: jpeg.data)
-            plaintextCache.save(messageID: dto.id, text: "Photo")
-
-            let sent = ChatMessage(
-                id: dto.id,
+            try await finishImageSend(
+                optimisticID: optimisticID,
                 peerUserID: peerUserID,
-                senderUserID: me,
-                text: "Photo",
-                createdAt: dto.createdAt,
-                isMine: true,
-                deleted: false,
-                receipt: receiptStatus(from: dto),
-                kind: .image,
-                mediaObjectId: upload.mediaObjectId,
-                imageWidth: jpeg.width,
-                imageHeight: jpeg.height,
-                imageData: jpeg.data
+                me: me,
+                material: material,
+                token: token,
+                jpeg: jpeg
             )
-            if var thread = threads[peerUserID],
-               let idx = thread.firstIndex(where: { $0.id == optimisticID })
-            {
-                thread[idx] = sent
-                threads[peerUserID] = thread
-            }
-            await refreshConversations()
             lastError = nil
             return nil
         } catch {
-            if var thread = threads[peerUserID] {
-                thread.removeAll { $0.id == optimisticID }
-                threads[peerUserID] = thread
-            }
             let message = SessionController.userMessage(for: error)
+            markImageFailed(optimisticID: optimisticID, peerUserID: peerUserID, error: message)
             lastError = message
             return message
         }
+    }
+
+    /// Retries a failed outbound photo that still has local image data.
+    func retryFailedImage(messageID: UUID, peerUserID: UUID) async -> String? {
+        guard let token = sessionController?.bearerToken,
+              let me = sessionController?.userID,
+              let material = cryptoController?.material,
+              var thread = threads[peerUserID],
+              let idx = thread.firstIndex(where: { $0.id == messageID && $0.isMine && $0.kind == .image }),
+              let data = thread[idx].imageData,
+              let image = UIImage(data: data)
+        else {
+            return "Nothing to retry."
+        }
+
+        thread[idx].receipt = .sending
+        thread[idx].sendError = nil
+        threads[peerUserID] = thread
+
+        let jpeg: (data: Data, width: Int, height: Int)
+        do {
+            jpeg = try MediaCrypto.jpegData(from: image)
+        } catch {
+            markImageFailed(optimisticID: messageID, peerUserID: peerUserID, error: "Could not prepare that photo.")
+            return "Could not prepare that photo."
+        }
+
+        do {
+            try await finishImageSend(
+                optimisticID: messageID,
+                peerUserID: peerUserID,
+                me: me,
+                material: material,
+                token: token,
+                jpeg: jpeg
+            )
+            return nil
+        } catch {
+            let message = SessionController.userMessage(for: error)
+            markImageFailed(optimisticID: messageID, peerUserID: peerUserID, error: message)
+            return message
+        }
+    }
+
+    private func finishImageSend(
+        optimisticID: UUID,
+        peerUserID: UUID,
+        me: UUID,
+        material: IdentityKeyMaterial,
+        token: String,
+        jpeg: (data: Data, width: Int, height: Int)
+    ) async throws {
+        let (fileKey, sealedFile) = try MediaCrypto.sealFile(jpeg.data)
+        let upload = try await mediaService.createUpload(
+            sizeBytes: sealedFile.count,
+            contentType: "application/octet-stream",
+            token: token
+        )
+        try await mediaService.uploadContent(
+            mediaID: upload.mediaObjectId,
+            data: sealedFile,
+            token: token
+        )
+
+        let payload = MediaMessagePayload(
+            t: MediaMessagePayload.kindImage,
+            mime: "image/jpeg",
+            w: jpeg.width,
+            h: jpeg.height,
+            k: fileKey.base64EncodedString()
+        )
+        let payloadData = try JSONEncoder().encode(payload)
+        let peerPub = try await resolvePeerIdentityPublicKey(peerUserID: peerUserID, token: token)
+        let sealed = try MessageCrypto.seal(
+            plaintext: payloadData,
+            toPeerIdentityPublicKey: peerPub,
+            ourIdentityPublicKey: material.identityPublicKeyData
+        )
+        let dto = try await messagesService.send(
+            SendMessageRequest(
+                peerUserId: peerUserID,
+                contentType: "media",
+                ciphertext: sealed.base64EncodedString(),
+                mediaObjectId: upload.mediaObjectId
+            ),
+            token: token
+        )
+        mediaCache.save(messageID: dto.id, data: jpeg.data)
+        plaintextCache.save(messageID: dto.id, text: "Photo")
+
+        let sent = ChatMessage(
+            id: dto.id,
+            peerUserID: peerUserID,
+            senderUserID: me,
+            text: "Photo",
+            createdAt: dto.createdAt,
+            isMine: true,
+            deleted: false,
+            receipt: receiptStatus(from: dto),
+            kind: .image,
+            mediaObjectId: upload.mediaObjectId,
+            imageWidth: jpeg.width,
+            imageHeight: jpeg.height,
+            imageData: jpeg.data,
+            sendError: nil
+        )
+        if var thread = threads[peerUserID],
+           let idx = thread.firstIndex(where: { $0.id == optimisticID })
+        {
+            thread[idx] = sent
+            threads[peerUserID] = thread
+        }
+        await refreshConversations()
+    }
+
+    private func markImageFailed(optimisticID: UUID, peerUserID: UUID, error: String) {
+        guard var thread = threads[peerUserID],
+              let idx = thread.firstIndex(where: { $0.id == optimisticID })
+        else { return }
+        thread[idx].receipt = .failed
+        thread[idx].sendError = error
+        threads[peerUserID] = thread
     }
 
     /// Loads decrypted image bytes for a media message (caches on success).
@@ -558,8 +633,7 @@ final class MessagingController {
             let payload = try JSONDecoder().decode(MediaMessagePayload.self, from: payloadData)
             guard let keyData = Data(base64Encoded: payload.k) else { return }
 
-            let download = try await mediaService.createDownload(mediaID: mediaID, token: token)
-            let sealedFile = try await mediaService.download(from: download.downloadUrl)
+            let sealedFile = try await mediaService.downloadContent(mediaID: mediaID, token: token)
             let jpeg = try MediaCrypto.openFile(sealed: sealedFile, keyData: keyData)
             mediaCache.save(messageID: message.id, data: jpeg)
             updateMessageImage(messageID: message.id, peerID: message.peerUserID, data: jpeg)
@@ -922,8 +996,7 @@ final class MessagingController {
            let mediaID = dto.mediaObjectId,
            let keyData = Data(base64Encoded: payload.k)
         {
-            if let download = try? await mediaService.createDownload(mediaID: mediaID, token: token),
-               let sealed = try? await mediaService.download(from: download.downloadUrl),
+            if let sealed = try? await mediaService.downloadContent(mediaID: mediaID, token: token),
                let jpeg = try? MediaCrypto.openFile(sealed: sealed, keyData: keyData)
             {
                 mediaCache.save(messageID: dto.id, data: jpeg)

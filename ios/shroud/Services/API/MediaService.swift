@@ -1,6 +1,6 @@
 import Foundation
 
-/// Media upload/download via API presigns + direct blob HTTP to Nebular/stub.
+/// Media upload/download via the Shroud API (encrypted blobs stay behind Bearer auth).
 struct MediaService: Sendable {
     private var client: APIClient { .makeConfiguredClient() }
 
@@ -30,32 +30,21 @@ struct MediaService: Sendable {
         )
     }
 
-    /// PUT encrypted bytes to a presigned upload URL (not the API host).
-    func upload(data: Data, to uploadURLString: String) async throws {
-        guard let url = URL(string: uploadURLString), url.scheme != "stub" else {
-            throw APIError.transport("Media storage is not configured on the server.")
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "PUT"
-        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-        request.httpBody = data
-        let (_, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200 ... 299).contains(http.statusCode) else {
-            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-            throw APIError.transport("Media upload failed (HTTP \(code)).")
-        }
+    /// PUT encrypted bytes to `media/{id}/content` (API, authenticated).
+    func uploadContent(mediaID: UUID, data: Data, token: String) async throws {
+        try await client.putRaw(
+            path: "media/\(mediaID.uuidString.lowercased())/content",
+            body: data,
+            contentType: "application/octet-stream",
+            bearerToken: token
+        )
     }
 
-    /// GET encrypted bytes from a presigned download URL.
-    func download(from downloadURLString: String) async throws -> Data {
-        guard let url = URL(string: downloadURLString), url.scheme != "stub" else {
-            throw APIError.transport("Media storage is not configured on the server.")
-        }
-        let (data, response) = try await URLSession.shared.data(from: url)
-        guard let http = response as? HTTPURLResponse, (200 ... 299).contains(http.statusCode) else {
-            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-            throw APIError.transport("Media download failed (HTTP \(code)).")
-        }
-        return data
+    /// GET encrypted bytes from `media/{id}/content` (API, authenticated).
+    func downloadContent(mediaID: UUID, token: String) async throws -> Data {
+        try await client.getRaw(
+            path: "media/\(mediaID.uuidString.lowercased())/content",
+            bearerToken: token
+        )
     }
 }

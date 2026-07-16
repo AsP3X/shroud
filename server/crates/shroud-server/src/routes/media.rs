@@ -1,9 +1,15 @@
-//! Encrypted media upload/download authorization (presigned or stub URLs).
+//! Encrypted media: metadata registration + API-proxied blob put/get.
+//!
+//! Clients always upload/download via the Shroud API (`/media/{id}/content`) so
+//! phones never need to reach internal Docker hostnames like `nebular:9000`.
+
+use std::path::{Path, PathBuf};
 
 use axum::{
-    Json,
-    extract::{Path, State},
-    http::StatusCode,
+    Json, body::Bytes,
+    extract::{Path as AxumPath, State},
+    http::{StatusCode, header},
+    response::{IntoResponse, Response},
 };
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
@@ -16,7 +22,7 @@ use crate::state::AppState;
 
 /// Maximum encrypted object size (25 MiB).
 pub const MAX_MEDIA_BYTES: i64 = 25 * 1024 * 1024;
-/// Presign TTL (15 minutes).
+/// Presign TTL (15 minutes) — kept for response compatibility.
 const PRESIGN_TTL_MINUTES: i64 = 15;
 
 #[derive(Debug, Deserialize)]
@@ -28,6 +34,7 @@ pub struct CreateUploadRequest {
 #[derive(Debug, Serialize)]
 pub struct CreateUploadResponse {
     pub media_object_id: Uuid,
+    /// Relative API path clients should PUT encrypted bytes to (with Bearer token).
     pub upload_url: String,
     pub object_key: String,
     pub expires_at: DateTime<Utc>,
@@ -35,6 +42,7 @@ pub struct CreateUploadResponse {
 
 #[derive(Debug, Serialize)]
 pub struct DownloadResponse {
+    /// Relative API path clients should GET encrypted bytes from (with Bearer token).
     pub download_url: String,
     pub expires_at: DateTime<Utc>,
 }
@@ -46,9 +54,10 @@ struct MediaRow {
     bucket: String,
     object_key: String,
     message_id: Option<Uuid>,
+    size_bytes: Option<i64>,
 }
 
-/// `POST /media/uploads` — create media row + short-lived upload URL.
+/// `POST /media/uploads` — create media row; client then PUTs to `/media/{id}/content`.
 pub async fn create_upload(
     State(state): State<AppState>,
     auth: AuthContext,
@@ -89,12 +98,8 @@ pub async fn create_upload(
     .await
     .map_err(|err| AppError::Internal(format!("insert media object failed: {err}")))?;
 
-    let upload_url = presign_url(&state, "upload", &bucket, &object_key, media_id, expires_at);
-    let backend = if state.nebular_url.is_some() {
-        "nebular"
-    } else {
-        "stub"
-    };
+    // Client-relative path — iOS resolves against the configured API base URL.
+    let upload_url = format!("media/{media_id}/content");
 
     tracing::info!(
         user_id = %auth.user_id,
@@ -102,9 +107,7 @@ pub async fn create_upload(
         size_bytes = body.size_bytes,
         bucket = %bucket,
         object_key = %object_key,
-        backend,
-        expires_at = %expires_at,
-        "media.upload_presign ok"
+        "media.upload_create ok"
     );
 
     Ok((
@@ -118,15 +121,105 @@ pub async fn create_upload(
     ))
 }
 
-/// `POST /media/:id/download` — short-lived download URL if authorized.
+/// `PUT /media/:id/content` — store encrypted blob (uploader only, before message link).
+pub async fn put_content(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    AxumPath(media_id): AxumPath<Uuid>,
+    body: Bytes,
+) -> Result<StatusCode, AppError> {
+    let media = load_media(&state, media_id).await?;
+    if media.uploader_user_id != auth.user_id {
+        return Err(AppError::forbidden(
+            "Only the uploader can write media content.",
+        ));
+    }
+    if media.message_id.is_some() {
+        return Err(AppError::already_exists(
+            "Media is already linked to a message and cannot be overwritten.",
+        ));
+    }
+
+    let len = body.len() as i64;
+    if len < 1 || len > MAX_MEDIA_BYTES {
+        return Err(AppError::validation(format!(
+            "body size must be between 1 and {MAX_MEDIA_BYTES} bytes."
+        )));
+    }
+    if let Some(expected) = media.size_bytes {
+        // Allow small variance? Keep strict: must match declared size.
+        if expected != len {
+            return Err(AppError::validation(format!(
+                "body size {len} does not match declared size_bytes {expected}."
+            )));
+        }
+    }
+
+    write_blob(&state, &media, body.as_ref()).await?;
+
+    tracing::info!(
+        user_id = %auth.user_id,
+        media_object_id = %media_id,
+        bytes = len,
+        "media.content_put ok"
+    );
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `GET /media/:id/content` — stream encrypted blob when authorized.
+pub async fn get_content(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    AxumPath(media_id): AxumPath<Uuid>,
+) -> Result<Response, AppError> {
+    let media = load_media(&state, media_id).await?;
+    authorize_download(&state, auth.user_id, &media).await?;
+
+    let bytes = read_blob(&state, &media).await?;
+
+    tracing::info!(
+        user_id = %auth.user_id,
+        media_object_id = %media_id,
+        bytes = bytes.len(),
+        "media.content_get ok"
+    );
+
+    Ok((
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/octet-stream")],
+        bytes,
+    )
+        .into_response())
+}
+
+/// `POST /media/:id/download` — returns API-relative download path (Bearer required).
 pub async fn create_download(
     State(state): State<AppState>,
     auth: AuthContext,
-    Path(media_id): Path<Uuid>,
+    AxumPath(media_id): AxumPath<Uuid>,
 ) -> Result<Json<DownloadResponse>, AppError> {
-    let media = sqlx::query_as::<_, MediaRow>(
+    let media = load_media(&state, media_id).await?;
+    authorize_download(&state, auth.user_id, &media).await?;
+
+    let expires_at = Utc::now() + Duration::minutes(PRESIGN_TTL_MINUTES);
+    let download_url = format!("media/{media_id}/content");
+
+    tracing::info!(
+        user_id = %auth.user_id,
+        media_object_id = %media.id,
+        "media.download_presign ok"
+    );
+
+    Ok(Json(DownloadResponse {
+        download_url,
+        expires_at,
+    }))
+}
+
+async fn load_media(state: &AppState, media_id: Uuid) -> Result<MediaRow, AppError> {
+    sqlx::query_as::<_, MediaRow>(
         r#"
-        SELECT id, uploader_user_id, bucket, object_key, message_id
+        SELECT id, uploader_user_id, bucket, object_key, message_id, size_bytes
         FROM media_objects
         WHERE id = $1
         "#,
@@ -135,39 +228,7 @@ pub async fn create_download(
     .fetch_optional(&state.pool)
     .await
     .map_err(|err| AppError::Internal(format!("load media failed: {err}")))?
-    .ok_or_else(|| AppError::not_found("Media not found."))?;
-
-    authorize_download(&state, auth.user_id, &media).await?;
-
-    let expires_at = Utc::now() + Duration::minutes(PRESIGN_TTL_MINUTES);
-    let download_url = presign_url(
-        &state,
-        "download",
-        &media.bucket,
-        &media.object_key,
-        media.id,
-        expires_at,
-    );
-    let backend = if state.nebular_url.is_some() {
-        "nebular"
-    } else {
-        "stub"
-    };
-
-    tracing::info!(
-        user_id = %auth.user_id,
-        media_object_id = %media.id,
-        bucket = %media.bucket,
-        object_key = %media.object_key,
-        backend,
-        expires_at = %expires_at,
-        "media.download_presign ok"
-    );
-
-    Ok(Json(DownloadResponse {
-        download_url,
-        expires_at,
-    }))
+    .ok_or_else(|| AppError::not_found("Media not found."))
 }
 
 async fn authorize_download(
@@ -185,7 +246,6 @@ async fn authorize_download(
     }
 
     let message_id = media.message_id.expect("checked");
-    // Human: Linked media is available to either conversation participant.
     let allowed: bool = sqlx::query_scalar(
         r#"
         SELECT EXISTS(
@@ -212,42 +272,81 @@ async fn authorize_download(
     }
 }
 
-/// Builds a Nebular or stub presigned-style URL (bytes never stored on API).
-fn presign_url(
-    state: &AppState,
-    kind: &str,
-    bucket: &str,
-    object_key: &str,
-    media_id: Uuid,
-    expires_at: DateTime<Utc>,
-) -> String {
+fn media_data_dir() -> PathBuf {
+    std::env::var("MEDIA_DATA_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/data/shroud-media"))
+}
+
+fn blob_path(media: &MediaRow) -> PathBuf {
+    media_data_dir().join(&media.object_key)
+}
+
+async fn write_blob(state: &AppState, media: &MediaRow, bytes: &[u8]) -> Result<(), AppError> {
+    // Prefer durable local volume; optionally mirror to Nebular when configured.
+    let path = blob_path(media);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|err| AppError::Internal(format!("create media dir failed: {err}")))?;
+    }
+    tokio::fs::write(&path, bytes)
+        .await
+        .map_err(|err| AppError::Internal(format!("write media blob failed: {err}")))?;
+
     if let Some(base) = &state.nebular_url {
         let base = base.trim_end_matches('/');
-        // Human: Real Nebular signing can replace this path once wired; shape is S3-like.
-        let url = format!(
-            "{base}/{bucket}/{object_key}?shroud_media_id={media_id}&expires={}",
-            expires_at.timestamp()
-        );
-        tracing::debug!(
-            kind,
-            bucket,
-            object_key,
-            media_id = %media_id,
-            nebular_base = %base,
-            "media.presign nebular url built"
-        );
-        url
-    } else {
-        tracing::debug!(
-            kind,
-            bucket,
-            object_key,
-            media_id = %media_id,
-            "media.presign stub url built"
-        );
-        format!(
-            "stub://{bucket}/{object_key}?op={kind}&media_id={media_id}&expires={}",
-            expires_at.timestamp()
-        )
+        let url = format!("{base}/{}/{}", media.bucket, media.object_key);
+        let client = reqwest::Client::new();
+        match client.put(&url).body(bytes.to_vec()).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                tracing::debug!(%url, "media mirrored to nebular");
+            }
+            Ok(resp) => {
+                tracing::warn!(
+                    status = %resp.status(),
+                    %url,
+                    "nebular mirror put failed; local blob kept"
+                );
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, %url, "nebular mirror put error; local blob kept");
+            }
+        }
     }
+
+    Ok(())
+}
+
+async fn read_blob(state: &AppState, media: &MediaRow) -> Result<Vec<u8>, AppError> {
+    let path = blob_path(media);
+    if Path::new(&path).exists() {
+        return tokio::fs::read(&path)
+            .await
+            .map_err(|err| AppError::Internal(format!("read media blob failed: {err}")));
+    }
+
+    // Fallback: try Nebular if local missing (other replica / legacy).
+    if let Some(base) = &state.nebular_url {
+        let base = base.trim_end_matches('/');
+        let url = format!("{base}/{}/{}", media.bucket, media.object_key);
+        let client = reqwest::Client::new();
+        match client.get(&url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                return resp
+                    .bytes()
+                    .await
+                    .map(|b| b.to_vec())
+                    .map_err(|err| AppError::Internal(format!("nebular body read failed: {err}")));
+            }
+            Ok(resp) => {
+                tracing::warn!(status = %resp.status(), %url, "nebular get failed");
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, %url, "nebular get error");
+            }
+        }
+    }
+
+    Err(AppError::not_found("Media content not found."))
 }

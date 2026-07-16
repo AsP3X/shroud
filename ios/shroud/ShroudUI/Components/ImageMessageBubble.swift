@@ -6,8 +6,10 @@ struct ImageMessageBubble: View {
     let message: MessagingController.ChatMessage
     let time: String
     var onAppearLoad: (() -> Void)?
+    var onRetry: (() -> Void)?
 
     private var isMine: Bool { message.isMine }
+    private var isFailed: Bool { message.receipt == .failed }
 
     private var corners: UnevenRoundedRectangle {
         if isMine {
@@ -43,45 +45,99 @@ struct ImageMessageBubble: View {
         HStack(alignment: .bottom, spacing: 0) {
             if isMine { Spacer(minLength: 56) }
 
-            ZStack(alignment: .bottomTrailing) {
-                Group {
-                    if message.deleted {
-                        deletedPlaceholder
-                    } else if let data = message.imageData, let ui = UIImage(data: data) {
-                        Image(uiImage: ui)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: displaySize.width, height: displaySize.height)
-                            .clipped()
-                    } else {
-                        loadingPlaceholder
+            VStack(alignment: isMine ? .trailing : .leading, spacing: 6) {
+                ZStack(alignment: .bottomTrailing) {
+                    Group {
+                        if message.deleted {
+                            deletedPlaceholder
+                        } else if let data = message.imageData, let ui = UIImage(data: data) {
+                            Image(uiImage: ui)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: displaySize.width, height: displaySize.height)
+                                .clipped()
+                                .opacity(isFailed ? 0.55 : 1)
+                        } else {
+                            loadingPlaceholder
+                        }
                     }
-                }
 
-                // Time chip over the image (Telegram style).
-                HStack(spacing: 3) {
-                    Text(time)
-                        .font(.system(size: 11, weight: .medium))
-                        .monospacedDigit()
-                    if isMine, !message.deleted {
-                        receiptIcon
+                    if isFailed {
+                        failedOverlay
+                    } else {
+                        timeChip
                     }
                 }
-                .foregroundStyle(Color.white.opacity(0.95))
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background(Color.black.opacity(0.35))
-                .clipShape(Capsule())
-                .padding(8)
+                .frame(width: displaySize.width, height: displaySize.height)
+                .clipShape(corners)
+                .overlay {
+                    if isFailed {
+                        RoundedRectangle(cornerRadius: 17.5, style: .continuous)
+                            .stroke(Theme.danger.opacity(0.7), lineWidth: 1.5)
+                    }
+                }
+                .shadow(color: Color.black.opacity(0.08), radius: 3, y: 1)
+                .onAppear { onAppearLoad?() }
+
+                if isFailed {
+                    failedFooter
+                }
             }
-            .frame(width: displaySize.width, height: displaySize.height)
-            .clipShape(corners)
-            .shadow(color: Color.black.opacity(0.08), radius: 3, y: 1)
-            .onAppear { onAppearLoad?() }
 
             if !isMine { Spacer(minLength: 56) }
         }
         .frame(maxWidth: .infinity, alignment: isMine ? .trailing : .leading)
+    }
+
+    private var timeChip: some View {
+        HStack(spacing: 3) {
+            Text(time)
+                .font(.system(size: 11, weight: .medium))
+                .monospacedDigit()
+            if isMine, !message.deleted {
+                receiptIcon
+            }
+        }
+        .foregroundStyle(Color.white.opacity(0.95))
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Color.black.opacity(0.35))
+        .clipShape(Capsule())
+        .padding(8)
+    }
+
+    private var failedOverlay: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 28))
+                .foregroundStyle(Color.white)
+            Text("Not sent")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.white)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black.opacity(0.35))
+    }
+
+    private var failedFooter: some View {
+        VStack(alignment: isMine ? .trailing : .leading, spacing: 4) {
+            if let error = message.sendError, !error.isEmpty {
+                Text(error)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.danger)
+                    .multilineTextAlignment(isMine ? .trailing : .leading)
+                    .frame(maxWidth: displaySize.width, alignment: isMine ? .trailing : .leading)
+            }
+            Button {
+                onRetry?()
+            } label: {
+                Label("Retry", systemImage: "arrow.clockwise")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 2)
     }
 
     private var loadingPlaceholder: some View {
@@ -106,6 +162,9 @@ struct ImageMessageBubble: View {
     @ViewBuilder
     private var receiptIcon: some View {
         switch message.receipt {
+        case .failed:
+            Image(systemName: "exclamationmark.circle.fill")
+                .font(.system(size: 11, weight: .semibold))
         case .sending:
             ProgressView()
                 .controlSize(.mini)

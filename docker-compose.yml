@@ -107,6 +107,8 @@ services:
       REDIS_URL: redis://redis:6379
       NEBULAR_URL: http://nebular:9000
       NEBULAR_MEDIA_BUCKET: shroud-media
+      # Encrypted blobs stored on the API volume (client always uses /media/{id}/content).
+      MEDIA_DATA_DIR: /data/shroud-media
       HOST: 0.0.0.0
       PORT: "8080"
       # Optional live APNs (pass through host env when set). Unset = register only / log send.
@@ -121,6 +123,8 @@ services:
       TURN_USERNAME: ${TURN_USERNAME:-}
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
       ICE_SERVERS_JSON: ${ICE_SERVERS_JSON:-}
+    volumes:
+      - shroud_media_data:/data/shroud-media
     networks:
       - shroud-internal
       - proxy-network
@@ -176,3 +180,4 @@ volumes:
   shroud_pg_data:
   shroud_redis_data:
   shroud_nebular_data:
+  shroud_media_data:
