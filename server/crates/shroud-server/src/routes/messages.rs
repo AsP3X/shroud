@@ -52,6 +52,12 @@ pub struct MessageResponse {
     pub media_object_id: Option<Uuid>,
     pub deleted_for_everyone: bool,
     pub created_at: DateTime<Utc>,
+    /// Outbound only: at least one of the peer's devices acknowledged delivery.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delivered: Option<bool>,
+    /// Outbound only: peer user has marked this message read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -298,6 +304,8 @@ pub async fn send_message(
         media_object_id: body.media_object_id,
         deleted_for_everyone: false,
         created_at: now,
+        delivered: Some(false),
+        read: Some(false),
     };
 
     // Human: Notify online peer devices and sender's other devices (not this sender device).
@@ -407,9 +415,21 @@ pub async fn list_messages(
         }
         .map_err(|err| AppError::Internal(format!("list messages failed: {err}")))?;
 
+    let mut messages = Vec::with_capacity(rows.len());
+    for row in rows {
+        let mut response = message_to_response(row);
+        if response.sender_user_id == auth.user_id {
+            let (delivered, read) =
+                peer_receipt_status(&state.pool, response.id, query.peer_user_id).await?;
+            response.delivered = Some(delivered);
+            response.read = Some(read);
+        }
+        messages.push(response);
+    }
+
     Ok(Json(ListMessagesResponse {
         conversation_id: Some(conversation_id),
-        messages: rows.into_iter().map(message_to_response).collect(),
+        messages,
     }))
 }
 
@@ -900,7 +920,50 @@ fn message_to_response(row: MessageRow) -> MessageResponse {
         media_object_id: if deleted { None } else { row.media_object_id },
         deleted_for_everyone: deleted,
         created_at: row.created_at,
+        delivered: None,
+        read: None,
     }
+}
+
+/// Delivery / read status of `peer_user_id` for an outbound message.
+async fn peer_receipt_status(
+    pool: &sqlx::PgPool,
+    message_id: Uuid,
+    peer_user_id: Uuid,
+) -> Result<(bool, bool), AppError> {
+    let delivered: bool = sqlx::query_scalar(
+        r#"
+        SELECT EXISTS(
+            SELECT 1
+            FROM message_deliveries d
+            INNER JOIN devices dev ON dev.id = d.device_id
+            WHERE d.message_id = $1
+              AND dev.user_id = $2
+              AND d.delivered_at IS NOT NULL
+        )
+        "#,
+    )
+    .bind(message_id)
+    .bind(peer_user_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("peer delivered check failed: {err}")))?;
+
+    let read: bool = sqlx::query_scalar(
+        r#"
+        SELECT EXISTS(
+            SELECT 1 FROM message_reads
+            WHERE message_id = $1 AND user_id = $2
+        )
+        "#,
+    )
+    .bind(message_id)
+    .bind(peer_user_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("peer read check failed: {err}")))?;
+
+    Ok((delivered, read))
 }
 
 /// `DELETE /messages/:id?scope=me|everyone`

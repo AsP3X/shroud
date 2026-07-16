@@ -228,7 +228,8 @@ struct ConversationView: View {
                                 text: message.text,
                                 time: messaging.clockTimeLabel(for: message.createdAt),
                                 isMine: message.isMine,
-                                isDeleted: message.deleted
+                                isDeleted: message.deleted,
+                                receipt: message.receipt
                             )
                             .id(message.id)
                             .onLongPressGesture(minimumDuration: 0.35) {
@@ -405,7 +406,8 @@ struct ConversationView: View {
                     text: message.text,
                     time: messaging.clockTimeLabel(for: message.createdAt),
                     isMine: message.isMine,
-                    isDeleted: message.deleted
+                    isDeleted: message.deleted,
+                    receipt: message.receipt
                 )
                 .padding(.horizontal, 24)
 

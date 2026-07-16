@@ -42,4 +42,14 @@ struct MessagesService: Sendable {
             bearerToken: token
         )
     }
+
+    /// Marks all inbound messages from `peerUserID` up to `upToMessageID` as read.
+    func markReadBulk(peerUserID: UUID, upToMessageID: UUID, token: String) async throws -> MarkReadBulkResponse {
+        try await client.post(
+            "messages/read",
+            body: MarkReadBulkBody(peerUserId: peerUserID, upToMessageId: upToMessageID),
+            as: MarkReadBulkResponse.self,
+            bearerToken: token
+        )
+    }
 }

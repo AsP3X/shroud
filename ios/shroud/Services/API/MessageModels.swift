@@ -41,6 +41,10 @@ struct MessageDTO: Decodable, Equatable, Sendable, Identifiable {
     let mediaObjectId: UUID?
     let deletedForEveryone: Bool
     let createdAt: Date
+    /// Outbound only — peer device(s) delivered.
+    let delivered: Bool?
+    /// Outbound only — peer user read.
+    let read: Bool?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -53,6 +57,28 @@ struct MessageDTO: Decodable, Equatable, Sendable, Identifiable {
         case mediaObjectId = "media_object_id"
         case deletedForEveryone = "deleted_for_everyone"
         case createdAt = "created_at"
+        case delivered
+        case read
+    }
+}
+
+struct MarkReadBulkBody: Encodable, Equatable, Sendable {
+    let peerUserId: UUID
+    let upToMessageId: UUID
+
+    enum CodingKeys: String, CodingKey {
+        case peerUserId = "peer_user_id"
+        case upToMessageId = "up_to_message_id"
+    }
+}
+
+struct MarkReadBulkResponse: Decodable, Equatable, Sendable {
+    let marked: UInt64
+    let readAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case marked
+        case readAt = "read_at"
     }
 }
 

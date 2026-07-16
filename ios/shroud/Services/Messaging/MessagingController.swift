@@ -44,6 +44,28 @@ final class MessagingController {
         let createdAt: Date
         let isMine: Bool
         let deleted: Bool
+        /// Outbound only; ignored for inbound.
+        var receipt: MessageReceiptStatus
+
+        init(
+            id: UUID,
+            peerUserID: UUID,
+            senderUserID: UUID,
+            text: String,
+            createdAt: Date,
+            isMine: Bool,
+            deleted: Bool,
+            receipt: MessageReceiptStatus = .sent
+        ) {
+            self.id = id
+            self.peerUserID = peerUserID
+            self.senderUserID = senderUserID
+            self.text = text
+            self.createdAt = createdAt
+            self.isMine = isMine
+            self.deleted = deleted
+            self.receipt = isMine ? receipt : .sent
+        }
     }
 
     func bind(session: SessionController, crypto: CryptoController) {
@@ -257,8 +279,13 @@ final class MessagingController {
                 }
             }
             threads[peerUserID] = decoded
+            // Mark all inbound up to the latest so the peer gets read receipts.
             if let lastFromPeer = decoded.last(where: { !$0.isMine }) {
-                try? await messagesService.markRead(messageID: lastFromPeer.id, token: token)
+                try? await messagesService.markReadBulk(
+                    peerUserID: peerUserID,
+                    upToMessageID: lastFromPeer.id,
+                    token: token
+                )
             }
             // Presence for header.
             if let presence = try? await contactsService.presence(userID: peerUserID, token: token) {
@@ -278,6 +305,21 @@ final class MessagingController {
               let material = cryptoController?.material
         else { return }
 
+        let optimisticID = UUID()
+        let optimistic = ChatMessage(
+            id: optimisticID,
+            peerUserID: peerUserID,
+            senderUserID: me,
+            text: trimmed,
+            createdAt: Date(),
+            isMine: true,
+            deleted: false,
+            receipt: .sending
+        )
+        var optimisticThread = threads[peerUserID] ?? []
+        optimisticThread.append(optimistic)
+        threads[peerUserID] = optimisticThread
+
         do {
             let peerPub = try await resolvePeerIdentityPublicKey(peerUserID: peerUserID, token: token)
             let sealed = try MessageCrypto.seal(
@@ -296,25 +338,36 @@ final class MessagingController {
                 ),
                 token: token
             )
-            // Optional cache for UI speed; v2 envelopes also decrypt as sender without cache.
             plaintextCache.save(messageID: dto.id, text: trimmed)
-            let chat = ChatMessage(
+            let sent = ChatMessage(
                 id: dto.id,
                 peerUserID: peerUserID,
                 senderUserID: me,
                 text: trimmed,
                 createdAt: dto.createdAt,
                 isMine: true,
-                deleted: false
+                deleted: false,
+                receipt: receiptStatus(from: dto)
             )
-            var thread = threads[peerUserID] ?? []
-            if !thread.contains(where: { $0.id == chat.id }) {
-                thread.append(chat)
-                threads[peerUserID] = thread
+            if var list = threads[peerUserID],
+               let idx = list.firstIndex(where: { $0.id == optimisticID })
+            {
+                list[idx] = sent
+                threads[peerUserID] = list
+            } else {
+                var list = threads[peerUserID] ?? []
+                if !list.contains(where: { $0.id == sent.id }) {
+                    list.append(sent)
+                    threads[peerUserID] = list
+                }
             }
             await refreshConversations()
             lastError = nil
         } catch {
+            if var list = threads[peerUserID] {
+                list.removeAll { $0.id == optimisticID }
+                threads[peerUserID] = list
+            }
             lastError = SessionController.userMessage(for: error)
         }
     }
@@ -358,19 +411,87 @@ final class MessagingController {
             Task { await ingestIncoming(dto) }
         case let .raw(type, json):
             if type == "message.new" {
-                // Decode path failed earlier — force a history refresh for the open thread.
                 Task {
                     await refreshConversations()
                     if let peer = activePeerID {
                         await loadThread(peerUserID: peer)
                     }
                 }
+            } else if type == "message.delivered" {
+                handleDeliveredEvent(json)
+            } else if type == "message.read" {
+                handleReadEvent(json)
             } else if type == "typing" {
                 handleTyping(json)
             } else if type == "presence.update" {
                 handlePresence(json)
             }
         }
+    }
+
+    private func handleDeliveredEvent(_ json: [String: Any]) {
+        guard let idString = json["message_id"] as? String,
+              let messageID = UUID(uuidString: idString)
+        else { return }
+        updateReceipt(messageID: messageID, atLeast: .delivered)
+    }
+
+    private func handleReadEvent(_ json: [String: Any]) {
+        // Single-message read or bulk up_to.
+        if let upToString = json["up_to_message_id"] as? String,
+           let upTo = UUID(uuidString: upToString)
+        {
+            markOwnMessagesRead(upToMessageID: upTo)
+            return
+        }
+        guard let idString = json["message_id"] as? String,
+              let messageID = UUID(uuidString: idString)
+        else { return }
+        // Single read also implies all earlier own messages in that thread are read
+        // once the peer has opened the chat; mark this one and promote earlier.
+        markOwnMessagesRead(upToMessageID: messageID)
+    }
+
+    /// Raises receipt status for a message (never lowers it).
+    private func updateReceipt(messageID: UUID, atLeast status: MessageReceiptStatus) {
+        for (peerID, thread) in threads {
+            guard let idx = thread.firstIndex(where: { $0.id == messageID && $0.isMine }) else {
+                continue
+            }
+            var copy = thread
+            let current = copy[idx].receipt
+            if status.rank >= current.rank {
+                copy[idx].receipt = status
+                threads[peerID] = copy
+            }
+            return
+        }
+    }
+
+    /// Marks every outbound message at or before `upToMessageID` (by createdAt) as read.
+    private func markOwnMessagesRead(upToMessageID: UUID) {
+        for (peerID, thread) in threads {
+            guard let anchor = thread.first(where: { $0.id == upToMessageID }) else { continue }
+            var copy = thread
+            var changed = false
+            for i in copy.indices where copy[i].isMine {
+                if copy[i].createdAt <= anchor.createdAt || copy[i].id == upToMessageID {
+                    if copy[i].receipt != .read {
+                        copy[i].receipt = .read
+                        changed = true
+                    }
+                }
+            }
+            if changed {
+                threads[peerID] = copy
+            }
+        }
+    }
+
+    private func receiptStatus(from dto: MessageDTO) -> MessageReceiptStatus {
+        if dto.read == true { return .read }
+        if dto.delivered == true { return .delivered }
+        return .sent
     }
 
     private func handleTyping(_ json: [String: Any]) {
@@ -436,7 +557,11 @@ final class MessagingController {
                 unreadCountByPeer[threadPeer, default: 0] += 1
             }
             if !chat.isMine, activePeerID == threadPeer {
-                try? await messagesService.markRead(messageID: chat.id, token: token)
+                try? await messagesService.markReadBulk(
+                    peerUserID: threadPeer,
+                    upToMessageID: chat.id,
+                    token: token
+                )
             }
         }
         await refreshConversations()
@@ -452,6 +577,7 @@ final class MessagingController {
         let peerUserID = isMine
             ? (conversations.first(where: { $0.id == dto.conversationId })?.peer.id ?? dto.senderUserId)
             : dto.senderUserId
+        let receipt = isMine ? receiptStatus(from: dto) : MessageReceiptStatus.sent
 
         if dto.deletedForEveryone {
             return ChatMessage(
@@ -461,7 +587,8 @@ final class MessagingController {
                 text: "Message deleted",
                 createdAt: dto.createdAt,
                 isMine: isMine,
-                deleted: true
+                deleted: true,
+                receipt: receipt
             )
         }
 
@@ -475,14 +602,21 @@ final class MessagingController {
                 text: "[Unable to decrypt]",
                 createdAt: dto.createdAt,
                 isMine: isMine,
-                deleted: false
+                deleted: false,
+                receipt: receipt
             )
         }
 
         do {
             if isMine {
                 if let existing = threads[peerUserID]?.first(where: { $0.id == dto.id }) {
-                    return existing
+                    // Keep the higher receipt of local vs server.
+                    var merged = existing
+                    let serverReceipt = receiptStatus(from: dto)
+                    if serverReceipt.rank > existing.receipt.rank {
+                        merged.receipt = serverReceipt
+                    }
+                    return merged
                 }
                 if let cached = plaintextCache.text(for: dto.id) {
                     return ChatMessage(
@@ -492,7 +626,8 @@ final class MessagingController {
                         text: cached,
                         createdAt: dto.createdAt,
                         isMine: true,
-                        deleted: false
+                        deleted: false,
+                        receipt: receipt
                     )
                 }
                 // v2 dual-seal: open self box with our private key.
@@ -511,7 +646,8 @@ final class MessagingController {
                         text: text,
                         createdAt: dto.createdAt,
                         isMine: true,
-                        deleted: false
+                        deleted: false,
+                        receipt: receipt
                     )
                 }
                 return ChatMessage(
@@ -521,7 +657,8 @@ final class MessagingController {
                     text: "[Encrypted message]",
                     createdAt: dto.createdAt,
                     isMine: true,
-                    deleted: false
+                    deleted: false,
+                    receipt: receipt
                 )
             }
 
