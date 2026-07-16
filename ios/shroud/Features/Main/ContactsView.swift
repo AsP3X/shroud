@@ -11,6 +11,8 @@ struct ContactsView: View {
     @State private var addError: String?
     @State private var isAdding = false
     @State private var sortAscending = true
+    /// Dedicated path type for this tab’s stack (avoids NavigationLink + outer path conflicts).
+    @State private var path: [ChatRoute] = []
 
     private var filtered: [ContactItemDTO] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -36,86 +38,94 @@ struct ContactsView: View {
     }
 
     var body: some View {
-        NavigationStack {
-        MainScrollScreen(title: "Contacts", collapsesTitle: true) {
-            Button(sortAscending ? "A–Z" : "Z–A") {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    sortAscending.toggle()
-                }
-            }
-            .font(.system(size: 16))
-            .foregroundStyle(Theme.accent)
-        } navTrailing: {
-            Button {
-                showAdd = true
-            } label: {
-                Image(systemName: "person.badge.plus")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(Theme.accent)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Add contact")
-        } accessory: {
-            SearchField(text: $searchText)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 10)
-        } content: {
-            LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
-                if !messaging.incomingRequests.isEmpty {
-                    Section {
-                        ForEach(messaging.incomingRequests) { request in
-                            requestRow(request)
-                        }
-                    } header: {
-                        sectionHeader("Pending")
+        NavigationStack(path: $path) {
+            MainScrollScreen(title: "Contacts", collapsesTitle: true) {
+                Button(sortAscending ? "A–Z" : "Z–A") {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        sortAscending.toggle()
                     }
                 }
-
-                ForEach(sections, id: \.letter) { section in
-                    Section {
-                        ForEach(section.items) { contact in
-                            NavigationLink {
-                                ConversationView(
-                                    peerUserID: contact.userId,
-                                    peerUsername: contact.username
-                                )
-                            } label: {
-                                ChatRowView(
-                                    title: contact.username,
-                                    subtitle: contactStatus(contact),
-                                    subtitleAccent: messaging.presenceByUser[contact.userId]?.online == true,
-                                    avatarGradient: AvatarView.gradient(for: contact.username)
-                                )
+                .font(.system(size: 16))
+                .foregroundStyle(Theme.accent)
+            } navTrailing: {
+                Button {
+                    showAdd = true
+                } label: {
+                    Image(systemName: "person.badge.plus")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(Theme.accent)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Add contact")
+            } accessory: {
+                SearchField(text: $searchText)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
+            } content: {
+                LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
+                    if !messaging.incomingRequests.isEmpty {
+                        Section {
+                            ForEach(messaging.incomingRequests) { request in
+                                requestRow(request)
                             }
-                            .buttonStyle(.plain)
+                        } header: {
+                            sectionHeader("Pending")
                         }
-                    } header: {
-                        sectionHeader(section.letter)
                     }
-                }
 
-                if sections.isEmpty && messaging.incomingRequests.isEmpty {
-                    emptyState
-                }
+                    ForEach(sections, id: \.letter) { section in
+                        Section {
+                            ForEach(section.items) { contact in
+                                Button {
+                                    path.append(
+                                        .conversation(
+                                            peerID: contact.userId,
+                                            username: contact.username
+                                        )
+                                    )
+                                } label: {
+                                    ChatRowView(
+                                        title: contact.username,
+                                        subtitle: contactStatus(contact),
+                                        subtitleAccent: messaging.presenceByUser[contact.userId]?.online == true,
+                                        avatarGradient: AvatarView.gradient(for: contact.username)
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        } header: {
+                            sectionHeader(section.letter)
+                        }
+                    }
 
-                if let myID = session.userID {
-                    shareIDFooter(myID)
-                }
+                    if sections.isEmpty && messaging.incomingRequests.isEmpty {
+                        emptyState
+                    }
 
-                Color.clear.frame(height: 16)
+                    if let myID = session.userID {
+                        shareIDFooter(myID)
+                    }
+
+                    Color.clear.frame(height: 16)
+                }
+            }
+            .background(Theme.background)
+            .navigationDestination(for: ChatRoute.self) { route in
+                switch route {
+                case let .conversation(peerID, username):
+                    ConversationView(peerUserID: peerID, peerUsername: username)
+                }
+            }
+            .refreshable {
+                await messaging.refreshContacts()
+            }
+            .sheet(isPresented: $showAdd) {
+                addContactSheet
+            }
+            .task {
+                await messaging.refreshContacts()
             }
         }
-        .background(Theme.background)
-        .refreshable {
-            await messaging.refreshContacts()
-        }
-        .sheet(isPresented: $showAdd) {
-            addContactSheet
-        }
-        .task {
-            await messaging.refreshContacts()
-        }
-        } // NavigationStack
     }
 
     private func requestRow(_ request: ContactRequestDTO) -> some View {
@@ -244,9 +254,7 @@ struct ContactsView: View {
 }
 
 #Preview {
-    NavigationStack {
-        ContactsView()
-            .environment(MessagingController())
-            .environment(SessionController())
-    }
+    ContactsView()
+        .environment(MessagingController())
+        .environment(SessionController())
 }

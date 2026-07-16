@@ -1,6 +1,10 @@
 import SwiftUI
 
 /// Root navigation shell — routes between onboarding and the main tab shell.
+///
+/// Onboarding and Main **must not** share one `NavigationStack`: nested stacks under a typed
+/// path (e.g. `AppRoute` + `ChatRoute` / `SettingsRoute`) crash with
+/// `AnyNavigationPath.Error.comparisonTypeMismatch`.
 struct RootView: View {
     @State private var sessionController = SessionController()
     @State private var cryptoController = CryptoController()
@@ -10,11 +14,12 @@ struct RootView: View {
     @Namespace private var onboardingNamespace
 
     var body: some View {
-        NavigationStack(path: $router.path) {
-            destination(for: router.rootRoute)
-                .navigationDestination(for: AppRoute.self) { route in
-                    destination(for: route)
-                }
+        Group {
+            if router.isUnlocked {
+                MainTabView(router: router)
+            } else {
+                onboardingStack
+            }
         }
         .environment(\.onboardingNamespace, onboardingNamespace)
         .environment(sessionController)
@@ -25,7 +30,6 @@ struct RootView: View {
             router.sessionController = sessionController
             router.cryptoController = cryptoController
             messagingController.bind(session: sessionController, crypto: cryptoController)
-            // Validate token, then restore identity keys when Keychain matches.
             await sessionController.validateSessionIfNeeded()
             router.restoreUnlockedSessionIfNeeded()
             if router.isUnlocked {
@@ -41,6 +45,8 @@ struct RootView: View {
         }
         .onChange(of: router.isUnlocked) { _, unlocked in
             if unlocked {
+                // Drop any leftover onboarding path before the main shell appears.
+                router.path = []
                 messagingController.start()
             } else {
                 messagingController.stop()
@@ -48,17 +54,20 @@ struct RootView: View {
         }
     }
 
-    @ViewBuilder
-    private func destination(for route: AppRoute) -> some View {
-        switch route {
-        case .welcome:
+    /// Pre-auth flow only — path elements are always `AppRoute`.
+    private var onboardingStack: some View {
+        NavigationStack(path: $router.path) {
             WelcomeView(router: router)
-        case .signUp:
-            SignUpView(router: router)
-        case .logIn:
-            LogInFlowView(router: router)
-        case .main:
-            MainTabView(router: router)
+                .navigationDestination(for: AppRoute.self) { route in
+                    switch route {
+                    case .welcome:
+                        WelcomeView(router: router)
+                    case .signUp:
+                        SignUpView(router: router)
+                    case .logIn:
+                        LogInFlowView(router: router)
+                    }
+                }
         }
     }
 }

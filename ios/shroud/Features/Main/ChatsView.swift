@@ -8,10 +8,6 @@ struct ChatsView: View {
     @State private var path: [ChatRoute] = []
     @State private var showNewChat = false
 
-    private enum ChatRoute: Hashable {
-        case conversation(peerID: UUID, username: String)
-    }
-
     private var filtered: [ConversationItemDTO] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return messaging.conversations }

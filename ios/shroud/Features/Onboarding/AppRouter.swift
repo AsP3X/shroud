@@ -1,11 +1,11 @@
 import SwiftUI
 
-/// Onboarding destinations — maps 1:1 to auth screens in `iOS-App.pen`.
+/// Onboarding push destinations only (not the main shell).
+/// Human: `main` is presented by `RootView` outside this stack — never push it onto `path`.
 enum AppRoute: Hashable {
     case welcome
     case signUp
     case logIn
-    case main
 }
 
 /// Central navigation state for the pre-auth onboarding flow.
@@ -27,13 +27,6 @@ final class AppRouter {
         hasUnlockedMessaging
             && sessionController?.isSignedIn == true
             && cryptoController?.isUnlocked == true
-    }
-
-    var rootRoute: AppRoute {
-        if isUnlocked {
-            return .main
-        }
-        return .welcome
     }
 
     func showWelcome() {
