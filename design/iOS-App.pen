@@ -25603,6 +25603,238 @@
           ]
         }
       ]
+    },
+    {
+      "type": "frame",
+      "id": "q6TJHc",
+      "name": "Conversation \u2014 Media Compose Caption Focused",
+      "x": 2820,
+      "y": 1851,
+      "width": 390,
+      "height": 844,
+      "clip": true,
+      "layout": "none",
+      "fill": "#000000",
+      "context": "Caption focused (captions_focused.PNG). Morph: options + expanded caption + white check above keyboard.",
+      "children": [
+        {
+          "type": "frame",
+          "id": "vOX0D",
+          "name": "Media Stage",
+          "x": 0,
+          "y": 0,
+          "width": 390,
+          "height": 844,
+          "layout": "vertical",
+          "justifyContent": "center",
+          "alignItems": "center",
+          "fill": "#000000",
+          "children": [
+            {
+              "type": "frame",
+              "id": "sUjRl",
+              "name": "Photo",
+              "width": 390,
+              "height": 360,
+              "opacity": 0.35,
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "mode": "fill",
+                "url": "https://images.unsplash.com/photo-1569718212165-3a8278d5f624?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=900&q=80"
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "o7nCiv",
+          "name": "Top Chrome",
+          "x": 0,
+          "y": 0,
+          "width": 390,
+          "height": 100,
+          "layout": "vertical",
+          "fill": "#000000",
+          "opacity": 0.5,
+          "children": [
+            {
+              "type": "frame",
+              "id": "JkKWj",
+              "name": "Status Bar",
+              "width": "fill_container",
+              "height": 54,
+              "layout": "horizontal",
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "padding": [
+                12,
+                28,
+                0,
+                28
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "content": "15:34",
+                  "fontFamily": "$font",
+                  "fontSize": 15,
+                  "fontWeight": "600",
+                  "fill": "#FFFFFF"
+                },
+                {
+                  "type": "frame",
+                  "layout": "horizontal",
+                  "gap": 6,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "fs1",
+                      "library": "lucide",
+                      "icon": "signal",
+                      "width": 16,
+                      "height": 16,
+                      "fill": "#FFFFFF"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "fw1",
+                      "library": "lucide",
+                      "icon": "wifi",
+                      "width": 16,
+                      "height": 16,
+                      "fill": "#FFFFFF"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "fb1",
+                      "library": "lucide",
+                      "icon": "battery-full",
+                      "width": 16,
+                      "height": 16,
+                      "fill": "#34C759"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "k12M0a",
+          "name": "Keyboard Placeholder",
+          "x": 0,
+          "y": 540,
+          "width": 390,
+          "height": 304,
+          "fill": "#1C1C1E",
+          "layout": "vertical",
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "text",
+              "content": "system keyboard",
+              "fontFamily": "$font",
+              "fontSize": 13,
+              "fill": "#8E8E93"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "ZSFVK",
+          "name": "Focused Caption Bar",
+          "x": 12,
+          "y": 480,
+          "width": 366,
+          "height": 52,
+          "layout": "horizontal",
+          "alignItems": "center",
+          "gap": 10,
+          "children": [
+            {
+              "type": "frame",
+              "name": "Options",
+              "width": 44,
+              "height": 44,
+              "cornerRadius": 22,
+              "layout": "vertical",
+              "justifyContent": "center",
+              "alignItems": "center",
+              "fill": "#2C2C2E",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "opti",
+                  "library": "lucide",
+                  "icon": "list",
+                  "width": 18,
+                  "height": 18,
+                  "fill": "#FFFFFF"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "name": "Caption Field",
+              "width": "fill_container",
+              "height": 44,
+              "layout": "horizontal",
+              "alignItems": "center",
+              "justifyContent": "space_between",
+              "padding": [
+                0,
+                14
+              ],
+              "cornerRadius": 22,
+              "fill": "#2C2C2E",
+              "children": [
+                {
+                  "type": "text",
+                  "content": "Chucky",
+                  "fontFamily": "$font",
+                  "fontSize": 16,
+                  "fill": "#FFFFFF"
+                },
+                {
+                  "type": "icon",
+                  "id": "em",
+                  "library": "lucide",
+                  "icon": "smile",
+                  "width": 20,
+                  "height": 20,
+                  "fill": "#FFFFFFD9"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "name": "Done Check",
+              "width": 44,
+              "height": 44,
+              "cornerRadius": 22,
+              "layout": "vertical",
+              "justifyContent": "center",
+              "alignItems": "center",
+              "fill": "#FFFFFF",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "chk",
+                  "library": "lucide",
+                  "icon": "check",
+                  "width": 20,
+                  "height": 20,
+                  "fill": "#000000"
+                }
+              ]
+            }
+          ]
+        }
+      ]
     }
   ],
   "variables": {

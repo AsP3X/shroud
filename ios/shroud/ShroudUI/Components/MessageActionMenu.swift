@@ -1,89 +1,168 @@
 import SwiftUI
 
 /// Long-press focus stack — reaction bar + context menu from `Conversation — * Message Menu`.
+/// Layout order is owned by the host: emoji bar → **message** → menu (Telegram).
 struct MessageActionMenu: View {
     let isMine: Bool
     var onReaction: (String) -> Void
     var onAction: (MessageMenuAction) -> Void
 
-    private let reactions = ["👍", "❤️", "🔥", "😂", "😮", "🙏"]
-
-    private var actions: [MessageMenuAction] {
-        if isMine {
-            return [.reply, .copy, .edit, .pin, .forward, .delete]
-        }
-        return [.reply, .copy, .pin, .forward, .select, .delete]
-    }
-
     var body: some View {
+        // Combined stack for previews; ConversationView places the bubble in between.
         VStack(spacing: 9) {
-            reactionBar
-            menuCard
+            MessageReactionBar(onReaction: onReaction, onMore: { onAction(.moreReactions) })
+            MessageContextMenuCard(isMine: isMine, onAction: onAction)
         }
         .frame(width: 250)
     }
+}
 
-    private var reactionBar: some View {
-        HStack(spacing: 7) {
+// MARK: - Reaction bar (above the focused bubble)
+
+struct MessageReactionBar: View {
+    var onReaction: (String) -> Void
+    var onMore: () -> Void
+
+    private let reactions = ["❤️", "🔥", "👍", "😢", "🙏", "😮", "👎"]
+
+    var body: some View {
+        HStack(spacing: 6) {
             ForEach(reactions, id: \.self) { emoji in
                 Button {
                     onReaction(emoji)
                 } label: {
                     Text(emoji)
-                        .font(.system(size: 22))
-                        .frame(width: 27, height: 27)
+                        .font(.system(size: 26))
+                        .frame(width: 34, height: 34)
                 }
                 .buttonStyle(.plain)
             }
-            Button {
-                onAction(.moreReactions)
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Theme.textSecondary)
-                    .frame(width: 28, height: 28)
-                    .background(Theme.backgroundGrouped)
+            Button(action: onMore) {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Color.white.opacity(0.85))
+                    .frame(width: 30, height: 30)
+                    .background(Color.white.opacity(0.12))
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("More reactions")
         }
-        .padding(.horizontal, 11)
-        .padding(.vertical, 7)
-        .background(Theme.background)
-        .clipShape(Capsule())
-        .shadow(color: Color.black.opacity(0.18), radius: 16, y: 6)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background {
+            Capsule()
+                .fill(Color(red: 0.14, green: 0.14, blue: 0.16).opacity(0.92))
+        }
+        .overlay {
+            Capsule()
+                .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+        }
+        .shadow(color: Color.black.opacity(0.35), radius: 20, y: 8)
     }
+}
 
-    private var menuCard: some View {
+// MARK: - Context menu card (below the focused bubble)
+
+struct MessageContextMenuCard: View {
+    let isMine: Bool
+    var onAction: (MessageMenuAction) -> Void
+
+    var body: some View {
         VStack(spacing: 0) {
-            ForEach(Array(actions.enumerated()), id: \.element.id) { index, action in
-                if index > 0 {
-                    Rectangle()
-                        .fill(Theme.separator)
-                        .frame(height: 1)
+            // Read receipt row (outbound) — Telegram-style meta header.
+            if isMine {
+                menuRow(
+                    title: "read",
+                    systemImage: "checkmark",
+                    destructive: false,
+                    muted: true
+                ) {
+                    // Informational; no-op for now.
                 }
-                Button {
+                separator
+            }
+
+            ForEach(Array(primaryActions.enumerated()), id: \.element.id) { index, action in
+                if index > 0 { separator }
+                menuRow(
+                    title: action.title,
+                    systemImage: action.systemImage,
+                    destructive: action.isDestructive,
+                    muted: false
+                ) {
                     onAction(action)
-                } label: {
-                    HStack {
-                        Text(action.title)
-                            .font(.system(size: 16))
-                            .foregroundStyle(action.isDestructive ? Theme.danger : Theme.textPrimary)
-                        Spacer()
-                        Image(systemName: action.systemImage)
-                            .font(.system(size: 15, weight: .medium))
-                            .foregroundStyle(action.isDestructive ? Theme.danger : Theme.textSecondary)
-                    }
-                    .padding(.horizontal, 14)
-                    .frame(height: 42)
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+            }
+
+            separator
+            menuRow(
+                title: MessageMenuAction.select.title,
+                systemImage: MessageMenuAction.select.systemImage,
+                destructive: false,
+                muted: false
+            ) {
+                onAction(.select)
             }
         }
-        .background(Theme.background)
+        .frame(width: 250)
+        .background {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(red: 0.12, green: 0.12, blue: 0.14).opacity(0.94))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+        }
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .shadow(color: Color.black.opacity(0.18), radius: 16, y: 6)
+        .shadow(color: Color.black.opacity(0.4), radius: 24, y: 10)
+    }
+
+    private var primaryActions: [MessageMenuAction] {
+        if isMine {
+            return [.reply, .copy, .pin, .forward, .delete]
+        }
+        return [.reply, .copy, .pin, .forward, .delete]
+    }
+
+    private var separator: some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.08))
+            .frame(height: 1)
+    }
+
+    private func menuRow(
+        title: String,
+        systemImage: String,
+        destructive: Bool,
+        muted: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(
+                        destructive
+                            ? Theme.danger
+                            : (muted ? Color.white.opacity(0.45) : Color.white.opacity(0.85))
+                    )
+                    .frame(width: 22)
+                Text(title)
+                    .font(.system(size: 16))
+                    .foregroundStyle(
+                        destructive
+                            ? Theme.danger
+                            : (muted ? Color.white.opacity(0.55) : Color.white)
+                    )
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(muted)
     }
 }
 
@@ -114,16 +193,61 @@ enum MessageMenuAction: String, Identifiable {
         case .forward: "arrowshape.turn.up.right"
         case .select: "checkmark.circle"
         case .delete: "trash"
-        case .moreReactions: "plus"
+        case .moreReactions: "chevron.down"
         }
     }
 
     var isDestructive: Bool { self == .delete }
 }
 
+// MARK: - Heavy dark blur backdrop (Telegram long-press)
+
+/// Strong blur + dark dim for message focus overlay.
+struct MessageMenuBackdrop: View {
+    var onTap: () -> Void
+
+    var body: some View {
+        ZStack {
+            // Heavy material blur (dark).
+            Rectangle()
+                .fill(.ultraThickMaterial)
+                .environment(\.colorScheme, .dark)
+
+            // Extra darken so chat content is heavily obscured.
+            Color.black.opacity(0.62)
+
+            // Subtle purple ambient like Telegram wallpaper bleed.
+            RadialGradient(
+                colors: [
+                    Color(red: 0.35, green: 0.2, blue: 0.75).opacity(0.35),
+                    Color.clear,
+                ],
+                center: .center,
+                startRadius: 40,
+                endRadius: 320
+            )
+            .blendMode(.plusLighter)
+            .opacity(0.5)
+        }
+        .ignoresSafeArea()
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onTap)
+    }
+}
+
 #Preview {
     ZStack {
-        Color.black.opacity(0.28).ignoresSafeArea()
-        MessageActionMenu(isMine: true, onReaction: { _ in }, onAction: { _ in })
+        MessageMenuBackdrop(onTap: {})
+        VStack(spacing: 10) {
+            MessageReactionBar(onReaction: { _ in }, onMore: {})
+            MessageBubbleView(
+                text: "Hey! How are you?",
+                time: "14:22",
+                isMine: true,
+                receipt: .read
+            )
+            MessageContextMenuCard(isMine: true, onAction: { _ in })
+        }
+        .padding(24)
     }
 }

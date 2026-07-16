@@ -32,6 +32,16 @@ struct MediaService: Sendable {
 
     /// PUT encrypted bytes to `media/{id}/content` (API, authenticated).
     func uploadContent(mediaID: UUID, data: Data, token: String) async throws {
+        // Server limit is 25 MiB (encrypted blob). Fail early with a clear message.
+        let maxBytes = 25 * 1024 * 1024
+        guard data.count <= maxBytes else {
+            let mb = max(1, data.count / 1_048_576)
+            throw APIError.server(
+                code: "VALIDATION_ERROR",
+                message: "This photo is too large after encryption (\(mb) MB). Try SD quality or a smaller image.",
+                statusCode: 400
+            )
+        }
         try await client.putRaw(
             path: "media/\(mediaID.uuidString.lowercased())/content",
             body: data,

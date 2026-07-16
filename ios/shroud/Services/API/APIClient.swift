@@ -18,7 +18,16 @@ final class APIClient: Sendable {
     ) -> APIClient {
         let fallback = URL(string: "http://127.0.0.1:8080/api/v1")!
         let url = configuration.resolvedBaseURL ?? fallback
-        return APIClient(baseURL: url)
+        return APIClient(baseURL: url, session: Self.makeSession())
+    }
+
+    /// Longer timeouts for media uploads (encrypted HD JPEGs can be multi‑MB).
+    private static func makeSession() -> URLSession {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 120
+        config.timeoutIntervalForResource = 300
+        config.waitsForConnectivity = true
+        return URLSession(configuration: config)
     }
 
     /// Debug factory — local Docker Compose default.

@@ -2,6 +2,7 @@
 
 use axum::{
     Router,
+    extract::DefaultBodyLimit,
     routing::{delete, get, post, put},
 };
 
@@ -74,9 +75,12 @@ pub fn router() -> Router<AppState> {
             .route("/conversations", get(messages::list_conversations))
             .route("/media/uploads", post(media::create_upload))
             .route("/media/{id}/download", post(media::create_download))
+            // Axum’s default body limit is 2 MiB — raise to match MAX_MEDIA_BYTES so HD photos work.
             .route(
                 "/media/{id}/content",
-                axum::routing::put(media::put_content).get(media::get_content),
+                axum::routing::put(media::put_content)
+                    .get(media::get_content)
+                    .layer(DefaultBodyLimit::max(media::MAX_MEDIA_BYTES as usize)),
             )
             .route("/presence/{user_id}", get(presence::get_presence))
             .route("/calls/ice-servers", get(calls::ice_servers))

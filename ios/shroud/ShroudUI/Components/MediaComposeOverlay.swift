@@ -13,36 +13,41 @@ enum MediaComposeQuality: String, CaseIterable, Sendable {
         }
     }
 
-    /// JPEG max edge + compression for `MediaCrypto.jpegData`.
+    /// JPEG max **pixel** edge + compression for `MediaCrypto.jpegData`.
     var encodeParams: (maxEdge: CGFloat, quality: CGFloat) {
         switch self {
-        case .sd: (1280, 0.72)
-        case .hd: (2560, 0.88)
+        case .sd: (2048, 0.88)
+        case .hd: (4096, 0.95)
         }
     }
 }
 
 /// Telegram-style media send screen — maps to `Conversation — Media Compose` in `iOS-App.pen`.
 ///
-/// Full-screen overlay (not a pushed route): photo preview, caption field, tools, blue send.
+/// Idle: tools + blue arrow-up send.  
+/// Caption focused: morphs chrome around a **stable** `TextField` (options + emoji + white check).
+///
+/// Important: the caption `TextField` must stay in the hierarchy when focus changes — swapping
+/// entire bars with `matchedGeometryEffect` causes freezes/crashes.
 struct MediaComposeOverlay: View {
     let image: UIImage
-    /// Recipient shown in the header (peer username).
     let peerUsername: String
     var onCancel: () -> Void
-    /// Caption + encode quality chosen in the compose UI.
     var onSend: (_ caption: String, _ quality: MediaComposeQuality) -> Void
     var onComingSoon: ((String) -> Void)?
 
     @State private var caption = ""
-    @State private var quality: MediaComposeQuality = .sd
+    @State private var quality: MediaComposeQuality = .hd
     @State private var multiSelectHint = false
     @State private var toolBanner: String?
+    @State private var keyboardHeight: CGFloat = 0
     @FocusState private var captionFocused: Bool
 
     private let chrome = Color(red: 44 / 255, green: 44 / 255, blue: 46 / 255)
-    /// Telegram blue send (design: `#3390EC`).
     private let telegramBlue = Color(red: 51 / 255, green: 144 / 255, blue: 236 / 255)
+
+    /// UI morph driven only by focus (not keyboard height) to avoid layout thrash mid-animation.
+    private var isFocused: Bool { captionFocused }
 
     private var windowTopInset: CGFloat {
         Self.keyWindowSafeArea.top
@@ -59,34 +64,40 @@ struct MediaComposeOverlay: View {
         return window?.safeAreaInsets ?? UIEdgeInsets(top: 59, left: 0, bottom: 34, right: 0)
     }
 
+    private func bottomChromePadding(homeInset: CGFloat) -> CGFloat {
+        if keyboardHeight > 0 { return keyboardHeight }
+        return max(homeInset, 8)
+    }
+
     var body: some View {
         GeometryReader { geo in
             let topInset = max(geo.safeAreaInsets.top, windowTopInset, 47)
-            let bottomInset = max(geo.safeAreaInsets.bottom, windowBottomInset, 8)
+            let homeInset = max(geo.safeAreaInsets.bottom, windowBottomInset, 8)
 
             ZStack {
                 Color.black.ignoresSafeArea()
-
-                // Centered letterboxed photo (pen Media Stage ~420pt tall).
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: geo.size.width)
-                    .frame(maxHeight: min(420, geo.size.height * 0.52))
-                    .clipped()
+                    .contentShape(Rectangle())
+                    .onTapGesture { dismissCaptionKeyboard() }
 
                 VStack(spacing: 0) {
                     topChrome(topInset: topInset)
-                    // EDIT chip over the letterbox (design Tool Chip at y≈132).
-                    HStack {
-                        editChip
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
+                        .opacity(isFocused ? 0.35 : 1)
 
-                    Spacer(minLength: 0)
-                    bottomChrome(bottomInset: bottomInset)
+                    editChipRow
+                        .opacity(isFocused ? 0 : 1)
+                        .frame(height: isFocused ? 0 : nil)
+                        .clipped()
+                        .allowsHitTesting(!isFocused)
+
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipped()
+                        .contentShape(Rectangle())
+                        .onTapGesture { dismissCaptionKeyboard() }
+
+                    bottomChrome(bottomPadding: bottomChromePadding(homeInset: homeInset))
                 }
 
                 if let toolBanner {
@@ -99,9 +110,9 @@ struct MediaComposeOverlay: View {
                             .padding(.vertical, 10)
                             .background(chrome.opacity(0.95))
                             .clipShape(Capsule())
-                            .padding(.bottom, 220)
+                            .padding(.bottom, 220 + (keyboardHeight > 0 ? keyboardHeight * 0.25 : 0))
                     }
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .transition(.opacity)
                     .allowsHitTesting(false)
                 }
             }
@@ -109,9 +120,13 @@ struct MediaComposeOverlay: View {
         .ignoresSafeArea()
         .preferredColorScheme(.dark)
         .accessibilityAddTraits(.isModal)
-        .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                captionFocused = true
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
+            updateKeyboardHeight(from: note)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { note in
+            let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+            withAnimation(.easeOut(duration: duration)) {
+                keyboardHeight = 0
             }
         }
     }
@@ -137,8 +152,8 @@ struct MediaComposeOverlay: View {
 
                 Spacer(minLength: 8)
 
-                // Multi-select (Telegram) — visual stub for now.
                 Button {
+                    dismissCaptionKeyboard()
                     multiSelectHint.toggle()
                     Haptics.impact(.light)
                     flashToolBanner("Multi-select coming soon")
@@ -165,86 +180,134 @@ struct MediaComposeOverlay: View {
         .background(Color.black)
     }
 
-    private var editChip: some View {
-        Button {
-            Haptics.impact(.light)
-            flashToolBanner("Edit tools coming soon")
-            onComingSoon?("Edit")
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "pencil.slash")
-                    .font(.system(size: 11, weight: .semibold))
-                Text("EDIT")
-                    .font(.system(size: 11, weight: .semibold))
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
+    private var editChipRow: some View {
+        HStack {
+            Button {
+                dismissCaptionKeyboard()
+                Haptics.impact(.light)
+                flashToolBanner("Edit tools coming soon")
+                onComingSoon?("Edit")
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "pencil.slash")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("EDIT")
+                        .font(.system(size: 11, weight: .semibold))
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .foregroundStyle(Color.white.opacity(0.85))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(chrome.opacity(0.9))
+                .clipShape(Capsule())
             }
-            .foregroundStyle(Color.white.opacity(0.85))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(chrome.opacity(0.9))
-            .clipShape(Capsule())
+            .buttonStyle(.plain)
+            .accessibilityLabel("Edit")
+
+            Spacer(minLength: 0)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Edit")
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 8)
     }
 
-    // MARK: - Bottom
+    // MARK: - Bottom (single TextField; chrome morphs around it)
 
-    private func bottomChrome(bottomInset: CGFloat) -> some View {
+    private func bottomChrome(bottomPadding: CGFloat) -> some View {
         VStack(spacing: 12) {
-            captionField
+            // One row: leading control | stable caption field | trailing control
+            HStack(spacing: 10) {
+                leadingControl
+                    .animation(.easeOut(duration: 0.2), value: isFocused)
 
-            HStack(spacing: 0) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        toolCircle(systemName: "chevron.left", label: "Back") {
-                            captionFocused = false
-                            onCancel()
-                        }
-                        toolCircle(systemName: "crop", label: "Crop") {
-                            flashToolBanner("Crop coming soon")
-                            onComingSoon?("Crop")
-                        }
-                        toolCircle(systemName: "textformat", label: "Text") {
-                            flashToolBanner("Text stickers coming soon")
-                            onComingSoon?("Text")
-                        }
-                        toolCircle(systemName: "slider.horizontal.3", label: "Filters") {
-                            flashToolBanner("Filters coming soon")
-                            onComingSoon?("Filters")
-                        }
-                        qualityBadge
-                    }
-                }
+                captionField
+                    .frame(maxWidth: .infinity)
 
-                Spacer(minLength: 10)
-
-                // Same arrow.up as chat composer; Telegram blue per design.
-                Button {
-                    captionFocused = false
-                    Haptics.impact(.medium)
-                    onSend(caption, quality)
-                } label: {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(Color.white)
-                        .frame(width: 50, height: 50)
-                        .background(telegramBlue)
-                        .clipShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Send")
+                trailingControl
+                    .animation(.easeOut(duration: 0.2), value: isFocused)
             }
 
-            Color.clear.frame(height: max(bottomInset, 8))
+            // Idle-only tool strip (hidden when focused, not removed from identity of TextField).
+            if !isFocused {
+                idleToolsRow
+                    .transition(.opacity)
+            }
+
+            Color.clear.frame(height: bottomPadding)
         }
-        .padding(.horizontal, 14)
-        .padding(.top, 12)
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
         .frame(maxWidth: .infinity)
         .background(Color.black)
+        .animation(.easeOut(duration: 0.22), value: isFocused)
+        .animation(.easeOut(duration: 0.25), value: keyboardHeight)
     }
 
+    @ViewBuilder
+    private var leadingControl: some View {
+        if isFocused {
+            // Caption options (captions_focused.PNG left circle)
+            Button {
+                Haptics.impact(.light)
+                flashToolBanner("Caption options coming soon")
+                onComingSoon?("Caption options")
+            } label: {
+                Image(systemName: "list.bullet")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Color.white)
+                    .frame(width: 44, height: 44)
+                    .background(chrome)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Caption options")
+            .transition(.scale.combined(with: .opacity))
+        } else {
+            // Idle: no leading control beside field (tools are below).
+            Color.clear.frame(width: 0, height: 44)
+        }
+    }
+
+    @ViewBuilder
+    private var trailingControl: some View {
+        if isFocused {
+            // White check = Done (dismiss keyboard)
+            Button {
+                Haptics.impact(.light)
+                dismissCaptionKeyboard()
+            } label: {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(Color.black)
+                    .frame(width: 44, height: 44)
+                    .background(Color.white)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Done")
+            .transition(.scale.combined(with: .opacity))
+        } else {
+            // Idle: blue send (same arrow.up as chat composer)
+            Button {
+                dismissCaptionKeyboard()
+                Haptics.impact(.medium)
+                onSend(caption, quality)
+            } label: {
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(Color.white)
+                    .frame(width: 50, height: 50)
+                    .background(telegramBlue)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Send")
+            .transition(.scale.combined(with: .opacity))
+        }
+    }
+
+    /// Stable caption field — never destroyed on focus change.
     private var captionField: some View {
         HStack(spacing: 10) {
             TextField("Add a caption...", text: $caption, axis: .vertical)
@@ -254,15 +317,31 @@ struct MediaComposeOverlay: View {
                 .focused($captionFocused)
                 .tint(telegramBlue)
 
-            Text("1")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Color.white)
-                .frame(width: 22, height: 22)
-                .overlay {
-                    Circle()
-                        .stroke(Color.white.opacity(0.4), lineWidth: 1.5)
+            if isFocused {
+                Button {
+                    Haptics.impact(.light)
+                    flashToolBanner("Emoji keyboard: use the globe key")
+                } label: {
+                    Image(systemName: "face.smiling")
+                        .font(.system(size: 20, weight: .regular))
+                        .foregroundStyle(Color.white.opacity(0.85))
+                        .frame(width: 28, height: 28)
                 }
-                .accessibilityLabel("1 photo")
+                .buttonStyle(.plain)
+                .accessibilityLabel("Emoji")
+                .transition(.opacity)
+            } else {
+                Text("1")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.white)
+                    .frame(width: 22, height: 22)
+                    .overlay {
+                        Circle()
+                            .stroke(Color.white.opacity(0.4), lineWidth: 1.5)
+                    }
+                    .accessibilityLabel("1 photo")
+                    .transition(.opacity)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -271,8 +350,39 @@ struct MediaComposeOverlay: View {
         .clipShape(Capsule())
     }
 
+    private var idleToolsRow: some View {
+        HStack(spacing: 0) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    toolCircle(systemName: "chevron.left", label: "Back") {
+                        dismissCaptionKeyboard()
+                        onCancel()
+                    }
+                    toolCircle(systemName: "crop", label: "Crop") {
+                        dismissCaptionKeyboard()
+                        flashToolBanner("Crop coming soon")
+                        onComingSoon?("Crop")
+                    }
+                    toolCircle(systemName: "textformat", label: "Text") {
+                        dismissCaptionKeyboard()
+                        flashToolBanner("Text stickers coming soon")
+                        onComingSoon?("Text")
+                    }
+                    toolCircle(systemName: "slider.horizontal.3", label: "Filters") {
+                        dismissCaptionKeyboard()
+                        flashToolBanner("Filters coming soon")
+                        onComingSoon?("Filters")
+                    }
+                    qualityBadge
+                }
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
     private var qualityBadge: some View {
         Button {
+            dismissCaptionKeyboard()
             Haptics.impact(.light)
             withAnimation(.easeInOut(duration: 0.15)) {
                 quality = quality == .sd ? .hd : .sd
@@ -292,7 +402,6 @@ struct MediaComposeOverlay: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Quality \(quality.label)")
-        .accessibilityHint("Double tap to toggle SD and HD")
     }
 
     private func toolCircle(systemName: String, label: String, action: @escaping () -> Void) -> some View {
@@ -309,6 +418,28 @@ struct MediaComposeOverlay: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
+    }
+
+    private func dismissCaptionKeyboard() {
+        captionFocused = false
+    }
+
+    private func updateKeyboardHeight(from notification: Notification) {
+        guard
+            let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
+        else { return }
+
+        let duration = (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double)
+            ?? 0.25
+        let screenHeight = UIScreen.main.bounds.height
+        let overlap = max(0, screenHeight - frame.origin.y)
+
+        // Avoid animating layout while the TextField is mid-focus if height is unchanged.
+        guard abs(overlap - keyboardHeight) > 0.5 else { return }
+
+        withAnimation(.easeOut(duration: duration)) {
+            keyboardHeight = overlap
+        }
     }
 
     private func flashToolBanner(_ text: String) {

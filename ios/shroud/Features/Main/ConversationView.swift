@@ -597,31 +597,45 @@ struct ConversationView: View {
     }
 
     @ViewBuilder
+    /// Telegram long-press: heavy blur backdrop, then emoji bar → **message** → context menu.
     private func messageMenuOverlay(for message: MessagingController.ChatMessage) -> some View {
         ZStack {
-            Theme.textPrimary.opacity(0.28)
-                .ignoresSafeArea()
-                .onTapGesture { focusedMessage = nil }
+            MessageMenuBackdrop {
+                withAnimation(.easeOut(duration: 0.18)) {
+                    focusedMessage = nil
+                }
+            }
 
-            VStack(spacing: 12) {
-                messageRow(message)
-                    .padding(.horizontal, 24)
-
-                MessageActionMenu(
-                    isMine: message.isMine,
+            VStack(spacing: 10) {
+                // 1) Quick reactions
+                MessageReactionBar(
                     onReaction: { emoji in
                         focusedMessage = nil
                         toast = "Reacted \(emoji)"
                         scheduleToastClear()
                     },
-                    onAction: { action in
+                    onMore: {
                         focusedMessage = nil
-                        handleMenu(action, message: message)
+                        showComingSoon("More reactions")
                     }
                 )
+                .frame(maxWidth: .infinity, alignment: message.isMine ? .trailing : .leading)
+
+                // 2) Focused message between emoji bar and menu
+                messageRow(message)
+                    .allowsHitTesting(false)
+
+                // 3) Context actions
+                MessageContextMenuCard(isMine: message.isMine) { action in
+                    focusedMessage = nil
+                    handleMenu(action, message: message)
+                }
+                .frame(maxWidth: .infinity, alignment: message.isMine ? .trailing : .leading)
             }
             .padding(.horizontal, 20)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .ignoresSafeArea()
         .transition(.opacity)
     }
 
