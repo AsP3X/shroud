@@ -24,9 +24,15 @@ struct SettingsRowView: View {
                     .font(.system(size: 16))
                     .foregroundStyle(Theme.textPrimary)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color(red: 199 / 255, green: 199 / 255, blue: 204 / 255))
+                if action != nil {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Color(red: 199 / 255, green: 199 / 255, blue: 204 / 255))
+                } else {
+                    Text("Soon")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
@@ -34,6 +40,7 @@ struct SettingsRowView: View {
         }
         .buttonStyle(.plain)
         .disabled(action == nil)
+        .opacity(action == nil ? 0.72 : 1)
     }
 }
 

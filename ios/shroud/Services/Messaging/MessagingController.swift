@@ -16,6 +16,10 @@ final class MessagingController {
     private(set) var threads: [UUID: [ChatMessage]] = [:]
     private(set) var typingPeerIDs: Set<UUID> = []
     private(set) var presenceByUser: [UUID: PresenceDTO] = [:]
+    /// Unread inbound counts by peer (local; cleared when the thread is opened).
+    private(set) var unreadCountByPeer: [UUID: Int] = [:]
+    /// Peer whose conversation is currently on screen (suppresses unread increments).
+    private(set) var activePeerID: UUID?
 
     private let contactsService = ContactsService()
     private let messagesService = MessagesService()
@@ -56,6 +60,18 @@ final class MessagingController {
 
     func stop() {
         realtime.disconnect()
+        activePeerID = nil
+    }
+
+    func setActivePeer(_ peerID: UUID?) {
+        activePeerID = peerID
+        if let peerID {
+            unreadCountByPeer[peerID] = 0
+        }
+    }
+
+    func unreadCount(for peerID: UUID) -> Int {
+        unreadCountByPeer[peerID] ?? 0
     }
 
     // MARK: - Contacts
@@ -71,9 +87,36 @@ final class MessagingController {
                 $0.username.localizedCaseInsensitiveCompare($1.username) == .orderedAscending
             }
             incomingRequests = try await requests
+            await refreshPresence(for: contacts.map(\.userId), token: token)
             lastError = nil
         } catch {
             lastError = SessionController.userMessage(for: error)
+        }
+    }
+
+    /// Fetches presence for many users (contacts list). Failures are skipped per user.
+    func refreshPresence(for userIDs: [UUID], token: String? = nil) async {
+        guard let token = token ?? sessionController?.bearerToken else { return }
+        let service = contactsService
+        var updates: [UUID: PresenceDTO] = [:]
+        await withTaskGroup(of: (UUID, PresenceDTO)?.self) { group in
+            for userID in userIDs {
+                group.addTask {
+                    guard let presence = try? await service.presence(
+                        userID: userID,
+                        token: token
+                    ) else { return nil }
+                    return (userID, presence)
+                }
+            }
+            for await result in group {
+                if let (userID, presence) = result {
+                    updates[userID] = presence
+                }
+            }
+        }
+        for (userID, presence) in updates {
+            presenceByUser[userID] = presence
         }
     }
 
@@ -134,6 +177,9 @@ final class MessagingController {
               let me = sessionController?.userID,
               let material = cryptoController?.material
         else { return }
+
+        activePeerID = peerUserID
+        unreadCountByPeer[peerUserID] = 0
 
         do {
             let response = try await messagesService.listMessages(peerUserID: peerUserID, token: token)
@@ -307,6 +353,12 @@ final class MessagingController {
         if !thread.contains(where: { $0.id == chat.id }) {
             thread.append(chat)
             threads[threadPeer] = thread
+            if !chat.isMine, activePeerID != threadPeer {
+                unreadCountByPeer[threadPeer, default: 0] += 1
+            }
+            if !chat.isMine, activePeerID == threadPeer {
+                try? await messagesService.markRead(messageID: chat.id, token: token)
+            }
         }
         await refreshConversations()
     }

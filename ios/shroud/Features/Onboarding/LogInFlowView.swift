@@ -218,37 +218,13 @@ struct LogInFlowView: View {
             .opacity(primaryButtonDimmed ? 0.45 : 1)
             .disabled(primaryButtonDisabled)
 
-            ZStack {
-                VStack(spacing: 12) {
-                    orDivider
-                    SecondaryButton(title: "Use Face ID") {}
-                }
-                .opacity(isCredentialsPhase ? 1 : 0)
-                .frame(maxHeight: isCredentialsPhase ? nil : 0)
-                .allowsHitTesting(isCredentialsPhase)
-
-                Button("I lost my encryption phrase") {}
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Theme.accent)
-                    .opacity(isCredentialsPhase ? 0 : 1)
-                    .frame(maxHeight: isCredentialsPhase ? 0 : nil)
-                    .allowsHitTesting(!isCredentialsPhase)
+            if !isCredentialsPhase {
+                Text("Shroud cannot recover a lost phrase. Messages on this device stay locked without it.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 8)
             }
-            .clipped()
-        }
-    }
-
-    private var orDivider: some View {
-        HStack(spacing: 10) {
-            Rectangle()
-                .fill(Theme.separator.opacity(0.8))
-                .frame(height: 1)
-            Text("or")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Theme.textSecondary)
-            Rectangle()
-                .fill(Theme.separator.opacity(0.8))
-                .frame(height: 1)
         }
     }
 

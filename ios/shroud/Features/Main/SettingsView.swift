@@ -266,37 +266,15 @@ struct SettingsView: View {
 
     private var stickyNavRow: some View {
         HStack(spacing: 0) {
-            HStack {
-                Button {} label: {
-                    Image(systemName: "qrcode")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                        .frame(width: 36, height: 36)
-                        .background(Theme.background.opacity(0.92))
-                        .clipShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("QR code")
-                Spacer(minLength: 0)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
             Color.clear
                 .frame(maxWidth: .infinity)
                 .frame(height: 1)
-
-            HStack {
-                Spacer(minLength: 0)
-                Button("Edit") {}
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(Theme.accent)
-                    .padding(.horizontal, 16)
-                    .frame(height: 36)
-                    .background(Theme.background.opacity(0.92))
-                    .clipShape(Capsule())
-                    .buttonStyle(.plain)
-            }
-            .frame(maxWidth: .infinity, alignment: .trailing)
+            Color.clear
+                .frame(maxWidth: .infinity)
+                .frame(height: 1)
+            Color.clear
+                .frame(maxWidth: .infinity)
+                .frame(height: 1)
         }
         .padding(.horizontal, 16)
         .frame(height: navRowHeight)
@@ -344,57 +322,51 @@ struct SettingsView: View {
 
     private var profileActionsCard: some View {
         settingsCard {
-            profileActionRow(systemImage: "face.smiling.inverse", title: "Set Emoji Status")
-            groupDivider(leading: 48)
-            profileActionRow(systemImage: "paintpalette.fill", title: "Change Profile Color")
-            groupDivider(leading: 48)
-            profileActionRow(systemImage: "camera.fill", title: "Change Profile Photo")
-        }
-    }
-
-    private func profileActionRow(systemImage: String, title: String) -> some View {
-        Button {} label: {
             HStack(spacing: 12) {
-                Image(systemName: systemImage)
+                Image(systemName: "person.text.rectangle")
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(Theme.accent)
                     .frame(width: 22)
-                Text(title)
-                    .font(.system(size: 16))
-                    .foregroundStyle(Theme.accent)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Profile personalization")
+                        .font(.system(size: 16))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("Emoji status, colors, and photos come later.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.textSecondary)
+                }
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 13)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
     }
 
     private var myProfileCard: some View {
-        Button {} label: {
-            HStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color(red: 1, green: 107 / 255, blue: 107 / 255))
-                        .frame(width: 30, height: 30)
-                    Image(systemName: "person.fill")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Color.white)
-                }
-                Text("My Profile")
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color(red: 1, green: 107 / 255, blue: 107 / 255))
+                    .frame(width: 30, height: 30)
+                Image(systemName: "person.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.white)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Signed in as \(handle)")
                     .font(.system(size: 16))
                     .foregroundStyle(Theme.textPrimary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color(red: 199 / 255, green: 199 / 255, blue: 204 / 255))
+                if let userID = sessionController.userID {
+                    Text(userID.uuidString.lowercased())
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(Theme.textSecondary)
+                        .textSelection(.enabled)
+                }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .contentShape(Rectangle())
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
         .background(Theme.background)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }

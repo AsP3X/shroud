@@ -10,6 +10,7 @@ struct ContactsView: View {
     @State private var addUserID = ""
     @State private var addError: String?
     @State private var isAdding = false
+    @State private var sortAscending = true
 
     private var filtered: [ContactItemDTO] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -24,19 +25,26 @@ struct ContactsView: View {
         let grouped = Dictionary(grouping: filtered) { contact in
             String(contact.username.prefix(1)).uppercased()
         }
-        return grouped.keys.sorted().map { key in
-            (key, (grouped[key] ?? []).sorted {
-                $0.username.localizedCaseInsensitiveCompare($1.username) == .orderedAscending
-            })
+        let keys = sortAscending ? grouped.keys.sorted() : grouped.keys.sorted().reversed()
+        return keys.map { key in
+            let items = (grouped[key] ?? []).sorted {
+                let cmp = $0.username.localizedCaseInsensitiveCompare($1.username)
+                return sortAscending ? cmp == .orderedAscending : cmp == .orderedDescending
+            }
+            return (key, items)
         }
     }
 
     var body: some View {
         NavigationStack {
         MainScrollScreen(title: "Contacts", collapsesTitle: true) {
-            Button("Sort") {}
-                .font(.system(size: 16))
-                .foregroundStyle(Theme.accent)
+            Button(sortAscending ? "A–Z" : "Z–A") {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    sortAscending.toggle()
+                }
+            }
+            .font(.system(size: 16))
+            .foregroundStyle(Theme.accent)
         } navTrailing: {
             Button {
                 showAdd = true

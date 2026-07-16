@@ -70,9 +70,15 @@ struct ConversationView: View {
         .task {
             await messaging.loadThread(peerUserID: peerUserID)
         }
+        .onAppear {
+            messaging.setActivePeer(peerUserID)
+        }
         .onDisappear {
             typingTask?.cancel()
             messaging.setTyping(peerUserID: peerUserID, isTyping: false)
+            if messaging.activePeerID == peerUserID {
+                messaging.setActivePeer(nil)
+            }
         }
     }
 
