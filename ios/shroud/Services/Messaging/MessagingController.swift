@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import UIKit
 
 /// Live contacts + chats state; seals plaintext with MessageCrypto before send.
 @MainActor
@@ -23,9 +24,11 @@ final class MessagingController {
 
     private let contactsService = ContactsService()
     private let messagesService = MessagesService()
+    private let mediaService = MediaService()
     private let keyBundleService = KeyBundleService()
     private let peerKeys = PeerIdentityStore()
     private let plaintextCache = LocalPlaintextCache()
+    private let mediaCache = LocalMediaCache()
     private let realtime = RealtimeClient()
     /// Polling fallback when the WebSocket is down (common behind some reverse proxies).
     private var pollTask: Task<Void, Never>?
@@ -36,16 +39,27 @@ final class MessagingController {
     /// Expose realtime health for diagnostics UI if needed.
     var isRealtimeConnected: Bool { realtime.isConnected }
 
+    enum ChatMessageKind: Equatable, Sendable {
+        case text
+        case image
+    }
+
     struct ChatMessage: Identifiable, Equatable, Sendable {
         let id: UUID
         let peerUserID: UUID
         let senderUserID: UUID
+        /// Caption or list preview ("Photo").
         let text: String
         let createdAt: Date
         let isMine: Bool
         let deleted: Bool
         /// Outbound only; ignored for inbound.
         var receipt: MessageReceiptStatus
+        var kind: ChatMessageKind
+        var mediaObjectId: UUID?
+        var imageWidth: Int?
+        var imageHeight: Int?
+        var imageData: Data?
 
         init(
             id: UUID,
@@ -55,7 +69,12 @@ final class MessagingController {
             createdAt: Date,
             isMine: Bool,
             deleted: Bool,
-            receipt: MessageReceiptStatus = .sent
+            receipt: MessageReceiptStatus = .sent,
+            kind: ChatMessageKind = .text,
+            mediaObjectId: UUID? = nil,
+            imageWidth: Int? = nil,
+            imageHeight: Int? = nil,
+            imageData: Data? = nil
         ) {
             self.id = id
             self.peerUserID = peerUserID
@@ -65,6 +84,11 @@ final class MessagingController {
             self.isMine = isMine
             self.deleted = deleted
             self.receipt = isMine ? receipt : .sent
+            self.kind = kind
+            self.mediaObjectId = mediaObjectId
+            self.imageWidth = imageWidth
+            self.imageHeight = imageHeight
+            self.imageData = imageData
         }
     }
 
@@ -376,10 +400,188 @@ final class MessagingController {
         realtime.sendTyping(peerUserID: peerUserID, isTyping: isTyping)
     }
 
+    /// Compresses, encrypts, uploads, and sends an image message to `peerUserID`.
+    /// Returns a user-facing error string, or `nil` on success.
+    func sendImage(_ image: UIImage, to peerUserID: UUID) async -> String? {
+        guard let token = sessionController?.bearerToken,
+              let me = sessionController?.userID,
+              let material = cryptoController?.material
+        else { return "Not signed in." }
+
+        let optimisticID = UUID()
+        let jpeg: (data: Data, width: Int, height: Int)
+        do {
+            jpeg = try MediaCrypto.jpegData(from: image)
+        } catch {
+            return "Could not prepare that photo."
+        }
+
+        let optimistic = ChatMessage(
+            id: optimisticID,
+            peerUserID: peerUserID,
+            senderUserID: me,
+            text: "Photo",
+            createdAt: Date(),
+            isMine: true,
+            deleted: false,
+            receipt: .sending,
+            kind: .image,
+            imageWidth: jpeg.width,
+            imageHeight: jpeg.height,
+            imageData: jpeg.data
+        )
+        var list = threads[peerUserID] ?? []
+        list.append(optimistic)
+        threads[peerUserID] = list
+
+        do {
+            let (fileKey, sealedFile) = try MediaCrypto.sealFile(jpeg.data)
+            let upload = try await mediaService.createUpload(
+                sizeBytes: sealedFile.count,
+                contentType: "application/octet-stream",
+                token: token
+            )
+            try await mediaService.upload(data: sealedFile, to: upload.uploadUrl)
+
+            let payload = MediaMessagePayload(
+                t: MediaMessagePayload.kindImage,
+                mime: "image/jpeg",
+                w: jpeg.width,
+                h: jpeg.height,
+                k: fileKey.base64EncodedString()
+            )
+            let payloadData = try JSONEncoder().encode(payload)
+            let peerPub = try await resolvePeerIdentityPublicKey(peerUserID: peerUserID, token: token)
+            let sealed = try MessageCrypto.seal(
+                plaintext: payloadData,
+                toPeerIdentityPublicKey: peerPub,
+                ourIdentityPublicKey: material.identityPublicKeyData
+            )
+            let dto = try await messagesService.send(
+                SendMessageRequest(
+                    peerUserId: peerUserID,
+                    contentType: "media",
+                    ciphertext: sealed.base64EncodedString(),
+                    mediaObjectId: upload.mediaObjectId
+                ),
+                token: token
+            )
+            mediaCache.save(messageID: dto.id, data: jpeg.data)
+            plaintextCache.save(messageID: dto.id, text: "Photo")
+
+            let sent = ChatMessage(
+                id: dto.id,
+                peerUserID: peerUserID,
+                senderUserID: me,
+                text: "Photo",
+                createdAt: dto.createdAt,
+                isMine: true,
+                deleted: false,
+                receipt: receiptStatus(from: dto),
+                kind: .image,
+                mediaObjectId: upload.mediaObjectId,
+                imageWidth: jpeg.width,
+                imageHeight: jpeg.height,
+                imageData: jpeg.data
+            )
+            if var thread = threads[peerUserID],
+               let idx = thread.firstIndex(where: { $0.id == optimisticID })
+            {
+                thread[idx] = sent
+                threads[peerUserID] = thread
+            }
+            await refreshConversations()
+            lastError = nil
+            return nil
+        } catch {
+            if var thread = threads[peerUserID] {
+                thread.removeAll { $0.id == optimisticID }
+                threads[peerUserID] = thread
+            }
+            let message = SessionController.userMessage(for: error)
+            lastError = message
+            return message
+        }
+    }
+
+    /// Loads decrypted image bytes for a media message (caches on success).
+    func ensureImageLoaded(for message: ChatMessage) async {
+        guard message.kind == .image,
+              message.imageData == nil,
+              !message.deleted,
+              let mediaID = message.mediaObjectId,
+              let token = sessionController?.bearerToken,
+              let material = cryptoController?.material
+        else { return }
+
+        if let cached = mediaCache.data(for: message.id) {
+            updateMessageImage(messageID: message.id, peerID: message.peerUserID, data: cached)
+            return
+        }
+
+        do {
+            // Re-open sealed payload from history to get the file key.
+            let response = try await messagesService.listMessages(
+                peerUserID: message.peerUserID,
+                token: token,
+                limit: 50
+            )
+            guard let dto = response.messages.first(where: { $0.id == message.id }),
+                  let ciphertextB64 = dto.ciphertext,
+                  let envelopeData = Data(base64Encoded: ciphertextB64)
+            else { return }
+
+            let me = sessionController?.userID
+            let isMine = dto.senderUserId == me
+            let payloadData: Data
+            if isMine {
+                payloadData = try MessageCrypto.open(
+                    envelopeData: envelopeData,
+                    with: material.agreementPrivateKey,
+                    ourIdentityPublicKey: material.identityPublicKeyData,
+                    senderIdentityPublicKey: material.identityPublicKeyData,
+                    as: .sender
+                )
+            } else {
+                let senderPub = try await resolvePeerIdentityPublicKey(
+                    peerUserID: dto.senderUserId,
+                    token: token
+                )
+                payloadData = try MessageCrypto.open(
+                    envelopeData: envelopeData,
+                    with: material.agreementPrivateKey,
+                    ourIdentityPublicKey: material.identityPublicKeyData,
+                    senderIdentityPublicKey: senderPub,
+                    as: .recipient
+                )
+            }
+            let payload = try JSONDecoder().decode(MediaMessagePayload.self, from: payloadData)
+            guard let keyData = Data(base64Encoded: payload.k) else { return }
+
+            let download = try await mediaService.createDownload(mediaID: mediaID, token: token)
+            let sealedFile = try await mediaService.download(from: download.downloadUrl)
+            let jpeg = try MediaCrypto.openFile(sealed: sealedFile, keyData: keyData)
+            mediaCache.save(messageID: message.id, data: jpeg)
+            updateMessageImage(messageID: message.id, peerID: message.peerUserID, data: jpeg)
+        } catch {
+            // Leave placeholder; user can reopen thread to retry.
+        }
+    }
+
+    private func updateMessageImage(messageID: UUID, peerID: UUID, data: Data) {
+        guard var thread = threads[peerID],
+              let idx = thread.firstIndex(where: { $0.id == messageID })
+        else { return }
+        thread[idx].imageData = data
+        threads[peerID] = thread
+    }
+
     func preview(for conversation: ConversationItemDTO) -> String {
         let peerID = conversation.peer.id
         if let last = threads[peerID]?.last {
-            return last.deleted ? "Message deleted" : last.text
+            if last.deleted { return "Message deleted" }
+            if last.kind == .image { return "Photo" }
+            return last.text
         }
         return "Encrypted conversation"
     }
@@ -578,6 +780,7 @@ final class MessagingController {
             ? (conversations.first(where: { $0.id == dto.conversationId })?.peer.id ?? dto.senderUserId)
             : dto.senderUserId
         let receipt = isMine ? receiptStatus(from: dto) : MessageReceiptStatus.sent
+        let isMedia = dto.contentType == "media"
 
         if dto.deletedForEveryone {
             return ChatMessage(
@@ -588,8 +791,20 @@ final class MessagingController {
                 createdAt: dto.createdAt,
                 isMine: isMine,
                 deleted: true,
-                receipt: receipt
+                receipt: receipt,
+                kind: isMedia ? .image : .text,
+                mediaObjectId: dto.mediaObjectId
             )
+        }
+
+        // Prefer in-memory message (optimistic send) with upgraded receipt.
+        if isMine, let existing = threads[peerUserID]?.first(where: { $0.id == dto.id }) {
+            var merged = existing
+            let serverReceipt = receiptStatus(from: dto)
+            if serverReceipt.rank > existing.receipt.rank {
+                merged.receipt = serverReceipt
+            }
+            return merged
         }
 
         guard let ciphertextB64 = dto.ciphertext,
@@ -599,101 +814,138 @@ final class MessagingController {
                 id: dto.id,
                 peerUserID: peerUserID,
                 senderUserID: dto.senderUserId,
-                text: "[Unable to decrypt]",
+                text: isMedia ? "Photo" : "[Unable to decrypt]",
                 createdAt: dto.createdAt,
                 isMine: isMine,
                 deleted: false,
-                receipt: receipt
+                receipt: receipt,
+                kind: isMedia ? .image : .text,
+                mediaObjectId: dto.mediaObjectId
             )
         }
 
         do {
+            let plain: Data
             if isMine {
-                if let existing = threads[peerUserID]?.first(where: { $0.id == dto.id }) {
-                    // Keep the higher receipt of local vs server.
-                    var merged = existing
-                    let serverReceipt = receiptStatus(from: dto)
-                    if serverReceipt.rank > existing.receipt.rank {
-                        merged.receipt = serverReceipt
-                    }
-                    return merged
-                }
-                if let cached = plaintextCache.text(for: dto.id) {
-                    return ChatMessage(
-                        id: dto.id,
-                        peerUserID: peerUserID,
-                        senderUserID: dto.senderUserId,
-                        text: cached,
-                        createdAt: dto.createdAt,
-                        isMine: true,
-                        deleted: false,
-                        receipt: receipt
-                    )
-                }
-                // v2 dual-seal: open self box with our private key.
-                if let plain = try? MessageCrypto.open(
+                plain = try MessageCrypto.open(
                     envelopeData: envelopeData,
                     with: material.agreementPrivateKey,
                     ourIdentityPublicKey: material.identityPublicKeyData,
                     senderIdentityPublicKey: material.identityPublicKeyData,
                     as: .sender
-                ), let text = String(data: plain, encoding: .utf8) {
-                    plaintextCache.save(messageID: dto.id, text: text)
-                    return ChatMessage(
-                        id: dto.id,
-                        peerUserID: peerUserID,
-                        senderUserID: dto.senderUserId,
-                        text: text,
-                        createdAt: dto.createdAt,
-                        isMine: true,
-                        deleted: false,
-                        receipt: receipt
-                    )
-                }
-                return ChatMessage(
-                    id: dto.id,
-                    peerUserID: peerUserID,
-                    senderUserID: dto.senderUserId,
-                    text: "[Encrypted message]",
-                    createdAt: dto.createdAt,
-                    isMine: true,
-                    deleted: false,
-                    receipt: receipt
+                )
+            } else {
+                let senderPub = try await resolvePeerIdentityPublicKey(
+                    peerUserID: dto.senderUserId,
+                    token: token
+                )
+                plain = try MessageCrypto.open(
+                    envelopeData: envelopeData,
+                    with: material.agreementPrivateKey,
+                    ourIdentityPublicKey: material.identityPublicKeyData,
+                    senderIdentityPublicKey: senderPub,
+                    as: .recipient
                 )
             }
 
-            let senderPub = try await resolvePeerIdentityPublicKey(
-                peerUserID: dto.senderUserId,
-                token: token
-            )
-            let plain = try MessageCrypto.open(
-                envelopeData: envelopeData,
-                with: material.agreementPrivateKey,
-                ourIdentityPublicKey: material.identityPublicKeyData,
-                senderIdentityPublicKey: senderPub,
-                as: .recipient
-            )
+            if isMedia {
+                return await decodeMediaMessage(
+                    dto: dto,
+                    plain: plain,
+                    peerUserID: peerUserID,
+                    isMine: isMine,
+                    receipt: receipt,
+                    token: token
+                )
+            }
+
             let text = String(data: plain, encoding: .utf8) ?? "[Binary message]"
+            if isMine {
+                plaintextCache.save(messageID: dto.id, text: text)
+            }
             return ChatMessage(
                 id: dto.id,
                 peerUserID: peerUserID,
                 senderUserID: dto.senderUserId,
                 text: text,
                 createdAt: dto.createdAt,
-                isMine: false,
-                deleted: false
+                isMine: isMine,
+                deleted: false,
+                receipt: receipt
             )
         } catch {
+            if isMine, let cached = plaintextCache.text(for: dto.id), !isMedia {
+                return ChatMessage(
+                    id: dto.id,
+                    peerUserID: peerUserID,
+                    senderUserID: dto.senderUserId,
+                    text: cached,
+                    createdAt: dto.createdAt,
+                    isMine: true,
+                    deleted: false,
+                    receipt: receipt
+                )
+            }
             return ChatMessage(
                 id: dto.id,
                 peerUserID: peerUserID,
                 senderUserID: dto.senderUserId,
-                text: "[Unable to decrypt]",
+                text: isMedia ? "Photo" : "[Unable to decrypt]",
                 createdAt: dto.createdAt,
                 isMine: isMine,
-                deleted: false
+                deleted: false,
+                receipt: receipt,
+                kind: isMedia ? .image : .text,
+                mediaObjectId: dto.mediaObjectId,
+                imageData: mediaCache.data(for: dto.id)
             )
         }
+    }
+
+    private func decodeMediaMessage(
+        dto: MessageDTO,
+        plain: Data,
+        peerUserID: UUID,
+        isMine: Bool,
+        receipt: MessageReceiptStatus,
+        token: String
+    ) async -> ChatMessage {
+        let cachedImage = mediaCache.data(for: dto.id)
+        let payload = try? JSONDecoder().decode(MediaMessagePayload.self, from: plain)
+        var imageData = cachedImage
+        var width = payload?.w
+        var height = payload?.h
+
+        // Best-effort download when we have a payload key (don't block the thread forever).
+        if imageData == nil,
+           let payload,
+           let mediaID = dto.mediaObjectId,
+           let keyData = Data(base64Encoded: payload.k)
+        {
+            if let download = try? await mediaService.createDownload(mediaID: mediaID, token: token),
+               let sealed = try? await mediaService.download(from: download.downloadUrl),
+               let jpeg = try? MediaCrypto.openFile(sealed: sealed, keyData: keyData)
+            {
+                mediaCache.save(messageID: dto.id, data: jpeg)
+                imageData = jpeg
+            }
+        }
+
+        return ChatMessage(
+            id: dto.id,
+            peerUserID: peerUserID,
+            senderUserID: dto.senderUserId,
+            text: "Photo",
+            createdAt: dto.createdAt,
+            isMine: isMine,
+            deleted: false,
+            receipt: receipt,
+            kind: .image,
+            mediaObjectId: dto.mediaObjectId,
+            imageWidth: width,
+            imageHeight: height,
+            imageData: imageData
+        )
     }
 
     private func resolvePeerIdentityPublicKey(peerUserID: UUID, token: String) async throws -> Data {

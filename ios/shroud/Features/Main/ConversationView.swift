@@ -1,4 +1,6 @@
+import PhotosUI
 import SwiftUI
+import UIKit
 
 /// 1:1 chat thread — maps to `Conversation` (+ variants) in `design/iOS-App.pen`.
 ///
@@ -22,6 +24,10 @@ struct ConversationView: View {
     @State private var toast: String?
     @State private var focusedMessage: MessagingController.ChatMessage?
     @State private var profileDestination: ProfileDestination?
+    @State private var photoPickerItem: PhotosPickerItem?
+    @State private var showPhotoPicker = false
+    @State private var showCamera = false
+    @State private var isSendingMedia = false
 
     private var messages: [MessagingController.ChatMessage] {
         messaging.threads[peerUserID] ?? []
@@ -100,12 +106,38 @@ struct ConversationView: View {
                 .presentationDragIndicator(.hidden)
                 .presentationBackground(Theme.background)
             }
+            .photosPicker(
+                isPresented: $showPhotoPicker,
+                selection: $photoPickerItem,
+                matching: .images,
+                photoLibrary: .shared()
+            )
+            .onChange(of: photoPickerItem) { _, item in
+                guard let item else { return }
+                Task { await sendPickedPhoto(item) }
+            }
+            .fullScreenCover(isPresented: $showCamera) {
+                CameraPicker { image in
+                    showCamera = false
+                    guard let image else { return }
+                    Task { await sendUIImage(image) }
+                }
+                .ignoresSafeArea()
+            }
             .navigationDestination(item: $profileDestination) { dest in
                 ContactProfileView(peerUserID: dest.peerUserID, peerUsername: dest.peerUsername)
             }
             .overlay {
                 if let focusedMessage {
                     messageMenuOverlay(for: focusedMessage)
+                }
+            }
+            .overlay {
+                if isSendingMedia {
+                    ProgressView("Sending photo…")
+                        .padding(16)
+                        .background(.ultraThinMaterial)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
             }
             .toast($toast)
@@ -226,18 +258,12 @@ struct ConversationView: View {
                                 .id(id)
                                 .padding(.vertical, 8)
                         case let .message(message):
-                            MessageBubbleView(
-                                text: message.text,
-                                time: messaging.clockTimeLabel(for: message.createdAt),
-                                isMine: message.isMine,
-                                isDeleted: message.deleted,
-                                receipt: message.receipt
-                            )
-                            .id(message.id)
-                            .onLongPressGesture(minimumDuration: 0.35) {
-                                Haptics.impact(.medium)
-                                focusedMessage = message
-                            }
+                            messageRow(message)
+                                .id(message.id)
+                                .onLongPressGesture(minimumDuration: 0.35) {
+                                    Haptics.impact(.medium)
+                                    focusedMessage = message
+                                }
                         }
                     }
 
@@ -378,10 +404,70 @@ struct ConversationView: View {
         }
     }
 
+    @ViewBuilder
+    private func messageRow(_ message: MessagingController.ChatMessage) -> some View {
+        switch message.kind {
+        case .image:
+            ImageMessageBubble(
+                message: message,
+                time: messaging.clockTimeLabel(for: message.createdAt)
+            ) {
+                Task { await messaging.ensureImageLoaded(for: message) }
+            }
+        case .text:
+            MessageBubbleView(
+                text: message.text,
+                time: messaging.clockTimeLabel(for: message.createdAt),
+                isMine: message.isMine,
+                isDeleted: message.deleted,
+                receipt: message.receipt
+            )
+        }
+    }
+
     private func handleAttach(_ option: ChatAttachOption) {
         switch option {
-        case .camera, .photos, .file, .location, .contact, .music, .gift, .stickers:
+        case .photos:
+            showPhotoPicker = true
+        case .camera:
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                showCamera = true
+            } else {
+                toast = "Camera is not available on this device."
+                scheduleToastClear()
+            }
+        case .file, .location, .contact, .music, .gift, .stickers:
             showComingSoon(option.title)
+        }
+    }
+
+    private func sendPickedPhoto(_ item: PhotosPickerItem) async {
+        defer { photoPickerItem = nil }
+        do {
+            guard let data = try await item.loadTransferable(type: Data.self),
+                  let image = UIImage(data: data)
+            else {
+                toast = "Could not load that photo."
+                scheduleToastClear()
+                return
+            }
+            await sendUIImage(image)
+        } catch {
+            toast = "Could not load that photo."
+            scheduleToastClear()
+        }
+    }
+
+    private func sendUIImage(_ image: UIImage) async {
+        isSendingMedia = true
+        let error = await messaging.sendImage(image, to: peerUserID)
+        isSendingMedia = false
+        if let error {
+            toast = error
+            Haptics.notification(.error)
+            scheduleToastClear()
+        } else {
+            Haptics.notification(.success)
         }
     }
 
@@ -404,14 +490,8 @@ struct ConversationView: View {
                 .onTapGesture { focusedMessage = nil }
 
             VStack(spacing: 12) {
-                MessageBubbleView(
-                    text: message.text,
-                    time: messaging.clockTimeLabel(for: message.createdAt),
-                    isMine: message.isMine,
-                    isDeleted: message.deleted,
-                    receipt: message.receipt
-                )
-                .padding(.horizontal, 24)
+                messageRow(message)
+                    .padding(.horizontal, 24)
 
                 MessageActionMenu(
                     isMine: message.isMine,
