@@ -5,12 +5,15 @@ struct ContactsView: View {
     @Environment(MessagingController.self) private var messaging
     @Environment(SessionController.self) private var session
 
+    @Binding var path: [ChatRoute]
     @State private var searchText = ""
     @State private var showAdd = false
     @State private var showMyQR = false
     @State private var sortAscending = true
-    /// Dedicated path type for this tab’s stack (avoids NavigationLink + outer path conflicts).
-    @State private var path: [ChatRoute] = []
+
+    init(path: Binding<[ChatRoute]> = .constant([])) {
+        _path = path
+    }
 
     private var filtered: [ContactItemDTO] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -133,11 +136,11 @@ struct ContactsView: View {
             .sheet(isPresented: $showMyQR) {
                 MyQRCodeSheet()
             }
-            .task {
-                await messaging.refreshContacts()
-                if session.shareCode == nil {
-                    await session.validateSessionIfNeeded()
-                }
+        }
+        .task {
+            await messaging.refreshContacts()
+            if session.shareCode == nil {
+                await session.validateSessionIfNeeded()
             }
         }
     }

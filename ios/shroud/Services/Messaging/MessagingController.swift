@@ -27,9 +27,14 @@ final class MessagingController {
     private let peerKeys = PeerIdentityStore()
     private let plaintextCache = LocalPlaintextCache()
     private let realtime = RealtimeClient()
+    /// Polling fallback when the WebSocket is down (common behind some reverse proxies).
+    private var pollTask: Task<Void, Never>?
 
     private weak var sessionController: SessionController?
     private weak var cryptoController: CryptoController?
+
+    /// Expose realtime health for diagnostics UI if needed.
+    var isRealtimeConnected: Bool { realtime.isConnected }
 
     struct ChatMessage: Identifiable, Equatable, Sendable {
         let id: UUID
@@ -52,6 +57,7 @@ final class MessagingController {
     func start() {
         guard let token = sessionController?.bearerToken else { return }
         realtime.connect(token: token)
+        startPollingFallback()
         Task {
             await refreshContacts()
             await refreshConversations()
@@ -59,14 +65,55 @@ final class MessagingController {
     }
 
     func stop() {
-        realtime.disconnect()
+        pollTask?.cancel()
+        pollTask = nil
+        realtime.disconnect(reconnect: false)
         activePeerID = nil
+    }
+
+    /// Call when the app returns to the foreground.
+    func handleAppBecameActive() {
+        guard let token = sessionController?.bearerToken else { return }
+        realtime.connect(token: token)
+        Task {
+            await refreshConversations()
+            if let peer = activePeerID {
+                await loadThread(peerUserID: peer)
+            }
+        }
     }
 
     func setActivePeer(_ peerID: UUID?) {
         activePeerID = peerID
         if let peerID {
             unreadCountByPeer[peerID] = 0
+        }
+    }
+
+    private func startPollingFallback() {
+        pollTask?.cancel()
+        pollTask = Task { [weak self] in
+            // When the WebSocket is down (or never connected), poll so messages still arrive.
+            // While connected, a slower safety poll catches any missed events.
+            var tick = 0
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                guard let self, !Task.isCancelled else { return }
+                tick += 1
+                let wsUp = self.realtime.isConnected
+                if !wsUp {
+                    await self.refreshConversations()
+                    if let peer = self.activePeerID {
+                        await self.loadThread(peerUserID: peer)
+                    }
+                } else if tick % 5 == 0 {
+                    // ~15s backup while realtime is healthy
+                    await self.refreshConversations()
+                    if let peer = self.activePeerID {
+                        await self.loadThread(peerUserID: peer)
+                    }
+                }
+            }
         }
     }
 
@@ -284,6 +331,7 @@ final class MessagingController {
         return "Encrypted conversation"
     }
 
+    /// Relative day label for list rows (Today → time, Yesterday, else date).
     func timeLabel(for date: Date?) -> String {
         guard let date else { return "" }
         let calendar = Calendar.current
@@ -296,6 +344,12 @@ final class MessagingController {
         return date.formatted(date: .abbreviated, time: .omitted)
     }
 
+    /// Clock time for in-bubble meta (always `11:05`-style).
+    func clockTimeLabel(for date: Date?) -> String {
+        guard let date else { return "" }
+        return date.formatted(date: .omitted, time: .shortened)
+    }
+
     // MARK: - Private
 
     private func handleRealtime(_ event: RealtimeEvent) {
@@ -303,7 +357,15 @@ final class MessagingController {
         case let .messageNew(dto):
             Task { await ingestIncoming(dto) }
         case let .raw(type, json):
-            if type == "typing" {
+            if type == "message.new" {
+                // Decode path failed earlier — force a history refresh for the open thread.
+                Task {
+                    await refreshConversations()
+                    if let peer = activePeerID {
+                        await loadThread(peerUserID: peer)
+                    }
+                }
+            } else if type == "typing" {
                 handleTyping(json)
             } else if type == "presence.update" {
                 handlePresence(json)

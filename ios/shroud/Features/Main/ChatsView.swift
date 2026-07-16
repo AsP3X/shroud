@@ -4,9 +4,13 @@ import SwiftUI
 struct ChatsView: View {
     @Environment(MessagingController.self) private var messaging
 
+    @Binding var path: [ChatRoute]
     @State private var searchText = ""
-    @State private var path: [ChatRoute] = []
     @State private var showNewChat = false
+
+    init(path: Binding<[ChatRoute]> = .constant([])) {
+        _path = path
+    }
 
     private var filtered: [ConversationItemDTO] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -2,50 +2,76 @@ import SwiftUI
 
 /// Post-auth shell — Chats / Contacts / Calls / Settings from `iOS-App.pen`.
 ///
-/// Liquid-glass floating tab bar plus a soft directional crossfade when switching tabs.
-/// Settings can push full-screen destinations (e.g. Server); the tab bar hides while those are open.
+/// Floating tab bar lives in a bottom `safeAreaInset` so list content clears it.
+/// Pushed destinations (chat, settings detail) clear the path-driven hide flag so the
+/// bar is fully removed — no residual overlay over the composer.
 struct MainTabView: View {
     let router: AppRouter
 
     @State private var selection: MainTab = .chats
+    @State private var chatsPath: [ChatRoute] = []
+    @State private var contactsPath: [ChatRoute] = []
     @State private var settingsPath: [SettingsRoute] = []
     /// Drives insertion offset: higher index → enter from the right, lower → from the left.
     @State private var movesForward = true
 
     private let tabAnimation = Animation.spring(response: 0.38, dampingFraction: 0.9)
 
+    /// Tab bar only on root list screens — never on conversation / profile / settings detail.
     private var showsTabBar: Bool {
-        if selection == .settings, !settingsPath.isEmpty {
-            return false
+        switch selection {
+        case .chats:
+            return chatsPath.isEmpty
+        case .contacts:
+            return contactsPath.isEmpty
+        case .calls:
+            return true
+        case .settings:
+            return settingsPath.isEmpty
         }
-        return true
     }
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            tabRoot(for: selection)
-                .id(selection)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .transition(tabContentTransition)
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    Color.clear.frame(height: showsTabBar ? 72 : 0)
+        tabRoot(for: selection)
+            .id(selection)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .transition(tabContentTransition)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if showsTabBar {
+                    FloatingTabBar(selection: selectionBinding)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
+            }
+            .animation(tabAnimation, value: selection)
+            .animation(.spring(response: 0.32, dampingFraction: 0.9), value: showsTabBar)
+            // List tabs: ignore keyboard so the bar doesn't jump. Conversation needs avoidance.
+            .modifier(KeyboardSafeAreaModifier(ignoreKeyboard: showsTabBar))
+            .navigationBarHidden(true)
+            // Still expose binding for conversation/profile backups (same source of truth paths).
+            .environment(\.hideFloatingTabBar, hideBinding)
+            .onChange(of: selection) { _, newValue in
+                if newValue != .settings {
+                    settingsPath = []
+                }
+            }
+    }
 
-            if showsTabBar {
-                FloatingTabBar(selection: selectionBinding)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+    /// Back-compat for screens that still write the hide flag; maps to path state.
+    private var hideBinding: Binding<Bool> {
+        Binding(
+            get: { !showsTabBar },
+            set: { hidden in
+                // Only allow "show" by clearing paths when explicitly requested.
+                if !hidden {
+                    switch selection {
+                    case .chats: chatsPath = []
+                    case .contacts: contactsPath = []
+                    case .settings: settingsPath = []
+                    case .calls: break
+                    }
+                }
             }
-        }
-        .animation(tabAnimation, value: selection)
-        .animation(.spring(response: 0.32, dampingFraction: 0.9), value: showsTabBar)
-        .ignoresSafeArea(.keyboard)
-        .navigationBarHidden(true)
-        .onChange(of: selection) { _, newValue in
-            // Leaving Settings pops any pushed server screen so state stays clean.
-            if newValue != .settings {
-                settingsPath = []
-            }
-        }
+        )
     }
 
     private var selectionBinding: Binding<MainTab> {
@@ -76,13 +102,26 @@ struct MainTabView: View {
     private func tabRoot(for tab: MainTab) -> some View {
         switch tab {
         case .chats:
-            ChatsView()
+            ChatsView(path: $chatsPath)
         case .contacts:
-            ContactsView()
+            ContactsView(path: $contactsPath)
         case .calls:
             CallsView()
         case .settings:
             SettingsView(router: router, navigationPath: $settingsPath)
+        }
+    }
+}
+
+/// Applies `.ignoresSafeArea(.keyboard)` only while the floating tab bar is visible.
+private struct KeyboardSafeAreaModifier: ViewModifier {
+    let ignoreKeyboard: Bool
+
+    func body(content: Content) -> some View {
+        if ignoreKeyboard {
+            content.ignoresSafeArea(.keyboard)
+        } else {
+            content
         }
     }
 }

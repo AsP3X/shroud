@@ -6,6 +6,8 @@ import SwiftUI
 /// path (e.g. `AppRoute` + `ChatRoute` / `SettingsRoute`) crash with
 /// `AnyNavigationPath.Error.comparisonTypeMismatch`.
 struct RootView: View {
+    @Environment(\.scenePhase) private var scenePhase
+
     @State private var sessionController = SessionController()
     @State private var cryptoController = CryptoController()
     @State private var messagingController = MessagingController()
@@ -51,6 +53,10 @@ struct RootView: View {
             } else {
                 messagingController.stop()
             }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active, router.isUnlocked else { return }
+            messagingController.handleAppBecameActive()
         }
     }
 

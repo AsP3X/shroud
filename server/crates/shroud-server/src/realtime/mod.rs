@@ -148,9 +148,11 @@ impl RealtimeHub {
 
     /// Fan-out entry point used by HTTP handlers.
     ///
-    /// Human: Without Redis, deliver locally. With Redis, publish only — every
-    /// instance (including this one) receives via subscriber and delivers locally
-    /// once, avoiding double delivery.
+    /// Always delivers to local sockets first (this process). When Redis is configured,
+    /// also publishes so other replicas can deliver. Clients de-dupe by message id.
+    ///
+    /// Previously Redis-only mode silently dropped events when the subscriber lagged
+    /// or no local sockets were registered yet after a publish-only path.
     pub async fn publish_to_users(
         &self,
         user_ids: impl IntoIterator<Item = Uuid>,
@@ -158,20 +160,34 @@ impl RealtimeHub {
         payload: &str,
     ) {
         let users: Vec<Uuid> = user_ids.into_iter().collect();
-        let redis = self.redis.read().await.clone();
 
+        // Count local targets for diagnostics (helps spot "send ok but nobody online").
+        let local_targets = {
+            let by_user = self.devices_by_user.read().await;
+            users
+                .iter()
+                .filter_map(|uid| by_user.get(uid).map(|set| set.len()))
+                .sum::<usize>()
+        };
+        if local_targets == 0 {
+            tracing::debug!(
+                users = ?users,
+                except_device = ?except_device,
+                "realtime.publish: no local websocket subscribers"
+            );
+        }
+
+        self.publish_local_to_users(users.clone(), except_device, payload)
+            .await;
+
+        let redis = self.redis.read().await.clone();
         let Some(mut conn) = redis else {
-            self.publish_local_to_users(users, except_device, payload)
-                .await;
             return;
         };
 
         let event: Value = match serde_json::from_str(payload) {
             Ok(value) => value,
-            Err(_) => {
-                // Fallback: wrap raw string if payload is not JSON object.
-                Value::String(payload.to_string())
-            }
+            Err(_) => Value::String(payload.to_string()),
         };
 
         for user_id in users {
