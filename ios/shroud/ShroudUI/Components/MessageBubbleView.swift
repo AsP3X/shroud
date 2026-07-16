@@ -27,7 +27,8 @@ enum MessageReceiptStatus: Equatable, Sendable, Comparable {
 
 /// Incoming / outgoing text bubble — maps to `Bubble In` / `Bubble Out` in `iOS-App.pen`.
 ///
-/// Short messages hug their text; long messages wrap up to `maxContentWidth`.
+/// Width follows content: a single letter/emoji stays tight; long text wraps up to
+/// `maxContentWidth`. Time + receipts can widen the bubble past a tiny text label.
 struct MessageBubbleView: View {
     let text: String
     let time: String
@@ -35,8 +36,12 @@ struct MessageBubbleView: View {
     var isDeleted: Bool = false
     var receipt: MessageReceiptStatus = .sent
 
-    /// Max text column width (padding is outside this).
-    private let maxContentWidth: CGFloat = 256
+    /// Max width of the text column (padding is outside).
+    private let maxContentWidth: CGFloat = 260
+
+    private var displayText: String {
+        isDeleted ? "Message deleted" : text
+    }
 
     private var bubbleFill: Color {
         isMine ? Theme.accent : Theme.bubbleIncoming
@@ -80,11 +85,14 @@ struct MessageBubbleView: View {
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 0) {
-            if isMine { Spacer(minLength: 52) }
+            if isMine { Spacer(minLength: 48) }
 
             bubbleBody
+                // Critical: don't expand to the LazyVStack's full proposed width.
+                // Ideal width = max(text, meta) up to maxContentWidth + padding.
+                .fixedSize(horizontal: true, vertical: false)
 
-            if !isMine { Spacer(minLength: 52) }
+            if !isMine { Spacer(minLength: 48) }
         }
         .frame(maxWidth: .infinity, alignment: isMine ? .trailing : .leading)
         .accessibilityElement(children: .combine)
@@ -92,22 +100,22 @@ struct MessageBubbleView: View {
     }
 
     private var bubbleBody: some View {
-        VStack(alignment: .trailing, spacing: 3) {
-            Text(isDeleted ? "Message deleted" : text)
+        VStack(alignment: isMine ? .trailing : .leading, spacing: 3) {
+            Text(displayText)
                 .font(.system(size: 15))
                 .italic(isDeleted)
                 .foregroundStyle(textColor)
                 .multilineTextAlignment(.leading)
                 .lineLimit(nil)
-                // Ideal width for short text; wrap once content hits the cap.
+                // Cap wrap width; short strings keep their intrinsic width.
                 .frame(maxWidth: maxContentWidth, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 4) {
                 Text(time)
                     .font(.system(size: 11, weight: .regular))
                     .foregroundStyle(metaColor)
                     .monospacedDigit()
+                    .layoutPriority(1)
 
                 if isMine, !isDeleted {
                     receiptIcon
@@ -157,7 +165,7 @@ struct MessageBubbleView: View {
     }
 
     private var accessibilityLabel: String {
-        var parts = [isMine ? "You" : "Them", isDeleted ? "Message deleted" : text, time]
+        var parts = [isMine ? "You" : "Them", displayText, time]
         if isMine {
             switch receipt {
             case .sending: parts.append("Sending")
@@ -171,19 +179,23 @@ struct MessageBubbleView: View {
 }
 
 #Preview {
-    VStack(alignment: .leading, spacing: 10) {
-        MessageBubbleView(text: "Hi", time: "11:02", isMine: false)
-        MessageBubbleView(text: "Ok", time: "11:03", isMine: true, receipt: .sent)
-        MessageBubbleView(text: "Yes! 10am", time: "11:05", isMine: true, receipt: .delivered)
-        MessageBubbleView(
-            text: "Hey! Are we still on for tomorrow? Parking near the trailhead fills up fast on weekends.",
-            time: "12:10",
-            isMine: true,
-            receipt: .read
-        )
-        MessageBubbleView(text: "Sounds good, see you tomorrow!", time: "12:11", isMine: false)
+    ScrollView {
+        VStack(alignment: .leading, spacing: 10) {
+            MessageBubbleView(text: "a", time: "11:00", isMine: false)
+            MessageBubbleView(text: "👍", time: "11:01", isMine: true, receipt: .sent)
+            MessageBubbleView(text: "Hi", time: "11:02", isMine: false)
+            MessageBubbleView(text: "Ok", time: "11:03", isMine: true, receipt: .delivered)
+            MessageBubbleView(text: "Yes! 10am", time: "11:05", isMine: true, receipt: .read)
+            MessageBubbleView(
+                text: "Hey! Are we still on for tomorrow? Parking near the trailhead fills up fast on weekends so let's leave early.",
+                time: "12:10",
+                isMine: true,
+                receipt: .read
+            )
+            MessageBubbleView(text: "Sounds good!", time: "12:11", isMine: false)
+        }
+        .padding()
+        .frame(maxWidth: .infinity)
     }
-    .padding()
-    .frame(maxWidth: .infinity)
     .background(Theme.backgroundChat)
 }
