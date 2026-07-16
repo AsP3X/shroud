@@ -51,31 +51,26 @@ struct SettingsView: View {
     }
 
     private var avatarOpacity: CGFloat {
-        // Stay visible while shrinking/sliding, then vanish near the end.
         max(0, 1 - pow(collapseProgress, 1.35) * 1.05)
     }
 
     /// Center Y of the avatar relative to the top of the sticky chrome (including nav).
     private var avatarCenterY: CGFloat {
         let rest = navRowHeight + heroTopPadding + avatarExpandedSize / 2
-        // Exit well above the top edge so it leaves the view entirely.
         let gone = -avatarExpandedSize * 0.85
         return rest + (gone - rest) * collapseProgress
     }
 
     // Single name layer: interpolates from hero position → nav-bar title slot.
     private var nameCenterY: CGFloat {
-        // Rest sits under the avatar; finish dead-center in the nav row (bar title slot).
         let rest = navRowHeight + heroTopPadding + avatarExpandedSize + avatarToNameGap + 16
         let bar = navRowHeight / 2
         return rest + (bar - rest) * collapseProgress
     }
 
-    /// Large under the avatar, then eases down to compact bar-title size while sliding up.
     private var nameFontSize: CGFloat {
         let expanded: CGFloat = 26
         let collapsed: CGFloat = 17
-        // Slight ease-in so it stays big early, then shrinks more as it enters the bar.
         let t = collapseProgress * collapseProgress
         return expanded - (expanded - collapsed) * t
     }
@@ -135,6 +130,8 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack(path: $navigationPath) {
             settingsRoot
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar(.hidden, for: .navigationBar)
                 .navigationDestination(for: SettingsRoute.self) { route in
                     switch route {
                     case .server:
@@ -153,7 +150,7 @@ struct SettingsView: View {
             ZStack(alignment: .top) {
                 ScrollView {
                     VStack(spacing: 0) {
-                        // Fixed spacer matching max sticky chrome so list meets the bar cleanly.
+                        // Spacer under sticky chrome so list starts below the expanded hero.
                         Color.clear
                             .frame(height: navRowHeight + heroExpandedHeight)
                             .accessibilityHidden(true)
@@ -169,49 +166,48 @@ struct SettingsView: View {
                         .padding(.horizontal, 16)
                         .padding(.bottom, 8)
                     }
-                    .background {
-                        GeometryReader { proxy in
-                            Color.clear.preference(
-                                key: SettingsScrollOffsetKey.self,
-                                value: -proxy.frame(in: .named("settingsScroll")).minY
-                            )
-                        }
+                }
+                .scrollIndicators(.hidden)
+                // iOS 18+: reliable content offset (preference/coordinateSpace broke under NavigationStack).
+                .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                    // contentOffset.y grows as the user scrolls down the list.
+                    max(0, geometry.contentOffset.y)
+                } action: { _, newOffset in
+                    // Drive collapse every frame without inheriting tab-switch animations.
+                    guard abs(newOffset - scrollOffsetY) > 0.25 else { return }
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        scrollOffsetY = newOffset
                     }
                 }
-                .coordinateSpace(name: "settingsScroll")
-                .onPreferenceChange(SettingsScrollOffsetKey.self) { value in
-                    if abs(value - scrollOffsetY) > 0.4 {
-                        scrollOffsetY = value
-                    }
-                }
-                .scrollDismissesKeyboard(.interactively)
 
                 stickyChrome(midX: midX)
+                    // Keep hero drawn above list; allow avatar to slide past the top edge.
+                    .allowsHitTesting(false)
             }
         }
         .background(Theme.backgroundGrouped)
-        .navigationBarHidden(true)
     }
 
     // MARK: - Sticky chrome + collapsing hero
 
-    /// Sticky stack height = nav + remaining hero band (list scrolls under this).
     private var stickyChromeHeight: CGFloat {
         navRowHeight + heroBandHeight
     }
 
     private func stickyChrome(midX: CGFloat) -> some View {
         ZStack(alignment: .top) {
-            // Gradient only within the sticky band (list peeks through below).
             stickyGradientBackground
                 .frame(height: stickyChromeHeight + 32)
                 .frame(maxWidth: .infinity, alignment: .top)
 
-            // Nav controls (QR / Edit). Name is a separate floating layer.
-            stickyNavRow
+            // Invisible nav-height band keeps layout metrics stable.
+            Color.clear
+                .frame(height: navRowHeight)
+                .frame(maxWidth: .infinity)
                 .zIndex(5)
 
-            // Avatar: slides upward out of the view, shrinks, blurs, then vanishes.
             AvatarView(
                 initials: initials,
                 size: avatarExpandedSize,
@@ -223,11 +219,8 @@ struct SettingsView: View {
             .opacity(Double(avatarOpacity))
             .frame(width: avatarExpandedSize, height: avatarExpandedSize)
             .position(x: midX, y: avatarCenterY)
-            .allowsHitTesting(false)
             .zIndex(2)
 
-            // One continuous name: from under the avatar → dead center of the nav bar.
-            // Drawn above the scroll view so list content never covers it.
             HStack(spacing: 6) {
                 Text(displayName)
                     .font(.system(size: nameFontSize, weight: nameWeight))
@@ -239,10 +232,8 @@ struct SettingsView: View {
                     .foregroundStyle(Theme.accent)
                     .opacity(Double(badgeOpacity))
             }
-            // Keep layout width stable so the title doesn’t jump while the font shrinks.
             .frame(maxWidth: midX * 1.35)
             .position(x: midX, y: nameCenterY)
-            .allowsHitTesting(false)
             .accessibilityAddTraits(.isHeader)
             .zIndex(6)
 
@@ -254,30 +245,12 @@ struct SettingsView: View {
                     x: midX,
                     y: nameCenterY + 22 * (1 - collapseProgress)
                 )
-                .allowsHitTesting(false)
                 .zIndex(3)
         }
-        // Layout height shrinks with scroll; drawing may extend above (avatar slides out).
         .frame(height: stickyChromeHeight, alignment: .top)
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(displayName), \(handle)")
-    }
-
-    private var stickyNavRow: some View {
-        HStack(spacing: 0) {
-            Color.clear
-                .frame(maxWidth: .infinity)
-                .frame(height: 1)
-            Color.clear
-                .frame(maxWidth: .infinity)
-                .frame(height: 1)
-            Color.clear
-                .frame(maxWidth: .infinity)
-                .frame(height: 1)
-        }
-        .padding(.horizontal, 16)
-        .frame(height: navRowHeight)
     }
 
     private var stickyGradientBackground: some View {
@@ -495,15 +468,6 @@ struct SettingsView: View {
         }
         .background(Theme.background)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-}
-
-// MARK: - Scroll tracking
-
-private struct SettingsScrollOffsetKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
     }
 }
 
