@@ -7,9 +7,14 @@ struct ImageMessageBubble: View {
     let time: String
     var onAppearLoad: (() -> Void)?
     var onRetry: (() -> Void)?
+    /// Tap the photo (when loaded) — host presents the media overlay.
+    var onOpen: (() -> Void)?
 
     private var isMine: Bool { message.isMine }
     private var isFailed: Bool { message.receipt == .failed }
+    private var canOpen: Bool {
+        !message.deleted && !isFailed && message.imageData != nil
+    }
 
     private var corners: UnevenRoundedRectangle {
         if isMine {
@@ -77,6 +82,12 @@ struct ImageMessageBubble: View {
                     }
                 }
                 .shadow(color: Color.black.opacity(0.08), radius: 3, y: 1)
+                .contentShape(corners)
+                .onTapGesture {
+                    guard canOpen else { return }
+                    Haptics.impact(.light)
+                    onOpen?()
+                }
                 .onAppear { onAppearLoad?() }
 
                 if isFailed {

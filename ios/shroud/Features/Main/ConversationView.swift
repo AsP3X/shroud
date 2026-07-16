@@ -23,6 +23,7 @@ struct ConversationView: View {
     @State private var recordingTimer: Timer?
     @State private var toast: String?
     @State private var focusedMessage: MessagingController.ChatMessage?
+    @State private var viewingMedia: ViewingMedia?
     @State private var profileDestination: ProfileDestination?
     @State private var photoPickerItem: PhotosPickerItem?
     @State private var showPhotoPicker = false
@@ -137,6 +138,28 @@ struct ConversationView: View {
                 }
             }
             .overlay {
+                if let viewingMedia {
+                    MediaImageViewerOverlay(
+                        image: viewingMedia.image,
+                        title: viewingMedia.title,
+                        dateLine: viewingMedia.dateLine,
+                        onClose: {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                self.viewingMedia = nil
+                            }
+                        },
+                        onComingSoon: { feature in
+                            toast = "\(feature) coming soon"
+                            scheduleToastClear()
+                        }
+                    )
+                    // Cover chat header + composer + status bar (true Telegram overlay).
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+                    .zIndex(50)
+                }
+            }
+            .overlay {
                 if isSendingMedia {
                     ProgressView("Sending photo…")
                         .padding(16)
@@ -145,12 +168,21 @@ struct ConversationView: View {
                 }
             }
             .toast($toast)
+            .animation(.easeOut(duration: 0.2), value: viewingMedia != nil)
     }
 
     private struct ProfileDestination: Identifiable, Hashable {
         let peerUserID: UUID
         let peerUsername: String
         var id: UUID { peerUserID }
+    }
+
+    /// In-conversation media overlay payload (not a navigation destination).
+    private struct ViewingMedia: Identifiable {
+        let id: UUID
+        let image: UIImage
+        let title: String
+        let dateLine: String
     }
 
     // MARK: - Top chrome (extends under status bar)
@@ -434,6 +466,9 @@ struct ConversationView: View {
                             Haptics.notification(.success)
                         }
                     }
+                },
+                onOpen: {
+                    openMediaViewer(for: message)
                 }
             )
         case .text:
@@ -558,6 +593,38 @@ struct ConversationView: View {
             try? await Task.sleep(nanoseconds: 1_800_000_000)
             toast = nil
         }
+    }
+
+    /// Presents the Telegram-style media **overlay** over the conversation (not a push).
+    private func openMediaViewer(for message: MessagingController.ChatMessage) {
+        Task {
+            await messaging.ensureImageLoaded(for: message)
+            let data = messaging.threads[peerUserID]?
+                .first(where: { $0.id == message.id })?
+                .imageData ?? message.imageData
+            guard let data, let image = UIImage(data: data) else {
+                toast = "Could not open that photo."
+                scheduleToastClear()
+                return
+            }
+            let title = message.isMine ? "You" : peerUsername
+            let dateLine = Self.viewerDateLine(for: message.createdAt)
+            withAnimation(.easeOut(duration: 0.2)) {
+                viewingMedia = ViewingMedia(
+                    id: message.id,
+                    image: image,
+                    title: title,
+                    dateLine: dateLine
+                )
+            }
+        }
+    }
+
+    private static func viewerDateLine(for date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_GB")
+        formatter.dateFormat = "dd.MM.yy"
+        return formatter.string(from: date)
     }
 }
 
