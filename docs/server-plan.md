@@ -1238,7 +1238,7 @@ Add optional:
 2. **Multi-device key fetch for send** — m2 is single best-device GET; list/fetch-all-device bundles for true multi-device fan-out.
 3. **Redis rate-limit wiring** — budgets documented; not fully enforced yet.
 4. **VoIP / CallKit push** — dedicated PushKit cert path (currently same data-push channel as messages).
-5. **iOS live feature wiring** — chats list, conversation, contacts, presence, media, calls against the API (auth + identity crypto **done**).
+5. **iOS polish** — media messages, call UI/WebRTC, presence polish, unread badges, multi-device own-message decrypt without local cache.
 6. **Double Ratchet** — client sealed ECDH+AES-GCM envelopes ship first; upgrade sessions to Signal-style DR later.
 7. **Envelope ciphertext encoding** — server stores opaque bytes; client currently uses JSON sealed envelope inside Base64 ciphertext field.
 

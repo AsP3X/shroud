@@ -29,10 +29,17 @@ final class APIClient: Sendable {
     /// Performs a GET and decodes JSON on success.
     func get<T: Decodable>(
         _ path: String,
+        query: [String: String]? = nil,
         as type: T.Type,
         bearerToken: String? = nil
     ) async throws -> T {
-        let (data, http) = try await perform(path, method: "GET", bodyData: nil, bearerToken: bearerToken)
+        let (data, http) = try await perform(
+            path,
+            method: "GET",
+            bodyData: nil,
+            bearerToken: bearerToken,
+            query: query
+        )
         try Self.throwIfNeeded(data: data, status: http.statusCode)
         return try Self.decode(T.self, from: data)
     }
@@ -45,7 +52,12 @@ final class APIClient: Sendable {
         bearerToken: String? = nil
     ) async throws -> T {
         let bodyData = try JSONEncoder.api.encode(body)
-        let (data, http) = try await perform(path, method: "POST", bodyData: bodyData, bearerToken: bearerToken)
+        let (data, http) = try await perform(
+            path,
+            method: "POST",
+            bodyData: bodyData,
+            bearerToken: bearerToken
+        )
         try Self.throwIfNeeded(data: data, status: http.statusCode)
         return try Self.decode(T.self, from: data)
     }
@@ -63,7 +75,12 @@ final class APIClient: Sendable {
         bearerToken: String? = nil
     ) async throws {
         let bodyData = try JSONEncoder.api.encode(body)
-        let (data, http) = try await perform(path, method: "PUT", bodyData: bodyData, bearerToken: bearerToken)
+        let (data, http) = try await perform(
+            path,
+            method: "PUT",
+            bodyData: bodyData,
+            bearerToken: bearerToken
+        )
         try Self.throwIfNeeded(data: data, status: http.statusCode)
     }
 
@@ -79,9 +96,10 @@ final class APIClient: Sendable {
         _ path: String,
         method: String,
         bodyData: Data?,
-        bearerToken: String?
+        bearerToken: String?,
+        query: [String: String]? = nil
     ) async throws -> (Data, HTTPURLResponse) {
-        var request = URLRequest(url: resolveURL(path))
+        var request = URLRequest(url: resolveURL(path, query: query))
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let bearerToken, !bearerToken.isEmpty {
@@ -106,12 +124,19 @@ final class APIClient: Sendable {
         return (data, http)
     }
 
-    private func resolveURL(_ path: String) -> URL {
+    private func resolveURL(_ path: String, query: [String: String]? = nil) -> URL {
         let trimmed = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        if trimmed.isEmpty {
-            return baseURL
+        var url = trimmed.isEmpty ? baseURL : baseURL.appending(path: trimmed)
+        if let query, !query.isEmpty {
+            var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            components?.queryItems = query
+                .map { URLQueryItem(name: $0.key, value: $0.value) }
+                .sorted { $0.name < $1.name }
+            if let withQuery = components?.url {
+                url = withQuery
+            }
         }
-        return baseURL.appending(path: trimmed)
+        return url
     }
 
     private static func throwIfNeeded(data: Data, status: Int) throws {

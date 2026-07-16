@@ -91,4 +91,6 @@ struct MainTabView: View {
     MainTabView(router: AppRouter())
         .environment(SessionController())
         .environment(ServerConfigurationController())
+        .environment(MessagingController())
+        .environment(CryptoController())
 }

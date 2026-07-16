@@ -1,0 +1,429 @@
+import CryptoKit
+import Foundation
+
+/// Live contacts + chats state; seals plaintext with MessageCrypto before send.
+@MainActor
+@Observable
+final class MessagingController {
+    private(set) var contacts: [ContactItemDTO] = []
+    private(set) var incomingRequests: [ContactRequestDTO] = []
+    private(set) var conversations: [ConversationItemDTO] = []
+    private(set) var isLoadingContacts = false
+    private(set) var isLoadingChats = false
+    private(set) var lastError: String?
+
+    /// Decrypted messages by peer user id (newest last).
+    private(set) var threads: [UUID: [ChatMessage]] = [:]
+    private(set) var typingPeerIDs: Set<UUID> = []
+    private(set) var presenceByUser: [UUID: PresenceDTO] = [:]
+
+    private let contactsService = ContactsService()
+    private let messagesService = MessagesService()
+    private let keyBundleService = KeyBundleService()
+    private let peerKeys = PeerIdentityStore()
+    private let plaintextCache = LocalPlaintextCache()
+    private let realtime = RealtimeClient()
+
+    private weak var sessionController: SessionController?
+    private weak var cryptoController: CryptoController?
+
+    struct ChatMessage: Identifiable, Equatable, Sendable {
+        let id: UUID
+        let peerUserID: UUID
+        let senderUserID: UUID
+        let text: String
+        let createdAt: Date
+        let isMine: Bool
+        let deleted: Bool
+    }
+
+    func bind(session: SessionController, crypto: CryptoController) {
+        sessionController = session
+        cryptoController = crypto
+        realtime.configure { [weak self] event in
+            self?.handleRealtime(event)
+        }
+    }
+
+    func start() {
+        guard let token = sessionController?.bearerToken else { return }
+        realtime.connect(token: token)
+        Task {
+            await refreshContacts()
+            await refreshConversations()
+        }
+    }
+
+    func stop() {
+        realtime.disconnect()
+    }
+
+    // MARK: - Contacts
+
+    func refreshContacts() async {
+        guard let token = sessionController?.bearerToken else { return }
+        isLoadingContacts = true
+        defer { isLoadingContacts = false }
+        do {
+            async let list = contactsService.listContacts(token: token)
+            async let requests = contactsService.listIncomingRequests(token: token)
+            contacts = try await list.sorted {
+                $0.username.localizedCaseInsensitiveCompare($1.username) == .orderedAscending
+            }
+            incomingRequests = try await requests
+            lastError = nil
+        } catch {
+            lastError = SessionController.userMessage(for: error)
+        }
+    }
+
+    func addContact(byUserIDString raw: String) async -> String? {
+        guard let token = sessionController?.bearerToken else {
+            return "Not signed in."
+        }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let userID = UUID(uuidString: trimmed) else {
+            return "Enter a valid user ID (UUID)."
+        }
+        do {
+            _ = try await contactsService.getUser(userID: userID, token: token)
+            _ = try await contactsService.createRequest(userID: userID, token: token)
+            await refreshContacts()
+            return nil
+        } catch {
+            return SessionController.userMessage(for: error)
+        }
+    }
+
+    func acceptRequest(_ request: ContactRequestDTO) async {
+        guard let token = sessionController?.bearerToken else { return }
+        do {
+            try await contactsService.acceptRequest(id: request.id, token: token)
+            await refreshContacts()
+        } catch {
+            lastError = SessionController.userMessage(for: error)
+        }
+    }
+
+    func rejectRequest(_ request: ContactRequestDTO) async {
+        guard let token = sessionController?.bearerToken else { return }
+        do {
+            try await contactsService.rejectRequest(id: request.id, token: token)
+            await refreshContacts()
+        } catch {
+            lastError = SessionController.userMessage(for: error)
+        }
+    }
+
+    // MARK: - Chats
+
+    func refreshConversations() async {
+        guard let token = sessionController?.bearerToken else { return }
+        isLoadingChats = true
+        defer { isLoadingChats = false }
+        do {
+            conversations = try await messagesService.listConversations(token: token)
+            lastError = nil
+        } catch {
+            lastError = SessionController.userMessage(for: error)
+        }
+    }
+
+    func loadThread(peerUserID: UUID) async {
+        guard let token = sessionController?.bearerToken,
+              let me = sessionController?.userID,
+              let material = cryptoController?.material
+        else { return }
+
+        do {
+            let response = try await messagesService.listMessages(peerUserID: peerUserID, token: token)
+            var decoded: [ChatMessage] = []
+            for dto in response.messages.reversed() {
+                // Server returns newest-first; reverse for chronological UI.
+                let message = await decodeMessage(dto, me: me, material: material, token: token)
+                decoded.append(message)
+                if dto.senderUserId != me {
+                    try? await messagesService.markDelivered(messageID: dto.id, token: token)
+                }
+            }
+            threads[peerUserID] = decoded
+            if let lastFromPeer = decoded.last(where: { !$0.isMine }) {
+                try? await messagesService.markRead(messageID: lastFromPeer.id, token: token)
+            }
+            // Presence for header.
+            if let presence = try? await contactsService.presence(userID: peerUserID, token: token) {
+                presenceByUser[peerUserID] = presence
+            }
+            lastError = nil
+        } catch {
+            lastError = SessionController.userMessage(for: error)
+        }
+    }
+
+    func sendText(_ text: String, to peerUserID: UUID) async {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let token = sessionController?.bearerToken,
+              let me = sessionController?.userID,
+              let material = cryptoController?.material
+        else { return }
+
+        do {
+            let peerPub = try await resolvePeerIdentityPublicKey(peerUserID: peerUserID, token: token)
+            let sealed = try MessageCrypto.seal(
+                plaintext: Data(trimmed.utf8),
+                toPeerIdentityPublicKey: peerPub,
+                ourIdentityPublicKey: material.identityPublicKeyData
+            )
+            let ciphertextB64 = sealed.base64EncodedString()
+            let clientID = UUID()
+            let dto = try await messagesService.send(
+                SendMessageRequest(
+                    peerUserId: peerUserID,
+                    clientMessageId: clientID,
+                    contentType: "text",
+                    ciphertext: ciphertextB64
+                ),
+                token: token
+            )
+            plaintextCache.save(messageID: dto.id, text: trimmed)
+            let chat = ChatMessage(
+                id: dto.id,
+                peerUserID: peerUserID,
+                senderUserID: me,
+                text: trimmed,
+                createdAt: dto.createdAt,
+                isMine: true,
+                deleted: false
+            )
+            var thread = threads[peerUserID] ?? []
+            if !thread.contains(where: { $0.id == chat.id }) {
+                thread.append(chat)
+                threads[peerUserID] = thread
+            }
+            await refreshConversations()
+            lastError = nil
+        } catch {
+            lastError = SessionController.userMessage(for: error)
+        }
+    }
+
+    func setTyping(peerUserID: UUID, isTyping: Bool) {
+        realtime.sendTyping(peerUserID: peerUserID, isTyping: isTyping)
+    }
+
+    func preview(for conversation: ConversationItemDTO) -> String {
+        let peerID = conversation.peer.id
+        if let last = threads[peerID]?.last {
+            return last.deleted ? "Message deleted" : last.text
+        }
+        return "Encrypted conversation"
+    }
+
+    func timeLabel(for date: Date?) -> String {
+        guard let date else { return "" }
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) {
+            return date.formatted(date: .omitted, time: .shortened)
+        }
+        if calendar.isDateInYesterday(date) {
+            return "Yesterday"
+        }
+        return date.formatted(date: .abbreviated, time: .omitted)
+    }
+
+    // MARK: - Private
+
+    private func handleRealtime(_ event: RealtimeEvent) {
+        switch event {
+        case let .messageNew(dto):
+            Task { await ingestIncoming(dto) }
+        case let .raw(type, json):
+            if type == "typing" {
+                handleTyping(json)
+            } else if type == "presence.update" {
+                handlePresence(json)
+            }
+        }
+    }
+
+    private func handleTyping(_ json: [String: Any]) {
+        guard let userString = json["user_id"] as? String,
+              let userID = UUID(uuidString: userString),
+              let isTyping = json["is_typing"] as? Bool
+        else { return }
+        if isTyping {
+            typingPeerIDs.insert(userID)
+        } else {
+            typingPeerIDs.remove(userID)
+        }
+    }
+
+    private func handlePresence(_ json: [String: Any]) {
+        guard let userString = json["user_id"] as? String,
+              let userID = UUID(uuidString: userString),
+              let online = json["online"] as? Bool
+        else { return }
+        var lastSeen: Date?
+        if let last = json["last_seen_at"] as? String {
+            lastSeen = ISO8601DateFormatter.apiFlexible.date(from: last)
+        }
+        presenceByUser[userID] = PresenceDTO(userId: userID, online: online, lastSeenAt: lastSeen)
+    }
+
+    private func ingestIncoming(_ dto: MessageDTO) async {
+        guard let me = sessionController?.userID,
+              let material = cryptoController?.material,
+              let token = sessionController?.bearerToken
+        else { return }
+
+        let peerID = dto.senderUserId == me
+            ? (conversations.first(where: { $0.id == dto.conversationId })?.peer.id
+                ?? threads.first(where: { $0.value.contains(where: { $0.id == dto.id }) })?.key)
+            : dto.senderUserId
+
+        // Prefer peer from conversation list or sender.
+        let resolvedPeer = peerID ?? dto.senderUserId
+        if dto.senderUserId != me {
+            try? await messagesService.markDelivered(messageID: dto.id, token: token)
+        }
+
+        let chat = await decodeMessage(dto, me: me, material: material, token: token)
+        // Attach to correct peer thread: if I sent from another device, peer is recipient.
+        let threadPeer: UUID
+        if dto.senderUserId == me {
+            // Multi-device echo — find peer from conversations.
+            if let conv = conversations.first(where: { $0.id == dto.conversationId }) {
+                threadPeer = conv.peer.id
+            } else {
+                threadPeer = resolvedPeer
+            }
+        } else {
+            threadPeer = dto.senderUserId
+        }
+
+        var thread = threads[threadPeer] ?? []
+        if !thread.contains(where: { $0.id == chat.id }) {
+            thread.append(chat)
+            threads[threadPeer] = thread
+        }
+        await refreshConversations()
+    }
+
+    private func decodeMessage(
+        _ dto: MessageDTO,
+        me: UUID,
+        material: IdentityKeyMaterial,
+        token: String
+    ) async -> ChatMessage {
+        let isMine = dto.senderUserId == me
+        let peerUserID = isMine
+            ? (conversations.first(where: { $0.id == dto.conversationId })?.peer.id ?? dto.senderUserId)
+            : dto.senderUserId
+
+        if dto.deletedForEveryone {
+            return ChatMessage(
+                id: dto.id,
+                peerUserID: peerUserID,
+                senderUserID: dto.senderUserId,
+                text: "Message deleted",
+                createdAt: dto.createdAt,
+                isMine: isMine,
+                deleted: true
+            )
+        }
+
+        guard let ciphertextB64 = dto.ciphertext,
+              let envelopeData = Data(base64Encoded: ciphertextB64)
+        else {
+            return ChatMessage(
+                id: dto.id,
+                peerUserID: peerUserID,
+                senderUserID: dto.senderUserId,
+                text: "[Unable to decrypt]",
+                createdAt: dto.createdAt,
+                isMine: isMine,
+                deleted: false
+            )
+        }
+
+        do {
+            if isMine {
+                if let existing = threads[peerUserID]?.first(where: { $0.id == dto.id }) {
+                    return existing
+                }
+                if let cached = plaintextCache.text(for: dto.id) {
+                    return ChatMessage(
+                        id: dto.id,
+                        peerUserID: peerUserID,
+                        senderUserID: dto.senderUserId,
+                        text: cached,
+                        createdAt: dto.createdAt,
+                        isMine: true,
+                        deleted: false
+                    )
+                }
+                return ChatMessage(
+                    id: dto.id,
+                    peerUserID: peerUserID,
+                    senderUserID: dto.senderUserId,
+                    text: "[Encrypted message]",
+                    createdAt: dto.createdAt,
+                    isMine: true,
+                    deleted: false
+                )
+            }
+
+            let senderPub = try await resolvePeerIdentityPublicKey(
+                peerUserID: dto.senderUserId,
+                token: token
+            )
+            let plain = try MessageCrypto.open(
+                envelopeData: envelopeData,
+                with: material.agreementPrivateKey,
+                ourIdentityPublicKey: material.identityPublicKeyData,
+                senderIdentityPublicKey: senderPub
+            )
+            let text = String(data: plain, encoding: .utf8) ?? "[Binary message]"
+            return ChatMessage(
+                id: dto.id,
+                peerUserID: peerUserID,
+                senderUserID: dto.senderUserId,
+                text: text,
+                createdAt: dto.createdAt,
+                isMine: false,
+                deleted: false
+            )
+        } catch {
+            return ChatMessage(
+                id: dto.id,
+                peerUserID: peerUserID,
+                senderUserID: dto.senderUserId,
+                text: "[Unable to decrypt]",
+                createdAt: dto.createdAt,
+                isMine: isMine,
+                deleted: false
+            )
+        }
+    }
+
+    private func resolvePeerIdentityPublicKey(peerUserID: UUID, token: String) async throws -> Data {
+        if let cached = peerKeys.publicKeyData(for: peerUserID) {
+            return cached
+        }
+        let bundle = try await keyBundleService.fetchBundle(userID: peerUserID, bearerToken: token)
+        peerKeys.save(userID: peerUserID, publicKeyBase64: bundle.identityKey)
+        guard let data = Data(base64Encoded: bundle.identityKey) else {
+            throw APIError.decoding
+        }
+        return data
+    }
+}
+
+private extension ISO8601DateFormatter {
+    static let apiFlexible: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+}

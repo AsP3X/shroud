@@ -95,5 +95,6 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 | Encryption phrase (BIP39 generate/validate) | **done** |
 | Identity keys + `PUT /keys/bundle` | **done** (CryptoKit X25519/Ed25519 + AES-GCM seal) |
 | Session ≠ messaging unlock | **done** (phrase or Keychain identity restore) |
-| Live chats / contacts / calls UI | **mock data** — next wiring pass |
+| Live contacts + chats | **done** (requests/list, conversations, sealed send/recv, WS) |
+| Calls UI / WebRTC | **mock** — server signaling ready |
 | Full Signal Double Ratchet | **not yet** — sealed ECDH envelopes ready for upgrade |
