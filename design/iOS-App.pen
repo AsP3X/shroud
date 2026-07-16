@@ -25085,7 +25085,7 @@
                       "type": "icon",
                       "id": "mc_sendi",
                       "library": "lucide",
-                      "icon": "send",
+                      "icon": "arrow-up",
                       "width": 22,
                       "height": 22,
                       "fill": "#FFFFFF"
@@ -25566,7 +25566,7 @@
                       "type": "icon",
                       "id": "cc_sendi",
                       "library": "lucide",
-                      "icon": "send",
+                      "icon": "arrow-up",
                       "width": 22,
                       "height": 22,
                       "fill": "#FFFFFF"
