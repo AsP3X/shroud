@@ -97,4 +97,5 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 | Session ≠ messaging unlock | **done** (phrase or Keychain identity restore) |
 | Live contacts + chats | **done** (requests/list, conversations, sealed send/recv, WS) |
 | Calls UI / WebRTC | **mock** — server signaling ready |
-| Full Signal Double Ratchet | **not yet** — sealed ECDH envelopes ready for upgrade |
+| Sealed messaging v2 | **done** — dual-seal (peer + self) so sender devices can decrypt history |
+| Full Signal Double Ratchet | **not yet** — upgrade path from sealed ECDH envelopes |

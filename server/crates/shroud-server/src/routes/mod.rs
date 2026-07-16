@@ -37,6 +37,7 @@ pub fn router() -> Router<AppState> {
             .route("/devices/{id}", delete(devices::delete_device))
             .route("/keys/bundle", axum::routing::put(keys::put_bundle))
             .route("/keys/bundle/{user_id}", get(keys::get_bundle))
+            .route("/keys/identity/{user_id}", get(keys::get_identity))
             .route("/keys/status", get(keys::keys_status))
             .route("/keys/otpk", post(keys::post_otpk))
             .route("/users/{user_id}", get(users::get_user))

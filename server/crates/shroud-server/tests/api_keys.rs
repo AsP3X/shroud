@@ -185,6 +185,62 @@ async fn put_status_get_consumes_otpk() {
 }
 
 #[tokio::test]
+async fn identity_get_does_not_consume_otpk() {
+    let Some(app) = test_app().await else {
+        eprintln!("skipping identity_get_does_not_consume_otpk: DATABASE_URL unavailable");
+        return;
+    };
+
+    let (token_a, user_a) = register(&app).await;
+    let (token_b, _user_b) = register(&app).await;
+
+    let put = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/keys/bundle")
+                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(sample_bundle(3).to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(put.status(), StatusCode::NO_CONTENT);
+
+    let identity = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/keys/identity/{user_a}"))
+                .header(header::AUTHORIZATION, format!("Bearer {token_b}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(identity.status(), StatusCode::OK);
+    let body = json_body(identity).await;
+    assert_eq!(body["user_id"], user_a);
+    assert!(body["identity_key"].is_string());
+    assert!(body.get("one_time_pre_key").is_none());
+
+    let status = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/keys/status")
+                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let status_json = json_body(status).await;
+    assert_eq!(status_json["otpk_count"], 3);
+}
+
+#[tokio::test]
 async fn get_without_keys_returns_keys_required() {
     let Some(app) = test_app().await else {
         eprintln!("skipping get_without_keys_returns_keys_required: DATABASE_URL unavailable");

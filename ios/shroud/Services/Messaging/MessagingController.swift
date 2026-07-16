@@ -186,6 +186,7 @@ final class MessagingController {
                 ),
                 token: token
             )
+            // Optional cache for UI speed; v2 envelopes also decrypt as sender without cache.
             plaintextCache.save(messageID: dto.id, text: trimmed)
             let chat = ChatMessage(
                 id: dto.id,
@@ -363,6 +364,25 @@ final class MessagingController {
                         deleted: false
                     )
                 }
+                // v2 dual-seal: open self box with our private key.
+                if let plain = try? MessageCrypto.open(
+                    envelopeData: envelopeData,
+                    with: material.agreementPrivateKey,
+                    ourIdentityPublicKey: material.identityPublicKeyData,
+                    senderIdentityPublicKey: material.identityPublicKeyData,
+                    as: .sender
+                ), let text = String(data: plain, encoding: .utf8) {
+                    plaintextCache.save(messageID: dto.id, text: text)
+                    return ChatMessage(
+                        id: dto.id,
+                        peerUserID: peerUserID,
+                        senderUserID: dto.senderUserId,
+                        text: text,
+                        createdAt: dto.createdAt,
+                        isMine: true,
+                        deleted: false
+                    )
+                }
                 return ChatMessage(
                     id: dto.id,
                     peerUserID: peerUserID,
@@ -382,7 +402,8 @@ final class MessagingController {
                 envelopeData: envelopeData,
                 with: material.agreementPrivateKey,
                 ourIdentityPublicKey: material.identityPublicKeyData,
-                senderIdentityPublicKey: senderPub
+                senderIdentityPublicKey: senderPub,
+                as: .recipient
             )
             let text = String(data: plain, encoding: .utf8) ?? "[Binary message]"
             return ChatMessage(
@@ -411,9 +432,13 @@ final class MessagingController {
         if let cached = peerKeys.publicKeyData(for: peerUserID) {
             return cached
         }
-        let bundle = try await keyBundleService.fetchBundle(userID: peerUserID, bearerToken: token)
-        peerKeys.save(userID: peerUserID, publicKeyBase64: bundle.identityKey)
-        guard let data = Data(base64Encoded: bundle.identityKey) else {
+        // Identity-only endpoint — does not consume OTPKs.
+        let identity = try await keyBundleService.fetchIdentity(
+            userID: peerUserID,
+            bearerToken: token
+        )
+        peerKeys.save(userID: peerUserID, publicKeyBase64: identity.identityKey)
+        guard let data = Data(base64Encoded: identity.identityKey) else {
             throw APIError.decoding
         }
         return data

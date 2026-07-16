@@ -56,6 +56,15 @@ pub struct BundleResponse {
     pub one_time_pre_key: Option<OneTimePreKeyOut>,
 }
 
+/// Identity-only public material (no OTPK consume).
+#[derive(Debug, Serialize)]
+pub struct IdentityResponse {
+    pub user_id: Uuid,
+    pub device_id: Uuid,
+    pub registration_id: i32,
+    pub identity_key: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct SignedPreKeyOut {
     pub key_id: i32,
@@ -240,6 +249,55 @@ pub async fn keys_status(
         signed_pre_key_id,
         otpk_count,
     }))
+}
+
+/// `GET /keys/identity/:user_id` — public identity only (does **not** consume OTPKs).
+///
+/// Human: Used for ongoing sealed messaging after first contact; full bundle remains for session setup.
+/// Agent: READS preferred device identity; never DELETE from device_one_time_prekeys.
+pub async fn get_identity(
+    State(state): State<AppState>,
+    _auth: AuthContext,
+    Path(user_id): Path<Uuid>,
+) -> Result<Json<IdentityResponse>, AppError> {
+    let row = sqlx::query_as::<_, IdentityDeviceRow>(
+        r#"
+        SELECT d.id AS device_id, ik.registration_id, ik.public_key
+        FROM devices d
+        INNER JOIN device_identity_keys ik ON ik.device_id = d.id
+        WHERE d.user_id = $1
+        ORDER BY d.last_seen_at DESC NULLS LAST, d.created_at DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(user_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("select identity device failed: {err}")))?;
+
+    let Some(row) = row else {
+        return Err(AppError::keys_required());
+    };
+
+    tracing::debug!(
+        target_user_id = %user_id,
+        device_id = %row.device_id,
+        "keys.identity_get ok"
+    );
+
+    Ok(Json(IdentityResponse {
+        user_id,
+        device_id: row.device_id,
+        registration_id: row.registration_id,
+        identity_key: encode_b64(&row.public_key),
+    }))
+}
+
+#[derive(Debug, FromRow)]
+struct IdentityDeviceRow {
+    device_id: Uuid,
+    registration_id: i32,
+    public_key: Vec<u8>,
 }
 
 /// `GET /keys/bundle/:user_id` — fetch + optionally consume one OTPK.

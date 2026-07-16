@@ -23,6 +23,15 @@ struct KeyBundleService: Sendable {
         )
     }
 
+    /// Fetches peer identity public key without consuming a one-time pre-key.
+    func fetchIdentity(userID: UUID, bearerToken: String) async throws -> PeerIdentityResponse {
+        try await client.get(
+            "keys/identity/\(userID.uuidString.lowercased())",
+            as: PeerIdentityResponse.self,
+            bearerToken: bearerToken
+        )
+    }
+
     /// Builds the wire request from local identity material.
     static func makePutRequest(from material: IdentityKeyMaterial) throws -> PutKeyBundleRequest {
         let signature = try material.signedPreKeySignature()

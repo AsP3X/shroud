@@ -51,8 +51,15 @@ final class RealtimeClient {
         self.task = task
         task.resume()
 
-        // First message must be auth within 10s.
-        let authPayload = #"{"type":"auth","token":"\#(token)"}"#
+        // First message must be auth within 10s — encode JSON safely (token may contain quotes).
+        let authObject: [String: String] = ["type": "auth", "token": token]
+        guard let authData = try? JSONSerialization.data(withJSONObject: authObject),
+              let authPayload = String(data: authData, encoding: .utf8)
+        else {
+            state = .failed("Could not encode WebSocket auth payload")
+            disconnect()
+            return
+        }
         task.send(.string(authPayload)) { [weak self] error in
             Task { @MainActor in
                 if let error {
