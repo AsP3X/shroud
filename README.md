@@ -19,6 +19,27 @@ End-to-end encrypted messenger: **Rust + PostgreSQL** server and a **native iOS*
 
 ## Server (Docker Compose — recommended)
 
+### Networks
+
+| Network | Type | Purpose |
+| --- | --- | --- |
+| `shroud-internal` | Compose bridge | Postgres, Redis, and private service-to-service traffic |
+| `proxy-network` | **External** | Shared with **Nginx Proxy Manager** — only services that should be public |
+
+```bash
+# Once per machine (skip if NPM already created it)
+docker network create proxy-network
+```
+
+| Service | Networks | NPM target (example) |
+| --- | --- | --- |
+| `postgres` | `shroud-internal` only | — |
+| `redis` | `shroud-internal` only | — |
+| `api` (`shroud-api`) | internal + **proxy** | `http://shroud-api:8080` |
+| `nebular` (`shroud-nebular`) | internal + **proxy** | `http://shroud-nebular:9000` (presigned media) |
+
+### Start
+
 From the **repository root**:
 
 ```bash
@@ -26,22 +47,25 @@ From the **repository root**:
 # Nebular is built from ../ownly/nebular-os (override with NEBULAR_CONTEXT=...)
 docker compose up -d --build
 
+# Local host ports (iOS Simulator / curl without NPM):
+docker compose -f docker-compose.yml -f docker-compose.host-ports.yml up -d --build
+
 # Follow API + Nebular logs (Ownly-style RUST_LOG=debug by default)
 docker compose logs -f api nebular
 
-# Health check (host)
+# Health check (host ports profile, or via your NPM hostname)
 curl http://127.0.0.1:8080/api/v1/health
 # {"status":"ok","database":"ok"}
 ```
 
-| Service | Host port | Notes |
+| Service | Default host port | Notes |
 | --- | --- | --- |
-| `api` | `8080` | Axum `/api/v1`; migrations run on startup; `x-request-id` on every response |
-| `nebular` | `9000` | Nebular OS object storage (media); needs sibling Ownly checkout or `NEBULAR_CONTEXT` |
-| `postgres` | `5432` | User/db/password: `shroud` |
-| `redis` | `6379` | Multi-replica WS fan-out |
+| `api` | none (use NPM or `host-ports` file → `8080`) | Axum `/api/v1`; migrations on startup; `x-request-id` |
+| `nebular` | none (or `9000` with host-ports) | Object storage; needs Ownly checkout or `NEBULAR_CONTEXT` |
+| `postgres` | none (or `5432` with host-ports) | User/db/password: `shroud` |
+| `redis` | none (or `6379` with host-ports) | Multi-replica WS fan-out |
 
-Logging: compose sets `RUST_LOG=debug` for `api` and `nebular` (same idea as Ownly). Override with `RUST_LOG=info docker compose up`.
+Logging: compose sets `RUST_LOG=debug` for `api` and `nebular`. Override with `RUST_LOG=info docker compose up`.
 
 Stop:
 
@@ -58,10 +82,10 @@ docker compose up -d --build api
 
 ## Server (native Cargo — optional)
 
-Useful for fast iteration without rebuilding the image. Keep Compose infra running:
+Useful for fast iteration without rebuilding the image. Keep Compose infra running with host ports:
 
 ```bash
-docker compose up -d postgres redis nebular
+docker compose -f docker-compose.yml -f docker-compose.host-ports.yml up -d postgres redis nebular
 
 cp server/.env.example server/.env
 # Point at host-mapped ports (defaults already do):

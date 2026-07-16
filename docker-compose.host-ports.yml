@@ -1,0 +1,24 @@
+# Optional host port publishes for local development without Nginx Proxy Manager
+# (iOS Simulator, curl, native cargo against Compose infra).
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.host-ports.yml up -d --build
+#
+# Do not use on a public host if you rely on NPM as the only entrypoint.
+
+services:
+  postgres:
+    ports:
+      - "5432:5432"
+
+  redis:
+    ports:
+      - "6379:6379"
+
+  nebular:
+    ports:
+      - "9000:9000"
+
+  api:
+    ports:
+      - "8080:8080"
