@@ -46,6 +46,8 @@ struct MediaMessagePayload: Codable, Equatable, Sendable {
     var h: Int
     /// Base64 AES-256 key for the uploaded blob.
     var k: String
+    /// Optional caption (Telegram-style text with the image).
+    var c: String?
 
     static let kindImage = "image"
 }

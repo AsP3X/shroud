@@ -16,6 +16,16 @@ struct ImageMessageBubble: View {
         !message.deleted && !isFailed && message.imageData != nil
     }
 
+    /// Caption when `text` is real user text (not the default "Photo" label).
+    private var hasCaption: Bool {
+        let t = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !t.isEmpty && t != "Photo"
+    }
+
+    private var caption: String {
+        message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private var corners: UnevenRoundedRectangle {
         if isMine {
             UnevenRoundedRectangle(
@@ -51,30 +61,52 @@ struct ImageMessageBubble: View {
             if isMine { Spacer(minLength: 56) }
 
             VStack(alignment: isMine ? .trailing : .leading, spacing: 6) {
-                ZStack(alignment: .bottomTrailing) {
-                    Group {
-                        if message.deleted {
-                            deletedPlaceholder
-                        } else if let data = message.imageData, let ui = UIImage(data: data) {
-                            Image(uiImage: ui)
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: displaySize.width, height: displaySize.height)
-                                .clipped()
-                                .opacity(isFailed ? 0.55 : 1)
-                        } else {
-                            loadingPlaceholder
+                VStack(alignment: .leading, spacing: 0) {
+                    ZStack(alignment: .bottomTrailing) {
+                        Group {
+                            if message.deleted {
+                                deletedPlaceholder
+                            } else if let data = message.imageData, let ui = UIImage(data: data) {
+                                Image(uiImage: ui)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: displaySize.width, height: displaySize.height)
+                                    .clipped()
+                                    .opacity(isFailed ? 0.55 : 1)
+                            } else {
+                                loadingPlaceholder
+                            }
+                        }
+
+                        if isFailed {
+                            failedOverlay
+                        } else if !hasCaption {
+                            timeChip
                         }
                     }
+                    .frame(width: displaySize.width, height: displaySize.height)
+                    .clipShape(
+                        hasCaption
+                            ? UnevenRoundedRectangle(
+                                topLeadingRadius: 17.5,
+                                bottomLeadingRadius: 0,
+                                bottomTrailingRadius: 0,
+                                topTrailingRadius: 17.5,
+                                style: .continuous
+                            )
+                            : corners
+                    )
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        guard canOpen else { return }
+                        Haptics.impact(.light)
+                        onOpen?()
+                    }
 
-                    if isFailed {
-                        failedOverlay
-                    } else {
-                        timeChip
+                    if hasCaption, !message.deleted {
+                        captionFooter
                     }
                 }
-                .frame(width: displaySize.width, height: displaySize.height)
-                .clipShape(corners)
                 .overlay {
                     if isFailed {
                         RoundedRectangle(cornerRadius: 17.5, style: .continuous)
@@ -82,12 +114,6 @@ struct ImageMessageBubble: View {
                     }
                 }
                 .shadow(color: Color.black.opacity(0.08), radius: 3, y: 1)
-                .contentShape(corners)
-                .onTapGesture {
-                    guard canOpen else { return }
-                    Haptics.impact(.light)
-                    onOpen?()
-                }
                 .onAppear { onAppearLoad?() }
 
                 if isFailed {
@@ -178,6 +204,48 @@ struct ImageMessageBubble: View {
                 .foregroundStyle(Theme.textSecondary)
         }
         .frame(width: displaySize.width, height: 120)
+    }
+
+    /// Caption strip under the photo (Telegram: text lives under media in the bubble).
+    private var captionFooter: some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            Text(caption)
+                .font(.system(size: 16))
+                .foregroundStyle(isMine ? Color.white : Theme.textPrimary)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 4)
+
+            HStack(spacing: 3) {
+                Text(time)
+                    .font(.system(size: 11, weight: .regular))
+                    .foregroundStyle(isMine ? Color.white.opacity(0.65) : Theme.textSecondary)
+                    .monospacedDigit()
+                if isMine {
+                    MessageReceiptIcon(
+                        receipt: message.receipt,
+                        metaColor: Color.white.opacity(0.65),
+                        readColor: Color.white.opacity(0.95)
+                    )
+                }
+            }
+            .fixedSize()
+        }
+        .padding(.horizontal, 11)
+        .padding(.top, 7)
+        .padding(.bottom, 6)
+        .frame(width: displaySize.width, alignment: .leading)
+        .background(isMine ? Theme.accent : Theme.bubbleIncoming)
+        .clipShape(
+            UnevenRoundedRectangle(
+                topLeadingRadius: 0,
+                bottomLeadingRadius: isMine ? 17.5 : 5,
+                bottomTrailingRadius: isMine ? 5 : 17.5,
+                topTrailingRadius: 0,
+                style: .continuous
+            )
+        )
     }
 
 }

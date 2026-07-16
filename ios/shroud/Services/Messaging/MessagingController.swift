@@ -405,12 +405,16 @@ final class MessagingController {
     }
 
     /// Compresses, encrypts, uploads, and sends an image message to `peerUserID`.
+    /// Optional `caption` is sealed in the media payload (Telegram-style).
     /// Returns a user-facing error string, or `nil` on success.
-    func sendImage(_ image: UIImage, to peerUserID: UUID) async -> String? {
+    func sendImage(_ image: UIImage, to peerUserID: UUID, caption: String = "") async -> String? {
         guard let token = sessionController?.bearerToken,
               let me = sessionController?.userID,
               let material = cryptoController?.material
         else { return "Not signed in." }
+
+        let trimmedCaption = caption.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayText = trimmedCaption.isEmpty ? "Photo" : trimmedCaption
 
         let optimisticID = UUID()
         let jpeg: (data: Data, width: Int, height: Int)
@@ -424,7 +428,7 @@ final class MessagingController {
             id: optimisticID,
             peerUserID: peerUserID,
             senderUserID: me,
-            text: "Photo",
+            text: displayText,
             createdAt: Date(),
             isMine: true,
             deleted: false,
@@ -445,7 +449,8 @@ final class MessagingController {
                 me: me,
                 material: material,
                 token: token,
-                jpeg: jpeg
+                jpeg: jpeg,
+                caption: trimmedCaption
             )
             lastError = nil
             return nil
@@ -482,6 +487,9 @@ final class MessagingController {
             return "Could not prepare that photo."
         }
 
+        let existingCaption = thread[idx].text
+        let caption = (existingCaption == "Photo" || existingCaption.isEmpty) ? "" : existingCaption
+
         do {
             try await finishImageSend(
                 optimisticID: messageID,
@@ -489,7 +497,8 @@ final class MessagingController {
                 me: me,
                 material: material,
                 token: token,
-                jpeg: jpeg
+                jpeg: jpeg,
+                caption: caption
             )
             return nil
         } catch {
@@ -505,7 +514,8 @@ final class MessagingController {
         me: UUID,
         material: IdentityKeyMaterial,
         token: String,
-        jpeg: (data: Data, width: Int, height: Int)
+        jpeg: (data: Data, width: Int, height: Int),
+        caption: String
     ) async throws {
         let (fileKey, sealedFile) = try MediaCrypto.sealFile(jpeg.data)
         let upload = try await mediaService.createUpload(
@@ -519,12 +529,15 @@ final class MessagingController {
             token: token
         )
 
+        let trimmedCaption = caption.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayText = trimmedCaption.isEmpty ? "Photo" : trimmedCaption
         let payload = MediaMessagePayload(
             t: MediaMessagePayload.kindImage,
             mime: "image/jpeg",
             w: jpeg.width,
             h: jpeg.height,
-            k: fileKey.base64EncodedString()
+            k: fileKey.base64EncodedString(),
+            c: trimmedCaption.isEmpty ? nil : trimmedCaption
         )
         let payloadData = try JSONEncoder().encode(payload)
         let peerPub = try await resolvePeerIdentityPublicKey(peerUserID: peerUserID, token: token)
@@ -543,13 +556,13 @@ final class MessagingController {
             token: token
         )
         mediaCache.save(messageID: dto.id, data: jpeg.data)
-        plaintextCache.save(messageID: dto.id, text: "Photo")
+        plaintextCache.save(messageID: dto.id, text: displayText)
 
         let sent = ChatMessage(
             id: dto.id,
             peerUserID: peerUserID,
             senderUserID: me,
-            text: "Photo",
+            text: displayText,
             createdAt: dto.createdAt,
             isMine: true,
             deleted: false,
@@ -654,7 +667,9 @@ final class MessagingController {
         let peerID = conversation.peer.id
         if let last = threads[peerID]?.last {
             if last.deleted { return "Message deleted" }
-            if last.kind == .image { return "Photo" }
+            if last.kind == .image {
+                return last.text.isEmpty || last.text == "Photo" ? "Photo" : last.text
+            }
             return last.text
         }
         return "Encrypted conversation"
@@ -1004,11 +1019,19 @@ final class MessagingController {
             }
         }
 
+        let caption = payload?.c?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let mediaText = caption.isEmpty
+            ? (plaintextCache.text(for: dto.id) ?? "Photo")
+            : caption
+        if !caption.isEmpty {
+            plaintextCache.save(messageID: dto.id, text: caption)
+        }
+
         return ChatMessage(
             id: dto.id,
             peerUserID: peerUserID,
             senderUserID: dto.senderUserId,
-            text: "Photo",
+            text: mediaText,
             createdAt: dto.createdAt,
             isMine: isMine,
             deleted: false,

@@ -24,6 +24,7 @@ struct ConversationView: View {
     @State private var toast: String?
     @State private var focusedMessage: MessagingController.ChatMessage?
     @State private var viewingMedia: ViewingMedia?
+    @State private var composeDraft: ComposeDraft?
     @State private var profileDestination: ProfileDestination?
     @State private var photoPickerItem: PhotosPickerItem?
     @State private var showPhotoPicker = false
@@ -104,7 +105,7 @@ struct ConversationView: View {
                     onCancel: { showAttach = false },
                     onPickImage: { image in
                         showAttach = false
-                        Task { await sendUIImage(image) }
+                        presentMediaCompose(image)
                     }
                 )
                 .presentationDetents([.height(420)])
@@ -119,13 +120,13 @@ struct ConversationView: View {
             )
             .onChange(of: photoPickerItem) { _, item in
                 guard let item else { return }
-                Task { await sendPickedPhoto(item) }
+                Task { await loadPickedPhotoForCompose(item) }
             }
             .fullScreenCover(isPresented: $showCamera) {
                 CameraPicker { image in
                     showCamera = false
                     guard let image else { return }
-                    Task { await sendUIImage(image) }
+                    presentMediaCompose(image)
                 }
                 .ignoresSafeArea()
             }
@@ -160,6 +161,33 @@ struct ConversationView: View {
                 }
             }
             .overlay {
+                if let composeDraft {
+                    MediaComposeOverlay(
+                        image: composeDraft.image,
+                        peerUsername: peerUsername,
+                        onCancel: {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                self.composeDraft = nil
+                            }
+                        },
+                        onSend: { caption in
+                            let image = composeDraft.image
+                            withAnimation(.easeOut(duration: 0.15)) {
+                                self.composeDraft = nil
+                            }
+                            Task { await sendUIImage(image, caption: caption) }
+                        },
+                        onComingSoon: { feature in
+                            toast = "\(feature) coming soon"
+                            scheduleToastClear()
+                        }
+                    )
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+                    .zIndex(60)
+                }
+            }
+            .overlay {
                 if isSendingMedia {
                     ProgressView("Sending photo…")
                         .padding(16)
@@ -169,6 +197,7 @@ struct ConversationView: View {
             }
             .toast($toast)
             .animation(.easeOut(duration: 0.2), value: viewingMedia != nil)
+            .animation(.easeOut(duration: 0.2), value: composeDraft != nil)
     }
 
     private struct ProfileDestination: Identifiable, Hashable {
@@ -183,6 +212,12 @@ struct ConversationView: View {
         let image: UIImage
         let title: String
         let dateLine: String
+    }
+
+    /// Draft photo ready for caption + send (Telegram media compose).
+    private struct ComposeDraft: Identifiable {
+        let id = UUID()
+        let image: UIImage
     }
 
     // MARK: - Top chrome (extends under status bar)
@@ -498,7 +533,7 @@ struct ConversationView: View {
         }
     }
 
-    private func sendPickedPhoto(_ item: PhotosPickerItem) async {
+    private func loadPickedPhotoForCompose(_ item: PhotosPickerItem) async {
         defer { photoPickerItem = nil }
         do {
             guard let data = try await item.loadTransferable(type: Data.self),
@@ -508,16 +543,22 @@ struct ConversationView: View {
                 scheduleToastClear()
                 return
             }
-            await sendUIImage(image)
+            presentMediaCompose(image)
         } catch {
             toast = "Could not load that photo."
             scheduleToastClear()
         }
     }
 
-    private func sendUIImage(_ image: UIImage) async {
+    private func presentMediaCompose(_ image: UIImage) {
+        withAnimation(.easeOut(duration: 0.2)) {
+            composeDraft = ComposeDraft(image: image)
+        }
+    }
+
+    private func sendUIImage(_ image: UIImage, caption: String = "") async {
         isSendingMedia = true
-        let error = await messaging.sendImage(image, to: peerUserID)
+        let error = await messaging.sendImage(image, to: peerUserID, caption: caption)
         isSendingMedia = false
         if let error {
             // Bubble stays in the thread with Retry; also surface the reason.
