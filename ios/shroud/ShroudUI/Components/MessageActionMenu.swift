@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Long-press focus stack — reaction bar + context menu from `Conversation — * Message Menu`.
 /// Layout order is owned by the host: emoji bar → **message** → menu (Telegram).
@@ -8,7 +9,6 @@ struct MessageActionMenu: View {
     var onAction: (MessageMenuAction) -> Void
 
     var body: some View {
-        // Combined stack for previews; ConversationView places the bubble in between.
         VStack(spacing: 9) {
             MessageReactionBar(onReaction: onReaction, onMore: { onAction(.moreReactions) })
             MessageContextMenuCard(isMine: isMine, onAction: onAction)
@@ -22,6 +22,7 @@ struct MessageActionMenu: View {
 struct MessageReactionBar: View {
     var onReaction: (String) -> Void
     var onMore: () -> Void
+    var isVisible: Bool = true
 
     private let reactions = ["❤️", "🔥", "👍", "😢", "🙏", "😮", "👎"]
 
@@ -58,7 +59,10 @@ struct MessageReactionBar: View {
             Capsule()
                 .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
         }
-        .shadow(color: Color.black.opacity(0.35), radius: 20, y: 8)
+        // Opacity + offset only (no scale — cheaper and snappier).
+        .opacity(isVisible ? 1 : 0)
+        .offset(y: isVisible ? 0 : 8)
+        .allowsHitTesting(isVisible)
     }
 }
 
@@ -67,19 +71,18 @@ struct MessageReactionBar: View {
 struct MessageContextMenuCard: View {
     let isMine: Bool
     var onAction: (MessageMenuAction) -> Void
+    var isVisible: Bool = true
 
     var body: some View {
         VStack(spacing: 0) {
-            // Read receipt row (outbound) — Telegram-style meta header.
             if isMine {
                 menuRow(
                     title: "read",
                     systemImage: "checkmark",
                     destructive: false,
-                    muted: true
-                ) {
-                    // Informational; no-op for now.
-                }
+                    muted: true,
+                    action: {}
+                )
                 separator
             }
 
@@ -115,14 +118,14 @@ struct MessageContextMenuCard: View {
                 .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
         }
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .shadow(color: Color.black.opacity(0.4), radius: 24, y: 10)
+        // Opacity + offset only (no scale — cheaper and snappier).
+        .opacity(isVisible ? 1 : 0)
+        .offset(y: isVisible ? 0 : 8)
+        .allowsHitTesting(isVisible)
     }
 
     private var primaryActions: [MessageMenuAction] {
-        if isMine {
-            return [.reply, .copy, .pin, .forward, .delete]
-        }
-        return [.reply, .copy, .pin, .forward, .delete]
+        [.reply, .copy, .pin, .forward, .delete]
     }
 
     private var separator: some View {
@@ -200,44 +203,128 @@ enum MessageMenuAction: String, Identifiable {
     var isDestructive: Bool { self == .delete }
 }
 
-// MARK: - Heavy dark blur backdrop (Telegram long-press)
+// MARK: - Backdrop
 
-/// Strong blur + dark dim for message focus overlay.
+/// Frosted veil. Material is **snapped** on/off (never opacity-animated — that lags).
+/// Only the solid dim eases for open/close feel.
 struct MessageMenuBackdrop: View {
     var onTap: () -> Void
+    /// 0…1 — animates dim only.
+    var dimProgress: Double = 1
+    /// When false, Material is removed immediately (used on dismiss to avoid blur tear-down lag).
+    var showsBlur: Bool = true
 
     var body: some View {
         ZStack {
-            // Heavy material blur (dark).
-            Rectangle()
-                .fill(.ultraThickMaterial)
-                .environment(\.colorScheme, .dark)
+            if showsBlur {
+                Rectangle()
+                    .fill(.regularMaterial)
+                    .environment(\.colorScheme, .dark)
+                    .opacity(0.85)
+                    .transition(.identity)
+            }
 
-            // Extra darken so chat content is heavily obscured.
-            Color.black.opacity(0.62)
-
-            // Subtle purple ambient like Telegram wallpaper bleed.
-            RadialGradient(
-                colors: [
-                    Color(red: 0.35, green: 0.2, blue: 0.75).opacity(0.35),
-                    Color.clear,
-                ],
-                center: .center,
-                startRadius: 40,
-                endRadius: 320
-            )
-            .blendMode(.plusLighter)
-            .opacity(0.5)
+            // Cheap solid fade for open/close.
+            Color.black.opacity(0.22 * dimProgress)
         }
         .ignoresSafeArea()
         .contentShape(Rectangle())
         .onTapGesture(perform: onTap)
+        .allowsHitTesting(dimProgress > 0.05 || showsBlur)
+    }
+}
+
+// MARK: - Decoded image cache (avoid UIImage(data:) on long-press)
+
+/// Populated when chat bubbles first decode; long-press reuses the same instance.
+enum DecodedImageCache {
+    nonisolated(unsafe) private static var storage: [UUID: UIImage] = [:]
+
+    static func store(_ id: UUID, image: UIImage) {
+        storage[id] = image
+    }
+
+    static func image(for id: UUID) -> UIImage? {
+        storage[id]
+    }
+
+    /// Cache hit, else decode once and store.
+    static func image(forMessage id: UUID, data: Data?) -> UIImage? {
+        if let cached = storage[id] { return cached }
+        guard let data, let image = UIImage(data: data) else { return nil }
+        storage[id] = image
+        return image
+    }
+}
+
+// MARK: - Lightweight hero (no ImageMessageBubble tree)
+
+struct MessageMenuHeroContent: View {
+    let message: MessagingController.ChatMessage
+    let timeLabel: String
+    let heroImage: UIImage?
+
+    private let maxHeroHeight: CGFloat = 180
+    private let maxHeroWidth: CGFloat = 220
+
+    var body: some View {
+        switch message.kind {
+        case .image:
+            imageHero
+        case .text:
+            MessageBubbleView(
+                text: message.text,
+                time: timeLabel,
+                isMine: message.isMine,
+                isDeleted: message.deleted,
+                receipt: message.receipt
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var imageHero: some View {
+        let size = fittedSize
+        ZStack(alignment: .bottomTrailing) {
+            if let heroImage {
+                Image(uiImage: heroImage)
+                    .resizable()
+                    .interpolation(.medium)
+                    .scaledToFill()
+                    .frame(width: size.width, height: size.height)
+                    .clipped()
+            } else {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.white.opacity(0.08))
+                    .frame(width: size.width, height: size.height)
+            }
+
+            Text(timeLabel)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Color.black.opacity(0.45), in: Capsule())
+                .padding(8)
+        }
+        .frame(width: size.width, height: size.height)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private var fittedSize: CGSize {
+        let w = CGFloat(message.imageWidth ?? 240)
+        let h = CGFloat(message.imageHeight ?? 240)
+        guard w > 0, h > 0 else {
+            return CGSize(width: 180, height: 160)
+        }
+        let scale = min(maxHeroWidth / w, maxHeroHeight / h, 1)
+        return CGSize(width: max(120, w * scale), height: max(100, h * scale))
     }
 }
 
 #Preview {
     ZStack {
-        MessageMenuBackdrop(onTap: {})
+        MessageMenuBackdrop(onTap: {}, dimProgress: 1, showsBlur: true)
         VStack(spacing: 10) {
             MessageReactionBar(onReaction: { _ in }, onMore: {})
             MessageBubbleView(

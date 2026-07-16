@@ -1,6 +1,7 @@
 import SwiftUI
 
 /// Contacts directory — live API (requests + list).
+/// Opens chats with a standard **horizontal push / swipe** transition.
 struct ContactsView: View {
     @Environment(MessagingController.self) private var messaging
     @Environment(SessionController.self) private var session
@@ -89,14 +90,12 @@ struct ContactsView: View {
                     ForEach(sections, id: \.letter) { section in
                         Section {
                             ForEach(section.items) { contact in
-                                Button {
-                                    path.append(
-                                        .conversation(
-                                            peerID: contact.userId,
-                                            username: contact.username
-                                        )
+                                NavigationLink(
+                                    value: ChatRoute.conversation(
+                                        peerID: contact.userId,
+                                        username: contact.username
                                     )
-                                } label: {
+                                ) {
                                     ChatRowView(
                                         title: contact.username,
                                         subtitle: contactStatus(contact),
@@ -125,10 +124,8 @@ struct ContactsView: View {
                 switch route {
                 case let .conversation(peerID, username):
                     ConversationView(peerUserID: peerID, peerUsername: username)
+                        .navigationTransition(.automatic)
                 }
-            }
-            .refreshable {
-                await messaging.refreshContacts()
             }
             .sheet(isPresented: $showAdd) {
                 AddContactSheet()

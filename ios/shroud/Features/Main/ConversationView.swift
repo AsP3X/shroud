@@ -11,6 +11,8 @@ import UIKit
 struct ConversationView: View {
     let peerUserID: UUID
     let peerUsername: String
+    /// When set (hero presentation from chat list), used instead of `dismiss()`.
+    var onBack: (() -> Void)? = nil
 
     @Environment(MessagingController.self) private var messaging
     @Environment(\.dismiss) private var dismiss
@@ -22,7 +24,16 @@ struct ConversationView: View {
     @State private var recordingSeconds = 0
     @State private var recordingTimer: Timer?
     @State private var toast: String?
-    @State private var focusedMessage: MessagingController.ChatMessage?
+    /// Active long-press focus session.
+    @State private var focusedMenu: FocusedMessageMenu?
+    /// 0 = at list slot offset, 1 = settled in stack.
+    @State private var menuTravel: CGFloat = 0
+    @State private var menuDim: CGFloat = 0
+    /// Material blur on/off — never animated (animating Material is the dismiss hitch).
+    @State private var menuShowsBlur = false
+    @State private var menuChromeVisible = false
+    @State private var menuAnimationTask: Task<Void, Never>?
+    @State private var menuAnimationGeneration = 0
     @State private var viewingMedia: ViewingMedia?
     @State private var composeDraft: ComposeDraft?
     @State private var profileDestination: ProfileDestination?
@@ -91,6 +102,7 @@ struct ConversationView: View {
             .onDisappear {
                 typingTask?.cancel()
                 recordingTimer?.invalidate()
+                menuAnimationTask?.cancel()
                 messaging.setTyping(peerUserID: peerUserID, isTyping: false)
                 if messaging.activePeerID == peerUserID {
                     messaging.setActivePeer(nil)
@@ -134,8 +146,8 @@ struct ConversationView: View {
                 ContactProfileView(peerUserID: dest.peerUserID, peerUsername: dest.peerUsername)
             }
             .overlay {
-                if let focusedMessage {
-                    messageMenuOverlay(for: focusedMessage)
+                if let focusedMenu {
+                    messageMenuOverlay(session: focusedMenu)
                 }
             }
             .overlay {
@@ -228,7 +240,11 @@ struct ConversationView: View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Button {
-                    dismiss()
+                    if let onBack {
+                        onBack()
+                    } else {
+                        dismiss()
+                    }
                 } label: {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 18, weight: .semibold))
@@ -333,9 +349,16 @@ struct ConversationView: View {
                         case let .message(message):
                             messageRow(message)
                                 .id(message.id)
-                                .onLongPressGesture(minimumDuration: 0.35) {
-                                    Haptics.impact(.medium)
-                                    focusedMessage = message
+                                // Keep layout space while focused so the list doesn’t jump.
+                                .opacity(focusedMenu?.message.id == message.id ? 0 : 1)
+                                // UIKit long-press (0.25s). SwiftUI long-press in ScrollView is unreliable.
+                                .messageContextLongPress(
+                                    minimumDuration: 0.25,
+                                    onTap: message.kind == .image
+                                        ? { openMediaViewer(for: message) }
+                                        : nil
+                                ) {
+                                    openMessageMenu(for: message)
                                 }
                         }
                     }
@@ -596,47 +619,139 @@ struct ConversationView: View {
         }
     }
 
-    @ViewBuilder
-    /// Telegram long-press: heavy blur backdrop, then emoji bar → **message** → context menu.
-    private func messageMenuOverlay(for message: MessagingController.ChatMessage) -> some View {
-        ZStack {
-            MessageMenuBackdrop {
-                withAnimation(.easeOut(duration: 0.18)) {
-                    focusedMessage = nil
-                }
+    /// Short elastic ease-out — snappy open.
+    private static let messageMenuOpenAnimation = Animation.timingCurve(
+        0.2, 1.05, 0.3, 1.0,
+        duration: 0.24
+    )
+
+    private struct FocusedMessageMenu: Identifiable {
+        var id: UUID { message.id }
+        let message: MessagingController.ChatMessage
+        /// Cached / already-decoded bitmap — never re-decode during animation.
+        let heroImage: UIImage?
+    }
+
+    private enum MessageMenuDismissStyle {
+        case backdrop
+        case action
+    }
+
+    private func openMessageMenu(for message: MessagingController.ChatMessage) {
+        // Cancel any in-flight dismiss so it can’t clear a freshly opened menu.
+        menuAnimationTask?.cancel()
+        menuAnimationGeneration &+= 1
+
+        // Cache-only image lookup (no decode on the open path).
+        let heroImage: UIImage? = message.kind == .image
+            ? DecodedImageCache.image(for: message.id)
+            : nil
+
+        // Reset + present in one turn, then animate — no yield / async hop.
+        var reset = Transaction()
+        reset.disablesAnimations = true
+        withTransaction(reset) {
+            menuTravel = 0
+            menuDim = 0
+            menuChromeVisible = false
+            menuShowsBlur = true
+            focusedMenu = FocusedMessageMenu(message: message, heroImage: heroImage)
+        }
+
+        withAnimation(Self.messageMenuOpenAnimation) {
+            menuTravel = 1
+            menuDim = 1
+            menuChromeVisible = true
+        }
+
+        Haptics.impact(.medium)
+    }
+
+    private func dismissMessageMenu(style: MessageMenuDismissStyle) {
+        menuAnimationTask?.cancel()
+        menuAnimationGeneration &+= 1
+        let generation = menuAnimationGeneration
+
+        // 1) Drop Material immediately (un-animated) — fading blur is what lagged close.
+        var snap = Transaction()
+        snap.disablesAnimations = true
+        withTransaction(snap) {
+            menuShowsBlur = false
+        }
+
+        // 2) Animate only solid dim + chrome transforms (cheap).
+        let duration: Double = style == .action ? 0.12 : 0.16
+        withAnimation(.easeOut(duration: duration)) {
+            menuChromeVisible = false
+            menuDim = 0
+            menuTravel = 0
+        }
+
+        menuAnimationTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000) + 8_000_000)
+            guard !Task.isCancelled, generation == menuAnimationGeneration else { return }
+            var clear = Transaction()
+            clear.disablesAnimations = true
+            withTransaction(clear) {
+                focusedMenu = nil
             }
+        }
+    }
+
+    @ViewBuilder
+    /// reactions → hero → menu. Hero only slides **up** (no left/right drift).
+    private func messageMenuOverlay(session: FocusedMessageMenu) -> some View {
+        let message = session.message
+        let frameAlignment: Alignment = message.isMine ? .trailing : .leading
+        // Short travel — less motion work, still reads as “lift”.
+        let slideUp: CGFloat = (1 - menuTravel) * 20
+
+        ZStack {
+            MessageMenuBackdrop(
+                onTap: { dismissMessageMenu(style: .backdrop) },
+                dimProgress: menuDim,
+                showsBlur: menuShowsBlur
+            )
 
             VStack(spacing: 10) {
-                // 1) Quick reactions
                 MessageReactionBar(
                     onReaction: { emoji in
-                        focusedMessage = nil
+                        dismissMessageMenu(style: .action)
                         toast = "Reacted \(emoji)"
                         scheduleToastClear()
                     },
                     onMore: {
-                        focusedMessage = nil
+                        dismissMessageMenu(style: .action)
                         showComingSoon("More reactions")
-                    }
+                    },
+                    isVisible: menuChromeVisible
                 )
-                .frame(maxWidth: .infinity, alignment: message.isMine ? .trailing : .leading)
+                .frame(maxWidth: .infinity, alignment: frameAlignment)
 
-                // 2) Focused message between emoji bar and menu
-                messageRow(message)
-                    .allowsHitTesting(false)
+                MessageMenuHeroContent(
+                    message: message,
+                    timeLabel: messaging.clockTimeLabel(for: message.createdAt),
+                    heroImage: session.heroImage
+                )
+                .frame(maxWidth: .infinity, alignment: frameAlignment)
+                .offset(y: slideUp)
+                .allowsHitTesting(false)
 
-                // 3) Context actions
-                MessageContextMenuCard(isMine: message.isMine) { action in
-                    focusedMessage = nil
-                    handleMenu(action, message: message)
-                }
-                .frame(maxWidth: .infinity, alignment: message.isMine ? .trailing : .leading)
+                MessageContextMenuCard(
+                    isMine: message.isMine,
+                    onAction: { action in
+                        dismissMessageMenu(style: .action)
+                        handleMenu(action, message: message)
+                    },
+                    isVisible: menuChromeVisible
+                )
+                .frame(maxWidth: .infinity, alignment: frameAlignment)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             .padding(.horizontal, 20)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.vertical, 12)
         }
         .ignoresSafeArea()
-        .transition(.opacity)
     }
 
     private func handleMenu(_ action: MessageMenuAction, message: MessagingController.ChatMessage) {

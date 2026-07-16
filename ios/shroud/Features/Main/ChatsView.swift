@@ -1,6 +1,7 @@
 import SwiftUI
 
 /// Chats list — live conversations from the API.
+/// Opens a conversation with a standard **horizontal push / swipe** transition.
 struct ChatsView: View {
     @Environment(MessagingController.self) private var messaging
 
@@ -42,14 +43,12 @@ struct ChatsView: View {
             } content: {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(filtered.enumerated()), id: \.element.id) { index, conversation in
-                        Button {
-                            path.append(
-                                .conversation(
-                                    peerID: conversation.peer.id,
-                                    username: conversation.peer.username
-                                )
+                        NavigationLink(
+                            value: ChatRoute.conversation(
+                                peerID: conversation.peer.id,
+                                username: conversation.peer.username
                             )
-                        } label: {
+                        ) {
                             ChatRowView(
                                 title: conversation.peer.username,
                                 subtitle: rowSubtitle(conversation),
@@ -81,11 +80,15 @@ struct ChatsView: View {
                 switch route {
                 case let .conversation(peerID, username):
                     ConversationView(peerUserID: peerID, peerUsername: username)
+                        // Explicit push style (slide from trailing).
+                        .navigationTransition(.automatic)
                 }
             }
             .sheet(isPresented: $showNewChat) {
                 NewChatSheet { peerID, username in
-                    path.append(.conversation(peerID: peerID, username: username))
+                    withAnimation(ChatOpenAnimation.push) {
+                        path.append(.conversation(peerID: peerID, username: username))
+                    }
                 }
             }
         }

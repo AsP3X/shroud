@@ -66,7 +66,9 @@ struct ImageMessageBubble: View {
                         Group {
                             if message.deleted {
                                 deletedPlaceholder
-                            } else if let data = message.imageData, let ui = UIImage(data: data) {
+                            } else if let data = message.imageData,
+                                      let ui = DecodedImageCache.image(forMessage: message.id, data: data)
+                            {
                                 Image(uiImage: ui)
                                     .resizable()
                                     .scaledToFill()
@@ -97,6 +99,9 @@ struct ImageMessageBubble: View {
                             : corners
                     )
                     .contentShape(Rectangle())
+                    // Tap / long-press are handled on the row via UIKit
+                    // (`messageContextLongPress`) so ScrollView doesn’t delay the menu ~1s.
+                    // Keep a SwiftUI tap as fallback when the bubble is used outside chat rows.
                     .onTapGesture {
                         guard canOpen else { return }
                         Haptics.impact(.light)
