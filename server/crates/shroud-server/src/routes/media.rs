@@ -286,13 +286,19 @@ async fn write_blob(state: &AppState, media: &MediaRow, bytes: &[u8]) -> Result<
     // Prefer durable local volume; optionally mirror to Nebular when configured.
     let path = blob_path(media);
     if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|err| AppError::Internal(format!("create media dir failed: {err}")))?;
+        tokio::fs::create_dir_all(parent).await.map_err(|err| {
+            AppError::Internal(format!(
+                "create media dir failed at {}: {err} (check MEDIA_DATA_DIR permissions; container user needs write access)",
+                parent.display()
+            ))
+        })?;
     }
-    tokio::fs::write(&path, bytes)
-        .await
-        .map_err(|err| AppError::Internal(format!("write media blob failed: {err}")))?;
+    tokio::fs::write(&path, bytes).await.map_err(|err| {
+        AppError::Internal(format!(
+            "write media blob failed at {}: {err}",
+            path.display()
+        ))
+    })?;
 
     if let Some(base) = &state.nebular_url {
         let base = base.trim_end_matches('/');
