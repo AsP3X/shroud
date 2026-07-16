@@ -9,6 +9,10 @@ struct ImageMessageBubble: View {
     var onRetry: (() -> Void)?
     /// Tap the photo (when loaded) — host presents the media overlay.
     var onOpen: (() -> Void)?
+    /// When false, renders only the bubble (no leading/trailing row spacers) for menu hero.
+    var isRowEmbedded: Bool = true
+    /// When set, reports this bubble’s global frame via `MessageBubbleFrameKey`.
+    var frameReportID: UUID? = nil
 
     private var isMine: Bool { message.isMine }
     private var isFailed: Bool { message.receipt == .failed }
@@ -57,78 +61,96 @@ struct ImageMessageBubble: View {
     }
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 0) {
-            if isMine { Spacer(minLength: 56) }
-
-            VStack(alignment: isMine ? .trailing : .leading, spacing: 6) {
-                VStack(alignment: .leading, spacing: 0) {
-                    ZStack(alignment: .bottomTrailing) {
-                        Group {
-                            if message.deleted {
-                                deletedPlaceholder
-                            } else if let data = message.imageData,
-                                      let ui = DecodedImageCache.image(forMessage: message.id, data: data)
-                            {
-                                Image(uiImage: ui)
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(width: displaySize.width, height: displaySize.height)
-                                    .clipped()
-                                    .opacity(isFailed ? 0.55 : 1)
-                            } else {
-                                loadingPlaceholder
-                            }
-                        }
-
-                        if isFailed {
-                            failedOverlay
-                        } else if !hasCaption {
-                            timeChip
-                        }
-                    }
-                    .frame(width: displaySize.width, height: displaySize.height)
-                    .clipShape(
-                        hasCaption
-                            ? UnevenRoundedRectangle(
-                                topLeadingRadius: 17.5,
-                                bottomLeadingRadius: 0,
-                                bottomTrailingRadius: 0,
-                                topTrailingRadius: 17.5,
-                                style: .continuous
-                            )
-                            : corners
-                    )
-                    .contentShape(Rectangle())
-                    // Tap / long-press are handled on the row via UIKit
-                    // (`messageContextLongPress`) so ScrollView doesn’t delay the menu ~1s.
-                    // Keep a SwiftUI tap as fallback when the bubble is used outside chat rows.
-                    .onTapGesture {
-                        guard canOpen else { return }
-                        Haptics.impact(.light)
-                        onOpen?()
-                    }
-
-                    if hasCaption, !message.deleted {
-                        captionFooter
-                    }
+        Group {
+            if isRowEmbedded {
+                HStack(alignment: .bottom, spacing: 0) {
+                    if isMine { Spacer(minLength: 56) }
+                    bubbleCore
+                    if !isMine { Spacer(minLength: 56) }
                 }
-                .overlay {
+                .frame(maxWidth: .infinity, alignment: isMine ? .trailing : .leading)
+            } else {
+                bubbleCore
+            }
+        }
+    }
+
+    private var bubbleCore: some View {
+        VStack(alignment: isMine ? .trailing : .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 0) {
+                ZStack(alignment: .bottomTrailing) {
+                    Group {
+                        if message.deleted {
+                            deletedPlaceholder
+                        } else if let data = message.imageData,
+                                  let ui = DecodedImageCache.image(forMessage: message.id, data: data)
+                        {
+                            Image(uiImage: ui)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: displaySize.width, height: displaySize.height)
+                                .clipped()
+                                .opacity(isFailed ? 0.55 : 1)
+                        } else {
+                            loadingPlaceholder
+                        }
+                    }
+
                     if isFailed {
-                        RoundedRectangle(cornerRadius: 17.5, style: .continuous)
-                            .stroke(Theme.danger.opacity(0.7), lineWidth: 1.5)
+                        failedOverlay
+                    } else if !hasCaption {
+                        timeChip
                     }
                 }
-                .shadow(color: Color.black.opacity(0.08), radius: 3, y: 1)
-                .onAppear { onAppearLoad?() }
+                .frame(width: displaySize.width, height: displaySize.height)
+                .clipShape(
+                    hasCaption
+                        ? UnevenRoundedRectangle(
+                            topLeadingRadius: 17.5,
+                            bottomLeadingRadius: 0,
+                            bottomTrailingRadius: 0,
+                            topTrailingRadius: 17.5,
+                            style: .continuous
+                        )
+                        : corners
+                )
+                .contentShape(Rectangle())
+                // Tap / long-press are handled on the row via UIKit
+                // (`messageContextLongPress`) so ScrollView doesn’t delay the menu ~1s.
+                // Keep a SwiftUI tap as fallback when the bubble is used outside chat rows.
+                .onTapGesture {
+                    guard canOpen else { return }
+                    Haptics.impact(.light)
+                    onOpen?()
+                }
 
-                if isFailed {
-                    failedFooter
+                if hasCaption, !message.deleted {
+                    captionFooter
                 }
             }
+            .overlay {
+                if isFailed {
+                    RoundedRectangle(cornerRadius: 17.5, style: .continuous)
+                        .stroke(Theme.danger.opacity(0.7), lineWidth: 1.5)
+                }
+            }
+            .shadow(color: Color.black.opacity(0.08), radius: 3, y: 1)
+            .onAppear { onAppearLoad?() }
 
-            if !isMine { Spacer(minLength: 56) }
+            if isFailed {
+                failedFooter
+            }
         }
-        .frame(maxWidth: .infinity, alignment: isMine ? .trailing : .leading)
+        .background {
+            if let frameReportID {
+                GeometryReader { geo in
+                    Color.clear.preference(
+                        key: MessageBubbleFrameKey.self,
+                        value: [frameReportID: geo.frame(in: .global)]
+                    )
+                }
+            }
+        }
     }
 
     /// Match text bubbles: muted meta for time/sent/delivered; brighter ticks when read.

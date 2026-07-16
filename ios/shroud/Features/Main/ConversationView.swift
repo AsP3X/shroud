@@ -26,14 +26,12 @@ struct ConversationView: View {
     @State private var toast: String?
     /// Active long-press focus session.
     @State private var focusedMenu: FocusedMessageMenu?
-    /// 0 = at list slot offset, 1 = settled in stack.
-    @State private var menuTravel: CGFloat = 0
-    @State private var menuDim: CGFloat = 0
-    /// Material blur on/off — never animated (animating Material is the dismiss hitch).
-    @State private var menuShowsBlur = false
-    @State private var menuChromeVisible = false
+    /// 0 = list slot, 1 = focus stack. Single source of truth for open+close motion.
+    @State private var menuProgress: CGFloat = 0
     @State private var menuAnimationTask: Task<Void, Never>?
     @State private var menuAnimationGeneration = 0
+    /// Live global frames of each bubble (visual only — no row spacers).
+    @State private var bubbleGlobalFrames: [UUID: CGRect] = [:]
     @State private var viewingMedia: ViewingMedia?
     @State private var composeDraft: ComposeDraft?
     @State private var profileDestination: ProfileDestination?
@@ -350,6 +348,7 @@ struct ConversationView: View {
                             messageRow(message)
                                 .id(message.id)
                                 // Keep layout space while focused so the list doesn’t jump.
+                                // Hero sits on this slot at progress 0, so handoff is seamless.
                                 .opacity(focusedMenu?.message.id == message.id ? 0 : 1)
                                 // UIKit long-press (0.25s). SwiftUI long-press in ScrollView is unreliable.
                                 .messageContextLongPress(
@@ -357,8 +356,10 @@ struct ConversationView: View {
                                     onTap: message.kind == .image
                                         ? { openMediaViewer(for: message) }
                                         : nil
-                                ) {
-                                    openMessageMenu(for: message)
+                                ) { rowGlobalFrame in
+                                    // Prefer the true bubble frame; fall back to the press row.
+                                    let source = bubbleGlobalFrames[message.id] ?? rowGlobalFrame
+                                    openMessageMenu(for: message, sourceGlobalFrame: source)
                                 }
                         }
                     }
@@ -372,6 +373,9 @@ struct ConversationView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
+                .onPreferenceChange(MessageBubbleFrameKey.self) { frames in
+                    bubbleGlobalFrames.merge(frames, uniquingKeysWith: { $1 })
+                }
             }
             .scrollDismissesKeyboard(.interactively)
             .onChange(of: messages.count) { _, _ in
@@ -529,7 +533,8 @@ struct ConversationView: View {
                 },
                 onOpen: {
                     openMediaViewer(for: message)
-                }
+                },
+                frameReportID: message.id
             )
         case .text:
             MessageBubbleView(
@@ -537,7 +542,8 @@ struct ConversationView: View {
                 time: messaging.clockTimeLabel(for: message.createdAt),
                 isMine: message.isMine,
                 isDeleted: message.deleted,
-                receipt: message.receipt
+                receipt: message.receipt,
+                frameReportID: message.id
             )
         }
     }
@@ -619,25 +625,24 @@ struct ConversationView: View {
         }
     }
 
-    /// Short elastic ease-out — snappy open.
-    private static let messageMenuOpenAnimation = Animation.timingCurve(
-        0.2, 1.05, 0.3, 1.0,
-        duration: 0.24
-    )
+    /// Shared open/close timing — ease-out (fast start → settle at the end).
+    private static let messageMenuAnimationDuration: Double = 0.21
+
+    private static let messageMenuAnimation = Animation.easeOut(duration: messageMenuAnimationDuration)
 
     private struct FocusedMessageMenu: Identifiable {
         var id: UUID { message.id }
         let message: MessagingController.ChatMessage
         /// Cached / already-decoded bitmap — never re-decode during animation.
         let heroImage: UIImage?
+        /// Bubble frame in **global** coordinates at long-press (list slot).
+        let sourceGlobalFrame: CGRect
     }
 
-    private enum MessageMenuDismissStyle {
-        case backdrop
-        case action
-    }
-
-    private func openMessageMenu(for message: MessagingController.ChatMessage) {
+    private func openMessageMenu(
+        for message: MessagingController.ChatMessage,
+        sourceGlobalFrame: CGRect
+    ) {
         // Cancel any in-flight dismiss so it can’t clear a freshly opened menu.
         menuAnimationTask?.cancel()
         menuAnimationGeneration &+= 1
@@ -647,109 +652,209 @@ struct ConversationView: View {
             ? DecodedImageCache.image(for: message.id)
             : nil
 
-        // Reset + present in one turn, then animate — no yield / async hop.
+        // Start at the list slot (progress 0), then lift into the focus stack.
         var reset = Transaction()
         reset.disablesAnimations = true
         withTransaction(reset) {
-            menuTravel = 0
-            menuDim = 0
-            menuChromeVisible = false
-            menuShowsBlur = true
-            focusedMenu = FocusedMessageMenu(message: message, heroImage: heroImage)
+            menuProgress = 0
+            focusedMenu = FocusedMessageMenu(
+                message: message,
+                heroImage: heroImage,
+                sourceGlobalFrame: sourceGlobalFrame
+            )
         }
 
-        withAnimation(Self.messageMenuOpenAnimation) {
-            menuTravel = 1
-            menuDim = 1
-            menuChromeVisible = true
+        withAnimation(Self.messageMenuAnimation) {
+            menuProgress = 1
         }
 
         Haptics.impact(.medium)
     }
 
-    private func dismissMessageMenu(style: MessageMenuDismissStyle) {
+    private func dismissMessageMenu() {
+        guard focusedMenu != nil else { return }
         menuAnimationTask?.cancel()
         menuAnimationGeneration &+= 1
         let generation = menuAnimationGeneration
 
-        // 1) Drop Material immediately (un-animated) — fading blur is what lagged close.
-        var snap = Transaction()
-        snap.disablesAnimations = true
-        withTransaction(snap) {
-            menuShowsBlur = false
-        }
-
-        // 2) Animate only solid dim + chrome transforms (cheap).
-        let duration: Double = style == .action ? 0.12 : 0.16
-        withAnimation(.easeOut(duration: duration)) {
-            menuChromeVisible = false
-            menuDim = 0
-            menuTravel = 0
+        // Ease-out back to the list slot: fast start, decelerate into place — no teleport.
+        withAnimation(Self.messageMenuAnimation) {
+            menuProgress = 0
         }
 
         menuAnimationTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000) + 8_000_000)
+            try? await Task.sleep(
+                nanoseconds: UInt64(Self.messageMenuAnimationDuration * 1_000_000_000) + 20_000_000
+            )
             guard !Task.isCancelled, generation == menuAnimationGeneration else { return }
+            // Hero is already exactly on the source frame; swap back to the list bubble.
             var clear = Transaction()
             clear.disablesAnimations = true
             withTransaction(clear) {
                 focusedMenu = nil
+                menuProgress = 0
             }
         }
     }
 
+    /// Context card width (matches `MessageContextMenuCard`).
+    private static let messageMenuCardWidth: CGFloat = 250
+    /// Context card row height × action count (mine includes muted “read”).
+    private static func messageMenuCardHeight(isMine: Bool) -> CGFloat {
+        let rows: CGFloat = isMine ? 7 : 6
+        return rows * 44
+    }
+
+    private static let messageMenuStackSpacing: CGFloat = 10
+    private static let messageMenuChromeHorizontalPad: CGFloat = 12
+
+    /// Clamp a chrome strip so its full width stays inside the overlay.
+    private func clampedChromeMinX(
+        preferredMinX: CGFloat,
+        width: CGFloat,
+        containerWidth: CGFloat
+    ) -> CGFloat {
+        let pad = Self.messageMenuChromeHorizontalPad
+        let minX = pad
+        let maxX = max(minX, containerWidth - pad - width)
+        return min(max(preferredMinX, minX), maxX)
+    }
+
+    /// Where the hero sits when fully open: stack centered, X locked to the source bubble.
+    private func focusedHeroFrame(
+        sourceLocal: CGRect,
+        container: CGSize,
+        isMine: Bool
+    ) -> CGRect {
+        let reactionH = MessageReactionBar.barHeight
+        let menuH = Self.messageMenuCardHeight(isMine: isMine)
+        let spacing = Self.messageMenuStackSpacing
+        let stackH = reactionH + spacing + sourceLocal.height + spacing + menuH
+
+        let topPad: CGFloat = 56
+        let bottomPad: CGFloat = 48
+        let available = max(0, container.height - topPad - bottomPad)
+        var stackTop = topPad + max(0, (available - stackH) / 2)
+        if stackTop + stackH > container.height - bottomPad {
+            stackTop = max(topPad, container.height - bottomPad - stackH)
+        }
+
+        let heroY = stackTop + reactionH + spacing
+        // Keep the bubble’s horizontal home (mine trailing / peer leading).
+        return CGRect(
+            x: sourceLocal.minX,
+            y: heroY,
+            width: sourceLocal.width,
+            height: sourceLocal.height
+        )
+    }
+
+    private func lerp(_ a: CGFloat, _ b: CGFloat, _ t: CGFloat) -> CGFloat {
+        a + (b - a) * t
+    }
+
+    private func lerpRect(_ a: CGRect, _ b: CGRect, _ t: CGFloat) -> CGRect {
+        CGRect(
+            x: lerp(a.minX, b.minX, t),
+            y: lerp(a.minY, b.minY, t),
+            width: lerp(a.width, b.width, t),
+            height: lerp(a.height, b.height, t)
+        )
+    }
+
     @ViewBuilder
-    /// reactions → hero → menu. Hero only slides **up** (no left/right drift).
+    /// Hero flies between the real list bubble and the focus stack (ease-out both ways).
     private func messageMenuOverlay(session: FocusedMessageMenu) -> some View {
         let message = session.message
-        let frameAlignment: Alignment = message.isMine ? .trailing : .leading
-        // Short travel — less motion work, still reads as “lift”.
-        let slideUp: CGFloat = (1 - menuTravel) * 20
+        let progress = menuProgress
+        let spacing = Self.messageMenuStackSpacing
+        let reactionW = MessageReactionBar.barWidth
+        let reactionH = MessageReactionBar.barHeight
+        let menuW = Self.messageMenuCardWidth
+        let menuH = Self.messageMenuCardHeight(isMine: message.isMine)
 
-        ZStack {
-            MessageMenuBackdrop(
-                onTap: { dismissMessageMenu(style: .backdrop) },
-                dimProgress: menuDim,
-                showsBlur: menuShowsBlur
+        GeometryReader { proxy in
+            let containerGlobal = proxy.frame(in: .global)
+            // Convert captured global bubble frame into this full-screen overlay’s local space.
+            let sourceLocal = CGRect(
+                x: session.sourceGlobalFrame.minX - containerGlobal.minX,
+                y: session.sourceGlobalFrame.minY - containerGlobal.minY,
+                width: max(1, session.sourceGlobalFrame.width),
+                height: max(1, session.sourceGlobalFrame.height)
             )
+            let focusLocal = focusedHeroFrame(
+                sourceLocal: sourceLocal,
+                container: proxy.size,
+                isMine: message.isMine
+            )
+            // progress 0 = exact list bubble, 1 = focus stack. Close eases into sourceLocal.
+            let heroFrame = lerpRect(sourceLocal, focusLocal, progress)
 
-            VStack(spacing: 10) {
+            // Align chrome to the bubble, then clamp so the full bar/card stays on-screen
+            // (outgoing bubbles near the trailing edge used to clip the “more” button).
+            let preferredReactionX = message.isMine
+                ? heroFrame.maxX - reactionW
+                : heroFrame.minX
+            let preferredMenuX = message.isMine
+                ? heroFrame.maxX - menuW
+                : heroFrame.minX
+            let reactionX = clampedChromeMinX(
+                preferredMinX: preferredReactionX,
+                width: reactionW,
+                containerWidth: proxy.size.width
+            )
+            let menuX = clampedChromeMinX(
+                preferredMinX: preferredMenuX,
+                width: menuW,
+                containerWidth: proxy.size.width
+            )
+            let reactionY = heroFrame.minY - spacing - reactionH
+            let menuY = heroFrame.maxY + spacing
+
+            ZStack(alignment: .topLeading) {
+                MessageMenuBackdrop(
+                    onTap: { dismissMessageMenu() },
+                    progress: progress
+                )
+
+                // Reaction + menu track the moving hero and fade with progress.
                 MessageReactionBar(
                     onReaction: { emoji in
-                        dismissMessageMenu(style: .action)
+                        dismissMessageMenu()
                         toast = "Reacted \(emoji)"
                         scheduleToastClear()
                     },
                     onMore: {
-                        dismissMessageMenu(style: .action)
+                        dismissMessageMenu()
                         showComingSoon("More reactions")
                     },
-                    isVisible: menuChromeVisible
+                    progress: progress
                 )
-                .frame(maxWidth: .infinity, alignment: frameAlignment)
+                .frame(width: reactionW, height: reactionH)
+                .position(x: reactionX + reactionW / 2, y: reactionY + reactionH / 2)
 
                 MessageMenuHeroContent(
                     message: message,
                     timeLabel: messaging.clockTimeLabel(for: message.createdAt),
                     heroImage: session.heroImage
                 )
-                .frame(maxWidth: .infinity, alignment: frameAlignment)
-                .offset(y: slideUp)
+                // Same size as the list bubble so progress 0 is a perfect handoff.
+                .frame(width: heroFrame.width, height: heroFrame.height)
+                .position(x: heroFrame.midX, y: heroFrame.midY)
                 .allowsHitTesting(false)
 
                 MessageContextMenuCard(
                     isMine: message.isMine,
                     onAction: { action in
-                        dismissMessageMenu(style: .action)
+                        dismissMessageMenu()
                         handleMenu(action, message: message)
                     },
-                    isVisible: menuChromeVisible
+                    progress: progress
                 )
-                .frame(maxWidth: .infinity, alignment: frameAlignment)
+                .frame(width: menuW, height: menuH, alignment: .top)
+                .position(x: menuX + menuW / 2, y: menuY + menuH / 2)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
+            .frame(width: proxy.size.width, height: proxy.size.height)
         }
         .ignoresSafeArea()
     }

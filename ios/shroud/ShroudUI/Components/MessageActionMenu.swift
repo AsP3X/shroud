@@ -22,19 +22,40 @@ struct MessageActionMenu: View {
 struct MessageReactionBar: View {
     var onReaction: (String) -> Void
     var onMore: () -> Void
-    var isVisible: Bool = true
+    /// 0…1 continuous progress (drives opacity + offset; avoid Bool for smooth close).
+    var progress: CGFloat = 1
 
-    private let reactions = ["❤️", "🔥", "👍", "😢", "🙏", "😮", "👎"]
+    static let reactions = ["❤️", "🔥", "👍", "😢", "🙏", "😮", "👎"]
+    private static let emojiSize: CGFloat = 34
+    private static let moreSize: CGFloat = 30
+    private static let itemSpacing: CGFloat = 6
+    private static let horizontalPadding: CGFloat = 12
+    private static let verticalPadding: CGFloat = 8
+
+    /// Intrinsic capsule width (emojis + more + spacing + padding).
+    static var barWidth: CGFloat {
+        let emojiCount = CGFloat(reactions.count)
+        let items = emojiCount + 1 // more button
+        return emojiCount * emojiSize
+            + moreSize
+            + (items - 1) * itemSpacing
+            + horizontalPadding * 2
+    }
+
+    /// Intrinsic capsule height.
+    static var barHeight: CGFloat {
+        max(emojiSize, moreSize) + verticalPadding * 2
+    }
 
     var body: some View {
-        HStack(spacing: 6) {
-            ForEach(reactions, id: \.self) { emoji in
+        HStack(spacing: Self.itemSpacing) {
+            ForEach(Self.reactions, id: \.self) { emoji in
                 Button {
                     onReaction(emoji)
                 } label: {
                     Text(emoji)
                         .font(.system(size: 26))
-                        .frame(width: 34, height: 34)
+                        .frame(width: Self.emojiSize, height: Self.emojiSize)
                 }
                 .buttonStyle(.plain)
             }
@@ -42,15 +63,16 @@ struct MessageReactionBar: View {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(Color.white.opacity(0.85))
-                    .frame(width: 30, height: 30)
+                    .frame(width: Self.moreSize, height: Self.moreSize)
                     .background(Color.white.opacity(0.12))
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("More reactions")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, Self.horizontalPadding)
+        .padding(.vertical, Self.verticalPadding)
+        .fixedSize(horizontal: true, vertical: true)
         .background {
             Capsule()
                 .fill(Color(red: 0.14, green: 0.14, blue: 0.16).opacity(0.92))
@@ -59,10 +81,9 @@ struct MessageReactionBar: View {
             Capsule()
                 .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
         }
-        // Opacity + offset only (no scale — cheaper and snappier).
-        .opacity(isVisible ? 1 : 0)
-        .offset(y: isVisible ? 0 : 8)
-        .allowsHitTesting(isVisible)
+        // Fade with the hero flight (no extra slide — hero owns the travel).
+        .opacity(progress)
+        .allowsHitTesting(progress > 0.5)
     }
 }
 
@@ -71,7 +92,8 @@ struct MessageReactionBar: View {
 struct MessageContextMenuCard: View {
     let isMine: Bool
     var onAction: (MessageMenuAction) -> Void
-    var isVisible: Bool = true
+    /// 0…1 continuous progress (drives opacity + offset; avoid Bool for smooth close).
+    var progress: CGFloat = 1
 
     var body: some View {
         VStack(spacing: 0) {
@@ -118,10 +140,9 @@ struct MessageContextMenuCard: View {
                 .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
         }
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        // Opacity + offset only (no scale — cheaper and snappier).
-        .opacity(isVisible ? 1 : 0)
-        .offset(y: isVisible ? 0 : 8)
-        .allowsHitTesting(isVisible)
+        // Fade with the hero flight (no extra slide — hero owns the travel).
+        .opacity(progress)
+        .allowsHitTesting(progress > 0.5)
     }
 
     private var primaryActions: [MessageMenuAction] {
@@ -205,32 +226,23 @@ enum MessageMenuAction: String, Identifiable {
 
 // MARK: - Backdrop
 
-/// Frosted veil. Material is **snapped** on/off (never opacity-animated — that lags).
-/// Only the solid dim eases for open/close feel.
+/// Dim veil driven by a single continuous progress.
+/// Solid scrim only — Material opacity animation stutters on dismiss.
 struct MessageMenuBackdrop: View {
     var onTap: () -> Void
-    /// 0…1 — animates dim only.
-    var dimProgress: Double = 1
-    /// When false, Material is removed immediately (used on dismiss to avoid blur tear-down lag).
-    var showsBlur: Bool = true
+    /// 0…1 continuous open amount.
+    var progress: CGFloat = 1
 
     var body: some View {
+        // Layered solid dim approximates the old frosted look without per-frame blur cost.
         ZStack {
-            if showsBlur {
-                Rectangle()
-                    .fill(.regularMaterial)
-                    .environment(\.colorScheme, .dark)
-                    .opacity(0.85)
-                    .transition(.identity)
-            }
-
-            // Cheap solid fade for open/close.
-            Color.black.opacity(0.22 * dimProgress)
+            Color.black.opacity(0.42 * progress)
+            Color(red: 0.06, green: 0.06, blue: 0.08).opacity(0.28 * progress)
         }
         .ignoresSafeArea()
         .contentShape(Rectangle())
         .onTapGesture(perform: onTap)
-        .allowsHitTesting(dimProgress > 0.05 || showsBlur)
+        .allowsHitTesting(progress > 0.05)
     }
 }
 
@@ -257,83 +269,47 @@ enum DecodedImageCache {
     }
 }
 
-// MARK: - Lightweight hero (no ImageMessageBubble tree)
+// MARK: - Hero (same bubble views as the list so close lands without a pop)
 
 struct MessageMenuHeroContent: View {
     let message: MessagingController.ChatMessage
     let timeLabel: String
+    /// Kept for API stability; image hero reads `DecodedImageCache` via `ImageMessageBubble`.
     let heroImage: UIImage?
-
-    private let maxHeroHeight: CGFloat = 180
-    private let maxHeroWidth: CGFloat = 220
 
     var body: some View {
         switch message.kind {
         case .image:
-            imageHero
+            ImageMessageBubble(
+                message: message,
+                time: timeLabel,
+                isRowEmbedded: false
+            )
         case .text:
             MessageBubbleView(
                 text: message.text,
                 time: timeLabel,
                 isMine: message.isMine,
                 isDeleted: message.deleted,
-                receipt: message.receipt
+                receipt: message.receipt,
+                isRowEmbedded: false
             )
         }
-    }
-
-    @ViewBuilder
-    private var imageHero: some View {
-        let size = fittedSize
-        ZStack(alignment: .bottomTrailing) {
-            if let heroImage {
-                Image(uiImage: heroImage)
-                    .resizable()
-                    .interpolation(.medium)
-                    .scaledToFill()
-                    .frame(width: size.width, height: size.height)
-                    .clipped()
-            } else {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color.white.opacity(0.08))
-                    .frame(width: size.width, height: size.height)
-            }
-
-            Text(timeLabel)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background(Color.black.opacity(0.45), in: Capsule())
-                .padding(8)
-        }
-        .frame(width: size.width, height: size.height)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-    }
-
-    private var fittedSize: CGSize {
-        let w = CGFloat(message.imageWidth ?? 240)
-        let h = CGFloat(message.imageHeight ?? 240)
-        guard w > 0, h > 0 else {
-            return CGSize(width: 180, height: 160)
-        }
-        let scale = min(maxHeroWidth / w, maxHeroHeight / h, 1)
-        return CGSize(width: max(120, w * scale), height: max(100, h * scale))
     }
 }
 
 #Preview {
     ZStack {
-        MessageMenuBackdrop(onTap: {}, dimProgress: 1, showsBlur: true)
+        MessageMenuBackdrop(onTap: {}, progress: 1)
         VStack(spacing: 10) {
-            MessageReactionBar(onReaction: { _ in }, onMore: {})
+            MessageReactionBar(onReaction: { _ in }, onMore: {}, progress: 1)
             MessageBubbleView(
                 text: "Hey! How are you?",
                 time: "14:22",
                 isMine: true,
                 receipt: .read
             )
-            MessageContextMenuCard(isMine: true, onAction: { _ in })
+            MessageContextMenuCard(isMine: true, onAction: { _ in }, progress: 1)
         }
         .padding(24)
     }

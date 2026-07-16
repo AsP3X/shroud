@@ -11,11 +11,14 @@ import UIKit
 ///
 /// Optional `onTap` is wired with `require(toFail: longPress)` so short taps still
 /// open the image viewer without waiting on the long-press timeout.
+///
+/// Long-press reports the press target’s **global** frame so the context menu can
+/// hero-animate from / back to the bubble’s list position.
 struct MessageLongPressGesture: UIViewRepresentable {
     var minimumDuration: TimeInterval = 0.25
     var allowableMovement: CGFloat = 16
     var onTap: (() -> Void)?
-    var onLongPress: () -> Void
+    var onLongPress: (CGRect) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(onTap: onTap, onLongPress: onLongPress)
@@ -77,20 +80,20 @@ struct MessageLongPressGesture: UIViewRepresentable {
 
     final class Coordinator: NSObject {
         var onTap: (() -> Void)?
-        var onLongPress: () -> Void
+        var onLongPress: (CGRect) -> Void
         weak var longPress: UILongPressGestureRecognizer?
         weak var tap: UITapGestureRecognizer?
 
-        init(onTap: (() -> Void)?, onLongPress: @escaping () -> Void) {
+        init(onTap: (() -> Void)?, onLongPress: @escaping (CGRect) -> Void) {
             self.onTap = onTap
             self.onLongPress = onLongPress
         }
 
         @objc func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
             // Fire at the moment duration is met — don’t wait for finger lift.
-            if gesture.state == .began {
-                onLongPress()
-            }
+            guard gesture.state == .began, let view = gesture.view else { return }
+            let globalFrame = view.convert(view.bounds, to: nil)
+            onLongPress(globalFrame)
         }
 
         @objc func handleTap(_ gesture: UITapGestureRecognizer) {
@@ -102,10 +105,11 @@ struct MessageLongPressGesture: UIViewRepresentable {
 
 extension View {
     /// ScrollView-safe context-menu long-press (optional tap for image open).
+    /// `perform` receives the press target’s global frame for hero open/close.
     func messageContextLongPress(
         minimumDuration: TimeInterval = 0.25,
         onTap: (() -> Void)? = nil,
-        perform: @escaping () -> Void
+        perform: @escaping (_ globalFrame: CGRect) -> Void
     ) -> some View {
         overlay {
             MessageLongPressGesture(

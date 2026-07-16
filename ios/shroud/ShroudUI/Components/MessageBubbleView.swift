@@ -73,6 +73,16 @@ struct MessageReceiptIcon: View {
     }
 }
 
+/// Preference for the visual bubble’s global frame (excludes row spacers).
+/// Used so the long-press menu can hero-animate from / back to the real bubble slot.
+struct MessageBubbleFrameKey: PreferenceKey {
+    static var defaultValue: [UUID: CGRect] = [:]
+
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { $1 })
+    }
+}
+
 /// Message bubble styled close to Telegram iOS:
 /// - Content-hugging width for short text
 /// - Wraps long text at a max width
@@ -84,6 +94,10 @@ struct MessageBubbleView: View {
     let isMine: Bool
     var isDeleted: Bool = false
     var receipt: MessageReceiptStatus = .sent
+    /// When false, renders only the bubble (no leading/trailing row spacers) for menu hero.
+    var isRowEmbedded: Bool = true
+    /// When set, reports this bubble’s global frame via `MessageBubbleFrameKey`.
+    var frameReportID: UUID? = nil
 
     /// Max width of the full bubble (including padding), ~Telegram on a 390pt phone.
     private let maxBubbleWidth: CGFloat = 280
@@ -144,21 +158,38 @@ struct MessageBubbleView: View {
     }
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 0) {
-            if isMine { Spacer(minLength: 56) }
-
-            // Compact single-line (text + meta side by side) when it fits;
-            // otherwise multi-line body with meta on the last line (Telegram style).
-            ViewThatFits(in: .horizontal) {
-                compactBubble
-                wrappingBubble
+        Group {
+            if isRowEmbedded {
+                HStack(alignment: .bottom, spacing: 0) {
+                    if isMine { Spacer(minLength: 56) }
+                    bubbleCore
+                    if !isMine { Spacer(minLength: 56) }
+                }
+                .frame(maxWidth: .infinity, alignment: isMine ? .trailing : .leading)
+            } else {
+                bubbleCore
             }
-
-            if !isMine { Spacer(minLength: 56) }
         }
-        .frame(maxWidth: .infinity, alignment: isMine ? .trailing : .leading)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
+    }
+
+    /// Compact single-line when it fits; otherwise multi-line body with meta on the last line.
+    private var bubbleCore: some View {
+        ViewThatFits(in: .horizontal) {
+            compactBubble
+            wrappingBubble
+        }
+        .background {
+            if let frameReportID {
+                GeometryReader { geo in
+                    Color.clear.preference(
+                        key: MessageBubbleFrameKey.self,
+                        value: [frameReportID: geo.frame(in: .global)]
+                    )
+                }
+            }
+        }
     }
 
     // MARK: - Compact (short messages)
