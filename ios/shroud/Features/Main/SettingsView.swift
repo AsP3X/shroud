@@ -5,8 +5,8 @@ enum SettingsRoute: Hashable {
     case server
 }
 
-/// Settings tab — maps to `Settings` in `iOS-App.pen`.
-/// Telegram-style profile hero: avatar shrinks/blurs on scroll; name slides into the sticky bar title.
+/// Settings tab — Telegram-style profile hero for the **title-only** sticky bar
+/// (no leading/trailing nav actions). Avatar exits; name settles as the compact bar title.
 struct SettingsView: View {
     let router: AppRouter
     /// When non-empty, the floating tab bar should hide (detail is covering Settings).
@@ -17,78 +17,105 @@ struct SettingsView: View {
 
     @State private var scrollOffsetY: CGFloat = 0
 
-    // MARK: - Collapse metrics
+    // MARK: - Layout metrics (title-only compact bar)
 
-    private let navRowHeight: CGFloat = 44
+    /// Collapsed sticky bar height (centered title only — no side buttons).
+    private let compactBarHeight: CGFloat = 44
     private let avatarExpandedSize: CGFloat = 88
-    private let heroTopPadding: CGFloat = 10
-    private let avatarToNameGap: CGFloat = 14
-    private let nameBlockHeight: CGFloat = 52
-    private let heroBottomPadding: CGFloat = 10
+    private let heroTopPadding: CGFloat = 12
+    private let avatarToNameGap: CGFloat = 12
+    private let nameExpandedLine: CGFloat = 30
+    private let handleLine: CGFloat = 20
+    private let handleGap: CGFloat = 4
+    private let heroBottomPadding: CGFloat = 12
 
-    /// Layout height of the expanded hero under the nav (also collapse travel).
-    private var heroExpandedHeight: CGFloat {
-        heroTopPadding + avatarExpandedSize + avatarToNameGap + nameBlockHeight + heroBottomPadding
+    private let nameExpandedSize: CGFloat = 26
+    private let nameCollapsedSize: CGFloat = 17
+
+    /// Full expanded hero height (avatar + name + handle). No empty action row.
+    private var expandedHeroHeight: CGFloat {
+        heroTopPadding
+            + avatarExpandedSize
+            + avatarToNameGap
+            + nameExpandedLine
+            + handleGap
+            + handleLine
+            + heroBottomPadding
     }
 
-    /// 0 at rest → 1 when the hero has fully collapsed.
+    /// Scroll distance that maps progress 0 → 1.
+    private var collapseDistance: CGFloat {
+        max(1, expandedHeroHeight - compactBarHeight)
+    }
+
+    /// 0 at rest → 1 when fully collapsed into the compact title bar.
     private var collapseProgress: CGFloat {
-        min(1, max(0, scrollOffsetY / max(heroExpandedHeight, 1)))
+        min(1, max(0, scrollOffsetY / collapseDistance))
     }
 
-    /// Sticky band under the nav shrinks so list content meets the bar (name stays in overlay).
-    private var heroBandHeight: CGFloat {
-        max(0, heroExpandedHeight - scrollOffsetY)
+    /// Sticky chrome height shrinks from expanded hero → compact title bar.
+    private var stickyChromeHeight: CGFloat {
+        max(compactBarHeight, expandedHeroHeight - scrollOffsetY)
     }
 
-    // Avatar: shrink + blur + slide upward out of the top of the screen.
+    // MARK: - Avatar motion
+
     private var avatarScale: CGFloat {
-        1 - 0.72 * collapseProgress
+        1 - 0.78 * collapseProgress
     }
 
     private var avatarBlur: CGFloat {
-        22 * collapseProgress
+        20 * collapseProgress
     }
 
     private var avatarOpacity: CGFloat {
-        max(0, 1 - pow(collapseProgress, 1.35) * 1.05)
+        max(0, 1 - pow(collapseProgress, 1.25) * 1.08)
     }
 
-    /// Center Y of the avatar relative to the top of the sticky chrome (including nav).
     private var avatarCenterY: CGFloat {
-        let rest = navRowHeight + heroTopPadding + avatarExpandedSize / 2
-        let gone = -avatarExpandedSize * 0.85
+        let rest = heroTopPadding + avatarExpandedSize / 2
+        // Exit above the compact bar so it clears the title.
+        let gone = -avatarExpandedSize * 0.55
         return rest + (gone - rest) * collapseProgress
     }
 
-    // Single name layer: interpolates from hero position → nav-bar title slot.
+    // MARK: - Name motion (hero → centered bar title)
+
     private var nameCenterY: CGFloat {
-        let rest = navRowHeight + heroTopPadding + avatarExpandedSize + avatarToNameGap + 16
-        let bar = navRowHeight / 2
-        return rest + (bar - rest) * collapseProgress
+        let rest = heroTopPadding
+            + avatarExpandedSize
+            + avatarToNameGap
+            + nameExpandedLine / 2
+        let bar = compactBarHeight / 2
+        // Ease so the name reaches the bar a bit before progress hits 1.
+        let t = min(1, collapseProgress * 1.05)
+        return rest + (bar - rest) * t
     }
 
     private var nameFontSize: CGFloat {
-        let expanded: CGFloat = 26
-        let collapsed: CGFloat = 17
+        // Keep large early; finish at compact bar title size.
         let t = collapseProgress * collapseProgress
-        return expanded - (expanded - collapsed) * t
+        return nameExpandedSize - (nameExpandedSize - nameCollapsedSize) * t
     }
 
     private var nameWeight: Font.Weight {
-        collapseProgress > 0.55 ? .semibold : .bold
+        collapseProgress > 0.5 ? .semibold : .bold
     }
 
     private var handleOpacity: CGFloat {
-        max(0, 1 - collapseProgress * 1.8)
+        max(0, 1 - collapseProgress * 2.0)
+    }
+
+    private var handleCenterY: CGFloat {
+        nameCenterY + nameExpandedLine / 2 + handleGap + handleLine / 2
     }
 
     private var badgeOpacity: CGFloat {
-        max(0, 1 - collapseProgress * 2.2)
+        max(0, 1 - collapseProgress * 2.4)
     }
 
     private var materialProgress: CGFloat {
-        min(1, max(0, collapseProgress * 1.05))
+        min(1, max(0, collapseProgress * 1.1))
     }
 
     init(router: AppRouter, navigationPath: Binding<[SettingsRoute]> = .constant([])) {
@@ -150,9 +177,9 @@ struct SettingsView: View {
             ZStack(alignment: .top) {
                 ScrollView {
                     VStack(spacing: 0) {
-                        // Spacer under sticky chrome so list starts below the expanded hero.
+                        // Match expanded sticky height so content sits below the hero at rest.
                         Color.clear
-                            .frame(height: navRowHeight + heroExpandedHeight)
+                            .frame(height: expandedHeroHeight)
                             .accessibilityHidden(true)
 
                         VStack(spacing: 14) {
@@ -168,13 +195,11 @@ struct SettingsView: View {
                     }
                 }
                 .scrollIndicators(.hidden)
-                // iOS 18+: reliable content offset (preference/coordinateSpace broke under NavigationStack).
                 .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                    // contentOffset.y grows as the user scrolls down the list.
-                    max(0, geometry.contentOffset.y)
+                    // Include top content inset so progress is 0 when pinned at rest.
+                    max(0, geometry.contentOffset.y + geometry.contentInsets.top)
                 } action: { _, newOffset in
-                    // Drive collapse every frame without inheriting tab-switch animations.
-                    guard abs(newOffset - scrollOffsetY) > 0.25 else { return }
+                    guard abs(newOffset - scrollOffsetY) > 0.2 else { return }
                     var transaction = Transaction()
                     transaction.disablesAnimations = true
                     withTransaction(transaction) {
@@ -183,31 +208,21 @@ struct SettingsView: View {
                 }
 
                 stickyChrome(midX: midX)
-                    // Keep hero drawn above list; allow avatar to slide past the top edge.
                     .allowsHitTesting(false)
             }
         }
         .background(Theme.backgroundGrouped)
     }
 
-    // MARK: - Sticky chrome + collapsing hero
-
-    private var stickyChromeHeight: CGFloat {
-        navRowHeight + heroBandHeight
-    }
+    // MARK: - Sticky chrome
 
     private func stickyChrome(midX: CGFloat) -> some View {
         ZStack(alignment: .top) {
             stickyGradientBackground
-                .frame(height: stickyChromeHeight + 32)
+                .frame(height: stickyChromeHeight + 28)
                 .frame(maxWidth: .infinity, alignment: .top)
 
-            // Invisible nav-height band keeps layout metrics stable.
-            Color.clear
-                .frame(height: navRowHeight)
-                .frame(maxWidth: .infinity)
-                .zIndex(5)
-
+            // Avatar — exits upward as the bar collapses.
             AvatarView(
                 initials: initials,
                 size: avatarExpandedSize,
@@ -221,18 +236,19 @@ struct SettingsView: View {
             .position(x: midX, y: avatarCenterY)
             .zIndex(2)
 
+            // Name — continuous path into the compact centered title.
             HStack(spacing: 6) {
                 Text(displayName)
                     .font(.system(size: nameFontSize, weight: nameWeight))
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    .minimumScaleFactor(0.75)
                 Image(systemName: "checkmark.seal.fill")
                     .font(.system(size: nameFontSize * 0.78, weight: .semibold))
                     .foregroundStyle(Theme.accent)
                     .opacity(Double(badgeOpacity))
             }
-            .frame(maxWidth: midX * 1.35)
+            .frame(maxWidth: midX * 1.4)
             .position(x: midX, y: nameCenterY)
             .accessibilityAddTraits(.isHeader)
             .zIndex(6)
@@ -241,10 +257,7 @@ struct SettingsView: View {
                 .font(.system(size: 15))
                 .foregroundStyle(Theme.textSecondary)
                 .opacity(Double(handleOpacity))
-                .position(
-                    x: midX,
-                    y: nameCenterY + 22 * (1 - collapseProgress)
-                )
+                .position(x: midX, y: handleCenterY)
                 .zIndex(3)
         }
         .frame(height: stickyChromeHeight, alignment: .top)
@@ -287,7 +300,7 @@ struct SettingsView: View {
                 endPoint: .bottom
             )
         }
-        .padding(.bottom, 24)
+        .padding(.bottom, 20)
         .ignoresSafeArea(edges: .top)
     }
 
