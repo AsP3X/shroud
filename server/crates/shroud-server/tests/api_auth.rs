@@ -94,6 +94,11 @@ async fn register_login_me_logout_flow() {
     let device_id = registered["device"]["id"].as_str().expect("device id");
     assert_eq!(registered["user"]["username"], username);
     assert_eq!(registered["device"]["name"], "iPhone Test");
+    let share_code = registered["user"]["share_code"]
+        .as_str()
+        .expect("share_code");
+    assert_eq!(share_code.len(), 10);
+    assert!(share_code.chars().all(|c| c.is_ascii_alphanumeric()));
 
     let me = app
         .clone()
@@ -109,6 +114,7 @@ async fn register_login_me_logout_flow() {
     assert_eq!(me.status(), StatusCode::OK);
     let me_json = json_body(me).await;
     assert_eq!(me_json["user"]["username"], username);
+    assert_eq!(me_json["user"]["share_code"], share_code);
     assert_eq!(me_json["device"]["id"], device_id);
 
     let logout = app

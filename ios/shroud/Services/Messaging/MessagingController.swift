@@ -120,22 +120,39 @@ final class MessagingController {
         }
     }
 
-    func addContact(byUserIDString raw: String) async -> String? {
+    /// Resolves share code, username, UUID, or invite link and sends a contact request.
+    /// Returns `nil` on success, otherwise a user-facing error string.
+    func addContact(fromInvite raw: String) async -> String? {
         guard let token = sessionController?.bearerToken else {
             return "Not signed in."
         }
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let userID = UUID(uuidString: trimmed) else {
-            return "Enter a valid user ID (UUID)."
+        guard let invite = ContactInviteParser.parse(raw) else {
+            return "Enter a share code, username, link, or user ID."
         }
         do {
-            _ = try await contactsService.getUser(userID: userID, token: token)
-            _ = try await contactsService.createRequest(userID: userID, token: token)
+            let card: UserCardDTO
+            switch invite {
+            case let .userID(id):
+                card = try await contactsService.getUser(userID: id, token: token)
+            case let .shareCode(code):
+                card = try await contactsService.getUserByShareCode(code, token: token)
+            case let .username(name):
+                card = try await contactsService.getUserByUsername(name, token: token)
+            }
+            if card.id == sessionController?.userID {
+                return "You can't add yourself."
+            }
+            _ = try await contactsService.createRequest(userID: card.id, token: token)
             await refreshContacts()
             return nil
         } catch {
             return SessionController.userMessage(for: error)
         }
+    }
+
+    /// Legacy UUID-only entry point (kept for call sites / tests).
+    func addContact(byUserIDString raw: String) async -> String? {
+        await addContact(fromInvite: raw)
     }
 
     func acceptRequest(_ request: ContactRequestDTO) async {

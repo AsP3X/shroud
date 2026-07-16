@@ -8,7 +8,8 @@ use uuid::Uuid;
 
 use crate::auth::session::AuthContext;
 use crate::auth::{
-    MAX_DEVICES_PER_USER, hash_password, issue_session_token, normalize_username, verify_password,
+    MAX_DEVICES_PER_USER, generate_share_code, hash_password, issue_session_token,
+    normalize_username, verify_password,
 };
 use crate::error::AppError;
 use crate::state::AppState;
@@ -25,6 +26,7 @@ pub struct AuthSessionResponse {
 pub struct UserDto {
     pub id: Uuid,
     pub username: String,
+    pub share_code: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -66,6 +68,7 @@ struct UserAuthRow {
     id: Uuid,
     username: String,
     password_hash: String,
+    share_code: String,
 }
 
 /// `POST /auth/register` — create user, first device, session.
@@ -84,26 +87,47 @@ pub async fn register(
         .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
 
     let user_id = Uuid::new_v4();
-    let insert = sqlx::query(
-        r#"
-        INSERT INTO users (id, username, password_hash)
-        VALUES ($1, $2, $3)
-        "#,
-    )
-    .bind(user_id)
-    .bind(&username)
-    .bind(&password_hash)
-    .execute(&mut *tx)
-    .await;
+    let mut share_code = generate_share_code();
+    let mut inserted = false;
+    for _ in 0..12 {
+        let insert = sqlx::query(
+            r#"
+            INSERT INTO users (id, username, password_hash, share_code)
+            VALUES ($1, $2, $3, $4)
+            "#,
+        )
+        .bind(user_id)
+        .bind(&username)
+        .bind(&password_hash)
+        .bind(&share_code)
+        .execute(&mut *tx)
+        .await;
 
-    match insert {
-        Ok(_) => {}
-        Err(sqlx::Error::Database(db_err)) if db_err.constraint() == Some("users_username_key") => {
-            return Err(AppError::username_taken());
+        match insert {
+            Ok(_) => {
+                inserted = true;
+                break;
+            }
+            Err(sqlx::Error::Database(db_err))
+                if db_err.constraint() == Some("users_username_key") =>
+            {
+                return Err(AppError::username_taken());
+            }
+            Err(sqlx::Error::Database(db_err))
+                if db_err.constraint() == Some("users_share_code_uidx") =>
+            {
+                share_code = generate_share_code();
+                continue;
+            }
+            Err(err) => {
+                return Err(AppError::Internal(format!("insert user failed: {err}")));
+            }
         }
-        Err(err) => {
-            return Err(AppError::Internal(format!("insert user failed: {err}")));
-        }
+    }
+    if !inserted {
+        return Err(AppError::Internal(
+            "could not allocate a unique share code".into(),
+        ));
     }
 
     let device_id = Uuid::new_v4();
@@ -141,6 +165,7 @@ pub async fn register(
             user: UserDto {
                 id: user_id,
                 username,
+                share_code,
             },
             device: DeviceDto {
                 id: device_id,
@@ -161,7 +186,7 @@ pub async fn login(
 
     let user = sqlx::query_as::<_, UserAuthRow>(
         r#"
-        SELECT id, username, password_hash FROM users WHERE username = $1
+        SELECT id, username, password_hash, share_code FROM users WHERE username = $1
         "#,
     )
     .bind(&username)
@@ -230,6 +255,7 @@ pub async fn login(
         user: UserDto {
             id: user.id,
             username: user.username,
+            share_code: user.share_code,
         },
         device: DeviceDto {
             id: device_id,
@@ -269,6 +295,7 @@ pub async fn me(auth: AuthContext) -> Result<Json<MeResponse>, AppError> {
         user: UserDto {
             id: auth.user_id,
             username: auth.username,
+            share_code: auth.share_code,
         },
         device: DeviceDto {
             id: auth.device_id,

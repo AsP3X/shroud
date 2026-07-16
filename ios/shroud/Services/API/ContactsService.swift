@@ -68,6 +68,25 @@ struct ContactsService: Sendable {
         )
     }
 
+    func getUserByUsername(_ username: String, token: String) async throws -> UserCardDTO {
+        let encoded = username.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? username
+        return try await client.get(
+            "users/by-username/\(encoded)",
+            as: UserCardDTO.self,
+            bearerToken: token
+        )
+    }
+
+    func getUserByShareCode(_ code: String, token: String) async throws -> UserCardDTO {
+        let normalized = ContactInviteParser.normalizeShareCode(code)
+        let encoded = normalized.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? normalized
+        return try await client.get(
+            "users/by-code/\(encoded)",
+            as: UserCardDTO.self,
+            bearerToken: token
+        )
+    }
+
     func presence(userID: UUID, token: String) async throws -> PresenceDTO {
         try await client.get(
             "presence/\(userID.uuidString.lowercased())",

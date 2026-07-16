@@ -73,11 +73,27 @@ nonisolated struct AuthService: Sendable {
             token: response.token,
             userID: response.user.id,
             username: response.user.username,
+            shareCode: response.user.shareCode,
             deviceID: response.device.id,
             deviceName: response.device.name
         )
         try sessionStore.save(session)
         return session
+    }
+
+    /// Updates Keychain session fields from `/auth/me` (e.g. share code after migration).
+    func refreshProfile(session: SessionStore.Session) async throws -> SessionStore.Session {
+        let me = try await fetchMe(session: session)
+        let updated = SessionStore.Session(
+            token: session.token,
+            userID: me.user.id,
+            username: me.user.username,
+            shareCode: me.user.shareCode,
+            deviceID: me.device.id,
+            deviceName: me.device.name ?? session.deviceName
+        )
+        try sessionStore.save(updated)
+        return updated
     }
 
     private static func currentDeviceName() -> String {

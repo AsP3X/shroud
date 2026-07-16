@@ -12,6 +12,7 @@ final class SessionController {
     var isSignedIn: Bool { session != nil }
     var username: String? { session?.username }
     var userID: UUID? { session?.userID }
+    var shareCode: String? { session?.shareCode }
     var bearerToken: String? { session?.token }
 
     init(authService: AuthService = AuthService()) {
@@ -36,13 +37,14 @@ final class SessionController {
     }
 
     /// Probes `/auth/me`; clears Keychain session on 401/unauthorized.
+    /// Also refreshes profile fields (username, share code) into Keychain.
     func validateSessionIfNeeded() async {
         guard let session else {
             sessionValidated = false
             return
         }
         do {
-            _ = try await authService.fetchMe(session: session)
+            self.session = try await authService.refreshProfile(session: session)
             sessionValidated = true
         } catch let api as APIError {
             if case let .server(_, _, status) = api, status == 401 {

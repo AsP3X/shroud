@@ -16,6 +16,8 @@ struct SessionStore: Sendable {
         let token: String
         let userID: UUID
         let username: String
+        /// Short public share code for QR / links (may be nil for pre-migration sessions).
+        let shareCode: String?
         let deviceID: UUID
         let deviceName: String?
     }
@@ -32,10 +34,12 @@ struct SessionStore: Sendable {
             return nil
         }
         let deviceName = read(key: Key.deviceName)
+        let shareCode = read(key: Key.shareCode)
         return Session(
             token: token,
             userID: userID,
             username: username,
+            shareCode: shareCode,
             deviceID: deviceID,
             deviceName: deviceName
         )
@@ -46,6 +50,11 @@ struct SessionStore: Sendable {
         try write(key: Key.userID, value: session.userID.uuidString)
         try write(key: Key.username, value: session.username)
         try write(key: Key.deviceID, value: session.deviceID.uuidString)
+        if let shareCode = session.shareCode, !shareCode.isEmpty {
+            try write(key: Key.shareCode, value: shareCode)
+        } else {
+            delete(key: Key.shareCode)
+        }
         if let deviceName = session.deviceName {
             try write(key: Key.deviceName, value: deviceName)
         } else {
@@ -57,6 +66,7 @@ struct SessionStore: Sendable {
         delete(key: Key.token)
         delete(key: Key.userID)
         delete(key: Key.username)
+        delete(key: Key.shareCode)
         delete(key: Key.deviceID)
         delete(key: Key.deviceName)
     }
@@ -67,6 +77,7 @@ struct SessionStore: Sendable {
         static let token = "session_token"
         static let userID = "user_id"
         static let username = "username"
+        static let shareCode = "share_code"
         static let deviceID = "device_id"
         static let deviceName = "device_name"
     }

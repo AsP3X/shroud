@@ -7,9 +7,7 @@ struct ContactsView: View {
 
     @State private var searchText = ""
     @State private var showAdd = false
-    @State private var addUserID = ""
-    @State private var addError: String?
-    @State private var isAdding = false
+    @State private var showMyQR = false
     @State private var sortAscending = true
     /// Dedicated path type for this tab’s stack (avoids NavigationLink + outer path conflicts).
     @State private var path: [ChatRoute] = []
@@ -48,15 +46,27 @@ struct ContactsView: View {
                 .font(.system(size: 16))
                 .foregroundStyle(Theme.accent)
             } navTrailing: {
-                Button {
-                    showAdd = true
-                } label: {
-                    Image(systemName: "person.badge.plus")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(Theme.accent)
+                HStack(spacing: 14) {
+                    Button {
+                        showMyQR = true
+                    } label: {
+                        Image(systemName: "qrcode")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(Theme.accent)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("My QR code")
+
+                    Button {
+                        showAdd = true
+                    } label: {
+                        Image(systemName: "person.badge.plus")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(Theme.accent)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Add contact")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Add contact")
             } accessory: {
                 SearchField(text: $searchText)
                     .padding(.horizontal, 16)
@@ -102,9 +112,7 @@ struct ContactsView: View {
                         emptyState
                     }
 
-                    if let myID = session.userID {
-                        shareIDFooter(myID)
-                    }
+                    shareFooter
 
                     Color.clear.frame(height: 16)
                 }
@@ -120,10 +128,16 @@ struct ContactsView: View {
                 await messaging.refreshContacts()
             }
             .sheet(isPresented: $showAdd) {
-                addContactSheet
+                AddContactSheet()
+            }
+            .sheet(isPresented: $showMyQR) {
+                MyQRCodeSheet()
             }
             .task {
                 await messaging.refreshContacts()
+                if session.shareCode == nil {
+                    await session.validateSessionIfNeeded()
+                }
             }
         }
     }
@@ -185,71 +199,51 @@ struct ContactsView: View {
             Text(messaging.isLoadingContacts ? "Loading…" : "No contacts yet")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
-            Text("Add someone with their user ID.")
+            Text("Scan a QR code or enter a share code to add someone.")
                 .font(.system(size: 14))
                 .foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 48)
     }
 
-    private func shareIDFooter(_ id: UUID) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Your user ID")
+    private var shareFooter: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Your invite")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Theme.textSecondary)
-            Text(id.uuidString.lowercased())
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(Theme.textPrimary)
-                .textSelection(.enabled)
+
+            if let code = session.shareCode {
+                Text(code)
+                    .font(.system(size: 18, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Theme.textPrimary)
+                    .textSelection(.enabled)
+
+                Text(ContactInviteParser.shareURL(code: code).absoluteString)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(Theme.textSecondary)
+                    .textSelection(.enabled)
+                    .lineLimit(2)
+            } else {
+                Text("Loading share code…")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+
+            Button {
+                showMyQR = true
+            } label: {
+                Label("Show QR code", systemImage: "qrcode")
+                    .font(.system(size: 14, weight: .semibold))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Theme.accent)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
         .padding(.top, 24)
-    }
-
-    private var addContactSheet: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    TextField("User ID (UUID)", text: $addUserID)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .font(.system(.body, design: .monospaced))
-                } footer: {
-                    Text("Ask your contact to share their user ID from Contacts.")
-                }
-                if let addError {
-                    Section {
-                        Text(addError)
-                            .foregroundStyle(Theme.danger)
-                            .font(.system(size: 14))
-                    }
-                }
-            }
-            .navigationTitle("Add Contact")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { showAdd = false }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(isAdding ? "Adding…" : "Add") {
-                        Task {
-                            isAdding = true
-                            addError = await messaging.addContact(byUserIDString: addUserID)
-                            isAdding = false
-                            if addError == nil {
-                                showAdd = false
-                                addUserID = ""
-                            }
-                        }
-                    }
-                    .disabled(isAdding || addUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            }
-        }
-        .presentationDetents([.medium])
     }
 }
 

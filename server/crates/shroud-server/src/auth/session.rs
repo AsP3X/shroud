@@ -15,6 +15,7 @@ use crate::state::AppState;
 pub struct AuthContext {
     pub user_id: Uuid,
     pub username: String,
+    pub share_code: String,
     pub device_id: Uuid,
     pub device_name: Option<String>,
     pub session_id: Uuid,
@@ -27,6 +28,7 @@ struct AuthRow {
     device_name: Option<String>,
     user_id: Uuid,
     username: String,
+    share_code: String,
 }
 
 impl FromRequestParts<AppState> for AuthContext {
@@ -61,7 +63,8 @@ impl FromRequestParts<AppState> for AuthContext {
                 d.id AS device_id,
                 d.name AS device_name,
                 u.id AS user_id,
-                u.username AS username
+                u.username AS username,
+                u.share_code AS share_code
             FROM sessions s
             INNER JOIN devices d ON d.id = s.device_id
             INNER JOIN users u ON u.id = d.user_id
@@ -98,6 +101,7 @@ impl FromRequestParts<AppState> for AuthContext {
         Ok(AuthContext {
             user_id: row.user_id,
             username: row.username,
+            share_code: row.share_code,
             device_id: row.device_id,
             device_name: row.device_name,
             session_id: row.session_id,

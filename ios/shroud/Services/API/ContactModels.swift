@@ -3,6 +3,14 @@ import Foundation
 struct UserCardDTO: Decodable, Equatable, Sendable, Identifiable {
     let id: UUID
     let username: String
+    /// Present on `/users/*` lookups; omitted on contact-request peer cards.
+    let shareCode: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case username
+        case shareCode = "share_code"
+    }
 }
 
 struct ContactRequestDTO: Decodable, Equatable, Sendable, Identifiable {

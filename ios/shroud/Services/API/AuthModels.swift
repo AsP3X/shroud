@@ -48,6 +48,14 @@ struct MeResponse: Decodable, Equatable, Sendable {
 struct UserDTO: Decodable, Equatable, Sendable, Identifiable {
     let id: UUID
     let username: String
+    /// Short public code for QR / deep links (not a secret).
+    let shareCode: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case username
+        case shareCode = "share_code"
+    }
 }
 
 struct DeviceDTO: Decodable, Equatable, Sendable, Identifiable {
