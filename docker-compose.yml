@@ -100,7 +100,7 @@ services:
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
       ICE_SERVERS_JSON: ${ICE_SERVERS_JSON:-}
     ports:
-      - "8080:8080"
+      - "0.0.0.0:8080:8080"
     healthcheck:
       # No curl in slim image — use the binary bind check via /dev/tcp if available,
       # or install nothing and rely on depends_on; prefer wget from busybox alternative.
