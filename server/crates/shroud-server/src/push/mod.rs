@@ -1,6 +1,9 @@
 //! APNs data-push dispatch (opaque ids only; no message content).
 
-use std::path::PathBuf;
+mod client;
+
+pub use client::{ApnsClient, ApnsConfig, ApnsEnvironment, ApnsSendOutcome, apns_config_from_env};
+
 use std::sync::Arc;
 
 use sqlx::PgPool;
@@ -8,71 +11,16 @@ use uuid::Uuid;
 
 use crate::realtime::RealtimeHub;
 
-/// Optional APNs token-auth settings (.p8).
-#[derive(Debug, Clone)]
-pub struct ApnsConfig {
-    pub key_path: PathBuf,
-    pub key_id: String,
-    pub team_id: String,
-    pub topic: String,
-    pub environment: ApnsEnvironment,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ApnsEnvironment {
-    Sandbox,
-    Production,
-}
-
-impl ApnsEnvironment {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Sandbox => "sandbox",
-            Self::Production => "production",
-        }
-    }
-}
-
-/// Loads APNs config from env when complete; otherwise `None` (registration still works).
-pub fn apns_config_from_env() -> Option<ApnsConfig> {
-    let key_path = std::env::var("APNS_KEY_PATH")
-        .ok()
-        .filter(|s| !s.is_empty())?;
-    let key_id = std::env::var("APNS_KEY_ID")
-        .ok()
-        .filter(|s| !s.is_empty())?;
-    let team_id = std::env::var("APNS_TEAM_ID")
-        .ok()
-        .filter(|s| !s.is_empty())?;
-    let topic = std::env::var("APNS_TOPIC").ok().filter(|s| !s.is_empty())?;
-    let environment = match std::env::var("APNS_ENVIRONMENT")
-        .unwrap_or_else(|_| "sandbox".into())
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "production" | "prod" => ApnsEnvironment::Production,
-        _ => ApnsEnvironment::Sandbox,
-    };
-
-    Some(ApnsConfig {
-        key_path: PathBuf::from(key_path),
-        key_id,
-        team_id,
-        topic,
-        environment,
-    })
-}
-
 /// Push dispatcher shared in app state.
 #[derive(Clone)]
 pub struct PushService {
     pool: PgPool,
     realtime: Arc<RealtimeHub>,
-    apns: Option<ApnsConfig>,
+    apns: Option<ApnsClient>,
 }
 
 impl PushService {
-    pub fn new(pool: PgPool, realtime: Arc<RealtimeHub>, apns: Option<ApnsConfig>) -> Self {
+    pub fn new(pool: PgPool, realtime: Arc<RealtimeHub>, apns: Option<ApnsClient>) -> Self {
         Self {
             pool,
             realtime,
@@ -80,10 +28,15 @@ impl PushService {
         }
     }
 
+    /// True when a live APNs client is configured.
+    pub fn is_configured(&self) -> bool {
+        self.apns.is_some()
+    }
+
     /// Sends silent data pushes to a user's devices if none are online on WS.
     ///
     /// Human: Payload is opaque ids only — never ciphertext or previews.
-    /// Agent: CHECKS online via hub/Redis; SELECT push_tokens; logs or APNs send.
+    /// Agent: CHECKS online via hub/Redis; SELECT push_tokens; HTTP/2 APNs or log-only.
     pub async fn notify_new_message_if_offline(
         &self,
         recipient_user_id: Uuid,
@@ -98,13 +51,14 @@ impl PushService {
 
         #[derive(sqlx::FromRow)]
         struct TokenRow {
+            device_id: Uuid,
             apns_token: String,
             environment: String,
         }
 
         let tokens: Vec<TokenRow> = match sqlx::query_as(
             r#"
-            SELECT pt.apns_token, pt.environment
+            SELECT pt.device_id, pt.apns_token, pt.environment
             FROM push_tokens pt
             INNER JOIN devices d ON d.id = pt.device_id
             WHERE d.user_id = $1
@@ -133,36 +87,71 @@ impl PushService {
             "peer_user_id": peer_user_id,
         });
 
-        match &self.apns {
-            None => {
-                // Human: Registration works without credentials; live send needs APNS_* env.
-                tracing::info!(
-                    %recipient_user_id,
-                    token_count = tokens.len(),
-                    %message_id,
-                    "apns data push (not configured — set APNS_KEY_PATH/KEY_ID/TEAM_ID/TOPIC)"
-                );
-            }
-            Some(config) => {
-                for row in tokens {
-                    // Prefer device-registered environment; config is the signing identity.
+        let Some(client) = &self.apns else {
+            // Human: Registration works without credentials; live send needs APNS_* env.
+            tracing::info!(
+                %recipient_user_id,
+                token_count = tokens.len(),
+                %message_id,
+                "apns data push (not configured — set APNS_KEY_PATH or APNS_KEY_PEM + KEY_ID/TEAM_ID/TOPIC)"
+            );
+            return;
+        };
+
+        for row in tokens {
+            let env = ApnsEnvironment::parse(&row.environment);
+            let outcome = client
+                .send_data_push(&row.apns_token, env, &payload)
+                .await;
+
+            match outcome {
+                ApnsSendOutcome::Accepted { apns_id } => {
                     tracing::info!(
                         %recipient_user_id,
                         %message_id,
-                        apns_env = %row.environment,
-                        topic = %config.topic,
-                        key_id = %config.key_id,
-                        "apns data push dispatch (wire client uses token auth; payload opaque)"
-                    );
-                    tracing::debug!(
-                        target: "shroud_server::push",
-                        payload = %payload,
-                        token_prefix = %row.apns_token.chars().take(8).collect::<String>()
+                        device_id = %row.device_id,
+                        apns_env = env.as_str(),
+                        topic = %client.topic(),
+                        ?apns_id,
+                        "apns data push accepted"
                     );
                 }
-                // Full HTTP/2 APNs client (a2 / hyper) can replace the log dispatch above
-                // without changing the public API or payload shape.
+                ApnsSendOutcome::InvalidToken { reason, status } => {
+                    tracing::warn!(
+                        %recipient_user_id,
+                        device_id = %row.device_id,
+                        %reason,
+                        status,
+                        "apns invalid token — removing"
+                    );
+                    if let Err(err) = delete_push_token(&self.pool, row.device_id).await {
+                        tracing::warn!(error = %err, device_id = %row.device_id, "delete push token failed");
+                    }
+                }
+                ApnsSendOutcome::Failed { reason, status } => {
+                    tracing::warn!(
+                        %recipient_user_id,
+                        %message_id,
+                        device_id = %row.device_id,
+                        apns_env = env.as_str(),
+                        %reason,
+                        status,
+                        "apns data push failed"
+                    );
+                }
             }
         }
     }
+}
+
+async fn delete_push_token(pool: &PgPool, device_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        DELETE FROM push_tokens WHERE device_id = $1
+        "#,
+    )
+    .bind(device_id)
+    .execute(pool)
+    .await?;
+    Ok(())
 }

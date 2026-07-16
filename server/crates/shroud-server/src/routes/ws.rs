@@ -1,4 +1,4 @@
-//! WebSocket endpoint with first-message session auth.
+//! WebSocket endpoint with first-message session auth, typing, and presence.
 
 use std::time::Duration;
 
@@ -9,9 +9,12 @@ use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::time::timeout;
+use uuid::Uuid;
 
 use crate::auth::hash_token;
 use crate::error::AppError;
+use crate::routes::contacts::are_contacts;
+use crate::routes::presence::{max_last_seen, notify_presence_to_contacts, touch_device_last_seen};
 use crate::state::AppState;
 
 const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
@@ -20,6 +23,8 @@ const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
 struct ClientMessage {
     r#type: String,
     token: Option<String>,
+    peer_user_id: Option<Uuid>,
+    is_typing: Option<bool>,
 }
 
 /// `GET /ws` — upgrade to WebSocket.
@@ -97,6 +102,11 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
     let mut rx = state.realtime.subscribe(user_id, device_id).await;
 
+    // Touch last_seen and announce online to contacts.
+    if let Ok(last_seen) = touch_device_last_seen(&state.pool, device_id).await {
+        notify_presence_to_contacts(&state, user_id, true, Some(last_seen)).await;
+    }
+
     loop {
         tokio::select! {
             outbound = rx.recv() => {
@@ -115,9 +125,10 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     Some(Ok(Message::Ping(data))) => {
                         let _ = sink.send(Message::Pong(data)).await;
                     }
-                    Some(Ok(Message::Text(_))) | Some(Ok(Message::Binary(_))) | Some(Ok(Message::Pong(_))) => {
-                        // Ignore client messages after auth (typing later).
+                    Some(Ok(Message::Text(text))) => {
+                        handle_client_text(&state, user_id, device_id, &text).await;
                     }
+                    Some(Ok(Message::Binary(_))) | Some(Ok(Message::Pong(_))) => {}
                     Some(Err(_)) => break,
                 }
             }
@@ -125,7 +136,75 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     }
 
     state.realtime.unsubscribe(user_id, device_id).await;
+
+    // Update last_seen; only announce offline if no remaining sessions for this user.
+    let last_seen = touch_device_last_seen(&state.pool, device_id).await.ok();
+    let still_online = state.realtime.is_user_online(user_id).await;
+    if !still_online {
+        let last = match last_seen {
+            Some(ts) => Some(ts),
+            None => max_last_seen(&state.pool, user_id).await.ok().flatten(),
+        };
+        notify_presence_to_contacts(&state, user_id, false, last).await;
+    }
+
     tracing::info!(%user_id, %device_id, "ws.disconnected");
+}
+
+async fn handle_client_text(state: &AppState, user_id: Uuid, device_id: Uuid, text: &str) {
+    let parsed: ClientMessage = match serde_json::from_str(text) {
+        Ok(m) => m,
+        Err(_) => {
+            tracing::debug!(%user_id, "ws.client invalid json");
+            return;
+        }
+    };
+
+    match parsed.r#type.as_str() {
+        "typing" => {
+            let Some(peer_user_id) = parsed.peer_user_id else {
+                tracing::debug!(%user_id, "ws.typing missing peer_user_id");
+                return;
+            };
+            if peer_user_id == user_id {
+                return;
+            }
+            let is_typing = parsed.is_typing.unwrap_or(true);
+
+            match are_contacts(&state.pool, user_id, peer_user_id).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    tracing::debug!(%user_id, %peer_user_id, "ws.typing not contacts");
+                    return;
+                }
+                Err(err) => {
+                    tracing::warn!(error = %err, "ws.typing contacts check failed");
+                    return;
+                }
+            }
+
+            let event = json!({
+                "type": "typing",
+                "user_id": user_id,
+                "device_id": device_id,
+                "peer_user_id": peer_user_id,
+                "is_typing": is_typing,
+            });
+            if let Ok(payload) = serde_json::to_string(&event) {
+                // Only the peer needs typing; exclude our own devices by not listing self.
+                state
+                    .realtime
+                    .publish_to_users([peer_user_id], None, &payload)
+                    .await;
+            }
+        }
+        "auth" => {
+            // Already authenticated; ignore duplicate auth frames.
+        }
+        other => {
+            tracing::debug!(%user_id, r#type = other, "ws.client unknown type");
+        }
+    }
 }
 
 async fn authenticate_text(

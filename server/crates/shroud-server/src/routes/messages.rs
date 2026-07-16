@@ -471,6 +471,230 @@ pub async fn list_conversations(
     Ok(Json(ConversationsResponse { conversations }))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct BulkReadRequest {
+    pub peer_user_id: Uuid,
+    /// Marks all messages from the peer in this conversation with
+    /// `(created_at, id) <=` this message as read.
+    pub up_to_message_id: Uuid,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BulkReadResponse {
+    pub marked: u64,
+    pub read_at: DateTime<Utc>,
+}
+
+/// `POST /messages/:id/read` — user-level read receipt (recipient only).
+pub async fn mark_read(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path(message_id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    let meta = load_readable_message(&state.pool, message_id, auth.user_id).await?;
+    let read_at = insert_read(&state.pool, message_id, auth.user_id).await?;
+    fanout_message_read(
+        &state,
+        message_id,
+        meta.conversation_id,
+        auth.user_id,
+        auth.device_id,
+        meta.user_a_id,
+        meta.user_b_id,
+        read_at,
+    )
+    .await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /messages/read` — mark all messages from peer up to `up_to_message_id` as read.
+pub async fn mark_read_bulk(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Json(body): Json<BulkReadRequest>,
+) -> Result<Json<BulkReadResponse>, AppError> {
+    if body.peer_user_id == auth.user_id {
+        return Err(AppError::validation("peer_user_id cannot be yourself."));
+    }
+    if !are_contacts(&state.pool, auth.user_id, body.peer_user_id).await? {
+        return Err(AppError::forbidden(
+            "You can only mark messages from accepted contacts as read.",
+        ));
+    }
+
+    let meta = load_readable_message(&state.pool, body.up_to_message_id, auth.user_id).await?;
+    // Cursor message must be in the conversation with this peer.
+    let peer_in_conv =
+        meta.user_a_id == body.peer_user_id || meta.user_b_id == body.peer_user_id;
+    if !peer_in_conv {
+        return Err(AppError::validation(
+            "up_to_message_id is not in a conversation with peer_user_id.",
+        ));
+    }
+
+    let now = Utc::now();
+    // Mark all peer→me messages in this conversation up to the cursor (inclusive).
+    let result = sqlx::query(
+        r#"
+        INSERT INTO message_reads (message_id, user_id, read_at)
+        SELECT m.id, $1, $2
+        FROM messages m
+        WHERE m.conversation_id = $3
+          AND m.sender_user_id = $4
+          AND m.sender_user_id <> $1
+          AND (m.created_at, m.id) <= ($5, $6)
+        ON CONFLICT (message_id, user_id) DO NOTHING
+        "#,
+    )
+    .bind(auth.user_id)
+    .bind(now)
+    .bind(meta.conversation_id)
+    .bind(body.peer_user_id)
+    .bind(meta.created_at)
+    .bind(body.up_to_message_id)
+    .execute(&state.pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("bulk read insert failed: {err}")))?;
+
+    let marked = result.rows_affected();
+    if marked > 0 {
+        let event = serde_json::json!({
+            "type": "message.read",
+            "message_id": body.up_to_message_id,
+            "conversation_id": meta.conversation_id,
+            "user_id": auth.user_id,
+            "device_id": auth.device_id,
+            "read_at": now,
+            "up_to_message_id": body.up_to_message_id,
+            "marked": marked,
+        });
+        if let Ok(payload) = serde_json::to_string(&event) {
+            state
+                .realtime
+                .publish_to_users(
+                    [meta.user_a_id, meta.user_b_id],
+                    Some(auth.device_id),
+                    &payload,
+                )
+                .await;
+        }
+    }
+
+    tracing::info!(
+        user_id = %auth.user_id,
+        peer = %body.peer_user_id,
+        marked,
+        "messages.read_bulk ok"
+    );
+
+    Ok(Json(BulkReadResponse {
+        marked,
+        read_at: now,
+    }))
+}
+
+#[derive(Debug, FromRow)]
+struct ReadableMessage {
+    conversation_id: Uuid,
+    sender_user_id: Uuid,
+    user_a_id: Uuid,
+    user_b_id: Uuid,
+    created_at: DateTime<Utc>,
+}
+
+/// Load message if caller is a conversation participant and is not the sender.
+async fn load_readable_message(
+    pool: &sqlx::PgPool,
+    message_id: Uuid,
+    reader_user_id: Uuid,
+) -> Result<ReadableMessage, AppError> {
+    let row = sqlx::query_as::<_, ReadableMessage>(
+        r#"
+        SELECT m.conversation_id, m.sender_user_id, c.user_a_id, c.user_b_id, m.created_at
+        FROM messages m
+        INNER JOIN conversations c ON c.id = m.conversation_id
+        WHERE m.id = $1
+        "#,
+    )
+    .bind(message_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("load message for read failed: {err}")))?
+    .ok_or_else(|| AppError::not_found("Message not found."))?;
+
+    let is_participant = row.user_a_id == reader_user_id || row.user_b_id == reader_user_id;
+    if !is_participant {
+        return Err(AppError::not_found("Message not found."));
+    }
+    if row.sender_user_id == reader_user_id {
+        return Err(AppError::validation(
+            "Cannot mark your own messages as read.",
+        ));
+    }
+    Ok(row)
+}
+
+async fn insert_read(
+    pool: &sqlx::PgPool,
+    message_id: Uuid,
+    user_id: Uuid,
+) -> Result<DateTime<Utc>, AppError> {
+    let now = Utc::now();
+    sqlx::query(
+        r#"
+        INSERT INTO message_reads (message_id, user_id, read_at)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (message_id, user_id) DO NOTHING
+        "#,
+    )
+    .bind(message_id)
+    .bind(user_id)
+    .bind(now)
+    .execute(pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("insert read failed: {err}")))?;
+
+    // Prefer stored read_at when already present (idempotent).
+    let stored: DateTime<Utc> = sqlx::query_scalar(
+        r#"
+        SELECT read_at FROM message_reads WHERE message_id = $1 AND user_id = $2
+        "#,
+    )
+    .bind(message_id)
+    .bind(user_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("fetch read_at failed: {err}")))?;
+    Ok(stored)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn fanout_message_read(
+    state: &AppState,
+    message_id: Uuid,
+    conversation_id: Uuid,
+    reader_user_id: Uuid,
+    reader_device_id: Uuid,
+    user_a_id: Uuid,
+    user_b_id: Uuid,
+    read_at: DateTime<Utc>,
+) {
+    let event = serde_json::json!({
+        "type": "message.read",
+        "message_id": message_id,
+        "conversation_id": conversation_id,
+        "user_id": reader_user_id,
+        "device_id": reader_device_id,
+        "read_at": read_at,
+    });
+    if let Ok(payload) = serde_json::to_string(&event) {
+        state
+            .realtime
+            .publish_to_users([user_a_id, user_b_id], Some(reader_device_id), &payload)
+            .await;
+    }
+}
+
 /// `POST /messages/:id/delivered`
 pub async fn mark_delivered(
     State(state): State<AppState>,

@@ -27,7 +27,7 @@ use tracing::{Level, Span};
 
 use crate::config::Config;
 use crate::error::AppError;
-use crate::push::{PushService, apns_config_from_env};
+use crate::push::{ApnsClient, PushService, apns_config_from_env};
 use crate::realtime::RealtimeHub;
 use crate::state::AppState;
 
@@ -109,12 +109,29 @@ pub async fn run() -> Result<(), AppError> {
         tracing::info!("realtime fan-out: in-process only (set REDIS_URL for multi-replica)");
     }
 
-    let apns = apns_config_from_env();
-    if apns.is_some() {
-        tracing::info!("apns: token auth configured");
-    } else {
-        tracing::info!("apns: credentials not set (token register works; send is log-only)");
-    }
+    let apns = match apns_config_from_env() {
+        None => {
+            tracing::info!(
+                "apns: credentials not set (token register works; send is log-only)"
+            );
+            None
+        }
+        Some(config) => match ApnsClient::new(config) {
+            Ok(client) => {
+                tracing::info!(
+                    topic = %client.topic(),
+                    key_id = %client.key_id(),
+                    "apns: HTTP/2 client ready (token auth)"
+                );
+                Some(client)
+            }
+            Err(err) => {
+                return Err(AppError::Internal(format!(
+                    "APNs configured but client failed to initialize: {err}"
+                )));
+            }
+        },
+    };
     let push = PushService::new(pool.clone(), realtime.clone(), apns);
 
     let state = AppState {

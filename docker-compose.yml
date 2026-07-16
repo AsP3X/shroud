@@ -87,6 +87,13 @@ services:
       NEBULAR_MEDIA_BUCKET: shroud-media
       HOST: 0.0.0.0
       PORT: "8080"
+      # Optional live APNs (pass through host env when set). Unset = register only / log send.
+      APNS_KEY_PATH: ${APNS_KEY_PATH:-}
+      APNS_KEY_PEM: ${APNS_KEY_PEM:-}
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+      APNS_TOPIC: ${APNS_TOPIC:-}
+      APNS_ENVIRONMENT: ${APNS_ENVIRONMENT:-sandbox}
     ports:
       - "8080:8080"
     healthcheck:

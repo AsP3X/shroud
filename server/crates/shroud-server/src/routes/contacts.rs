@@ -622,7 +622,7 @@ async fn insert_contact_pair(
     Ok(())
 }
 
-async fn are_contacts(pool: &sqlx::PgPool, a: Uuid, b: Uuid) -> Result<bool, AppError> {
+pub(crate) async fn are_contacts(pool: &sqlx::PgPool, a: Uuid, b: Uuid) -> Result<bool, AppError> {
     sqlx::query_scalar(
         r#"
         SELECT EXISTS(
@@ -635,6 +635,22 @@ async fn are_contacts(pool: &sqlx::PgPool, a: Uuid, b: Uuid) -> Result<bool, App
     .fetch_one(pool)
     .await
     .map_err(|err| AppError::Internal(format!("contacts check failed: {err}")))
+}
+
+/// Returns user IDs of accepted contacts for `user_id` (directed edges owned by user).
+pub(crate) async fn list_contact_user_ids(
+    pool: &sqlx::PgPool,
+    user_id: Uuid,
+) -> Result<Vec<Uuid>, AppError> {
+    sqlx::query_scalar(
+        r#"
+        SELECT contact_user_id FROM contacts WHERE user_id = $1
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("list contact ids failed: {err}")))
 }
 
 async fn pending_exists(pool: &sqlx::PgPool, from: Uuid, to: Uuid) -> Result<bool, AppError> {

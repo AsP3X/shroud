@@ -15,6 +15,7 @@ pub mod health;
 pub mod keys;
 pub mod media;
 pub mod messages;
+pub mod presence;
 pub mod push;
 pub mod users;
 pub mod ws;
@@ -59,11 +60,14 @@ pub fn router() -> Router<AppState> {
             .route("/blocks/{user_id}", delete(blocks::delete_block))
             .route("/messages", post(messages::send_message))
             .route("/messages", get(messages::list_messages))
+            .route("/messages/read", post(messages::mark_read_bulk))
             .route("/messages/{id}/delivered", post(messages::mark_delivered))
+            .route("/messages/{id}/read", post(messages::mark_read))
             .route("/messages/{id}", delete(messages::delete_message))
             .route("/conversations", get(messages::list_conversations))
             .route("/media/uploads", post(media::create_upload))
             .route("/media/{id}/download", post(media::create_download))
+            .route("/presence/{user_id}", get(presence::get_presence))
             .route("/ws", get(ws::ws_upgrade))
             .route("/push/token", put(push::put_token)),
     )

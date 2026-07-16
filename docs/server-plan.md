@@ -4,8 +4,8 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 
 | | |
 | --- | --- |
-| **Status** | Server vertical slice through **APNs registration + offline push gate** **implemented**. Live HTTP/2 APNs client still log-backed until .p8 wired in ops |
-| **Last updated** | 2026-07-15 |
+| **Status** | Server vertical slice through **m8 APNs** (register + offline gate + live HTTP/2 token-auth client when `APNS_*` set). Next: **m9 Calls** |
+| **Last updated** | 2026-07-16 |
 | **Related** | [architecture.md](./architecture.md) · [thought-collection.md](../thought-collection.md) · [README.md](../README.md) |
 
 ---
@@ -98,7 +98,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Real-time m4 | HTTP send + history (done) |
 | Real-time 4b | **WebSocket** in-process fan-out (**done**) |
 | Redis fan-out | **Optional** when `REDIS_URL` set: local hub + pub/sub on `shroud:user:{user_id}` |
-| WS events | `message.new`, `message.delivered` |
+| WS events | `message.new`, `message.delivered`, `message.read`, `message.deleted`, `typing`, `presence.update` |
 | WS recipients | Peer devices + sender’s **other** devices (not the sending device for new) |
 | Delivery receipts | `POST /messages/:id/delivered` for current device (m4); read later |
 | Retention | Indefinite until user delete |
@@ -394,6 +394,19 @@ Extend `messages` (or keep ciphertext as envelope that may contain media keys; s
 
 - Optional `media_object_id UUID NULL REFERENCES media_objects` on `messages` via new migration — link server-side for ACL.
 
+### Milestone 6 — Read receipts schema (locked)
+
+#### `message_reads`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `message_id` | `UUID` NOT NULL FK → `messages` CASCADE | |
+| `user_id` | `UUID` NOT NULL FK → `users` CASCADE | Reader (recipient) |
+| `read_at` | `TIMESTAMPTZ` NOT NULL | |
+| PK | `(message_id, user_id)` | User-level (not per-device) |
+
+Presence uses existing `devices.last_seen_at` + in-process / Redis online sets — no extra tables.
+
 ### Milestone 7 — Deletes schema (locked)
 
 #### `messages` columns (add)
@@ -494,9 +507,11 @@ Env-tunable later. Key pattern: `rl:{scope}:{id}`.
 
 ### Presence and push
 
-- Typing ephemeral; online/last-seen via Redis TTL; contacts only.
+- **Typing** — ephemeral WS only: client `{ "type": "typing", "peer_user_id", "is_typing" }` → peer gets same shape plus `user_id` / `device_id`. Contacts only; no DB.
+- **Online / last-seen** — online = at least one live WS (in-process hub + optional Redis `shroud:online:{user_id}` set). `last_seen_at` = max `devices.last_seen_at`. `GET /presence/:user_id` contacts-only (self always allowed). On connect/disconnect, fan-out `presence.update` to accepted contacts.
+- **Read receipts** — user-level (`message_reads`); not per-device. Recipient only; idempotent. Single + bulk up-to cursor. WS `message.read`.
 - WS must auth within 10s.
-- Data APNs with opaque ids when offline.
+- **Data APNs** when recipient has **no** online WS: silent `content-available` payload with opaque `message_id` / `conversation_id` / `peer_user_id` only. Requires `APNS_KEY_PATH` or `APNS_KEY_PEM` + `APNS_KEY_ID` + `APNS_TEAM_ID` + `APNS_TOPIC`. Per-device host from `push_tokens.environment`. Permanent APNs token errors delete the row.
 
 ### Calls (later)
 
@@ -514,9 +529,9 @@ Env-tunable later. Key pattern: `rl:{scope}:{id}`.
 | **4** | **Messages (HTTP)** | **Done** — migration 005; send/list/conversations/delivered |
 | **4b** | **WebSocket** | **Done** — `/ws`, in-process hub, message.new + message.delivered |
 | **5** | **Media** | **Done** — migration 006; upload/download presign (stub/Nebular); media on messages |
-| 6 | Receipts & presence | Read receipts; typing; online/last-seen |
+| **6** | **Receipts & presence** | **Done** — migration 009 `message_reads`; `POST /messages/:id/read` + bulk; `GET /presence/:user_id`; WS `typing` + `presence.update` + `message.read` |
 | **7** | **Deletes** | **Done** — migration 007; for me / everyone; account delete; message.deleted WS |
-| 8 | APNs | Tokens; opaque data push |
+| **8** | **APNs** | **Done** — migration 008; `PUT /push/token`; offline WS gate; HTTP/2 ES256 JWT client (`.p8` / `APNS_KEY_PEM`); drop invalid tokens |
 | 9 | Calls | Signaling + coturn; VoIP push |
 
 **Compose:** Postgres + Redis + Nebular + API → later + coturn.
@@ -999,11 +1014,116 @@ Optional field: `"media_object_id": "<uuid>"` required when `content_type` is `m
 - On `POST /messages/:id/delivered`: notify online devices of the **message sender** (other devices / peer may care — notify **sender_user**’s online devices and peer’s other devices; minimum: notify **sender’s devices** so ticks update).
 - **Recommended delivered notify:** all online devices of both conversation users except the device that just acked.
 
-#### Not in 4b
+#### Not in 4b (partially lifted in m6)
 
-- Redis pub/sub
-- Typing / presence
-- Client→server messages beyond `auth` (ignore or nack unknown types)
+- Redis pub/sub — optional when `REDIS_URL` set
+- Typing / presence — **m6**
+- Client→server after auth: **`typing`** (m6); unknown types ignored
+
+### Milestone 6 — Presence & read receipts (locked)
+
+#### `GET /presence/:user_id` → `200`
+
+```json
+{
+  "user_id": "<uuid>",
+  "online": false,
+  "last_seen_at": "2026-07-15T12:00:00Z"
+}
+```
+
+- Self always allowed. Other users: **accepted contacts only** → else `403` + `FORBIDDEN`.
+- `online`: any live WebSocket for that user (local hub / Redis online set).
+- `last_seen_at`: max `devices.last_seen_at` (omitted if null).
+
+#### `POST /messages/:id/read` → `204`
+
+- Caller must be a conversation participant and **not** the sender.
+- Upserts `message_reads (message_id, user_id)`; idempotent.
+- WS fan-out to conversation users except acking device:
+
+```json
+{
+  "type": "message.read",
+  "message_id": "<uuid>",
+  "conversation_id": "<uuid>",
+  "user_id": "<reader>",
+  "device_id": "<device>",
+  "read_at": "..."
+}
+```
+
+#### `POST /messages/read` → `200`
+
+```json
+{
+  "peer_user_id": "<uuid>",
+  "up_to_message_id": "<uuid>"
+}
+```
+
+Marks all messages **from** `peer_user_id` **to** the caller in that conversation with `(created_at, id) <=` the cursor message. Response:
+
+```json
+{ "marked": 2, "read_at": "..." }
+```
+
+WS `message.read` includes `up_to_message_id` + `marked` when bulk.
+
+#### WebSocket client → server (after auth)
+
+```json
+{ "type": "typing", "peer_user_id": "<uuid>", "is_typing": true }
+```
+
+Server → peer only (contacts required):
+
+```json
+{
+  "type": "typing",
+  "user_id": "<sender>",
+  "device_id": "<device>",
+  "peer_user_id": "<uuid>",
+  "is_typing": true
+}
+```
+
+#### WebSocket server → contacts (connect / full disconnect)
+
+```json
+{
+  "type": "presence.update",
+  "user_id": "<uuid>",
+  "online": true,
+  "last_seen_at": "..."
+}
+```
+
+Offline fan-out only when the user has **no** remaining online devices.
+
+### Milestone 8 — Push (locked)
+
+#### `PUT /push/token` → `204`
+
+```json
+{ "token": "<apns device token>", "environment": "sandbox" }
+```
+
+- `environment`: `sandbox` | `production` (selects APNs host at send time).
+- Upserts one token per `device_id`.
+
+#### Offline data push (server-internal)
+
+On successful `POST /messages`, if the **peer** has no online WebSocket:
+
+1. Load `push_tokens` for peer's devices.
+2. If APNs client not configured → log only.
+3. Else HTTP/2 POST `https://api[.sandbox].push.apple.com/3/device/{token}` with:
+   - JWT bearer (`iss` = team, `kid` = key id, ES256, cached ~50m)
+   - `apns-topic`, `apns-push-type: background`, `apns-priority: 5`
+   - Body: `{ "aps": { "content-available": 1 }, "message_id", "conversation_id", "peer_user_id" }` only
+
+`BadDeviceToken` / `Unregistered` / `DeviceTokenNotForTopic` / `ExpiredToken` → delete token row.
 
 ### Milestone 7 — Deletes (locked)
 
@@ -1041,8 +1161,6 @@ Add optional:
 
 | Area | Routes |
 | --- | --- |
-| Push | `PUT /push/token` |
-| Real-time | Redis multi-replica fan-out |
 | Calls | signaling |
 
 ---
@@ -1059,7 +1177,10 @@ Add optional:
 | `NEBULAR_URL` | Nebular base URL |
 | `NEBULAR_SIGNING_SECRET` | Presign material (name may match Nebular docs) |
 | `NEBULAR_MEDIA_BUCKET` | Default `shroud-media` |
-| APNs credentials | When push ships |
+| `APNS_KEY_PATH` or `APNS_KEY_PEM` | PKCS#8 AuthKey `.p8` (path or inline PEM) |
+| `APNS_KEY_ID` | Key ID from Apple developer |
+| `APNS_TEAM_ID` | Apple Team ID (JWT `iss`) |
+| `APNS_TOPIC` | App bundle id (`apns-topic`) |
 
 ---
 
@@ -1075,10 +1196,11 @@ Add optional:
 
 ## Still open
 
-1. **Envelope ciphertext encoding** — client crypto; server stores opaque bytes (messaging milestone).
-2. **Nebular presign wire format** — when media lands.
+1. **Envelope ciphertext encoding** — client crypto; server stores opaque bytes.
+2. **Nebular presign wire format** — real signing when not stub; Nebular in Compose for local.
 3. **Multi-device key fetch for send** — m2 is single best-device GET; messaging will likely add list/fetch-all-device bundles for fan-out.
-4. **Redis rate-limit wiring** — budgets documented; enforce when Redis is in the stack (auth/keys can ship without Redis first).
+4. **Redis rate-limit wiring** — budgets documented; not fully enforced yet.
+5. **Calls** — signaling + coturn (milestone 9); VoIP push for CallKit.
 
 ---
 
