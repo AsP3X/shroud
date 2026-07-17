@@ -291,3 +291,133 @@ async fn rejects_oversized_otpk_batch() {
     let body = json_body(put).await;
     assert_eq!(body["error"]["code"], "VALIDATION_ERROR");
 }
+
+fn sample_bundle_with_reg(registration_id: i32, otpk_count: usize) -> Value {
+    let mut bundle = sample_bundle(otpk_count);
+    bundle["registration_id"] = json!(registration_id);
+    bundle
+}
+
+#[tokio::test]
+async fn list_bundles_returns_all_devices_and_consumes_otpk_each() {
+    let Some(app) = test_app().await else {
+        eprintln!(
+            "skipping list_bundles_returns_all_devices_and_consumes_otpk_each: DATABASE_URL unavailable"
+        );
+        return;
+    };
+
+    let (username, password) = unique_user();
+    let register_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/register")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "username": username,
+                        "password": password,
+                        "device_name": "Device One"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(register_resp.status(), StatusCode::CREATED);
+    let reg_body = json_body(register_resp).await;
+    let token_d1 = reg_body["token"].as_str().unwrap().to_string();
+    let user_a = reg_body["user"]["id"].as_str().unwrap().to_string();
+
+    // Second device for the same account (no device_id → new device).
+    let login2 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "username": username,
+                        "password": password,
+                        "device_name": "Device Two"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(login2.status(), StatusCode::OK);
+    let login2_body = json_body(login2).await;
+    let token_d2 = login2_body["token"].as_str().unwrap().to_string();
+    assert_ne!(login2_body["device"]["id"], reg_body["device"]["id"]);
+
+    for (token, reg_id) in [(&token_d1, 11), (&token_d2, 22)] {
+        let put = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/v1/keys/bundle")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(sample_bundle_with_reg(reg_id, 2).to_string()))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(put.status(), StatusCode::NO_CONTENT);
+    }
+
+    let (token_b, _) = register(&app).await;
+    let list = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/keys/bundles/{user_a}"))
+                .header(header::AUTHORIZATION, format!("Bearer {token_b}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(list.status(), StatusCode::OK);
+    let list_json = json_body(list).await;
+    assert_eq!(list_json["user_id"], user_a);
+    let bundles = list_json["bundles"].as_array().expect("bundles array");
+    assert_eq!(bundles.len(), 2);
+    for b in bundles {
+        assert!(b["device_id"].is_string());
+        assert!(b["one_time_pre_key"]["key_id"].is_number());
+        assert!(b["signed_pre_key"]["key_id"].is_number());
+    }
+    let regs: Vec<i64> = bundles
+        .iter()
+        .map(|b| b["registration_id"].as_i64().unwrap())
+        .collect();
+    assert!(regs.contains(&11));
+    assert!(regs.contains(&22));
+
+    // Each device should have lost one OTPK (2 → 1).
+    for token in [&token_d1, &token_d2] {
+        let status = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/keys/status")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(status.status(), StatusCode::OK);
+        let status_json = json_body(status).await;
+        assert_eq!(status_json["otpk_count"], 1);
+    }
+}

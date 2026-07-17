@@ -69,6 +69,34 @@ struct PeerKeyBundleResponse: Decodable, Equatable, Sendable {
     }
 }
 
+/// One device entry from `GET /keys/bundles/:user_id`.
+struct PeerDeviceBundle: Decodable, Equatable, Sendable {
+    let deviceId: UUID
+    let registrationId: Int
+    let identityKey: String
+    let signedPreKey: SignedPreKeyDTO
+    let oneTimePreKey: OneTimePreKeyDTO?
+
+    enum CodingKeys: String, CodingKey {
+        case deviceId = "device_id"
+        case registrationId = "registration_id"
+        case identityKey = "identity_key"
+        case signedPreKey = "signed_pre_key"
+        case oneTimePreKey = "one_time_pre_key"
+    }
+}
+
+/// Multi-device fan-out response from `GET /keys/bundles/:user_id`.
+struct PeerKeyBundlesResponse: Decodable, Equatable, Sendable {
+    let userId: UUID
+    let bundles: [PeerDeviceBundle]
+
+    enum CodingKeys: String, CodingKey {
+        case userId = "user_id"
+        case bundles
+    }
+}
+
 /// Identity-only response from `GET /keys/identity/:user_id` (no OTPK consume).
 struct PeerIdentityResponse: Decodable, Equatable, Sendable {
     let userId: UUID

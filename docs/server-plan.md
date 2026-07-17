@@ -695,7 +695,7 @@ Uploads/replaces keys for the **authenticated current device**.
 
 #### `GET /keys/bundle/:user_id` → `200`
 
-Fetch a pre-key bundle to start a session with that user (any authenticated caller in m2).
+Fetch a pre-key bundle for the **most recently active** publishable device (any authenticated caller). Prefer multi-device list for fan-out.
 
 ```json
 {
@@ -718,6 +718,37 @@ Fetch a pre-key bundle to start a session with that user (any authenticated call
 - `one_time_pre_key` **omitted** if pool empty (not an error).
 - If user has **no** device with identity+SPK → `404` + `KEYS_REQUIRED`.
 - OTPK row deleted in the same transaction as the read when present.
+
+#### `GET /keys/bundles/:user_id` → `200`
+
+All publishable devices (identity + signed pre-key) for multi-device sealed send.
+
+```json
+{
+  "user_id": "<uuid>",
+  "bundles": [
+    {
+      "device_id": "<uuid>",
+      "registration_id": 12345,
+      "identity_key": "<base64>",
+      "signed_pre_key": {
+        "key_id": 1,
+        "public_key": "<base64>",
+        "signature": "<base64>"
+      },
+      "one_time_pre_key": {
+        "key_id": 42,
+        "public_key": "<base64>"
+      }
+    }
+  ]
+}
+```
+
+- Ordered by `last_seen_at DESC`, then `created_at DESC`.
+- **One OTPK consumed per device** when that device’s pool is non-empty (omitted otherwise).
+- Empty publishable set → `404` + `KEYS_REQUIRED` (same enumeration posture as single GET).
+- Same rate limits as single bundle GET (`keys_ip` / `keys_user`).
 
 #### `GET /keys/status` → `200`
 
@@ -1235,7 +1266,7 @@ Add optional:
 ## Still open
 
 1. **Nebular presign wire format** — harden real signing when not stub (Compose Nebular works for local).
-2. **Multi-device key fetch for send** — m2 is single best-device GET; list/fetch-all-device bundles for true multi-device fan-out. (`GET /keys/identity/:user_id` avoids OTPK consume for identity-only lookups.)
+2. **Multi-device key fetch for send** — **done** (`GET /keys/bundles/:user_id` returns all publishable devices with optional OTPK each; single-device `GET /keys/bundle/:user_id` kept).
 3. **Redis rate-limit wiring** — **done** (`rate_limit` module; Redis fixed windows when `REDIS_URL` set, else in-process; scopes: auth IP/username, user lookup IP, keys IP/user, contact requests, media presign, WS connect).
 4. **VoIP / CallKit push** — dedicated PushKit cert path (currently same data-push channel as messages).
 5. **iOS polish** — media messages, call UI/WebRTC, presence polish, unread badges, multi-device own-message decrypt without local cache.

@@ -76,7 +76,7 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 ### Server
 
 1. **Auth** — **done** (register/login, multi-device, opaque tokens, argon2id)  
-2. **Key bundles** — **done** (per-device identity/SPK/OTPK, PUT/GET/status, atomic consume)  
+2. **Key bundles** — **done** (per-device identity/SPK/OTPK, PUT/GET single + multi-device list, status, atomic consume)  
 3. **Contacts** — **done** (UUID requests, mutual auto-accept, directed contacts, blocks)  
 4. **Messages** — **done** (HTTP send/history; lazy conversations; delivery acks)  
 4b. **WebSocket** — **done** (in-process fan-out; `message.new` + `message.delivered`)  

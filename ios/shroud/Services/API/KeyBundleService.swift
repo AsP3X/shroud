@@ -23,6 +23,15 @@ struct KeyBundleService: Sendable {
         )
     }
 
+    /// All publishable device bundles for multi-device sealed send (one OTPK per device when available).
+    func fetchBundles(userID: UUID, bearerToken: String) async throws -> PeerKeyBundlesResponse {
+        try await client.get(
+            "keys/bundles/\(userID.uuidString.lowercased())",
+            as: PeerKeyBundlesResponse.self,
+            bearerToken: bearerToken
+        )
+    }
+
     /// Fetches peer identity public key without consuming a one-time pre-key.
     func fetchIdentity(userID: UUID, bearerToken: String) async throws -> PeerIdentityResponse {
         try await client.get(
