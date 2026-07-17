@@ -159,3 +159,20 @@ async fn health_error_envelope_shape() {
     assert_eq!(json["error"]["code"], "NOT_FOUND");
     assert_eq!(json["error"]["message"], "resource missing");
 }
+
+#[tokio::test]
+async fn rate_limited_sets_scope_aware_retry_after() {
+    use axum::http::header;
+
+    let response = AppError::rate_limited_after(3600).into_response();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok()),
+        Some("3600")
+    );
+    let json = json_body(response).await;
+    assert_eq!(json["error"]["code"], "RATE_LIMITED");
+}

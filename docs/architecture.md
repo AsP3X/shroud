@@ -25,7 +25,7 @@ High-level structure for the E2E encrypted messenger.
                                                                     presence)
 ```
 
-Later: **coturn** for WebRTC TURN (calls). Call media does not flow through the Rust API. App media blobs live in Nebular OS (ciphertext).
+Later: **coturn** for WebRTC TURN (calls). Call media does not flow through the Rust API. App media ciphertext is stored on the API volume (and optionally mirrored to Nebular); clients always use `/media/{id}/content`.
 
 ## Repository map
 
@@ -82,9 +82,9 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 3. **Contacts** — **done** (UUID requests, mutual auto-accept, directed contacts, blocks)  
 4. **Messages** — **done** (HTTP send/history; lazy conversations; delivery acks)  
 4b. **WebSocket** — **done** (in-process fan-out; `message.new` + `message.delivered`)  
-5. **Media** — **done** (presign upload → message link; stub without Nebular; 25 MiB)  
+5. **Media** — **done** (API-proxied upload/download → message link; optional Nebular mirror; 25 MiB)  
 6. **Presence / receipts** — **done** (typing WS; online/last-seen contacts-only; read receipts)  
-7. **Deletes** — for me / for everyone; hard account cascade  
+7. **Deletes** — **done** (for me / for everyone; hard account cascade)  
 8. **Push** — **done** (token register; offline gate; live HTTP/2 APNs with .p8 JWT when configured)  
 9. **Calls** — **done** (1:1 signaling ring/accept/reject/hangup/signal; ICE servers; coturn compose profile)
 

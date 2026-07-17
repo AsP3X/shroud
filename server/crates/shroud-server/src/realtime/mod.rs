@@ -12,12 +12,16 @@ use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
 
 /// Per-device outbound event channel (JSON text frames).
-type DeviceTx = mpsc::UnboundedSender<String>;
+type DeviceTx = mpsc::Sender<String>;
 
 const USER_CHANNEL_PREFIX: &str = "shroud:user:";
 const ONLINE_KEY_PREFIX: &str = "shroud:online:";
 /// Redis online hash entries older than this are treated as stale (crash without unsubscribe).
 pub const ONLINE_TTL_SECS: i64 = 90;
+/// Bounded outbound queue per device — drops events when full (slow-client backpressure).
+const OUTBOUND_QUEUE_CAP: usize = 256;
+/// Max simultaneous WebSocket connections per user on this replica.
+pub const MAX_WS_PER_USER: usize = 5;
 
 fn online_key(user_id: Uuid) -> String {
     format!("{ONLINE_KEY_PREFIX}{user_id}")
@@ -85,12 +89,26 @@ impl RealtimeHub {
     }
 
     /// Registers a device connection; returns the receiver for WS write loop.
+    ///
+    /// Human: Caps concurrent sockets per user and uses a bounded queue so slow clients
+    /// cannot grow memory without bound.
+    /// Agent: RETURNS Err when local connections for user >= MAX_WS_PER_USER (unless reconnect).
     pub async fn subscribe(
         self: &Arc<Self>,
         user_id: Uuid,
         device_id: Uuid,
-    ) -> mpsc::UnboundedReceiver<String> {
-        let (tx, rx) = mpsc::unbounded_channel();
+    ) -> Result<mpsc::Receiver<String>, &'static str> {
+        {
+            let by_user = self.devices_by_user.read().await;
+            if let Some(set) = by_user.get(&user_id)
+                && set.len() >= MAX_WS_PER_USER
+                && !set.contains(&device_id)
+            {
+                return Err("too many websocket connections for this user");
+            }
+        }
+
+        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAP);
         {
             let mut by_device = self.by_device.write().await;
             by_device.insert(device_id, tx);
@@ -100,7 +118,7 @@ impl RealtimeHub {
             by_user.entry(user_id).or_default().insert(device_id);
         }
         self.mark_online(user_id, device_id).await;
-        rx
+        Ok(rx)
     }
 
     /// Removes a device connection (on disconnect or replace).
@@ -183,7 +201,18 @@ impl RealtimeHub {
                         continue;
                     }
                     if let Some(tx) = by_device.get(device_id) {
-                        let _ = tx.send(payload.to_string());
+                        // Human: Never block HTTP handlers on slow WS consumers — drop when full.
+                        // Agent: try_send; Full → warn+drop; Closed → ignore.
+                        match tx.try_send(payload.to_string()) {
+                            Ok(()) => {}
+                            Err(mpsc::error::TrySendError::Full(_)) => {
+                                tracing::warn!(
+                                    %device_id,
+                                    "realtime outbound queue full; dropping event"
+                                );
+                            }
+                            Err(mpsc::error::TrySendError::Closed(_)) => {}
+                        }
                     }
                 }
             }

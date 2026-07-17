@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use axum::{
     Json,
-    body::Bytes,
+    body::{Body, Bytes},
     extract::{Path as AxumPath, State},
     http::{StatusCode, header},
     response::{IntoResponse, Response},
@@ -15,6 +15,7 @@ use axum::{
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use tokio_util::io::ReaderStream;
 use uuid::Uuid;
 
 use crate::auth::session::AuthContext;
@@ -190,13 +191,35 @@ pub async fn get_content(
     let media = load_media(&state, media_id).await?;
     authorize_download(&state, auth.user_id, &media).await?;
 
-    let bytes = read_blob(&state, &media).await?;
+    let path = blob_path(&media);
+    if Path::new(&path).exists() {
+        // Human: Stream from disk so large ciphertext never fills process RAM.
+        // Agent: READS local file via ReaderStream; never logs plaintext.
+        let file = tokio::fs::File::open(&path)
+            .await
+            .map_err(|err| AppError::Internal(format!("open media blob failed: {err}")))?;
+        let stream = ReaderStream::new(file);
+        let body = Body::from_stream(stream);
+        tracing::info!(
+            user_id = %auth.user_id,
+            media_object_id = %media_id,
+            "media.content_get ok (stream)"
+        );
+        return Ok((
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "application/octet-stream")],
+            body,
+        )
+            .into_response());
+    }
 
+    // Rare path: local miss — fall back to Nebular (may buffer into memory).
+    let bytes = read_blob(&state, &media).await?;
     tracing::info!(
         user_id = %auth.user_id,
         media_object_id = %media_id,
         bytes = bytes.len(),
-        "media.content_get ok"
+        "media.content_get ok (buffered fallback)"
     );
 
     Ok((

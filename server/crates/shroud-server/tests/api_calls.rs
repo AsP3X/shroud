@@ -304,3 +304,87 @@ async fn reject_and_non_contact() {
 
     let _ = token_c;
 }
+
+#[tokio::test]
+async fn expire_stale_ringing_calls_marks_missed() {
+    let database_url = match std::env::var("DATABASE_URL") {
+        Ok(url) => url,
+        Err(_) => {
+            eprintln!("skipping expire_stale_ringing_calls_marks_missed: DATABASE_URL unavailable");
+            return;
+        }
+    };
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .expect("pool");
+    sqlx::migrate!("../../migrations/postgres")
+        .run(&pool)
+        .await
+        .expect("migrate");
+
+    // Insert a synthetic stale ringing call with two throwaway users/devices.
+    let user_a = Uuid::new_v4();
+    let user_b = Uuid::new_v4();
+    let device_a = Uuid::new_v4();
+    let call_id = Uuid::new_v4();
+    let password_hash = "$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHQ$placeholder";
+
+    for (uid, uname) in [(user_a, "gca"), (user_b, "gcb")] {
+        let id = &Uuid::new_v4().simple().to_string()[..8];
+        sqlx::query(
+            r#"
+            INSERT INTO users (id, username, password_hash, share_code)
+            VALUES ($1, $2, $3, $4)
+            "#,
+        )
+        .bind(uid)
+        .bind(format!("{uname}_{id}"))
+        .bind(password_hash)
+        .bind(format!("SC{}XX", id.to_ascii_uppercase()))
+        .execute(&pool)
+        .await
+        .expect("user");
+    }
+    sqlx::query(
+        r#"
+        INSERT INTO devices (id, user_id, name)
+        VALUES ($1, $2, 'gc')
+        "#,
+    )
+    .bind(device_a)
+    .bind(user_a)
+    .execute(&pool)
+    .await
+    .expect("device");
+
+    sqlx::query(
+        r#"
+        INSERT INTO calls (
+            id, caller_user_id, caller_device_id, callee_user_id,
+            modality, status, created_at
+        )
+        VALUES ($1, $2, $3, $4, 'voice', 'ringing', now() - interval '10 minutes')
+        "#,
+    )
+    .bind(call_id)
+    .bind(user_a)
+    .bind(device_a)
+    .bind(user_b)
+    .execute(&pool)
+    .await
+    .expect("call");
+
+    let expired = shroud_server::routes::calls::expire_stale_ringing_calls(&pool)
+        .await
+        .expect("expire");
+    assert!(expired >= 1);
+
+    let status: String = sqlx::query_scalar(r#"SELECT status FROM calls WHERE id = $1"#)
+        .bind(call_id)
+        .fetch_one(&pool)
+        .await
+        .expect("status");
+    assert_eq!(status, "missed");
+}

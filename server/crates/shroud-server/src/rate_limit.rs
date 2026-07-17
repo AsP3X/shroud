@@ -28,6 +28,12 @@ pub mod budgets {
     pub const CONTACT_REQUEST_USER: (u64, Duration) = (10, Duration::from_secs(3600));
     pub const MEDIA_PRESIGN_USER: (u64, Duration) = (60, Duration::from_secs(60));
     pub const WS_CONNECT_IP: (u64, Duration) = (30, Duration::from_secs(60));
+    /// Message send / delivery hot path.
+    pub const MESSAGE_SEND_USER: (u64, Duration) = (120, Duration::from_secs(60));
+    /// Call create / signal abuse budget.
+    pub const CALL_USER: (u64, Duration) = (30, Duration::from_secs(60));
+    /// Password change and account delete (expensive / sensitive).
+    pub const AUTH_SENSITIVE_USER: (u64, Duration) = (5, Duration::from_secs(3600));
 }
 
 struct MemoryWindow {
@@ -97,7 +103,7 @@ impl RateLimiter {
                     if allowed {
                         return Ok(());
                     }
-                    return Err(AppError::rate_limited());
+                    return Err(AppError::rate_limited_after(window_secs));
                 }
                 Err(err) => {
                     // Human: Degrade to in-process windows — do not fail open under Redis outage.
@@ -165,33 +171,37 @@ async fn memory_check(
 
     entry.count = entry.count.saturating_add(1);
     if entry.count > limit {
-        return Err(AppError::rate_limited());
+        return Err(AppError::rate_limited_after(window.as_secs().max(1)));
     }
     Ok(())
 }
 
-/// Best-effort client IP for limit keys (proxy-aware).
+/// Best-effort client IP for limit keys (proxy-aware when trusted).
 ///
-/// Prefer first `X-Forwarded-For` hop, then `X-Real-IP`, else `"unknown"`.
-pub fn client_ip(headers: &HeaderMap) -> String {
-    if let Some(xff) = headers
-        .get("x-forwarded-for")
-        .and_then(|value| value.to_str().ok())
-        && let Some(first) = xff.split(',').next()
-    {
-        let trimmed = first.trim();
-        if !trimmed.is_empty() {
-            return trimmed.to_string();
+/// When `trust_forwarded` is true (API behind a trusted reverse proxy), prefer the
+/// first `X-Forwarded-For` hop, then `X-Real-IP`. Otherwise ignore those headers
+/// so clients cannot spoof rate-limit keys.
+pub fn client_ip(headers: &HeaderMap, trust_forwarded: bool) -> String {
+    if trust_forwarded {
+        if let Some(xff) = headers
+            .get("x-forwarded-for")
+            .and_then(|value| value.to_str().ok())
+            && let Some(first) = xff.split(',').next()
+        {
+            let trimmed = first.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
         }
-    }
 
-    if let Some(real) = headers
-        .get("x-real-ip")
-        .and_then(|value| value.to_str().ok())
-    {
-        let trimmed = real.trim();
-        if !trimmed.is_empty() {
-            return trimmed.to_string();
+        if let Some(real) = headers
+            .get("x-real-ip")
+            .and_then(|value| value.to_str().ok())
+        {
+            let trimmed = real.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
         }
     }
 
@@ -225,11 +235,29 @@ mod tests {
             .await
             .expect_err("blocked");
         match err {
-            AppError::Api { status, code, .. } => {
-                assert_eq!(status, axum::http::StatusCode::TOO_MANY_REQUESTS);
-                assert_eq!(code, "RATE_LIMITED");
+            AppError::RateLimited { retry_after_secs } => {
+                assert_eq!(retry_after_secs, 60);
             }
-            other => panic!("expected RATE_LIMITED, got {other:?}"),
+            other => panic!("expected RateLimited, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn rate_limited_uses_window_for_retry_after() {
+        let rl = RateLimiter::new();
+        let window = Duration::from_secs(3600);
+        for _ in 0..2 {
+            rl.check("test", "hour", 2, window).await.expect("allowed");
+        }
+        let err = rl
+            .check("test", "hour", 2, window)
+            .await
+            .expect_err("blocked");
+        match err {
+            AppError::RateLimited { retry_after_secs } => {
+                assert_eq!(retry_after_secs, 3600);
+            }
+            other => panic!("expected RateLimited, got {other:?}"),
         }
     }
 
@@ -265,22 +293,29 @@ mod tests {
     }
 
     #[test]
-    fn client_ip_prefers_forwarded_for() {
+    fn client_ip_prefers_forwarded_for_when_trusted() {
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", "1.2.3.4, 10.0.0.1".parse().unwrap());
         headers.insert("x-real-ip", "9.9.9.9".parse().unwrap());
-        assert_eq!(client_ip(&headers), "1.2.3.4");
+        assert_eq!(client_ip(&headers, true), "1.2.3.4");
     }
 
     #[test]
-    fn client_ip_falls_back_to_real_ip() {
+    fn client_ip_ignores_forwarded_when_untrusted() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "1.2.3.4".parse().unwrap());
+        assert_eq!(client_ip(&headers, false), "unknown");
+    }
+
+    #[test]
+    fn client_ip_falls_back_to_real_ip_when_trusted() {
         let mut headers = HeaderMap::new();
         headers.insert("x-real-ip", "8.8.8.8".parse().unwrap());
-        assert_eq!(client_ip(&headers), "8.8.8.8");
+        assert_eq!(client_ip(&headers, true), "8.8.8.8");
     }
 
     #[test]
     fn client_ip_unknown_when_missing() {
-        assert_eq!(client_ip(&HeaderMap::new()), "unknown");
+        assert_eq!(client_ip(&HeaderMap::new(), true), "unknown");
     }
 }

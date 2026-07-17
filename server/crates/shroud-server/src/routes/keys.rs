@@ -16,7 +16,7 @@ use crate::keys::{
     OTPK_BATCH_MAX, OTPK_POOL_MAX, decode_public_key, decode_signature, encode_b64,
     validate_key_id, validate_registration_id,
 };
-use crate::rate_limit::{budgets, client_ip};
+use crate::rate_limit::budgets;
 use crate::routes::contacts::are_contacts;
 use crate::state::AppState;
 
@@ -348,7 +348,7 @@ async fn apply_keys_fetch_limits(
     headers: &HeaderMap,
     requester_user_id: Uuid,
 ) -> Result<(), AppError> {
-    let ip = client_ip(headers);
+    let ip = state.client_ip(headers);
     state
         .rate_limiter
         .check_budget("keys_ip", &ip, budgets::KEYS_IP)

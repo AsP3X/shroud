@@ -2,11 +2,12 @@
 
 use std::sync::Arc;
 
+use axum::http::HeaderMap;
 use sqlx::PgPool;
 
 use crate::config::IceServer;
 use crate::push::PushService;
-use crate::rate_limit::RateLimiter;
+use crate::rate_limit::{self, RateLimiter};
 use crate::realtime::RealtimeHub;
 
 /// State injected into every API handler.
@@ -14,7 +15,7 @@ use crate::realtime::RealtimeHub;
 pub struct AppState {
     /// Shared Postgres pool for metadata queries (no message plaintext).
     pub pool: PgPool,
-    /// Optional Nebular base URL; `None` enables stub media presigns.
+    /// Optional Nebular base URL; `None` uses local media volume only.
     pub nebular_url: Option<String>,
     /// Object storage bucket name for encrypted media.
     pub media_bucket: String,
@@ -30,13 +31,20 @@ pub struct AppState {
     pub redis_required: bool,
     /// Shared HTTP client for Nebular (and other outbound) calls.
     pub http_client: reqwest::Client,
+    /// Honor `X-Forwarded-For` / `X-Real-IP` only when behind a trusted proxy.
+    pub trust_forwarded_headers: bool,
 }
 
 impl AppState {
-    /// Builds state for integration tests (rate limits off, no Nebular/APNs).
+    /// Client IP for rate-limit keys (respects [`Self::trust_forwarded_headers`]).
+    pub fn client_ip(&self, headers: &HeaderMap) -> String {
+        rate_limit::client_ip(headers, self.trust_forwarded_headers)
+    }
+
+    /// Builds state for integration tests (rate limits off, trust forwarded headers for XFF tests).
     ///
     /// Human: Keeps test setup identical across suites so new fields are not forgotten.
-    /// Agent: CALLS RateLimiter::disabled; WRITES AppState with reqwest::Client::new().
+    /// Agent: CALLS RateLimiter::disabled; trust_forwarded_headers=true for proxy-header tests.
     pub fn for_integration_tests(pool: PgPool) -> Self {
         Self::for_integration_tests_with_limiter(pool, RateLimiter::disabled())
     }
@@ -55,6 +63,7 @@ impl AppState {
             rate_limiter,
             redis_required: false,
             http_client: reqwest::Client::new(),
+            trust_forwarded_headers: true,
         }
     }
 }

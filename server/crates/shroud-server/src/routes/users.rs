@@ -12,11 +12,11 @@ use uuid::Uuid;
 use crate::auth::session::AuthContext;
 use crate::auth::{is_valid_share_code_format, normalize_share_code, normalize_username};
 use crate::error::AppError;
-use crate::rate_limit::{budgets, client_ip};
+use crate::rate_limit::budgets;
 use crate::state::AppState;
 
 async fn limit_user_lookup(state: &AppState, headers: &HeaderMap) -> Result<(), AppError> {
-    let ip = client_ip(headers);
+    let ip = state.client_ip(headers);
     state
         .rate_limiter
         .check_budget("user_lookup_ip", &ip, budgets::USER_LOOKUP_IP)

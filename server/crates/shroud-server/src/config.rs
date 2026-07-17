@@ -30,11 +30,13 @@ pub struct Config {
     pub run_migrations: bool,
     pub host: IpAddr,
     pub port: u16,
-    /// Optional Nebular OS base URL; when unset, media uses stub presign URLs.
+    /// Optional Nebular OS base URL; when unset, media uses the local volume only.
     pub nebular_url: Option<String>,
     pub nebular_media_bucket: String,
     /// Optional Redis URL for multi-replica WebSocket fan-out and shared rate limits.
     pub redis_url: Option<String>,
+    /// When true, honor `X-Forwarded-For` / `X-Real-IP` for rate-limit keys (trusted proxy only).
+    pub trust_forwarded_headers: bool,
     /// STUN/TURN servers for WebRTC clients.
     pub ice_servers: Vec<IceServer>,
 }
@@ -87,6 +89,14 @@ impl Config {
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
 
+        // Human: Default false so a publicly bound API cannot have rate-limit IPs spoofed via XFF.
+        // Agent: READS TRUST_FORWARDED_HEADERS; Compose sets true behind NPM.
+        let trust_forwarded_headers = parse_bool_env(
+            "TRUST_FORWARDED_HEADERS",
+            std::env::var("TRUST_FORWARDED_HEADERS").ok().as_deref(),
+            false,
+        )?;
+
         let ice_servers = ice_servers_from_env();
 
         Ok(Self {
@@ -98,6 +108,7 @@ impl Config {
             nebular_url,
             nebular_media_bucket,
             redis_url,
+            trust_forwarded_headers,
             ice_servers,
         })
     }

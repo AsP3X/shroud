@@ -10,7 +10,7 @@
 #
 # NPM reverse-proxy targets (container DNS names on proxy-network):
 #   http://shroud-api:8080   → API  (/api/v1, /api/v1/ws)
-#   http://shroud-nebular:9000 → media object store (presigned client URLs)
+#   http://shroud-nebular:9000 → optional object store (server-side mirror; clients use API)
 #
 # Optional host ports for local tools / iOS Simulator without NPM
 # (postgres/redis stay internal-only — never on proxy-network):
@@ -57,8 +57,8 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # Nebular OS object storage (same binary Ownly uses). Media bytes never hit the API.
-  # Joins proxy-network so NPM can expose presigned upload/download endpoints.
+  # Nebular OS object storage (same binary Ownly uses). Optional mirror for API replicas;
+  # clients always upload/download via shroud-api `/media/{id}/content`.
   nebular:
     build:
       context: ${NEBULAR_CONTEXT:-../ownly/nebular-os}
@@ -107,10 +107,13 @@ services:
       DATABASE_POOL_MAX: "10"
       # Single compose replica runs migrations; set false on extra API replicas when scaling.
       RUN_MIGRATIONS: "true"
+      # API sits behind NPM / reverse proxy — honor X-Forwarded-For for rate-limit keys.
+      TRUST_FORWARDED_HEADERS: "true"
       REDIS_URL: redis://redis:6379
       NEBULAR_URL: http://nebular:9000
       NEBULAR_MEDIA_BUCKET: shroud-media
-      # Encrypted blobs stored on the API volume (client always uses /media/{id}/content).
+      # Encrypted blobs on the API volume; clients always use /media/{id}/content (API proxy).
+      # Multi-replica deployments need a shared volume or Nebular as primary store.
       MEDIA_DATA_DIR: /data/shroud-media
       HOST: 0.0.0.0
       PORT: "8080"

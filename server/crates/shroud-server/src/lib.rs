@@ -64,6 +64,7 @@ pub async fn run() -> Result<(), AppError> {
         database_pool_max = config.database_pool_max,
         run_migrations = config.run_migrations,
         redis = config.redis_url.is_some(),
+        trust_forwarded_headers = config.trust_forwarded_headers,
         nebular = config.nebular_url.is_some(),
         media_bucket = %config.nebular_media_bucket,
         "configuration loaded"
@@ -159,6 +160,8 @@ pub async fn run() -> Result<(), AppError> {
     crate::routes::media::spawn_orphan_gc(pool.clone());
     // Human: Drop revoked session rows after the 30-day retention window.
     crate::auth::session::spawn_revoked_session_purge(pool.clone());
+    // Human: Mark unanswered ringing calls as missed so busy detection cannot stick.
+    crate::routes::calls::spawn_ringing_call_gc(pool.clone());
 
     let state = AppState {
         pool,
@@ -170,6 +173,7 @@ pub async fn run() -> Result<(), AppError> {
         rate_limiter,
         redis_required,
         http_client,
+        trust_forwarded_headers: config.trust_forwarded_headers,
     };
 
     // Human: Last `.layer` is outermost — request-id runs first, then TraceLayer sees the header.
@@ -199,9 +203,13 @@ pub async fn run() -> Result<(), AppError> {
 
     let addr: SocketAddr = config.socket_addr()?;
     if let Some(ref url) = config.nebular_url {
-        tracing::info!(nebular_url = %url, bucket = %config.nebular_media_bucket, "media presign: Nebular");
+        tracing::info!(
+            nebular_url = %url,
+            bucket = %config.nebular_media_bucket,
+            "media: local volume + Nebular mirror"
+        );
     } else {
-        tracing::info!("media presign: stub (set NEBULAR_URL for real object storage)");
+        tracing::info!("media: local volume only (set NEBULAR_URL to mirror ciphertext blobs)");
     }
     tracing::info!(%addr, "shroud-server listening");
     let listener = tokio::net::TcpListener::bind(addr)

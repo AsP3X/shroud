@@ -17,10 +17,14 @@ use uuid::Uuid;
 use crate::auth::session::AuthContext;
 use crate::config::IceServer;
 use crate::error::AppError;
+use crate::rate_limit::budgets;
 use crate::routes::contacts::{are_contacts, is_blocked_either_way};
 use crate::state::AppState;
 
 const MAX_SIGNAL_BYTES: usize = 64 * 1024;
+/// Unanswered ringing calls become `missed` after this many seconds.
+pub const RINGING_TIMEOUT_SECS: i64 = 90;
+const RINGING_GC_INTERVAL_SECS: u64 = 30;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateCallRequest {
@@ -99,6 +103,11 @@ pub async fn create_call(
     auth: AuthContext,
     Json(body): Json<CreateCallRequest>,
 ) -> Result<(StatusCode, Json<CallResponse>), AppError> {
+    state
+        .rate_limiter
+        .check_budget("call_user", &auth.user_id.to_string(), budgets::CALL_USER)
+        .await?;
+
     if body.peer_user_id == auth.user_id {
         return Err(AppError::validation("Cannot call yourself."));
     }
@@ -300,6 +309,11 @@ pub async fn signal_call(
     Path(call_id): Path<Uuid>,
     Json(body): Json<SignalRequest>,
 ) -> Result<StatusCode, AppError> {
+    state
+        .rate_limiter
+        .check_budget("call_user", &auth.user_id.to_string(), budgets::CALL_USER)
+        .await?;
+
     let signal_type = body.signal_type.trim();
     if !matches!(
         signal_type,
@@ -504,4 +518,51 @@ fn call_to_response(row: &CallRow) -> CallResponse {
         answered_at: row.answered_at,
         ended_at: row.ended_at,
     }
+}
+
+/// Mark unanswered `ringing` calls as `missed` after [`RINGING_TIMEOUT_SECS`].
+///
+/// Human: Prevents stuck busy state when the callee never answers and clients disconnect.
+/// Agent: UPDATE calls SET status=missed WHERE ringing AND created_at older than timeout.
+pub async fn expire_stale_ringing_calls(pool: &sqlx::PgPool) -> Result<u64, AppError> {
+    let result = sqlx::query(
+        r#"
+        UPDATE calls
+        SET status = 'missed',
+            ended_at = now(),
+            ended_reason = 'timeout'
+        WHERE status = 'ringing'
+          AND created_at < now() - make_interval(secs => $1)
+        "#,
+    )
+    .bind(RINGING_TIMEOUT_SECS)
+    .execute(pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("expire ringing calls failed: {err}")))?;
+
+    Ok(result.rows_affected())
+}
+
+/// Background loop: expire stale ringing calls.
+pub fn spawn_ringing_call_gc(pool: sqlx::PgPool) {
+    tokio::spawn(async move {
+        let mut interval =
+            tokio::time::interval(std::time::Duration::from_secs(RINGING_GC_INTERVAL_SECS));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            match expire_stale_ringing_calls(&pool).await {
+                Ok(0) => {
+                    tracing::debug!("calls.ringing_gc: nothing to expire");
+                }
+                Ok(n) => {
+                    tracing::info!(expired = n, "calls.ringing_gc ok");
+                }
+                Err(err) => {
+                    tracing::warn!(error = %err, "calls.ringing_gc failed");
+                }
+            }
+        }
+    });
 }

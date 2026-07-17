@@ -16,7 +16,7 @@ use crate::auth::{
     normalize_username, verify_password,
 };
 use crate::error::AppError;
-use crate::rate_limit::{budgets, client_ip};
+use crate::rate_limit::budgets;
 use crate::state::AppState;
 
 /// Register / login success body (token shown once).
@@ -82,7 +82,7 @@ pub async fn register(
     headers: HeaderMap,
     Json(body): Json<RegisterRequest>,
 ) -> Result<(StatusCode, Json<AuthSessionResponse>), AppError> {
-    let ip = client_ip(&headers);
+    let ip = state.client_ip(&headers);
     state
         .rate_limiter
         .check_budget("auth_ip", &ip, budgets::AUTH_IP)
@@ -198,7 +198,7 @@ pub async fn login(
     headers: HeaderMap,
     Json(body): Json<LoginRequest>,
 ) -> Result<Json<AuthSessionResponse>, AppError> {
-    let ip = client_ip(&headers);
+    let ip = state.client_ip(&headers);
     state
         .rate_limiter
         .check_budget("auth_ip", &ip, budgets::AUTH_IP)
@@ -345,6 +345,15 @@ pub async fn delete_account(
     auth: AuthContext,
     Json(body): Json<DeleteAccountRequest>,
 ) -> Result<StatusCode, AppError> {
+    state
+        .rate_limiter
+        .check_budget(
+            "auth_sensitive_user",
+            &auth.user_id.to_string(),
+            budgets::AUTH_SENSITIVE_USER,
+        )
+        .await?;
+
     let password_hash: String =
         sqlx::query_scalar(r#"SELECT password_hash FROM users WHERE id = $1"#)
             .bind(auth.user_id)
@@ -415,6 +424,15 @@ pub async fn change_password(
     auth: AuthContext,
     Json(body): Json<PasswordChangeRequest>,
 ) -> Result<StatusCode, AppError> {
+    state
+        .rate_limiter
+        .check_budget(
+            "auth_sensitive_user",
+            &auth.user_id.to_string(),
+            budgets::AUTH_SENSITIVE_USER,
+        )
+        .await?;
+
     let password_hash: String =
         sqlx::query_scalar(r#"SELECT password_hash FROM users WHERE id = $1"#)
             .bind(auth.user_id)

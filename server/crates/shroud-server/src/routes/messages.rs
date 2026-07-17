@@ -15,7 +15,8 @@ use uuid::Uuid;
 
 use crate::auth::session::AuthContext;
 use crate::error::AppError;
-use crate::routes::contacts::is_blocked_either_way;
+use crate::rate_limit::budgets;
+use crate::routes::contacts::{are_contacts, is_blocked_either_way};
 use crate::state::AppState;
 
 const MAX_CIPHERTEXT_BYTES: usize = 64 * 1024;
@@ -114,6 +115,15 @@ pub async fn send_message(
     auth: AuthContext,
     Json(body): Json<SendMessageRequest>,
 ) -> Result<(StatusCode, Json<MessageResponse>), AppError> {
+    state
+        .rate_limiter
+        .check_budget(
+            "message_send_user",
+            &auth.user_id.to_string(),
+            budgets::MESSAGE_SEND_USER,
+        )
+        .await?;
+
     if body.peer_user_id == auth.user_id {
         return Err(AppError::validation("Cannot message yourself."));
     }
@@ -291,6 +301,23 @@ pub async fn send_message(
         .map_err(|err| AppError::Internal(format!("insert delivery failed: {err}")))?;
     }
 
+    // Human: Keep conversation list sort cheap — denormalized last_message_at (migration 014).
+    // Agent: UPDATE conversations.last_message_at = now in same transaction as insert.
+    sqlx::query(
+        r#"
+        UPDATE conversations
+        SET last_message_at = $1
+        WHERE id = $2
+        "#,
+    )
+    .bind(now)
+    .bind(conversation_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| {
+        AppError::Internal(format!("touch conversation last_message_at failed: {err}"))
+    })?;
+
     tx.commit()
         .await
         .map_err(|err| AppError::Internal(format!("commit message failed: {err}")))?;
@@ -461,7 +488,7 @@ pub async fn list_conversations(
         last_message_at: Option<DateTime<Utc>>,
     }
 
-    // Human: Join peer username in one query — avoids N+1 per conversation row.
+    // Human: Join peer username; use denormalized last_message_at (no correlated subquery).
     // Agent: SELECT conversations JOIN users; RETURNS ConversationItem list.
     let rows = sqlx::query_as::<_, Row>(
         r#"
@@ -470,15 +497,12 @@ pub async fn list_conversations(
             CASE WHEN c.user_a_id = $1 THEN c.user_b_id ELSE c.user_a_id END AS peer_id,
             CASE WHEN c.user_a_id = $1 THEN ub.username ELSE ua.username END AS peer_username,
             c.created_at,
-            (
-              SELECT MAX(m.created_at) FROM messages m
-              WHERE m.conversation_id = c.id
-            ) AS last_message_at
+            c.last_message_at
         FROM conversations c
         INNER JOIN users ua ON ua.id = c.user_a_id
         INNER JOIN users ub ON ub.id = c.user_b_id
         WHERE c.user_a_id = $1 OR c.user_b_id = $1
-        ORDER BY last_message_at DESC NULLS LAST, c.created_at DESC
+        ORDER BY c.last_message_at DESC NULLS LAST, c.created_at DESC
         "#,
     )
     .bind(auth.user_id)
@@ -896,21 +920,6 @@ async fn load_by_client_id(
     .fetch_optional(pool)
     .await
     .map_err(|err| AppError::Internal(format!("load by client_message_id failed: {err}")))
-}
-
-async fn are_contacts(pool: &sqlx::PgPool, a: Uuid, b: Uuid) -> Result<bool, AppError> {
-    sqlx::query_scalar(
-        r#"
-        SELECT EXISTS(
-            SELECT 1 FROM contacts WHERE user_id = $1 AND contact_user_id = $2
-        )
-        "#,
-    )
-    .bind(a)
-    .bind(b)
-    .fetch_one(pool)
-    .await
-    .map_err(|err| AppError::Internal(format!("contacts check failed: {err}")))
 }
 
 fn message_to_response(row: MessageRow) -> MessageResponse {

@@ -36,7 +36,7 @@ docker network create proxy-network
 | `postgres` | `shroud-internal` only | — |
 | `redis` | `shroud-internal` only | — |
 | `api` (`shroud-api`) | internal + **proxy** | `http://shroud-api:8080` |
-| `nebular` (`shroud-nebular`) | internal + **proxy** | `http://shroud-nebular:9000` (presigned media) |
+| `nebular` (`shroud-nebular`) | internal + **proxy** | optional mirror; clients use API `/media/{id}/content` |
 
 ### Start
 

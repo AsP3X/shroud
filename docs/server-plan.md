@@ -162,10 +162,10 @@ Keep as one shared constant in code; reject with `USERNAME_RESERVED`.
 1. Never accept, store, or log message **plaintext**, **private keys**, or the **encryption phrase**.
 2. Session tokens: persist **hash only**; return raw token once at register/login.
 3. Pre-key APIs: **public** material only; one-time pre-keys consumed atomically.
-4. Nebular objects are **ciphertext**; authorize with short-lived **presigned URLs**.
+4. Media objects are **ciphertext**; clients upload/download via the API (`/media/{id}/content`). Optional Nebular mirror is server-side only.
 5. APNs: **opaque ids** only (message / conversation / call).
 6. Enforce **contacts** and **blocks** before full message envelopes.
-7. Rate-limit auth, lookups, contact requests, media presign, WS connects.
+7. Rate-limit auth, lookups, contact requests, messages, calls, media, WS connects.
 8. Presence visible only to **accepted contacts**.
 
 ---
@@ -491,7 +491,7 @@ Redis: pub/sub fan-out, online sets, future rate limits.
 
 ### Media
 
-- Client encrypts → presign (≤25 MiB, 15m TTL) → PUT Nebular → envelope refs key.
+- Client encrypts → register upload → PUT `/media/{id}/content` (≤25 MiB) → envelope refs media id.
 - Path: `shroud-media` / `{uploader_user_id}/{object_id}`.
 
 ### Rate limits (starting budgets)
@@ -499,18 +499,21 @@ Redis: pub/sub fan-out, online sets, future rate limits.
 | Scope | Budget |
 | --- | --- |
 | Auth (register/login) | 10/min per IP; 5/min per username |
+| Auth sensitive (password change / account delete) | 5/hour per user |
 | User lookup | 30/min per IP |
-| Key bundle GET | 60/min per user; 120/min per IP |
+| Key bundle / identity GET | 60/min per user; 120/min per IP |
 | Contact requests | 10/hour per user |
-| Media presign | 60/min per user |
+| Message send | 120/min per user |
+| Call create / signal | 30/min per user |
+| Media upload registration | 60/min per user |
 | WebSocket connect | 30/min per IP |
 
-Env-tunable later. Key pattern: `rl:{scope}:{id}`.
+`Retry-After` mirrors the budget window (seconds). `TRUST_FORWARDED_HEADERS` must be true only behind a trusted reverse proxy. Key pattern: `rl:{scope}:{id}`.
 
 ### Presence and push
 
 - **Typing** — ephemeral WS only: client `{ "type": "typing", "peer_user_id", "is_typing" }` → peer gets same shape plus `user_id` / `device_id`. Contacts only; no DB.
-- **Online / last-seen** — online = at least one live WS (in-process hub + optional Redis `shroud:online:{user_id}` set). `last_seen_at` = max `devices.last_seen_at`. `GET /presence/:user_id` contacts-only (self always allowed). On connect/disconnect, fan-out `presence.update` to accepted contacts.
+- **Online / last-seen** — online = at least one live WS (in-process hub + optional Redis `shroud:online:{user_id}` HASH with TTL). `last_seen_at` = max `devices.last_seen_at`. `GET /presence/:user_id` contacts-only (self always allowed). On connect/disconnect, fan-out `presence.update` to accepted contacts.
 - **Read receipts** — user-level (`message_reads`); not per-device. Recipient only; idempotent. Single + bulk up-to cursor. WS `message.read`.
 - WS must auth within 10s.
 - **Data APNs** when recipient has **no** online WS: silent `content-available` payload with opaque `message_id` / `conversation_id` / `peer_user_id` only. Requires `APNS_KEY_PATH` or `APNS_KEY_PEM` + `APNS_KEY_ID` + `APNS_TEAM_ID` + `APNS_TOPIC`. Per-device host from `push_tokens.environment`. Permanent APNs token errors delete the row.
@@ -519,6 +522,7 @@ Env-tunable later. Key pattern: `rl:{scope}:{id}`.
 
 - **1:1 only**; contacts required; one ringing/active call per user.
 - State machine: `ringing` → `active` | `rejected` | `cancelled` | `missed`; `active` → `ended`.
+- Unanswered `ringing` rows auto-expire to `missed` after 90s (background GC).
 - SDP/ICE are **opaque client blobs** (relayed, not stored).
 - `GET /calls/ice-servers` returns STUN (default) + optional TURN from env.
 - Compose: `docker compose --profile calls up` starts **coturn** (host network, local-only credentials).
@@ -535,7 +539,7 @@ Env-tunable later. Key pattern: `rl:{scope}:{id}`.
 | **3** | **Contacts** | **Done** — migration 004; user card; requests; mutual accept; contacts; blocks |
 | **4** | **Messages (HTTP)** | **Done** — migration 005; send/list/conversations/delivered |
 | **4b** | **WebSocket** | **Done** — `/ws`, in-process hub, message.new + message.delivered |
-| **5** | **Media** | **Done** — migration 006; upload/download presign (stub/Nebular); media on messages |
+| **5** | **Media** | **Done** — migration 006; API-proxied put/get content; optional Nebular mirror; media on messages |
 | **6** | **Receipts & presence** | **Done** — migration 009 `message_reads`; `POST /messages/:id/read` + bulk; `GET /presence/:user_id`; WS `typing` + `presence.update` + `message.read` |
 | **7** | **Deletes** | **Done** — migration 007; for me / everyone; account delete; message.deleted WS |
 | **8** | **APNs** | **Done** — migration 008; `PUT /push/token`; offline WS gate; HTTP/2 ES256 JWT client (`.p8` / `APNS_KEY_PEM`); drop invalid tokens |
@@ -1222,7 +1226,7 @@ Add optional:
 
 #### `DELETE /auth/account` → `204`
 
-- Authenticated; optional body `{ "password": "..." }` verify.
+- Authenticated; body `{ "password": "..." }` **required** (verify before hard delete).
 - Tombstone all messages where `sender_user_id = me` (clear ciphertext, set deleted_for_everyone_at).
 - `DELETE FROM users WHERE id = me` (cascades devices, sessions, keys, contacts, blocks, media ownership, hides, deliveries via FKs).
 - Remaining conversation rows may still exist for peer with tombstoned messages.
@@ -1241,9 +1245,11 @@ Add optional:
 | --- | --- |
 | `DATABASE_URL` | Postgres |
 | `DATABASE_POOL_MAX` | Pool size per instance |
-| `REDIS_URL` | Optional; enables multi-replica WS fan-out (+ future limits/presence) |
+| `REDIS_URL` | Optional; enables multi-replica WS fan-out, shared rate limits, presence |
+| `TRUST_FORWARDED_HEADERS` | Honor XFF / X-Real-IP for rate-limit keys (trusted proxy only; default false) |
 | `HOST` / `PORT` | Bind (default localhost:8080) |
 | `RUN_MIGRATIONS` | Prefer single migrator when scaled |
+| `MEDIA_DATA_DIR` | Local ciphertext blob directory |
 | `NEBULAR_URL` | Nebular base URL |
 | `NEBULAR_SIGNING_SECRET` | Presign material (name may match Nebular docs) |
 | `NEBULAR_MEDIA_BUCKET` | Default `shroud-media` |
@@ -1268,13 +1274,14 @@ Add optional:
 
 ## Still open
 
-1. **Nebular presign wire format** — harden real signing when not stub (Compose Nebular works for local). Orphan GC + download ACL (conversation, hide, delete-for-everyone) are **done**; local blob purge runs on an interval.
+1. **Multi-replica media** — clients use API-proxied `/media/{id}/content` (local volume + optional Nebular mirror). Shared volume or Nebular-primary reads needed when running N API replicas. Orphan GC + download ACL are **done**.
 2. **Multi-device key fetch for send** — **done** (`GET /keys/bundles/:user_id` returns all publishable devices with optional OTPK each; single-device `GET /keys/bundle/:user_id` kept).
-3. **Redis rate-limit wiring** — **done** (`rate_limit` module; Redis fixed windows when `REDIS_URL` set, else in-process; scopes: auth IP/username, user lookup IP, keys IP/user, contact requests, media presign, WS connect).
+3. **Redis rate-limit wiring** — **done** (auth, keys, contacts, media, WS, messages, calls, sensitive auth; Redis when configured).
 4. **VoIP / CallKit push** — dedicated PushKit cert path (currently same data-push channel as messages).
 5. **iOS polish** — media messages, call UI/WebRTC, presence polish, unread badges, multi-device own-message decrypt without local cache.
 6. **Double Ratchet** — client sealed ECDH+AES-GCM envelopes ship first; upgrade sessions to Signal-style DR later.
 7. **Envelope ciphertext encoding** — server stores opaque bytes; client currently uses JSON sealed envelope inside Base64 ciphertext field.
+8. **Observability** — Prometheus / OpenTelemetry metrics (latency, pool, WS, push) not yet wired.
 
 ---
 

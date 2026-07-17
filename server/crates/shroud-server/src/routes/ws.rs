@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::auth::hash_token;
 use crate::error::AppError;
-use crate::rate_limit::{budgets, client_ip};
+use crate::rate_limit::budgets;
 use crate::routes::contacts::are_contacts;
 use crate::routes::presence::{max_last_seen, notify_presence_to_contacts, touch_device_last_seen};
 use crate::state::AppState;
@@ -35,7 +35,7 @@ pub async fn ws_upgrade(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, AppError> {
-    let ip = client_ip(&headers);
+    let ip = state.client_ip(&headers);
     state
         .rate_limiter
         .check_budget("ws_ip", &ip, budgets::WS_CONNECT_IP)
@@ -111,7 +111,27 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         return;
     }
 
-    let mut rx = state.realtime.subscribe(user_id, device_id).await;
+    let mut rx = match state.realtime.subscribe(user_id, device_id).await {
+        Ok(rx) => rx,
+        Err(reason) => {
+            tracing::warn!(%user_id, %device_id, %reason, "ws.subscribe rejected");
+            let _ = sink
+                .send(Message::Text(
+                    json!({
+                        "type": "auth.error",
+                        "error": {
+                            "code": "RATE_LIMITED",
+                            "message": "Too many WebSocket connections for this account."
+                        }
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await;
+            let _ = sink.close().await;
+            return;
+        }
+    };
 
     // Touch last_seen and announce online to contacts.
     if let Ok(last_seen) = touch_device_last_seen(&state.pool, device_id).await {
