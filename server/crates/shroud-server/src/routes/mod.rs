@@ -28,6 +28,8 @@ pub fn router() -> Router<AppState> {
         "/api/v1",
         Router::new()
             .route("/health", get(health::health))
+            .route("/health/live", get(health::live))
+            .route("/health/ready", get(health::ready))
             .route("/auth/register", post(auth::register))
             .route("/auth/login", post(auth::login))
             .route("/auth/logout", post(auth::logout))

@@ -26,4 +26,6 @@ pub struct AppState {
     pub ice_servers: Vec<IceServer>,
     /// Abuse budgets (Redis when configured, else in-process).
     pub rate_limiter: RateLimiter,
+    /// When true, readiness requires a live Redis connection (`REDIS_URL` was set).
+    pub redis_required: bool,
 }

@@ -86,6 +86,7 @@ pub async fn run() -> Result<(), AppError> {
 
     let realtime = Arc::new(RealtimeHub::new());
     let rate_limiter = RateLimiter::new();
+    let redis_required = config.redis_url.is_some();
     if let Some(redis_url) = config.redis_url.clone() {
         match redis::Client::open(redis_url.as_str()) {
             Ok(client) => match redis::aio::ConnectionManager::new(client).await {
@@ -98,14 +99,14 @@ pub async fn run() -> Result<(), AppError> {
                 Err(err) => {
                     tracing::error!(
                         error = %err,
-                        "REDIS_URL set but connection manager failed; using in-process only"
+                        "REDIS_URL set but connection manager failed; readiness will report redis error"
                     );
                 }
             },
             Err(err) => {
                 tracing::error!(
                     error = %err,
-                    "REDIS_URL invalid; using in-process realtime + rate limits only"
+                    "REDIS_URL invalid; readiness will report redis error"
                 );
             }
         }
@@ -153,6 +154,7 @@ pub async fn run() -> Result<(), AppError> {
         push,
         ice_servers: config.ice_servers.clone(),
         rate_limiter,
+        redis_required,
     };
 
     // Human: Last `.layer` is outermost — request-id runs first, then TraceLayer sees the header.

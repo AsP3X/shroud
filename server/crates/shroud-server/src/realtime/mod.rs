@@ -54,6 +54,26 @@ impl RealtimeHub {
         *self.redis.write().await = Some(manager);
     }
 
+    /// True when a Redis connection manager is attached.
+    pub async fn has_redis(&self) -> bool {
+        self.redis.read().await.is_some()
+    }
+
+    /// PING Redis when configured. Errors if missing or the command fails.
+    pub async fn ping_redis(&self) -> Result<(), String> {
+        let mut conn = self
+            .redis
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| "redis not connected".to_string())?;
+        redis::cmd("PING")
+            .query_async::<String>(&mut conn)
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
     /// Registers a device connection; returns the receiver for WS write loop.
     pub async fn subscribe(
         self: &Arc<Self>,

@@ -62,7 +62,9 @@ Compose stack: **Postgres + Redis + API** (Nebular optional later).
 
 ```bash
 docker compose up -d --build   # from repo root
-curl http://127.0.0.1:8080/api/v1/health
+curl http://127.0.0.1:8080/api/v1/health/live   # process up
+curl http://127.0.0.1:8080/api/v1/health/ready  # Postgres (+ Redis if configured)
+curl http://127.0.0.1:8080/api/v1/health        # same as ready (compat)
 ```
 
 Optional native API: `docker compose up -d postgres redis` then `cd server && cargo run -p shroud-server`.

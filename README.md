@@ -54,8 +54,10 @@ docker compose -f docker-compose.yml -f docker-compose.host-ports.yml up -d --bu
 docker compose logs -f api nebular
 
 # Health check (host ports profile, or via your NPM hostname)
-curl http://127.0.0.1:8080/api/v1/health
-# {"status":"ok","database":"ok"}
+curl http://127.0.0.1:8080/api/v1/health/live
+# {"status":"ok"}
+curl http://127.0.0.1:8080/api/v1/health/ready
+# {"status":"ok","database":"ok","redis":"ok"|"skipped"}
 ```
 
 | Service | Default host port | Notes |

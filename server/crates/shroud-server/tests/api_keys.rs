@@ -24,6 +24,7 @@ fn test_state(pool: sqlx::PgPool) -> shroud_server::state::AppState {
         push,
         ice_servers: vec![],
         rate_limiter: shroud_server::rate_limit::RateLimiter::disabled(),
+        redis_required: false,
     }
 }
 
