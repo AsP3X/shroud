@@ -293,9 +293,11 @@ pub async fn keys_status(
 /// Agent: READS preferred device identity; never DELETE from device_one_time_prekeys.
 pub async fn get_identity(
     State(state): State<AppState>,
+    headers: HeaderMap,
     auth: AuthContext,
     Path(user_id): Path<Uuid>,
 ) -> Result<Json<IdentityResponse>, AppError> {
+    apply_keys_fetch_limits(&state, &headers, auth.user_id).await?;
     authorize_key_fetch(&state, auth.user_id, user_id).await?;
 
     let row = sqlx::query_as::<_, IdentityDeviceRow>(
@@ -317,7 +319,10 @@ pub async fn get_identity(
         return Err(AppError::keys_required());
     };
 
-    tracing::debug!(
+    // Human: Audit key material fetches for abuse detection (metadata only — no key bytes).
+    // Agent: LOGS requester/target/device ids at info; never logs public_key bytes.
+    tracing::info!(
+        requester_user_id = %auth.user_id,
         target_user_id = %user_id,
         device_id = %row.device_id,
         "keys.identity_get ok"

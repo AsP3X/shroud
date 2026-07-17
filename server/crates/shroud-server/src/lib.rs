@@ -21,9 +21,9 @@ use std::time::Duration;
 
 use axum::{Router, extract::Request, middleware};
 use sqlx::postgres::PgPoolOptions;
+use tower_http::LatencyUnit;
 use tower_http::classify::ServerErrorsFailureClass;
 use tower_http::trace::{DefaultOnResponse, TraceLayer};
-use tower_http::LatencyUnit;
 use tracing::{Level, Span};
 
 use crate::config::Config;
@@ -61,6 +61,8 @@ pub async fn run() -> Result<(), AppError> {
     tracing::info!(
         host = %config.host,
         port = config.port,
+        database_pool_max = config.database_pool_max,
+        run_migrations = config.run_migrations,
         redis = config.redis_url.is_some(),
         nebular = config.nebular_url.is_some(),
         media_bucket = %config.nebular_media_bucket,
@@ -69,20 +71,29 @@ pub async fn run() -> Result<(), AppError> {
 
     tracing::info!("connecting to postgres");
     let pool = PgPoolOptions::new()
-        .max_connections(10)
+        .max_connections(config.database_pool_max)
         .connect(&config.database_url)
         .await
         .map_err(|err| AppError::Internal(format!("database connection failed: {err}")))?;
-    tracing::info!("postgres connection pool ready");
+    tracing::info!(
+        max_connections = config.database_pool_max,
+        "postgres connection pool ready"
+    );
 
-    // Human: Migrations run automatically at startup so every instance shares schema version.
-    // Agent: CALLS sqlx::migrate! against server/migrations/postgres; DB DDL only.
-    tracing::info!("running database migrations");
-    sqlx::migrate!("../../migrations/postgres")
-        .run(&pool)
-        .await
-        .map_err(|err| AppError::Internal(format!("migration failed: {err}")))?;
-    tracing::info!("database migrations applied");
+    // Human: Only the migrator replica should apply DDL when horizontally scaled.
+    // Agent: CALLS sqlx::migrate! when RUN_MIGRATIONS=true; skips otherwise.
+    if config.run_migrations {
+        tracing::info!("running database migrations");
+        sqlx::migrate!("../../migrations/postgres")
+            .run(&pool)
+            .await
+            .map_err(|err| AppError::Internal(format!("migration failed: {err}")))?;
+        tracing::info!("database migrations applied");
+    } else {
+        tracing::info!("skipping database migrations (RUN_MIGRATIONS=false)");
+    }
+
+    let http_client = reqwest::Client::new();
 
     let realtime = Arc::new(RealtimeHub::new());
     let rate_limiter = RateLimiter::new();
@@ -118,9 +129,7 @@ pub async fn run() -> Result<(), AppError> {
 
     let apns = match apns_config_from_env() {
         None => {
-            tracing::info!(
-                "apns: credentials not set (token register works; send is log-only)"
-            );
+            tracing::info!("apns: credentials not set (token register works; send is log-only)");
             None
         }
         Some(config) => match ApnsClient::new(config) {
@@ -160,6 +169,7 @@ pub async fn run() -> Result<(), AppError> {
         ice_servers: config.ice_servers.clone(),
         rate_limiter,
         redis_required,
+        http_client,
     };
 
     // Human: Last `.layer` is outermost — request-id runs first, then TraceLayer sees the header.
@@ -184,9 +194,7 @@ pub async fn run() -> Result<(), AppError> {
                     },
                 ),
         )
-        .layer(middleware::from_fn(
-            request_tracking::request_id_middleware,
-        ))
+        .layer(middleware::from_fn(request_tracking::request_id_middleware))
         .with_state(state);
 
     let addr: SocketAddr = config.socket_addr()?;
@@ -200,9 +208,46 @@ pub async fn run() -> Result<(), AppError> {
         .await
         .map_err(|err| AppError::Internal(format!("bind failed: {err}")))?;
 
+    // Human: Drain in-flight HTTP after SIGTERM/Ctrl-C so orchestrators can stop cleanly.
+    // Agent: CALLS axum::serve.with_graceful_shutdown; WS clients see close on process exit.
     axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
         .await
         .map_err(|err| AppError::Internal(format!("server error: {err}")))?;
 
+    tracing::info!("shroud-server shut down");
     Ok(())
+}
+
+/// Waits for Ctrl-C or SIGTERM before returning.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        if let Err(err) = tokio::signal::ctrl_c().await {
+            tracing::error!(error = %err, "failed to install Ctrl-C handler");
+        }
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut stream) => {
+                stream.recv().await;
+            }
+            Err(err) => {
+                tracing::error!(error = %err, "failed to install SIGTERM handler");
+            }
+        }
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        () = ctrl_c => {
+            tracing::info!("shutdown signal: ctrl-c");
+        }
+        () = terminate => {
+            tracing::info!("shutdown signal: sigterm");
+        }
+    }
 }

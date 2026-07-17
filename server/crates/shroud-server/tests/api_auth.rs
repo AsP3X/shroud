@@ -13,18 +13,7 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 fn test_state(pool: sqlx::PgPool) -> shroud_server::state::AppState {
-    let realtime = std::sync::Arc::new(shroud_server::realtime::RealtimeHub::new());
-    let push = shroud_server::push::PushService::new(pool.clone(), realtime.clone(), None);
-    shroud_server::state::AppState {
-        pool,
-        nebular_url: None,
-        media_bucket: "shroud-media".into(),
-        realtime,
-        push,
-        ice_servers: vec![],
-        rate_limiter: shroud_server::rate_limit::RateLimiter::disabled(),
-        redis_required: false,
-    }
+    shroud_server::state::AppState::for_integration_tests(pool)
 }
 
 async fn test_app() -> Option<axum::Router> {
@@ -378,4 +367,82 @@ async fn login_reuses_device_and_lists_devices() {
         .expect("response");
     let list2 = json_body(devices2).await;
     assert_eq!(list2["devices"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn delete_account_requires_password_and_removes_user() {
+    let Some(app) = test_app().await else {
+        eprintln!(
+            "skipping delete_account_requires_password_and_removes_user: DATABASE_URL unavailable"
+        );
+        return;
+    };
+
+    let (username, password) = unique_user();
+    let register = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/register")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "username": username,
+                        "password": password,
+                        "device_name": "Delete Me"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(register.status(), StatusCode::CREATED);
+    let registered = json_body(register).await;
+    let token = registered["token"].as_str().unwrap();
+
+    let wrong = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/api/v1/auth/account")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "password": "wrong-password-value" }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED);
+
+    let deleted = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/api/v1/auth/account")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({ "password": password }).to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+
+    let me = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/me")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(me.status(), StatusCode::UNAUTHORIZED);
 }

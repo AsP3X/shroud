@@ -1,0 +1,60 @@
+name: Server
+
+on:
+  push:
+    paths:
+      - "server/**"
+      - ".github/workflows/server.yml"
+  pull_request:
+    paths:
+      - "server/**"
+      - ".github/workflows/server.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+  DATABASE_URL: postgres://shroud:shroud@localhost:5432/shroud
+
+jobs:
+  test:
+    name: fmt / clippy / test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: shroud
+          POSTGRES_PASSWORD: shroud
+          POSTGRES_DB: shroud
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U shroud -d shroud"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+
+      - name: cargo fmt
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace

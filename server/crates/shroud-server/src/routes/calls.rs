@@ -175,12 +175,7 @@ pub async fn create_call(
 
     state
         .push
-        .notify_incoming_call_if_offline(
-            body.peer_user_id,
-            call_id,
-            auth.user_id,
-            modality,
-        )
+        .notify_incoming_call_if_offline(body.peer_user_id, call_id, auth.user_id, modality)
         .await;
 
     tracing::info!(
@@ -386,7 +381,9 @@ async fn end_call_as(
         (EndAction::Hangup, "ringing", false) => ("missed", Some("declined")),
         (EndAction::Hangup, "active", _) => ("ended", Some("hangup")),
         (EndAction::Hangup, _, _) => {
-            return Err(AppError::validation("Call cannot be hung up in this state."));
+            return Err(AppError::validation(
+                "Call cannot be hung up in this state.",
+            ));
         }
     };
 

@@ -14,18 +14,7 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 fn test_state(pool: sqlx::PgPool, rate_limiter: RateLimiter) -> shroud_server::state::AppState {
-    let realtime = std::sync::Arc::new(shroud_server::realtime::RealtimeHub::new());
-    let push = shroud_server::push::PushService::new(pool.clone(), realtime.clone(), None);
-    shroud_server::state::AppState {
-        pool,
-        nebular_url: None,
-        media_bucket: "shroud-media".into(),
-        realtime,
-        push,
-        ice_servers: vec![],
-        rate_limiter,
-        redis_required: false,
-    }
+    shroud_server::state::AppState::for_integration_tests_with_limiter(pool, rate_limiter)
 }
 
 async fn test_app(rate_limiter: RateLimiter) -> Option<axum::Router> {
@@ -92,7 +81,10 @@ async fn auth_login_rate_limited_by_ip() {
             let json = json_body(response).await;
             assert_eq!(json["error"]["code"], "RATE_LIMITED");
             saw_limited = true;
-            eprintln!("auth_login_rate_limited_by_ip: limited after {} attempts", i + 1);
+            eprintln!(
+                "auth_login_rate_limited_by_ip: limited after {} attempts",
+                i + 1
+            );
             break;
         }
 
@@ -105,5 +97,8 @@ async fn auth_login_rate_limited_by_ip() {
         );
     }
 
-    assert!(saw_limited, "expected RATE_LIMITED within 15 login attempts");
+    assert!(
+        saw_limited,
+        "expected RATE_LIMITED within 15 login attempts"
+    );
 }

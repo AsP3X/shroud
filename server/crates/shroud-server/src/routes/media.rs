@@ -6,7 +6,8 @@
 use std::path::{Path, PathBuf};
 
 use axum::{
-    Json, body::Bytes,
+    Json,
+    body::Bytes,
     extract::{Path as AxumPath, State},
     http::{StatusCode, header},
     response::{IntoResponse, Response},
@@ -155,7 +156,7 @@ pub async fn put_content(
     }
 
     let len = body.len() as i64;
-    if len < 1 || len > MAX_MEDIA_BYTES {
+    if !(1..=MAX_MEDIA_BYTES).contains(&len) {
         return Err(AppError::validation(format!(
             "body size must be between 1 and {MAX_MEDIA_BYTES} bytes."
         )));
@@ -257,17 +258,16 @@ async fn authorize_download(
     user_id: Uuid,
     media: &MediaRow,
 ) -> Result<(), AppError> {
-    // Unlinked (compose / abandoned upload): only the uploader.
-    if media.message_id.is_none() {
+    let Some(message_id) = media.message_id else {
+        // Unlinked (compose / abandoned upload): only the uploader.
         if media.uploader_user_id == user_id {
             return Ok(());
         }
         return Err(AppError::forbidden(
             "Only the uploader can download unlinked media.",
         ));
-    }
+    };
 
-    let message_id = media.message_id.expect("checked");
     // Linked: conversation participant, not deleted-for-everyone, not hidden for caller.
     let access = sqlx::query_as::<_, MediaAccessRow>(
         r#"
@@ -296,9 +296,7 @@ async fn authorize_download(
         ));
     }
     if access.deleted_everyone {
-        return Err(AppError::forbidden(
-            "This media was deleted for everyone.",
-        ));
+        return Err(AppError::forbidden("This media was deleted for everyone."));
     }
     if access.hidden {
         return Err(AppError::forbidden(
@@ -330,15 +328,15 @@ pub async fn purge_orphan_media(pool: &sqlx::PgPool) -> Result<u64, AppError> {
     let mut purged = 0_u64;
     for media in orphans {
         let path = blob_path(&media);
-        if Path::new(&path).exists() {
-            if let Err(err) = tokio::fs::remove_file(&path).await {
-                tracing::warn!(
-                    error = %err,
-                    path = %path.display(),
-                    media_object_id = %media.id,
-                    "orphan media blob delete failed"
-                );
-            }
+        if Path::new(&path).exists()
+            && let Err(err) = tokio::fs::remove_file(&path).await
+        {
+            tracing::warn!(
+                error = %err,
+                path = %path.display(),
+                media_object_id = %media.id,
+                "orphan media blob delete failed"
+            );
         }
 
         let result = sqlx::query(
@@ -416,8 +414,13 @@ async fn write_blob(state: &AppState, media: &MediaRow, bytes: &[u8]) -> Result<
     if let Some(base) = &state.nebular_url {
         let base = base.trim_end_matches('/');
         let url = format!("{base}/{}/{}", media.bucket, media.object_key);
-        let client = reqwest::Client::new();
-        match client.put(&url).body(bytes.to_vec()).send().await {
+        match state
+            .http_client
+            .put(&url)
+            .body(bytes.to_vec())
+            .send()
+            .await
+        {
             Ok(resp) if resp.status().is_success() => {
                 tracing::debug!(%url, "media mirrored to nebular");
             }
@@ -449,8 +452,7 @@ async fn read_blob(state: &AppState, media: &MediaRow) -> Result<Vec<u8>, AppErr
     if let Some(base) = &state.nebular_url {
         let base = base.trim_end_matches('/');
         let url = format!("{base}/{}/{}", media.bucket, media.object_key);
-        let client = reqwest::Client::new();
-        match client.get(&url).send().await {
+        match state.http_client.get(&url).send().await {
             Ok(resp) if resp.status().is_success() => {
                 return resp
                     .bytes()

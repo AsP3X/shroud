@@ -100,9 +100,7 @@ impl PushService {
 
         for row in tokens {
             let env = ApnsEnvironment::parse(&row.environment);
-            let outcome = client
-                .send_data_push(&row.apns_token, env, &payload)
-                .await;
+            let outcome = client.send_data_push(&row.apns_token, env, &payload).await;
 
             match outcome {
                 ApnsSendOutcome::Accepted { apns_id } => {
@@ -208,10 +206,7 @@ impl PushService {
 
         for row in tokens {
             let env = ApnsEnvironment::parse(&row.environment);
-            match client
-                .send_data_push(&row.apns_token, env, &payload)
-                .await
-            {
+            match client.send_data_push(&row.apns_token, env, &payload).await {
                 ApnsSendOutcome::Accepted { apns_id } => {
                     tracing::info!(
                         %recipient_user_id,

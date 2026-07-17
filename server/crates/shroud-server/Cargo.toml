@@ -36,4 +36,5 @@ uuid.workspace = true
 
 [dev-dependencies]
 http-body-util = "0.1"
+tokio-tungstenite = "0.26"
 tower = { workspace = true, features = ["util"] }

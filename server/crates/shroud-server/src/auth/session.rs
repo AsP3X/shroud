@@ -14,6 +14,8 @@ use crate::state::AppState;
 pub const REVOKED_SESSION_RETENTION_DAYS: i64 = 30;
 /// How often the background purge task runs.
 const SESSION_PURGE_INTERVAL_SECS: u64 = 60 * 60;
+/// Skip `last_used_at` / `last_seen_at` writes when already touched within this window.
+const SESSION_TOUCH_THROTTLE_SECS: i64 = 5 * 60;
 
 /// Authenticated caller bound to a user device and live session.
 #[derive(Debug, Clone)]
@@ -82,24 +84,34 @@ impl FromRequestParts<AppState> for AuthContext {
         .map_err(|err| AppError::Internal(format!("session lookup failed: {err}")))?
         .ok_or_else(AppError::unauthorized)?;
 
+        // Human: Touch at most every few minutes so hot auth paths are not two UPDATEs each request.
+        // Agent: UPDATE sessions/devices only when last_* older than SESSION_TOUCH_THROTTLE_SECS.
         let now: DateTime<Utc> = Utc::now();
         let _ = sqlx::query(
             r#"
-            UPDATE sessions SET last_used_at = $1 WHERE id = $2
+            UPDATE sessions
+            SET last_used_at = $1
+            WHERE id = $2
+              AND (last_used_at IS NULL OR last_used_at < $1 - make_interval(secs => $3))
             "#,
         )
         .bind(now)
         .bind(row.session_id)
+        .bind(SESSION_TOUCH_THROTTLE_SECS)
         .execute(&state.pool)
         .await;
 
         let _ = sqlx::query(
             r#"
-            UPDATE devices SET last_seen_at = $1 WHERE id = $2
+            UPDATE devices
+            SET last_seen_at = $1
+            WHERE id = $2
+              AND (last_seen_at IS NULL OR last_seen_at < $1 - make_interval(secs => $3))
             "#,
         )
         .bind(now)
         .bind(row.device_id)
+        .bind(SESSION_TOUCH_THROTTLE_SECS)
         .execute(&state.pool)
         .await;
 

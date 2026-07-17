@@ -118,6 +118,12 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         notify_presence_to_contacts(&state, user_id, true, Some(last_seen)).await;
     }
 
+    // Human: Refresh Redis online TTL while the socket is alive so crashes expire cleanly.
+    // Agent: CALLS realtime.refresh_online every 30s; TTL is ONLINE_TTL_SECS (90).
+    let mut online_heartbeat = tokio::time::interval(Duration::from_secs(30));
+    online_heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    online_heartbeat.tick().await;
+
     loop {
         tokio::select! {
             outbound = rx.recv() => {
@@ -129,6 +135,9 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     }
                     None => break,
                 }
+            }
+            _ = online_heartbeat.tick() => {
+                state.realtime.refresh_online(user_id, device_id).await;
             }
             inbound = stream.next() => {
                 match inbound {

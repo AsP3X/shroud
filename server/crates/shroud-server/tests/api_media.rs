@@ -11,18 +11,7 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 fn test_state(pool: sqlx::PgPool) -> shroud_server::state::AppState {
-    let realtime = std::sync::Arc::new(shroud_server::realtime::RealtimeHub::new());
-    let push = shroud_server::push::PushService::new(pool.clone(), realtime.clone(), None);
-    shroud_server::state::AppState {
-        pool,
-        nebular_url: None,
-        media_bucket: "shroud-media".into(),
-        realtime,
-        push,
-        ice_servers: vec![],
-        rate_limiter: shroud_server::rate_limit::RateLimiter::disabled(),
-        redis_required: false,
-    }
+    shroud_server::state::AppState::for_integration_tests(pool)
 }
 
 async fn test_app() -> Option<axum::Router> {
@@ -147,12 +136,7 @@ async fn upload_link_download_for_peer() {
     assert_eq!(upload.status(), StatusCode::CREATED);
     let up = json_body(upload).await;
     let media_id = up["media_object_id"].as_str().unwrap().to_string();
-    assert!(
-        up["upload_url"]
-            .as_str()
-            .unwrap()
-            .starts_with("media/")
-    );
+    assert!(up["upload_url"].as_str().unwrap().starts_with("media/"));
 
     // Peer cannot download unlinked media.
     let denied = app
@@ -336,12 +320,11 @@ async fn purge_orphan_media_deletes_stale_unlinked_rows() {
         .expect("purge");
     assert!(purged >= 1);
 
-    let gone: bool = sqlx::query_scalar(
-        r#"SELECT NOT EXISTS(SELECT 1 FROM media_objects WHERE id = $1)"#,
-    )
-    .bind(Uuid::parse_str(&media_id).unwrap())
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let gone: bool =
+        sqlx::query_scalar(r#"SELECT NOT EXISTS(SELECT 1 FROM media_objects WHERE id = $1)"#)
+            .bind(Uuid::parse_str(&media_id).unwrap())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert!(gone);
 }

@@ -199,7 +199,9 @@ Calls phase adds **coturn** (TURN). Media bytes do not transit the Rust API.
 - Run migrations once (single job / `RUN_MIGRATIONS`), not on every replica concurrently.
 - Configurable `DATABASE_POOL_MAX`.
 - Idempotent message inserts via `client_message_id`.
-- Liveness vs readiness — **done** (`GET /health/live`, `/health/ready`; `/health` = ready; Redis required when `REDIS_URL` set). Graceful SIGTERM drain still open.
+- Liveness vs readiness — **done** (`GET /health/live`, `/health/ready`; `/health` = ready; Redis required when `REDIS_URL` set).
+- Graceful SIGTERM / Ctrl-C drain — **done** (`axum::serve` + `with_graceful_shutdown`).
+- `DATABASE_POOL_MAX` / `RUN_MIGRATIONS` — **done** (env-backed; Compose sets both).
 
 ---
 
@@ -442,7 +444,7 @@ History `GET /messages` excludes rows hidden for the caller; for-everyone rows r
 
 | Entity | Role |
 | --- | --- |
-| (presence/typing keys) | Redis TTLs later |
+| (presence online hash) | Redis HASH + 90s TTL / WS heartbeat refresh |
 
 Redis: pub/sub fan-out, online sets, future rate limits.
 

@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use redis::AsyncCommands;
 use redis::aio::ConnectionManager;
@@ -15,9 +16,18 @@ type DeviceTx = mpsc::UnboundedSender<String>;
 
 const USER_CHANNEL_PREFIX: &str = "shroud:user:";
 const ONLINE_KEY_PREFIX: &str = "shroud:online:";
+/// Redis online hash entries older than this are treated as stale (crash without unsubscribe).
+pub const ONLINE_TTL_SECS: i64 = 90;
 
 fn online_key(user_id: Uuid) -> String {
     format!("{ONLINE_KEY_PREFIX}{user_id}")
+}
+
+fn unix_now_secs() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 /// Shared connection hub keyed by device (and indexed by user).
@@ -109,14 +119,13 @@ impl RealtimeHub {
         self.mark_offline(user_id, device_id).await;
     }
 
-    /// True if the user has at least one online WebSocket (local or Redis online set).
+    /// True if the user has at least one online WebSocket (local or Redis online hash).
     pub async fn is_user_online(&self, user_id: Uuid) -> bool {
         if let Some(mut conn) = self.redis.read().await.clone() {
-            let key = online_key(user_id);
-            match conn.scard::<_, u64>(&key).await {
+            match redis_online_count(&mut conn, user_id).await {
                 Ok(n) if n > 0 => return true,
                 Ok(_) => {}
-                Err(err) => tracing::warn!(error = %err, "redis online scard failed"),
+                Err(err) => tracing::warn!(error = %err, "redis online check failed"),
             }
         }
         let by_user = self.devices_by_user.read().await;
@@ -125,11 +134,26 @@ impl RealtimeHub {
             .is_some_and(|devices| !devices.is_empty())
     }
 
+    /// Refreshes this device's Redis online heartbeat (call from WS loop).
+    pub async fn refresh_online(&self, user_id: Uuid, device_id: Uuid) {
+        self.mark_online(user_id, device_id).await;
+    }
+
     async fn mark_online(&self, user_id: Uuid, device_id: Uuid) {
         if let Some(mut conn) = self.redis.read().await.clone() {
             let key = online_key(user_id);
-            if let Err(err) = conn.sadd::<_, _, ()>(&key, device_id.to_string()).await {
-                tracing::warn!(error = %err, "redis online sadd failed");
+            let now = unix_now_secs();
+            // Human: HASH field = device_id, value = unix ts; EXPIRE bounds crash orphans.
+            // Agent: HSET + EXPIRE ONLINE_TTL_SECS; pruned on is_user_online read.
+            if let Err(err) = conn
+                .hset::<_, _, _, ()>(&key, device_id.to_string(), now)
+                .await
+            {
+                tracing::warn!(error = %err, "redis online hset failed");
+                return;
+            }
+            if let Err(err) = conn.expire::<_, ()>(&key, ONLINE_TTL_SECS).await {
+                tracing::warn!(error = %err, "redis online expire failed");
             }
         }
     }
@@ -137,8 +161,8 @@ impl RealtimeHub {
     async fn mark_offline(&self, user_id: Uuid, device_id: Uuid) {
         if let Some(mut conn) = self.redis.read().await.clone() {
             let key = online_key(user_id);
-            if let Err(err) = conn.srem::<_, _, ()>(&key, device_id.to_string()).await {
-                tracing::warn!(error = %err, "redis online srem failed");
+            if let Err(err) = conn.hdel::<_, _, ()>(&key, device_id.to_string()).await {
+                tracing::warn!(error = %err, "redis online hdel failed");
             }
         }
     }
@@ -229,6 +253,29 @@ impl RealtimeHub {
             }
         }
     }
+}
+
+/// Counts fresh Redis online devices for `user_id`, pruning stale hash fields.
+async fn redis_online_count(
+    conn: &mut ConnectionManager,
+    user_id: Uuid,
+) -> Result<usize, redis::RedisError> {
+    let key = online_key(user_id);
+    let entries: HashMap<String, i64> = conn.hgetall(&key).await?;
+    if entries.is_empty() {
+        return Ok(0);
+    }
+
+    let cutoff = unix_now_secs() - ONLINE_TTL_SECS;
+    let mut fresh = 0usize;
+    for (device_id, ts) in entries {
+        if ts >= cutoff {
+            fresh += 1;
+        } else if let Err(err) = conn.hdel::<_, _, ()>(&key, &device_id).await {
+            tracing::warn!(error = %err, %device_id, "redis online prune hdel failed");
+        }
+    }
+    Ok(fresh)
 }
 
 /// Spawns a background task that pattern-subscribes and fans out to the local hub.

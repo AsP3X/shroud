@@ -26,7 +26,7 @@ RUN touch crates/shroud-server/src/main.rs crates/shroud-server/src/lib.rs \
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libssl3 gosu \
+    && apt-get install -y --no-install-recommends ca-certificates libssl3 gosu curl \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /data/shroud-media \
     && chown -R nobody:nogroup /data

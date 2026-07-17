@@ -100,9 +100,13 @@ impl RateLimiter {
                     return Err(AppError::rate_limited());
                 }
                 Err(err) => {
-                    // Fail open on Redis errors so a cache outage does not take down the API.
-                    tracing::warn!(error = %err, %key, "rate limit redis failed; allowing request");
-                    return Ok(());
+                    // Human: Degrade to in-process windows — do not fail open under Redis outage.
+                    // Agent: FALLBACK memory_check on Redis error; still enforces per-process budgets.
+                    tracing::warn!(
+                        error = %err,
+                        %key,
+                        "rate limit redis failed; falling back to in-process window"
+                    );
                 }
             }
         }
@@ -173,12 +177,11 @@ pub fn client_ip(headers: &HeaderMap) -> String {
     if let Some(xff) = headers
         .get("x-forwarded-for")
         .and_then(|value| value.to_str().ok())
+        && let Some(first) = xff.split(',').next()
     {
-        if let Some(first) = xff.split(',').next() {
-            let trimmed = first.trim();
-            if !trimmed.is_empty() {
-                return trimmed.to_string();
-            }
+        let trimmed = first.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
         }
     }
 

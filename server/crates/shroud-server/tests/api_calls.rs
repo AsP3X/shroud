@@ -10,18 +10,7 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 fn test_state(pool: sqlx::PgPool) -> shroud_server::state::AppState {
-    let realtime = std::sync::Arc::new(shroud_server::realtime::RealtimeHub::new());
-    let push = shroud_server::push::PushService::new(pool.clone(), realtime.clone(), None);
-    shroud_server::state::AppState {
-        pool,
-        nebular_url: None,
-        media_bucket: "shroud-media".into(),
-        realtime,
-        push,
-        ice_servers: vec![],
-        rate_limiter: shroud_server::rate_limit::RateLimiter::disabled(),
-        redis_required: false,
-    }
+    shroud_server::state::AppState::for_integration_tests(pool)
 }
 
 async fn test_app() -> Option<axum::Router> {
@@ -273,9 +262,7 @@ async fn reject_and_non_contact() {
                 .uri("/api/v1/calls")
                 .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(
-                    json!({ "peer_user_id": user_c }).to_string(),
-                ))
+                .body(Body::from(json!({ "peer_user_id": user_c }).to_string()))
                 .expect("request"),
         )
         .await
@@ -292,9 +279,7 @@ async fn reject_and_non_contact() {
                 .uri("/api/v1/calls")
                 .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(
-                    json!({ "peer_user_id": user_b }).to_string(),
-                ))
+                .body(Body::from(json!({ "peer_user_id": user_b }).to_string()))
                 .expect("request"),
         )
         .await

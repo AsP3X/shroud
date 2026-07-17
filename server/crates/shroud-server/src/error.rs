@@ -2,7 +2,7 @@
 
 use axum::{
     Json,
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use serde::Serialize;
@@ -206,10 +206,11 @@ impl IntoResponse for AppError {
             },
         };
 
+        let code = self.code();
         if status.is_server_error() {
             tracing::error!(
                 status = %status,
-                code = self.code(),
+                code,
                 error = %self,
                 "internal API error"
             );
@@ -217,12 +218,19 @@ impl IntoResponse for AppError {
             // Human: 4xx are expected (auth, validation); keep info-level so local stacks stay readable.
             tracing::info!(
                 status = %status,
-                code = self.code(),
+                code,
                 message = %self.client_message(),
                 "client API error"
             );
         }
 
-        (status, Json(body)).into_response()
+        let mut response = (status, Json(body)).into_response();
+        if code == "RATE_LIMITED" {
+            // Hint clients to back off for one fixed-window period (budgets are per-minute).
+            response
+                .headers_mut()
+                .insert(header::RETRY_AFTER, HeaderValue::from_static("60"));
+        }
+        response
     }
 }

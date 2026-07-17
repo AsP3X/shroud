@@ -104,6 +104,9 @@ services:
       <<: *shroud-logging
       # Docker network hostnames on shroud-internal (not localhost).
       DATABASE_URL: postgres://shroud:shroud@postgres:5432/shroud
+      DATABASE_POOL_MAX: "10"
+      # Single compose replica runs migrations; set false on extra API replicas when scaling.
+      RUN_MIGRATIONS: "true"
       REDIS_URL: redis://redis:6379
       NEBULAR_URL: http://nebular:9000
       NEBULAR_MEDIA_BUCKET: shroud-media
@@ -129,11 +132,10 @@ services:
       - shroud-internal
       - proxy-network
     healthcheck:
-      # No curl in slim image — use the binary bind check via /dev/tcp if available.
       test:
         [
           "CMD-SHELL",
-          "timeout 2 bash -c 'cat < /dev/null > /dev/tcp/127.0.0.1/8080' || exit 1",
+          "curl -fsS http://127.0.0.1:8080/api/v1/health/ready >/dev/null || exit 1",
         ]
       interval: 10s
       timeout: 5s

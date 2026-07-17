@@ -60,9 +60,8 @@ pub async fn get_user_by_username(
 ) -> Result<Json<UserCard>, AppError> {
     limit_user_lookup(&state, &headers).await?;
 
-    let username = normalize_username(&username).map_err(|_| {
-        AppError::not_found("User not found.")
-    })?;
+    let username =
+        normalize_username(&username).map_err(|_| AppError::not_found("User not found."))?;
 
     let row = sqlx::query_as::<_, UserCard>(
         r#"SELECT id, username, share_code FROM users WHERE username = $1"#,

@@ -28,4 +28,33 @@ pub struct AppState {
     pub rate_limiter: RateLimiter,
     /// When true, readiness requires a live Redis connection (`REDIS_URL` was set).
     pub redis_required: bool,
+    /// Shared HTTP client for Nebular (and other outbound) calls.
+    pub http_client: reqwest::Client,
+}
+
+impl AppState {
+    /// Builds state for integration tests (rate limits off, no Nebular/APNs).
+    ///
+    /// Human: Keeps test setup identical across suites so new fields are not forgotten.
+    /// Agent: CALLS RateLimiter::disabled; WRITES AppState with reqwest::Client::new().
+    pub fn for_integration_tests(pool: PgPool) -> Self {
+        Self::for_integration_tests_with_limiter(pool, RateLimiter::disabled())
+    }
+
+    /// Like [`Self::for_integration_tests`] but with a custom rate limiter (e.g. enabled).
+    pub fn for_integration_tests_with_limiter(pool: PgPool, rate_limiter: RateLimiter) -> Self {
+        let realtime = Arc::new(RealtimeHub::new());
+        let push = PushService::new(pool.clone(), realtime.clone(), None);
+        Self {
+            pool,
+            nebular_url: None,
+            media_bucket: "shroud-media".into(),
+            realtime,
+            push,
+            ice_servers: vec![],
+            rate_limiter,
+            redis_required: false,
+            http_client: reqwest::Client::new(),
+        }
+    }
 }

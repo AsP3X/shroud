@@ -1,5 +1,7 @@
 //! HTTP message send, history, conversations list, delivery acks.
 
+use std::collections::HashMap;
+
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -415,12 +417,24 @@ pub async fn list_messages(
         }
         .map_err(|err| AppError::Internal(format!("list messages failed: {err}")))?;
 
+    // Human: Batch receipt lookups so history pages are O(1) queries, not O(n).
+    // Agent: CALLS peer_receipt_status_batch for outbound ids; WRITES delivered/read on responses.
+    let outbound_ids: Vec<Uuid> = rows
+        .iter()
+        .filter(|row| row.sender_user_id == auth.user_id)
+        .map(|row| row.id)
+        .collect();
+    let receipt_map =
+        peer_receipt_status_batch(&state.pool, &outbound_ids, query.peer_user_id).await?;
+
     let mut messages = Vec::with_capacity(rows.len());
     for row in rows {
         let mut response = message_to_response(row);
         if response.sender_user_id == auth.user_id {
-            let (delivered, read) =
-                peer_receipt_status(&state.pool, response.id, query.peer_user_id).await?;
+            let (delivered, read) = receipt_map
+                .get(&response.id)
+                .copied()
+                .unwrap_or((false, false));
             response.delivered = Some(delivered);
             response.read = Some(read);
         }
@@ -441,20 +455,28 @@ pub async fn list_conversations(
     #[derive(FromRow)]
     struct Row {
         id: Uuid,
-        user_a_id: Uuid,
-        user_b_id: Uuid,
+        peer_id: Uuid,
+        peer_username: String,
         created_at: DateTime<Utc>,
         last_message_at: Option<DateTime<Utc>>,
     }
 
+    // Human: Join peer username in one query — avoids N+1 per conversation row.
+    // Agent: SELECT conversations JOIN users; RETURNS ConversationItem list.
     let rows = sqlx::query_as::<_, Row>(
         r#"
-        SELECT c.id, c.user_a_id, c.user_b_id, c.created_at,
-               (
-                 SELECT MAX(m.created_at) FROM messages m
-                 WHERE m.conversation_id = c.id
-               ) AS last_message_at
+        SELECT
+            c.id,
+            CASE WHEN c.user_a_id = $1 THEN c.user_b_id ELSE c.user_a_id END AS peer_id,
+            CASE WHEN c.user_a_id = $1 THEN ub.username ELSE ua.username END AS peer_username,
+            c.created_at,
+            (
+              SELECT MAX(m.created_at) FROM messages m
+              WHERE m.conversation_id = c.id
+            ) AS last_message_at
         FROM conversations c
+        INNER JOIN users ua ON ua.id = c.user_a_id
+        INNER JOIN users ub ON ub.id = c.user_b_id
         WHERE c.user_a_id = $1 OR c.user_b_id = $1
         ORDER BY last_message_at DESC NULLS LAST, c.created_at DESC
         "#,
@@ -464,29 +486,18 @@ pub async fn list_conversations(
     .await
     .map_err(|err| AppError::Internal(format!("list conversations failed: {err}")))?;
 
-    let mut conversations = Vec::with_capacity(rows.len());
-    for row in rows {
-        let peer_id = if row.user_a_id == auth.user_id {
-            row.user_b_id
-        } else {
-            row.user_a_id
-        };
-        let username: String = sqlx::query_scalar(r#"SELECT username FROM users WHERE id = $1"#)
-            .bind(peer_id)
-            .fetch_one(&state.pool)
-            .await
-            .map_err(|err| AppError::Internal(format!("peer username failed: {err}")))?;
-
-        conversations.push(ConversationItem {
+    let conversations = rows
+        .into_iter()
+        .map(|row| ConversationItem {
             id: row.id,
             peer: PeerCard {
-                id: peer_id,
-                username,
+                id: row.peer_id,
+                username: row.peer_username,
             },
             created_at: row.created_at,
             last_message_at: row.last_message_at,
-        });
-    }
+        })
+        .collect();
 
     Ok(Json(ConversationsResponse { conversations }))
 }
@@ -544,8 +555,7 @@ pub async fn mark_read_bulk(
 
     let meta = load_readable_message(&state.pool, body.up_to_message_id, auth.user_id).await?;
     // Cursor message must be in the conversation with this peer.
-    let peer_in_conv =
-        meta.user_a_id == body.peer_user_id || meta.user_b_id == body.peer_user_id;
+    let peer_in_conv = meta.user_a_id == body.peer_user_id || meta.user_b_id == body.peer_user_id;
     if !peer_in_conv {
         return Err(AppError::validation(
             "up_to_message_id is not in a conversation with peer_user_id.",
@@ -925,45 +935,70 @@ fn message_to_response(row: MessageRow) -> MessageResponse {
     }
 }
 
-/// Delivery / read status of `peer_user_id` for an outbound message.
-async fn peer_receipt_status(
+/// Delivery / read status of `peer_user_id` for many outbound messages (batched).
+async fn peer_receipt_status_batch(
     pool: &sqlx::PgPool,
-    message_id: Uuid,
+    message_ids: &[Uuid],
     peer_user_id: Uuid,
-) -> Result<(bool, bool), AppError> {
-    let delivered: bool = sqlx::query_scalar(
+) -> Result<HashMap<Uuid, (bool, bool)>, AppError> {
+    let mut map: HashMap<Uuid, (bool, bool)> =
+        message_ids.iter().map(|id| (*id, (false, false))).collect();
+    if message_ids.is_empty() {
+        return Ok(map);
+    }
+
+    #[derive(FromRow)]
+    struct DeliveredRow {
+        message_id: Uuid,
+    }
+
+    let delivered_rows = sqlx::query_as::<_, DeliveredRow>(
         r#"
-        SELECT EXISTS(
-            SELECT 1
-            FROM message_deliveries d
-            INNER JOIN devices dev ON dev.id = d.device_id
-            WHERE d.message_id = $1
-              AND dev.user_id = $2
-              AND d.delivered_at IS NOT NULL
-        )
+        SELECT DISTINCT d.message_id
+        FROM message_deliveries d
+        INNER JOIN devices dev ON dev.id = d.device_id
+        WHERE d.message_id = ANY($1)
+          AND dev.user_id = $2
+          AND d.delivered_at IS NOT NULL
         "#,
     )
-    .bind(message_id)
+    .bind(message_ids)
     .bind(peer_user_id)
-    .fetch_one(pool)
+    .fetch_all(pool)
     .await
-    .map_err(|err| AppError::Internal(format!("peer delivered check failed: {err}")))?;
+    .map_err(|err| AppError::Internal(format!("peer delivered batch failed: {err}")))?;
 
-    let read: bool = sqlx::query_scalar(
+    for row in delivered_rows {
+        if let Some(entry) = map.get_mut(&row.message_id) {
+            entry.0 = true;
+        }
+    }
+
+    #[derive(FromRow)]
+    struct ReadRow {
+        message_id: Uuid,
+    }
+
+    let read_rows = sqlx::query_as::<_, ReadRow>(
         r#"
-        SELECT EXISTS(
-            SELECT 1 FROM message_reads
-            WHERE message_id = $1 AND user_id = $2
-        )
+        SELECT message_id
+        FROM message_reads
+        WHERE message_id = ANY($1) AND user_id = $2
         "#,
     )
-    .bind(message_id)
+    .bind(message_ids)
     .bind(peer_user_id)
-    .fetch_one(pool)
+    .fetch_all(pool)
     .await
-    .map_err(|err| AppError::Internal(format!("peer read check failed: {err}")))?;
+    .map_err(|err| AppError::Internal(format!("peer read batch failed: {err}")))?;
 
-    Ok((delivered, read))
+    for row in read_rows {
+        if let Some(entry) = map.get_mut(&row.message_id) {
+            entry.1 = true;
+        }
+    }
+
+    Ok(map)
 }
 
 /// `DELETE /messages/:id?scope=me|everyone`
