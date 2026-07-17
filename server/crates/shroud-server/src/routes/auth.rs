@@ -1,6 +1,10 @@
 //! Registration, login, logout, me, and password change.
 
-use axum::{Json, extract::State, http::StatusCode};
+use axum::{
+    Json,
+    extract::State,
+    http::{HeaderMap, StatusCode},
+};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -12,6 +16,7 @@ use crate::auth::{
     normalize_username, verify_password,
 };
 use crate::error::AppError;
+use crate::rate_limit::{budgets, client_ip};
 use crate::state::AppState;
 
 /// Register / login success body (token shown once).
@@ -74,9 +79,21 @@ struct UserAuthRow {
 /// `POST /auth/register` — create user, first device, session.
 pub async fn register(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<RegisterRequest>,
 ) -> Result<(StatusCode, Json<AuthSessionResponse>), AppError> {
+    let ip = client_ip(&headers);
+    state
+        .rate_limiter
+        .check_budget("auth_ip", &ip, budgets::AUTH_IP)
+        .await?;
+
     let username = normalize_username(&body.username)?;
+    state
+        .rate_limiter
+        .check_budget("auth_user", &username, budgets::AUTH_USERNAME)
+        .await?;
+
     let password_hash = hash_password(&body.password)?;
     let device_name = normalize_optional_name(body.device_name);
 
@@ -178,10 +195,23 @@ pub async fn register(
 /// `POST /auth/login` — verify password, reuse or create device, issue session.
 pub async fn login(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<LoginRequest>,
 ) -> Result<Json<AuthSessionResponse>, AppError> {
+    let ip = client_ip(&headers);
+    state
+        .rate_limiter
+        .check_budget("auth_ip", &ip, budgets::AUTH_IP)
+        .await?;
+
     let username =
         normalize_username(&body.username).map_err(|_| AppError::invalid_credentials())?;
+    // Count failed and successful attempts so password guessing burns the budget.
+    state
+        .rate_limiter
+        .check_budget("auth_user", &username, budgets::AUTH_USERNAME)
+        .await?;
+
     let device_name = normalize_optional_name(body.device_name);
 
     let user = sqlx::query_as::<_, UserAuthRow>(

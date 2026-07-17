@@ -26,7 +26,7 @@ pub struct Config {
     /// Optional Nebular OS base URL; when unset, media uses stub presign URLs.
     pub nebular_url: Option<String>,
     pub nebular_media_bucket: String,
-    /// Optional Redis URL for multi-replica WebSocket fan-out.
+    /// Optional Redis URL for multi-replica WebSocket fan-out and shared rate limits.
     pub redis_url: Option<String>,
     /// STUN/TURN servers for WebRTC clients.
     pub ice_servers: Vec<IceServer>,

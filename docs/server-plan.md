@@ -1236,7 +1236,7 @@ Add optional:
 
 1. **Nebular presign wire format** — harden real signing when not stub (Compose Nebular works for local).
 2. **Multi-device key fetch for send** — m2 is single best-device GET; list/fetch-all-device bundles for true multi-device fan-out. (`GET /keys/identity/:user_id` avoids OTPK consume for identity-only lookups.)
-3. **Redis rate-limit wiring** — budgets documented; not fully enforced yet.
+3. **Redis rate-limit wiring** — **done** (`rate_limit` module; Redis fixed windows when `REDIS_URL` set, else in-process; scopes: auth IP/username, user lookup IP, keys IP/user, contact requests, media presign, WS connect).
 4. **VoIP / CallKit push** — dedicated PushKit cert path (currently same data-push channel as messages).
 5. **iOS polish** — media messages, call UI/WebRTC, presence polish, unread badges, multi-device own-message decrypt without local cache.
 6. **Double Ratchet** — client sealed ECDH+AES-GCM envelopes ship first; upgrade sessions to Signal-style DR later.

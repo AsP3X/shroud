@@ -3,6 +3,7 @@
 use axum::{
     Json,
     extract::{Path, State},
+    http::HeaderMap,
 };
 use serde::Serialize;
 use sqlx::FromRow;
@@ -11,7 +12,16 @@ use uuid::Uuid;
 use crate::auth::session::AuthContext;
 use crate::auth::{is_valid_share_code_format, normalize_share_code, normalize_username};
 use crate::error::AppError;
+use crate::rate_limit::{budgets, client_ip};
 use crate::state::AppState;
+
+async fn limit_user_lookup(state: &AppState, headers: &HeaderMap) -> Result<(), AppError> {
+    let ip = client_ip(headers);
+    state
+        .rate_limiter
+        .check_budget("user_lookup_ip", &ip, budgets::USER_LOOKUP_IP)
+        .await
+}
 
 #[derive(Debug, Serialize, FromRow)]
 pub struct UserCard {
@@ -23,9 +33,12 @@ pub struct UserCard {
 /// `GET /users/:user_id` — minimal public profile by UUID.
 pub async fn get_user(
     State(state): State<AppState>,
+    headers: HeaderMap,
     _auth: AuthContext,
     Path(user_id): Path<Uuid>,
 ) -> Result<Json<UserCard>, AppError> {
+    limit_user_lookup(&state, &headers).await?;
+
     let row = sqlx::query_as::<_, UserCard>(
         r#"SELECT id, username, share_code FROM users WHERE id = $1"#,
     )
@@ -41,9 +54,12 @@ pub async fn get_user(
 /// `GET /users/by-username/:username` — lookup by username (case-insensitive).
 pub async fn get_user_by_username(
     State(state): State<AppState>,
+    headers: HeaderMap,
     _auth: AuthContext,
     Path(username): Path<String>,
 ) -> Result<Json<UserCard>, AppError> {
+    limit_user_lookup(&state, &headers).await?;
+
     let username = normalize_username(&username).map_err(|_| {
         AppError::not_found("User not found.")
     })?;
@@ -63,9 +79,12 @@ pub async fn get_user_by_username(
 /// `GET /users/by-code/:code` — lookup by short share code (QR / deep link).
 pub async fn get_user_by_share_code(
     State(state): State<AppState>,
+    headers: HeaderMap,
     _auth: AuthContext,
     Path(code): Path<String>,
 ) -> Result<Json<UserCard>, AppError> {
+    limit_user_lookup(&state, &headers).await?;
+
     let code = normalize_share_code(&code);
     if !is_valid_share_code_format(&code) {
         return Err(AppError::not_found("User not found."));

@@ -6,6 +6,7 @@ use sqlx::PgPool;
 
 use crate::config::IceServer;
 use crate::push::PushService;
+use crate::rate_limit::RateLimiter;
 use crate::realtime::RealtimeHub;
 
 /// State injected into every API handler.
@@ -23,4 +24,6 @@ pub struct AppState {
     pub push: PushService,
     /// STUN/TURN servers advertised to clients for WebRTC.
     pub ice_servers: Vec<IceServer>,
+    /// Abuse budgets (Redis when configured, else in-process).
+    pub rate_limiter: RateLimiter,
 }

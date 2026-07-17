@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
@@ -13,6 +14,7 @@ use uuid::Uuid;
 
 use crate::auth::hash_token;
 use crate::error::AppError;
+use crate::rate_limit::{budgets, client_ip};
 use crate::routes::contacts::are_contacts;
 use crate::routes::presence::{max_last_seen, notify_presence_to_contacts, touch_device_last_seen};
 use crate::state::AppState;
@@ -28,8 +30,17 @@ struct ClientMessage {
 }
 
 /// `GET /ws` — upgrade to WebSocket.
-pub async fn ws_upgrade(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, state))
+pub async fn ws_upgrade(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, AppError> {
+    let ip = client_ip(&headers);
+    state
+        .rate_limiter
+        .check_budget("ws_ip", &ip, budgets::WS_CONNECT_IP)
+        .await?;
+    Ok(ws.on_upgrade(move |socket| handle_socket(socket, state)))
 }
 
 async fn handle_socket(socket: WebSocket, state: AppState) {

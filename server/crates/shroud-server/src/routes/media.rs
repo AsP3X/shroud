@@ -18,6 +18,7 @@ use uuid::Uuid;
 
 use crate::auth::session::AuthContext;
 use crate::error::AppError;
+use crate::rate_limit::budgets;
 use crate::state::AppState;
 
 /// Maximum encrypted object size (25 MiB).
@@ -63,6 +64,15 @@ pub async fn create_upload(
     auth: AuthContext,
     Json(body): Json<CreateUploadRequest>,
 ) -> Result<(StatusCode, Json<CreateUploadResponse>), AppError> {
+    state
+        .rate_limiter
+        .check_budget(
+            "media_presign_user",
+            &auth.user_id.to_string(),
+            budgets::MEDIA_PRESIGN_USER,
+        )
+        .await?;
+
     if body.size_bytes < 1 || body.size_bytes > MAX_MEDIA_BYTES {
         return Err(AppError::validation(format!(
             "size_bytes must be between 1 and {MAX_MEDIA_BYTES}."

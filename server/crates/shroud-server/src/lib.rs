@@ -9,6 +9,7 @@ pub mod error;
 pub mod keys;
 pub mod logging;
 pub mod push;
+pub mod rate_limit;
 pub mod realtime;
 pub mod request_tracking;
 pub mod routes;
@@ -28,6 +29,7 @@ use tracing::{Level, Span};
 use crate::config::Config;
 use crate::error::AppError;
 use crate::push::{ApnsClient, PushService, apns_config_from_env};
+use crate::rate_limit::RateLimiter;
 use crate::realtime::RealtimeHub;
 use crate::state::AppState;
 
@@ -83,13 +85,15 @@ pub async fn run() -> Result<(), AppError> {
     tracing::info!("database migrations applied");
 
     let realtime = Arc::new(RealtimeHub::new());
+    let rate_limiter = RateLimiter::new();
     if let Some(redis_url) = config.redis_url.clone() {
         match redis::Client::open(redis_url.as_str()) {
             Ok(client) => match redis::aio::ConnectionManager::new(client).await {
                 Ok(manager) => {
-                    realtime.set_redis(manager).await;
+                    realtime.set_redis(manager.clone()).await;
+                    rate_limiter.set_redis(manager).await;
                     crate::realtime::spawn_redis_subscriber(realtime.clone(), redis_url);
-                    tracing::info!("realtime fan-out: Redis pub/sub enabled");
+                    tracing::info!("realtime fan-out + rate limits: Redis enabled");
                 }
                 Err(err) => {
                     tracing::error!(
@@ -101,12 +105,14 @@ pub async fn run() -> Result<(), AppError> {
             Err(err) => {
                 tracing::error!(
                     error = %err,
-                    "REDIS_URL invalid; using in-process realtime only"
+                    "REDIS_URL invalid; using in-process realtime + rate limits only"
                 );
             }
         }
     } else {
-        tracing::info!("realtime fan-out: in-process only (set REDIS_URL for multi-replica)");
+        tracing::info!(
+            "realtime fan-out + rate limits: in-process only (set REDIS_URL for multi-replica)"
+        );
     }
 
     let apns = match apns_config_from_env() {
@@ -146,6 +152,7 @@ pub async fn run() -> Result<(), AppError> {
         realtime,
         push,
         ice_servers: config.ice_servers.clone(),
+        rate_limiter,
     };
 
     // Human: Last `.layer` is outermost — request-id runs first, then TraceLayer sees the header.

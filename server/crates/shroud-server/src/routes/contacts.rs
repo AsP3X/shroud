@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::auth::session::AuthContext;
 use crate::error::AppError;
+use crate::rate_limit::budgets;
 use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -79,6 +80,15 @@ pub async fn create_request(
     auth: AuthContext,
     Json(body): Json<CreateRequestBody>,
 ) -> Result<(StatusCode, Json<ContactRequestResponse>), AppError> {
+    state
+        .rate_limiter
+        .check_budget(
+            "contact_req_user",
+            &auth.user_id.to_string(),
+            budgets::CONTACT_REQUEST_USER,
+        )
+        .await?;
+
     if body.user_id == auth.user_id {
         return Err(AppError::validation(
             "Cannot send a contact request to yourself.",

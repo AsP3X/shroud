@@ -3,7 +3,7 @@
 use axum::{
     Json,
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -16,6 +16,7 @@ use crate::keys::{
     OTPK_BATCH_MAX, OTPK_POOL_MAX, decode_public_key, decode_signature, encode_b64,
     validate_key_id, validate_registration_id,
 };
+use crate::rate_limit::{budgets, client_ip};
 use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -303,9 +304,24 @@ struct IdentityDeviceRow {
 /// `GET /keys/bundle/:user_id` — fetch + optionally consume one OTPK.
 pub async fn get_bundle(
     State(state): State<AppState>,
+    headers: HeaderMap,
     auth: AuthContext,
     Path(user_id): Path<Uuid>,
 ) -> Result<Json<BundleResponse>, AppError> {
+    let ip = client_ip(&headers);
+    state
+        .rate_limiter
+        .check_budget("keys_ip", &ip, budgets::KEYS_IP)
+        .await?;
+    state
+        .rate_limiter
+        .check_budget(
+            "keys_user",
+            &auth.user_id.to_string(),
+            budgets::KEYS_USER,
+        )
+        .await?;
+
     // Human: Unknown user and “no keys” share KEYS_REQUIRED to avoid account enumeration.
     let mut tx = state
         .pool
