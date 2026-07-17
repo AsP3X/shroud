@@ -17,7 +17,24 @@ use crate::keys::{
     validate_key_id, validate_registration_id,
 };
 use crate::rate_limit::{budgets, client_ip};
+use crate::routes::contacts::are_contacts;
 use crate::state::AppState;
+
+/// Key fetch is contacts-only (or self). Non-contacts get `KEYS_REQUIRED` so we do not
+/// distinguish “exists with keys” from “not allowed” for enumeration safety.
+async fn authorize_key_fetch(
+    state: &AppState,
+    requester: Uuid,
+    target: Uuid,
+) -> Result<(), AppError> {
+    if requester == target {
+        return Ok(());
+    }
+    if are_contacts(&state.pool, requester, target).await? {
+        return Ok(());
+    }
+    Err(AppError::keys_required())
+}
 
 #[derive(Debug, Deserialize)]
 pub struct PutBundleRequest {
@@ -276,9 +293,11 @@ pub async fn keys_status(
 /// Agent: READS preferred device identity; never DELETE from device_one_time_prekeys.
 pub async fn get_identity(
     State(state): State<AppState>,
-    _auth: AuthContext,
+    auth: AuthContext,
     Path(user_id): Path<Uuid>,
 ) -> Result<Json<IdentityResponse>, AppError> {
+    authorize_key_fetch(&state, auth.user_id, user_id).await?;
+
     let row = sqlx::query_as::<_, IdentityDeviceRow>(
         r#"
         SELECT d.id AS device_id, ik.registration_id, ik.public_key
@@ -412,6 +431,7 @@ pub async fn get_bundle(
     Path(user_id): Path<Uuid>,
 ) -> Result<Json<BundleResponse>, AppError> {
     apply_keys_fetch_limits(&state, &headers, auth.user_id).await?;
+    authorize_key_fetch(&state, auth.user_id, user_id).await?;
 
     // Human: Unknown user and “no keys” share KEYS_REQUIRED to avoid account enumeration.
     let mut tx = state
@@ -475,6 +495,7 @@ pub async fn get_bundles(
     Path(user_id): Path<Uuid>,
 ) -> Result<Json<BundlesListResponse>, AppError> {
     apply_keys_fetch_limits(&state, &headers, auth.user_id).await?;
+    authorize_key_fetch(&state, auth.user_id, user_id).await?;
 
     let mut tx = state
         .pool

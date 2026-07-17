@@ -749,6 +749,7 @@ All publishable devices (identity + signed pre-key) for multi-device sealed send
 - **One OTPK consumed per device** when that device’s pool is non-empty (omitted otherwise).
 - Empty publishable set → `404` + `KEYS_REQUIRED` (same enumeration posture as single GET).
 - Same rate limits as single bundle GET (`keys_ip` / `keys_user`).
+- **Contact gate:** requester must be an accepted contact of the target (or self). Non-contacts receive `404` + `KEYS_REQUIRED` (same as missing keys).
 
 #### `GET /keys/status` → `200`
 

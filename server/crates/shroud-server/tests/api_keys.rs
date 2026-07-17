@@ -93,6 +93,41 @@ async fn register(app: &axum::Router) -> (String, String) {
     (token, user_id)
 }
 
+async fn become_contacts(
+    app: &axum::Router,
+    token_a: &str,
+    user_a: &str,
+    token_b: &str,
+    user_b: &str,
+) {
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/contacts/requests")
+                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({ "user_id": user_b }).to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let r2 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/contacts/requests")
+                .header(header::AUTHORIZATION, format!("Bearer {token_b}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({ "user_id": user_a }).to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(r2.status(), StatusCode::OK);
+}
+
 fn sample_bundle(otpk_count: usize) -> Value {
     let otpk: Vec<Value> = (0..otpk_count)
         .map(|i| {
@@ -122,7 +157,8 @@ async fn put_status_get_consumes_otpk() {
     };
 
     let (token_a, user_a) = register(&app).await;
-    let (token_b, _user_b) = register(&app).await;
+    let (token_b, user_b) = register(&app).await;
+    become_contacts(&app, &token_a, &user_a, &token_b, &user_b).await;
 
     let put = app
         .clone()
@@ -194,7 +230,8 @@ async fn identity_get_does_not_consume_otpk() {
     };
 
     let (token_a, user_a) = register(&app).await;
-    let (token_b, _user_b) = register(&app).await;
+    let (token_b, user_b) = register(&app).await;
+    become_contacts(&app, &token_a, &user_a, &token_b, &user_b).await;
 
     let put = app
         .clone()
@@ -250,7 +287,8 @@ async fn get_without_keys_returns_keys_required() {
     };
 
     let (token_a, user_a) = register(&app).await;
-    let (token_b, _) = register(&app).await;
+    let (token_b, user_b) = register(&app).await;
+    become_contacts(&app, &token_a, &user_a, &token_b, &user_b).await;
 
     let get = app
         .oneshot(
@@ -265,7 +303,47 @@ async fn get_without_keys_returns_keys_required() {
     assert_eq!(get.status(), StatusCode::NOT_FOUND);
     let body = json_body(get).await;
     assert_eq!(body["error"]["code"], "KEYS_REQUIRED");
-    let _ = token_a;
+}
+
+#[tokio::test]
+async fn get_bundle_requires_contact() {
+    let Some(app) = test_app().await else {
+        eprintln!("skipping get_bundle_requires_contact: DATABASE_URL unavailable");
+        return;
+    };
+
+    let (token_a, user_a) = register(&app).await;
+    let (token_b, _) = register(&app).await;
+
+    let put = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/keys/bundle")
+                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(sample_bundle(1).to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(put.status(), StatusCode::NO_CONTENT);
+
+    // Not contacts — same KEYS_REQUIRED as missing keys (no enumeration).
+    let get = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/keys/bundle/{user_a}"))
+                .header(header::AUTHORIZATION, format!("Bearer {token_b}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(get.status(), StatusCode::NOT_FOUND);
+    let body = json_body(get).await;
+    assert_eq!(body["error"]["code"], "KEYS_REQUIRED");
 }
 
 #[tokio::test]
@@ -375,7 +453,8 @@ async fn list_bundles_returns_all_devices_and_consumes_otpk_each() {
         assert_eq!(put.status(), StatusCode::NO_CONTENT);
     }
 
-    let (token_b, _) = register(&app).await;
+    let (token_b, user_b) = register(&app).await;
+    become_contacts(&app, &token_d1, &user_a, &token_b, &user_b).await;
     let list = app
         .clone()
         .oneshot(
