@@ -148,6 +148,8 @@ pub async fn run() -> Result<(), AppError> {
 
     // Human: Drop abandoned uploads that never linked to a message.
     crate::routes::media::spawn_orphan_gc(pool.clone());
+    // Human: Drop revoked session rows after the 30-day retention window.
+    crate::auth::session::spawn_revoked_session_purge(pool.clone());
 
     let state = AppState {
         pool,

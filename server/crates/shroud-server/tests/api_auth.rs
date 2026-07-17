@@ -226,6 +226,75 @@ async fn register_rejects_reserved_and_common_password() {
 }
 
 #[tokio::test]
+async fn purge_revoked_sessions_deletes_old_rows() {
+    let Some(app) = test_app().await else {
+        eprintln!("skipping purge_revoked_sessions_deletes_old_rows: DATABASE_URL unavailable");
+        return;
+    };
+
+    let (username, password) = unique_user();
+    let register = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/register")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "username": username,
+                        "password": password,
+                        "device_name": "Purge Test"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(register.status(), StatusCode::CREATED);
+    let reg = json_body(register).await;
+    let token = reg["token"].as_str().unwrap().to_string();
+
+    let logout = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/logout")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(logout.status(), StatusCode::NO_CONTENT);
+
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&std::env::var("DATABASE_URL").unwrap())
+        .await
+        .unwrap();
+
+    // Backdate revoked_at past the 30-day retention window.
+    sqlx::query(
+        r#"
+        UPDATE sessions
+        SET revoked_at = now() - interval '40 days'
+        WHERE revoked_at IS NOT NULL
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let purged = shroud_server::auth::session::purge_revoked_sessions(&pool)
+        .await
+        .expect("purge");
+    assert!(purged >= 1);
+}
+
+#[tokio::test]
 async fn login_reuses_device_and_lists_devices() {
     let Some(app) = test_app().await else {
         eprintln!("skipping login_reuses_device_and_lists_devices: DATABASE_URL unavailable");

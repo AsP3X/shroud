@@ -249,7 +249,7 @@ Indexes:
 - `(device_id)`
 - **Partial unique:** `UNIQUE (device_id) WHERE revoked_at IS NULL` — one live session per device
 
-**Retention:** keep revoked rows; purge job deletes where `revoked_at < now() - interval '30 days'`.
+**Retention:** keep revoked rows; purge job (`purge_revoked_sessions`, hourly) deletes where `revoked_at < now() - interval '30 days'`.
 
 Auth lookup: `SELECT … FROM sessions JOIN devices … JOIN users … WHERE token_hash = $1 AND revoked_at IS NULL`.
 

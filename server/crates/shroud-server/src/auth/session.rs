@@ -10,6 +10,11 @@ use crate::auth::hash_token;
 use crate::error::AppError;
 use crate::state::AppState;
 
+/// Keep revoked session rows this long for audit / debugging, then hard-delete.
+pub const REVOKED_SESSION_RETENTION_DAYS: i64 = 30;
+/// How often the background purge task runs.
+const SESSION_PURGE_INTERVAL_SECS: u64 = 60 * 60;
+
 /// Authenticated caller bound to a user device and live session.
 #[derive(Debug, Clone)]
 pub struct AuthContext {
@@ -107,4 +112,48 @@ impl FromRequestParts<AppState> for AuthContext {
             session_id: row.session_id,
         })
     }
+}
+
+/// Hard-delete revoked sessions older than [`REVOKED_SESSION_RETENTION_DAYS`].
+///
+/// Human: Live sessions (`revoked_at IS NULL`) are never removed by this job.
+/// Agent: DELETE FROM sessions WHERE revoked_at < now() - 30 days.
+pub async fn purge_revoked_sessions(pool: &sqlx::PgPool) -> Result<u64, AppError> {
+    let result = sqlx::query(
+        r#"
+        DELETE FROM sessions
+        WHERE revoked_at IS NOT NULL
+          AND revoked_at < now() - ($1::text || ' days')::interval
+        "#,
+    )
+    .bind(REVOKED_SESSION_RETENTION_DAYS.to_string())
+    .execute(pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("purge revoked sessions failed: {err}")))?;
+
+    Ok(result.rows_affected())
+}
+
+/// Background loop: purge old revoked sessions hourly.
+pub fn spawn_revoked_session_purge(pool: sqlx::PgPool) {
+    tokio::spawn(async move {
+        let mut interval =
+            tokio::time::interval(std::time::Duration::from_secs(SESSION_PURGE_INTERVAL_SECS));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            match purge_revoked_sessions(&pool).await {
+                Ok(0) => {
+                    tracing::debug!("sessions.revoked_purge: nothing to purge");
+                }
+                Ok(n) => {
+                    tracing::info!(purged = n, "sessions.revoked_purge ok");
+                }
+                Err(err) => {
+                    tracing::warn!(error = %err, "sessions.revoked_purge failed");
+                }
+            }
+        }
+    });
 }
