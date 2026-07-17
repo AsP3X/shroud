@@ -146,8 +146,13 @@ async fn upload_link_download_for_peer() {
         .expect("response");
     assert_eq!(upload.status(), StatusCode::CREATED);
     let up = json_body(upload).await;
-    let media_id = up["media_object_id"].as_str().unwrap();
-    assert!(up["upload_url"].as_str().unwrap().starts_with("stub://"));
+    let media_id = up["media_object_id"].as_str().unwrap().to_string();
+    assert!(
+        up["upload_url"]
+            .as_str()
+            .unwrap()
+            .starts_with("media/")
+    );
 
     // Peer cannot download unlinked media.
     let denied = app
@@ -189,8 +194,10 @@ async fn upload_link_download_for_peer() {
     assert_eq!(send.status(), StatusCode::CREATED);
     let msg = json_body(send).await;
     assert_eq!(msg["media_object_id"], media_id);
+    let message_id = msg["id"].as_str().unwrap().to_string();
 
     let download = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -203,5 +210,138 @@ async fn upload_link_download_for_peer() {
         .expect("response");
     assert_eq!(download.status(), StatusCode::OK);
     let dl = json_body(download).await;
-    assert!(dl["download_url"].as_str().unwrap().contains("stub://"));
+    assert!(dl["download_url"].as_str().unwrap().starts_with("media/"));
+
+    // Hide-for-me: hider loses download access; peer still has it.
+    let hide = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/messages/{message_id}?scope=me"))
+                .header(header::AUTHORIZATION, format!("Bearer {token_b}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(hide.status(), StatusCode::NO_CONTENT);
+
+    let hidden_denied = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/media/{media_id}/download"))
+                .header(header::AUTHORIZATION, format!("Bearer {token_b}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(hidden_denied.status(), StatusCode::FORBIDDEN);
+
+    let sender_still_ok = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/media/{media_id}/download"))
+                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(sender_still_ok.status(), StatusCode::OK);
+
+    // Delete for everyone unlinks media; peer and sender (non-uploader path for linked)
+    // — after unlink only uploader may fetch; sender is uploader so still ok for unlinked.
+    let del = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/messages/{message_id}?scope=everyone"))
+                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(del.status(), StatusCode::NO_CONTENT);
+
+    // Peer is not uploader and media is unlinked → forbidden.
+    let peer_after_unsend = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/media/{media_id}/download"))
+                .header(header::AUTHORIZATION, format!("Bearer {token_b}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(peer_after_unsend.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn purge_orphan_media_deletes_stale_unlinked_rows() {
+    let Some(app) = test_app().await else {
+        eprintln!("skipping purge_orphan_media_deletes_stale_unlinked_rows: no DATABASE_URL");
+        return;
+    };
+
+    let (token, _) = register(&app).await;
+    let upload = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/media/uploads")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({ "size_bytes": 16 }).to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(upload.status(), StatusCode::CREATED);
+    let media_id = json_body(upload).await["media_object_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Backdate so orphan GC considers it stale (TTL = 60 minutes).
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&std::env::var("DATABASE_URL").unwrap())
+        .await
+        .unwrap();
+    sqlx::query(
+        r#"
+        UPDATE media_objects
+        SET created_at = now() - interval '2 hours'
+        WHERE id = $1
+        "#,
+    )
+    .bind(Uuid::parse_str(&media_id).unwrap())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let purged = shroud_server::routes::media::purge_orphan_media(&pool)
+        .await
+        .expect("purge");
+    assert!(purged >= 1);
+
+    let gone: bool = sqlx::query_scalar(
+        r#"SELECT NOT EXISTS(SELECT 1 FROM media_objects WHERE id = $1)"#,
+    )
+    .bind(Uuid::parse_str(&media_id).unwrap())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(gone);
 }

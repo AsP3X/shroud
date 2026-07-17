@@ -25,6 +25,10 @@ use crate::state::AppState;
 pub const MAX_MEDIA_BYTES: i64 = 25 * 1024 * 1024;
 /// Presign TTL (15 minutes) — kept for response compatibility.
 const PRESIGN_TTL_MINUTES: i64 = 15;
+/// Unlinked media older than this is eligible for orphan GC.
+pub const ORPHAN_TTL_MINUTES: i64 = 60;
+/// How often the background GC task runs.
+const ORPHAN_GC_INTERVAL_SECS: u64 = 15 * 60;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateUploadRequest {
@@ -241,11 +245,19 @@ async fn load_media(state: &AppState, media_id: Uuid) -> Result<MediaRow, AppErr
     .ok_or_else(|| AppError::not_found("Media not found."))
 }
 
+#[derive(Debug, FromRow)]
+struct MediaAccessRow {
+    in_conversation: bool,
+    deleted_everyone: bool,
+    hidden: bool,
+}
+
 async fn authorize_download(
     state: &AppState,
     user_id: Uuid,
     media: &MediaRow,
 ) -> Result<(), AppError> {
+    // Unlinked (compose / abandoned upload): only the uploader.
     if media.message_id.is_none() {
         if media.uploader_user_id == user_id {
             return Ok(());
@@ -256,30 +268,121 @@ async fn authorize_download(
     }
 
     let message_id = media.message_id.expect("checked");
-    let allowed: bool = sqlx::query_scalar(
+    // Linked: conversation participant, not deleted-for-everyone, not hidden for caller.
+    let access = sqlx::query_as::<_, MediaAccessRow>(
         r#"
-        SELECT EXISTS(
-            SELECT 1
-            FROM messages m
-            INNER JOIN conversations c ON c.id = m.conversation_id
-            WHERE m.id = $1
-              AND (c.user_a_id = $2 OR c.user_b_id = $2)
-        )
+        SELECT
+            (c.user_a_id = $2 OR c.user_b_id = $2) AS in_conversation,
+            (m.deleted_for_everyone_at IS NOT NULL) AS deleted_everyone,
+            EXISTS(
+                SELECT 1 FROM message_hides h
+                WHERE h.message_id = m.id AND h.user_id = $2
+            ) AS hidden
+        FROM messages m
+        INNER JOIN conversations c ON c.id = m.conversation_id
+        WHERE m.id = $1
         "#,
     )
     .bind(message_id)
     .bind(user_id)
-    .fetch_one(&state.pool)
+    .fetch_optional(&state.pool)
     .await
-    .map_err(|err| AppError::Internal(format!("media ACL check failed: {err}")))?;
+    .map_err(|err| AppError::Internal(format!("media ACL check failed: {err}")))?
+    .ok_or_else(|| AppError::forbidden("You are not allowed to download this media."))?;
 
-    if allowed {
-        Ok(())
-    } else {
-        Err(AppError::forbidden(
+    if !access.in_conversation {
+        return Err(AppError::forbidden(
             "You are not allowed to download this media.",
-        ))
+        ));
     }
+    if access.deleted_everyone {
+        return Err(AppError::forbidden(
+            "This media was deleted for everyone.",
+        ));
+    }
+    if access.hidden {
+        return Err(AppError::forbidden(
+            "This media is hidden for your account.",
+        ));
+    }
+    Ok(())
+}
+
+/// Delete unlinked media older than [`ORPHAN_TTL_MINUTES`] (DB row + local blob).
+///
+/// Human: Stops abandoned uploads from filling disk indefinitely.
+/// Agent: SELECT orphans; remove_file; DELETE WHERE message_id IS NULL.
+pub async fn purge_orphan_media(pool: &sqlx::PgPool) -> Result<u64, AppError> {
+    let cutoff = Utc::now() - Duration::minutes(ORPHAN_TTL_MINUTES);
+    let orphans = sqlx::query_as::<_, MediaRow>(
+        r#"
+        SELECT id, uploader_user_id, bucket, object_key, message_id, size_bytes
+        FROM media_objects
+        WHERE message_id IS NULL
+          AND created_at < $1
+        "#,
+    )
+    .bind(cutoff)
+    .fetch_all(pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("list orphan media failed: {err}")))?;
+
+    let mut purged = 0_u64;
+    for media in orphans {
+        let path = blob_path(&media);
+        if Path::new(&path).exists() {
+            if let Err(err) = tokio::fs::remove_file(&path).await {
+                tracing::warn!(
+                    error = %err,
+                    path = %path.display(),
+                    media_object_id = %media.id,
+                    "orphan media blob delete failed"
+                );
+            }
+        }
+
+        let result = sqlx::query(
+            r#"
+            DELETE FROM media_objects
+            WHERE id = $1 AND message_id IS NULL
+            "#,
+        )
+        .bind(media.id)
+        .execute(pool)
+        .await
+        .map_err(|err| AppError::Internal(format!("delete orphan media row failed: {err}")))?;
+
+        if result.rows_affected() > 0 {
+            purged += 1;
+        }
+    }
+
+    Ok(purged)
+}
+
+/// Background loop: purge abandoned unlinked media on a fixed interval.
+pub fn spawn_orphan_gc(pool: sqlx::PgPool) {
+    tokio::spawn(async move {
+        let mut interval =
+            tokio::time::interval(std::time::Duration::from_secs(ORPHAN_GC_INTERVAL_SECS));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // Don't run immediately at boot — wait one interval so cold starts settle.
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            match purge_orphan_media(&pool).await {
+                Ok(0) => {
+                    tracing::debug!("media.orphan_gc: nothing to purge");
+                }
+                Ok(n) => {
+                    tracing::info!(purged = n, "media.orphan_gc ok");
+                }
+                Err(err) => {
+                    tracing::warn!(error = %err, "media.orphan_gc failed");
+                }
+            }
+        }
+    });
 }
 
 fn media_data_dir() -> PathBuf {

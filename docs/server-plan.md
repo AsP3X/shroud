@@ -1265,7 +1265,7 @@ Add optional:
 
 ## Still open
 
-1. **Nebular presign wire format** — harden real signing when not stub (Compose Nebular works for local).
+1. **Nebular presign wire format** — harden real signing when not stub (Compose Nebular works for local). Orphan GC + download ACL (conversation, hide, delete-for-everyone) are **done**; local blob purge runs on an interval.
 2. **Multi-device key fetch for send** — **done** (`GET /keys/bundles/:user_id` returns all publishable devices with optional OTPK each; single-device `GET /keys/bundle/:user_id` kept).
 3. **Redis rate-limit wiring** — **done** (`rate_limit` module; Redis fixed windows when `REDIS_URL` set, else in-process; scopes: auth IP/username, user lookup IP, keys IP/user, contact requests, media presign, WS connect).
 4. **VoIP / CallKit push** — dedicated PushKit cert path (currently same data-push channel as messages).

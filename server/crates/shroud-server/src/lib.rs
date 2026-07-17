@@ -146,6 +146,9 @@ pub async fn run() -> Result<(), AppError> {
         "webrtc ice servers loaded"
     );
 
+    // Human: Drop abandoned uploads that never linked to a message.
+    crate::routes::media::spawn_orphan_gc(pool.clone());
+
     let state = AppState {
         pool,
         nebular_url: config.nebular_url.clone(),
