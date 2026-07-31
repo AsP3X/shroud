@@ -11,31 +11,46 @@ struct RootView: View {
     @State private var sessionController = SessionController()
     @State private var cryptoController = CryptoController()
     @State private var messagingController = MessagingController()
+    @State private var callController = CallController()
     @State private var serverConfig = ServerConfigurationController()
     @State private var router = AppRouter()
     @Namespace private var onboardingNamespace
 
     var body: some View {
-        Group {
-            if router.isUnlocked {
-                MainTabView(router: router)
-            } else {
-                onboardingStack
+        ZStack {
+            Group {
+                if router.isUnlocked {
+                    MainTabView(router: router)
+                } else {
+                    onboardingStack
+                }
             }
+
+            InCallOverlay()
+                .zIndex(100)
+                .allowsHitTesting(callController.active != nil)
         }
         .environment(\.onboardingNamespace, onboardingNamespace)
         .environment(sessionController)
         .environment(cryptoController)
         .environment(messagingController)
+        .environment(callController)
         .environment(serverConfig)
         .task {
             router.sessionController = sessionController
             router.cryptoController = cryptoController
-            messagingController.bind(session: sessionController, crypto: cryptoController)
+            messagingController.bind(
+                session: sessionController,
+                crypto: cryptoController,
+                calls: callController
+            )
+            callController.bind(session: sessionController, messaging: messagingController)
+            PushNotificationService.shared.bind(session: sessionController, calls: callController)
             await sessionController.validateSessionIfNeeded()
             router.restoreUnlockedSessionIfNeeded()
             if router.isUnlocked {
                 messagingController.start()
+                PushNotificationService.shared.start()
             }
         }
         .onChange(of: sessionController.isSignedIn) { _, signedIn in
@@ -43,6 +58,7 @@ struct RootView: View {
                 router.hasUnlockedMessaging = false
                 cryptoController.lock(wipeStore: false)
                 messagingController.stop()
+                PushNotificationService.shared.stop()
             }
         }
         .onChange(of: router.isUnlocked) { _, unlocked in
@@ -50,6 +66,7 @@ struct RootView: View {
                 // Drop any leftover onboarding path before the main shell appears.
                 router.path = []
                 messagingController.start()
+                PushNotificationService.shared.start()
             } else {
                 messagingController.stop()
             }

@@ -15,6 +15,7 @@ struct ConversationView: View {
     var onBack: (() -> Void)? = nil
 
     @Environment(MessagingController.self) private var messaging
+    @Environment(CallController.self) private var calls
     @Environment(\.dismiss) private var dismiss
 
     @State private var draft = ""
@@ -23,6 +24,7 @@ struct ConversationView: View {
     @State private var isRecording = false
     @State private var recordingSeconds = 0
     @State private var recordingTimer: Timer?
+    @State private var voiceRecorder = VoiceRecorder()
     @State private var toast: String?
     /// Active long-press focus session.
     @State private var focusedMenu: FocusedMessageMenu?
@@ -290,7 +292,17 @@ struct ConversationView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 Button {
-                    showComingSoon("Video calls")
+                    Task {
+                        await calls.startCall(
+                            peerUserID: peerUserID,
+                            peerUsername: peerUsername,
+                            modality: .video
+                        )
+                        if let err = calls.lastError {
+                            toast = err
+                            scheduleToastClear()
+                        }
+                    }
                 } label: {
                     Image(systemName: "video.fill")
                         .font(.system(size: 17, weight: .semibold))
@@ -302,7 +314,17 @@ struct ConversationView: View {
                 .accessibilityLabel("Video call")
 
                 Button {
-                    showComingSoon("Voice calls")
+                    Task {
+                        await calls.startCall(
+                            peerUserID: peerUserID,
+                            peerUsername: peerUsername,
+                            modality: .voice
+                        )
+                        if let err = calls.lastError {
+                            toast = err
+                            scheduleToastClear()
+                        }
+                    }
                 } label: {
                     Image(systemName: "phone.fill")
                         .font(.system(size: 16, weight: .semibold))
@@ -481,13 +503,21 @@ struct ConversationView: View {
     }
 
     private func startRecordingUI() {
-        isRecording = true
-        recordingSeconds = 0
-        recordingTimer?.invalidate()
-        recordingTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
-            recordingSeconds += 1
+        Task {
+            do {
+                try await voiceRecorder.start()
+                isRecording = true
+                recordingSeconds = 0
+                recordingTimer?.invalidate()
+                recordingTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+                    recordingSeconds = voiceRecorder.elapsedSeconds
+                }
+                Haptics.impact(.medium)
+            } catch {
+                toast = SessionController.userMessage(for: error)
+                scheduleToastClear()
+            }
         }
-        Haptics.impact(.medium)
     }
 
     private func stopRecording(discard: Bool) -> () -> Void {
@@ -496,10 +526,39 @@ struct ConversationView: View {
             recordingTimer = nil
             isRecording = false
             recordingSeconds = 0
-            if discard {
-                Haptics.notification(.warning)
-            } else {
-                showComingSoon("Voice messages")
+            do {
+                let result = try voiceRecorder.stop(discard: discard)
+                if discard {
+                    Haptics.notification(.warning)
+                    return
+                }
+                guard let result else { return }
+                Haptics.impact(.light)
+                Task {
+                    // Best-effort on-device transcript (Tier 1) — never blocks send on failure.
+                    var transcript: String?
+                    if let text = try? await VoiceTranscriber.transcribe(audioData: result.data),
+                       !text.isEmpty
+                    {
+                        transcript = text
+                    }
+                    let error = await messaging.sendVoice(
+                        audioData: result.data,
+                        durationMs: result.durationMs,
+                        to: peerUserID,
+                        transcript: transcript
+                    )
+                    if let error {
+                        toast = error
+                        Haptics.notification(.error)
+                        scheduleToastClear()
+                    } else {
+                        Haptics.notification(.success)
+                    }
+                }
+            } catch {
+                toast = SessionController.userMessage(for: error)
+                scheduleToastClear()
             }
         }
     }
@@ -535,6 +594,18 @@ struct ConversationView: View {
                     openMediaViewer(for: message)
                 },
                 frameReportID: message.id
+            )
+        case .voice:
+            VoiceMessageBubble(
+                message: message,
+                time: messaging.clockTimeLabel(for: message.createdAt),
+                onAppearLoad: {
+                    Task { await messaging.ensureVoiceLoaded(for: message) }
+                },
+                onRequestTranscript: {
+                    guard let data = message.voiceData else { return nil }
+                    return try? await VoiceTranscriber.transcribe(audioData: data)
+                }
             )
         case .text:
             MessageBubbleView(

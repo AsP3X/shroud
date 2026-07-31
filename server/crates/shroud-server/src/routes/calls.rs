@@ -187,6 +187,11 @@ pub async fn create_call(
         .notify_incoming_call_if_offline(body.peer_user_id, call_id, auth.user_id, modality)
         .await;
 
+    state
+        .metrics
+        .calls_created_total
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
     tracing::info!(
         call_id = %call_id,
         caller = %auth.user_id,

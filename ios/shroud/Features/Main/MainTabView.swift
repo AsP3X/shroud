@@ -121,4 +121,5 @@ struct MainTabView: View {
         .environment(ServerConfigurationController())
         .environment(MessagingController())
         .environment(CryptoController())
+        .environment(CallController())
 }

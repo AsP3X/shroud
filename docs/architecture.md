@@ -25,7 +25,7 @@ High-level structure for the E2E encrypted messenger.
                                                                     presence)
 ```
 
-Later: **coturn** for WebRTC TURN (calls). Call media does not flow through the Rust API. App media ciphertext is stored on the API volume (and optionally mirrored to Nebular); clients always use `/media/{id}/content`.
+**coturn** (Compose profile) supplies TURN when P2P fails. Call media does not flow through the Rust API. App media ciphertext is stored on the API volume and, when `NEBULAR_URL` is set, mirrored to Nebular with prefer-Nebular reads for multi-replica (`MEDIA_PREFER_NEBULAR`, default true). Clients always use `/media/{id}/content`. Prometheus text metrics: `GET /api/v1/metrics`.
 
 ## Repository map
 
@@ -98,6 +98,9 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 | Identity keys + `PUT /keys/bundle` | **done** (CryptoKit X25519/Ed25519 + AES-GCM seal) |
 | Session ≠ messaging unlock | **done** (phrase or Keychain identity restore) |
 | Live contacts + chats | **done** (requests/list, conversations, sealed send/recv, WS) |
-| Calls UI / WebRTC | **mock** — server signaling ready |
+| Photo media messages | **done** — E2E AES-GCM blobs + caption compose |
+| Voice messages | **done** — record/upload/play; on-device Speech transcript (Tier 1) |
+| Calls UI / WebRTC | **done** — signaling + WKWebView WebRTC + CallKit; voice & video |
+| APNs / VoIP push register | **done** — data token + PushKit VoIP token → `PUT /push/token` |
 | Sealed messaging v2 | **done** — dual-seal (peer + self) so sender devices can decrypt history |
-| Full Signal Double Ratchet | **not yet** — upgrade path from sealed ECDH envelopes |
+| Double Ratchet (v3) | **done** — CryptoKit DR with Keychain sessions; v2 fallback |

@@ -8,6 +8,7 @@ pub mod config;
 pub mod error;
 pub mod keys;
 pub mod logging;
+pub mod metrics;
 pub mod push;
 pub mod rate_limit;
 pub mod realtime;
@@ -32,6 +33,21 @@ use crate::push::{ApnsClient, PushService, apns_config_from_env};
 use crate::rate_limit::RateLimiter;
 use crate::realtime::RealtimeHub;
 use crate::state::AppState;
+
+/// Counts HTTP requests / 5xx for Prometheus `/metrics`.
+async fn metrics_http_middleware(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    request: Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    let response = next.run(request).await;
+    if response.status().is_server_error() {
+        state.metrics.inc_http_err();
+    } else {
+        state.metrics.inc_http_ok();
+    }
+    response
+}
 
 /// Structured span per HTTP request — correlates with `x-request-id` (Ownly-style).
 fn make_request_span(request: &Request) -> Span {
@@ -163,10 +179,16 @@ pub async fn run() -> Result<(), AppError> {
     // Human: Mark unanswered ringing calls as missed so busy detection cannot stick.
     crate::routes::calls::spawn_ringing_call_gc(pool.clone());
 
+    let media_prefer_nebular = config.nebular_url.is_some()
+        && std::env::var("MEDIA_PREFER_NEBULAR")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(true);
+
     let state = AppState {
         pool,
         nebular_url: config.nebular_url.clone(),
         media_bucket: config.nebular_media_bucket.clone(),
+        media_prefer_nebular,
         realtime,
         push,
         ice_servers: config.ice_servers.clone(),
@@ -174,10 +196,11 @@ pub async fn run() -> Result<(), AppError> {
         redis_required,
         http_client,
         trust_forwarded_headers: config.trust_forwarded_headers,
+        metrics: Arc::new(crate::metrics::Metrics::new()),
     };
 
-    // Human: Last `.layer` is outermost — request-id runs first, then TraceLayer sees the header.
-    // Agent: OUTER request_id_middleware → TraceLayer → routes.
+    // Human: Last `.layer` is outermost — request-id runs first, then metrics, then TraceLayer.
+    // Agent: OUTER request_id_middleware → metrics → TraceLayer → routes.
     let app = Router::new()
         .merge(routes::router())
         .layer(
@@ -198,6 +221,10 @@ pub async fn run() -> Result<(), AppError> {
                     },
                 ),
         )
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            metrics_http_middleware,
+        ))
         .layer(middleware::from_fn(request_tracking::request_id_middleware))
         .with_state(state);
 

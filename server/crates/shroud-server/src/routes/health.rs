@@ -76,6 +76,18 @@ pub async fn health(state: axum::extract::State<AppState>) -> Response {
     ready(state).await
 }
 
+/// `GET /metrics` — Prometheus text exposition (process-local counters).
+pub async fn metrics(state: axum::extract::State<AppState>) -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        state.metrics.render(),
+    )
+}
+
 async fn check_database(state: &AppState) -> Result<(), AppError> {
     // Human: Lightweight query proves the pool can talk to Postgres.
     // Agent: DB SELECT 1; no user data.

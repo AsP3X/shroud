@@ -172,6 +172,10 @@ pub async fn put_content(
     }
 
     write_blob(&state, &media, body.as_ref()).await?;
+    state
+        .metrics
+        .media_puts_total
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
     tracing::info!(
         user_id = %auth.user_id,
@@ -191,6 +195,33 @@ pub async fn get_content(
     let media = load_media(&state, media_id).await?;
     authorize_download(&state, auth.user_id, &media).await?;
 
+    // Multi-replica: when Nebular is primary, try shared object store first so any
+    // API replica can serve blobs uploaded on another node.
+    if state.media_prefer_nebular && state.nebular_url.is_some() {
+        if let Ok(bytes) = read_blob_nebular(&state, &media).await {
+            state
+                .metrics
+                .media_nebular_hits_total
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            state
+                .metrics
+                .media_gets_total
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            tracing::info!(
+                user_id = %auth.user_id,
+                media_object_id = %media_id,
+                bytes = bytes.len(),
+                "media.content_get ok (nebular primary)"
+            );
+            return Ok((
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "application/octet-stream")],
+                bytes,
+            )
+                .into_response());
+        }
+    }
+
     let path = blob_path(&media);
     if Path::new(&path).exists() {
         // Human: Stream from disk so large ciphertext never fills process RAM.
@@ -200,6 +231,14 @@ pub async fn get_content(
             .map_err(|err| AppError::Internal(format!("open media blob failed: {err}")))?;
         let stream = ReaderStream::new(file);
         let body = Body::from_stream(stream);
+        state
+            .metrics
+            .media_local_hits_total
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        state
+            .metrics
+            .media_gets_total
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         tracing::info!(
             user_id = %auth.user_id,
             media_object_id = %media_id,
@@ -213,8 +252,16 @@ pub async fn get_content(
             .into_response());
     }
 
-    // Rare path: local miss — fall back to Nebular (may buffer into memory).
+    // Local miss — fall back to Nebular (may buffer into memory).
     let bytes = read_blob(&state, &media).await?;
+    state
+        .metrics
+        .media_nebular_hits_total
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    state
+        .metrics
+        .media_gets_total
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     tracing::info!(
         user_id = %auth.user_id,
         media_object_id = %media_id,
@@ -417,7 +464,7 @@ fn blob_path(media: &MediaRow) -> PathBuf {
 }
 
 async fn write_blob(state: &AppState, media: &MediaRow, bytes: &[u8]) -> Result<(), AppError> {
-    // Prefer durable local volume; optionally mirror to Nebular when configured.
+    // Local volume (fast path for single-node) + Nebular mirror for multi-replica reads.
     let path = blob_path(media);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await.map_err(|err| {
@@ -448,6 +495,13 @@ async fn write_blob(state: &AppState, media: &MediaRow, bytes: &[u8]) -> Result<
                 tracing::debug!(%url, "media mirrored to nebular");
             }
             Ok(resp) => {
+                // Multi-replica relies on Nebular — surface as error when prefer-nebular.
+                if state.media_prefer_nebular {
+                    return Err(AppError::Internal(format!(
+                        "nebular mirror put failed with status {} (required for multi-replica media)",
+                        resp.status()
+                    )));
+                }
                 tracing::warn!(
                     status = %resp.status(),
                     %url,
@@ -455,12 +509,37 @@ async fn write_blob(state: &AppState, media: &MediaRow, bytes: &[u8]) -> Result<
                 );
             }
             Err(err) => {
+                if state.media_prefer_nebular {
+                    return Err(AppError::Internal(format!(
+                        "nebular mirror put error (required for multi-replica media): {err}"
+                    )));
+                }
                 tracing::warn!(error = %err, %url, "nebular mirror put error; local blob kept");
             }
         }
     }
 
     Ok(())
+}
+
+async fn read_blob_nebular(state: &AppState, media: &MediaRow) -> Result<Vec<u8>, AppError> {
+    let Some(base) = &state.nebular_url else {
+        return Err(AppError::not_found("Media content not found."));
+    };
+    let base = base.trim_end_matches('/');
+    let url = format!("{base}/{}/{}", media.bucket, media.object_key);
+    match state.http_client.get(&url).send().await {
+        Ok(resp) if resp.status().is_success() => resp
+            .bytes()
+            .await
+            .map(|b| b.to_vec())
+            .map_err(|err| AppError::Internal(format!("nebular body read failed: {err}"))),
+        Ok(resp) => Err(AppError::Internal(format!(
+            "nebular get failed with status {}",
+            resp.status()
+        ))),
+        Err(err) => Err(AppError::Internal(format!("nebular get error: {err}"))),
+    }
 }
 
 async fn read_blob(state: &AppState, media: &MediaRow) -> Result<Vec<u8>, AppError> {
@@ -472,25 +551,8 @@ async fn read_blob(state: &AppState, media: &MediaRow) -> Result<Vec<u8>, AppErr
     }
 
     // Fallback: try Nebular if local missing (other replica / legacy).
-    if let Some(base) = &state.nebular_url {
-        let base = base.trim_end_matches('/');
-        let url = format!("{base}/{}/{}", media.bucket, media.object_key);
-        match state.http_client.get(&url).send().await {
-            Ok(resp) if resp.status().is_success() => {
-                return resp
-                    .bytes()
-                    .await
-                    .map(|b| b.to_vec())
-                    .map_err(|err| AppError::Internal(format!("nebular body read failed: {err}")));
-            }
-            Ok(resp) => {
-                tracing::warn!(status = %resp.status(), %url, "nebular get failed");
-            }
-            Err(err) => {
-                tracing::warn!(error = %err, %url, "nebular get error");
-            }
-        }
+    match read_blob_nebular(state, media).await {
+        Ok(bytes) => Ok(bytes),
+        Err(_) => Err(AppError::not_found("Media content not found.")),
     }
-
-    Err(AppError::not_found("Media content not found."))
 }

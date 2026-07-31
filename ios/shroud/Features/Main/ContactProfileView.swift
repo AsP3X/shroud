@@ -6,6 +6,7 @@ struct ContactProfileView: View {
     let peerUsername: String
 
     @Environment(MessagingController.self) private var messaging
+    @Environment(CallController.self) private var calls
     @Environment(\.dismiss) private var dismiss
     @State private var toast: String?
 
@@ -92,12 +93,30 @@ struct ContactProfileView: View {
     private var actionRow: some View {
         HStack(spacing: 8) {
             profileAction(title: "Call", icon: "phone.fill") {
-                toast = "Voice calls coming soon"
-                scheduleClear()
+                Task {
+                    await calls.startCall(
+                        peerUserID: peerUserID,
+                        peerUsername: peerUsername,
+                        modality: .voice
+                    )
+                    if let err = calls.lastError {
+                        toast = err
+                        scheduleClear()
+                    }
+                }
             }
             profileAction(title: "Video", icon: "video.fill") {
-                toast = "Video calls coming soon"
-                scheduleClear()
+                Task {
+                    await calls.startCall(
+                        peerUserID: peerUserID,
+                        peerUsername: peerUsername,
+                        modality: .video
+                    )
+                    if let err = calls.lastError {
+                        toast = err
+                        scheduleClear()
+                    }
+                }
             }
             profileAction(title: "Mute", icon: "bell.slash.fill") {
                 toast = "Mute coming soon"

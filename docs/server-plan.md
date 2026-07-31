@@ -4,8 +4,8 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 
 | | |
 | --- | --- |
-| **Status** | Server m1–m9 **done**. iOS: auth session solid + real on-device identity crypto (phrase → keys → `PUT /keys/bundle`). Next: live chats/contacts wiring |
-| **Last updated** | 2026-07-16 |
+| **Status** | Server m1–m9 **done** + metrics + multi-replica media prefer-Nebular. iOS: live chats, media, voice, calls/WebRTC/CallKit, push register, Double Ratchet v3. |
+| **Last updated** | 2026-07-31 |
 | **Related** | [architecture.md](./architecture.md) · [thought-collection.md](../thought-collection.md) · [README.md](../README.md) |
 
 ---
@@ -1274,14 +1274,14 @@ Add optional:
 
 ## Still open
 
-1. **Multi-replica media** — clients use API-proxied `/media/{id}/content` (local volume + optional Nebular mirror). Shared volume or Nebular-primary reads needed when running N API replicas. Orphan GC + download ACL are **done**.
+1. **Multi-replica media** — **done** for Nebular path: when `NEBULAR_URL` is set, `MEDIA_PREFER_NEBULAR` defaults true (reads prefer Nebular; mirror put required on upload). Local volume remains a cache. Orphan GC + download ACL are **done**.
 2. **Multi-device key fetch for send** — **done** (`GET /keys/bundles/:user_id` returns all publishable devices with optional OTPK each; single-device `GET /keys/bundle/:user_id` kept).
 3. **Redis rate-limit wiring** — **done** (auth, keys, contacts, media, WS, messages, calls, sensitive auth; Redis when configured).
-4. **VoIP / CallKit push** — dedicated PushKit cert path (currently same data-push channel as messages).
-5. **iOS polish** — media messages, call UI/WebRTC, presence polish, unread badges, multi-device own-message decrypt without local cache.
-6. **Double Ratchet** — client sealed ECDH+AES-GCM envelopes ship first; upgrade sessions to Signal-style DR later.
-7. **Envelope ciphertext encoding** — server stores opaque bytes; client currently uses JSON sealed envelope inside Base64 ciphertext field.
-8. **Observability** — Prometheus / OpenTelemetry metrics (latency, pool, WS, push) not yet wired.
+4. **VoIP / CallKit push** — iOS registers PushKit tokens (`voip:…` prefix) and data APNs tokens. Production needs APNs VoIP topic / PushKit cert configured on the server push client.
+5. **iOS polish** — **done** for media, voice, call UI/WebRTC/CallKit, presence, unread, multi-device self-box decrypt. Remaining: group chats, SFU, server-assist transcription.
+6. **Double Ratchet** — **done** on client (envelope v3 + Keychain sessions; v1/v2 still open).
+7. **Envelope ciphertext encoding** — server stores opaque bytes; client uses JSON sealed / DR envelope inside Base64 ciphertext field.
+8. **Observability** — **done** (lightweight Prometheus text at `GET /api/v1/metrics`: request counts, media local/Nebular hits, calls). Full OpenTelemetry tracing still optional later.
 
 ---
 

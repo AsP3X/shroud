@@ -6,6 +6,7 @@ use axum::http::HeaderMap;
 use sqlx::PgPool;
 
 use crate::config::IceServer;
+use crate::metrics::Metrics;
 use crate::push::PushService;
 use crate::rate_limit::{self, RateLimiter};
 use crate::realtime::RealtimeHub;
@@ -19,6 +20,8 @@ pub struct AppState {
     pub nebular_url: Option<String>,
     /// Object storage bucket name for encrypted media.
     pub media_bucket: String,
+    /// When true and Nebular is configured, prefer Nebular for media reads (multi-replica).
+    pub media_prefer_nebular: bool,
     /// In-process WebSocket fan-out hub (single instance).
     pub realtime: Arc<RealtimeHub>,
     /// APNs data-push dispatcher (no-ops send when credentials missing).
@@ -33,6 +36,8 @@ pub struct AppState {
     pub http_client: reqwest::Client,
     /// Honor `X-Forwarded-For` / `X-Real-IP` only when behind a trusted proxy.
     pub trust_forwarded_headers: bool,
+    /// Process metrics for `/metrics`.
+    pub metrics: Arc<Metrics>,
 }
 
 impl AppState {
@@ -57,6 +62,7 @@ impl AppState {
             pool,
             nebular_url: None,
             media_bucket: "shroud-media".into(),
+            media_prefer_nebular: false,
             realtime,
             push,
             ice_servers: vec![],
@@ -64,6 +70,7 @@ impl AppState {
             redis_required: false,
             http_client: reqwest::Client::new(),
             trust_forwarded_headers: true,
+            metrics: Arc::new(Metrics::new()),
         }
     }
 }
