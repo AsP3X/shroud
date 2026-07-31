@@ -1,9 +1,17 @@
 import CryptoKit
 import Foundation
 
-/// Real CryptoKit message sealing for 1:1 envelopes (ECDH + AES-GCM).
+/// Message sealing for 1:1 chats.
+///
+/// - **v1** peer-only sealed box (legacy)
+/// - **v2** dual-seal peer + self (no session state)
+/// - **v3** Double Ratchet for peer ciphertext + dual-seal self box for multi-device history
+///
+/// Live messaging uses **v3** by default. Self-box always allows the sender (and their
+/// other devices) to open history without ratchet state.
+///
 /// Human: Plaintext never leaves the device unencrypted; server only sees ciphertext bytes.
-/// Agent: v2 dual-seals to peer + self so sender devices can decrypt history; v1 peer-only still openable.
+/// Agent: Seal/open; DR sessions in Keychain; self dual-seal on every v3 message.
 enum MessageCrypto {
     /// One sealed box (ephemeral ECDH → AES-GCM).
     struct SealedBox: Codable, Equatable, Sendable {
@@ -17,12 +25,9 @@ enum MessageCrypto {
     struct SealedEnvelope: Codable, Equatable, Sendable {
         /// 1 = peer-only (legacy); 2 = peer + self dual seal.
         var v: Int
-        /// v1 fields (also used when decoding legacy).
         var ek: String?
         var ct: String?
-        /// v2: sealed to recipient identity.
         var peer: SealedBox?
-        /// v2: sealed to sender identity (multi-device / own history).
         var selfBox: SealedBox?
 
         enum CodingKeys: String, CodingKey {
@@ -40,9 +45,7 @@ enum MessageCrypto {
 
     /// Who is opening the envelope.
     enum OpenAs: Sendable {
-        /// Recipient decrypts the peer-directed box.
         case recipient
-        /// Sender (or another of sender's devices) decrypts the self box.
         case sender
     }
 
@@ -50,7 +53,7 @@ enum MessageCrypto {
     private static let versionV2 = 2
     private static let versionV3 = DoubleRatchet.envelopeVersion
 
-    /// v3 wire: Double Ratchet body + optional self dual-seal for multi-device history.
+    /// v3 wire: Double Ratchet body + self dual-seal for multi-device history.
     struct RatchetEnvelope: Codable, Equatable, Sendable {
         var v: Int
         var dh: String
@@ -65,8 +68,9 @@ enum MessageCrypto {
         }
     }
 
-    /// Encrypts plaintext for the peer **and** a copy for the sender (v2 dual-seal).
-    /// Prefer ``seal(plaintext:peerUserID:...)`` for Double Ratchet (v3) when a session exists or can be bootstrapped.
+    // MARK: - Seal
+
+    /// Dual-seal v2 (no ratchet). Kept for tests and explicit fallbacks.
     static func seal(
         plaintext: Data,
         toPeerIdentityPublicKey peerPublic: Data,
@@ -96,25 +100,24 @@ enum MessageCrypto {
 
     /// Seals a 1:1 message for `peerUserID`.
     ///
-    /// **Default is dual-seal v2** (peer + self boxes). That path is what live chats use:
-    /// each message is independently decryptable from identity keys alone — no shared
-    /// ratchet state between devices.
+    /// **v3 Double Ratchet** when a session exists or we are the deterministic initiator
+    /// (`ourUserID < peerUserID`). Otherwise the first outbound message is **v2 dual-seal**
+    /// so both sides can message first without poisoning ratchet state (dual-initiator).
     ///
-    /// Double Ratchet (v3) is opt-in (`useRatchet: true`) only. Always-on DR broke
-    /// decryption when both parties sealed as “initiator” (mismatched session roles).
+    /// Every v3 message also carries a self dual-seal for multi-device history.
     ///
-    /// - Parameters:
-    ///   - peerUserID: Session store key when `useRatchet` is true.
-    ///   - useRatchet: Experimental DR; leave false for production messaging.
+    /// - Parameter ourUserID: Local account id (for initiator election). Defaults to a
+    ///   nil-safe path that only uses DR when a session already exists.
+    /// - Parameter useRatchet: When false, always dual-seal v2.
     static func seal(
         plaintext: Data,
         peerUserID: UUID,
         toPeerIdentityPublicKey peerPublic: Data,
         ourPrivateKey: Curve25519.KeyAgreement.PrivateKey,
         ourIdentityPublicKey: Data,
-        useRatchet: Bool = false
+        ourUserID: UUID? = nil,
+        useRatchet: Bool = true
     ) throws -> Data {
-        // Production path: sealed send v2 (works across devices without prior session).
         guard useRatchet else {
             return try seal(
                 plaintext: plaintext,
@@ -123,15 +126,32 @@ enum MessageCrypto {
             )
         }
 
-        var session = try loadOrCreateInitiatorSession(
+        let existing = RatchetSessionStore.load(peerUserID: peerUserID)
+        let mayStartRatchet: Bool = {
+            if existing != nil { return true }
+            // Deterministic initiator: only the lower UUID creates a brand-new DR session.
+            // The higher UUID sends v2 until they have received (session established on open).
+            guard let ourUserID else { return true }
+            return ourUserID.uuidString.lowercased() < peerUserID.uuidString.lowercased()
+        }()
+
+        guard mayStartRatchet else {
+            return try seal(
+                plaintext: plaintext,
+                toPeerIdentityPublicKey: peerPublic,
+                ourIdentityPublicKey: ourIdentityPublicKey
+            )
+        }
+
+        var session = try sessionForEncrypt(
             peerUserID: peerUserID,
             ourPrivateKey: ourPrivateKey,
-            peerPublic: peerPublic
+            peerPublic: peerPublic,
+            existing: existing
         )
         let drBody = try DoubleRatchet.encrypt(plaintext: plaintext, session: &session)
         RatchetSessionStore.save(session, peerUserID: peerUserID)
 
-        // Attach self dual-seal so other own devices can open history without the ratchet state.
         let selfBox = try sealBox(
             plaintext: plaintext,
             recipientPublic: ourIdentityPublicKey,
@@ -150,7 +170,9 @@ enum MessageCrypto {
         return try JSONEncoder().encode(envelope)
     }
 
-    /// Decrypts an envelope. Use `.recipient` for incoming, `.sender` for own messages.
+    // MARK: - Open
+
+    /// Opens v1/v2 (and v3 self-box for sender). Prefer the peerUserID overload for live chats.
     static func open(
         envelopeData: Data,
         with ourPrivateKey: Curve25519.KeyAgreement.PrivateKey,
@@ -158,27 +180,22 @@ enum MessageCrypto {
         senderIdentityPublicKey: Data,
         as role: OpenAs = .recipient
     ) throws -> Data {
-        // Peek version without failing on unknown shapes.
-        if let v3 = try? JSONDecoder().decode(RatchetEnvelope.self, from: envelopeData),
-           v3.v == versionV3
-        {
-            switch role {
-            case .sender:
-                guard let box = v3.selfBox else { throw CryptoError.openFailed }
-                return try openBox(
-                    box,
-                    with: ourPrivateKey,
-                    senderIdentityPublic: ourIdentityPublicKey,
-                    recipientIdentityPublic: ourIdentityPublicKey
-                )
-            case .recipient:
-                // Requires peerUserID path — use openRatchet for full DR.
+        if let version = peekEnvelopeVersion(envelopeData), version == versionV3 {
+            guard role == .sender else {
+                // Recipient needs peerUserID for DR session store.
                 throw CryptoError.unsupportedVersion
             }
+            let v3 = try JSONDecoder().decode(RatchetEnvelope.self, from: envelopeData)
+            guard let box = v3.selfBox else { throw CryptoError.openFailed }
+            return try openBox(
+                box,
+                with: ourPrivateKey,
+                senderIdentityPublic: ourIdentityPublicKey,
+                recipientIdentityPublic: ourIdentityPublicKey
+            )
         }
 
         let envelope = try JSONDecoder().decode(SealedEnvelope.self, from: envelopeData)
-
         switch envelope.v {
         case versionV1:
             guard let ek = envelope.ek, let ct = envelope.ct else {
@@ -190,7 +207,6 @@ enum MessageCrypto {
                 senderIdentityPublic: senderIdentityPublicKey,
                 recipientIdentityPublic: ourIdentityPublicKey
             )
-
         case versionV2:
             switch role {
             case .recipient:
@@ -210,13 +226,12 @@ enum MessageCrypto {
                     recipientIdentityPublic: ourIdentityPublicKey
                 )
             }
-
         default:
             throw CryptoError.unsupportedVersion
         }
     }
 
-    /// Opens any supported envelope; for v3 uses Double Ratchet state for `peerUserID`.
+    /// Opens any supported envelope. For v3 recipient, uses Double Ratchet state for `peerUserID`.
     static func open(
         envelopeData: Data,
         peerUserID: UUID,
@@ -225,41 +240,32 @@ enum MessageCrypto {
         senderIdentityPublicKey: Data,
         as role: OpenAs = .recipient
     ) throws -> Data {
-        // Peek version first so v2 envelopes never enter the DR path by mistake.
-        if let version = peekEnvelopeVersion(envelopeData), version == versionV3 {
+        guard let version = peekEnvelopeVersion(envelopeData) else {
+            throw CryptoError.openFailed
+        }
+
+        if version == versionV3 {
             if role == .sender {
-                // Prefer self-box (multi-device history) — does not need ratchet state.
-                if let v3 = try? JSONDecoder().decode(RatchetEnvelope.self, from: envelopeData),
-                   let box = v3.selfBox
-                {
-                    return try openBox(
-                        box,
-                        with: ourPrivateKey,
-                        senderIdentityPublic: ourIdentityPublicKey,
-                        recipientIdentityPublic: ourIdentityPublicKey
-                    )
-                }
-                throw CryptoError.openFailed
+                let v3 = try JSONDecoder().decode(RatchetEnvelope.self, from: envelopeData)
+                guard let box = v3.selfBox else { throw CryptoError.openFailed }
+                return try openBox(
+                    box,
+                    with: ourPrivateKey,
+                    senderIdentityPublic: ourIdentityPublicKey,
+                    recipientIdentityPublic: ourIdentityPublicKey
+                )
             }
 
-            // Recipient: try DR. If the stored session was poisoned (e.g. both sides
-            // initiated), wipe and retry once as a fresh responder.
-            if let plain = try? openRatchetV3(
+            // Recipient: try session strategies until one decrypts.
+            // Order matters for dual-initiator (both sealed before either opened):
+            // unused initiator sessions cannot open the peer's initiator message, so we
+            // also try a pure receiver bootstrap. Legitimate replies still hit the
+            // stored initiator session first when it works.
+            return try openRatchetV3Recipient(
                 envelopeData: envelopeData,
                 peerUserID: peerUserID,
                 ourPrivateKey: ourPrivateKey,
-                senderIdentityPublicKey: senderIdentityPublicKey,
-                resetSession: false
-            ) {
-                return plain
-            }
-            RatchetSessionStore.delete(peerUserID: peerUserID)
-            return try openRatchetV3(
-                envelopeData: envelopeData,
-                peerUserID: peerUserID,
-                ourPrivateKey: ourPrivateKey,
-                senderIdentityPublicKey: senderIdentityPublicKey,
-                resetSession: true
+                senderIdentityPublicKey: senderIdentityPublicKey
             )
         }
 
@@ -272,84 +278,96 @@ enum MessageCrypto {
         )
     }
 
-    private static func peekEnvelopeVersion(_ data: Data) -> Int? {
-        struct VersionPeek: Decodable {
-            let v: Int
+    // MARK: - Session helpers
+
+    private static func sessionForEncrypt(
+        peerUserID: UUID,
+        ourPrivateKey: Curve25519.KeyAgreement.PrivateKey,
+        peerPublic: Data,
+        existing: DoubleRatchet.Session?
+    ) throws -> DoubleRatchet.Session {
+        if var existing {
+            if existing.peerIdentityPublic != peerPublic {
+                existing.peerIdentityPublic = peerPublic
+            }
+            // Missing send chain is promoted inside DoubleRatchet.encrypt (keeps recv state).
+            return existing
         }
-        return try? JSONDecoder().decode(VersionPeek.self, from: data).v
+        return try DoubleRatchet.Session.initiateAsSender(
+            ourPrivate: ourPrivateKey,
+            theirIdentityPublic: peerPublic
+        )
     }
 
-    private static func openRatchetV3(
+    private static func openRatchetV3Recipient(
         envelopeData: Data,
         peerUserID: UUID,
         ourPrivateKey: Curve25519.KeyAgreement.PrivateKey,
-        senderIdentityPublicKey: Data,
-        resetSession: Bool
+        senderIdentityPublicKey: Data
     ) throws -> Data {
         let v3 = try JSONDecoder().decode(RatchetEnvelope.self, from: envelopeData)
         guard v3.v == versionV3 else { throw CryptoError.unsupportedVersion }
 
-        if resetSession {
-            RatchetSessionStore.delete(peerUserID: peerUserID)
-        }
-
-        var session = try loadOrCreateResponderSession(
-            peerUserID: peerUserID,
-            ourPrivateKey: ourPrivateKey,
-            senderPublic: senderIdentityPublicKey
-        )
-        // Responder bootstrap must use identity as the receiving DH private for the
-        // first remote message. If we previously sealed as initiator to this peer,
-        // the stored session is wrong — caller may reset and retry.
         let drData = try JSONEncoder().encode(
             DoubleRatchet.Message(v: v3.v, dh: v3.dh, n: v3.n, pn: v3.pn, ct: v3.ct)
         )
-        let plain = try DoubleRatchet.decrypt(envelopeData: drData, session: &session)
-        RatchetSessionStore.save(session, peerUserID: peerUserID)
-        return plain
-    }
 
-    private static func loadOrCreateInitiatorSession(
-        peerUserID: UUID,
-        ourPrivateKey: Curve25519.KeyAgreement.PrivateKey,
-        peerPublic: Data
-    ) throws -> DoubleRatchet.Session {
+        // Build candidate sessions (copies) — first success wins and is persisted.
+        var candidates: [DoubleRatchet.Session] = []
+
         if let existing = RatchetSessionStore.load(peerUserID: peerUserID) {
-            return existing
+            let unusedInitiator =
+                existing.sendChainKey != nil
+                && existing.recvChainKey == nil
+                && existing.dhRecvPublic == existing.peerIdentityPublic
+
+            if unusedInitiator {
+                // Prefer pure receiver first: peer's first message is dual-init style.
+                // Fall back to stored initiator for a real reply after they received us.
+                candidates.append(
+                    try DoubleRatchet.Session.prepareAsReceiver(
+                        ourPrivate: ourPrivateKey,
+                        theirIdentityPublic: senderIdentityPublicKey
+                    )
+                )
+                candidates.append(existing)
+            } else {
+                candidates.append(existing)
+                candidates.append(
+                    try DoubleRatchet.Session.prepareAsReceiver(
+                        ourPrivate: ourPrivateKey,
+                        theirIdentityPublic: senderIdentityPublicKey
+                    )
+                )
+            }
+        } else {
+            candidates.append(
+                try DoubleRatchet.Session.prepareAsReceiver(
+                    ourPrivate: ourPrivateKey,
+                    theirIdentityPublic: senderIdentityPublicKey
+                )
+            )
         }
-        let shared = try DoubleRatchet.identitySharedSecret(
-            ourPrivate: ourPrivateKey,
-            theirPublic: peerPublic
-        )
-        let session = try DoubleRatchet.Session.bootstrapInitiator(
-            sharedSecret: shared,
-            theirRatchetPublic: peerPublic
-        )
-        RatchetSessionStore.save(session, peerUserID: peerUserID)
-        return session
+
+        var lastError: Error = CryptoError.openFailed
+        for var session in candidates {
+            do {
+                let plain = try DoubleRatchet.decrypt(envelopeData: drData, session: &session)
+                RatchetSessionStore.save(session, peerUserID: peerUserID)
+                return plain
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError
     }
 
-    private static func loadOrCreateResponderSession(
-        peerUserID: UUID,
-        ourPrivateKey: Curve25519.KeyAgreement.PrivateKey,
-        senderPublic: Data
-    ) throws -> DoubleRatchet.Session {
-        if let existing = RatchetSessionStore.load(peerUserID: peerUserID) {
-            return existing
-        }
-        let shared = try DoubleRatchet.identitySharedSecret(
-            ourPrivate: ourPrivateKey,
-            theirPublic: senderPublic
-        )
-        let session = DoubleRatchet.Session.bootstrapResponder(
-            sharedSecret: shared,
-            ourRatchetPrivate: ourPrivateKey
-        )
-        RatchetSessionStore.save(session, peerUserID: peerUserID)
-        return session
+    private static func peekEnvelopeVersion(_ data: Data) -> Int? {
+        struct VersionPeek: Decodable { let v: Int }
+        return try? JSONDecoder().decode(VersionPeek.self, from: data).v
     }
 
-    // MARK: - Internals
+    // MARK: - Sealed box primitives (v1/v2/self)
 
     private static func sealBox(
         plaintext: Data,

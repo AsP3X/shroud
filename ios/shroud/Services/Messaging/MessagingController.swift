@@ -371,7 +371,8 @@ final class MessagingController {
                 peerUserID: peerUserID,
                 toPeerIdentityPublicKey: peerPub,
                 ourPrivateKey: material.agreementPrivateKey,
-                ourIdentityPublicKey: material.identityPublicKeyData
+                ourIdentityPublicKey: material.identityPublicKeyData,
+                ourUserID: me
             )
             let ciphertextB64 = sealed.base64EncodedString()
             let clientID = UUID()
@@ -574,7 +575,8 @@ final class MessagingController {
             peerUserID: peerUserID,
             toPeerIdentityPublicKey: peerPub,
             ourPrivateKey: material.agreementPrivateKey,
-            ourIdentityPublicKey: material.identityPublicKeyData
+            ourIdentityPublicKey: material.identityPublicKeyData,
+            ourUserID: me
         )
         let dto = try await messagesService.send(
             SendMessageRequest(
@@ -680,7 +682,8 @@ final class MessagingController {
                 peerUserID: peerUserID,
                 toPeerIdentityPublicKey: peerPub,
                 ourPrivateKey: material.agreementPrivateKey,
-                ourIdentityPublicKey: material.identityPublicKeyData
+                ourIdentityPublicKey: material.identityPublicKeyData,
+                ourUserID: me
             )
             let dto = try await messagesService.send(
                 SendMessageRequest(

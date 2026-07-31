@@ -1279,7 +1279,7 @@ Add optional:
 3. **Redis rate-limit wiring** — **done** (auth, keys, contacts, media, WS, messages, calls, sensitive auth; Redis when configured).
 4. **VoIP / CallKit push** — iOS registers PushKit tokens (`voip:…` prefix) and data APNs tokens. Production needs APNs VoIP topic / PushKit cert configured on the server push client.
 5. **iOS polish** — **done** for media, voice, call UI/WebRTC/CallKit, presence, unread, multi-device self-box decrypt. Remaining: group chats, SFU, server-assist transcription.
-6. **Double Ratchet** — **done** on client (envelope v3 + Keychain sessions; v1/v2 still open).
+6. **Double Ratchet** — **done** on client (envelope v3 default; identity X3DH-lite bootstrap; dual-initiator session reset; v1/v2 still openable).
 7. **Envelope ciphertext encoding** — server stores opaque bytes; client uses JSON sealed / DR envelope inside Base64 ciphertext field.
 8. **Observability** — **done** (lightweight Prometheus text at `GET /api/v1/metrics`: request counts, media local/Nebular hits, calls). Full OpenTelemetry tracing still optional later.
 
