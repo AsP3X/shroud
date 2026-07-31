@@ -16,6 +16,11 @@ struct ContactsView: View {
         _path = path
     }
 
+    /// Skeleton stands in only for the *first* load — a refresh over existing rows keeps the list.
+    private var showsSkeleton: Bool {
+        messaging.isLoadingContacts && messaging.contacts.isEmpty && searchText.isEmpty
+    }
+
     private var filtered: [ContactItemDTO] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return messaging.contacts }
@@ -42,13 +47,20 @@ struct ContactsView: View {
     var body: some View {
         NavigationStack(path: $path) {
             MainScrollScreen(title: "Contacts", collapsesTitle: true) {
-                Button(sortAscending ? "A–Z" : "Z–A") {
-                    withAnimation(.easeInOut(duration: 0.2)) {
+                Button {
+                    // Sections re-sort with a spring so the letters visibly travel.
+                    withAnimation(Motion.standard) {
                         sortAscending.toggle()
                     }
+                } label: {
+                    Text(sortAscending ? "A–Z" : "Z–A")
+                        .font(.system(size: 16))
+                        .foregroundStyle(Theme.accent)
+                        .contentTransition(.opacity)
+                        .frame(height: 44)
+                        .contentShape(Rectangle())
                 }
-                .font(.system(size: 16))
-                .foregroundStyle(Theme.accent)
+                .pressable(scale: 0.92)
             } navTrailing: {
                 HStack(spacing: 14) {
                     Button {
@@ -57,8 +69,10 @@ struct ContactsView: View {
                         Image(systemName: "qrcode")
                             .font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(Theme.accent)
+                            .frame(width: 40, height: 44)
+                            .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .pressable(scale: 0.88)
                     .accessibilityLabel("My QR code")
 
                     Button {
@@ -67,8 +81,10 @@ struct ContactsView: View {
                         Image(systemName: "person.badge.plus")
                             .font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(Theme.accent)
+                            .frame(width: 40, height: 44, alignment: .trailing)
+                            .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .pressable(scale: 0.88)
                     .accessibilityLabel("Add contact")
                 }
             } accessory: {
@@ -87,9 +103,9 @@ struct ContactsView: View {
                         }
                     }
 
-                    ForEach(sections, id: \.letter) { section in
+                    ForEach(Array(sections.enumerated()), id: \.element.letter) { sectionIndex, section in
                         Section {
-                            ForEach(section.items) { contact in
+                            ForEach(Array(section.items.enumerated()), id: \.element.id) { rowIndex, contact in
                                 NavigationLink(
                                     value: ChatRoute.conversation(
                                         peerID: contact.userId,
@@ -103,14 +119,18 @@ struct ContactsView: View {
                                         avatarGradient: AvatarView.gradient(for: contact.username)
                                     )
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(HighlightRowButtonStyle())
+                                // Stagger runs across sections, not restarting per letter.
+                                .entranceRow(index: sectionIndex + rowIndex)
                             }
                         } header: {
                             sectionHeader(section.letter)
                         }
                     }
 
-                    if sections.isEmpty && messaging.incomingRequests.isEmpty {
+                    if showsSkeleton {
+                        SkeletonChatList(count: 8)
+                    } else if sections.isEmpty && messaging.incomingRequests.isEmpty {
                         emptyState
                     }
 
@@ -118,7 +138,11 @@ struct ContactsView: View {
 
                     Color.clear.frame(height: 16)
                 }
+                .animation(Motion.standard, value: sortAscending)
+                .animation(Motion.standard, value: messaging.incomingRequests.map(\.id))
+                .animation(Motion.fade, value: showsSkeleton)
             }
+            .listEntranceHost(resetOn: messaging.contacts.isEmpty)
             .background(Theme.background)
             .navigationDestination(for: ChatRoute.self) { route in
                 switch route {
@@ -155,19 +179,33 @@ struct ContactsView: View {
                     .foregroundStyle(Theme.textSecondary)
             }
             Spacer()
-            Button("Reject") {
+            Button {
                 Task { await messaging.rejectRequest(request) }
+            } label: {
+                Text("Reject")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.danger)
+                    .padding(.vertical, 10)
+                    .contentShape(Rectangle())
             }
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(Theme.danger)
-            Button("Accept") {
+            .pressable(scale: 0.9)
+
+            Button {
+                // Success tick on accept — the row then animates out of the Pending section.
+                Haptics.notification(.success)
                 Task { await messaging.acceptRequest(request) }
+            } label: {
+                Text("Accept")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+                    .padding(.vertical, 10)
+                    .contentShape(Rectangle())
             }
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(Theme.accent)
+            .pressable(scale: 0.9, haptic: nil)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+        .transition(.opacity.combined(with: .move(edge: .top)))
     }
 
     private func sectionHeader(_ title: String) -> some View {
@@ -196,7 +234,12 @@ struct ContactsView: View {
 
     private var emptyState: some View {
         VStack(spacing: 8) {
-            Text(messaging.isLoadingContacts ? "Loading…" : "No contacts yet")
+            Image(systemName: "person.2.fill")
+                .font(.system(size: 32, weight: .semibold))
+                .foregroundStyle(Theme.accent.opacity(0.85))
+                .symbolEffect(.bounce, options: .nonRepeating)
+                .padding(.bottom, 6)
+            Text("No contacts yet")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
             Text("Scan a QR code or enter a share code to add someone.")
@@ -207,6 +250,7 @@ struct ContactsView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 48)
+        .transition(.opacity.combined(with: .offset(y: 8)))
     }
 
     private var shareFooter: some View {
@@ -237,9 +281,11 @@ struct ContactsView: View {
             } label: {
                 Label("Show QR code", systemImage: "qrcode")
                     .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(Theme.accent)
+            .pressable(scale: 0.95)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)

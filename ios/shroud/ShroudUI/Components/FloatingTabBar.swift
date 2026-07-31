@@ -34,7 +34,7 @@ struct FloatingTabBar: View {
     @Binding var selection: MainTab
     @Namespace private var tabNamespace
 
-    private let selectionSpring = Animation.spring(response: 0.34, dampingFraction: 0.86)
+    private let selectionSpring = Motion.snappy
 
     var body: some View {
         GlassEffectContainer {
@@ -58,8 +58,8 @@ struct FloatingTabBar: View {
     private func tabButton(_ tab: MainTab) -> some View {
         let selected = selection == tab
         return Button {
-            Haptics.impact(.light)
             // Parent `MainTabView` owns direction-aware content animation via the binding.
+            // The press haptic already fired on touch-down (`PressableButtonStyle`).
             withAnimation(selectionSpring) {
                 selection = tab
             }
@@ -68,6 +68,8 @@ struct FloatingTabBar: View {
                 Image(systemName: tab.systemImage)
                     .font(.system(size: 18, weight: .semibold))
                     .symbolEffect(.bounce, value: selected)
+                    // Active glyph sits a hair larger — reinforces the pill without moving layout.
+                    .scaleEffect(selected ? 1.08 : 1)
                 Text(tab.title)
                     .font(.system(size: 10, weight: selected ? .semibold : .medium))
             }
@@ -80,8 +82,10 @@ struct FloatingTabBar: View {
                         .matchedGeometryEffect(id: "tabSelectionPill", in: tabNamespace)
                 }
             }
+            .contentShape(Rectangle())
+            .animation(selectionSpring, value: selected)
         }
-        .buttonStyle(.plain)
+        .pressable(scale: 0.9, dimming: 0)
         .accessibilityLabel(tab.title)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }

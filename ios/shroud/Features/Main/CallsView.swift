@@ -17,8 +17,9 @@ struct CallsView: View {
                 emptyState
             } else {
                 LazyVStack(spacing: 0) {
-                    ForEach(calls.recent) { item in
+                    ForEach(Array(calls.recent.enumerated()), id: \.element.id) { index, item in
                         recentRow(item)
+                            .entranceRow(index: index)
                         Rectangle()
                             .fill(Theme.separator)
                             .frame(height: 1)
@@ -26,8 +27,11 @@ struct CallsView: View {
                     }
                     Color.clear.frame(height: 88)
                 }
+                // A finished call prepends a row — slide the history down instead of snapping.
+                .animation(Motion.standard, value: calls.recent.map(\.id))
             }
         }
+        .listEntranceHost(resetOn: calls.recent.isEmpty)
         .background(Theme.background)
     }
 
@@ -36,6 +40,7 @@ struct CallsView: View {
             Image(systemName: "phone.fill")
                 .font(.system(size: 36, weight: .semibold))
                 .foregroundStyle(Theme.accent.opacity(0.85))
+                .symbolEffect(.bounce, options: .nonRepeating)
                 .padding(.top, 56)
 
             Text("Voice & video calls")
@@ -106,7 +111,8 @@ struct CallsView: View {
                             .background(Theme.backgroundGrouped)
                             .clipShape(Circle())
                     }
-                    .buttonStyle(.plain)
+                    .pressable(scale: 0.86, haptic: .medium)
+                    .accessibilityLabel("Call \(item.peerUsername)")
 
                     Button {
                         Task {
@@ -124,7 +130,8 @@ struct CallsView: View {
                             .background(Theme.backgroundGrouped)
                             .clipShape(Circle())
                     }
-                    .buttonStyle(.plain)
+                    .pressable(scale: 0.86, haptic: .medium)
+                    .accessibilityLabel("Video call \(item.peerUsername)")
                 }
             }
         }

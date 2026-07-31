@@ -38,8 +38,10 @@ struct ChatAttachSheet: View {
                                 .font(.system(size: 11, weight: .semibold))
                         }
                         .foregroundStyle(Theme.accent)
+                        .padding(.vertical, 4)
+                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .pressable(scale: 0.94)
                 }
 
                 if photoAccessDenied {
@@ -49,21 +51,21 @@ struct ChatAttachSheet: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 12)
                 } else if recentImages.isEmpty {
+                    // Shimmering tiles instead of spinners — the strip's shape is already known.
                     HStack(spacing: 8) {
                         ForEach(0 ..< 4, id: \.self) { _ in
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
                                 .fill(Theme.backgroundGrouped)
                                 .frame(width: 96, height: 96)
-                                .overlay {
-                                    ProgressView()
-                                }
                         }
                         Spacer(minLength: 0)
                     }
+                    .shimmering()
+                    .transition(.opacity)
                 } else {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
-                            ForEach(Array(recentImages.enumerated()), id: \.offset) { _, image in
+                            ForEach(Array(recentImages.enumerated()), id: \.offset) { index, image in
                                 Button {
                                     if let onPickImage {
                                         onPickImage(image)
@@ -77,15 +79,18 @@ struct ChatAttachSheet: View {
                                         .frame(width: 96, height: 96)
                                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                                 }
-                                .buttonStyle(.plain)
+                                .pressable(scale: 0.93, dimming: 0.12)
+                                .entranceRow(index: index)
                             }
                         }
                     }
+                    .transition(.opacity)
                 }
             }
+            .animation(Motion.fade, value: recentImages.isEmpty)
 
-            optionRow(row1)
-            optionRow(row2)
+            optionRow(row1, startIndex: 0)
+            optionRow(row2, startIndex: row1.count)
 
             Button(action: onCancel) {
                 Text("Cancel")
@@ -96,9 +101,11 @@ struct ChatAttachSheet: View {
                     .background(Theme.backgroundGrouped)
                     .clipShape(Capsule())
             }
-            .buttonStyle(.plain)
+            .pressable(scale: 0.975, dimming: 0.06)
             .padding(.bottom, 4)
         }
+        // Tiles ripple in behind the sheet's own presentation.
+        .listEntranceHost(resetOn: false)
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
         .background(
@@ -116,9 +123,10 @@ struct ChatAttachSheet: View {
         }
     }
 
-    private func optionRow(_ options: [ChatAttachOption]) -> some View {
+    /// `startIndex` continues the entrance stagger across both rows.
+    private func optionRow(_ options: [ChatAttachOption], startIndex: Int) -> some View {
         HStack(spacing: 8) {
-            ForEach(options) { option in
+            ForEach(Array(options.enumerated()), id: \.element.id) { index, option in
                 Button {
                     onSelect(option)
                 } label: {
@@ -137,8 +145,10 @@ struct ChatAttachSheet: View {
                             .lineLimit(1)
                     }
                     .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .pressable(scale: 0.9)
+                .entranceRow(index: startIndex + index)
             }
         }
     }

@@ -35,7 +35,20 @@ struct MessageReceiptIcon: View {
     /// Failed glyph color (text bubbles use danger; image chips may use white).
     var failedColor: Color = Theme.danger
 
+    /// Human: The tick is the app's smallest but most-watched state machine
+    /// (sending → sent → delivered → read). Each hop pops the new glyph in instead of
+    /// hard-cutting, so progress stays legible out of the corner of the eye.
     var body: some View {
+        ZStack {
+            glyph
+                .id(receipt)
+                .transition(Motion.iconSwap)
+        }
+        .animation(Motion.snappy, value: receipt)
+    }
+
+    @ViewBuilder
+    private var glyph: some View {
         switch receipt {
         case .failed:
             Image(systemName: "exclamationmark.circle.fill")

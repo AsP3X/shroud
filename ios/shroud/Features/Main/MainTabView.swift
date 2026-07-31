@@ -15,7 +15,8 @@ struct MainTabView: View {
     @State private var settingsPath: [SettingsRoute] = []
     @State private var movesForward = true
 
-    private let tabAnimation = Animation.spring(response: 0.38, dampingFraction: 0.9)
+    // Same curve as before, now expressed as a design-system token (`Motion.standard`).
+    private let tabAnimation = Motion.standard
     private let tabBarClearance: CGFloat = 88
 
     private var showsTabBar: Bool {
@@ -44,7 +45,7 @@ struct MainTabView: View {
                 .allowsHitTesting(showsTabBar)
                 .accessibilityHidden(!showsTabBar)
                 // Animate **only** the bar, not the NavigationStack parent.
-                .animation(.easeOut(duration: 0.22), value: showsTabBar)
+                .animation(Motion.scrim, value: showsTabBar)
                 .zIndex(showsTabBar ? 1 : 0)
         }
         // Tab switches only — never animate off `showsTabBar` here (that cancelled pushes).

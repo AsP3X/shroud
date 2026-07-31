@@ -5,7 +5,10 @@ struct WelcomeView: View {
     let router: AppRouter
 
     @Environment(ServerConfigurationController.self) private var serverConfig
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showServerSettings = false
+    /// Drives the one-shot arrival choreography (logo → copy → tiles → actions).
+    @State private var hasArrived = false
 
     var body: some View {
         GroupedScreen {
@@ -32,9 +35,18 @@ struct WelcomeView: View {
                 }
                 .screenContent()
                 .padding(.vertical, 12)
+                .opacity(hasArrived ? 1 : 0)
+                .offset(y: hasArrived || reduceMotion ? 0 : 20)
             }
         }
         .navigationBarHidden(true)
+        .onAppear {
+            guard !hasArrived else { return }
+            // The app's first frame: elements settle in reading order, then the CTAs arrive.
+            withAnimation(Motion.respecting(reduceMotion, Motion.gentle).delay(0.05)) {
+                hasArrived = true
+            }
+        }
         .serverSettingsSheet(
             isPresented: $showServerSettings,
             context: .onboarding,
@@ -46,7 +58,6 @@ struct WelcomeView: View {
         HStack {
             Spacer(minLength: 0)
             Button {
-                Haptics.impact(.light)
                 showServerSettings = true
             } label: {
                 Image(systemName: "gearshape.fill")
@@ -56,7 +67,8 @@ struct WelcomeView: View {
                     .background(Theme.backgroundGrouped)
                     .clipShape(Circle())
             }
-            .buttonStyle(.plain)
+            // Press haptic comes from the style now.
+            .pressable(scale: 0.88)
             .accessibilityLabel("Server settings")
         }
         .padding(.horizontal, 16)
@@ -68,6 +80,10 @@ struct WelcomeView: View {
             BrandLogoMark(size: 80)
                 .onboardingHeroSource()
                 .shadow(color: Theme.accent.opacity(0.22), radius: 16, y: 10)
+                // Logo lands first and slightly overshoots — the brand moment of the app.
+                .scaleEffect(hasArrived || reduceMotion ? 1 : 0.7)
+                .opacity(hasArrived ? 1 : 0)
+
             VStack(spacing: 8) {
                 Text("Private messaging,\nfully encrypted")
                     .font(.system(size: 32, weight: .bold))
@@ -79,6 +95,8 @@ struct WelcomeView: View {
                     .multilineTextAlignment(.center)
                     .lineSpacing(4)
             }
+            .opacity(hasArrived ? 1 : 0)
+            .offset(y: hasArrived || reduceMotion ? 0 : 14)
         }
         .frame(maxWidth: .infinity)
     }
@@ -86,9 +104,13 @@ struct WelcomeView: View {
     private var featureTiles: some View {
         VStack(spacing: 10) {
             featureTile(icon: "lock.fill", title: "End-to-end encrypted", subtitle: "Messages decrypt only on your devices")
+                .entranceRow(index: 2)
             featureTile(icon: "waveform", title: "Voice messages", subtitle: "Encrypted audio with on-device transcription")
+                .entranceRow(index: 3)
             featureTile(icon: "phone.fill", title: "Secure calls", subtitle: "Voice and video with WebRTC encryption")
+                .entranceRow(index: 4)
         }
+        .listEntranceHost(resetOn: false)
     }
 
     private var connectionHint: some View {

@@ -257,7 +257,7 @@ struct SignUpView: View {
             }
             .padding(.horizontal, 4)
         }
-        .buttonStyle(.plain)
+        .pressable(scale: 0.97)
     }
 
     private func credentialRow(

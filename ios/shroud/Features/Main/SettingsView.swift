@@ -448,7 +448,7 @@ struct SettingsView: View {
                 .padding(.vertical, 10)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(HighlightRowButtonStyle())
             .accessibilityLabel("Server, \(serverSubtitle)")
         }
     }
@@ -465,7 +465,7 @@ struct SettingsView: View {
                 .background(Theme.background)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .pressable(scale: 0.98, dimming: 0.1, haptic: .medium)
     }
 
     private func groupDivider(leading: CGFloat = 54) -> some View {

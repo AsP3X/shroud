@@ -54,11 +54,13 @@ struct NewChatSheet: View {
                             }
                             .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
+                        .pressable(scale: 0.98, dimming: 0.15)
                     }
                     .listStyle(.plain)
                 }
             }
+            // Search narrows the list — animate rows out instead of hard-cutting.
+            .animation(Motion.standard, value: filtered.map(\.id))
             .searchable(text: $searchText, prompt: "Search contacts")
             .navigationTitle("New Chat")
             .navigationBarTitleDisplayMode(.inline)

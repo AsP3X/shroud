@@ -117,7 +117,7 @@ struct MyQRCodeSheet: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Theme.accent)
             }
-            .buttonStyle(.plain)
+            .pressable(scale: 0.85)
             .accessibilityLabel("Copy")
         }
         .padding(12)

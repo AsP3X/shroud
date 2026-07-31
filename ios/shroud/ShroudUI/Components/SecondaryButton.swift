@@ -15,6 +15,13 @@ struct SecondaryButton: View {
                 .background(Theme.accentSoft)
                 .clipShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .pressable(scale: 0.975, dimming: 0.06)
+        .accessibilityLabel(title)
     }
+}
+
+#Preview {
+    SecondaryButton(title: "Maybe later", action: {})
+        .padding()
+        .background(Theme.backgroundGrouped)
 }

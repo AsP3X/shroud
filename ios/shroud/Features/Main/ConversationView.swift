@@ -180,7 +180,8 @@ struct ConversationView: View {
                     )
                     // Cover chat header + composer + status bar (true Telegram overlay).
                     .ignoresSafeArea()
-                    .transition(.opacity)
+                    // Grows into place from just under full size — reads as "zoom into the photo".
+                    .transition(.scale(scale: 0.94).combined(with: .opacity))
                     .zIndex(50)
                 }
             }
@@ -209,7 +210,8 @@ struct ConversationView: View {
                         }
                     )
                     .ignoresSafeArea()
-                    .transition(.opacity)
+                    // Compose is a sheet-like surface — it rises from the composer it replaces.
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                     .zIndex(60)
                 }
             }
@@ -219,11 +221,13 @@ struct ConversationView: View {
                         .padding(16)
                         .background(.ultraThinMaterial)
                         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .transition(.scale(scale: 0.9).combined(with: .opacity))
                 }
             }
             .toast($toast)
-            .animation(.easeOut(duration: 0.2), value: viewingMedia != nil)
-            .animation(.easeOut(duration: 0.2), value: composeDraft != nil)
+            .animation(Motion.scrim, value: viewingMedia != nil)
+            .animation(Motion.scrim, value: composeDraft != nil)
+            .animation(Motion.snappy, value: isSendingMedia)
     }
 
     private struct ProfileDestination: Identifiable, Hashable {
@@ -261,10 +265,10 @@ struct ConversationView: View {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(Theme.accent)
-                        .frame(width: 26, height: 26)
+                        .frame(width: 34, height: 34)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .pressable(scale: 0.82)
                 .accessibilityLabel("Back")
 
                 Button {
@@ -288,19 +292,24 @@ struct ConversationView: View {
                                 .lineLimit(1)
                             HStack(spacing: 4) {
                                 if isOnline || isPeerTyping {
-                                    Circle()
-                                        .fill(isPeerTyping ? Theme.accent : Theme.online)
-                                        .frame(width: 7, height: 7)
+                                    PresenceDot(isTyping: isPeerTyping)
+                                        .transition(Motion.iconSwap)
                                 }
                                 Text(presenceLabel)
                                     .font(.system(size: 12))
                                     .foregroundStyle(presenceAccent ? Theme.accent : Theme.textSecondary)
                                     .lineLimit(1)
+                                    // "online" → "typing…" swaps in place.
+                                    .contentTransition(.opacity)
                             }
+                            // Presence is the header's only live state — animate every part of it.
+                            .animation(Motion.snappy, value: presenceLabel)
+                            .animation(Motion.snappy, value: isOnline || isPeerTyping)
                         }
                     }
+                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .pressable(scale: 0.98, dimming: 0.12)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 Button {
@@ -319,10 +328,10 @@ struct ConversationView: View {
                     Image(systemName: "video.fill")
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(Theme.accent)
-                        .frame(width: 28, height: 28)
+                        .frame(width: 34, height: 34)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .pressable(scale: 0.82, haptic: .medium)
                 .accessibilityLabel("Video call")
 
                 Button {
@@ -341,10 +350,10 @@ struct ConversationView: View {
                     Image(systemName: "phone.fill")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(Theme.accent)
-                        .frame(width: 26, height: 26)
+                        .frame(width: 34, height: 34)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .pressable(scale: 0.82, haptic: .medium)
                 .accessibilityLabel("Call")
             }
             .padding(.horizontal, 16)
@@ -383,6 +392,8 @@ struct ConversationView: View {
                         case let .message(message):
                             messageRow(message)
                                 .id(message.id)
+                                // Arriving bubbles grow out of the corner they were "spoken" from.
+                                .transition(Motion.bubbleIn(isMine: message.isMine))
                                 // Keep layout space while focused so the list doesn’t jump.
                                 // Hero sits on this slot at progress 0, so handoff is seamless.
                                 .opacity(focusedMenu?.message.id == message.id ? 0 : 1)
@@ -412,6 +423,11 @@ struct ConversationView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
+                // Drives the bubble insertion transition above. Keyed on the newest id (not
+                // just `count`) so a same-count reload still resolves without re-animating
+                // the whole thread. The bottom-pin below runs on the same change.
+                .animation(Motion.bouncy, value: newestMessageID)
+                .animation(Motion.standard, value: isPeerTyping)
                 .onPreferenceChange(MessageBubbleFrameKey.self) { frames in
                     bubbleGlobalFrames.merge(frames, uniquingKeysWith: { $1 })
                 }

@@ -144,8 +144,10 @@ struct ContactProfileView: View {
             .padding(.vertical, 10)
             .background(Theme.background)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .pressable(scale: 0.93)
+        .accessibilityLabel(title)
     }
 
     private var infoCard: some View {

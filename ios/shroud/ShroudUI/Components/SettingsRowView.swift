@@ -38,7 +38,8 @@ struct SettingsRowView: View {
             .padding(.vertical, 10)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        // Rows highlight rather than scale — a full-width scale reads as a layout glitch.
+        .buttonStyle(HighlightRowButtonStyle())
         .disabled(action == nil)
         .opacity(action == nil ? 0.72 : 1)
     }

@@ -91,17 +91,24 @@ struct ImageMessageBubble: View {
                                 .frame(width: displaySize.width, height: displaySize.height)
                                 .clipped()
                                 .opacity(isFailed ? 0.55 : 1)
+                                // Decrypt + decode finishes off the main thread; dissolve the
+                                // photo in over the placeholder instead of snapping it.
+                                .transition(.opacity)
                         } else {
                             loadingPlaceholder
+                                .transition(.opacity)
                         }
                     }
+                    .animation(Motion.fade, value: message.imageData == nil)
 
                     if isFailed {
                         failedOverlay
+                            .transition(.opacity)
                     } else if !hasCaption {
                         timeChip
                     }
                 }
+                .animation(Motion.snappy, value: isFailed)
                 .frame(width: displaySize.width, height: displaySize.height)
                 .clipShape(
                     hasCaption
@@ -208,15 +215,21 @@ struct ImageMessageBubble: View {
                 Label("Retry", systemImage: "arrow.clockwise")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.accent)
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .pressable(scale: 0.92, haptic: .medium)
         }
         .padding(.horizontal, 2)
+        .transition(.opacity.combined(with: .move(edge: .top)))
     }
 
+    /// Human: The bubble already knows the photo's dimensions from the message metadata, so the
+    /// placeholder occupies the exact final frame — the thread never reflows when the image lands.
     private var loadingPlaceholder: some View {
         ZStack {
             (isMine ? Theme.accent : Theme.bubbleIncoming)
+                .shimmering()
             ProgressView()
                 .tint(isMine ? Color.white.opacity(0.9) : Theme.accent)
         }

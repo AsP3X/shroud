@@ -232,7 +232,7 @@ struct MediaImageViewerOverlay: View {
                 .background(circleFill)
                 .clipShape(Circle())
         }
-        .buttonStyle(.plain)
+        .pressable(scale: 0.85, dimming: 0)
         .accessibilityLabel(accessibility)
     }
 
@@ -249,7 +249,7 @@ struct MediaImageViewerOverlay: View {
                 .background(circleFill)
                 .clipShape(Circle())
         }
-        .buttonStyle(.plain)
+        .pressable(scale: 0.85, dimming: 0)
         .accessibilityLabel(label)
     }
 

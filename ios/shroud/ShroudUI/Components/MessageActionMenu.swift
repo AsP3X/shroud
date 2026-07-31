@@ -56,8 +56,10 @@ struct MessageReactionBar: View {
                     Text(emoji)
                         .font(.system(size: 26))
                         .frame(width: Self.emojiSize, height: Self.emojiSize)
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                // Emoji squash hard on press — the most playful control in the app.
+                .pressable(scale: 0.78, dimming: 0)
             }
             Button(action: onMore) {
                 Image(systemName: "chevron.down")
@@ -67,7 +69,7 @@ struct MessageReactionBar: View {
                     .background(Color.white.opacity(0.12))
                     .clipShape(Circle())
             }
-            .buttonStyle(.plain)
+            .pressable(scale: 0.85, dimming: 0)
             .accessibilityLabel("More reactions")
         }
         .padding(.horizontal, Self.horizontalPadding)
@@ -185,7 +187,8 @@ struct MessageContextMenuCard: View {
             .frame(height: 44)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        // Dark menu — highlight with a light wash rather than the grouped-background token.
+        .buttonStyle(HighlightRowButtonStyle(fill: Color.white.opacity(0.1)))
         .disabled(muted)
     }
 }

@@ -13,6 +13,8 @@ struct VoiceMessageBubble: View {
     @State private var progress: Double = 0
     @State private var tick: Timer?
     @State private var localTranscript: String?
+    /// Drives the inline spinner while on-device transcription runs.
+    @State private var isTranscribing = false
 
     private var isMine: Bool { message.isMine }
     private var durationMs: Int { message.voiceDurationMs ?? 0 }
@@ -28,14 +30,17 @@ struct VoiceMessageBubble: View {
                 HStack(spacing: 10) {
                     Button(action: togglePlay) {
                         Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                            // Play ⇄ pause morph rather than a hard glyph swap.
+                            .contentTransition(.symbolEffect(.replace.downUp))
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(isMine ? Color.white : Theme.accent)
                             .frame(width: 36, height: 36)
                             .background(isMine ? Color.white.opacity(0.2) : Theme.accent.opacity(0.12))
                             .clipShape(Circle())
                     }
-                    .buttonStyle(.plain)
+                    .pressable(scale: 0.88, dimming: 0)
                     .disabled(message.voiceData == nil && message.mediaObjectId != nil)
+                    .animation(Motion.snappy, value: isPlaying)
 
                     VStack(alignment: .leading, spacing: 4) {
                         GeometryReader { geo in
@@ -46,6 +51,8 @@ struct VoiceMessageBubble: View {
                                 Capsule()
                                     .fill(isMine ? Color.white : Theme.accent)
                                     .frame(width: max(4, geo.size.width * progress), height: 4)
+                                    // Bridges the 50 ms polling interval into a continuous fill.
+                                    .animation(.linear(duration: 0.05), value: progress)
                             }
                         }
                         .frame(height: 4)
@@ -70,22 +77,44 @@ struct VoiceMessageBubble: View {
                         .foregroundStyle(Theme.textSecondary)
                         .padding(.horizontal, 4)
                         .frame(maxWidth: 260, alignment: isMine ? .trailing : .leading)
+                        // Transcription lands async — unfold it instead of snapping the row taller.
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                 } else if onRequestTranscript != nil, message.voiceData != nil {
-                    Button("Transcribe on device") {
+                    Button {
+                        isTranscribing = true
                         Task {
-                            if let t = await onRequestTranscript?() {
-                                localTranscript = t
+                            let result = await onRequestTranscript?()
+                            isTranscribing = false
+                            withAnimation(Motion.standard) {
+                                localTranscript = result
                             }
                         }
+                    } label: {
+                        HStack(spacing: 5) {
+                            if isTranscribing {
+                                ProgressView()
+                                    .controlSize(.mini)
+                                    .tint(Theme.accent)
+                            }
+                            Text(isTranscribing ? "Transcribing…" : "Transcribe on device")
+                                .font(.system(size: 12, weight: .medium))
+                                .contentTransition(.opacity)
+                        }
+                        .foregroundStyle(Theme.accent)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 4)
+                        .contentShape(Rectangle())
                     }
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.accent)
-                    .padding(.horizontal, 4)
+                    .pressable(scale: 0.94)
+                    .disabled(isTranscribing)
+                    .animation(Motion.snappy, value: isTranscribing)
+                    .transition(.opacity)
                 }
             }
 
             if !isMine { Spacer(minLength: 48) }
         }
+        .animation(Motion.standard, value: transcript)
         .onAppear(perform: onAppearLoad)
         .onDisappear { stopPlayback() }
     }

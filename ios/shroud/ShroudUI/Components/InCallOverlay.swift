@@ -27,27 +27,21 @@ struct InCallOverlay: View {
             VStack(spacing: 28) {
                 Spacer(minLength: 48)
 
-                AvatarView(
-                    initials: AvatarView.initials(for: call.peerUsername),
-                    size: 104,
-                    gradient: AvatarView.gradient(for: call.peerUsername),
-                    fontSize: 36
-                )
-                .opacity(call.phase == .active ? 1 : 0.92)
+                avatar(for: call)
 
                 VStack(spacing: 6) {
                     Text(call.peerUsername)
                         .font(.system(size: 26, weight: .semibold))
                         .foregroundStyle(.white)
-                    Text(statusLine(for: call))
-                        .font(.system(size: 15))
-                        .foregroundStyle(.white.opacity(0.72))
+                    statusLabel(for: call)
                     if call.modality == .video {
                         Text("Video")
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(Theme.accent)
+                            .transition(Motion.iconSwap)
                     }
                 }
+                .animation(Motion.snappy, value: call.modality)
 
                 Spacer()
 
@@ -84,9 +78,58 @@ struct InCallOverlay: View {
                     }
                 }
                 .padding(.bottom, 48)
+                // Accept/Decline collapse into a single End button on answer — animate the swap.
+                .animation(Motion.standard, value: call.phase)
             }
             .padding(.horizontal, 24)
         }
+    }
+
+    /// Human: While ringing, the avatar breathes so the screen never looks frozen on a
+    /// slow network; once connected it settles to a steady state.
+    @ViewBuilder
+    private func avatar(for call: CallController.ActiveCall) -> some View {
+        let base = AvatarView(
+            initials: AvatarView.initials(for: call.peerUsername),
+            size: 104,
+            gradient: AvatarView.gradient(for: call.peerUsername),
+            fontSize: 36
+        )
+
+        if isRinging(call.phase) {
+            base.phaseAnimator([false, true]) { view, big in
+                view
+                    .scaleEffect(big ? 1.05 : 0.97)
+                    .shadow(color: Theme.accent.opacity(big ? 0.45 : 0.15), radius: big ? 34 : 14)
+            } animation: { _ in .easeInOut(duration: 1.1) }
+        } else {
+            base.opacity(call.phase == .active ? 1 : 0.92)
+        }
+    }
+
+    private func isRinging(_ phase: CallController.Phase) -> Bool {
+        phase == .outgoingRinging || phase == .incomingRinging || phase == .connecting
+    }
+
+    /// Human: An active call must show a *running* clock — a one-shot `Date()` read renders
+    /// once and then sits there looking broken. TimelineView re-renders it every second.
+    @ViewBuilder
+    private func statusLabel(for call: CallController.ActiveCall) -> some View {
+        Group {
+            if call.phase == .active, let start = call.startedAt {
+                TimelineView(.periodic(from: start, by: 1)) { context in
+                    Text(elapsed(from: start, now: context.date))
+                        .monospacedDigit()
+                        .contentTransition(.numericText(countsDown: false))
+                }
+            } else {
+                Text(statusLine(for: call))
+                    .contentTransition(.opacity)
+            }
+        }
+        .font(.system(size: 15))
+        .foregroundStyle(.white.opacity(0.72))
+        .animation(Motion.snappy, value: call.phase)
     }
 
     private func statusLine(for call: CallController.ActiveCall) -> String {
@@ -100,17 +143,14 @@ struct InCallOverlay: View {
         case .connecting:
             return "Connecting…"
         case .active:
-            if let start = call.startedAt {
-                return elapsed(from: start)
-            }
             return "Connected"
         case .ending:
             return "Ending…"
         }
     }
 
-    private func elapsed(from start: Date) -> String {
-        let seconds = max(0, Int(Date().timeIntervalSince(start)))
+    private func elapsed(from start: Date, now: Date) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(start)))
         let m = seconds / 60
         let s = seconds % 60
         return String(format: "%d:%02d", m, s)
@@ -127,14 +167,22 @@ struct InCallOverlay: View {
                 Image(systemName: icon)
                     .font(.system(size: 22, weight: .semibold))
                     .foregroundStyle(.white)
+                    // Mute / video glyphs morph through their slashed variant.
+                    .contentTransition(.symbolEffect(.replace))
                     .frame(width: 64, height: 64)
                     .background(color)
                     .clipShape(Circle())
                 Text(label)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.white.opacity(0.8))
+                    .contentTransition(.opacity)
             }
+            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        // Call controls are consequential — a firmer press and a heavier tick.
+        .pressable(scale: 0.9, dimming: 0, haptic: .medium)
+        .animation(Motion.snappy, value: icon)
+        .animation(Motion.snappy, value: color)
+        .transition(Motion.iconSwap)
     }
 }

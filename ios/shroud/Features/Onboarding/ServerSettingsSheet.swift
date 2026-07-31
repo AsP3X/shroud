@@ -204,7 +204,7 @@ struct ServerSettingsSheet: View {
             )
             .scaleEffect(selected ? 1.0 : 0.99)
         }
-        .buttonStyle(.plain)
+        .pressable(scale: 0.98)
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityLabel("\(title). \(subtitle)")
     }
@@ -338,7 +338,7 @@ struct ServerSettingsSheet: View {
                     .shadow(color: Theme.accent.opacity(0.25), radius: 16, y: 8)
                     .scaleEffect(savePulse ? 0.97 : 1)
             }
-            .buttonStyle(.plain)
+            .pressable(scale: 0.98, dimming: 0.05, haptic: .medium)
 
             Button {
                 dismiss()
@@ -351,7 +351,7 @@ struct ServerSettingsSheet: View {
                     .background(Theme.backgroundGrouped)
                     .clipShape(Capsule())
             }
-            .buttonStyle(.plain)
+            .pressable(scale: 0.98, dimming: 0.06)
         }
         .padding(.top, 4)
     }

@@ -38,21 +38,33 @@ struct ChatRowView: View {
                         .foregroundStyle(subtitleAccent ? Theme.accent : Theme.textSecondary)
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        // "typing…" replaces the preview in place instead of hard-cutting.
+                        .contentTransition(.opacity)
+                        .animation(Motion.fade, value: subtitle)
+                        .animation(Motion.snappy, value: subtitleAccent)
+
                     if let unreadCount, unreadCount > 0 {
                         Text(unreadBadgeText(unreadCount))
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(Color.white)
+                            // Rolls the digits when another message lands.
+                            .contentTransition(.numericText(value: Double(unreadCount)))
+                            .monospacedDigit()
                             .padding(.horizontal, 7)
                             .padding(.vertical, 3)
                             .background(Theme.accent)
                             .clipShape(Capsule())
+                            .transition(Motion.iconSwap)
                     }
                 }
+                // A new unread badge pops; an increment rolls.
+                .animation(Motion.bouncy, value: unreadCount)
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background(Theme.background)
+        // No opaque fill here — the row press highlight lives behind it (`HighlightRowButtonStyle`).
+        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
     }
@@ -85,4 +97,5 @@ struct ChatRowView: View {
             subtitleAccent: true
         )
     }
+    .background(Theme.background)
 }

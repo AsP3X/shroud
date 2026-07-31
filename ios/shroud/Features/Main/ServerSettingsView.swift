@@ -121,7 +121,7 @@ struct ServerSettingsView: View {
                 }
                 .foregroundStyle(Theme.accent)
             }
-            .buttonStyle(.plain)
+            .pressable(scale: 0.9)
             .disabled(isBusy)
             .opacity(isBusy ? 0.4 : 1)
 
@@ -132,7 +132,7 @@ struct ServerSettingsView: View {
             }
             .font(.system(size: 16, weight: .semibold))
             .foregroundStyle(Theme.accent)
-            .buttonStyle(.plain)
+            .pressable(scale: 0.9)
             .disabled(isBusy)
             .opacity(isBusy ? 0.4 : 1)
         }
@@ -195,7 +195,7 @@ struct ServerSettingsView: View {
                 )
                 .scaleEffect(savePhase == .saving ? 0.98 : 1)
             }
-            .buttonStyle(.plain)
+            .pressable(scale: 0.98, dimming: 0.05, haptic: .medium)
             .disabled(isBusy)
             .animation(.spring(response: 0.38, dampingFraction: 0.82), value: savePhase)
             .padding(.horizontal, 16)
@@ -283,7 +283,7 @@ struct ServerSettingsView: View {
                     .stroke(selected ? Theme.accent.opacity(0.35) : Color.clear, lineWidth: 1.5)
             )
         }
-        .buttonStyle(.plain)
+        .pressable(scale: 0.98)
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityLabel("\(title). \(subtitle)")
     }

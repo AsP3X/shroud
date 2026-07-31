@@ -176,7 +176,7 @@ struct MediaComposeOverlay: View {
                             }
                         }
                 }
-                .buttonStyle(.plain)
+                .pressable(scale: 0.88, dimming: 0)
                 .accessibilityLabel("Select multiple")
             }
             .padding(.horizontal, 16)
@@ -208,7 +208,7 @@ struct MediaComposeOverlay: View {
                 .background(chrome.opacity(0.9))
                 .clipShape(Capsule())
             }
-            .buttonStyle(.plain)
+            .pressable(scale: 0.9)
             .accessibilityLabel("Edit")
 
             Spacer(minLength: 0)
@@ -266,7 +266,7 @@ struct MediaComposeOverlay: View {
                     .background(chrome)
                     .clipShape(Circle())
             }
-            .buttonStyle(.plain)
+            .pressable(scale: 0.85, dimming: 0)
             .accessibilityLabel("Caption options")
             .transition(.scale.combined(with: .opacity))
         } else {
@@ -290,7 +290,7 @@ struct MediaComposeOverlay: View {
                     .background(Color.white)
                     .clipShape(Circle())
             }
-            .buttonStyle(.plain)
+            .pressable(scale: 0.85, dimming: 0)
             .accessibilityLabel("Done")
             .transition(.scale.combined(with: .opacity))
         } else {
@@ -307,7 +307,7 @@ struct MediaComposeOverlay: View {
                     .background(telegramBlue)
                     .clipShape(Circle())
             }
-            .buttonStyle(.plain)
+            .pressable(scale: 0.85, dimming: 0, haptic: .medium)
             .accessibilityLabel("Send")
             .transition(.scale.combined(with: .opacity))
         }
@@ -333,7 +333,7 @@ struct MediaComposeOverlay: View {
                         .foregroundStyle(Color.white.opacity(0.85))
                         .frame(width: 28, height: 28)
                 }
-                .buttonStyle(.plain)
+                .pressable(scale: 0.85, haptic: nil)
                 .accessibilityLabel("Emoji")
                 .transition(.opacity)
             } else {
@@ -414,7 +414,7 @@ struct MediaComposeOverlay: View {
                         )
                 }
         }
-        .buttonStyle(.plain)
+        .pressable(scale: 0.9)
         .accessibilityLabel("Quality \(quality.label)")
         .accessibilityHint("Tap to switch between Original and HD")
     }
@@ -431,7 +431,7 @@ struct MediaComposeOverlay: View {
                 .background(chrome)
                 .clipShape(Circle())
         }
-        .buttonStyle(.plain)
+        .pressable(scale: 0.85, dimming: 0)
         .accessibilityLabel(label)
     }
 
