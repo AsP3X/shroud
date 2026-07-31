@@ -588,7 +588,8 @@ final class MessagingController {
             token: token
         )
         mediaCache.save(messageID: dto.id, data: jpeg.data)
-        plaintextCache.save(messageID: dto.id, text: displayText)
+        // Cache sealed media payload (file key), not just the caption — needed for reload.
+        plaintextCache.save(messageID: dto.id, data: payloadData)
 
         let sent = ChatMessage(
             id: dto.id,
@@ -695,7 +696,7 @@ final class MessagingController {
                 token: token
             )
             mediaCache.save(messageID: dto.id, data: audioData)
-            plaintextCache.save(messageID: dto.id, text: displayText)
+            plaintextCache.save(messageID: dto.id, data: payloadData)
 
             let sent = ChatMessage(
                 id: dto.id,
@@ -751,44 +752,10 @@ final class MessagingController {
         }
 
         do {
-            let response = try await messagesService.listMessages(
-                peerUserID: message.peerUserID,
-                token: token,
-                limit: 50
-            )
-            guard let dto = response.messages.first(where: { $0.id == message.id }),
-                  let ciphertextB64 = dto.ciphertext,
-                  let envelopeData = Data(base64Encoded: ciphertextB64)
+            guard let payloadData = try await mediaPayloadData(for: message, token: token, material: material),
+                  let payload = try? JSONDecoder().decode(MediaMessagePayload.self, from: payloadData),
+                  let keyData = Data(base64Encoded: payload.k)
             else { return }
-
-            let me = sessionController?.userID
-            let isMine = dto.senderUserId == me
-            let payloadData: Data
-            if isMine {
-                payloadData = try MessageCrypto.open(
-                    envelopeData: envelopeData,
-                    peerUserID: message.peerUserID,
-                    with: material.agreementPrivateKey,
-                    ourIdentityPublicKey: material.identityPublicKeyData,
-                    senderIdentityPublicKey: material.identityPublicKeyData,
-                    as: .sender
-                )
-            } else {
-                let senderPub = try await resolvePeerIdentityPublicKey(
-                    peerUserID: dto.senderUserId,
-                    token: token
-                )
-                payloadData = try MessageCrypto.open(
-                    envelopeData: envelopeData,
-                    peerUserID: dto.senderUserId,
-                    with: material.agreementPrivateKey,
-                    ourIdentityPublicKey: material.identityPublicKeyData,
-                    senderIdentityPublicKey: senderPub,
-                    as: .recipient
-                )
-            }
-            let payload = try JSONDecoder().decode(MediaMessagePayload.self, from: payloadData)
-            guard let keyData = Data(base64Encoded: payload.k) else { return }
             let sealedFile = try await mediaService.downloadContent(mediaID: mediaID, token: token)
             let audio = try MediaCrypto.openFile(sealed: sealedFile, keyData: keyData)
             mediaCache.save(messageID: message.id, data: audio)
@@ -845,45 +812,12 @@ final class MessagingController {
         }
 
         do {
-            // Re-open sealed payload from history to get the file key.
-            let response = try await messagesService.listMessages(
-                peerUserID: message.peerUserID,
-                token: token,
-                limit: 50
-            )
-            guard let dto = response.messages.first(where: { $0.id == message.id }),
-                  let ciphertextB64 = dto.ciphertext,
-                  let envelopeData = Data(base64Encoded: ciphertextB64)
+            // Prefer cached media payload (file key). Never re-open as recipient — that
+            // advances/desyncs the Double Ratchet after the first successful decrypt.
+            guard let payloadData = try await mediaPayloadData(for: message, token: token, material: material),
+                  let payload = try? JSONDecoder().decode(MediaMessagePayload.self, from: payloadData),
+                  let keyData = Data(base64Encoded: payload.k)
             else { return }
-
-            let me = sessionController?.userID
-            let isMine = dto.senderUserId == me
-            let payloadData: Data
-            if isMine {
-                payloadData = try MessageCrypto.open(
-                    envelopeData: envelopeData,
-                    peerUserID: message.peerUserID,
-                    with: material.agreementPrivateKey,
-                    ourIdentityPublicKey: material.identityPublicKeyData,
-                    senderIdentityPublicKey: material.identityPublicKeyData,
-                    as: .sender
-                )
-            } else {
-                let senderPub = try await resolvePeerIdentityPublicKey(
-                    peerUserID: dto.senderUserId,
-                    token: token
-                )
-                payloadData = try MessageCrypto.open(
-                    envelopeData: envelopeData,
-                    peerUserID: dto.senderUserId,
-                    with: material.agreementPrivateKey,
-                    ourIdentityPublicKey: material.identityPublicKeyData,
-                    senderIdentityPublicKey: senderPub,
-                    as: .recipient
-                )
-            }
-            let payload = try JSONDecoder().decode(MediaMessagePayload.self, from: payloadData)
-            guard let keyData = Data(base64Encoded: payload.k) else { return }
 
             let sealedFile = try await mediaService.downloadContent(mediaID: mediaID, token: token)
             let jpeg = try MediaCrypto.openFile(sealed: sealedFile, keyData: keyData)
@@ -892,6 +826,40 @@ final class MessagingController {
         } catch {
             // Leave placeholder; user can reopen thread to retry.
         }
+    }
+
+    /// Resolves the sealed media payload JSON (contains AES file key). Never re-opens as recipient.
+    private func mediaPayloadData(
+        for message: ChatMessage,
+        token: String,
+        material: IdentityKeyMaterial
+    ) async throws -> Data? {
+        if let cached = plaintextCache.data(for: message.id), isMediaPayloadData(cached) {
+            return cached
+        }
+        guard message.isMine else {
+            // Inbound: payload must already be cached from the first DR open in decodeMessage.
+            return nil
+        }
+        let response = try await messagesService.listMessages(
+            peerUserID: message.peerUserID,
+            token: token,
+            limit: 50
+        )
+        guard let dto = response.messages.first(where: { $0.id == message.id }),
+              let ciphertextB64 = dto.ciphertext,
+              let envelopeData = Data(base64Encoded: ciphertextB64)
+        else { return nil }
+        let payloadData = try MessageCrypto.open(
+            envelopeData: envelopeData,
+            peerUserID: message.peerUserID,
+            with: material.agreementPrivateKey,
+            ourIdentityPublicKey: material.identityPublicKeyData,
+            senderIdentityPublicKey: material.identityPublicKeyData,
+            as: .sender
+        )
+        plaintextCache.save(messageID: message.id, data: payloadData)
+        return payloadData
     }
 
     private func updateMessageImage(messageID: UUID, peerID: UUID, data: Data) {
@@ -1132,14 +1100,58 @@ final class MessagingController {
             )
         }
 
-        // Prefer in-memory message (optimistic send) with upgraded receipt.
-        if isMine, let existing = threads[peerUserID]?.first(where: { $0.id == dto.id }) {
+        // Prefer in-memory message (optimistic send / already decoded) with upgraded receipt.
+        if let existing = threads[peerUserID]?.first(where: { $0.id == dto.id }) {
             var merged = existing
-            let serverReceipt = receiptStatus(from: dto)
-            if serverReceipt.rank > existing.receipt.rank {
-                merged.receipt = serverReceipt
+            if isMine {
+                let serverReceipt = receiptStatus(from: dto)
+                if serverReceipt.rank > existing.receipt.rank {
+                    merged.receipt = serverReceipt
+                }
             }
-            return merged
+            // Skip re-decrypt: DR message keys are one-shot.
+            // Still re-enter media path when we have a payload cache but no image bytes yet
+            // (download can be retried without touching the ratchet).
+            let needsMediaBytes = (existing.kind == .image || existing.kind == .voice)
+                && existing.imageData == nil
+                && existing.voiceData == nil
+                && !existing.deleted
+                && plaintextCache.data(for: dto.id) != nil
+            if !existing.deleted,
+               existing.text != "[Unable to decrypt]",
+               existing.text != "Media",
+               !needsMediaBytes
+            {
+                return merged
+            }
+        }
+
+        // Cached plaintext from a prior successful open (survives loadThread reloads).
+        // Media: this is the *payload JSON* (file key), not the caption.
+        if let cachedData = plaintextCache.data(for: dto.id),
+           isMediaPayloadData(cachedData) || !isMedia
+        {
+            if isMedia {
+                return await decodeMediaMessage(
+                    dto: dto,
+                    plain: cachedData,
+                    peerUserID: peerUserID,
+                    isMine: isMine,
+                    receipt: receipt,
+                    token: token
+                )
+            }
+            let text = String(data: cachedData, encoding: .utf8) ?? "[Binary message]"
+            return ChatMessage(
+                id: dto.id,
+                peerUserID: peerUserID,
+                senderUserID: dto.senderUserId,
+                text: text,
+                createdAt: dto.createdAt,
+                isMine: isMine,
+                deleted: false,
+                receipt: receipt
+            )
         }
 
         guard let ciphertextB64 = dto.ciphertext,
@@ -1162,6 +1174,7 @@ final class MessagingController {
         do {
             let plain: Data
             if isMine {
+                // Self dual-seal only — never advances the peer DR session.
                 plain = try MessageCrypto.open(
                     envelopeData: envelopeData,
                     peerUserID: peerUserID,
@@ -1175,6 +1188,7 @@ final class MessagingController {
                     peerUserID: dto.senderUserId,
                     token: token
                 )
+                // First open only: advances DR once and caches payload below.
                 plain = try MessageCrypto.open(
                     envelopeData: envelopeData,
                     peerUserID: dto.senderUserId,
@@ -1184,6 +1198,9 @@ final class MessagingController {
                     as: .recipient
                 )
             }
+
+            // Always cache so loadThread / media reload never re-runs DR on this id.
+            plaintextCache.save(messageID: dto.id, data: plain)
 
             if isMedia {
                 return await decodeMediaMessage(
@@ -1197,9 +1214,6 @@ final class MessagingController {
             }
 
             let text = String(data: plain, encoding: .utf8) ?? "[Binary message]"
-            if isMine {
-                plaintextCache.save(messageID: dto.id, text: text)
-            }
             return ChatMessage(
                 id: dto.id,
                 peerUserID: peerUserID,
@@ -1211,16 +1225,26 @@ final class MessagingController {
                 receipt: receipt
             )
         } catch {
-            if isMine, let cached = plaintextCache.text(for: dto.id), !isMedia {
+            if let cached = plaintextCache.text(for: dto.id), !isMedia {
                 return ChatMessage(
                     id: dto.id,
                     peerUserID: peerUserID,
                     senderUserID: dto.senderUserId,
                     text: cached,
                     createdAt: dto.createdAt,
-                    isMine: true,
+                    isMine: isMine,
                     deleted: false,
                     receipt: receipt
+                )
+            }
+            if isMedia, let cachedData = plaintextCache.data(for: dto.id) {
+                return await decodeMediaMessage(
+                    dto: dto,
+                    plain: cachedData,
+                    peerUserID: peerUserID,
+                    isMine: isMine,
+                    receipt: receipt,
+                    token: token
                 )
             }
             return ChatMessage(
@@ -1264,13 +1288,9 @@ final class MessagingController {
                     voiceData = audio
                 }
             }
+            // Keep payload JSON in plaintextCache (file key); do not overwrite with transcript.
             let transcript = payload?.c?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let mediaText = (transcript?.isEmpty == false)
-                ? transcript!
-                : (plaintextCache.text(for: dto.id) ?? "Voice message")
-            if let transcript, !transcript.isEmpty {
-                plaintextCache.save(messageID: dto.id, text: transcript)
-            }
+            let mediaText = (transcript?.isEmpty == false) ? transcript! : "Voice message"
             return ChatMessage(
                 id: dto.id,
                 peerUserID: peerUserID,
@@ -1306,12 +1326,25 @@ final class MessagingController {
             }
         }
 
+        // Never overwrite the payload cache with a caption — that drops the AES file key
+        // and ensureImageLoaded can no longer download the photo.
         let caption = payload?.c?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let mediaText = caption.isEmpty
-            ? (plaintextCache.text(for: dto.id) ?? "Photo")
-            : caption
-        if !caption.isEmpty {
-            plaintextCache.save(messageID: dto.id, text: caption)
+        let mediaText = caption.isEmpty ? "Photo" : caption
+
+        // If we still lack bytes, keep a clear failed state only when payload is missing.
+        if imageData == nil, payload == nil {
+            return ChatMessage(
+                id: dto.id,
+                peerUserID: peerUserID,
+                senderUserID: dto.senderUserId,
+                text: "Media",
+                createdAt: dto.createdAt,
+                isMine: isMine,
+                deleted: false,
+                receipt: receipt,
+                kind: .image,
+                mediaObjectId: dto.mediaObjectId
+            )
         }
 
         return ChatMessage(
@@ -1329,6 +1362,11 @@ final class MessagingController {
             imageHeight: height,
             imageData: imageData
         )
+    }
+
+    /// True when `data` looks like a media payload JSON (`{"t":"image"|...}`), not a caption string.
+    private func isMediaPayloadData(_ data: Data) -> Bool {
+        (try? JSONDecoder().decode(MediaMessagePayload.self, from: data)) != nil
     }
 
     private func resolvePeerIdentityPublicKey(peerUserID: UUID, token: String) async throws -> Data {

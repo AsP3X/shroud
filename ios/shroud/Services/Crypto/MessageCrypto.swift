@@ -312,18 +312,25 @@ enum MessageCrypto {
             DoubleRatchet.Message(v: v3.v, dh: v3.dh, n: v3.n, pn: v3.pn, ct: v3.ct)
         )
 
-        // Build candidate sessions (copies) — first success wins and is persisted.
-        var candidates: [DoubleRatchet.Session] = []
+        // Critical: once we have an established receive chain, NEVER fall back to a fresh
+        // prepareAsReceiver on failure. That wipe/rebuild desyncs the ratchet after the
+        // first successful message and makes the next text/image fail with auth errors.
+        if var existing = RatchetSessionStore.load(peerUserID: peerUserID),
+           existing.recvChainKey != nil || existing.touched
+        {
+            let plain = try DoubleRatchet.decrypt(envelopeData: drData, session: &existing)
+            RatchetSessionStore.save(existing, peerUserID: peerUserID)
+            return plain
+        }
 
+        // No established session yet: try unused-initiator recovery, then pure receiver.
+        var candidates: [DoubleRatchet.Session] = []
         if let existing = RatchetSessionStore.load(peerUserID: peerUserID) {
             let unusedInitiator =
                 existing.sendChainKey != nil
                 && existing.recvChainKey == nil
                 && existing.dhRecvPublic == existing.peerIdentityPublic
-
             if unusedInitiator {
-                // Prefer pure receiver first: peer's first message is dual-init style.
-                // Fall back to stored initiator for a real reply after they received us.
                 candidates.append(
                     try DoubleRatchet.Session.prepareAsReceiver(
                         ourPrivate: ourPrivateKey,
@@ -333,14 +340,9 @@ enum MessageCrypto {
                 candidates.append(existing)
             } else {
                 candidates.append(existing)
-                candidates.append(
-                    try DoubleRatchet.Session.prepareAsReceiver(
-                        ourPrivate: ourPrivateKey,
-                        theirIdentityPublic: senderIdentityPublicKey
-                    )
-                )
             }
-        } else {
+        }
+        if candidates.isEmpty {
             candidates.append(
                 try DoubleRatchet.Session.prepareAsReceiver(
                     ourPrivate: ourPrivateKey,

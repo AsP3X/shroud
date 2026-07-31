@@ -481,6 +481,9 @@ async fn write_blob(state: &AppState, media: &MediaRow, bytes: &[u8]) -> Result<
         ))
     })?;
 
+    // Mirror to Nebular for multi-replica reads. Local volume remains authoritative for
+    // this write — a Nebular blip must not fail the client upload (photos would "not send").
+    // Prefer-Nebular only affects *read* path (see get_content).
     if let Some(base) = &state.nebular_url {
         let base = base.trim_end_matches('/');
         let url = format!("{base}/{}/{}", media.bucket, media.object_key);
@@ -495,26 +498,20 @@ async fn write_blob(state: &AppState, media: &MediaRow, bytes: &[u8]) -> Result<
                 tracing::debug!(%url, "media mirrored to nebular");
             }
             Ok(resp) => {
-                // Multi-replica relies on Nebular — surface as error when prefer-nebular.
-                if state.media_prefer_nebular {
-                    return Err(AppError::Internal(format!(
-                        "nebular mirror put failed with status {} (required for multi-replica media)",
-                        resp.status()
-                    )));
-                }
                 tracing::warn!(
                     status = %resp.status(),
                     %url,
+                    prefer_nebular = state.media_prefer_nebular,
                     "nebular mirror put failed; local blob kept"
                 );
             }
             Err(err) => {
-                if state.media_prefer_nebular {
-                    return Err(AppError::Internal(format!(
-                        "nebular mirror put error (required for multi-replica media): {err}"
-                    )));
-                }
-                tracing::warn!(error = %err, %url, "nebular mirror put error; local blob kept");
+                tracing::warn!(
+                    error = %err,
+                    %url,
+                    prefer_nebular = state.media_prefer_nebular,
+                    "nebular mirror put error; local blob kept"
+                );
             }
         }
     }

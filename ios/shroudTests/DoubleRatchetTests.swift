@@ -349,4 +349,76 @@ struct DoubleRatchetTests {
         struct Peek: Decodable { let v: Int }
         #expect(try JSONDecoder().decode(Peek.self, from: sealed).v == 2)
     }
+
+    @Test
+    func textThenImageDoesNotBreakRecipient() throws {
+        // Regression: second message (e.g. photo) must open after a successful text.
+        let alice = Curve25519.KeyAgreement.PrivateKey()
+        let bob = Curve25519.KeyAgreement.PrivateKey()
+        let aliceUser = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        let bobUser = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+        RatchetSessionStore.delete(peerUserID: aliceUser)
+        RatchetSessionStore.delete(peerUserID: bobUser)
+
+        let textEnv = try MessageCrypto.seal(
+            plaintext: Data("hi".utf8),
+            peerUserID: bobUser,
+            toPeerIdentityPublicKey: bob.publicKey.rawRepresentation,
+            ourPrivateKey: alice,
+            ourIdentityPublicKey: alice.publicKey.rawRepresentation,
+            ourUserID: aliceUser
+        )
+        #expect(try MessageCrypto.open(
+            envelopeData: textEnv,
+            peerUserID: aliceUser,
+            with: bob,
+            ourIdentityPublicKey: bob.publicKey.rawRepresentation,
+            senderIdentityPublicKey: alice.publicKey.rawRepresentation,
+            as: .recipient
+        ) == Data("hi".utf8))
+
+        // Simulate a failed re-open of the same text (must NOT wipe Bob's session).
+        #expect(throws: (any Error).self) {
+            _ = try MessageCrypto.open(
+                envelopeData: textEnv,
+                peerUserID: aliceUser,
+                with: bob,
+                ourIdentityPublicKey: bob.publicKey.rawRepresentation,
+                senderIdentityPublicKey: alice.publicKey.rawRepresentation,
+                as: .recipient
+            )
+        }
+
+        let imagePayload = try JSONEncoder().encode(
+            MediaMessagePayload(
+                t: MediaMessagePayload.kindImage,
+                mime: "image/jpeg",
+                w: 10,
+                h: 10,
+                k: Data(repeating: 1, count: 32).base64EncodedString(),
+                c: nil,
+                d: nil
+            )
+        )
+        let imageEnv = try MessageCrypto.seal(
+            plaintext: imagePayload,
+            peerUserID: bobUser,
+            toPeerIdentityPublicKey: bob.publicKey.rawRepresentation,
+            ourPrivateKey: alice,
+            ourIdentityPublicKey: alice.publicKey.rawRepresentation,
+            ourUserID: aliceUser
+        )
+        let openedImage = try MessageCrypto.open(
+            envelopeData: imageEnv,
+            peerUserID: aliceUser,
+            with: bob,
+            ourIdentityPublicKey: bob.publicKey.rawRepresentation,
+            senderIdentityPublicKey: alice.publicKey.rawRepresentation,
+            as: .recipient
+        )
+        #expect(openedImage == imagePayload)
+
+        RatchetSessionStore.delete(peerUserID: aliceUser)
+        RatchetSessionStore.delete(peerUserID: bobUser)
+    }
 }
