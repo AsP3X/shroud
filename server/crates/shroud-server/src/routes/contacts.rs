@@ -178,18 +178,26 @@ pub async fn create_request(
             .await
             .map_err(|err| AppError::Internal(format!("commit mutual accept failed: {err}")))?;
 
-        return Ok((
-            StatusCode::OK,
-            Json(ContactRequestResponse {
-                id: request_id,
-                from_user_id: auth.user_id,
-                to_user_id: body.user_id,
-                status: "accepted".into(),
-                created_at: now,
-                responded_at: Some(now),
-                user: None,
-            }),
-        ));
+        let response = ContactRequestResponse {
+            id: request_id,
+            from_user_id: auth.user_id,
+            to_user_id: body.user_id,
+            status: "accepted".into(),
+            created_at: now,
+            responded_at: Some(now),
+            user: load_peer_user(&state.pool, auth.user_id).await.ok().flatten(),
+        };
+        // Both users become contacts immediately — refresh both UIs.
+        publish_contact_event(
+            &state,
+            "contact.accepted",
+            &response,
+            [auth.user_id, body.user_id],
+            None,
+        )
+        .await;
+
+        return Ok((StatusCode::OK, Json(response)));
     }
 
     let request_id = Uuid::new_v4();
@@ -233,18 +241,38 @@ pub async fn create_request(
         "contacts.request_create ok"
     );
 
-    Ok((
-        StatusCode::CREATED,
-        Json(ContactRequestResponse {
-            id: request_id,
-            from_user_id: auth.user_id,
-            to_user_id: body.user_id,
-            status: "pending".into(),
-            created_at: now,
-            responded_at: None,
-            user: None,
-        }),
-    ))
+    // Include requester profile so the recipient can render the pending row immediately.
+    let from_user = load_peer_user(&state.pool, auth.user_id).await.ok().flatten();
+    let response = ContactRequestResponse {
+        id: request_id,
+        from_user_id: auth.user_id,
+        to_user_id: body.user_id,
+        status: "pending".into(),
+        created_at: now,
+        responded_at: None,
+        user: from_user,
+    };
+
+    // Fan-out to the target user so their Contacts "Pending" section updates live.
+    publish_contact_event(
+        &state,
+        "contact.request",
+        &response,
+        [body.user_id],
+        None,
+    )
+    .await;
+    // Sender's other devices: keep outgoing request state in sync.
+    publish_contact_event(
+        &state,
+        "contact.request",
+        &response,
+        [auth.user_id],
+        Some(auth.device_id),
+    )
+    .await;
+
+    Ok((StatusCode::CREATED, Json(response)))
 }
 
 /// `GET /contacts/requests`
@@ -395,15 +423,28 @@ pub async fn accept_request(
         "contacts.request_accept ok"
     );
 
-    Ok(Json(ContactRequestResponse {
+    let response = ContactRequestResponse {
         id: row.id,
         from_user_id: row.from_user_id,
         to_user_id: row.to_user_id,
         status: "accepted".into(),
         created_at: row.created_at,
         responded_at: Some(now),
-        user: None,
-    }))
+        user: load_peer_user(&state.pool, row.from_user_id)
+            .await
+            .ok()
+            .flatten(),
+    };
+    publish_contact_event(
+        &state,
+        "contact.accepted",
+        &response,
+        [row.from_user_id, row.to_user_id],
+        None,
+    )
+    .await;
+
+    Ok(Json(response))
 }
 
 /// `POST /contacts/requests/:id/reject`
@@ -468,7 +509,7 @@ pub async fn cancel_request(
         .await
         .map_err(|err| AppError::Internal(format!("commit cancel failed: {err}")))?;
 
-    Ok(Json(ContactRequestResponse {
+    let response = ContactRequestResponse {
         id: row.id,
         from_user_id: row.from_user_id,
         to_user_id: row.to_user_id,
@@ -476,7 +517,18 @@ pub async fn cancel_request(
         created_at: row.created_at,
         responded_at: Some(now),
         user: None,
-    }))
+    };
+    // Notify recipient so a pending invite disappears immediately.
+    publish_contact_event(
+        &state,
+        "contact.cancelled",
+        &response,
+        [row.to_user_id, row.from_user_id],
+        Some(auth.device_id),
+    )
+    .await;
+
+    Ok(Json(response))
 }
 
 /// `GET /contacts`
@@ -540,6 +592,18 @@ pub async fn delete_contact(
         return Err(AppError::not_found("Contact not found."));
     }
 
+    let event = serde_json::json!({
+        "type": "contact.removed",
+        "user_id": auth.user_id,
+        "peer_user_id": peer_id,
+    });
+    if let Ok(payload) = serde_json::to_string(&event) {
+        state
+            .realtime
+            .publish_to_users([auth.user_id, peer_id], Some(auth.device_id), &payload)
+            .await;
+    }
+
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -597,7 +661,7 @@ async fn respond_as_recipient(
         .await
         .map_err(|err| AppError::Internal(format!("commit respond failed: {err}")))?;
 
-    Ok(Json(ContactRequestResponse {
+    let response = ContactRequestResponse {
         id: row.id,
         from_user_id: row.from_user_id,
         to_user_id: row.to_user_id,
@@ -605,7 +669,54 @@ async fn respond_as_recipient(
         created_at: row.created_at,
         responded_at: Some(now),
         user: None,
-    }))
+    };
+    let event_type = if status == "rejected" {
+        "contact.rejected"
+    } else {
+        "contact.updated"
+    };
+    publish_contact_event(
+        state,
+        event_type,
+        &response,
+        [row.from_user_id, row.to_user_id],
+        None,
+    )
+    .await;
+
+    Ok(Json(response))
+}
+
+/// Loads a minimal peer card for contact-request WS/API payloads.
+async fn load_peer_user(pool: &sqlx::PgPool, user_id: Uuid) -> Result<Option<PeerUser>, AppError> {
+    let row: Option<(Uuid, String)> = sqlx::query_as(
+        r#"SELECT id, username FROM users WHERE id = $1"#,
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("load peer user failed: {err}")))?;
+    Ok(row.map(|(id, username)| PeerUser { id, username }))
+}
+
+/// Publishes a contact-related realtime event to one or more users.
+async fn publish_contact_event(
+    state: &AppState,
+    event_type: &str,
+    request: &ContactRequestResponse,
+    user_ids: impl IntoIterator<Item = Uuid>,
+    except_device: Option<Uuid>,
+) {
+    let event = serde_json::json!({
+        "type": event_type,
+        "request": request,
+    });
+    if let Ok(payload) = serde_json::to_string(&event) {
+        state
+            .realtime
+            .publish_to_users(user_ids, except_device, &payload)
+            .await;
+    }
 }
 
 async fn insert_contact_pair(

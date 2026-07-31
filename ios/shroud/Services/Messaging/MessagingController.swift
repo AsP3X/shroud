@@ -32,6 +32,8 @@ final class MessagingController {
     private let realtime = RealtimeClient()
     /// Polling fallback when the WebSocket is down (common behind some reverse proxies).
     private var pollTask: Task<Void, Never>?
+    /// Separate poll so contact invites still appear if WS is down.
+    private var contactsPollTask: Task<Void, Never>?
     /// Optional call controller for WS call.* fan-in (bound from RootView).
     private weak var callController: CallController?
 
@@ -124,6 +126,7 @@ final class MessagingController {
         guard let token = sessionController?.bearerToken else { return }
         realtime.connect(token: token)
         startPollingFallback()
+        startContactsPolling()
         Task {
             await refreshContacts()
             await refreshConversations()
@@ -133,6 +136,8 @@ final class MessagingController {
     func stop() {
         pollTask?.cancel()
         pollTask = nil
+        contactsPollTask?.cancel()
+        contactsPollTask = nil
         realtime.disconnect(reconnect: false)
         activePeerID = nil
     }
@@ -142,6 +147,7 @@ final class MessagingController {
         guard let token = sessionController?.bearerToken else { return }
         realtime.connect(token: token)
         Task {
+            await refreshContacts()
             await refreshConversations()
             if let peer = activePeerID {
                 await loadThread(peerUserID: peer)
@@ -179,6 +185,19 @@ final class MessagingController {
                         await self.loadThread(peerUserID: peer)
                     }
                 }
+            }
+        }
+    }
+
+    /// Polls contact requests so invites appear even if the WebSocket is blocked.
+    private func startContactsPolling() {
+        contactsPollTask?.cancel()
+        contactsPollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                // 5s when offline/slow path; still light enough for multi-device invites.
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard let self, !Task.isCancelled else { return }
+                await self.refreshContacts()
             }
         }
     }
@@ -930,8 +949,28 @@ final class MessagingController {
                 handlePresence(json)
             } else if type.hasPrefix("call.") {
                 callController?.handleRealtime(type: type, json: json)
+            } else if type.hasPrefix("contact.") {
+                handleContactRealtime(type: type, json: json)
             }
         }
+    }
+
+    /// Apply contact invite / accept / cancel immediately, then refresh from API.
+    private func handleContactRealtime(type: String, json: [String: Any]) {
+        if type == "contact.request",
+           let requestJSON = json["request"] as? [String: Any],
+           let data = try? JSONSerialization.data(withJSONObject: requestJSON),
+           let request = try? JSONDecoder.api.decode(ContactRequestDTO.self, from: data),
+           let me = sessionController?.userID,
+           request.toUserId == me,
+           request.status == "pending"
+        {
+            // Optimistic insert so Pending shows before the network round-trip.
+            if !incomingRequests.contains(where: { $0.id == request.id }) {
+                incomingRequests.insert(request, at: 0)
+            }
+        }
+        Task { await refreshContacts() }
     }
 
     private func handleDeliveredEvent(_ json: [String: Any]) {

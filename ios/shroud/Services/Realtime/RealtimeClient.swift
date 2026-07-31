@@ -209,7 +209,9 @@ final class RealtimeClient {
             }
         case "message.delivered", "message.read", "message.deleted",
              "typing", "presence.update", "call.ring", "call.accepted",
-             "call.ended", "call.signal":
+             "call.ended", "call.signal",
+             "contact.request", "contact.accepted", "contact.rejected",
+             "contact.cancelled", "contact.removed", "contact.updated":
             onEvent?(.raw(type: type, json: json))
         default:
             break
