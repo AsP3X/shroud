@@ -3,7 +3,7 @@ import Foundation
 /// Minimal HTTP client for the Shroud REST API (`/api/v1`).
 /// Human: Views never call this directly — feature services wrap it.
 /// Agent: HTTP JSON only; never sends key material or message plaintext.
-final class APIClient: Sendable {
+nonisolated final class APIClient: Sendable {
     private let baseURL: URL
     private let session: URLSession
 
@@ -232,7 +232,9 @@ final class APIClient: Sendable {
 
 extension JSONDecoder {
     /// Shared API decoder (ISO-8601 dates with fractional seconds when present).
-    static let api: JSONDecoder = {
+    // nonisolated(unsafe): JSONDecoder is not Sendable; APIClient is nonisolated and only
+    // mutates decoder configuration at init time (never after first use).
+    nonisolated(unsafe) static let api: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
@@ -252,7 +254,8 @@ extension JSONDecoder {
 }
 
 extension JSONEncoder {
-    static let api: JSONEncoder = {
+    // nonisolated(unsafe): JSONEncoder is not Sendable; configuration is set once at init.
+    nonisolated(unsafe) static let api: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         return encoder
@@ -260,13 +263,13 @@ extension JSONEncoder {
 }
 
 private extension ISO8601DateFormatter {
-    static let api: ISO8601DateFormatter = {
+    nonisolated(unsafe) static let api: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
         return formatter
     }()
 
-    static let apiFractional: ISO8601DateFormatter = {
+    nonisolated(unsafe) static let apiFractional: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
@@ -274,7 +277,7 @@ private extension ISO8601DateFormatter {
 }
 
 /// Health probe payload matching the server route.
-struct HealthResponse: Decodable, Equatable, Sendable {
+nonisolated struct HealthResponse: Decodable, Equatable, Sendable {
     let status: String
     let database: String
 }

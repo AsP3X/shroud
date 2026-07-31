@@ -17,6 +17,7 @@ struct ConversationView: View {
     @Environment(MessagingController.self) private var messaging
     @Environment(CallController.self) private var calls
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.displayScale) private var displayScale
 
     @State private var draft = ""
     @State private var typingTask: Task<Void, Never>?
@@ -364,7 +365,7 @@ struct ConversationView: View {
 
             Rectangle()
                 .fill(Theme.separator)
-                .frame(height: 1 / UIScreen.main.scale)
+                .frame(height: 1 / displayScale)
         }
         .background {
             // Solid theme color under status bar (works in light + dark).

@@ -1,7 +1,7 @@
 import Foundation
 
 /// Canonical API error envelope from `/api/v1` — mirrors server `AppError` JSON.
-struct APIErrorResponse: Decodable, Equatable, Sendable {
+nonisolated struct APIErrorResponse: Decodable, Equatable, Sendable {
     struct Detail: Decodable, Equatable, Sendable {
         let code: String
         let message: String
@@ -11,7 +11,7 @@ struct APIErrorResponse: Decodable, Equatable, Sendable {
 }
 
 /// Typed client-side API failure mapped from HTTP status + error envelope.
-enum APIError: Error, Equatable, Sendable {
+nonisolated enum APIError: Error, Equatable, Sendable {
     case transport(String)
     case server(code: String, message: String, statusCode: Int)
     case decoding

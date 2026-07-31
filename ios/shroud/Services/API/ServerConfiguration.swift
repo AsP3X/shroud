@@ -1,13 +1,13 @@
 import Foundation
 
 /// How the app chooses the backend endpoint.
-enum ServerConnectionMode: String, Codable, CaseIterable, Sendable {
+nonisolated enum ServerConnectionMode: String, Codable, CaseIterable, Sendable {
     case official
     case selfHosted
 }
 
 /// User-editable server endpoint configuration (not a secret).
-struct ServerConfiguration: Equatable, Codable, Sendable {
+nonisolated struct ServerConfiguration: Equatable, Codable, Sendable {
     var mode: ServerConnectionMode
     /// Host or IP without scheme (e.g. `127.0.0.1` or `api.example.com`).
     var host: String
@@ -110,7 +110,7 @@ struct ServerConfiguration: Equatable, Codable, Sendable {
 }
 
 /// Persists server configuration in UserDefaults (non-secret).
-struct ServerConfigurationStore: Sendable {
+nonisolated struct ServerConfigurationStore: Sendable {
     private let defaults: UserDefaults
     private let key = "shroud.server.configuration"
 

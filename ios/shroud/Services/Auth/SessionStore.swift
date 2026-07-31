@@ -4,7 +4,7 @@ import Security
 /// Persists session token + device id in the Keychain (never logs secrets).
 /// Human: Survives app restarts so the user stays logged in like Signal.
 /// Agent: READS/WRITES Keychain; never stores encryption phrase here.
-struct SessionStore: Sendable {
+nonisolated struct SessionStore: Sendable {
     private let service: String
 
     init(service: String = "com.shroud.session") {

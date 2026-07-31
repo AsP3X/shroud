@@ -446,7 +446,12 @@ struct MediaComposeOverlay: View {
 
         let duration = (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double)
             ?? 0.25
-        let screenHeight = UIScreen.main.bounds.height
+        // Prefer the active window scene's screen (UIScreen.main is deprecated in iOS 26).
+        let screenHeight = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first(where: { $0.activationState == .foregroundActive })?
+            .screen.bounds.height
+            ?? frame.maxY
         let overlap = max(0, screenHeight - frame.origin.y)
 
         // Avoid animating layout while the TextField is mid-focus if height is unchanged.
