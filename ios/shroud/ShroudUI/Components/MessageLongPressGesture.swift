@@ -1,70 +1,28 @@
 import SwiftUI
 import UIKit
 
-/// Reliable short long-press for chat rows.
+/// Makes the enclosing `UIScrollView` deliver touches immediately.
 ///
-/// SwiftUI’s `onLongPressGesture` inside a `ScrollView` is often delayed ~0.5–1s by
-/// scroll touch arbitration and by child `onTapGesture`s. This installs a real
-/// `UILongPressGestureRecognizer` with `delaysTouchesBegan = false` and disables
-/// `delaysContentTouches` on the enclosing scroll view so `minimumPressDuration`
-/// is actually honored.
-///
-/// Optional `onTap` is wired with `require(toFail: longPress)` so short taps still
-/// open the image viewer without waiting on the long-press timeout.
-///
-/// Long-press reports the press target’s **global** frame so the context menu can
-/// hero-animate from / back to the bubble’s list position.
-struct MessageLongPressGesture: UIViewRepresentable {
-    var minimumDuration: TimeInterval = 0.25
-    var allowableMovement: CGFloat = 16
-    var onTap: (() -> Void)?
-    var onLongPress: (CGRect) -> Void
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onTap: onTap, onLongPress: onLongPress)
+/// Human: This is the one piece of the old UIKit long-press that still earns its keep. Without
+/// `delaysContentTouches = false`, UIScrollView holds touches for ~150ms deciding whether they
+/// are a scroll, which is what made SwiftUI's `LongPressGesture` feel like it needed a full
+/// second inside a chat thread.
+/// Agent: WRITES delaysContentTouches/canCancelContentTouches on the nearest ancestor
+/// UIScrollView. Never participates in hit-testing itself.
+private struct ScrollTouchDelayDisabler: UIViewRepresentable {
+    /// Returns nil from `hitTest` so it can never intercept a touch meant for the row.
+    final class PassthroughView: UIView {
+        override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? { nil }
     }
 
     func makeUIView(context: Context) -> UIView {
-        let view = UIView()
+        let view = PassthroughView()
         view.backgroundColor = .clear
-        view.isUserInteractionEnabled = true
-
-        let longPress = UILongPressGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.handleLongPress(_:))
-        )
-        longPress.minimumPressDuration = minimumDuration
-        longPress.allowableMovement = allowableMovement
-        longPress.cancelsTouchesInView = true
-        longPress.delaysTouchesBegan = false
-        longPress.delaysTouchesEnded = false
-        view.addGestureRecognizer(longPress)
-
-        let tap = UITapGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.handleTap(_:))
-        )
-        tap.cancelsTouchesInView = false
-        tap.delaysTouchesBegan = false
-        // Short tap only if long-press never began.
-        tap.require(toFail: longPress)
-        view.addGestureRecognizer(tap)
-
-        context.coordinator.longPress = longPress
-        context.coordinator.tap = tap
-        context.coordinator.onTap = onTap
-        context.coordinator.onLongPress = onLongPress
+        view.isUserInteractionEnabled = false
         return view
     }
 
     func updateUIView(_ uiView: UIView, context: Context) {
-        context.coordinator.onTap = onTap
-        context.coordinator.onLongPress = onLongPress
-        context.coordinator.longPress?.minimumPressDuration = minimumDuration
-        context.coordinator.longPress?.allowableMovement = allowableMovement
-        // Tap is only useful when provided (e.g. open image).
-        context.coordinator.tap?.isEnabled = onTap != nil
-
         DispatchQueue.main.async {
             var node: UIView? = uiView
             while let current = node {
@@ -77,49 +35,78 @@ struct MessageLongPressGesture: UIViewRepresentable {
             }
         }
     }
+}
 
-    final class Coordinator: NSObject {
-        var onTap: (() -> Void)?
-        var onLongPress: (CGRect) -> Void
-        weak var longPress: UILongPressGestureRecognizer?
-        weak var tap: UITapGestureRecognizer?
+/// Chat-row context press: opens the message menu on a short hold, without stealing taps from
+/// controls inside the bubble.
+///
+/// Human: This used to install a UIKit recognizer in an `.overlay` stretched across the row.
+/// That view became the frontmost hit-test result for every touch, so **no control inside any
+/// bubble was reachable** — the voice message play button, its speed chip and the image retry
+/// button all silently did nothing. Moving it behind the row fixed the buttons but broke the
+/// long-press, because opaque bubble content then swallowed the touch first.
+///
+/// `simultaneousGesture` is the composition that satisfies both: the long press recognises
+/// alongside whatever the bubble's own controls are doing, so a hold opens the menu and a tap
+/// still reaches the button under the finger.
+/// Agent: READS the row's global frame via GeometryReader (used for the menu's hero animation);
+/// CALLS perform(frame) once the hold threshold is met, and onTap for a short tap.
+private struct MessageContextLongPress: ViewModifier {
+    let minimumDuration: TimeInterval
+    let onTap: (() -> Void)?
+    let perform: (CGRect) -> Void
 
-        init(onTap: (() -> Void)?, onLongPress: @escaping (CGRect) -> Void) {
-            self.onTap = onTap
-            self.onLongPress = onLongPress
-        }
+    /// Live global frame of the row — the menu hero flies from and back to it.
+    @State private var rowFrame: CGRect = .zero
+    /// Suppresses the trailing tap so a hold that opened the menu doesn't also fire `onTap`.
+    @State private var didLongPress = false
 
-        @objc func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
-            // Fire at the moment duration is met — don’t wait for finger lift.
-            guard gesture.state == .began, let view = gesture.view else { return }
-            let globalFrame = view.convert(view.bounds, to: nil)
-            onLongPress(globalFrame)
-        }
-
-        @objc func handleTap(_ gesture: UITapGestureRecognizer) {
-            guard gesture.state == .ended else { return }
-            onTap?()
-        }
+    func body(content: Content) -> some View {
+        content
+            .background {
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear { rowFrame = geo.frame(in: .global) }
+                        .onChange(of: geo.frame(in: .global)) { _, new in rowFrame = new }
+                }
+                .allowsHitTesting(false)
+            }
+            .background { ScrollTouchDelayDisabler() }
+            .simultaneousGesture(
+                LongPressGesture(minimumDuration: minimumDuration)
+                    .onEnded { _ in
+                        didLongPress = true
+                        perform(rowFrame)
+                    }
+            )
+            .simultaneousGesture(
+                TapGesture().onEnded {
+                    // A hold that already opened the menu must not also open the image viewer.
+                    guard !didLongPress else {
+                        didLongPress = false
+                        return
+                    }
+                    onTap?()
+                },
+                isEnabled: onTap != nil
+            )
     }
 }
 
 extension View {
     /// ScrollView-safe context-menu long-press (optional tap for image open).
-    /// `perform` receives the press target’s global frame for hero open/close.
+    /// `perform` receives the row's **global** frame for the menu's hero open/close.
     func messageContextLongPress(
         minimumDuration: TimeInterval = 0.25,
         onTap: (() -> Void)? = nil,
         perform: @escaping (_ globalFrame: CGRect) -> Void
     ) -> some View {
-        overlay {
-            MessageLongPressGesture(
+        modifier(
+            MessageContextLongPress(
                 minimumDuration: minimumDuration,
                 onTap: onTap,
-                onLongPress: perform
+                perform: perform
             )
-            // Cover the row so UIKit receives the same hit target as the bubble stack.
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .contentShape(Rectangle())
-        }
+        )
     }
 }

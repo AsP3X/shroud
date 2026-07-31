@@ -3,6 +3,7 @@ import SwiftUI
 /// In-settings destinations pushed over the Settings tab.
 enum SettingsRoute: Hashable {
     case server
+    case transcription
 }
 
 /// Settings tab — Telegram-style profile hero for the **title-only** sticky bar
@@ -163,6 +164,8 @@ struct SettingsView: View {
                     switch route {
                     case .server:
                         ServerSettingsView(router: router)
+                    case .transcription:
+                        TranscriptionLanguageView()
                     }
                 }
         }
@@ -416,6 +419,14 @@ struct SettingsView: View {
                 systemImage: "globe",
                 iconBackground: Color(red: 155 / 255, green: 74 / 255, blue: 230 / 255)
             )
+            groupDivider()
+            SettingsRowView(
+                title: "Transcription",
+                systemImage: "waveform",
+                iconBackground: Color(red: 46 / 255, green: 143 / 255, blue: 224 / 255)
+            ) {
+                navigationPath.append(.transcription)
+            }
             groupDivider()
             Button {
                 Haptics.impact(.light)

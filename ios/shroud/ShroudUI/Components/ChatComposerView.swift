@@ -1,29 +1,62 @@
 import SwiftUI
 
 /// Bottom composer — maps to `Composer` in `Conversation` (`iOS-App.pen`).
-/// Empty: attach + field + mic. Non-empty: attach + field + send.
+///
+/// Three states:
+/// - **Idle**: attach + field + mic (or send, once there is a draft).
+/// - **Recording**: hold the mic. The field is replaced by a live waveform + timer, and a lock
+///   affordance floats above the thumb. Slide left to cancel, up to lock, release to send.
+/// - **Locked**: hands-free. Trash / waveform / send.
+///
+/// Human: The gesture lives here rather than in `ConversationView` so its thresholds sit next to
+/// the geometry they act on; the host only receives the three outcomes (start / cancel / send).
+/// Agent: READS `recorder` (@Observable) for live elapsed + levels; CALLS onRecordStart /
+/// onRecordCancel / onRecordSend. Owns no audio state itself.
 struct ChatComposerView: View {
     @Binding var draft: String
-    var isRecording: Bool = false
-    var recordingSeconds: Int = 0
+    /// Live recording state. Owned by the host so audio outlives composer view updates.
+    var recorder: VoiceRecorder
     var onAttach: () -> Void
     var onSend: () -> Void
-    var onMicTap: () -> Void
-    var onDiscardRecording: () -> Void = {}
-    var onSendRecording: () -> Void = {}
+    /// Returns false when recording could not start (permission denied, already busy) so the
+    /// gesture resets instead of showing a recording that is not happening.
+    var onRecordStart: () async -> Bool
+    var onRecordCancel: () -> Void
+    var onRecordSend: () -> Void
     var onDraftChange: (String) -> Void = { _ in }
 
     @FocusState private var focused: Bool
+    @State private var phase: VoiceRecordingPhase = .idle
+    /// Guards the drag from firing again while `onRecordStart` is still awaiting.
+    @State private var isStarting = false
+    /// Set when the finger lifts before start() resolved — we discard whatever arrives.
+    @State private var abandonedDuringStart = false
 
     private var canSend: Bool {
         !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var cancelProgress: CGFloat {
+        if case let .recording(cancel, _) = phase { return cancel }
+        return 0
+    }
+
+    private var lockProgress: CGFloat {
+        if case let .recording(_, lock) = phase { return lock }
+        return 0
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            if isRecording {
-                recordingPanel
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            if phase.isLocked {
+                VoiceLockedBar(
+                    elapsed: recorder.elapsed,
+                    levels: recorder.liveLevels,
+                    onDiscard: { finishRecording(send: false) },
+                    onSend: { finishRecording(send: true) }
+                )
+                .padding(.vertical, 8)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             } else {
                 composerRow
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -34,205 +67,221 @@ struct ChatComposerView: View {
             Theme.background
                 .ignoresSafeArea(edges: .bottom)
         }
-        // Recording takes over the whole bar — slide the panels past each other.
-        .animation(Motion.standard, value: isRecording)
+        .animation(Motion.standard, value: phase.isLocked)
     }
+
+    // MARK: - Idle / recording row
 
     private var composerRow: some View {
         HStack(spacing: 10) {
-            Button(action: onAttach) {
-                Image(systemName: "plus")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(Theme.accent)
-                    .frame(width: 34, height: 34)
-                    .contentShape(Rectangle())
+            if phase.isActive {
+                VoiceRecordingBar(
+                    elapsed: recorder.elapsed,
+                    cancelProgress: cancelProgress
+                )
+                .transition(.opacity)
+            } else {
+                attachButton
+                textField
+                    .transition(.opacity)
             }
-            .pressable(scale: 0.82)
-            .accessibilityLabel("Attach")
 
-            HStack(spacing: 8) {
-                TextField("Message", text: $draft, axis: .vertical)
-                    .font(.system(size: 15))
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1 ... 5)
-                    .focused($focused)
-                    .onChange(of: draft) { _, value in
-                        onDraftChange(value)
-                    }
-
-                Image(systemName: "face.smiling")
-                    .font(.system(size: 18, weight: .regular))
-                    .foregroundStyle(focused ? Theme.accent : Theme.textSecondary)
-                    .accessibilityHidden(true)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .frame(minHeight: 36)
-            .background(Theme.backgroundGrouped)
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay {
-                // Focus ring fades in rather than snapping — signals the field is live.
-                // Decorative only: it must never swallow taps meant for the text field.
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(Theme.accent.opacity(focused ? 0.35 : 0), lineWidth: 1)
-                    .allowsHitTesting(false)
-            }
-            // Field grows as the draft wraps; spring the whole row so nothing jumps.
-            .animation(Motion.snappy, value: focused)
-            .animation(Motion.snappy, value: draft)
-
-            // ZStack instead of if/else so the two controls cross-fade on the same
-            // spot — swapping siblings in the HStack used to nudge the field's width.
-            ZStack {
-                if canSend {
-                    Button(action: onSend) {
-                        Image(systemName: "arrow.up")
-                            .font(.system(size: 15, weight: .bold))
-                            .foregroundStyle(Color.white)
-                            .frame(width: 34, height: 34)
-                            .background(Theme.accent)
-                            .clipShape(Circle())
-                    }
-                    .pressable(scale: 0.86, dimming: 0, haptic: nil)
-                    .accessibilityLabel("Send")
-                    .transition(Motion.iconSwap.combined(with: .offset(y: 6)))
-                } else {
-                    Button(action: onMicTap) {
-                        Image(systemName: "mic.fill")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(Theme.accent)
-                            .frame(width: 34, height: 34)
-                            .contentShape(Rectangle())
-                    }
-                    .pressable(scale: 0.82)
-                    .accessibilityLabel("Voice message")
-                    .transition(Motion.iconSwap)
-                }
-            }
-            .frame(width: 34, height: 34)
+            trailingControl
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+        .animation(Motion.snappy, value: phase.isActive)
         // Bouncy: the send button appearing is the "you can send now" moment.
         .animation(Motion.bouncy, value: canSend)
     }
 
-    private var recordingPanel: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 8) {
-                // Slow blink is the universal "we are recording" cue.
-                Circle()
-                    .fill(Theme.danger)
-                    .frame(width: 8, height: 8)
-                    .phaseAnimator([1.0, 0.25]) { view, opacity in
-                        view.opacity(opacity)
-                    } animation: { _ in .easeInOut(duration: 0.6) }
-                ChatWaveformBar(accent: true, animated: true)
-                    .frame(height: 28)
-                Text(timerLabel)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.danger)
-                    .monospacedDigit()
-                    // Seconds roll upward instead of flickering.
-                    .contentTransition(.numericText(countsDown: false))
-                    .animation(Motion.snappy, value: recordingSeconds)
-            }
-            .padding(.horizontal, 14)
-            .frame(height: 44)
-            .background(Theme.backgroundGrouped)
-            .clipShape(Capsule())
+    private var attachButton: some View {
+        Button(action: onAttach) {
+            Image(systemName: "plus")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(Theme.accent)
+                .frame(width: 34, height: 34)
+                .contentShape(Rectangle())
+        }
+        .pressable(scale: 0.82)
+        .accessibilityLabel("Attach")
+    }
 
-            HStack(spacing: 10) {
-                Button(action: onDiscardRecording) {
-                    Image(systemName: "trash")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(Theme.danger)
-                        .frame(width: 40, height: 40)
-                        .background(Color(red: 0.988, green: 0.906, blue: 0.929))
-                        .clipShape(Circle())
+    private var textField: some View {
+        HStack(spacing: 8) {
+            TextField("Message", text: $draft, axis: .vertical)
+                .font(.system(size: 15))
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1 ... 5)
+                .focused($focused)
+                .onChange(of: draft) { _, value in
+                    onDraftChange(value)
                 }
-                .pressable(scale: 0.88)
-                .accessibilityLabel("Discard recording")
 
-                HStack(spacing: 5) {
-                    Image(systemName: "lock.fill")
-                        .font(.system(size: 11))
-                    Text("Recording locked — release to review")
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .foregroundStyle(Theme.textSecondary)
-                .frame(maxWidth: .infinity)
-
-                Button(action: onSendRecording) {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(Color.white)
-                        .frame(width: 44, height: 44)
-                        .background(Theme.accent)
-                        .clipShape(Circle())
-                }
-                .pressable(scale: 0.88, dimming: 0)
-                .accessibilityLabel("Send recording")
-            }
+            Image(systemName: "face.smiling")
+                .font(.system(size: 18, weight: .regular))
+                .foregroundStyle(focused ? Theme.accent : Theme.textSecondary)
+                .accessibilityHidden(true)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+        .frame(minHeight: 36)
+        .background(Theme.backgroundGrouped)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            // Focus ring fades in rather than snapping — signals the field is live.
+            // Decorative only: it must never swallow taps meant for the text field.
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Theme.accent.opacity(focused ? 0.35 : 0), lineWidth: 1)
+                .allowsHitTesting(false)
+        }
+        // Field grows as the draft wraps; spring the whole row so nothing jumps.
+        .animation(Motion.snappy, value: focused)
+        .animation(Motion.snappy, value: draft)
     }
 
-    private var timerLabel: String {
-        let m = recordingSeconds / 60
-        let s = recordingSeconds % 60
-        return String(format: "%d:%02d", m, s)
-    }
-}
-
-/// Decorative waveform used in recording UI and voice bubbles.
-///
-/// Human: When `animated`, the bars breathe on a travelling sine so an in-progress recording
-/// looks live. The motion is driven by `TimelineView`, so it costs nothing while off-screen
-/// and never needs a timer to be torn down.
-/// Agent: Pure view; no audio metering is read (levels are decorative, not sampled).
-struct ChatWaveformBar: View {
-    var accent: Bool = true
-    /// Animates the bar heights — set while a recording is in flight.
-    var animated: Bool = false
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private let heights: [CGFloat] = [
-        5, 15, 18, 19, 25, 23, 22, 23, 14, 14, 11, 11, 20, 22, 22, 26, 21, 20, 18, 9,
-        12, 16, 16, 24, 23, 22, 24, 18, 16, 13, 8, 18, 21, 20, 26, 23, 21, 21, 13, 11,
-    ]
-
-    var body: some View {
-        if animated, !reduceMotion {
-            TimelineView(.animation(minimumInterval: 1 / 30)) { context in
-                bars(phase: context.date.timeIntervalSinceReferenceDate * 3.2)
+    /// Send button once there is a draft, otherwise the hold-to-record mic.
+    private var trailingControl: some View {
+        ZStack {
+            if canSend, !phase.isActive {
+                Button(action: onSend) {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(Color.white)
+                        .frame(width: 34, height: 34)
+                        .background(Theme.accent)
+                        .clipShape(Circle())
+                }
+                .pressable(scale: 0.86, dimming: 0, haptic: nil)
+                .accessibilityLabel("Send")
+                .transition(Motion.iconSwap.combined(with: .offset(y: 6)))
+            } else {
+                micButton
+                    .transition(Motion.iconSwap)
             }
+        }
+        // 44pt so the hit target survives the first points of drag travel; the glyphs
+        // inside stay 34pt to match the design system's composer spec.
+        .frame(width: 44, height: 44)
+        // Lock affordance floats above the thumb while the finger is down.
+        .overlay(alignment: .bottom) {
+            if phase.isActive, !phase.isLocked {
+                VoiceLockIndicator(progress: lockProgress)
+                    .offset(y: -58)
+                    .transition(.scale(scale: 0.6, anchor: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(Motion.snappy, value: phase.isActive)
+    }
+
+    /// Grows and glows while recording; the halo tracks the current input level.
+    private var micButton: some View {
+        let level = CGFloat(recorder.liveLevels.last ?? 0)
+        return Image(systemName: "mic.fill")
+            .font(.system(size: 18, weight: .semibold))
+            .foregroundStyle(phase.isActive ? Color.white : Theme.accent)
+            .frame(width: 34, height: 34)
+            .background {
+                Circle()
+                    .fill(Theme.accent)
+                    .opacity(phase.isActive ? 1 : 0)
+                    .scaleEffect(phase.isActive ? 1 : 0.4)
+            }
+            .background {
+                // Level-reactive halo — visible proof the mic is hearing something.
+                Circle()
+                    .fill(Theme.accent.opacity(0.18))
+                    .scaleEffect(phase.isActive ? 1.6 + level * 1.1 : 0.5)
+                    .opacity(phase.isActive ? 1 : 0)
+                    .animation(.easeOut(duration: 0.12), value: level)
+            }
+            .scaleEffect(phase.isActive ? 1.25 : 1)
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
+            .gesture(recordGesture)
+            .animation(Motion.snappy, value: phase.isActive)
+            .accessibilityLabel("Hold to record a voice message")
+            .accessibilityAddTraits(.startsMediaSession)
+    }
+
+    // MARK: - Gesture
+
+    private var recordGesture: some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                switch phase {
+                case .idle:
+                    beginRecording()
+                case .recording:
+                    updateDrag(translation: value.translation)
+                case .locked:
+                    // The finger is irrelevant once locked; explicit buttons take over.
+                    break
+                }
+            }
+            .onEnded { _ in
+                switch phase {
+                case .idle:
+                    if isStarting { abandonedDuringStart = true }
+                case .recording:
+                    finishRecording(send: cancelProgress < 1)
+                case .locked:
+                    break
+                }
+            }
+    }
+
+    private func beginRecording() {
+        guard !isStarting else { return }
+        isStarting = true
+        abandonedDuringStart = false
+
+        Task {
+            let started = await onRecordStart()
+            isStarting = false
+            guard started else {
+                phase = .idle
+                return
+            }
+            guard !abandonedDuringStart else {
+                // Released during the permission / session round-trip: a tap, not a message.
+                abandonedDuringStart = false
+                onRecordCancel()
+                phase = .idle
+                return
+            }
+            withAnimation(Motion.snappy) {
+                phase = .recording(cancelProgress: 0, lockProgress: 0)
+            }
+        }
+    }
+
+    private func updateDrag(translation: CGSize) {
+        let cancel = min(1, max(0, -translation.width / VoiceRecordingThresholds.cancel))
+        let lock = min(1, max(0, -translation.height / VoiceRecordingThresholds.lock))
+
+        if lock >= 1 {
+            Haptics.notification(.success)
+            withAnimation(Motion.standard) { phase = .locked }
+            return
+        }
+        if cancel >= 1 {
+            // Telegram cancels the moment you cross, without waiting for the release.
+            finishRecording(send: false)
+            return
+        }
+        phase = .recording(cancelProgress: cancel, lockProgress: lock)
+    }
+
+    private func finishRecording(send: Bool) {
+        guard phase.isActive else { return }
+        withAnimation(Motion.standard) { phase = .idle }
+        if send {
+            onRecordSend()
         } else {
-            bars(phase: nil)
+            Haptics.impact(.rigid)
+            onRecordCancel()
         }
-    }
-
-    /// `phase` nil renders the static design heights; otherwise each bar rides a shifted sine.
-    private func bars(phase: Double?) -> some View {
-        HStack(alignment: .center, spacing: 2) {
-            ForEach(Array(heights.enumerated()), id: \.offset) { index, h in
-                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                    .fill(accent ? Theme.accent : Theme.textSecondary.opacity(0.45))
-                    .frame(width: 3, height: barHeight(base: h, index: index, phase: phase))
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .clipped()
-    }
-
-    private func barHeight(base: CGFloat, index: Int, phase: Double?) -> CGFloat {
-        let rest = base * 0.7
-        guard let phase else { return rest }
-        // Offsetting by index makes the pulse travel left→right instead of blinking in unison.
-        let wave = sin(phase - Double(index) * 0.45)
-        return max(3, rest * (0.55 + 0.45 * CGFloat(wave + 1) / 2 + 0.25))
     }
 }
 
@@ -241,23 +290,21 @@ struct ChatWaveformBar: View {
         Spacer()
         ChatComposerView(
             draft: .constant(""),
+            recorder: VoiceRecorder(),
             onAttach: {},
             onSend: {},
-            onMicTap: {}
+            onRecordStart: { true },
+            onRecordCancel: {},
+            onRecordSend: {}
         )
         ChatComposerView(
             draft: .constant("Hello"),
+            recorder: VoiceRecorder(),
             onAttach: {},
             onSend: {},
-            onMicTap: {}
-        )
-        ChatComposerView(
-            draft: .constant(""),
-            isRecording: true,
-            recordingSeconds: 12,
-            onAttach: {},
-            onSend: {},
-            onMicTap: {}
+            onRecordStart: { true },
+            onRecordCancel: {},
+            onRecordSend: {}
         )
     }
     .background(Theme.backgroundChat)

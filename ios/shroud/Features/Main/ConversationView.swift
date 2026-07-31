@@ -21,9 +21,7 @@ struct ConversationView: View {
     @State private var draft = ""
     @State private var typingTask: Task<Void, Never>?
     @State private var showAttach = false
-    @State private var isRecording = false
-    @State private var recordingSeconds = 0
-    @State private var recordingTimer: Timer?
+    /// Owns the mic session for this thread. The composer only reads its live state.
     @State private var voiceRecorder = VoiceRecorder()
     @State private var toast: String?
     /// Active long-press focus session.
@@ -32,6 +30,8 @@ struct ConversationView: View {
     @State private var menuProgress: CGFloat = 0
     @State private var menuAnimationTask: Task<Void, Never>?
     @State private var menuAnimationGeneration = 0
+    /// When the current menu opened — used to ignore the release of the finger that opened it.
+    @State private var menuOpenedAt: Date?
     /// Live global frames of each bubble (visual only — no row spacers).
     @State private var bubbleGlobalFrames: [UUID: CGRect] = [:]
     @State private var viewingMedia: ViewingMedia?
@@ -87,13 +87,12 @@ struct ConversationView: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 ChatComposerView(
                     draft: $draft,
-                    isRecording: isRecording,
-                    recordingSeconds: recordingSeconds,
+                    recorder: voiceRecorder,
                     onAttach: { showAttach = true },
                     onSend: sendDraft,
-                    onMicTap: startRecordingUI,
-                    onDiscardRecording: stopRecording(discard: true),
-                    onSendRecording: stopRecording(discard: false),
+                    onRecordStart: startRecording,
+                    onRecordCancel: cancelRecording,
+                    onRecordSend: sendRecording,
                     onDraftChange: { scheduleTyping(!$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
                 )
             }
@@ -113,7 +112,10 @@ struct ConversationView: View {
             }
             .onDisappear {
                 typingTask?.cancel()
-                recordingTimer?.invalidate()
+                // Leaving the thread throws away an in-flight take and silences playback —
+                // there is no mini-player to hand either off to.
+                voiceRecorder.cancel()
+                VoicePlaybackCoordinator.shared.stop()
                 menuAnimationTask?.cancel()
                 messaging.setTyping(peerUserID: peerUserID, isTyping: false)
                 if messaging.activePeerID == peerUserID {
@@ -570,64 +572,82 @@ struct ConversationView: View {
         }
     }
 
-    private func startRecordingUI() {
-        Task {
-            do {
-                try await voiceRecorder.start()
-                isRecording = true
-                recordingSeconds = 0
-                recordingTimer?.invalidate()
-                recordingTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
-                    recordingSeconds = voiceRecorder.elapsedSeconds
-                }
-                Haptics.impact(.medium)
-            } catch {
-                toast = SessionController.userMessage(for: error)
-                scheduleToastClear()
-            }
+    // MARK: - Voice recording
+
+    /// Begins a take. Returns false so the composer can drop straight back to idle when the
+    /// mic is unavailable — otherwise the UI would show a recording that never started.
+    private func startRecording() async -> Bool {
+        // Playback and recording cannot share the route; a note that is playing must yield.
+        VoicePlaybackCoordinator.shared.stop()
+        do {
+            try await voiceRecorder.start()
+            Haptics.impact(.medium)
+            // Recording is a clear signal the user wants a transcript, so start fetching the
+            // language model now — it downloads while they speak instead of stalling the send.
+            // No-op once installed.
+            Task.detached(priority: .utility) { await VoiceTranscriber.prepareModel() }
+            return true
+        } catch {
+            toast = SessionController.userMessage(for: error)
+            Haptics.notification(.error)
+            scheduleToastClear()
+            return false
         }
     }
 
-    private func stopRecording(discard: Bool) -> () -> Void {
-        {
-            recordingTimer?.invalidate()
-            recordingTimer = nil
-            isRecording = false
-            recordingSeconds = 0
-            do {
-                let result = try voiceRecorder.stop(discard: discard)
-                if discard {
-                    Haptics.notification(.warning)
-                    return
-                }
-                guard let result else { return }
-                Haptics.impact(.light)
-                Task {
-                    // Best-effort on-device transcript (Tier 1) — never blocks send on failure.
-                    var transcript: String?
-                    if let text = try? await VoiceTranscriber.transcribe(audioData: result.data),
-                       !text.isEmpty
-                    {
-                        transcript = text
-                    }
-                    let error = await messaging.sendVoice(
-                        audioData: result.data,
-                        durationMs: result.durationMs,
-                        to: peerUserID,
-                        transcript: transcript
-                    )
-                    if let error {
-                        toast = error
-                        Haptics.notification(.error)
-                        scheduleToastClear()
-                    } else {
-                        Haptics.notification(.success)
-                    }
-                }
-            } catch {
-                toast = SessionController.userMessage(for: error)
+    private func cancelRecording() {
+        voiceRecorder.cancel()
+    }
+
+    /// Names to bias the recogniser toward — proper nouns are what transcripts most often
+    /// get wrong, and in a messenger the likely ones are the people you talk to.
+    private var transcriptionHints: [String] {
+        var names = [peerUsername]
+        names.append(contentsOf: messaging.contacts.map(\.username))
+        // Keep the list short; a long bias list dilutes each entry.
+        return Array(Set(names)).sorted().prefix(50).map { $0 }
+    }
+
+    /// Finishes the take and sends it. A sub-`minimumDuration` take is treated as a mis-tap:
+    /// discarded, with a hint instead of an error.
+    private func sendRecording() {
+        do {
+            guard let take = try voiceRecorder.finish() else {
+                toast = "Hold to record, release to send"
+                Haptics.notification(.warning)
                 scheduleToastClear()
+                return
             }
+            Haptics.impact(.light)
+            Task {
+                let error = await messaging.sendVoice(
+                    audioData: take.data,
+                    durationMs: take.durationMs,
+                    to: peerUserID,
+                    waveform: take.waveform,
+                    // Best-effort on-device transcript (Tier 1) — never blocks send on failure.
+                    // Runs after the bubble is on screen (see `sendVoice`), so a long recording
+                    // appears immediately instead of waiting on the transcriber.
+                    transcriptProvider: {
+                        try? await VoiceTranscriber.transcribe(
+                            audioData: take.data,
+                            contextualStrings: transcriptionHints,
+                            conversationID: peerUserID
+                        )
+                    }
+                )
+                if let error {
+                    toast = error
+                    Haptics.notification(.error)
+                    scheduleToastClear()
+                } else {
+                    Haptics.notification(.success)
+                }
+            }
+        } catch {
+            toast = SessionController.userMessage(for: error)
+            Haptics.notification(.error)
+            scheduleToastClear()
         }
     }
 
@@ -672,7 +692,11 @@ struct ConversationView: View {
                 },
                 onRequestTranscript: {
                     guard let data = message.voiceData else { return nil }
-                    return try? await VoiceTranscriber.transcribe(audioData: data)
+                    return try? await VoiceTranscriber.transcribe(
+                        audioData: data,
+                        contextualStrings: transcriptionHints,
+                        conversationID: peerUserID
+                    )
                 }
             )
         case .text:
@@ -764,6 +788,9 @@ struct ConversationView: View {
         }
     }
 
+    /// How long after opening the backdrop ignores taps (see `MessageMenuBackdrop` above).
+    private static let menuTapGrace: TimeInterval = 0.4
+
     /// Shared open/close timing — ease-out (fast start → settle at the end).
     private static let messageMenuAnimationDuration: Double = 0.21
 
@@ -806,6 +833,7 @@ struct ConversationView: View {
         withAnimation(Self.messageMenuAnimation) {
             menuProgress = 1
         }
+        menuOpenedAt = Date()
 
         Haptics.impact(.medium)
     }
@@ -952,7 +980,14 @@ struct ConversationView: View {
 
             ZStack(alignment: .topLeading) {
                 MessageMenuBackdrop(
-                    onTap: { dismissMessageMenu() },
+                    onTap: {
+                        // The finger that opened the menu is usually still down; its release
+                        // lands on this backdrop and would close what the hold just opened.
+                        guard let opened = menuOpenedAt,
+                              Date().timeIntervalSince(opened) > Self.menuTapGrace
+                        else { return }
+                        dismissMessageMenu()
+                    },
                     progress: progress
                 )
 

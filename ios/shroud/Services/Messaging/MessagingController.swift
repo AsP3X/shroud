@@ -69,6 +69,9 @@ final class MessagingController {
         var voiceData: Data?
         /// Voice duration in milliseconds.
         var voiceDurationMs: Int?
+        /// Amplitude envelope captured at record time, 0…255 per bar.
+        /// Nil for messages sent before waveforms were part of the payload.
+        var voiceWaveform: [UInt8]?
         /// On-device transcript (local or sealed in payload).
         var transcript: String?
         /// Set when an outbound send failed; bubble stays for retry.
@@ -90,6 +93,7 @@ final class MessagingController {
             imageData: Data? = nil,
             voiceData: Data? = nil,
             voiceDurationMs: Int? = nil,
+            voiceWaveform: [UInt8]? = nil,
             transcript: String? = nil,
             sendError: String? = nil
         ) {
@@ -108,6 +112,7 @@ final class MessagingController {
             self.imageData = imageData
             self.voiceData = voiceData
             self.voiceDurationMs = voiceDurationMs
+            self.voiceWaveform = voiceWaveform
             self.transcript = transcript
             self.sendError = sendError
         }
@@ -637,29 +642,29 @@ final class MessagingController {
 
     /// Records are done by the view; this encrypts, uploads, and sends a voice message.
     /// Optional on-device transcript is sealed inside the media payload (never sent as plaintext).
+    /// - Parameter transcriptProvider: Produces the on-device transcript. Called *after* the
+    ///   optimistic bubble is on screen, so a long recording is never held back by transcription
+    ///   (which can take seconds for a multi-minute note). The result is still sealed into the
+    ///   payload, so the recipient gets it without re-transcribing.
     func sendVoice(
         audioData: Data,
         durationMs: Int,
         to peerUserID: UUID,
-        transcript: String? = nil
+        waveform: [UInt8]? = nil,
+        transcript: String? = nil,
+        transcriptProvider: (() async -> String?)? = nil
     ) async -> String? {
         guard let token = sessionController?.bearerToken,
               let me = sessionController?.userID,
               let material = cryptoController?.material
         else { return "Not signed in." }
 
-        let trimmedTranscript = transcript?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let displayText: String = {
-            if let t = trimmedTranscript, !t.isEmpty { return t }
-            return "Voice message"
-        }()
-
         let optimisticID = UUID()
         let optimistic = ChatMessage(
             id: optimisticID,
             peerUserID: peerUserID,
             senderUserID: me,
-            text: displayText,
+            text: "Voice message",
             createdAt: Date(),
             isMine: true,
             deleted: false,
@@ -667,11 +672,21 @@ final class MessagingController {
             kind: .voice,
             voiceData: audioData,
             voiceDurationMs: durationMs,
-            transcript: trimmedTranscript
+            voiceWaveform: waveform,
+            transcript: nil
         )
         var list = threads[peerUserID] ?? []
         list.append(optimistic)
         threads[peerUserID] = list
+
+        // Bubble is visible now; only then pay for transcription.
+        var resolved = transcript?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if resolved?.isEmpty != false, let transcriptProvider {
+            resolved = (await transcriptProvider())?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let trimmedTranscript = (resolved?.isEmpty == false) ? resolved : nil
+        let displayText = trimmedTranscript ?? "Voice message"
 
         do {
             let (fileKey, sealedFile) = try MediaCrypto.sealFile(audioData)
@@ -693,7 +708,8 @@ final class MessagingController {
                 h: 0,
                 k: fileKey.base64EncodedString(),
                 c: (trimmedTranscript?.isEmpty == false) ? trimmedTranscript : nil,
-                d: durationMs
+                d: durationMs,
+                wf: waveform.flatMap(VoiceWaveform.encode)
             )
             let payloadData = try JSONEncoder().encode(payload)
             let peerPub = try await resolvePeerIdentityPublicKey(peerUserID: peerUserID, token: token)
@@ -730,6 +746,7 @@ final class MessagingController {
                 mediaObjectId: upload.mediaObjectId,
                 voiceData: audioData,
                 voiceDurationMs: durationMs,
+                voiceWaveform: waveform,
                 transcript: trimmedTranscript
             )
             if var thread = threads[peerUserID],
@@ -1343,6 +1360,7 @@ final class MessagingController {
                 mediaObjectId: dto.mediaObjectId,
                 voiceData: voiceData,
                 voiceDurationMs: payload?.d,
+                voiceWaveform: VoiceWaveform.decode(payload?.wf),
                 transcript: transcript
             )
         }

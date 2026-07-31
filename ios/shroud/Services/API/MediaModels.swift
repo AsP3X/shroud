@@ -52,6 +52,9 @@ struct MediaMessagePayload: Codable, Equatable, Sendable {
     var c: String?
     /// Voice duration in milliseconds (voice only).
     var d: Int?
+    /// Base64 amplitude envelope, one byte (0…255) per bar (voice only).
+    /// Optional so payloads written before waveforms existed still decode.
+    var wf: String?
 
     static let kindImage = "image"
     static let kindVoice = "voice"
