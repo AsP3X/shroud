@@ -27,14 +27,18 @@ enum MediaCrypto {
     }
 
     /// Downscales (in **pixels**) and re-encodes as JPEG for chat.
-    /// Defaults preserve high quality for modern phone photos.
-    static func jpegData(from image: UIImage, maxEdge: CGFloat = 4096, quality: CGFloat = 0.92) throws -> (
+    /// - Parameters:
+    ///   - maxEdge: Longest pixel edge cap. Pass a very large value (e.g. 16384) for original size.
+    ///   - quality: JPEG compression 0…1. Use `1.0` for maximum quality (default for Original send).
+    static func jpegData(from image: UIImage, maxEdge: CGFloat = 16_384, quality: CGFloat = 1.0) throws -> (
         data: Data,
         width: Int,
         height: Int
     ) {
         let scaled = scaledImage(image, maxEdgePixels: maxEdge)
-        guard let data = scaled.jpegData(compressionQuality: quality) else {
+        // Clamp quality into a valid JPEG range; 1.0 is full fidelity for Original.
+        let q = min(1, max(0, quality))
+        guard let data = scaled.jpegData(compressionQuality: q) else {
             throw MediaError.imageEncodeFailed
         }
         // Report pixel dimensions (scale may be 1 after pixel-space render).
@@ -44,13 +48,14 @@ enum MediaCrypto {
     }
 
     /// Scales so the longest **pixel** edge is ≤ `maxEdgePixels`, fixing orientation.
+    /// When the image is already within the cap, dimensions are preserved (no quality loss from resize).
     private static func scaledImage(_ image: UIImage, maxEdgePixels: CGFloat) -> UIImage {
         let pixelW = image.size.width * image.scale
         let pixelH = image.size.height * image.scale
         let longest = max(pixelW, pixelH)
         let targetW: CGFloat
         let targetH: CGFloat
-        if longest > maxEdgePixels, longest > 0 {
+        if maxEdgePixels.isFinite, longest > maxEdgePixels, longest > 0 {
             let factor = maxEdgePixels / longest
             targetW = (pixelW * factor).rounded(.down)
             targetH = (pixelH * factor).rounded(.down)

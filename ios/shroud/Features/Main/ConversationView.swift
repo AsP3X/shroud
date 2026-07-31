@@ -713,7 +713,7 @@ struct ConversationView: View {
     private func sendUIImage(
         _ image: UIImage,
         caption: String = "",
-        quality: MediaComposeQuality = .sd
+        quality: MediaComposeQuality = .original
     ) async {
         isSendingMedia = true
         let error = await messaging.sendImage(

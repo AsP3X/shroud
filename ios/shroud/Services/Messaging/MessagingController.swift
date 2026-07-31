@@ -449,7 +449,7 @@ final class MessagingController {
         _ image: UIImage,
         to peerUserID: UUID,
         caption: String = "",
-        quality: MediaComposeQuality = .sd
+        quality: MediaComposeQuality = .original
     ) async -> String? {
         guard let token = sessionController?.bearerToken,
               let me = sessionController?.userID,

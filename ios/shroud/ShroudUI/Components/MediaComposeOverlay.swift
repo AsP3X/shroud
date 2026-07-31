@@ -1,14 +1,19 @@
 import SwiftUI
 import UIKit
 
-/// Send-quality for media compose (maps to design **SD** badge / Telegram quality).
+/// Send-quality for media compose.
+///
+/// - **original** (default): full pixel dimensions, JPEG quality 1.0 (true source quality).
+/// - **hd**: smaller send — still sharp, but downscaled and more compressed.
 enum MediaComposeQuality: String, CaseIterable, Sendable {
-    case sd
+    /// 100% source quality — default when composing a photo.
+    case original
+    /// Lower-size option (still labeled HD in the badge).
     case hd
 
     var label: String {
         switch self {
-        case .sd: "SD"
+        case .original: "Original"
         case .hd: "HD"
         }
     }
@@ -16,8 +21,9 @@ enum MediaComposeQuality: String, CaseIterable, Sendable {
     /// JPEG max **pixel** edge + compression for `MediaCrypto.jpegData`.
     var encodeParams: (maxEdge: CGFloat, quality: CGFloat) {
         switch self {
-        case .sd: (2048, 0.88)
-        case .hd: (4096, 0.95)
+        // Cap only at a pathologically large edge so normal phone photos are unscaled.
+        case .original: (16_384, 1.0)
+        case .hd: (2560, 0.85)
         }
     }
 }
@@ -37,7 +43,7 @@ struct MediaComposeOverlay: View {
     var onComingSoon: ((String) -> Void)?
 
     @State private var caption = ""
-    @State private var quality: MediaComposeQuality = .hd
+    @State private var quality: MediaComposeQuality = .original
     @State private var multiSelectHint = false
     @State private var toolBanner: String?
     @State private var keyboardHeight: CGFloat = 0
@@ -385,23 +391,32 @@ struct MediaComposeOverlay: View {
             dismissCaptionKeyboard()
             Haptics.impact(.light)
             withAnimation(.easeInOut(duration: 0.15)) {
-                quality = quality == .sd ? .hd : .sd
+                // Default is Original (100%); tap toggles down to HD.
+                quality = quality == .original ? .hd : .original
             }
-            flashToolBanner(quality == .hd ? "High quality" : "Standard quality")
+            flashToolBanner(
+                quality == .original ? "Original quality (100%)" : "HD quality (smaller file)"
+            )
         } label: {
             Text(quality.label)
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(quality == .hd ? telegramBlue : Color.white)
+                .font(.system(size: 11, weight: .bold))
+                .minimumScaleFactor(0.7)
+                .lineLimit(1)
+                .foregroundStyle(quality == .original ? telegramBlue : Color.white)
                 .frame(width: 44, height: 44)
                 .background(chrome)
                 .clipShape(Circle())
                 .overlay {
                     Circle()
-                        .stroke(quality == .hd ? telegramBlue.opacity(0.8) : Color.clear, lineWidth: 1.5)
+                        .stroke(
+                            quality == .original ? telegramBlue.opacity(0.85) : Color.clear,
+                            lineWidth: 1.5
+                        )
                 }
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Quality \(quality.label)")
+        .accessibilityHint("Tap to switch between Original and HD")
     }
 
     private func toolCircle(systemName: String, label: String, action: @escaping () -> Void) -> some View {
