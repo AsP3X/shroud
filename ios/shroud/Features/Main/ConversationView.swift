@@ -41,9 +41,16 @@ struct ConversationView: View {
     @State private var showPhotoPicker = false
     @State private var showCamera = false
     @State private var isSendingMedia = false
+    /// Bumped after thread load / open so we re-pin to the newest message once layout is ready.
+    @State private var pinToBottomToken = 0
 
     private var messages: [MessagingController.ChatMessage] {
         messaging.threads[peerUserID] ?? []
+    }
+
+    /// Stable identity of the newest bubble (count alone misses same-count reloads).
+    private var newestMessageID: UUID? {
+        messages.last?.id
     }
 
     private var isPeerTyping: Bool {
@@ -94,10 +101,15 @@ struct ConversationView: View {
             .toolbar(.hidden, for: .navigationBar)
             .toolbarBackground(.hidden, for: .navigationBar)
             .task {
+                // Pin immediately if the thread is already in memory, then again after network load.
+                pinToBottomToken &+= 1
                 await messaging.loadThread(peerUserID: peerUserID)
+                pinToBottomToken &+= 1
             }
             .onAppear {
                 messaging.setActivePeer(peerUserID)
+                // Opening a chat should always start at the newest message (Telegram/Signal/WhatsApp).
+                pinToBottomToken &+= 1
             }
             .onDisappear {
                 typingTask?.cancel()
@@ -356,7 +368,9 @@ struct ConversationView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 // Telegram-like density: tighter gaps between bubbles.
-                LazyVStack(spacing: 3) {
+                // Non-lazy VStack so the bottom anchor exists as soon as messages are set
+                // (LazyVStack often fails first `scrollTo` because the last row is not realized).
+                VStack(spacing: 3) {
                     headerChips
                         .padding(.bottom, 6)
 
@@ -391,7 +405,10 @@ struct ConversationView: View {
                             .id("typing-indicator")
                     }
 
-                    Color.clear.frame(height: 8).id("thread-bottom")
+                    // Stable end anchor — always scroll here when opening / pinning to newest.
+                    Color.clear
+                        .frame(height: 1)
+                        .id("thread-bottom")
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
@@ -399,15 +416,24 @@ struct ConversationView: View {
                     bubbleGlobalFrames.merge(frames, uniquingKeysWith: { $1 })
                 }
             }
+            // Open chats pre-scrolled to newest (iOS 17+), like Telegram/Signal/WhatsApp.
+            .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
             .onChange(of: messages.count) { _, _ in
+                scrollToBottom(proxy)
+            }
+            .onChange(of: newestMessageID) { _, _ in
                 scrollToBottom(proxy)
             }
             .onChange(of: isPeerTyping) { _, typing in
                 if typing { scrollToBottom(proxy) }
             }
+            .onChange(of: pinToBottomToken) { _, _ in
+                // Opening + post-load: force pin without animation so we never flash the top.
+                scrollToBottom(proxy, animated: false, force: true)
+            }
             .onAppear {
-                scrollToBottom(proxy, animated: false)
+                scrollToBottom(proxy, animated: false, force: true)
             }
         }
     }
@@ -463,20 +489,46 @@ struct ConversationView: View {
         return date.formatted(date: .abbreviated, time: .omitted)
     }
 
-    private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {
-        let action = {
+    /// Pins the thread to the newest content (bottom).
+    /// - Parameter force: When true, retries after layout so open/load always lands on the latest message.
+    private func scrollToBottom(
+        _ proxy: ScrollViewProxy,
+        animated: Bool = true,
+        force: Bool = false
+    ) {
+        let pin = {
+            // Prefer the fixed end anchor so Lazy/layout races cannot miss a message id.
             if isPeerTyping {
                 proxy.scrollTo("typing-indicator", anchor: .bottom)
-            } else if let last = messages.last {
+            }
+            proxy.scrollTo("thread-bottom", anchor: .bottom)
+            if let last = messages.last {
                 proxy.scrollTo(last.id, anchor: .bottom)
-            } else {
-                proxy.scrollTo("thread-bottom", anchor: .bottom)
             }
         }
         if animated {
-            withAnimation(.easeOut(duration: 0.2), action)
+            withAnimation(.easeOut(duration: 0.2), pin)
         } else {
-            action()
+            // Disable implicit animation so open does not animate from the top of the thread.
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction, pin)
+        }
+
+        guard force else { return }
+        // `defaultScrollAnchor` + first layout pass can still leave us mid-thread; re-pin after frames settle.
+        Task { @MainActor in
+            for delayNs in [16_000_000, 50_000_000, 120_000_000] as [UInt64] {
+                try? await Task.sleep(nanoseconds: delayNs)
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    proxy.scrollTo("thread-bottom", anchor: .bottom)
+                    if let last = messages.last {
+                        proxy.scrollTo(last.id, anchor: .bottom)
+                    }
+                }
+            }
         }
     }
 

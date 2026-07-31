@@ -103,4 +103,5 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 | Calls UI / WebRTC | **done** — signaling + WKWebView WebRTC + CallKit; voice & video |
 | APNs / VoIP push register | **done** — data token + PushKit VoIP token → `PUT /push/token` |
 | Sealed messaging v2 | **done** — dual-seal (peer + self) so sender devices can decrypt history |
-| Double Ratchet (v3) | **done** — CryptoKit DR with Keychain sessions; v2 fallback |
+| Sealed messaging (live) | **v2 dual-seal** — independent ECDH+AES-GCM per message (peer + self) |
+| Double Ratchet (v3) | **experimental** — opt-in only; not used for live sends (role-setup incomplete) |

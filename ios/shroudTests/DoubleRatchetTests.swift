@@ -60,7 +60,8 @@ struct DoubleRatchetTests {
             peerUserID: peerID,
             toPeerIdentityPublicKey: bob.publicKey.rawRepresentation,
             ourPrivateKey: alice,
-            ourIdentityPublicKey: alice.publicKey.rawRepresentation
+            ourIdentityPublicKey: alice.publicKey.rawRepresentation,
+            useRatchet: true
         )
 
         // Sender multi-device path uses self box.
@@ -108,5 +109,90 @@ struct DoubleRatchetTests {
             as: .recipient
         )
         #expect(opened == Data("classic".utf8))
+    }
+
+    @Test
+    func productionSealDefaultsToV2DualSeal() throws {
+        let alice = Curve25519.KeyAgreement.PrivateKey()
+        let bob = Curve25519.KeyAgreement.PrivateKey()
+        let peerID = UUID()
+        let plain = Data("hello contact".utf8)
+
+        // MessagingController uses this overload without useRatchet — must be v2.
+        let sealed = try MessageCrypto.seal(
+            plaintext: plain,
+            peerUserID: peerID,
+            toPeerIdentityPublicKey: bob.publicKey.rawRepresentation,
+            ourPrivateKey: alice,
+            ourIdentityPublicKey: alice.publicKey.rawRepresentation
+        )
+        struct Peek: Decodable { let v: Int }
+        let version = try JSONDecoder().decode(Peek.self, from: sealed).v
+        #expect(version == 2)
+
+        let asRecipient = try MessageCrypto.open(
+            envelopeData: sealed,
+            peerUserID: peerID,
+            with: bob,
+            ourIdentityPublicKey: bob.publicKey.rawRepresentation,
+            senderIdentityPublicKey: alice.publicKey.rawRepresentation,
+            as: .recipient
+        )
+        #expect(asRecipient == plain)
+
+        let asSender = try MessageCrypto.open(
+            envelopeData: sealed,
+            peerUserID: peerID,
+            with: alice,
+            ourIdentityPublicKey: alice.publicKey.rawRepresentation,
+            senderIdentityPublicKey: alice.publicKey.rawRepresentation,
+            as: .sender
+        )
+        #expect(asSender == plain)
+    }
+
+    @Test
+    func dualInitiatorRatchetRecoversWithSessionReset() throws {
+        // Both sides sealed as initiator first — old DR path failed open; reset must recover.
+        let alice = Curve25519.KeyAgreement.PrivateKey()
+        let bob = Curve25519.KeyAgreement.PrivateKey()
+        let aliceID = UUID()
+        let bobID = UUID()
+        RatchetSessionStore.delete(peerUserID: aliceID)
+        RatchetSessionStore.delete(peerUserID: bobID)
+
+        // Bob initiates toward Alice (poisons Bob's session store for aliceID if roles invert).
+        _ = try MessageCrypto.seal(
+            plaintext: Data("bob first".utf8),
+            peerUserID: aliceID,
+            toPeerIdentityPublicKey: alice.publicKey.rawRepresentation,
+            ourPrivateKey: bob,
+            ourIdentityPublicKey: bob.publicKey.rawRepresentation,
+            useRatchet: true
+        )
+
+        // Alice initiates toward Bob.
+        let fromAlice = try MessageCrypto.seal(
+            plaintext: Data("alice first".utf8),
+            peerUserID: bobID,
+            toPeerIdentityPublicKey: bob.publicKey.rawRepresentation,
+            ourPrivateKey: alice,
+            ourIdentityPublicKey: alice.publicKey.rawRepresentation,
+            useRatchet: true
+        )
+
+        // Bob opens Alice's message — may need session reset after his own initiator seal.
+        let opened = try MessageCrypto.open(
+            envelopeData: fromAlice,
+            peerUserID: aliceID,
+            with: bob,
+            ourIdentityPublicKey: bob.publicKey.rawRepresentation,
+            senderIdentityPublicKey: alice.publicKey.rawRepresentation,
+            as: .recipient
+        )
+        #expect(opened == Data("alice first".utf8))
+
+        RatchetSessionStore.delete(peerUserID: aliceID)
+        RatchetSessionStore.delete(peerUserID: bobID)
     }
 }
