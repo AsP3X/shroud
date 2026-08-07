@@ -6,11 +6,22 @@ import UIKit
 struct ChatAttachSheet: View {
     var onSelect: (ChatAttachOption) -> Void
     var onCancel: () -> Void
-    /// Called when the user taps a recent thumbnail (image already loaded).
-    var onPickImage: ((UIImage) -> Void)? = nil
+    /// Called with the tapped photo once its **original** file has been fetched.
+    var onPickImage: ((PickedPhoto) -> Void)? = nil
 
-    @State private var recentImages: [UIImage] = []
+    /// A tile in the recents strip: a cheap thumbnail plus the asset it came from.
+    ///
+    /// Human: The thumbnail is 192 px — fine to show, catastrophic to send. Tapping goes back
+    /// to the asset for the original file, so "Original" quality means the real photo.
+    private struct RecentPhoto: Identifiable, Sendable {
+        let id: String
+        let thumbnail: UIImage
+    }
+
+    @State private var recentPhotos: [RecentPhoto] = []
     @State private var photoAccessDenied = false
+    /// Asset whose original is being fetched (may be an iCloud download).
+    @State private var loadingAssetID: String?
 
     private let row1: [ChatAttachOption] = [.camera, .photos, .file, .location]
     private let row2: [ChatAttachOption] = [.contact, .music, .gift, .stickers]
@@ -50,7 +61,7 @@ struct ChatAttachSheet: View {
                         .foregroundStyle(Theme.textSecondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 12)
-                } else if recentImages.isEmpty {
+                } else if recentPhotos.isEmpty {
                     // Shimmering tiles instead of spinners — the strip's shape is already known.
                     HStack(spacing: 8) {
                         ForEach(0 ..< 4, id: \.self) { _ in
@@ -65,21 +76,32 @@ struct ChatAttachSheet: View {
                 } else {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
-                            ForEach(Array(recentImages.enumerated()), id: \.offset) { index, image in
+                            ForEach(Array(recentPhotos.enumerated()), id: \.element.id) { index, photo in
                                 Button {
-                                    if let onPickImage {
-                                        onPickImage(image)
+                                    if onPickImage != nil {
+                                        pickOriginal(photo)
                                     } else {
                                         onSelect(.photos)
                                     }
                                 } label: {
-                                    Image(uiImage: image)
+                                    Image(uiImage: photo.thumbnail)
                                         .resizable()
                                         .scaledToFill()
                                         .frame(width: 96, height: 96)
                                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                        .overlay {
+                                            if loadingAssetID == photo.id {
+                                                ZStack {
+                                                    Color.black.opacity(0.35)
+                                                    ProgressView().tint(.white)
+                                                }
+                                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                            }
+                                        }
                                 }
                                 .pressable(scale: 0.93, dimming: 0.12)
+                                // One fetch at a time — an iCloud original can take a moment.
+                                .disabled(loadingAssetID != nil)
                                 .entranceRow(index: index)
                             }
                         }
@@ -87,7 +109,8 @@ struct ChatAttachSheet: View {
                     .transition(.opacity)
                 }
             }
-            .animation(Motion.fade, value: recentImages.isEmpty)
+            .animation(Motion.fade, value: recentPhotos.isEmpty)
+            .animation(Motion.fade, value: loadingAssetID)
 
             optionRow(row1, startIndex: 0)
             optionRow(row2, startIndex: row1.count)
@@ -158,12 +181,12 @@ struct ChatAttachSheet: View {
         let status = await requestPhotoAccess()
         guard status == .authorized || status == .limited else {
             photoAccessDenied = true
-            recentImages = []
+            recentPhotos = []
             return
         }
         photoAccessDenied = false
 
-        let images: [UIImage] = await Task.detached(priority: .userInitiated) {
+        let photos: [RecentPhoto] = await Task.detached(priority: .userInitiated) {
             let options = PHFetchOptions()
             options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
             options.fetchLimit = 12
@@ -172,14 +195,15 @@ struct ChatAttachSheet: View {
 
             let manager = PHImageManager.default()
             let requestOptions = PHImageRequestOptions()
-            requestOptions.deliveryMode = .opportunistic
+            requestOptions.deliveryMode = .highQualityFormat
             requestOptions.resizeMode = .fast
             requestOptions.isNetworkAccessAllowed = true
             requestOptions.isSynchronous = true
 
-            var out: [UIImage] = []
+            var out: [RecentPhoto] = []
             let target = CGSize(width: 192, height: 192)
             result.enumerateObjects { asset, _, stop in
+                let identifier = asset.localIdentifier
                 manager.requestImage(
                     for: asset,
                     targetSize: target,
@@ -187,7 +211,7 @@ struct ChatAttachSheet: View {
                     options: requestOptions
                 ) { image, _ in
                     if let image {
-                        out.append(image)
+                        out.append(RecentPhoto(id: identifier, thumbnail: image))
                     }
                 }
                 if out.count >= 12 { stop.pointee = true }
@@ -195,7 +219,48 @@ struct ChatAttachSheet: View {
             return out
         }.value
 
-        recentImages = images
+        recentPhotos = photos
+    }
+
+    /// Fetches the tapped asset's original file before handing it to compose.
+    private func pickOriginal(_ photo: RecentPhoto) {
+        guard loadingAssetID == nil else { return }
+        loadingAssetID = photo.id
+        Task {
+            let picked = await Self.originalPhoto(localIdentifier: photo.id, fallback: photo.thumbnail)
+            loadingAssetID = nil
+            onPickImage?(picked)
+        }
+    }
+
+    /// The asset's current file bytes — edits included, iCloud originals downloaded on demand.
+    /// Falls back to the thumbnail only when the library refuses to hand anything back.
+    private static func originalPhoto(localIdentifier: String, fallback: UIImage) async -> PickedPhoto {
+        // Fetch *and* downsample off the main thread — the original can be 48 MP.
+        let loaded: (data: Data, preview: UIImage)? = await Task.detached(priority: .userInitiated) {
+            guard let asset = PHAsset.fetchAssets(
+                withLocalIdentifiers: [localIdentifier],
+                options: nil
+            ).firstObject else { return nil }
+
+            let options = PHImageRequestOptions()
+            options.version = .current
+            options.deliveryMode = .highQualityFormat
+            options.isNetworkAccessAllowed = true
+            options.isSynchronous = true
+
+            var out: Data?
+            PHImageManager.default().requestImageDataAndOrientation(for: asset, options: options) { data, _, _, _ in
+                out = data
+            }
+            guard let data = out, let preview = MediaCrypto.previewImage(from: data, maxEdge: 2048) else {
+                return nil
+            }
+            return (data, preview)
+        }.value
+
+        guard let loaded else { return PickedPhoto(image: fallback) }
+        return PickedPhoto(preview: loaded.preview, source: .fileData(loaded.data))
     }
 
     private func requestPhotoAccess() async -> PHAuthorizationStatus {

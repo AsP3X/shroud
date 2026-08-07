@@ -38,8 +38,10 @@ struct ConversationView: View {
     @State private var viewingMedia: ViewingMedia?
     @State private var composeDraft: ComposeDraft?
     @State private var profileDestination: ProfileDestination?
-    @State private var photoPickerItem: PhotosPickerItem?
+    @State private var photoPickerItems: [PhotosPickerItem] = []
     @State private var showPhotoPicker = false
+    /// True when the picker was opened from compose, so its results append instead of replace.
+    @State private var pickerAppendsToDraft = false
     @State private var showCamera = false
     @State private var isSendingMedia = false
     /// Bumped after thread load / open so we re-pin to the newest message once layout is ready.
@@ -130,30 +132,35 @@ struct ConversationView: View {
                         handleAttach(option)
                     },
                     onCancel: { showAttach = false },
-                    onPickImage: { image in
+                    onPickImage: { picked in
                         showAttach = false
-                        presentMediaCompose(image)
+                        presentMediaCompose([picked])
                     }
                 )
                 .presentationDetents([.height(420)])
                 .presentationDragIndicator(.hidden)
                 .presentationBackground(Theme.background)
             }
+            // `.current` keeps the library's own encoding — `.automatic` lets the system
+            // transcode HEIC to JPEG behind our back, which is a silent quality loss.
             .photosPicker(
                 isPresented: $showPhotoPicker,
-                selection: $photoPickerItem,
+                selection: $photoPickerItems,
+                maxSelectionCount: Self.maxPhotosPerSend,
+                selectionBehavior: .ordered,
                 matching: .images,
+                preferredItemEncoding: .current,
                 photoLibrary: .shared()
             )
-            .onChange(of: photoPickerItem) { _, item in
-                guard let item else { return }
-                Task { await loadPickedPhotoForCompose(item) }
+            .onChange(of: photoPickerItems) { _, items in
+                guard !items.isEmpty else { return }
+                Task { await loadPickedPhotosForCompose(items) }
             }
             .fullScreenCover(isPresented: $showCamera) {
                 CameraPicker { image in
                     showCamera = false
                     guard let image else { return }
-                    presentMediaCompose(image)
+                    presentMediaCompose([PickedPhoto(image: image)])
                 }
                 .ignoresSafeArea()
             }
@@ -168,13 +175,16 @@ struct ConversationView: View {
             .overlay {
                 if let viewingMedia {
                     MediaImageViewerOverlay(
-                        image: viewingMedia.image,
-                        title: viewingMedia.title,
-                        dateLine: viewingMedia.dateLine,
+                        items: mediaViewerItems,
+                        initialID: viewingMedia.id,
                         onClose: {
                             withAnimation(.easeOut(duration: 0.2)) {
                                 self.viewingMedia = nil
                             }
+                        },
+                        onLoad: { messageID in
+                            guard let message = messages.first(where: { $0.id == messageID }) else { return }
+                            Task { await messaging.ensureImageLoaded(for: message) }
                         },
                         onComingSoon: { feature in
                             toast = "\(feature) coming soon"
@@ -191,21 +201,34 @@ struct ConversationView: View {
             .overlay {
                 if let composeDraft {
                     MediaComposeOverlay(
-                        image: composeDraft.image,
+                        photos: composeDraft.photos,
                         peerUsername: peerUsername,
                         onCancel: {
                             withAnimation(.easeOut(duration: 0.2)) {
                                 self.composeDraft = nil
                             }
                         },
-                        onSend: { caption, quality in
-                            let image = composeDraft.image
+                        onSend: { caption, quality, edits in
+                            let photos = composeDraft.photos
                             withAnimation(.easeOut(duration: 0.15)) {
                                 self.composeDraft = nil
                             }
                             Task {
-                                await sendUIImage(image, caption: caption, quality: quality)
+                                await sendPickedPhotos(
+                                    photos,
+                                    edits: edits,
+                                    caption: caption,
+                                    quality: quality
+                                )
                             }
+                        },
+                        onAddMore: {
+                            pickerAppendsToDraft = true
+                            photoPickerItems = []
+                            showPhotoPicker = true
+                        },
+                        onRemovePhoto: { index in
+                            removeComposePhoto(at: index)
                         },
                         onComingSoon: { feature in
                             toast = "\(feature) coming soon"
@@ -239,19 +262,19 @@ struct ConversationView: View {
         var id: UUID { peerUserID }
     }
 
-    /// In-conversation media overlay payload (not a navigation destination).
+    /// Which photo the media overlay opened on (not a navigation destination).
     private struct ViewingMedia: Identifiable {
         let id: UUID
-        let image: UIImage
-        let title: String
-        let dateLine: String
     }
 
-    /// Draft photo ready for caption + send (Telegram media compose).
+    /// Photos staged for caption + edit + send (Telegram media compose).
     private struct ComposeDraft: Identifiable {
         let id = UUID()
-        let image: UIImage
+        var photos: [PickedPhoto]
     }
+
+    /// Telegram caps an album at 10; matching that keeps one send from ballooning.
+    private static let maxPhotosPerSend = 10
 
     // MARK: - Top chrome (extends under status bar)
 
@@ -728,50 +751,85 @@ struct ConversationView: View {
         }
     }
 
-    private func loadPickedPhotoForCompose(_ item: PhotosPickerItem) async {
-        defer { photoPickerItem = nil }
-        do {
-            guard let data = try await item.loadTransferable(type: Data.self),
-                  let image = UIImage(data: data)
-            else {
-                toast = "Could not load that photo."
-                scheduleToastClear()
-                return
-            }
-            presentMediaCompose(image)
-        } catch {
-            toast = "Could not load that photo."
+    private func loadPickedPhotosForCompose(_ items: [PhotosPickerItem]) async {
+        let appending = pickerAppendsToDraft
+        defer {
+            photoPickerItems = []
+            pickerAppendsToDraft = false
+        }
+
+        var picked: [PickedPhoto] = []
+        for item in items {
+            // The original file's bytes — held encoded until send so "Original" stays original.
+            guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
+            // Downsample off the main thread; a 48 MP decode would stutter the picker dismissal.
+            let preview = await Task.detached(priority: .userInitiated) {
+                MediaCrypto.previewImage(from: data, maxEdge: 2048)
+            }.value
+            guard let preview else { continue }
+            picked.append(PickedPhoto(preview: preview, source: .fileData(data)))
+        }
+
+        guard !picked.isEmpty else {
+            toast = items.count > 1 ? "Could not load those photos." : "Could not load that photo."
             scheduleToastClear()
+            return
+        }
+
+        if appending, var draft = composeDraft {
+            draft.photos = Array((draft.photos + picked).prefix(Self.maxPhotosPerSend))
+            withAnimation(Motion.standard) { composeDraft = draft }
+        } else {
+            presentMediaCompose(picked)
         }
     }
 
-    private func presentMediaCompose(_ image: UIImage) {
+    private func presentMediaCompose(_ picked: [PickedPhoto]) {
         withAnimation(.easeOut(duration: 0.2)) {
-            composeDraft = ComposeDraft(image: image)
+            composeDraft = ComposeDraft(photos: Array(picked.prefix(Self.maxPhotosPerSend)))
         }
     }
 
-    private func sendUIImage(
-        _ image: UIImage,
+    private func removeComposePhoto(at index: Int) {
+        guard var draft = composeDraft, draft.photos.indices.contains(index) else { return }
+        draft.photos.remove(at: index)
+        withAnimation(Motion.standard) {
+            composeDraft = draft.photos.isEmpty ? nil : draft
+        }
+    }
+
+    /// Sends the staged photos in order, each with its own edits and the shared caption.
+    /// Telegram puts the caption on the first item of an album; this does the same.
+    private func sendPickedPhotos(
+        _ photos: [PickedPhoto],
+        edits: [MediaEdits],
         caption: String = "",
         quality: MediaComposeQuality = .original
     ) async {
+        guard !photos.isEmpty else { return }
         isSendingMedia = true
-        let error = await messaging.sendImage(
-            image,
-            to: peerUserID,
-            caption: caption,
-            quality: quality
-        )
-        isSendingMedia = false
-        if let error {
-            // Bubble stays in the thread with Retry; also surface the reason.
-            toast = error
+        defer { isSendingMedia = false }
+
+        var firstError: String?
+        for (index, photo) in photos.enumerated() {
+            let error = await messaging.sendImage(
+                photo.source,
+                to: peerUserID,
+                caption: index == 0 ? caption : "",
+                quality: quality,
+                edits: edits.indices.contains(index) ? edits[index] : MediaEdits()
+            )
+            if let error, firstError == nil { firstError = error }
+        }
+
+        if let firstError {
+            // Bubbles stay in the thread with Retry; also surface the reason.
+            toast = firstError
             Haptics.notification(.error)
             // Keep error visible longer so it can be read.
             Task {
                 try? await Task.sleep(nanoseconds: 4_000_000_000)
-                if toast == error { toast = nil }
+                if toast == firstError { toast = nil }
             }
         } else {
             Haptics.notification(.success)
@@ -1056,29 +1114,37 @@ struct ConversationView: View {
         }
     }
 
-    /// Presents the Telegram-style media **overlay** over the conversation (not a push).
-    private func openMediaViewer(for message: MessagingController.ChatMessage) {
-        Task {
-            await messaging.ensureImageLoaded(for: message)
-            let data = messaging.threads[peerUserID]?
-                .first(where: { $0.id == message.id })?
-                .imageData ?? message.imageData
-            guard let data, let image = UIImage(data: data) else {
-                toast = "Could not open that photo."
-                scheduleToastClear()
-                return
-            }
-            let title = message.isMine ? "You" : peerUsername
-            let dateLine = Self.viewerDateLine(for: message.createdAt)
-            withAnimation(.easeOut(duration: 0.2)) {
-                viewingMedia = ViewingMedia(
+    /// Every photo in the thread, so the viewer can page through them the way Telegram does.
+    ///
+    /// Pages that haven't been decrypted yet come through with `image == nil` and load on demand;
+    /// their aspect ratio is already known from the message metadata, so nothing reflows.
+    private var mediaViewerItems: [MediaImageViewerOverlay.Item] {
+        messages
+            .filter { $0.kind == .image && !$0.deleted && $0.receipt != .failed }
+            .map { message in
+                let caption = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                let width = CGFloat(message.imageWidth ?? 0)
+                let height = CGFloat(message.imageHeight ?? 0)
+                return MediaImageViewerOverlay.Item(
                     id: message.id,
-                    image: image,
-                    title: title,
-                    dateLine: dateLine
+                    title: message.isMine ? "You" : peerUsername,
+                    dateLine: Self.viewerDateLine(for: message.createdAt),
+                    caption: caption == "Photo" ? nil : caption,
+                    // Cache-only — decoding every photo in the thread here would block the
+                    // main thread the moment the viewer opens. Pages decode their own.
+                    image: DecodedImageCache.image(for: message.id),
+                    data: message.imageData,
+                    aspect: height > 0 ? width / height : 1
                 )
             }
+    }
+
+    /// Presents the Telegram-style media **overlay** over the conversation (not a push).
+    private func openMediaViewer(for message: MessagingController.ChatMessage) {
+        withAnimation(.easeOut(duration: 0.2)) {
+            viewingMedia = ViewingMedia(id: message.id)
         }
+        Task { await messaging.ensureImageLoaded(for: message) }
     }
 
     private static func viewerDateLine(for date: Date) -> String {

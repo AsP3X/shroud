@@ -617,14 +617,17 @@ final class MessagingController {
         realtime.sendTyping(peerUserID: peerUserID, isTyping: isTyping)
     }
 
-    /// Compresses, encrypts, uploads, and sends an image message to `peerUserID`.
-    /// Optional `caption` is sealed in the media payload (Telegram-style).
+    /// Encrypts, uploads, and sends an image message to `peerUserID`.
+    ///
+    /// At `.original` quality a library file is sent byte-for-byte; nothing is resized or
+    /// re-encoded. Optional `caption` is sealed in the media payload (Telegram-style).
     /// Returns a user-facing error string, or `nil` on success.
     func sendImage(
-        _ image: UIImage,
+        _ source: MediaImageSource,
         to peerUserID: UUID,
         caption: String = "",
-        quality: MediaComposeQuality = .original
+        quality: MediaComposeQuality = .original,
+        edits: MediaEdits = MediaEdits()
     ) async -> String? {
         guard let token = sessionController?.bearerToken,
               let me = sessionController?.userID,
@@ -635,14 +638,27 @@ final class MessagingController {
         let displayText = trimmedCaption.isEmpty ? "Photo" : trimmedCaption
 
         let optimisticID = UUID()
-        let jpeg: (data: Data, width: Int, height: Int)
+        let encoded: EncodedImage
         do {
             let params = quality.encodeParams
-            jpeg = try MediaCrypto.jpegData(
-                from: image,
-                maxEdge: params.maxEdge,
-                quality: params.quality
-            )
+            // Keep a full-resolution render + encode off the main actor — it can take a beat
+            // on 48 MP files.
+            encoded = try await Task.detached(priority: .userInitiated) {
+                // Crop, filters, markup and stickers are baked here, at full resolution. An
+                // untouched photo skips this entirely and keeps its pass-through.
+                var prepared = source
+                if !edits.isIdentity {
+                    guard let full = MediaCrypto.fullResolutionImage(from: source, maxEdge: params.maxEdge)
+                    else { throw MediaCrypto.MediaError.imageEncodeFailed }
+                    prepared = .image(MediaEditRenderer.render(full, edits: edits))
+                }
+                return try MediaCrypto.encode(
+                    prepared,
+                    maxEdge: params.maxEdge,
+                    compression: params.compression,
+                    allowsPassthrough: params.allowsPassthrough && edits.isIdentity
+                )
+            }.value
         } catch {
             return "Could not prepare that photo."
         }
@@ -657,9 +673,9 @@ final class MessagingController {
             deleted: false,
             receipt: .sending,
             kind: .image,
-            imageWidth: jpeg.width,
-            imageHeight: jpeg.height,
-            imageData: jpeg.data
+            imageWidth: encoded.width,
+            imageHeight: encoded.height,
+            imageData: encoded.data
         )
         var list = threads[peerUserID] ?? []
         list.append(optimistic)
@@ -672,7 +688,7 @@ final class MessagingController {
                 me: me,
                 material: material,
                 token: token,
-                jpeg: jpeg,
+                encoded: encoded,
                 caption: trimmedCaption
             )
             lastError = nil
@@ -692,8 +708,7 @@ final class MessagingController {
               let material = cryptoController?.material,
               var thread = threads[peerUserID],
               let idx = thread.firstIndex(where: { $0.id == messageID && $0.isMine && $0.kind == .image }),
-              let data = thread[idx].imageData,
-              let image = UIImage(data: data)
+              let data = thread[idx].imageData
         else {
             return "Nothing to retry."
         }
@@ -702,13 +717,15 @@ final class MessagingController {
         thread[idx].sendError = nil
         threads[peerUserID] = thread
 
-        let jpeg: (data: Data, width: Int, height: Int)
-        do {
-            jpeg = try MediaCrypto.jpegData(from: image)
-        } catch {
-            markImageFailed(optimisticID: messageID, peerUserID: peerUserID, error: "Could not prepare that photo.")
-            return "Could not prepare that photo."
-        }
+        // The bytes were already prepared for the first attempt — re-encoding here would throw
+        // away whatever quality the first pass chose and add a second generation of JPEG loss.
+        let size = MediaCrypto.pixelSize(for: data)
+        let encoded = EncodedImage(
+            data: data,
+            width: size?.width ?? thread[idx].imageWidth ?? 0,
+            height: size?.height ?? thread[idx].imageHeight ?? 0,
+            mime: MediaCrypto.mimeType(for: data)
+        )
 
         let existingCaption = thread[idx].text
         let caption = (existingCaption == "Photo" || existingCaption.isEmpty) ? "" : existingCaption
@@ -720,7 +737,7 @@ final class MessagingController {
                 me: me,
                 material: material,
                 token: token,
-                jpeg: jpeg,
+                encoded: encoded,
                 caption: caption
             )
             return nil
@@ -737,10 +754,10 @@ final class MessagingController {
         me: UUID,
         material: IdentityKeyMaterial,
         token: String,
-        jpeg: (data: Data, width: Int, height: Int),
+        encoded: EncodedImage,
         caption: String
     ) async throws {
-        let (fileKey, sealedFile) = try MediaCrypto.sealFile(jpeg.data)
+        let (fileKey, sealedFile) = try MediaCrypto.sealFile(encoded.data)
         let upload = try await mediaService.createUpload(
             sizeBytes: sealedFile.count,
             contentType: "application/octet-stream",
@@ -756,9 +773,9 @@ final class MessagingController {
         let displayText = trimmedCaption.isEmpty ? "Photo" : trimmedCaption
         let payload = MediaMessagePayload(
             t: MediaMessagePayload.kindImage,
-            mime: "image/jpeg",
-            w: jpeg.width,
-            h: jpeg.height,
+            mime: encoded.mime,
+            w: encoded.width,
+            h: encoded.height,
             k: fileKey.base64EncodedString(),
             c: trimmedCaption.isEmpty ? nil : trimmedCaption
         )
@@ -781,7 +798,7 @@ final class MessagingController {
             ),
             token: token
         )
-        mediaCache.save(messageID: dto.id, data: jpeg.data)
+        mediaCache.save(messageID: dto.id, data: encoded.data)
         // Cache sealed media payload (file key), not just the caption — needed for reload.
         plaintextCache.save(messageID: dto.id, data: payloadData)
 
@@ -796,9 +813,9 @@ final class MessagingController {
             receipt: receiptStatus(from: dto),
             kind: .image,
             mediaObjectId: upload.mediaObjectId,
-            imageWidth: jpeg.width,
-            imageHeight: jpeg.height,
-            imageData: jpeg.data,
+            imageWidth: encoded.width,
+            imageHeight: encoded.height,
+            imageData: encoded.data,
             sendError: nil
         )
         if var thread = threads[peerUserID],
