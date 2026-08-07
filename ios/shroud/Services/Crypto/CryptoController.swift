@@ -190,8 +190,15 @@ final class CryptoController {
     }
 
     /// Re-seal vault after biometry unlock when prefs changed (no phrase available).
+    ///
+    /// Also upgrades a vault that was sealed while the device had no biometry or passcode. That
+    /// fallback is otherwise permanent — the unprotected wrap key keeps satisfying every later
+    /// unlock, so enrolling Face ID afterwards never brings the prompt back.
     private func rewrapHistoryIfNeeded(_ historyKey: SymmetricKey, userID: UUID) {
-        guard SecurityPreferences.vaultNeedsRewrap else { return }
+        let canUpgradeProtection = HistoryKeyVault.requiresUserPresence
+            && !HistoryKeyVault.isWrapKeyProtected
+            && HistoryKeyVault.canProtectWrapKey
+        guard SecurityPreferences.vaultNeedsRewrap || canUpgradeProtection else { return }
         do {
             try HistoryKeyVault.store(
                 historyKey: historyKey,
