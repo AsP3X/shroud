@@ -62,6 +62,8 @@ final class MessagingController {
     private var conversationsRefreshTask: Task<Void, Never>?
     /// One in-flight thread load per peer.
     private var threadLoadTasks: [UUID: Task<Void, Never>] = [:]
+    /// Dedup concurrent image/voice hydrate for the same message id.
+    private var mediaHydrateTasks: [UUID: Task<Void, Never>] = [:]
     /// Serializes outbound flush so reconnect + poll don't double-send.
     private let outboundQueue = OutboundSendQueue()
     /// Presence is swept in bulk at most this often; live changes arrive over WS anyway.
@@ -590,7 +592,7 @@ final class MessagingController {
     /// The 3s poll, WS `message.new`, and the chat view's `.task` all land here. They share a
     /// single in-flight load per peer — duplicate fetches decrypt the same page twice and
     /// rewrite `threads`, which redraws every bubble. Callers still await real data.
-    /// Loads a peer thread (or Notes). Walks `before_*` pages until the 90-day window is filled.
+    /// Loads a peer thread (or Notes). Walks `before_*` pages newest→older until the 90-day window.
     func loadThread(peerUserID: UUID) async {
         guard sessionController?.bearerToken != nil,
               sessionController?.userID != nil,
@@ -627,9 +629,18 @@ final class MessagingController {
         if threadLoadTasks[taskKey] == task { threadLoadTasks[taskKey] = nil }
     }
 
+    /// Page size for history HTTP calls (server max is 100).
+    private static let historyPageSize = 100
+    /// Hard stop: 40 × 100 = 4000 messages (still clamped by 90-day retention).
+    private static let historyMaxPages = 40
+
     /// - Parameters:
     ///   - apiPeerID: Peer id for HTTP (`me` for Notes).
     ///   - storePeerID: Key in `threads` (sentinel for Notes).
+    ///
+    /// Publishes each page as soon as it is decoded (newest batch first) so the chat UI
+    /// is usable while older pages continue to load. Media bytes are **not** fetched here —
+    /// bubbles call `ensureImageLoaded` / `ensureVoiceLoaded` when they appear.
     private func performThreadLoad(apiPeerID: UUID, storePeerID: UUID) async {
         guard let token = sessionController?.bearerToken,
               let me = sessionController?.userID,
@@ -644,22 +655,26 @@ final class MessagingController {
         ) ?? Date().addingTimeInterval(-TimeInterval(LocalMessageStore.retentionDays) * 86_400)
 
         do {
-            var decoded: [ChatMessage] = []
+            /// Server pages newest→older; we prepend older pages so chronological order is oldest…newest.
+            var accumulatedNewestFirstPages: [ChatMessage] = []
             var beforeAt: Date?
             var beforeID: UUID?
             var pages = 0
-            let maxPages = 40 // 40 × 100 = 4000 msgs hard stop
+            var pendingDeliveryIDs: [UUID] = []
 
             repeat {
                 let response = try await messagesService.listMessages(
                     peerUserID: apiPeerID,
                     token: token,
-                    limit: 100,
+                    limit: Self.historyPageSize,
                     beforeCreatedAt: beforeAt,
                     beforeID: beforeID
                 )
                 pages += 1
-                // Server returns newest-first; reverse each page for chronological append order.
+
+                // Server returns newest-first; reverse → chronological within this page.
+                var pageChronological: [ChatMessage] = []
+                pageChronological.reserveCapacity(response.messages.count)
                 for dto in response.messages.reversed() {
                     var message = await decodeMessage(
                         dto,
@@ -671,16 +686,42 @@ final class MessagingController {
                     if isNotes {
                         message = notesMessageFromServer(message)
                     }
-                    decoded.append(message)
+                    // Drop over-retention early so we don't publish then strip.
+                    if !isNotes, message.createdAt < retentionCutoff, !message.pendingSync {
+                        continue
+                    }
+                    pageChronological.append(message)
                     if !isNotes, dto.senderUserId != me {
-                        try? await messagesService.markDelivered(messageID: dto.id, token: token)
+                        pendingDeliveryIDs.append(dto.id)
                     }
                 }
-                let oldest = response.messages.last // still newest-first from server
-                if response.hasMore == true || response.messages.count >= 100,
+
+                // First page = newest batch. Later pages are older → prepend.
+                if accumulatedNewestFirstPages.isEmpty {
+                    accumulatedNewestFirstPages = pageChronological
+                } else {
+                    accumulatedNewestFirstPages = pageChronological + accumulatedNewestFirstPages
+                }
+
+                // Publish immediately so the open chat shows the newest messages while older
+                // pages keep loading. Re-read the live thread each page to pick up sends.
+                let currentThread = threads[storePeerID] ?? []
+                let merged = ThreadMessageMerge.mergeThread(
+                    decoded: accumulatedNewestFirstPages,
+                    previous: currentThread,
+                    pendingLocal: currentThread.filter(\.pendingSync)
+                )
+                if threads[storePeerID] != merged {
+                    threads[storePeerID] = merged
+                }
+
+                let oldest = response.messages.last // newest-first from server → oldest of page
+                let pageFull = response.messages.count >= Self.historyPageSize
+                let mayHaveMore = response.hasMore == true || pageFull
+                if mayHaveMore,
                    let oldest,
                    oldest.createdAt >= retentionCutoff,
-                   pages < maxPages
+                   pages < Self.historyMaxPages
                 {
                     beforeAt = oldest.createdAt
                     beforeID = oldest.id
@@ -690,26 +731,13 @@ final class MessagingController {
                 }
             } while beforeAt != nil && beforeID != nil
 
-            // Drop anything older than retention for normal chats (Notes keep all server rows).
+            // Delivery acks after the visible thread is populated (don't stall first paint).
             if !isNotes {
-                decoded = decoded.filter { $0.createdAt >= retentionCutoff || $0.pendingSync }
-            }
-
-            // Re-read the thread instead of merging against the snapshot taken before the
-            // paging loop. A flush running alongside this load replaces optimistic bubbles
-            // with their server-keyed copies; merging the stale list would re-append the
-            // optimistic one next to the delivered message — a visible duplicate that then
-            // persists to disk and flushes again as a second server row.
-            let currentThread = threads[storePeerID] ?? []
-            decoded = ThreadMessageMerge.mergeThread(
-                decoded: decoded,
-                previous: currentThread,
-                pendingLocal: currentThread.filter(\.pendingSync)
-            )
-            if threads[storePeerID] != decoded { threads[storePeerID] = decoded }
-
-            if !isNotes {
-                if let lastFromPeer = decoded.last(where: { !$0.isMine }) {
+                for id in pendingDeliveryIDs {
+                    try? await messagesService.markDelivered(messageID: id, token: token)
+                }
+                let finalThread = threads[storePeerID] ?? []
+                if let lastFromPeer = finalThread.last(where: { !$0.isMine }) {
                     _ = try? await messagesService.markReadBulk(
                         peerUserID: apiPeerID,
                         upToMessageID: lastFromPeer.id,
@@ -1513,8 +1541,29 @@ final class MessagingController {
         }
     }
 
-    /// Loads decrypted voice bytes for playback.
+    /// Loads decrypted voice bytes for playback (deduped; safe to call from many onAppears).
     func ensureVoiceLoaded(for message: ChatMessage) async {
+        guard message.kind == .voice,
+              message.voiceData == nil,
+              !message.deleted
+        else { return }
+
+        if let existing = mediaHydrateTasks[message.id] {
+            await existing.value
+            return
+        }
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.hydrateVoice(for: message)
+        }
+        mediaHydrateTasks[message.id] = task
+        await task.value
+        if mediaHydrateTasks[message.id] == task {
+            mediaHydrateTasks[message.id] = nil
+        }
+    }
+
+    private func hydrateVoice(for message: ChatMessage) async {
         guard message.kind == .voice,
               message.voiceData == nil,
               !message.deleted
@@ -1578,7 +1627,29 @@ final class MessagingController {
     }
 
     /// Loads decrypted image bytes for a media message (caches on success).
+    /// Deduped so LazyVStack onAppear storms don't download the same photo twice.
     func ensureImageLoaded(for message: ChatMessage) async {
+        guard message.kind == .image,
+              message.imageData == nil,
+              !message.deleted
+        else { return }
+
+        if let existing = mediaHydrateTasks[message.id] {
+            await existing.value
+            return
+        }
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.hydrateImage(for: message)
+        }
+        mediaHydrateTasks[message.id] = task
+        await task.value
+        if mediaHydrateTasks[message.id] == task {
+            mediaHydrateTasks[message.id] = nil
+        }
+    }
+
+    private func hydrateImage(for message: ChatMessage) async {
         guard message.kind == .image,
               message.imageData == nil,
               !message.deleted

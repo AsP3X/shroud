@@ -66,17 +66,23 @@ enum MessageDecoder {
                     merged.receipt = serverReceipt
                 }
             }
-            let needsMediaBytes = (existing.kind == .image || existing.kind == .voice)
-                && existing.imageData == nil
-                && existing.voiceData == nil
-                && !existing.deleted
-                && local.sealedPlaintext(for: dto.id) != nil
+            // Keep a readable bubble even when media bytes are still missing — UI lazy-loads
+            // images/voice on appear. Never block history decode on media download.
             if !existing.deleted,
-               !ThreadMessageMerge.isFailedDecryptText(existing.text),
-               !needsMediaBytes
+               !ThreadMessageMerge.isFailedDecryptText(existing.text)
             {
                 if !isMedia, local.sealedPlaintext(for: dto.id) == nil {
                     local.saveSealedPlaintext(messageID: dto.id, text: existing.text)
+                }
+                if merged.imageData == nil, existing.kind == .image,
+                   let cached = local.sealedMedia(for: dto.id)
+                {
+                    merged.imageData = cached
+                }
+                if merged.voiceData == nil, existing.kind == .voice,
+                   let cached = local.sealedMedia(for: dto.id)
+                {
+                    merged.voiceData = cached
                 }
                 return merged
             }
@@ -222,6 +228,10 @@ enum MessageDecoder {
         }
     }
 
+    /// Builds a media bubble from plaintext payload + **local** cache only.
+    ///
+    /// Network download is intentionally skipped here so history paging stays fast.
+    /// `MessagingController.ensureImageLoaded` / `ensureVoiceLoaded` fill bytes when a row appears.
     private static func decodeMedia(
         dto: MessageDTO,
         plain: Data,
@@ -231,26 +241,11 @@ enum MessageDecoder {
         context: Context
     ) async -> MessagingController.ChatMessage {
         let local = context.local
+        // Disk cache only — never await media download during thread history decode.
         let cached = local.sealedMedia(for: dto.id)
         let payload = try? JSONDecoder().decode(MediaMessagePayload.self, from: plain)
 
         if payload?.isVoice == true {
-            var voiceData = cached
-            if voiceData == nil,
-               let payload,
-               let mediaID = dto.mediaObjectId,
-               let keyData = Data(base64Encoded: payload.k)
-            {
-                if let sealed = try? await context.mediaService.downloadContent(
-                    mediaID: mediaID,
-                    token: context.token
-                ),
-                   let audio = try? MediaCrypto.openFile(sealed: sealed, keyData: keyData)
-                {
-                    local.saveSealedMedia(messageID: dto.id, data: audio)
-                    voiceData = audio
-                }
-            }
             let transcript = payload?.c?.trimmingCharacters(in: .whitespacesAndNewlines)
             let mediaText = (transcript?.isEmpty == false) ? transcript! : "Voice message"
             return MessagingController.ChatMessage(
@@ -264,37 +259,19 @@ enum MessageDecoder {
                 receipt: receipt,
                 kind: .voice,
                 mediaObjectId: dto.mediaObjectId,
-                voiceData: voiceData,
+                voiceData: cached,
                 voiceDurationMs: payload?.d,
                 voiceWaveform: VoiceWaveform.decode(payload?.wf),
                 transcript: transcript
             )
         }
 
-        var imageData = cached
         let width = payload?.w
         let height = payload?.h
-
-        if imageData == nil,
-           let payload,
-           let mediaID = dto.mediaObjectId,
-           let keyData = Data(base64Encoded: payload.k)
-        {
-            if let sealed = try? await context.mediaService.downloadContent(
-                mediaID: mediaID,
-                token: context.token
-            ),
-               let jpeg = try? MediaCrypto.openFile(sealed: sealed, keyData: keyData)
-            {
-                local.saveSealedMedia(messageID: dto.id, data: jpeg)
-                imageData = jpeg
-            }
-        }
-
         let caption = payload?.c?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let mediaText = caption.isEmpty ? "Photo" : caption
 
-        if imageData == nil, payload == nil {
+        if cached == nil, payload == nil {
             return MessagingController.ChatMessage(
                 id: dto.id,
                 peerUserID: peerUserID,
@@ -322,7 +299,7 @@ enum MessageDecoder {
             mediaObjectId: dto.mediaObjectId,
             imageWidth: width,
             imageHeight: height,
-            imageData: imageData
+            imageData: cached
         )
     }
 }
