@@ -637,8 +637,6 @@ final class MessagingController {
         else { return }
 
         let isNotes = isNotesChat(storePeerID)
-        let previousThread = threads[storePeerID] ?? []
-        let pendingLocal = previousThread.filter(\.pendingSync)
         let retentionCutoff = Calendar.current.date(
             byAdding: .day,
             value: -LocalMessageStore.retentionDays,
@@ -697,10 +695,16 @@ final class MessagingController {
                 decoded = decoded.filter { $0.createdAt >= retentionCutoff || $0.pendingSync }
             }
 
+            // Re-read the thread instead of merging against the snapshot taken before the
+            // paging loop. A flush running alongside this load replaces optimistic bubbles
+            // with their server-keyed copies; merging the stale list would re-append the
+            // optimistic one next to the delivered message — a visible duplicate that then
+            // persists to disk and flushes again as a second server row.
+            let currentThread = threads[storePeerID] ?? []
             decoded = ThreadMessageMerge.mergeThread(
                 decoded: decoded,
-                previous: previousThread,
-                pendingLocal: pendingLocal
+                previous: currentThread,
+                pendingLocal: currentThread.filter(\.pendingSync)
             )
             if threads[storePeerID] != decoded { threads[storePeerID] = decoded }
 
@@ -1050,7 +1054,11 @@ final class MessagingController {
                let material = cryptoController?.material
             {
                 do {
-                    try await finishImageSend(
+                    // Re-key the Notes bubble to the server's id. `finishImageSend` can only
+                    // swap it in place under the API peer, and this photo lives under the
+                    // Notes sentinel — so without this the note keeps its client id and the
+                    // next reload shows the server copy *next to* it as a duplicate.
+                    let sent = try await finishImageSend(
                         optimisticID: optimisticID,
                         peerUserID: realMe,
                         me: realMe,
@@ -1059,36 +1067,31 @@ final class MessagingController {
                         encoded: encoded,
                         caption: trimmedCaption
                     )
-                    if var notes = threads[peerUserID],
-                       let idx = notes.firstIndex(where: { $0.id == optimisticID || $0.mediaObjectId != nil })
-                    {
-                        // Prefer keeping the Notes-thread bubble (server id may replace optimistic).
-                        if let updated = threads[realMe]?.last(where: { $0.kind == .image }) {
-                            notes.removeAll { $0.id == optimisticID }
-                            var mapped = updated
-                            mapped = ChatMessage(
-                                id: updated.id,
+                    if var notes = threads[peerUserID] {
+                        notes.removeAll { $0.id == optimisticID || $0.id == sent.id }
+                        notes.append(
+                            ChatMessage(
+                                id: sent.id,
                                 peerUserID: peerUserID,
                                 senderUserID: realMe,
-                                text: updated.text,
-                                createdAt: updated.createdAt,
+                                text: sent.text,
+                                createdAt: sent.createdAt,
                                 isMine: true,
                                 deleted: false,
                                 receipt: .sent,
                                 kind: .image,
-                                mediaObjectId: updated.mediaObjectId,
-                                imageWidth: updated.imageWidth,
-                                imageHeight: updated.imageHeight,
-                                imageData: updated.imageData ?? encoded.data
+                                mediaObjectId: sent.mediaObjectId,
+                                imageWidth: sent.imageWidth,
+                                imageHeight: sent.imageHeight,
+                                imageData: sent.imageData ?? encoded.data
                             )
-                            notes.append(mapped)
-                            threads[peerUserID] = notes
-                            threads[realMe] = nil
-                            persistThread(peerUserID)
-                        } else {
-                            notes[idx].pendingSync = false
-                            threads[peerUserID] = notes
-                        }
+                        )
+                        notes.sort { $0.createdAt < $1.createdAt }
+                        threads[peerUserID] = notes
+                        // finishImageSend may have parked a copy under the API peer; Notes owns
+                        // this bubble, so that thread must not linger as a second chat.
+                        threads[realMe] = nil
+                        persistThread(peerUserID)
                     }
                 } catch {
                     // Keep local-only photo.
@@ -1197,6 +1200,9 @@ final class MessagingController {
         }
     }
 
+    /// Returns the delivered message as the server keyed it, so callers whose bubble lives
+    /// under a different thread key (Notes) can re-key theirs instead of guessing.
+    @discardableResult
     private func finishImageSend(
         optimisticID: UUID,
         peerUserID: UUID,
@@ -1205,7 +1211,7 @@ final class MessagingController {
         token: String,
         encoded: EncodedImage,
         caption: String
-    ) async throws {
+    ) async throws -> ChatMessage {
         let (fileKey, sealedFile) = try MediaCrypto.sealFile(encoded.data)
         let upload = try await mediaService.createUpload(
             sizeBytes: sealedFile.count,
@@ -1241,6 +1247,9 @@ final class MessagingController {
         let dto = try await messagesService.send(
             SendMessageRequest(
                 peerUserId: peerUserID,
+                // Idempotency key. Without it the default is a fresh UUID per attempt, so a
+                // retried or raced flush inserts a *second* server row for the same photo.
+                clientMessageId: optimisticID,
                 contentType: "media",
                 ciphertext: sealed.base64EncodedString(),
                 mediaObjectId: upload.mediaObjectId
@@ -1278,6 +1287,7 @@ final class MessagingController {
         }
         persistSnapshot()
         await refreshConversations(force: true)
+        return sent
     }
 
     /// Records are done by the view; this encrypts, uploads, and sends a voice message.
@@ -1430,6 +1440,9 @@ final class MessagingController {
             let dto = try await messagesService.send(
                 SendMessageRequest(
                     peerUserId: peerUserID,
+                    // Same idempotency key as photos — a retried voice send must not become
+                    // a second message.
+                    clientMessageId: optimisticID,
                     contentType: "media",
                     ciphertext: sealed.base64EncodedString(),
                     mediaObjectId: upload.mediaObjectId
