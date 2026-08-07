@@ -2,7 +2,7 @@ import Foundation
 
 /// Parses free-form invite text (share code, username, UUID, or `/u/{code}` link).
 enum ContactInviteParser {
-    enum Invite: Equatable, Sendable {
+    nonisolated enum Invite: Equatable, Sendable {
         case userID(UUID)
         case shareCode(String)
         case username(String)

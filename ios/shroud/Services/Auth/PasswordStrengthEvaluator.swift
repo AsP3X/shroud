@@ -1,7 +1,7 @@
 import Foundation
 
 /// Discrete labels shown in the Sign Up strength badge.
-enum PasswordStrengthLevel: String, Equatable {
+nonisolated enum PasswordStrengthLevel: String, Equatable, Sendable {
     case empty = ""
     case weak = "Weak"
     case fair = "Fair"
@@ -10,7 +10,7 @@ enum PasswordStrengthLevel: String, Equatable {
 }
 
 /// Live password strength snapshot for the Sign Up identity card.
-struct PasswordStrengthEvaluation: Equatable {
+nonisolated struct PasswordStrengthEvaluation: Equatable, Sendable {
     let level: PasswordStrengthLevel
     /// Normalized fill amount for the strength track (`0`…`1`).
     let score: Double
@@ -23,7 +23,7 @@ struct PasswordStrengthEvaluation: Equatable {
 }
 
 /// Evaluates registration passwords against the Sign Up screen requirements.
-enum PasswordStrengthEvaluator {
+nonisolated enum PasswordStrengthEvaluator {
     private static let minimumLength = 12
 
     // Human: Scores passwords for the Sign Up meter using length and character-class checks only.

@@ -38,7 +38,7 @@ struct MediaDownloadResponse: Decodable, Equatable, Sendable {
 }
 
 /// Plaintext sealed inside the message ciphertext for `content_type = media`.
-struct MediaMessagePayload: Codable, Equatable, Sendable {
+nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
     /// `"image"` for photos, `"voice"` for voice messages.
     var t: String
     var mime: String

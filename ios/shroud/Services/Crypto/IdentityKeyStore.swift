@@ -5,7 +5,7 @@ import Security
 /// Persists identity private material in the Keychain (never the raw phrase).
 /// Human: Survives restarts so cold start can unlock without re-entering the phrase.
 /// Agent: READS/WRITES Keychain service com.shroud.identity; clears on logout only when requested.
-struct IdentityKeyStore: Sendable {
+nonisolated struct IdentityKeyStore: Sendable {
     private let service: String
 
     init(service: String = "com.shroud.identity") {

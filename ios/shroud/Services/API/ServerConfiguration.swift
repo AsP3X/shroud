@@ -111,7 +111,9 @@ nonisolated struct ServerConfiguration: Equatable, Codable, Sendable {
 
 /// Persists server configuration in UserDefaults (non-secret).
 nonisolated struct ServerConfigurationStore: Sendable {
-    private let defaults: UserDefaults
+    // nonisolated(unsafe): UserDefaults is not Sendable but is documented as thread-safe;
+    // the reference is set once at init and never reassigned.
+    nonisolated(unsafe) private let defaults: UserDefaults
     private let key = "shroud.server.configuration"
 
     init(defaults: UserDefaults = .standard) {

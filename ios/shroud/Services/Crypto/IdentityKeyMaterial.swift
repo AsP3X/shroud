@@ -5,7 +5,7 @@ import Security
 /// On-device identity material derived from the encryption phrase + device pre-keys.
 /// Human: Private keys never leave the device; only public bundle fields go to the API.
 /// Agent: Deterministic identity from BIP39 seed; random SPK/OTPK for upload.
-struct IdentityKeyMaterial: Sendable {
+nonisolated struct IdentityKeyMaterial: Sendable {
     let userID: UUID
     let registrationID: UInt32
     let agreementPrivateKey: Curve25519.KeyAgreement.PrivateKey
@@ -75,7 +75,7 @@ struct IdentityKeyMaterial: Sendable {
         let signing = try Curve25519.Signing.PrivateKey(rawRepresentation: signingSeed)
         let historyKey = SymmetricKey(data: historyRaw)
 
-        var regBytes = [UInt8](regRaw)
+        let regBytes = [UInt8](regRaw)
         let registrationID =
             (UInt32(regBytes[0]) << 24
                 | UInt32(regBytes[1]) << 16

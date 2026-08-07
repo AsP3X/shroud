@@ -13,9 +13,11 @@ struct ChatsView: View {
         _path = path
     }
 
-    /// Skeleton stands in only for the *first* load — a refresh over existing rows keeps the list.
+    /// Skeleton stands in only for the *first* load — a refresh over existing rows keeps the
+    /// list. Keyed on `hasLoadedChats` (not `isLoadingChats`) so the 3s poll can't flip an
+    /// empty list back to placeholders on every tick.
     private var showsSkeleton: Bool {
-        messaging.isLoadingChats && messaging.conversations.isEmpty && searchText.isEmpty
+        !messaging.hasLoadedChats && messaging.conversations.isEmpty && searchText.isEmpty
     }
 
     private var filtered: [ConversationItemDTO] {
@@ -108,7 +110,8 @@ struct ChatsView: View {
             }
         }
         .refreshable {
-            await messaging.refreshConversations()
+            // Explicit pull always fetches, even if a background poll is mid-flight.
+            await messaging.refreshConversations(force: true)
         }
         .task {
             await messaging.refreshConversations()

@@ -22,7 +22,7 @@ nonisolated struct AuthService: Sendable {
 
     /// Registers a new account and stores the session in Keychain.
     func register(username: String, password: String) async throws -> SessionStore.Session {
-        let deviceName = Self.currentDeviceName()
+        let deviceName = await Self.currentDeviceName()
         let body = RegisterRequest(
             username: username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
             password: password,
@@ -39,7 +39,7 @@ nonisolated struct AuthService: Sendable {
     /// Logs in and stores the session; reuses `device_id` when Keychain still has one.
     func login(username: String, password: String) async throws -> SessionStore.Session {
         let existing = sessionStore.load()
-        let deviceName = Self.currentDeviceName()
+        let deviceName = await Self.currentDeviceName()
         let body = LoginRequest(
             username: username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
             password: password,
@@ -96,6 +96,8 @@ nonisolated struct AuthService: Sendable {
         return updated
     }
 
+    /// UIDevice is main-actor state, so this hops rather than reading it off the caller's thread.
+    @MainActor
     private static func currentDeviceName() -> String {
         UIDevice.current.name
     }

@@ -14,7 +14,7 @@ import Foundation
 /// Agent: Seal/open; DR sessions in Keychain; self dual-seal on every v3 message.
 enum MessageCrypto {
     /// One sealed box (ephemeral ECDH → AES-GCM).
-    struct SealedBox: Codable, Equatable, Sendable {
+    nonisolated struct SealedBox: Codable, Equatable, Sendable {
         /// Ephemeral X25519 public key (standard Base64).
         var ek: String
         /// AES-GCM combined nonce+ciphertext (Base64).
@@ -22,7 +22,7 @@ enum MessageCrypto {
     }
 
     /// Wire envelope JSON (stored as server ciphertext Base64 outer layer).
-    struct SealedEnvelope: Codable, Equatable, Sendable {
+    nonisolated struct SealedEnvelope: Codable, Equatable, Sendable {
         /// 1 = peer-only (legacy); 2 = peer + self dual seal.
         var v: Int
         var ek: String?

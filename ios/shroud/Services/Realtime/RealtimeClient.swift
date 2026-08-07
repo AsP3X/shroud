@@ -105,12 +105,11 @@ final class RealtimeClient {
             return
         }
         task.send(.string(authPayload)) { [weak self] error in
+            guard let self, let error else { return }
             Task { @MainActor in
-                if let error {
-                    self?.state = .failed(error.localizedDescription)
-                    self?.disconnect(reconnect: true)
-                    self?.scheduleReconnect()
-                }
+                self.state = .failed(error.localizedDescription)
+                self.disconnect(reconnect: true)
+                self.scheduleReconnect()
             }
         }
 
@@ -121,7 +120,7 @@ final class RealtimeClient {
 
     /// Builds `ws(s)://…/api/v1/ws` from the REST base URL.
     nonisolated static func webSocketURL(from apiBase: URL) -> URL? {
-        var components = URLComponents(url: apiBase, resolvingAgainstBaseURL: false)
+        let components = URLComponents(url: apiBase, resolvingAgainstBaseURL: false)
         guard var comps = components else { return nil }
         switch comps.scheme?.lowercased() {
         case "https":

@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 
 /// Uploads and fetches public pre-key bundles (private keys stay in IdentityKeyStore).
-struct KeyBundleService: Sendable {
+nonisolated struct KeyBundleService: Sendable {
     private var client: APIClient {
         .makeConfiguredClient()
     }

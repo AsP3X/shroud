@@ -5,7 +5,7 @@ import Foundation
 /// BIP39 seed derivation and 12-word mnemonic validation.
 /// Human: Phrase → seed stays on-device; never logs or transmits the phrase.
 /// Agent: PBKDF2-HMAC-SHA512 (BIP39); validates wordlist + checksum.
-enum BIP39Seed {
+nonisolated enum BIP39Seed {
     static let seedLength = 64
     private static let iterations: UInt32 = 2048
     private static let saltPrefix = "mnemonic"
@@ -114,7 +114,7 @@ enum BIP39Seed {
     }
 }
 
-extension BIP39EnglishWordlist {
+nonisolated extension BIP39EnglishWordlist {
     private static let wordToIndex: [String: Int] = {
         var map: [String: Int] = [:]
         map.reserveCapacity(words.count)

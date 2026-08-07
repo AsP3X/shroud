@@ -1,7 +1,7 @@
 import Foundation
 
 /// Request body for `PUT /keys/bundle`.
-struct PutKeyBundleRequest: Encodable, Equatable, Sendable {
+nonisolated struct PutKeyBundleRequest: Encodable, Equatable, Sendable {
     let registrationId: Int
     let identityKey: String
     let signedPreKey: SignedPreKeyDTO
@@ -15,7 +15,7 @@ struct PutKeyBundleRequest: Encodable, Equatable, Sendable {
     }
 }
 
-struct SignedPreKeyDTO: Codable, Equatable, Sendable {
+nonisolated struct SignedPreKeyDTO: Codable, Equatable, Sendable {
     let keyId: Int
     let publicKey: String
     let signature: String
@@ -27,7 +27,7 @@ struct SignedPreKeyDTO: Codable, Equatable, Sendable {
     }
 }
 
-struct OneTimePreKeyDTO: Codable, Equatable, Sendable {
+nonisolated struct OneTimePreKeyDTO: Codable, Equatable, Sendable {
     let keyId: Int
     let publicKey: String
 
@@ -37,7 +37,7 @@ struct OneTimePreKeyDTO: Codable, Equatable, Sendable {
     }
 }
 
-struct KeysStatusResponse: Decodable, Equatable, Sendable {
+nonisolated struct KeysStatusResponse: Decodable, Equatable, Sendable {
     let deviceId: UUID
     let hasIdentity: Bool
     let signedPreKeyId: Int?
@@ -51,7 +51,7 @@ struct KeysStatusResponse: Decodable, Equatable, Sendable {
     }
 }
 
-struct PeerKeyBundleResponse: Decodable, Equatable, Sendable {
+nonisolated struct PeerKeyBundleResponse: Decodable, Equatable, Sendable {
     let userId: UUID
     let deviceId: UUID
     let registrationId: Int
@@ -70,7 +70,7 @@ struct PeerKeyBundleResponse: Decodable, Equatable, Sendable {
 }
 
 /// One device entry from `GET /keys/bundles/:user_id`.
-struct PeerDeviceBundle: Decodable, Equatable, Sendable {
+nonisolated struct PeerDeviceBundle: Decodable, Equatable, Sendable {
     let deviceId: UUID
     let registrationId: Int
     let identityKey: String
@@ -87,7 +87,7 @@ struct PeerDeviceBundle: Decodable, Equatable, Sendable {
 }
 
 /// Multi-device fan-out response from `GET /keys/bundles/:user_id`.
-struct PeerKeyBundlesResponse: Decodable, Equatable, Sendable {
+nonisolated struct PeerKeyBundlesResponse: Decodable, Equatable, Sendable {
     let userId: UUID
     let bundles: [PeerDeviceBundle]
 
@@ -98,7 +98,7 @@ struct PeerKeyBundlesResponse: Decodable, Equatable, Sendable {
 }
 
 /// Identity-only response from `GET /keys/identity/:user_id` (no OTPK consume).
-struct PeerIdentityResponse: Decodable, Equatable, Sendable {
+nonisolated struct PeerIdentityResponse: Decodable, Equatable, Sendable {
     let userId: UUID
     let deviceId: UUID
     let registrationId: Int

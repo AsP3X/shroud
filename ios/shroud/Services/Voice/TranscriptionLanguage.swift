@@ -7,7 +7,7 @@ import Foundation
 /// produces garbage. `automatic` probes plausible languages and scores them; the explicit
 /// override exists because auto-detection can only choose between installed models.
 /// Agent: READS/WRITES UserDefaults key `transcription.locale`; no other state.
-enum TranscriptionLanguage {
+nonisolated enum TranscriptionLanguage {
     private static let defaultsKey = "transcription.locale"
 
     /// Explicitly chosen language, or nil for automatic detection.

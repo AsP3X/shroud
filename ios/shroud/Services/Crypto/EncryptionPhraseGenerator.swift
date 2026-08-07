@@ -3,7 +3,7 @@ import Foundation
 import Security
 
 /// Generates a 12-word BIP39 encryption phrase using the platform CSPRNG.
-enum EncryptionPhraseGenerator {
+nonisolated enum EncryptionPhraseGenerator {
     static let wordCount = 12
 
     // Human: Creates the account recovery phrase shown during Sign Up.

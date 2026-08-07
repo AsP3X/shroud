@@ -41,12 +41,13 @@ final class CallKitManager: NSObject {
         start.isVideo = hasVideo
         let tx = CXTransaction(action: start)
         controller.request(tx) { [weak self] error in
+            guard let self else { return }
             Task { @MainActor in
                 if let error {
-                    self?.delegate?.callKit(didFail: error.localizedDescription)
+                    self.delegate?.callKit(didFail: error.localizedDescription)
                     return
                 }
-                self?.provider.reportOutgoingCall(with: uuid, startedConnectingAt: Date())
+                self.provider.reportOutgoingCall(with: uuid, startedConnectingAt: Date())
             }
         }
     }
@@ -67,10 +68,9 @@ final class CallKitManager: NSObject {
         update.hasVideo = hasVideo
         update.localizedCallerName = peerUsername
         provider.reportNewIncomingCall(with: uuid, update: update) { [weak self] error in
+            guard let self, let error else { return }
             Task { @MainActor in
-                if let error {
-                    self?.delegate?.callKit(didFail: error.localizedDescription)
-                }
+                self.delegate?.callKit(didFail: error.localizedDescription)
             }
         }
     }
@@ -142,7 +142,7 @@ extension CallKitManager: CXProviderDelegate {
         try? audioSession.setCategory(
             .playAndRecord,
             mode: .voiceChat,
-            options: [.allowBluetooth, .allowBluetoothA2DP, .defaultToSpeaker]
+            options: [.allowBluetoothHFP, .allowBluetoothA2DP, .defaultToSpeaker]
         )
         try? audioSession.setActive(true)
     }

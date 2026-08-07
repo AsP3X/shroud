@@ -16,9 +16,11 @@ struct ContactsView: View {
         _path = path
     }
 
-    /// Skeleton stands in only for the *first* load — a refresh over existing rows keeps the list.
+    /// Skeleton stands in only for the *first* load — a refresh over existing rows keeps the
+    /// list. Keyed on `hasLoadedContacts` (not `isLoadingContacts`) so the contacts poll
+    /// can't flip an empty list back to placeholders on every tick.
     private var showsSkeleton: Bool {
-        messaging.isLoadingContacts && messaging.contacts.isEmpty && searchText.isEmpty
+        !messaging.hasLoadedContacts && messaging.contacts.isEmpty && searchText.isEmpty
     }
 
     private var filtered: [ContactItemDTO] {

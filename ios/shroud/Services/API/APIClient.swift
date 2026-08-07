@@ -232,9 +232,7 @@ nonisolated final class APIClient: Sendable {
 
 extension JSONDecoder {
     /// Shared API decoder (ISO-8601 dates with fractional seconds when present).
-    // nonisolated(unsafe): JSONDecoder is not Sendable; APIClient is nonisolated and only
-    // mutates decoder configuration at init time (never after first use).
-    nonisolated(unsafe) static let api: JSONDecoder = {
+    nonisolated static let api: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
@@ -254,8 +252,7 @@ extension JSONDecoder {
 }
 
 extension JSONEncoder {
-    // nonisolated(unsafe): JSONEncoder is not Sendable; configuration is set once at init.
-    nonisolated(unsafe) static let api: JSONEncoder = {
+    nonisolated static let api: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         return encoder

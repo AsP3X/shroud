@@ -10,7 +10,9 @@ enum Theme {
     static let bubbleIncoming = Color("BubbleIncoming")
     static let textPrimary = Color("TextPrimary")
     static let textSecondary = Color("TextSecondary")
-    static let separator = Color("Separator")
+    // Asset is "SeparatorLine": a "Separator" asset generates a symbol that collides with
+    // UIKit's own `UIColor.separator`.
+    static let separator = Color("SeparatorLine")
     static let online = Color("Online")
     static let danger = Color("Danger")
 

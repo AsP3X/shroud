@@ -161,6 +161,14 @@ struct MessageBubbleView: View {
         }
     }
 
+    /// The message body, styled for inline composition with `metaSpacerText`.
+    private var bodyText: Text {
+        Text(displayText)
+            .font(messageFont)
+            .italic(isDeleted)
+            .foregroundStyle(textColor)
+    }
+
     /// Invisible trailing reservation so the last text line leaves room for time + ticks.
     private var metaSpacerText: Text {
         // Match meta font metrics so reservation width ≈ real meta.
@@ -234,8 +242,7 @@ struct MessageBubbleView: View {
     private var wrappingBubble: some View {
         ZStack(alignment: .bottomTrailing) {
             // Text + clear spacer on the last line reserves space for meta.
-            (Text(displayText).font(messageFont).italic(isDeleted).foregroundStyle(textColor)
-                + metaSpacerText)
+            Text("\(bodyText)\(metaSpacerText)")
                 .multilineTextAlignment(.leading)
                 .lineSpacing(1)
                 .fixedSize(horizontal: false, vertical: true)

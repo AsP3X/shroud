@@ -11,6 +11,11 @@ final class MessagingController {
     private(set) var conversations: [ConversationItemDTO] = []
     private(set) var isLoadingContacts = false
     private(set) var isLoadingChats = false
+    /// Flips once per sign-in, when the first load *settles* (success or failure). Drives the
+    /// skeleton so a background poll can never swap loaded rows back out for placeholders,
+    /// and so a failing server shows the empty state instead of shimmering forever.
+    private(set) var hasLoadedContacts = false
+    private(set) var hasLoadedChats = false
     private(set) var lastError: String?
 
     /// Decrypted messages by peer user id (newest last).
@@ -34,6 +39,14 @@ final class MessagingController {
     private var pollTask: Task<Void, Never>?
     /// Separate poll so contact invites still appear if WS is down.
     private var contactsPollTask: Task<Void, Never>?
+    /// Coalesce overlapping refreshes — polling, WS events, and `.task` all fan into these.
+    private var contactsRefreshTask: Task<Void, Never>?
+    private var conversationsRefreshTask: Task<Void, Never>?
+    /// One in-flight thread load per peer.
+    private var threadLoadTasks: [UUID: Task<Void, Never>] = [:]
+    /// Presence is swept in bulk at most this often; live changes arrive over WS anyway.
+    private var lastPresenceSweep: Date?
+    private let presenceSweepInterval: TimeInterval = 30
     /// Optional call controller for WS call.* fan-in (bound from RootView).
     private weak var callController: CallController?
 
@@ -145,6 +158,15 @@ final class MessagingController {
         contactsPollTask = nil
         realtime.disconnect(reconnect: false)
         activePeerID = nil
+        // Drop (don't cancel) in-flight refreshes: without a token they no-op anyway, and
+        // cancelling would surface a spurious network error on sign-out.
+        contactsRefreshTask = nil
+        conversationsRefreshTask = nil
+        threadLoadTasks.removeAll()
+        // Next sign-in is a genuine first load again, so the skeleton is allowed back.
+        hasLoadedContacts = false
+        hasLoadedChats = false
+        lastPresenceSweep = nil
     }
 
     /// Call when the app returns to the foreground.
@@ -161,8 +183,8 @@ final class MessagingController {
     }
 
     func setActivePeer(_ peerID: UUID?) {
-        activePeerID = peerID
-        if let peerID {
+        if activePeerID != peerID { activePeerID = peerID }
+        if let peerID, unreadCountByPeer[peerID] != 0 {
             unreadCountByPeer[peerID] = 0
         }
     }
@@ -198,10 +220,15 @@ final class MessagingController {
     private func startContactsPolling() {
         contactsPollTask?.cancel()
         contactsPollTask = Task { [weak self] in
+            var tick = 0
             while !Task.isCancelled {
                 // 5s when offline/slow path; still light enough for multi-device invites.
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
                 guard let self, !Task.isCancelled else { return }
+                tick += 1
+                // While realtime is healthy, `contact.*` events already push invites through —
+                // polling on top of that only churns the list, so keep a 30s safety net.
+                guard !self.realtime.isConnected || tick % 6 == 0 else { continue }
                 await self.refreshContacts()
             }
         }
@@ -213,22 +240,70 @@ final class MessagingController {
 
     // MARK: - Contacts
 
-    func refreshContacts() async {
+    /// Reloads contacts + pending invites.
+    ///
+    /// Overlapping callers (poll, WS `contact.*`, view `.task`) share one fetch instead of
+    /// each starting their own. Pass `force` after mutating server state — it waits out the
+    /// in-flight fetch and then runs a fresh one, so the caller sees its own write.
+    func refreshContacts(force: Bool = false) async {
+        if let existing = contactsRefreshTask {
+            await existing.value
+            if !force { return }
+        }
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.performContactsRefresh()
+        }
+        contactsRefreshTask = task
+        await task.value
+        if contactsRefreshTask == task { contactsRefreshTask = nil }
+    }
+
+    /// Every write below is guarded by an equality check: with `@Observable`, assigning an
+    /// identical value still invalidates every view that reads it, and a poll that returns
+    /// unchanged data would otherwise redraw the list a few times a second.
+    private func performContactsRefresh() async {
         guard let token = sessionController?.bearerToken else { return }
-        isLoadingContacts = true
-        defer { isLoadingContacts = false }
+        // Loading chrome belongs to the first load only; polls refresh in place.
+        let showsLoading = !hasLoadedContacts
+        if showsLoading { isLoadingContacts = true }
+        defer {
+            if showsLoading { isLoadingContacts = false }
+            if !hasLoadedContacts { hasLoadedContacts = true }
+        }
         do {
-            async let list = contactsService.listContacts(token: token)
-            async let requests = contactsService.listIncomingRequests(token: token)
-            contacts = try await list.sorted {
+            async let listTask = contactsService.listContacts(token: token)
+            async let requestsTask = contactsService.listIncomingRequests(token: token)
+            // Await both before publishing so a half-failed refresh never lands.
+            let sorted = try await listTask.sorted {
                 $0.username.localizedCaseInsensitiveCompare($1.username) == .orderedAscending
             }
-            incomingRequests = try await requests
-            await refreshPresence(for: contacts.map(\.userId), token: token)
-            lastError = nil
+            let requests = try await requestsTask
+            let rosterChanged = contacts.map(\.userId) != sorted.map(\.userId)
+            if contacts != sorted { contacts = sorted }
+            if incomingRequests != requests { incomingRequests = requests }
+            if lastError != nil { lastError = nil }
+            // Rows are publishable now — don't hold the skeleton up for the presence fan-out.
+            if !hasLoadedContacts { hasLoadedContacts = true }
+            // A new contact needs presence right away; otherwise stay on the slow sweep.
+            await sweepPresenceIfNeeded(token: token, force: rosterChanged)
         } catch {
-            lastError = SessionController.userMessage(for: error)
+            let message = SessionController.userMessage(for: error)
+            if lastError != message { lastError = message }
         }
+    }
+
+    /// Bulk presence sweep, rate-limited to `presenceSweepInterval`.
+    /// Between sweeps, `presence.update` events keep the rows current.
+    private func sweepPresenceIfNeeded(token: String, force: Bool = false) async {
+        if !force,
+           let last = lastPresenceSweep,
+           Date().timeIntervalSince(last) < presenceSweepInterval
+        {
+            return
+        }
+        lastPresenceSweep = Date()
+        await refreshPresence(for: contacts.map(\.userId), token: token)
     }
 
     /// Fetches presence for many users (contacts list). Failures are skipped per user.
@@ -252,9 +327,13 @@ final class MessagingController {
                 }
             }
         }
+        // One assignment for the whole sweep — writing per user re-rendered the contacts
+        // list once per contact, which is what made it strobe.
+        var merged = presenceByUser
         for (userID, presence) in updates {
-            presenceByUser[userID] = presence
+            merged[userID] = presence
         }
+        if merged != presenceByUser { presenceByUser = merged }
     }
 
     /// Resolves share code, username, UUID, or invite link and sends a contact request.
@@ -280,7 +359,7 @@ final class MessagingController {
                 return "You can't add yourself."
             }
             _ = try await contactsService.createRequest(userID: card.id, token: token)
-            await refreshContacts()
+            await refreshContacts(force: true)
             return nil
         } catch {
             return SessionController.userMessage(for: error)
@@ -296,7 +375,7 @@ final class MessagingController {
         guard let token = sessionController?.bearerToken else { return }
         do {
             try await contactsService.acceptRequest(id: request.id, token: token)
-            await refreshContacts()
+            await refreshContacts(force: true)
         } catch {
             lastError = SessionController.userMessage(for: error)
         }
@@ -306,7 +385,7 @@ final class MessagingController {
         guard let token = sessionController?.bearerToken else { return }
         do {
             try await contactsService.rejectRequest(id: request.id, token: token)
-            await refreshContacts()
+            await refreshContacts(force: true)
         } catch {
             lastError = SessionController.userMessage(for: error)
         }
@@ -314,26 +393,72 @@ final class MessagingController {
 
     // MARK: - Chats
 
-    func refreshConversations() async {
+    /// See `refreshContacts(force:)` — same coalescing contract.
+    func refreshConversations(force: Bool = false) async {
+        if let existing = conversationsRefreshTask {
+            await existing.value
+            if !force { return }
+        }
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.performConversationsRefresh()
+        }
+        conversationsRefreshTask = task
+        await task.value
+        if conversationsRefreshTask == task { conversationsRefreshTask = nil }
+    }
+
+    private func performConversationsRefresh() async {
         guard let token = sessionController?.bearerToken else { return }
-        isLoadingChats = true
-        defer { isLoadingChats = false }
+        let showsLoading = !hasLoadedChats
+        if showsLoading { isLoadingChats = true }
+        defer {
+            if showsLoading { isLoadingChats = false }
+            if !hasLoadedChats { hasLoadedChats = true }
+        }
         do {
-            conversations = try await messagesService.listConversations(token: token)
-            lastError = nil
+            let list = try await messagesService.listConversations(token: token)
+            // Same-value writes still invalidate observers — only publish real changes.
+            if conversations != list { conversations = list }
+            if lastError != nil { lastError = nil }
         } catch {
-            lastError = SessionController.userMessage(for: error)
+            let message = SessionController.userMessage(for: error)
+            if lastError != message { lastError = message }
         }
     }
 
+    /// Loads (and decrypts) a peer's thread.
+    ///
+    /// The 3s poll, WS `message.new`, and the chat view's `.task` all land here. They share a
+    /// single in-flight load per peer — duplicate fetches decrypt the same page twice and
+    /// rewrite `threads`, which redraws every bubble. Callers still await real data.
     func loadThread(peerUserID: UUID) async {
+        guard sessionController?.bearerToken != nil,
+              sessionController?.userID != nil,
+              cryptoController?.material != nil
+        else { return }
+
+        if activePeerID != peerUserID { activePeerID = peerUserID }
+        if unreadCountByPeer[peerUserID] != 0 { unreadCountByPeer[peerUserID] = 0 }
+
+        if let existing = threadLoadTasks[peerUserID] {
+            await existing.value
+            return
+        }
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.performThreadLoad(peerUserID: peerUserID)
+        }
+        threadLoadTasks[peerUserID] = task
+        await task.value
+        if threadLoadTasks[peerUserID] == task { threadLoadTasks[peerUserID] = nil }
+    }
+
+    private func performThreadLoad(peerUserID: UUID) async {
         guard let token = sessionController?.bearerToken,
               let me = sessionController?.userID,
               let material = cryptoController?.material
         else { return }
-
-        activePeerID = peerUserID
-        unreadCountByPeer[peerUserID] = 0
 
         do {
             let response = try await messagesService.listMessages(peerUserID: peerUserID, token: token)
@@ -346,22 +471,25 @@ final class MessagingController {
                     try? await messagesService.markDelivered(messageID: dto.id, token: token)
                 }
             }
-            threads[peerUserID] = decoded
+            if threads[peerUserID] != decoded { threads[peerUserID] = decoded }
             // Mark all inbound up to the latest so the peer gets read receipts.
             if let lastFromPeer = decoded.last(where: { !$0.isMine }) {
-                try? await messagesService.markReadBulk(
+                _ = try? await messagesService.markReadBulk(
                     peerUserID: peerUserID,
                     upToMessageID: lastFromPeer.id,
                     token: token
                 )
             }
             // Presence for header.
-            if let presence = try? await contactsService.presence(userID: peerUserID, token: token) {
+            if let presence = try? await contactsService.presence(userID: peerUserID, token: token),
+               presenceByUser[peerUserID] != presence
+            {
                 presenceByUser[peerUserID] = presence
             }
-            lastError = nil
+            if lastError != nil { lastError = nil }
         } catch {
-            lastError = SessionController.userMessage(for: error)
+            let message = SessionController.userMessage(for: error)
+            if lastError != message { lastError = message }
         }
     }
 
@@ -432,7 +560,7 @@ final class MessagingController {
                     threads[peerUserID] = list
                 }
             }
-            await refreshConversations()
+            await refreshConversations(force: true)
             lastError = nil
         } catch {
             if var list = threads[peerUserID] {
@@ -637,7 +765,7 @@ final class MessagingController {
             thread[idx] = sent
             threads[peerUserID] = thread
         }
-        await refreshConversations()
+        await refreshConversations(force: true)
     }
 
     /// Records are done by the view; this encrypts, uploads, and sends a voice message.
@@ -755,7 +883,7 @@ final class MessagingController {
                 thread[idx] = sent
                 threads[peerUserID] = thread
             }
-            await refreshConversations()
+            await refreshConversations(force: true)
             lastError = nil
             return nil
         } catch {
@@ -1061,8 +1189,8 @@ final class MessagingController {
               let isTyping = json["is_typing"] as? Bool
         else { return }
         if isTyping {
-            typingPeerIDs.insert(userID)
-        } else {
+            if !typingPeerIDs.contains(userID) { typingPeerIDs.insert(userID) }
+        } else if typingPeerIDs.contains(userID) {
             typingPeerIDs.remove(userID)
         }
     }
@@ -1076,7 +1204,8 @@ final class MessagingController {
         if let last = json["last_seen_at"] as? String {
             lastSeen = ISO8601DateFormatter.apiFlexible.date(from: last)
         }
-        presenceByUser[userID] = PresenceDTO(userId: userID, online: online, lastSeenAt: lastSeen)
+        let presence = PresenceDTO(userId: userID, online: online, lastSeenAt: lastSeen)
+        if presenceByUser[userID] != presence { presenceByUser[userID] = presence }
     }
 
     private func ingestIncoming(_ dto: MessageDTO) async {
@@ -1118,7 +1247,7 @@ final class MessagingController {
                 unreadCountByPeer[threadPeer, default: 0] += 1
             }
             if !chat.isMine, activePeerID == threadPeer {
-                try? await messagesService.markReadBulk(
+                _ = try? await messagesService.markReadBulk(
                     peerUserID: threadPeer,
                     upToMessageID: chat.id,
                     token: token
@@ -1366,8 +1495,8 @@ final class MessagingController {
         }
 
         var imageData = cached
-        var width = payload?.w
-        var height = payload?.h
+        let width = payload?.w
+        let height = payload?.h
 
         // Best-effort download when we have a payload key (don't block the thread forever).
         if imageData == nil,
