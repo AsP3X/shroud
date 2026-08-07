@@ -236,7 +236,8 @@ enum MessageDecoder {
     /// Builds a media bubble from plaintext payload + **local** cache only.
     ///
     /// Network download is intentionally skipped here so history paging stays fast.
-    /// `MessagingController.ensureImageLoaded` / `ensureVoiceLoaded` fill bytes when a row appears.
+    /// `MessagingController.ensureImageLoaded` / `ensureVoiceLoaded` / `ensureVideoLoaded`
+    /// fill bytes when a row appears.
     private static func decodeMedia(
         dto: MessageDTO,
         plain: Data,

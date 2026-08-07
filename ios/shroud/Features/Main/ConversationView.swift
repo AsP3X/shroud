@@ -1420,11 +1420,13 @@ struct ConversationView: View {
 
     private func openVideoPlayer(for message: MessagingController.ChatMessage) {
         Task {
+            // Re-fetch the live bubble — hydrate mutates `threads` in place.
             await messaging.ensureVideoLoaded(for: message)
-            let data = messaging.threads[peerUserID]?.first(where: { $0.id == message.id })?.videoData
-                ?? message.videoData
-            guard let data else {
+            let live = messaging.threads[peerUserID]?.first(where: { $0.id == message.id })
+            let data = live?.videoData ?? message.videoData
+            guard let data, !data.isEmpty else {
                 toast = "Could not load that video."
+                Haptics.notification(.error)
                 scheduleToastClear()
                 return
             }

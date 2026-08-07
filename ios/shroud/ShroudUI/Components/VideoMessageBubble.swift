@@ -12,6 +12,7 @@ struct VideoMessageBubble: View {
     var frameReportID: UUID? = nil
 
     @Environment(\.chatRowWidth) private var chatRowWidth
+    /// Regenerated when poster JPEG / video bytes land after hydrate.
     @State private var poster: UIImage?
 
     private var isMine: Bool { message.isMine }
@@ -22,7 +23,7 @@ struct VideoMessageBubble: View {
 
     private var hasCaption: Bool {
         let t = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !t.isEmpty && t != "Video"
+        return !t.isEmpty && t != "Video" && t != "Media"
     }
 
     private var caption: String {
@@ -35,6 +36,11 @@ struct VideoMessageBubble: View {
         let m = total / 60
         let s = total % 60
         return String(format: "%d:%02d", m, s)
+    }
+
+    /// Drives re-load of the poster after download/decrypt.
+    private var mediaEpoch: String {
+        "\(message.id.uuidString)-\(message.videoData?.count ?? 0)-\(message.imageData?.count ?? 0)"
     }
 
     private var corners: UnevenRoundedRectangle {
@@ -75,6 +81,13 @@ struct VideoMessageBubble: View {
         return CGSize(width: maxW, height: size.height)
     }
 
+    /// Prefer live poster state, then message poster JPEG, then decode cache.
+    private var displayedPoster: UIImage? {
+        if let poster { return poster }
+        if let data = message.imageData, let ui = UIImage(data: data) { return ui }
+        return DecodedImageCache.image(for: message.id)
+    }
+
     var body: some View {
         Group {
             if isRowEmbedded {
@@ -88,9 +101,13 @@ struct VideoMessageBubble: View {
                 bubbleCore
             }
         }
+        // Hydrate as soon as the row appears (don't wait on poster generation).
         .task(id: message.id) {
-            await loadPoster()
             onAppearLoad?()
+        }
+        // Re-run when video/poster bytes arrive after download.
+        .task(id: mediaEpoch) {
+            await loadPoster()
         }
     }
 
@@ -101,8 +118,8 @@ struct VideoMessageBubble: View {
                     Group {
                         if message.deleted {
                             deletedPlaceholder
-                        } else if let poster {
-                            Image(uiImage: poster)
+                        } else if let ui = displayedPoster {
+                            Image(uiImage: ui)
                                 .resizable()
                                 .scaledToFill()
                                 .frame(width: displaySize.width, height: displaySize.height)
@@ -114,6 +131,7 @@ struct VideoMessageBubble: View {
                                 .transition(.opacity)
                         }
                     }
+                    .animation(Motion.fade, value: displayedPoster == nil)
 
                     if !message.deleted, !isFailed {
                         playBadge
@@ -362,15 +380,19 @@ struct VideoMessageBubble: View {
     }
 
     private func loadPoster() async {
-        if let data = message.imageData, let ui = UIImage(data: data) {
-            poster = ui
-            return
-        }
         if let cached = DecodedImageCache.image(for: message.id) {
             poster = cached
             return
         }
-        guard let video = message.videoData else { return }
+        if let data = message.imageData, let ui = UIImage(data: data) {
+            DecodedImageCache.store(message.id, image: ui)
+            poster = ui
+            return
+        }
+        guard let video = message.videoData else {
+            poster = nil
+            return
+        }
         if let jpeg = await VideoMedia.thumbnailJPEG(from: video),
            let ui = UIImage(data: jpeg)
         {

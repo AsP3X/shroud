@@ -49,26 +49,26 @@ nonisolated enum VideoMedia {
 
         let thumbnail = await thumbnailJPEG(from: asset, maxEdge: 720)
 
-        // Small enough already and already an MP4/MOV we can ship — prefer the original file.
-        if let attrs = try? FileManager.default.attributesOfItem(atPath: sourceURL.path),
+        // Only pass through real MP4 under the size cap. Never ship raw .mov / HEVC camera
+        // containers — recipients write a temp `.mp4` for playback and those formats fail to open.
+        if sourceURL.pathExtension.lowercased() == "mp4" || sourceURL.pathExtension.lowercased() == "m4v",
+           let attrs = try? FileManager.default.attributesOfItem(atPath: sourceURL.path),
            let size = attrs[.size] as? NSNumber,
            size.intValue > 0,
            size.intValue <= maxPlaintextBytes,
-           let data = try? Data(contentsOf: sourceURL, options: [.mappedIfSafe]),
-           Self.isShipableContainer(url: sourceURL)
+           let data = try? Data(contentsOf: sourceURL, options: [.mappedIfSafe])
         {
-            let mime = Self.mimeType(for: sourceURL) ?? "video/mp4"
             return EncodedVideo(
                 data: data,
                 width: width,
                 height: height,
                 durationMs: durationMs,
-                mime: mime,
+                mime: "video/mp4",
                 thumbnailJPEG: thumbnail
             )
         }
 
-        // Progressive quality until under the cap.
+        // Progressive quality until under the cap (always H.264/AAC MP4).
         let presets: [String] = [
             AVAssetExportPreset1280x720,
             AVAssetExportPreset960x540,

@@ -24,15 +24,29 @@ enum ThreadMessageMerge {
             }
             if kept.imageData == nil { kept.imageData = decoded.imageData }
             if kept.voiceData == nil { kept.voiceData = decoded.voiceData }
+            if kept.videoData == nil { kept.videoData = decoded.videoData }
             if kept.mediaObjectId == nil { kept.mediaObjectId = decoded.mediaObjectId }
             if kept.transcript == nil { kept.transcript = decoded.transcript }
+            // Prefer a more specific media kind once we know it (e.g. "Media" → video).
+            if kept.kind != decoded.kind, !decodedFailed {
+                if decoded.kind == .video || decoded.kind == .image || decoded.kind == .voice {
+                    kept.kind = decoded.kind
+                }
+            }
             return kept
         }
 
         var merged = decoded
         if merged.imageData == nil { merged.imageData = prior.imageData }
         if merged.voiceData == nil { merged.voiceData = prior.voiceData }
+        if merged.videoData == nil { merged.videoData = prior.videoData }
         if merged.transcript == nil { merged.transcript = prior.transcript }
+        // Don't clobber a hydrated video with a decode that still lacks bytes.
+        if prior.kind == .video, merged.kind != .video, prior.videoData != nil || prior.mediaObjectId != nil {
+            merged.kind = .video
+            if merged.videoData == nil { merged.videoData = prior.videoData }
+            if merged.voiceDurationMs == nil { merged.voiceDurationMs = prior.voiceDurationMs }
+        }
         if !priorFailed, decodedFailed {
             return prior
         }

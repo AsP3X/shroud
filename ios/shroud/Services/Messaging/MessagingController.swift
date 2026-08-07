@@ -1002,7 +1002,7 @@ final class MessagingController {
             isMine: old.isMine,
             deleted: true,
             receipt: old.receipt,
-            kind: old.kind == .image ? .image : .text
+            kind: (old.kind == .image || old.kind == .video || old.kind == .voice) ? old.kind : .text
         )
         threads[peerUserID] = list
         local.removeCaches(messageIDs: [messageID])
@@ -1526,22 +1526,30 @@ final class MessagingController {
             guard let payloadData = try await mediaPayloadData(for: message, token: token, material: material),
                   let payload = try? JSONDecoder().decode(MediaMessagePayload.self, from: payloadData),
                   let keyData = Data(base64Encoded: payload.k)
-            else { return }
+            else {
+                // Payload missing (e.g. race before first decrypt finished) — retry once via history.
+                return
+            }
 
             let sealedFile = try await mediaService.downloadContent(mediaID: mediaID, token: token)
             let video = try MediaCrypto.openFile(sealed: sealedFile, keyData: keyData)
             local.saveSealedMedia(messageID: message.id, data: video)
+
+            // Poster frame for the bubble (image path uses jpeg bytes; video needs a still).
+            let poster = await VideoMedia.thumbnailJPEG(from: video)
+
             updateMessageVideo(
                 messageID: message.id,
                 peerID: message.peerUserID,
                 data: video,
                 durationMs: payload.d,
-                width: payload.w,
-                height: payload.h,
-                caption: payload.c
+                width: payload.w > 0 ? payload.w : nil,
+                height: payload.h > 0 ? payload.h : nil,
+                caption: payload.c,
+                posterJPEG: poster
             )
         } catch {
-            // Leave placeholder; reopen thread to retry.
+            // Leave placeholder; reopen thread / tap to retry.
         }
     }
 
@@ -1552,58 +1560,63 @@ final class MessagingController {
         durationMs: Int? = nil,
         width: Int? = nil,
         height: Int? = nil,
-        caption: String? = nil
+        caption: String? = nil,
+        posterJPEG: Data? = nil
     ) {
-        guard var thread = threads[peerID],
+        // Prefer the thread key that actually holds this id (ingest can race with peer remap).
+        let resolvedPeer: UUID
+        if threads[peerID]?.contains(where: { $0.id == messageID }) == true {
+            resolvedPeer = peerID
+        } else {
+            resolvedPeer = self.peerID(forMessage: messageID) ?? peerID
+        }
+
+        guard var thread = threads[resolvedPeer],
               let idx = thread.firstIndex(where: { $0.id == messageID })
         else { return }
-        thread[idx].videoData = data
-        if let durationMs { thread[idx].voiceDurationMs = durationMs }
-        if let width, width > 0 { thread[idx].imageWidth = width }
-        if let height, height > 0 { thread[idx].imageHeight = height }
+
+        var updated = thread[idx]
+        updated.videoData = data
+        updated.kind = ChatMessageKind.video
+        if let durationMs { updated.voiceDurationMs = durationMs }
+        if let width, width > 0 { updated.imageWidth = width }
+        if let height, height > 0 { updated.imageHeight = height }
+        if let posterJPEG, updated.imageData == nil {
+            updated.imageData = posterJPEG
+            if let ui = UIImage(data: posterJPEG) {
+                DecodedImageCache.store(messageID, image: ui)
+            }
+        }
+
         // Caption is normally set at decode; only fill if still the generic placeholder.
         if let caption {
             let trimmed = caption.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty, thread[idx].text == "Video" || thread[idx].text == "Media" {
-                let m = thread[idx]
-                thread[idx] = ChatMessage(
-                    id: m.id,
-                    peerUserID: m.peerUserID,
-                    senderUserID: m.senderUserID,
+            if !trimmed.isEmpty, updated.text == "Video" || updated.text == "Media" {
+                updated = ChatMessage(
+                    id: updated.id,
+                    peerUserID: updated.peerUserID,
+                    senderUserID: updated.senderUserID,
                     text: trimmed,
-                    createdAt: m.createdAt,
-                    isMine: m.isMine,
-                    deleted: m.deleted,
-                    receipt: m.receipt,
+                    createdAt: updated.createdAt,
+                    isMine: updated.isMine,
+                    deleted: updated.deleted,
+                    receipt: updated.receipt,
                     kind: .video,
-                    mediaObjectId: m.mediaObjectId,
-                    imageWidth: m.imageWidth,
-                    imageHeight: m.imageHeight,
-                    imageData: m.imageData,
-                    voiceData: m.voiceData,
+                    mediaObjectId: updated.mediaObjectId,
+                    imageWidth: updated.imageWidth,
+                    imageHeight: updated.imageHeight,
+                    imageData: updated.imageData,
+                    voiceData: updated.voiceData,
                     videoData: data,
-                    voiceDurationMs: m.voiceDurationMs,
-                    sendError: m.sendError,
-                    pendingSync: m.pendingSync
+                    voiceDurationMs: updated.voiceDurationMs,
+                    sendError: updated.sendError,
+                    pendingSync: updated.pendingSync
                 )
             }
         }
-        threads[peerID] = thread
 
-        // Thumbnail for the bubble when we only have video bytes.
-        if thread[idx].imageData == nil {
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                if let jpeg = await VideoMedia.thumbnailJPEG(from: data),
-                   var t = self.threads[peerID],
-                   let i = t.firstIndex(where: { $0.id == messageID }),
-                   t[i].imageData == nil
-                {
-                    t[i].imageData = jpeg
-                    self.threads[peerID] = t
-                }
-            }
-        }
+        thread[idx] = updated
+        threads[resolvedPeer] = thread
     }
 
     /// Retries a failed outbound photo that still has local image data.
@@ -2108,7 +2121,8 @@ final class MessagingController {
         }
     }
 
-    /// Resolves the sealed media payload JSON (contains AES file key). Never re-opens as recipient.
+    /// Resolves the sealed media payload JSON (contains AES file key). Never re-opens as recipient
+    /// (that would desync Double Ratchet). Inbound must have been cached on first decrypt.
     private func mediaPayloadData(
         for message: ChatMessage,
         token: String,
@@ -2117,27 +2131,67 @@ final class MessagingController {
         if let cached = local.sealedPlaintext(for: message.id), MessageDecoder.isMediaPayloadData(cached) {
             return cached
         }
-        guard message.isMine else {
-            // Inbound: payload must already be cached from the first DR open in decodeMessage.
+        // Cached text might be the display label if something wrote the wrong blob — ignore it.
+        if message.isMine {
+            let response = try await messagesService.listMessages(
+                peerUserID: message.peerUserID,
+                token: token,
+                limit: 50
+            )
+            guard let dto = response.messages.first(where: { $0.id == message.id }),
+                  let ciphertextB64 = dto.ciphertext,
+                  let envelopeData = Data(base64Encoded: ciphertextB64)
+            else { return nil }
+            let payloadData = try MessageCrypto.open(
+                envelopeData: envelopeData,
+                peerUserID: message.peerUserID,
+                with: material.agreementPrivateKey,
+                ourIdentityPublicKey: material.identityPublicKeyData,
+                senderIdentityPublicKey: material.identityPublicKeyData,
+                as: .sender
+            )
+            if MessageDecoder.isMediaPayloadData(payloadData) {
+                local.saveSealedPlaintext(messageID: message.id, data: payloadData)
+                return payloadData
+            }
             return nil
         }
+
+        // Inbound recovery: if the thread was reloaded before the first open saved the payload,
+        // re-decode this single DTO (open as recipient once) so hydrate can finish.
         let response = try await messagesService.listMessages(
             peerUserID: message.peerUserID,
             token: token,
-            limit: 50
+            limit: 80
         )
         guard let dto = response.messages.first(where: { $0.id == message.id }),
               let ciphertextB64 = dto.ciphertext,
               let envelopeData = Data(base64Encoded: ciphertextB64)
         else { return nil }
+
+        // Prefer already-cached open from a concurrent decode of the same message.
+        if let cached = local.sealedPlaintext(for: message.id), MessageDecoder.isMediaPayloadData(cached) {
+            return cached
+        }
+
+        let senderPub = try await resolvePeerIdentityPublicKey(
+            peerUserID: dto.senderUserId,
+            token: token
+        )
+        // Only open if we have no sealed plaintext at all — otherwise a bad non-JSON blob
+        // would burn a second open. Skip if *any* sealed bytes exist.
+        if local.sealedPlaintext(for: message.id) != nil {
+            return nil
+        }
         let payloadData = try MessageCrypto.open(
             envelopeData: envelopeData,
-            peerUserID: message.peerUserID,
+            peerUserID: dto.senderUserId,
             with: material.agreementPrivateKey,
             ourIdentityPublicKey: material.identityPublicKeyData,
-            senderIdentityPublicKey: material.identityPublicKeyData,
-            as: .sender
+            senderIdentityPublicKey: senderPub,
+            as: .recipient
         )
+        guard MessageDecoder.isMediaPayloadData(payloadData) else { return nil }
         local.saveSealedPlaintext(messageID: message.id, data: payloadData)
         return payloadData
     }
@@ -2419,6 +2473,7 @@ final class MessagingController {
                 imageHeight: message.imageHeight,
                 imageData: message.imageData,
                 voiceData: message.voiceData,
+                videoData: message.videoData,
                 voiceDurationMs: message.voiceDurationMs,
                 voiceWaveform: message.voiceWaveform,
                 transcript: message.transcript,
