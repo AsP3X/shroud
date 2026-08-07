@@ -23,6 +23,15 @@ final class MessagingLocalRepository {
 
     func setHistoryKey(_ key: SymmetricKey?) {
         historyKey = key
+        if key == nil {
+            plaintextCache.clearMemory()
+        }
+    }
+
+    /// Revoke history key + L1 plaintext so sealed disk files cannot be opened until unlock.
+    func lockSensitiveMemory() {
+        historyKey = nil
+        plaintextCache.clearMemory()
     }
 
     // MARK: - Decrypt cache (one-shot DR payloads)

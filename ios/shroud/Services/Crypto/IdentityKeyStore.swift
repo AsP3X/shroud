@@ -3,8 +3,11 @@ import Foundation
 import Security
 
 /// Persists identity private material in the Keychain (never the raw phrase).
-/// Human: Survives restarts so cold start can unlock without re-entering the phrase.
-/// Agent: READS/WRITES Keychain service com.shroud.identity; clears on logout only when requested.
+///
+/// Human: Identity keys can restore for messaging; the **history key** that opens local chats
+/// is **not** stored here in the clear — see `HistoryKeyVault`.
+///
+/// Agent: Service com.shroud.identity. Plain `history_key` is deleted on save (migration).
 nonisolated struct IdentityKeyStore: Sendable {
     private let service: String
 
@@ -12,15 +15,14 @@ nonisolated struct IdentityKeyStore: Sendable {
         self.service = service
     }
 
+    /// Keychain shell without history key (must be supplied from phrase or vault).
     struct StoredIdentity: Sendable {
         let userID: UUID
         let registrationID: UInt32
         let agreementPrivateKey: Curve25519.KeyAgreement.PrivateKey
         let signingPrivateKey: Curve25519.Signing.PrivateKey
-        let historyKey: SymmetricKey
         let signedPreKeyID: UInt32
         let signedPreKeyPrivate: Curve25519.KeyAgreement.PrivateKey
-        /// OTPK private keys keyed by key_id (stringified in storage).
         let oneTimePreKeys: [UInt32: Curve25519.KeyAgreement.PrivateKey]
     }
 
@@ -32,7 +34,6 @@ nonisolated struct IdentityKeyStore: Sendable {
             let registrationID = UInt32(regString),
             let agreementData = readData(key: Key.agreementPrivate),
             let signingData = readData(key: Key.signingPrivate),
-            let historyData = readData(key: Key.historyKey),
             let spkIDString = read(key: Key.spkID),
             let spkID = UInt32(spkIDString),
             let spkData = readData(key: Key.spkPrivate)
@@ -65,11 +66,22 @@ nonisolated struct IdentityKeyStore: Sendable {
             registrationID: registrationID,
             agreementPrivateKey: agreement,
             signingPrivateKey: signing,
-            historyKey: SymmetricKey(data: historyData),
             signedPreKeyID: spkID,
             signedPreKeyPrivate: spk,
             oneTimePreKeys: otpks
         )
+    }
+
+    /// Legacy plain history key (pre-vault). Returned once for migration, then should be wiped.
+    func loadLegacyPlainHistoryKey() -> SymmetricKey? {
+        guard let historyData = readData(key: Key.legacyHistoryKey), historyData.count == 32 else {
+            return nil
+        }
+        return SymmetricKey(data: historyData)
+    }
+
+    func clearLegacyPlainHistoryKey() {
+        delete(key: Key.legacyHistoryKey)
     }
 
     func save(_ material: IdentityKeyMaterial) throws {
@@ -77,8 +89,6 @@ nonisolated struct IdentityKeyStore: Sendable {
         try write(key: Key.registrationID, value: String(material.registrationID))
         try writeData(key: Key.agreementPrivate, value: material.agreementPrivateKey.rawRepresentation)
         try writeData(key: Key.signingPrivate, value: material.signingPrivateKey.rawRepresentation)
-        let historyData = material.historyKey.withUnsafeBytes { Data($0) }
-        try writeData(key: Key.historyKey, value: historyData)
         try write(key: Key.spkID, value: String(material.signedPreKeyID))
         try writeData(key: Key.spkPrivate, value: material.signedPreKeyPrivate.rawRepresentation)
 
@@ -88,12 +98,16 @@ nonisolated struct IdentityKeyStore: Sendable {
         }
         let mapData = try JSONEncoder().encode(map)
         try writeData(key: Key.otpkMap, value: mapData)
+
+        // Never leave plaintext history key in the identity keychain.
+        clearLegacyPlainHistoryKey()
     }
 
     func clear() {
         for key in Key.all {
             delete(key: key)
         }
+        clearLegacyPlainHistoryKey()
     }
 
     /// True when Keychain holds identity for this user.
@@ -108,14 +122,15 @@ nonisolated struct IdentityKeyStore: Sendable {
         static let registrationID = "registration_id"
         static let agreementPrivate = "agreement_private"
         static let signingPrivate = "signing_private"
-        static let historyKey = "history_key"
+        /// Legacy plaintext history key — migrated into HistoryKeyVault then deleted.
+        static let legacyHistoryKey = "history_key"
         static let spkID = "spk_id"
         static let spkPrivate = "spk_private"
         static let otpkMap = "otpk_map"
 
         static let all = [
             userID, registrationID, agreementPrivate, signingPrivate,
-            historyKey, spkID, spkPrivate, otpkMap,
+            spkID, spkPrivate, otpkMap,
         ]
     }
 
@@ -147,9 +162,6 @@ nonisolated struct IdentityKeyStore: Sendable {
 
     private func writeData(key: String, value: Data) throws {
         delete(key: key)
-        // ThisDeviceOnly: never leaves the device via backup restore.
-        // WhenUnlocked: unavailable while the device is locked (seized locked device
-        // cannot use Keychain-held history/identity keys to open sealed chat files).
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -179,7 +191,7 @@ enum IdentityKeyStoreError: Error, Equatable {
 }
 
 extension IdentityKeyMaterial {
-    init(stored: IdentityKeyStore.StoredIdentity) {
+    init(stored: IdentityKeyStore.StoredIdentity, historyKey: SymmetricKey) {
         let otpks = stored.oneTimePreKeys
             .map { OneTimePreKey(keyID: $0.key, privateKey: $0.value) }
             .sorted { $0.keyID < $1.keyID }
@@ -188,7 +200,7 @@ extension IdentityKeyMaterial {
             registrationID: stored.registrationID,
             agreementPrivateKey: stored.agreementPrivateKey,
             signingPrivateKey: stored.signingPrivateKey,
-            historyKey: stored.historyKey,
+            historyKey: historyKey,
             signedPreKeyID: stored.signedPreKeyID,
             signedPreKeyPrivate: stored.signedPreKeyPrivate,
             oneTimePreKeys: otpks

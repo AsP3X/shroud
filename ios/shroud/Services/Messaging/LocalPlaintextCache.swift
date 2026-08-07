@@ -103,11 +103,16 @@ final class LocalPlaintextCache: @unchecked Sendable {
         save(messageID: messageID, data: Data(text.utf8), historyKey: historyKey)
     }
 
-    /// Drops every cached plaintext entry (logout / local wipe).
-    func clearAll() {
+    /// Drops in-RAM plaintext only (history lock / background). Disk seals remain.
+    func clearMemory() {
         lock.lock()
         memory.removeAll()
         lock.unlock()
+    }
+
+    /// Drops every cached plaintext entry (logout / local wipe).
+    func clearAll() {
+        clearMemory()
         try? FileManager.default.removeItem(at: directory)
         LocalDataProtection.prepareDirectory(directory)
         wipeLegacyUserDefaults()

@@ -37,6 +37,7 @@ struct RootView: View {
         .environment(callController)
         .environment(serverConfig)
         .task {
+            SecurityPreferences.applyToVault()
             router.sessionController = sessionController
             router.cryptoController = cryptoController
             router.messagingController = messagingController
@@ -51,7 +52,7 @@ struct RootView: View {
             await sessionController.validateSessionIfNeeded()
             // Only restore if Keychain still has a session (logout clears it first).
             if sessionController.isSignedIn {
-                router.restoreUnlockedSessionIfNeeded()
+                await router.restoreUnlockedSessionIfNeeded()
             } else {
                 router.hasUnlockedMessaging = false
             }
@@ -86,8 +87,39 @@ struct RootView: View {
             }
         }
         .onChange(of: scenePhase) { _, phase in
-            guard phase == .active, router.isUnlocked else { return }
-            messagingController.handleAppBecameActive()
+            switch phase {
+            case .background:
+                // Drop plaintext history from RAM; sealed files stay on disk.
+                // Vault remains; re-open via biometry/passcode when returning.
+                if SecurityPreferences.lockChatsOnBackground,
+                   (router.isUnlocked || cryptoController.isUnlocked)
+                {
+                    messagingController.lockSensitiveMemory()
+                    cryptoController.lockHistoryInMemory()
+                }
+            case .active:
+                guard sessionController.isSignedIn else { return }
+                Task {
+                    if !cryptoController.isUnlocked,
+                       let userID = sessionController.userID
+                    {
+                        let ok = await cryptoController.unlockHistoryIfPossible(for: userID)
+                        if ok {
+                            router.hasUnlockedMessaging = true
+                            messagingController.start()
+                        } else if cryptoController.needsHistoryUnlock {
+                            // Cancelled biometry or missing vault — phrase unlock onboarding.
+                            router.hasUnlockedMessaging = false
+                        }
+                    } else if router.isUnlocked {
+                        messagingController.handleAppBecameActive()
+                    }
+                }
+            case .inactive:
+                break
+            @unknown default:
+                break
+            }
         }
     }
 

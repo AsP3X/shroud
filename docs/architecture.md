@@ -50,13 +50,14 @@ High-level structure for the E2E encrypted messenger.
 1. Message plaintext exists **only on devices**, and **only in memory** while messaging is unlocked.
 2. Private keys and the 12-word encryption phrase **never leave the device**.
 3. Server stores ciphertext envelopes, encrypted media references, and minimal delivery metadata.
-4. **Local at-rest:** chats, notes, media, and decrypt caches on disk are AES-256-GCM sealed with the BIP39-derived `historyKey` (HKDF `shroud-history-aes`). Files use completeUntilFirstUserAuthentication protection and are excluded from backups. Without the history key (Keychain + unlock), sealed blobs are unreadable.
-5. Voice transcription is **on-device** for v1 (no server transcript APIs yet).
-6. Contact requests and blocks are enforced on the server before full messaging.
-7. Push payloads are **opaque references only** (no content or keys).
-8. Sessions are **device-bound opaque tokens** with no time-based logout (revoke on logout / device remove / password change of other devices).
-9. Presence is visible only to **accepted contacts**.
-10. Identity Keychain items use `WhenUnlockedThisDeviceOnly` (no backup restore; unavailable while device locked).
+4. **Local at-rest:** chats, notes, media, and decrypt caches on disk are AES-256-GCM sealed with the BIP39-derived `historyKey` (HKDF `shroud-history-aes`). Files are excluded from backups. Without the history key, sealed blobs are unreadable.
+5. **History key vault:** raw `historyKey` is **never** stored in the identity Keychain. It is AES-GCM wrapped under a device wrap key gated by **userPresence** (Face ID / Touch ID / passcode) via `HistoryKeyVault`. Phrase unlock re-derives and re-vaults the key. Backgrounding clears history key + decrypted threads from RAM.
+6. Voice transcription is **on-device** for v1 (no server transcript APIs yet).
+7. Contact requests and blocks are enforced on the server before full messaging.
+8. Push payloads are **opaque references only** (no content or keys).
+9. Sessions are **device-bound opaque tokens** with no time-based logout (revoke on logout / device remove / password change of other devices).
+10. Presence is visible only to **accepted contacts**.
+11. Identity Keychain items use `WhenUnlockedThisDeviceOnly` (no backup restore; unavailable while device locked).
 
 ## Local development
 
@@ -106,6 +107,7 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 | MessagingLocalRepository | **done** — offline/disk/decrypt-cache separated from MessagingController |
 | OutboundPending + ChatListFormatting | **done** — pure helpers for offline queue + list previews |
 | MessageDecoder + NotesLocal | **done** — decrypt pipeline and Notes CRUD pulled out of controller |
+| History key vault | **done** — biometry/passcode wrap; no plain historyKey in identity Keychain; RAM wipe on background |
 | Notes to me | **done** — local-only self chat (text / photo / voice / todos); no server replies |
 | Photo media messages | **done** — E2E AES-GCM blobs + caption compose |
 | Voice messages | **done** — record/upload/play; on-device Speech transcript (Tier 1) |

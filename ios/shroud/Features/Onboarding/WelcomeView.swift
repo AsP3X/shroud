@@ -5,12 +5,19 @@ struct WelcomeView: View {
     @Bindable var router: AppRouter
 
     @Environment(ServerConfigurationController.self) private var serverConfig
+    @Environment(SessionController.self) private var sessionController
+    @Environment(CryptoController.self) private var cryptoController
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showServerSettings = false
     /// Drives the one-shot arrival choreography (logo → copy → tiles → actions).
     @State private var hasArrived = false
     @State private var toastMessage: String?
     @State private var toastDismissTask: Task<Void, Never>?
+    @State private var isUnlocking = false
+
+    private var needsChatUnlock: Bool {
+        sessionController.isSignedIn && !cryptoController.isUnlocked
+    }
 
     var body: some View {
         GroupedScreen {
@@ -20,19 +27,35 @@ struct WelcomeView: View {
                 ScrollView {
                     VStack(spacing: 28) {
                         hero
-                        featureTiles
-                        connectionHint
+                        if needsChatUnlock {
+                            lockedBanner
+                        } else {
+                            featureTiles
+                            connectionHint
+                        }
                     }
                     .screenContent()
                     .padding(.top, 8)
                 }
 
                 VStack(spacing: 12) {
-                    PrimaryButton(title: "Start Messaging") {
-                        router.showSignUp()
-                    }
-                    SecondaryButton(title: "Log In") {
-                        router.showLogIn()
+                    if needsChatUnlock {
+                        PrimaryButton(
+                            title: isUnlocking ? "Unlocking…" : "Unlock with Face ID / Passcode"
+                        ) {
+                            Task { await unlockWithVault() }
+                        }
+                        .disabled(isUnlocking)
+                        SecondaryButton(title: "Use encryption phrase") {
+                            router.showLogIn()
+                        }
+                    } else {
+                        PrimaryButton(title: "Start Messaging") {
+                            router.showSignUp()
+                        }
+                        SecondaryButton(title: "Log In") {
+                            router.showLogIn()
+                        }
                     }
                 }
                 .screenContent()
@@ -44,12 +67,17 @@ struct WelcomeView: View {
         .navigationBarHidden(true)
         .toast($toastMessage)
         .onAppear {
-            guard !hasArrived else { return }
-            // The app's first frame: elements settle in reading order, then the CTAs arrive.
-            withAnimation(Motion.respecting(reduceMotion, Motion.gentle).delay(0.05)) {
-                hasArrived = true
+            if !hasArrived {
+                // The app's first frame: elements settle in reading order, then the CTAs arrive.
+                withAnimation(Motion.respecting(reduceMotion, Motion.gentle).delay(0.05)) {
+                    hasArrived = true
+                }
             }
             presentPostAuthToastIfNeeded()
+            // Signed in + chats locked: offer vault unlock immediately.
+            if needsChatUnlock, !isUnlocking {
+                Task { await unlockWithVault() }
+            }
         }
         .onChange(of: router.postAuthToast) { _, _ in
             presentPostAuthToastIfNeeded()
@@ -73,6 +101,39 @@ struct WelcomeView: View {
             try? await Task.sleep(nanoseconds: 2_400_000_000)
             guard !Task.isCancelled else { return }
             toastMessage = nil
+        }
+    }
+
+    private var lockedBanner: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Chats locked", systemImage: "lock.fill")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
+            Text(
+                "Your session is still signed in. Authenticate to open encrypted chat history on this device, or enter your 12-word phrase."
+            )
+            .font(.system(size: 14))
+            .foregroundStyle(Theme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.background)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func unlockWithVault() async {
+        guard let userID = sessionController.userID else {
+            router.showLogIn()
+            return
+        }
+        isUnlocking = true
+        defer { isUnlocking = false }
+        let ok = await cryptoController.unlockHistoryIfPossible(for: userID)
+        if ok {
+            router.unlockMessages()
+        } else {
+            toastMessage = CryptoController.userMessage(for: CryptoControllerError.historyLocked)
         }
     }
 

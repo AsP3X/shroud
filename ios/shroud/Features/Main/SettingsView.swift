@@ -4,6 +4,7 @@ import SwiftUI
 enum SettingsRoute: Hashable {
     case server
     case transcription
+    case privacySecurity
 }
 
 /// Settings tab — Telegram-style profile hero for the **title-only** sticky bar
@@ -167,6 +168,8 @@ struct SettingsView: View {
                         ServerSettingsView(router: router)
                     case .transcription:
                         TranscriptionLanguageView()
+                    case .privacySecurity:
+                        PrivacySecurityView(router: router)
                     }
                 }
         }
@@ -415,7 +418,9 @@ struct SettingsView: View {
                 title: "Privacy and Security",
                 systemImage: "lock.fill",
                 iconBackground: Theme.textSecondary
-            )
+            ) {
+                navigationPath.append(.privacySecurity)
+            }
             groupDivider()
             SettingsRowView(
                 title: "Data and Storage",

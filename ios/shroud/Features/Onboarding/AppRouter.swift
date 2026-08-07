@@ -70,15 +70,19 @@ final class AppRouter {
         path = []
     }
 
-    /// Cold start: session + Keychain identity for same user → main without re-entering phrase.
-    func restoreUnlockedSessionIfNeeded() {
+    /// Cold start: session + vault-unlocked history (biometry/passcode) → main shell.
+    /// Falls back to phrase entry when the vault is missing or auth is cancelled.
+    func restoreUnlockedSessionIfNeeded() async {
         guard let session = sessionController?.session else { return }
-        guard cryptoController?.restoreIfPossible(for: session.userID) == true else {
+        guard let crypto = cryptoController else {
             hasUnlockedMessaging = false
             return
         }
-        hasUnlockedMessaging = true
-        path = []
+        let ok = await crypto.restoreIfPossible(for: session.userID)
+        hasUnlockedMessaging = ok
+        if ok {
+            path = []
+        }
     }
 
     /// Ends the server session, wipes local message caches, locks crypto (identity kept for re-login).

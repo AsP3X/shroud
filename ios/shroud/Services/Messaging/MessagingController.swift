@@ -252,9 +252,14 @@ final class MessagingController {
         isLoadingChats = false
     }
 
-    /// Call when the app returns to the foreground.
+    /// Call when the app returns to the foreground (history key must already be in memory).
     func handleAppBecameActive() {
         guard let token = sessionController?.bearerToken else { return }
+        // Re-bind history key after biometry unlock (start may have been skipped).
+        if local.historyKey == nil, let key = cryptoController?.material?.historyKey {
+            local.setHistoryKey(key)
+            hydrateFromDisk()
+        }
         isOffline = !connectivity.isOnline
         realtime.connect(token: token)
         Task {
@@ -265,6 +270,19 @@ final class MessagingController {
             }
             await flushPendingSends()
         }
+    }
+
+    /// Clears decrypted threads and history key from RAM (sealed files stay on disk).
+    /// Call when the app backgrounds so a seized unlocked device cannot read chats from memory.
+    func lockSensitiveMemory() {
+        local.lockSensitiveMemory()
+        // Drop message bodies; keep conversation list shells for a less jarring re-unlock.
+        threads = [:]
+        typingPeerIDs = []
+        unreadCountByPeer = [:]
+        activePeerID = nil
+        threadLoadTasks.values.forEach { $0.cancel() }
+        threadLoadTasks.removeAll()
     }
 
     /// Reacts to path changes (wired from RootView / scene phase optional).

@@ -80,6 +80,12 @@ struct LogInFlowView: View {
         .navigationBarHidden(true)
         .onboardingHeroDestination()
         .animation(.spring(response: 0.42, dampingFraction: 0.86), value: phase)
+        .onAppear {
+            // Already have a server session (e.g. locked chats) — jump to phrase unlock.
+            if sessionController.isSignedIn {
+                phase = .encryptionPhrase
+            }
+        }
         .onDisappear {
             revealTask?.cancel()
         }
