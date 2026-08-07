@@ -86,6 +86,36 @@ final class AppRouter {
         }
     }
 
+    /// After a full local wipe (or incomplete login), a Keychain session can remain while
+    /// identity/vault keys are gone — that used to trap users on the lock screen forever.
+    /// Clears the orphan session so Welcome shows Sign Up / Log In again.
+    @discardableResult
+    func reconcileOrphanedSessionIfNeeded() async -> Bool {
+        guard let session = sessionController?.session else { return false }
+        guard let crypto = cryptoController else { return false }
+        // Fully unlocked mid-session: nothing to fix.
+        if crypto.isUnlocked { return false }
+        // Identity still on device → normal lock / Face ID path.
+        if crypto.hasLocalIdentity(for: session.userID) { return false }
+
+        await clearOrphanedLocalSession(
+            toast: "Local data was cleared. Sign in or create an account."
+        )
+        return true
+    }
+
+    /// Drops server session + any leftover crypto shell and returns to fresh Welcome.
+    private func clearOrphanedLocalSession(toast: String) async {
+        postAuthToast = toast
+        await sessionController?.logout()
+        // Wipe identity leftovers so a half-deleted vault cannot reappear.
+        cryptoController?.lock(wipeStore: true)
+        messagingController?.stop(wipeDisk: true)
+        callController?.clearLocalState()
+        hasUnlockedMessaging = false
+        path = []
+    }
+
     /// Ends the server session, wipes local message caches, locks crypto (identity kept for re-login).
     ///
     /// Local session + caches clear first so a force-quit mid-network never leaves you signed in.

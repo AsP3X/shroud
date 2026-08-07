@@ -16,6 +16,13 @@ final class CryptoController {
 
     var isUnlocked: Bool { material != nil }
 
+    /// True when Keychain still holds identity material for this account (Face ID / vault path).
+    /// False after a full local wipe, incomplete login, or first install — caller should not
+    /// show the lock screen in that case.
+    func hasLocalIdentity(for userID: UUID) -> Bool {
+        store.hasIdentity(for: userID)
+    }
+
     /// True when identity keys exist for the user but history vault has not been opened.
     private(set) var needsHistoryUnlock: Bool = false
 
@@ -34,12 +41,21 @@ final class CryptoController {
         self.keyBundleService = keyBundleService
     }
 
+    /// Last vault unlock failure message for UI toasts (nil after success).
+    private(set) var lastUnlockErrorMessage: String?
+
     /// Re-open history (biometry/passcode). Identity must still match.
     /// Always user-initiated — automatic Face ID prompts were removed (they stacked / stuck).
     /// - Parameter automatic: Kept for call-site compatibility; when true, still respects
     ///   `suppressAutomaticVaultPrompt` if any residual auto path fires.
+    /// - Parameter method: Face ID first vs device passcode only.
     @discardableResult
-    func unlockHistoryIfPossible(for userID: UUID, automatic: Bool = false) async -> Bool {
+    func unlockHistoryIfPossible(
+        for userID: UUID,
+        automatic: Bool = false,
+        method: HistoryKeyVault.UnlockMethod = .biometryPreferred
+    ) async -> Bool {
+        lastUnlockErrorMessage = nil
         if automatic, suppressAutomaticVaultPrompt {
             needsHistoryUnlock = store.hasIdentity(for: userID)
             return false
@@ -54,6 +70,8 @@ final class CryptoController {
         guard let stored = store.load(), stored.userID == userID else {
             material = nil
             needsHistoryUnlock = false
+            // No identity on device — Face ID cannot work; session is orphaned after a wipe.
+            lastUnlockErrorMessage = Self.userMessage(for: CryptoControllerError.localDataMissing)
             return false
         }
 
@@ -64,7 +82,7 @@ final class CryptoController {
         }
 
         do {
-            let historyKey = try await HistoryKeyVault.unlock(userID: userID)
+            let historyKey = try await HistoryKeyVault.unlock(userID: userID, method: method)
             rewrapHistoryIfNeeded(historyKey, userID: userID)
             let restored = IdentityKeyMaterial(stored: stored, historyKey: historyKey)
             material = restored
@@ -75,6 +93,15 @@ final class CryptoController {
         } catch HistoryKeyVault.VaultError.userCancelled {
             material = nil
             needsHistoryUnlock = true
+            lastUnlockErrorMessage = Self.userMessage(for: HistoryKeyVault.VaultError.userCancelled)
+            if automatic {
+                suppressAutomaticVaultPrompt = true
+            }
+            return false
+        } catch HistoryKeyVault.VaultError.timedOut {
+            material = nil
+            needsHistoryUnlock = true
+            lastUnlockErrorMessage = Self.userMessage(for: HistoryKeyVault.VaultError.timedOut)
             if automatic {
                 suppressAutomaticVaultPrompt = true
             }
@@ -82,6 +109,7 @@ final class CryptoController {
         } catch {
             material = nil
             needsHistoryUnlock = store.hasIdentity(for: userID)
+            lastUnlockErrorMessage = Self.userMessage(for: error)
             if automatic {
                 suppressAutomaticVaultPrompt = true
             }
@@ -236,12 +264,16 @@ final class CryptoController {
                 return "Unlock messaging with your encryption phrase first."
             case .historyLocked:
                 return "Unlock with Face ID, Touch ID, or your device passcode to open chats."
+            case .localDataMissing:
+                return "Local encryption data is missing. Sign in or create an account again."
             }
         }
         if let vault = error as? HistoryKeyVault.VaultError {
             switch vault {
             case .userCancelled:
                 return "Authentication cancelled."
+            case .timedOut:
+                return "Unlock timed out. Try again, use device passcode, or your encryption phrase."
             case .notFound:
                 return "Enter your encryption phrase to unlock chats on this device."
             default:
@@ -259,4 +291,6 @@ enum CryptoControllerError: Error, Equatable {
     case phraseDoesNotMatchAccount
     case notUnlocked
     case historyLocked
+    /// Session token exists but identity/vault was wiped from the device.
+    case localDataMissing
 }

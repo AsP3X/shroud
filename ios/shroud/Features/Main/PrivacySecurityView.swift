@@ -25,7 +25,7 @@ struct PrivacySecurityView: View {
                                         .font(.system(size: 16))
                                         .foregroundStyle(Theme.textPrimary)
                                     Text(
-                                        "When you leave the app, decrypted messages are cleared from memory. Tap the Face ID unlock icon on the welcome screen to re-open."
+                                        "When you leave the app, decrypted messages are cleared from memory. Re-open from the welcome screen with Face ID, device passcode, or your encryption phrase."
                                     )
                                     .font(.system(size: 13))
                                     .foregroundStyle(Theme.textSecondary)

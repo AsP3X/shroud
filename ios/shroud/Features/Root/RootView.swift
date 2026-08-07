@@ -50,9 +50,12 @@ struct RootView: View {
             callController.bind(session: sessionController, messaging: messagingController)
             PushNotificationService.shared.bind(session: sessionController, calls: callController)
             await sessionController.validateSessionIfNeeded()
-            // Only restore if Keychain still has a session (logout clears it first).
+            // Session without local identity (app data wipe / incomplete login) → Sign Up / Log In.
             if sessionController.isSignedIn {
-                await router.restoreUnlockedSessionIfNeeded()
+                let clearedOrphan = await router.reconcileOrphanedSessionIfNeeded()
+                if !clearedOrphan {
+                    await router.restoreUnlockedSessionIfNeeded()
+                }
             } else {
                 router.hasUnlockedMessaging = false
             }

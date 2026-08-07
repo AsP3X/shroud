@@ -14,18 +14,39 @@ struct WelcomeView: View {
     @State private var hasArrived = false
     @State private var toastMessage: String?
     @State private var toastDismissTask: Task<Void, Never>?
-    @State private var isUnlocking = false
+    /// Which unlock control is currently running (nil = idle).
+    @State private var unlockingMethod: HistoryKeyVault.UnlockMethod?
 
+    /// Lock UI only when a real local vault/identity still exists.
+    /// Signed-in-without-identity (data wipe) is reconciled to Sign Up / Log In instead.
     private var needsChatUnlock: Bool {
-        sessionController.isSignedIn && !cryptoController.isUnlocked
+        guard sessionController.isSignedIn,
+              !cryptoController.isUnlocked,
+              let userID = sessionController.userID
+        else { return false }
+        return cryptoController.hasLocalIdentity(for: userID)
     }
 
-    /// SF Symbol for the device biometry (Face ID / Touch ID), falling back to a lock when none.
+    private var isUnlocking: Bool { unlockingMethod != nil }
+
+    /// True when the device can evaluate biometry (Face ID / Touch ID / Optic ID).
+    private var hasBiometry: Bool {
+        let context = LAContext()
+        var error: NSError?
+        return context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error)
+    }
+
+    /// True when the device can prove owner presence at all (passcode and/or biometry).
+    private var canUseDeviceAuth: Bool {
+        HistoryKeyVault.canProtectWrapKey
+    }
+
+    /// SF Symbol for the device biometry (Face ID / Touch ID).
     private var biometryUnlockSymbol: String {
         let context = LAContext()
         var error: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else {
-            return "lock.open.fill"
+            return "faceid"
         }
         switch context.biometryType {
         case .faceID:
@@ -35,9 +56,9 @@ struct WelcomeView: View {
         case .opticID:
             return "opticid"
         case .none:
-            return "lock.open.fill"
+            return "faceid"
         @unknown default:
-            return "lock.open.fill"
+            return "faceid"
         }
     }
 
@@ -50,7 +71,7 @@ struct WelcomeView: View {
         case "opticid":
             return "Unlock with Optic ID"
         default:
-            return "Unlock with device passcode"
+            return "Unlock with biometrics"
         }
     }
 
@@ -75,33 +96,31 @@ struct WelcomeView: View {
 
                 VStack(spacing: 16) {
                     if needsChatUnlock {
-                        // Face ID / Touch ID is opt-in via icon tap — auto-prompt was getting stuck.
-                        Button {
-                            Task { await unlockWithVault() }
-                        } label: {
-                            Group {
-                                if isUnlocking {
-                                    ProgressView()
-                                        .tint(Theme.accent)
-                                } else {
-                                    Image(systemName: biometryUnlockSymbol)
-                                        .font(.system(size: 52, weight: .regular))
-                                        .foregroundStyle(Theme.accent)
-                                        .symbolRenderingMode(.monochrome)
-                                }
-                            }
-                            .frame(width: 64, height: 64)
-                            .contentShape(Rectangle())
+                        // Face ID stays an icon-only control; passcode matches the phrase button.
+                        if hasBiometry {
+                            unlockIconButton(
+                                systemName: biometryUnlockSymbol,
+                                accessibilityLabel: biometryUnlockAccessibilityLabel,
+                                method: .biometryPreferred
+                            )
+                            .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(.plain)
-                        .pressable(scale: 0.88)
-                        .disabled(isUnlocking)
-                        .accessibilityLabel(biometryUnlockAccessibilityLabel)
-                        .frame(maxWidth: .infinity)
+
+                        if canUseDeviceAuth {
+                            SecondaryButton(
+                                title: unlockingMethod == .passcodeOnly
+                                    ? "Unlocking…"
+                                    : "Use device passcode"
+                            ) {
+                                Task { await unlockWithVault(method: .passcodeOnly) }
+                            }
+                            .disabled(isUnlocking)
+                        }
 
                         SecondaryButton(title: "Use encryption phrase") {
                             router.showLogIn()
                         }
+                        .disabled(isUnlocking)
                     } else {
                         PrimaryButton(title: "Start Messaging") {
                             router.showSignUp()
@@ -127,6 +146,12 @@ struct WelcomeView: View {
                 }
             }
             presentPostAuthToastIfNeeded()
+            // Belt-and-suspenders: drop orphan sessions so wipe → lock screen cannot stick.
+            Task {
+                if await router.reconcileOrphanedSessionIfNeeded() {
+                    presentPostAuthToastIfNeeded()
+                }
+            }
         }
         .onChange(of: router.postAuthToast) { _, _ in
             presentPostAuthToastIfNeeded()
@@ -159,7 +184,7 @@ struct WelcomeView: View {
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
             Text(
-                "Your session is still signed in. Tap the unlock icon to open encrypted chats with Face ID, Touch ID, or your device passcode — or enter your 12-word phrase."
+                "Your session is still signed in. Unlock with Face ID, your device passcode, or your 12-word encryption phrase."
             )
             .font(.system(size: 14))
             .foregroundStyle(Theme.textSecondary)
@@ -171,22 +196,64 @@ struct WelcomeView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
-    private func unlockWithVault() async {
+    /// Plain Face ID / Touch ID icon — no fill background.
+    private func unlockIconButton(
+        systemName: String,
+        accessibilityLabel: String,
+        method: HistoryKeyVault.UnlockMethod
+    ) -> some View {
+        let busy = unlockingMethod == method
+        return Button {
+            Task { await unlockWithVault(method: method) }
+        } label: {
+            Group {
+                if busy {
+                    ProgressView()
+                        .tint(Theme.accent)
+                } else {
+                    Image(systemName: systemName)
+                        .font(.system(size: 48, weight: .regular))
+                        .foregroundStyle(Theme.accent)
+                        .symbolRenderingMode(.monochrome)
+                }
+            }
+            .frame(width: 64, height: 64)
+            .contentShape(Rectangle())
+            .opacity(isUnlocking && !busy ? 0.35 : 1)
+        }
+        .buttonStyle(.plain)
+        .pressable(scale: 0.88)
+        .disabled(isUnlocking)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private func unlockWithVault(method: HistoryKeyVault.UnlockMethod) async {
         guard let userID = sessionController.userID else {
             router.showLogIn()
             return
         }
-        isUnlocking = true
-        defer { isUnlocking = false }
+        // Identity gone (e.g. data wiped mid-session) — leave the lock screen entirely.
+        if !cryptoController.hasLocalIdentity(for: userID) {
+            _ = await router.reconcileOrphanedSessionIfNeeded()
+            presentPostAuthToastIfNeeded()
+            return
+        }
+        unlockingMethod = method
+        defer { unlockingMethod = nil }
         let ok = await cryptoController.unlockHistoryIfPossible(
             for: userID,
-            automatic: false
+            automatic: false,
+            method: method
         )
         if ok {
             router.unlockMessages()
+        } else if !cryptoController.hasLocalIdentity(for: userID) {
+            _ = await router.reconcileOrphanedSessionIfNeeded()
+            presentPostAuthToastIfNeeded()
         } else {
-            // Surface cancel / missing vault / auth failure so the user can try again or use phrase.
-            toastMessage = CryptoController.userMessage(for: CryptoControllerError.historyLocked)
+            // Prefer the concrete vault error (cancel / not found) over a generic locked message.
+            toastMessage = cryptoController.lastUnlockErrorMessage
+                ?? CryptoController.userMessage(for: CryptoControllerError.historyLocked)
         }
     }
 

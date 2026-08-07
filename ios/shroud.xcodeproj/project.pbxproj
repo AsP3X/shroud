@@ -402,6 +402,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSAppTransportSecurity_AllowsLocalNetworking = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Camera access is used for contact QR codes, photo messages, and video calls.";
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "Face ID unlocks your encrypted chats on this device.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Microphone access is used for voice messages and calls.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Photos you save from a chat are added to your photo library.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Photo library access is used to send photos in chats.";
@@ -441,6 +442,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSAppTransportSecurity_AllowsLocalNetworking = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Camera access is used for contact QR codes, photo messages, and video calls.";
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "Face ID unlocks your encrypted chats on this device.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Microphone access is used for voice messages and calls.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Photos you save from a chat are added to your photo library.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Photo library access is used to send photos in chats.";
