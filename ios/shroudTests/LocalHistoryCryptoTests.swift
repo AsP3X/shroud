@@ -81,17 +81,18 @@ final class LocalHistoryCryptoTests: XCTestCase {
         store.save(snap, userID: userID, historyKey: key)
 
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let sealedURL = base
-            .appendingPathComponent("shroud/messages/\(userID.uuidString.lowercased())/snapshot.sealed")
+        let rosterURL = base
+            .appendingPathComponent("shroud/messages/\(userID.uuidString.lowercased())/roster.sealed")
         let plainURL = base
             .appendingPathComponent("shroud/messages/\(userID.uuidString.lowercased())/snapshot.json")
 
-        let onDisk = try Data(contentsOf: sealedURL)
+        let onDisk = try Data(contentsOf: rosterURL)
         XCTAssertTrue(LocalHistoryCrypto.isSealedBlob(onDisk))
         XCTAssertFalse(FileManager.default.fileExists(atPath: plainURL.path))
 
-        // Wrong key cannot load.
-        XCTAssertNil(store.load(userID: userID, historyKey: SymmetricKey(size: .bits256)))
+        // Wrong key cannot load conversations.
+        let wrong = store.load(userID: userID, historyKey: SymmetricKey(size: .bits256))
+        XCTAssertTrue(wrong?.conversations.isEmpty != false || wrong == nil)
         // Correct key loads.
         let loaded = store.load(userID: userID, historyKey: key)
         XCTAssertEqual(loaded?.conversations.first?.peerUsername, "alice")

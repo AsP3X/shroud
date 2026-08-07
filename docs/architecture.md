@@ -102,6 +102,10 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 | Live contacts + chats | **done** (requests/list, conversations, sealed send/recv, WS) |
 | Offline local cache | **done** — 90 days of peer chats + media on device; hydrate offline, merge online |
 | Local at-rest encryption | **done** — AES-256-GCM under phrase-derived `historyKey`; no plaintext on disk |
+| Local store layout | **done** — sealed `roster` + per-peer `threads/{id}.sealed` (not one monolithic blob) |
+| MessagingLocalRepository | **done** — offline/disk/decrypt-cache separated from MessagingController |
+| OutboundPending + ChatListFormatting | **done** — pure helpers for offline queue + list previews |
+| MessageDecoder + NotesLocal | **done** — decrypt pipeline and Notes CRUD pulled out of controller |
 | Notes to me | **done** — local-only self chat (text / photo / voice / todos); no server replies |
 | Photo media messages | **done** — E2E AES-GCM blobs + caption compose |
 | Voice messages | **done** — record/upload/play; on-device Speech transcript (Tier 1) |

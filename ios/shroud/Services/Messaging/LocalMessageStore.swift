@@ -1,19 +1,17 @@
 import CryptoKit
 import Foundation
 
-/// Durable on-device message + list snapshot for offline use (90-day window for peer chats).
+/// Encrypted on-device message store: **roster** + **per-peer thread** sealed files.
 ///
-/// Human: Open the app on a plane and your recent chats still load; notes stay forever.
-/// Disk is **always** AES-256-GCM ciphertext under the phrase-derived history key — a filesystem
-/// dump alone cannot read chats.
+/// Human: Offline chats stay available; each conversation is its own sealed file so one
+/// new message does not rewrite every other chat.
 ///
-/// Agent: Application Support sealed blob per user. Requires `historyKey` to load/save.
-/// Peer threads pruned at 90 days; Notes exempt. Media binaries live in `LocalMediaCache`.
+/// Agent: Application Support `shroud/messages/{userId}/`.
+/// - `roster.sealed` — conversations, contacts, requests, unread
+/// - `threads/{peerId}.sealed` — `[StoredMessage]` for that peer
+/// Migrates monolithic `snapshot.sealed` / `snapshot.json` once. Requires `historyKey`.
 struct LocalMessageStore: Sendable {
-    /// Peer conversations older than this are dropped from the local index.
     static let retentionDays: Int = 90
-
-    /// Stable local-only peer id for the "Notes to me" chat (never sent to the API).
     static let notesPeerID = UUID(uuidString: "00000000-0000-4000-8000-6E6F74657321")!
 
     private let fileManager: FileManager
@@ -22,16 +20,33 @@ struct LocalMessageStore: Sendable {
         self.fileManager = fileManager
     }
 
-    // MARK: - Snapshot types
+    // MARK: - Models
 
+    /// Full in-memory picture (used for prune / tests / migration).
     struct Snapshot: Codable, Equatable, Sendable {
-        var version: Int = 1
+        var version: Int = 2
         var conversations: [CachedConversation] = []
         var contacts: [CachedContact] = []
         var incomingRequests: [CachedContactRequest] = []
         /// peerUserID.uuidString.lowercased() → messages (oldest first)
         var threads: [String: [StoredMessage]] = [:]
         var unreadByPeer: [String: Int] = [:]
+        var updatedAt: Date = Date()
+    }
+
+    struct Roster: Codable, Equatable, Sendable {
+        var version: Int = 1
+        var conversations: [CachedConversation] = []
+        var contacts: [CachedContact] = []
+        var incomingRequests: [CachedContactRequest] = []
+        var unreadByPeer: [String: Int] = [:]
+        var updatedAt: Date = Date()
+    }
+
+    struct ThreadFile: Codable, Equatable, Sendable {
+        var version: Int = 1
+        var peerID: UUID
+        var messages: [StoredMessage] = []
         var updatedAt: Date = Date()
     }
 
@@ -77,9 +92,7 @@ struct LocalMessageStore: Sendable {
         var voiceWaveform: [UInt8]?
         var transcript: String?
         var sendError: String?
-        /// Local Notes todo completion (nil for non-todos).
         var todoDone: Bool?
-        /// True while waiting for a network send (outbound queue).
         var pendingSync: Bool?
 
         static func from(_ message: MessagingController.ChatMessage) -> StoredMessage {
@@ -152,68 +165,142 @@ struct LocalMessageStore: Sendable {
         return dir
     }
 
-    private func sealedURL(for userID: UUID) -> URL {
+    private func threadsDirectory(for userID: UUID) -> URL {
+        let dir = directoryURL(for: userID).appendingPathComponent("threads", isDirectory: true)
+        LocalDataProtection.prepareDirectory(dir)
+        return dir
+    }
+
+    private func rosterURL(for userID: UUID) -> URL {
+        directoryURL(for: userID).appendingPathComponent("roster.sealed")
+    }
+
+    private func threadURL(peerID: UUID, userID: UUID) -> URL {
+        threadsDirectory(for: userID)
+            .appendingPathComponent(peerID.uuidString.lowercased() + ".sealed")
+    }
+
+    private func legacySnapshotSealedURL(for userID: UUID) -> URL {
         directoryURL(for: userID).appendingPathComponent("snapshot.sealed")
     }
 
-    /// Legacy plaintext path (migrated once, then deleted).
-    private func legacyPlainURL(for userID: UUID) -> URL {
+    private func legacySnapshotPlainURL(for userID: UUID) -> URL {
         directoryURL(for: userID).appendingPathComponent("snapshot.json")
     }
 
-    // MARK: - Load / save (encrypted)
+    // MARK: - Public load / save
 
-    /// Decrypts and returns the snapshot. Requires the phrase-derived history key.
+    /// Loads roster + all peer threads (migrates legacy snapshot if needed).
     func load(userID: UUID, historyKey: SymmetricKey) -> Snapshot? {
-        let sealedPath = sealedURL(for: userID)
-        if let sealed = try? Data(contentsOf: sealedPath),
-           let plain = try? LocalHistoryCrypto.open(
-               sealed,
-               masterKey: historyKey,
-               context: .messagesSnapshot
-           ),
-           let snapshot = try? JSONDecoder.localStore.decode(Snapshot.self, from: plain)
-        {
+        migrateLegacySnapshotIfNeeded(userID: userID, historyKey: historyKey)
+
+        guard let roster = loadRoster(userID: userID, historyKey: historyKey) else {
+            // Empty install — still OK.
+            return Snapshot()
+        }
+
+        var snapshot = Snapshot()
+        snapshot.version = 2
+        snapshot.conversations = roster.conversations
+        snapshot.contacts = roster.contacts
+        snapshot.incomingRequests = roster.incomingRequests
+        snapshot.unreadByPeer = roster.unreadByPeer
+        snapshot.updatedAt = roster.updatedAt
+
+        let threadDir = threadsDirectory(for: userID)
+        guard let files = try? fileManager.contentsOfDirectory(
+            at: threadDir,
+            includingPropertiesForKeys: nil
+        ) else {
             return snapshot
         }
 
-        // One-shot migration: legacy plaintext → sealed, then wipe the plaintext file.
-        let legacy = legacyPlainURL(for: userID)
-        if let plain = try? Data(contentsOf: legacy),
-           let snapshot = try? JSONDecoder.localStore.decode(Snapshot.self, from: plain)
-        {
-            save(snapshot, userID: userID, historyKey: historyKey)
-            try? fileManager.removeItem(at: legacy)
-            return snapshot
+        for file in files where file.pathExtension == "sealed" {
+            let name = file.deletingPathExtension().lastPathComponent
+            guard let peerID = UUID(uuidString: name),
+                  let messages = loadThread(peerID: peerID, userID: userID, historyKey: historyKey)
+            else { continue }
+            snapshot.threads[peerID.uuidString.lowercased()] = messages
         }
-        return nil
+        return snapshot
     }
 
-    /// Encrypts and atomically writes the snapshot. Never writes plaintext JSON.
-    func save(_ snapshot: Snapshot, userID: UUID, historyKey: SymmetricKey) {
-        var copy = snapshot
+    func loadRoster(userID: UUID, historyKey: SymmetricKey) -> Roster? {
+        decodeSealed(rosterURL(for: userID), as: Roster.self, historyKey: historyKey)
+    }
+
+    func saveRoster(_ roster: Roster, userID: UUID, historyKey: SymmetricKey) {
+        var copy = roster
         copy.updatedAt = Date()
-        guard let plain = try? JSONEncoder.localStore.encode(copy),
-              let sealed = try? LocalHistoryCrypto.seal(
-                  plain,
-                  masterKey: historyKey,
-                  context: .messagesSnapshot
-              )
-        else { return }
-        let url = sealedURL(for: userID)
-        try? sealed.write(to: url, options: .atomic)
-        LocalDataProtection.lockDown(url: url)
-        // Ensure no leftover plaintext from older builds.
-        try? fileManager.removeItem(at: legacyPlainURL(for: userID))
+        encodeSealed(copy, to: rosterURL(for: userID), historyKey: historyKey)
     }
 
-    /// Removes the entire on-disk snapshot for a user (logout wipe).
+    func loadThread(peerID: UUID, userID: UUID, historyKey: SymmetricKey) -> [StoredMessage]? {
+        guard let file = decodeSealed(
+            threadURL(peerID: peerID, userID: userID),
+            as: ThreadFile.self,
+            historyKey: historyKey
+        ) else { return nil }
+        return file.messages
+    }
+
+    /// Writes a single peer thread without touching other peers or the roster.
+    func saveThread(
+        peerID: UUID,
+        messages: [StoredMessage],
+        userID: UUID,
+        historyKey: SymmetricKey
+    ) {
+        let file = ThreadFile(
+            version: 1,
+            peerID: peerID,
+            messages: messages,
+            updatedAt: Date()
+        )
+        encodeSealed(file, to: threadURL(peerID: peerID, userID: userID), historyKey: historyKey)
+    }
+
+    /// Persists a full snapshot as roster + per-peer files (drops removed peers from disk).
+    func save(_ snapshot: Snapshot, userID: UUID, historyKey: SymmetricKey) {
+        let roster = Roster(
+            version: 1,
+            conversations: snapshot.conversations,
+            contacts: snapshot.contacts,
+            incomingRequests: snapshot.incomingRequests,
+            unreadByPeer: snapshot.unreadByPeer,
+            updatedAt: Date()
+        )
+        saveRoster(roster, userID: userID, historyKey: historyKey)
+
+        let wantedPeers = Set(snapshot.threads.keys)
+        for (key, messages) in snapshot.threads {
+            guard let peerID = UUID(uuidString: key) else { continue }
+            saveThread(peerID: peerID, messages: messages, userID: userID, historyKey: historyKey)
+        }
+
+        // Remove thread files for peers no longer in the snapshot.
+        let threadDir = threadsDirectory(for: userID)
+        if let files = try? fileManager.contentsOfDirectory(
+            at: threadDir,
+            includingPropertiesForKeys: nil
+        ) {
+            for file in files where file.pathExtension == "sealed" {
+                let name = file.deletingPathExtension().lastPathComponent
+                if !wantedPeers.contains(name.lowercased()) {
+                    try? fileManager.removeItem(at: file)
+                }
+            }
+        }
+
+        // Drop legacy monolithic files after successful split save.
+        try? fileManager.removeItem(at: legacySnapshotSealedURL(for: userID))
+        try? fileManager.removeItem(at: legacySnapshotPlainURL(for: userID))
+    }
+
     func clear(userID: UUID) {
-        let dir = directoryURL(for: userID)
-        try? fileManager.removeItem(at: dir)
+        try? fileManager.removeItem(at: directoryURL(for: userID))
     }
 
-    /// Drops every user's local message store (full local wipe).
     func clearAll() {
         let base = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? fileManager.temporaryDirectory
@@ -225,7 +312,7 @@ struct LocalMessageStore: Sendable {
 
     // MARK: - Prune
 
-    /// Returns a pruned snapshot and the message IDs that were dropped (for media/plaintext cleanup).
+    /// Returns a pruned snapshot and dropped message IDs (for media/plaintext cleanup).
     func prune(_ snapshot: Snapshot, now: Date = Date()) -> (Snapshot, [UUID]) {
         let cutoff = Calendar.current.date(
             byAdding: .day,
@@ -239,13 +326,11 @@ struct LocalMessageStore: Sendable {
 
         for (key, messages) in snapshot.threads {
             if key == notesKey {
-                // Notes are personal storage — keep until the user deletes them.
                 threads[key] = messages
                 continue
             }
             let kept = messages.filter { message in
                 if message.createdAt >= cutoff { return true }
-                // Keep unsynced outbound so a long offline period still flushes.
                 if message.pendingSync == true { return true }
                 dropped.append(message.id)
                 return false
@@ -257,7 +342,6 @@ struct LocalMessageStore: Sendable {
 
         var copy = snapshot
         copy.threads = threads
-        // Drop conversation rows whose peer thread is gone and last activity is old.
         copy.conversations = snapshot.conversations.filter { conv in
             let peerKey = conv.peerID.uuidString.lowercased()
             if threads[peerKey] != nil { return true }
@@ -265,6 +349,70 @@ struct LocalMessageStore: Sendable {
             return conv.createdAt >= cutoff
         }
         return (copy, dropped)
+    }
+
+    // MARK: - Migration
+
+    /// One-shot: `snapshot.sealed` / `snapshot.json` → roster + per-peer thread files.
+    private func migrateLegacySnapshotIfNeeded(userID: UUID, historyKey: SymmetricKey) {
+        // Already on v2 layout?
+        if fileManager.fileExists(atPath: rosterURL(for: userID).path) {
+            return
+        }
+
+        var legacy: Snapshot?
+        let sealedPath = legacySnapshotSealedURL(for: userID)
+        if let sealed = try? Data(contentsOf: sealedPath),
+           let plain = try? LocalHistoryCrypto.open(
+               sealed,
+               masterKey: historyKey,
+               context: .messagesSnapshot
+           ),
+           let snap = try? JSONDecoder.localStore.decode(Snapshot.self, from: plain)
+        {
+            legacy = snap
+        } else if let plain = try? Data(contentsOf: legacySnapshotPlainURL(for: userID)),
+                  let snap = try? JSONDecoder.localStore.decode(Snapshot.self, from: plain)
+        {
+            legacy = snap
+        }
+
+        guard let snapshot = legacy else { return }
+        save(snapshot, userID: userID, historyKey: historyKey)
+    }
+
+    // MARK: - Sealed I/O
+
+    private func encodeSealed<T: Encodable>(
+        _ value: T,
+        to url: URL,
+        historyKey: SymmetricKey
+    ) {
+        guard let plain = try? JSONEncoder.localStore.encode(value),
+              let sealed = try? LocalHistoryCrypto.seal(
+                  plain,
+                  masterKey: historyKey,
+                  context: .messagesSnapshot
+              )
+        else { return }
+        try? sealed.write(to: url, options: .atomic)
+        LocalDataProtection.lockDown(url: url)
+    }
+
+    private func decodeSealed<T: Decodable>(
+        _ url: URL,
+        as type: T.Type,
+        historyKey: SymmetricKey
+    ) -> T? {
+        guard let sealed = try? Data(contentsOf: url),
+              let plain = try? LocalHistoryCrypto.open(
+                  sealed,
+                  masterKey: historyKey,
+                  context: .messagesSnapshot
+              ),
+              let value = try? JSONDecoder.localStore.decode(type, from: plain)
+        else { return nil }
+        return value
     }
 }
 
@@ -371,7 +519,7 @@ extension MessageReceiptStatus {
     }
 }
 
-// MARK: - Local JSON codec (ISO-8601 fractional)
+// MARK: - Local JSON codec
 
 extension JSONDecoder {
     static let localStore: JSONDecoder = {

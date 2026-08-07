@@ -13,8 +13,8 @@ import UIKit
 @Observable
 final class MessagingController {
     /// Local-only "Notes to me" peer — never used as an API peer_user_id.
-    static let notesPeerID = LocalMessageStore.notesPeerID
-    static let notesDisplayName = "Notes to me"
+    static let notesPeerID = NotesLocal.peerID
+    static let notesDisplayName = NotesLocal.displayName
 
     private(set) var contacts: [ContactItemDTO] = []
     private(set) var incomingRequests: [ContactRequestDTO] = []
@@ -49,9 +49,8 @@ final class MessagingController {
     private let mediaService = MediaService()
     private let keyBundleService = KeyBundleService()
     private let peerKeys = PeerIdentityStore()
-    private let plaintextCache = LocalPlaintextCache()
-    private let mediaCache = LocalMediaCache()
-    private let messageStore = LocalMessageStore()
+    /// Encrypted offline history + decrypt/media caches (not the network layer).
+    private let local = MessagingLocalRepository()
     private let connectivity = ConnectivityMonitor()
     private let realtime = RealtimeClient()
     /// Polling fallback when the WebSocket is down (common behind some reverse proxies).
@@ -64,7 +63,7 @@ final class MessagingController {
     /// One in-flight thread load per peer.
     private var threadLoadTasks: [UUID: Task<Void, Never>] = [:]
     /// Serializes outbound flush so reconnect + poll don't double-send.
-    private var pendingFlushTask: Task<Void, Never>?
+    private let outboundQueue = OutboundSendQueue()
     /// Presence is swept in bulk at most this often; live changes arrive over WS anyway.
     private var lastPresenceSweep: Date?
     private let presenceSweepInterval: TimeInterval = 30
@@ -163,18 +162,8 @@ final class MessagingController {
     }
 
     func isNotesChat(_ peerID: UUID) -> Bool {
-        peerID == Self.notesPeerID
+        NotesLocal.isNotes(peerID)
     }
-
-    /// Retained while messaging is running so sealed caches keep working even if the weak
-    /// `cryptoController` reference is temporarily unavailable during teardown races.
-    private var cachedHistoryKey: SymmetricKey?
-
-    /// Phrase-derived AES key for at-rest local history. Nil when messaging crypto is locked.
-    private var historyKey: SymmetricKey? {
-        cryptoController?.material?.historyKey ?? cachedHistoryKey
-    }
-
 
     func bind(session: SessionController, crypto: CryptoController, calls: CallController? = nil) {
         sessionController = session
@@ -187,7 +176,7 @@ final class MessagingController {
 
     func start() {
         guard let token = sessionController?.bearerToken else { return }
-        cachedHistoryKey = cryptoController?.material?.historyKey
+        local.setHistoryKey(cryptoController?.material?.historyKey)
         connectivity.start()
         isOffline = !connectivity.isOnline
         // Paint cached chats/contacts immediately so offline / cold start feels instant.
@@ -216,8 +205,7 @@ final class MessagingController {
         pollTask = nil
         contactsPollTask?.cancel()
         contactsPollTask = nil
-        pendingFlushTask?.cancel()
-        pendingFlushTask = nil
+        outboundQueue.cancel()
         connectivity.stop()
         realtime.disconnect(reconnect: false)
         activePeerID = nil
@@ -235,7 +223,7 @@ final class MessagingController {
         lastError = nil
         isOffline = false
         lastPresenceSweep = nil
-        cachedHistoryKey = nil
+        local.setHistoryKey(nil)
         if wipeDisk {
             clearLocalData()
         } else {
@@ -246,14 +234,8 @@ final class MessagingController {
     /// Wipes in-memory lists and on-device message caches (plaintext, media, ratchets, peer keys).
     /// Called on sign-out so a restart never resurfaces another account’s data.
     func clearLocalData() {
-        if let userID = sessionController?.userID {
-            messageStore.clear(userID: userID)
-        } else {
-            messageStore.clearAll()
-        }
+        local.clear(userID: sessionController?.userID)
         clearInMemoryState()
-        plaintextCache.clearAll()
-        mediaCache.clearAll()
         peerKeys.clear()
         RatchetSessionStore.deleteAll()
     }
@@ -645,22 +627,16 @@ final class MessagingController {
             for dto in response.messages.reversed() {
                 // Server returns newest-first; reverse for chronological UI.
                 let message = await decodeMessage(dto, me: me, material: material, token: token)
-                decoded.append(preferReadableMessage(message, previous: previousThread))
+                decoded.append(message)
                 if dto.senderUserId != me {
                     try? await messagesService.markDelivered(messageID: dto.id, token: token)
                 }
             }
-            // Re-attach unsynced locals that the server does not know about yet.
-            for pending in pendingLocal where !decoded.contains(where: { $0.id == pending.id }) {
-                decoded.append(pending)
-            }
-            // Keep local-only messages the server page did not return (still within retention).
-            for prior in previousThread where !decoded.contains(where: { $0.id == prior.id }) {
-                if !isFailedDecryptText(prior.text) {
-                    decoded.append(prior)
-                }
-            }
-            decoded.sort { $0.createdAt < $1.createdAt }
+            decoded = ThreadMessageMerge.mergeThread(
+                decoded: decoded,
+                previous: previousThread,
+                pendingLocal: pendingLocal
+            )
             if threads[peerUserID] != decoded { threads[peerUserID] = decoded }
             // Mark all inbound up to the latest so the peer gets read receipts.
             if let lastFromPeer = decoded.last(where: { !$0.isMine }) {
@@ -678,7 +654,7 @@ final class MessagingController {
             }
             if lastError != nil { lastError = nil }
             isOffline = false
-            persistSnapshot()
+            persistThread(peerUserID)
         } catch {
             // Offline / error: keep whatever was hydrated from disk (or still in memory).
             if threads[peerUserID]?.isEmpty != false {
@@ -769,24 +745,22 @@ final class MessagingController {
     /// Toggles a Notes todo checkbox.
     func toggleTodo(messageID: UUID, peerUserID: UUID = MessagingController.notesPeerID) {
         guard isNotesChat(peerUserID),
-              var list = threads[peerUserID],
-              let idx = list.firstIndex(where: { $0.id == messageID && $0.kind == .todo })
+              let list = threads[peerUserID],
+              let updated = NotesLocal.toggleTodo(messageID: messageID, in: list)
         else { return }
-        let current = list[idx].todoDone ?? false
-        list[idx].todoDone = !current
-        threads[peerUserID] = list
-        persistSnapshot()
+        threads[peerUserID] = updated
+        persistThread(peerUserID)
     }
 
     /// Deletes a local Notes message (and its media bytes if any).
     func deleteLocalNote(messageID: UUID) {
         let peer = Self.notesPeerID
-        guard var list = threads[peer] else { return }
-        list.removeAll { $0.id == messageID }
-        threads[peer] = list
-        mediaCache.remove(messageIDs: [messageID])
-        plaintextCache.remove(messageIDs: [messageID])
-        persistSnapshot()
+        guard let list = threads[peer] else { return }
+        let result = NotesLocal.delete(messageID: messageID, in: list)
+        guard result.removed else { return }
+        threads[peer] = result.messages
+        local.removeCaches(messageIDs: [messageID])
+        persistThread(peer)
     }
 
     func setTyping(peerUserID: UUID, isTyping: Bool) {
@@ -836,7 +810,7 @@ final class MessagingController {
 
         if isNotesChat(peerUserID) {
             let me = sessionController?.userID ?? Self.notesPeerID
-            saveSealedMedia(messageID: optimisticID, data: encoded.data)
+            local.saveSealedMedia(messageID: optimisticID, data: encoded.data)
             let note = ChatMessage(
                 id: optimisticID,
                 peerUserID: peerUserID,
@@ -881,7 +855,7 @@ final class MessagingController {
         var list = threads[peerUserID] ?? []
         list.append(optimistic)
         threads[peerUserID] = list
-        saveSealedMedia(messageID: optimisticID, data: encoded.data)
+        local.saveSealedMedia(messageID: optimisticID, data: encoded.data)
         persistSnapshot()
 
         if !connectivity.isOnline {
@@ -1008,12 +982,12 @@ final class MessagingController {
             ),
             token: token
         )
-        saveSealedMedia(messageID: dto.id, data: encoded.data)
+        local.saveSealedMedia(messageID: dto.id, data: encoded.data)
         if dto.id != optimisticID {
-            mediaCache.remove(messageIDs: [optimisticID])
+            local.removeCaches(messageIDs: [optimisticID])
         }
         // Cache sealed media payload (file key), not just the caption — needed for reload.
-        saveSealedPlaintext(messageID: dto.id, data: payloadData)
+        local.saveSealedPlaintext(messageID: dto.id, data: payloadData)
 
         let sent = ChatMessage(
             id: dto.id,
@@ -1077,7 +1051,7 @@ final class MessagingController {
         var list = threads[peerUserID] ?? []
         list.append(optimistic)
         threads[peerUserID] = list
-        saveSealedMedia(messageID: optimisticID, data: audioData)
+        local.saveSealedMedia(messageID: optimisticID, data: audioData)
 
         // Bubble is visible now; only then pay for transcription.
         var resolved = transcript?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1197,11 +1171,11 @@ final class MessagingController {
                 ),
                 token: token
             )
-            saveSealedMedia(messageID: dto.id, data: audioData)
+            local.saveSealedMedia(messageID: dto.id, data: audioData)
             if dto.id != optimisticID {
-                mediaCache.remove(messageIDs: [optimisticID])
+                local.removeCaches(messageIDs: [optimisticID])
             }
-            saveSealedPlaintext(messageID: dto.id, data: payloadData)
+            local.saveSealedPlaintext(messageID: dto.id, data: payloadData)
 
             let sent = ChatMessage(
                 id: dto.id,
@@ -1268,7 +1242,7 @@ final class MessagingController {
               !message.deleted
         else { return }
 
-        if let cached = sealedMedia(for: message.id) {
+        if let cached = local.sealedMedia(for: message.id) {
             updateMessageVoice(messageID: message.id, peerID: message.peerUserID, data: cached)
             return
         }
@@ -1285,7 +1259,7 @@ final class MessagingController {
             else { return }
             let sealedFile = try await mediaService.downloadContent(mediaID: mediaID, token: token)
             let audio = try MediaCrypto.openFile(sealed: sealedFile, keyData: keyData)
-            saveSealedMedia(messageID: message.id, data: audio)
+            local.saveSealedMedia(messageID: message.id, data: audio)
             updateMessageVoice(
                 messageID: message.id,
                 peerID: message.peerUserID,
@@ -1332,7 +1306,7 @@ final class MessagingController {
               !message.deleted
         else { return }
 
-        if let cached = sealedMedia(for: message.id) {
+        if let cached = local.sealedMedia(for: message.id) {
             updateMessageImage(messageID: message.id, peerID: message.peerUserID, data: cached)
             return
         }
@@ -1353,7 +1327,7 @@ final class MessagingController {
 
             let sealedFile = try await mediaService.downloadContent(mediaID: mediaID, token: token)
             let jpeg = try MediaCrypto.openFile(sealed: sealedFile, keyData: keyData)
-            saveSealedMedia(messageID: message.id, data: jpeg)
+            local.saveSealedMedia(messageID: message.id, data: jpeg)
             updateMessageImage(messageID: message.id, peerID: message.peerUserID, data: jpeg)
         } catch {
             // Leave placeholder; user can reopen thread to retry.
@@ -1366,7 +1340,7 @@ final class MessagingController {
         token: String,
         material: IdentityKeyMaterial
     ) async throws -> Data? {
-        if let cached = sealedPlaintext(for: message.id), isMediaPayloadData(cached) {
+        if let cached = local.sealedPlaintext(for: message.id), MessageDecoder.isMediaPayloadData(cached) {
             return cached
         }
         guard message.isMine else {
@@ -1390,7 +1364,7 @@ final class MessagingController {
             senderIdentityPublicKey: material.identityPublicKeyData,
             as: .sender
         )
-        saveSealedPlaintext(messageID: message.id, data: payloadData)
+        local.saveSealedPlaintext(messageID: message.id, data: payloadData)
         return payloadData
     }
 
@@ -1408,23 +1382,11 @@ final class MessagingController {
 
     /// List subtitle for a peer thread (including Notes).
     func preview(forPeer peerID: UUID) -> String {
-        if let last = threads[peerID]?.last {
-            if last.deleted { return "Message deleted" }
-            switch last.kind {
-            case .image:
-                return last.text.isEmpty || last.text == "Photo" ? "Photo" : last.text
-            case .voice:
-                if let t = last.transcript, !t.isEmpty { return t }
-                return "Voice message"
-            case .todo:
-                let mark = (last.todoDone == true) ? "✓ " : "○ "
-                return mark + last.text
-            case .text:
-                return last.text
-            }
-        }
-        if isNotesChat(peerID) { return "Personal notes, photos & todos" }
-        return "Encrypted conversation"
+        ChatListFormatting.preview(
+            forPeer: peerID,
+            threads: threads,
+            isNotes: isNotesChat(peerID)
+        )
     }
 
     /// Latest activity timestamp for Notes (or nil when empty).
@@ -1434,21 +1396,12 @@ final class MessagingController {
 
     /// Relative day label for list rows (Today → time, Yesterday, else date).
     func timeLabel(for date: Date?) -> String {
-        guard let date else { return "" }
-        let calendar = Calendar.current
-        if calendar.isDateInToday(date) {
-            return date.formatted(date: .omitted, time: .shortened)
-        }
-        if calendar.isDateInYesterday(date) {
-            return "Yesterday"
-        }
-        return date.formatted(date: .abbreviated, time: .omitted)
+        ChatListFormatting.timeLabel(for: date)
     }
 
     /// Clock time for in-bubble meta (always `11:05`-style).
     func clockTimeLabel(for date: Date?) -> String {
-        guard let date else { return "" }
-        return date.formatted(date: .omitted, time: .shortened)
+        ChatListFormatting.clockTimeLabel(for: date)
     }
 
     // MARK: - Private
@@ -1559,9 +1512,7 @@ final class MessagingController {
     }
 
     private func receiptStatus(from dto: MessageDTO) -> MessageReceiptStatus {
-        if dto.read == true { return .read }
-        if dto.delivered == true { return .delivered }
-        return .sent
+        MessageDecoder.receiptStatus(from: dto)
     }
 
     private func handleTyping(_ json: [String: Any]) {
@@ -1645,310 +1596,22 @@ final class MessagingController {
         material: IdentityKeyMaterial,
         token: String
     ) async -> ChatMessage {
-        let isMine = dto.senderUserId == me
-        let peerUserID = isMine
-            ? (conversations.first(where: { $0.id == dto.conversationId })?.peer.id ?? dto.senderUserId)
-            : dto.senderUserId
-        let receipt = isMine ? receiptStatus(from: dto) : MessageReceiptStatus.sent
-        let isMedia = dto.contentType == "media"
-
-        if dto.deletedForEveryone {
-            return ChatMessage(
-                id: dto.id,
-                peerUserID: peerUserID,
-                senderUserID: dto.senderUserId,
-                text: "Message deleted",
-                createdAt: dto.createdAt,
-                isMine: isMine,
-                deleted: true,
-                receipt: receipt,
-                kind: isMedia ? .image : .text,
-                mediaObjectId: dto.mediaObjectId
-            )
-        }
-
-        // Prefer in-memory / hydrated message (already decoded) with upgraded receipt.
-        // Search this peer first, then any thread — snapshot hydrate must win over re-decrypt.
-        let existing = threads[peerUserID]?.first(where: { $0.id == dto.id })
-            ?? threads.values.lazy.flatMap({ $0 }).first(where: { $0.id == dto.id })
-        if let existing {
-            var merged = existing
-            if isMine {
-                let serverReceipt = receiptStatus(from: dto)
-                if serverReceipt.rank > existing.receipt.rank {
-                    merged.receipt = serverReceipt
+        await MessageDecoder.decode(
+            dto,
+            context: MessageDecoder.Context(
+                me: me,
+                material: material,
+                token: token,
+                conversations: conversations,
+                threads: threads,
+                local: local,
+                mediaService: mediaService,
+                resolvePeerIdentityPublicKey: { [weak self] peerID, tok in
+                    guard let self else { throw APIError.decoding }
+                    return try await self.resolvePeerIdentityPublicKey(peerUserID: peerID, token: tok)
                 }
-            }
-            // Skip re-decrypt: DR message keys are one-shot.
-            // Still re-enter media path when we have a payload cache but no image bytes yet
-            // (download can be retried without touching the ratchet).
-            let needsMediaBytes = (existing.kind == .image || existing.kind == .voice)
-                && existing.imageData == nil
-                && existing.voiceData == nil
-                && !existing.deleted
-                && sealedPlaintext(for: dto.id) != nil
-            if !existing.deleted,
-               !isFailedDecryptText(existing.text),
-               !needsMediaBytes
-            {
-                // Backfill sealed plaintext so a later cold start does not need DR again.
-                if !isMedia, sealedPlaintext(for: dto.id) == nil {
-                    saveSealedPlaintext(messageID: dto.id, text: existing.text)
-                }
-                return merged
-            }
-        }
-
-        // Cached plaintext from a prior successful open (survives loadThread reloads).
-        // Media: this is the *payload JSON* (file key), not the caption.
-        if let cachedData = sealedPlaintext(for: dto.id),
-           isMediaPayloadData(cachedData) || !isMedia
-        {
-            if isMedia {
-                return await decodeMediaMessage(
-                    dto: dto,
-                    plain: cachedData,
-                    peerUserID: peerUserID,
-                    isMine: isMine,
-                    receipt: receipt,
-                    token: token
-                )
-            }
-            let text = String(data: cachedData, encoding: .utf8) ?? "[Binary message]"
-            return ChatMessage(
-                id: dto.id,
-                peerUserID: peerUserID,
-                senderUserID: dto.senderUserId,
-                text: text,
-                createdAt: dto.createdAt,
-                isMine: isMine,
-                deleted: false,
-                receipt: receipt
             )
-        }
-
-        guard let ciphertextB64 = dto.ciphertext,
-              let envelopeData = Data(base64Encoded: ciphertextB64)
-        else {
-            return ChatMessage(
-                id: dto.id,
-                peerUserID: peerUserID,
-                senderUserID: dto.senderUserId,
-                text: isMedia ? "Photo" : "[Unable to decrypt]",
-                createdAt: dto.createdAt,
-                isMine: isMine,
-                deleted: false,
-                receipt: receipt,
-                kind: isMedia ? .image : .text,
-                mediaObjectId: dto.mediaObjectId
-            )
-        }
-
-        do {
-            let plain: Data
-            if isMine {
-                // Self dual-seal only — never advances the peer DR session.
-                plain = try MessageCrypto.open(
-                    envelopeData: envelopeData,
-                    peerUserID: peerUserID,
-                    with: material.agreementPrivateKey,
-                    ourIdentityPublicKey: material.identityPublicKeyData,
-                    senderIdentityPublicKey: material.identityPublicKeyData,
-                    as: .sender
-                )
-            } else {
-                let senderPub = try await resolvePeerIdentityPublicKey(
-                    peerUserID: dto.senderUserId,
-                    token: token
-                )
-                // First open only: advances DR once and caches payload below.
-                plain = try MessageCrypto.open(
-                    envelopeData: envelopeData,
-                    peerUserID: dto.senderUserId,
-                    with: material.agreementPrivateKey,
-                    ourIdentityPublicKey: material.identityPublicKeyData,
-                    senderIdentityPublicKey: senderPub,
-                    as: .recipient
-                )
-            }
-
-            // Always cache so loadThread / media reload never re-runs DR on this id.
-            saveSealedPlaintext(messageID: dto.id, data: plain)
-
-            if isMedia {
-                return await decodeMediaMessage(
-                    dto: dto,
-                    plain: plain,
-                    peerUserID: peerUserID,
-                    isMine: isMine,
-                    receipt: receipt,
-                    token: token
-                )
-            }
-
-            let text = String(data: plain, encoding: .utf8) ?? "[Binary message]"
-            return ChatMessage(
-                id: dto.id,
-                peerUserID: peerUserID,
-                senderUserID: dto.senderUserId,
-                text: text,
-                createdAt: dto.createdAt,
-                isMine: isMine,
-                deleted: false,
-                receipt: receipt
-            )
-        } catch {
-            if let cached = sealedPlaintextText(for: dto.id), !isMedia {
-                return ChatMessage(
-                    id: dto.id,
-                    peerUserID: peerUserID,
-                    senderUserID: dto.senderUserId,
-                    text: cached,
-                    createdAt: dto.createdAt,
-                    isMine: isMine,
-                    deleted: false,
-                    receipt: receipt
-                )
-            }
-            if isMedia, let cachedData = sealedPlaintext(for: dto.id) {
-                return await decodeMediaMessage(
-                    dto: dto,
-                    plain: cachedData,
-                    peerUserID: peerUserID,
-                    isMine: isMine,
-                    receipt: receipt,
-                    token: token
-                )
-            }
-            // Last resort: keep a previously good bubble (hydrate / earlier load) instead of
-            // burning the UI with a permanent "[Unable to decrypt]" after a one-shot DR miss.
-            if let existing,
-               !existing.deleted,
-               !isFailedDecryptText(existing.text)
-            {
-                return existing
-            }
-            return ChatMessage(
-                id: dto.id,
-                peerUserID: peerUserID,
-                senderUserID: dto.senderUserId,
-                text: isMedia ? "Media" : "[Unable to decrypt]",
-                createdAt: dto.createdAt,
-                isMine: isMine,
-                deleted: false,
-                receipt: receipt,
-                kind: isMedia ? .image : .text,
-                mediaObjectId: dto.mediaObjectId,
-                imageData: sealedMedia(for: dto.id)
-            )
-        }
-    }
-
-    private func decodeMediaMessage(
-        dto: MessageDTO,
-        plain: Data,
-        peerUserID: UUID,
-        isMine: Bool,
-        receipt: MessageReceiptStatus,
-        token: String
-    ) async -> ChatMessage {
-        let cached = sealedMedia(for: dto.id)
-        let payload = try? JSONDecoder().decode(MediaMessagePayload.self, from: plain)
-
-        if payload?.isVoice == true {
-            var voiceData = cached
-            if voiceData == nil,
-               let payload,
-               let mediaID = dto.mediaObjectId,
-               let keyData = Data(base64Encoded: payload.k)
-            {
-                if let sealed = try? await mediaService.downloadContent(mediaID: mediaID, token: token),
-                   let audio = try? MediaCrypto.openFile(sealed: sealed, keyData: keyData)
-                {
-                    saveSealedMedia(messageID: dto.id, data: audio)
-                    voiceData = audio
-                }
-            }
-            // Keep payload JSON in plaintextCache (file key); do not overwrite with transcript.
-            let transcript = payload?.c?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let mediaText = (transcript?.isEmpty == false) ? transcript! : "Voice message"
-            return ChatMessage(
-                id: dto.id,
-                peerUserID: peerUserID,
-                senderUserID: dto.senderUserId,
-                text: mediaText,
-                createdAt: dto.createdAt,
-                isMine: isMine,
-                deleted: false,
-                receipt: receipt,
-                kind: .voice,
-                mediaObjectId: dto.mediaObjectId,
-                voiceData: voiceData,
-                voiceDurationMs: payload?.d,
-                voiceWaveform: VoiceWaveform.decode(payload?.wf),
-                transcript: transcript
-            )
-        }
-
-        var imageData = cached
-        let width = payload?.w
-        let height = payload?.h
-
-        // Best-effort download when we have a payload key (don't block the thread forever).
-        if imageData == nil,
-           let payload,
-           let mediaID = dto.mediaObjectId,
-           let keyData = Data(base64Encoded: payload.k)
-        {
-            if let sealed = try? await mediaService.downloadContent(mediaID: mediaID, token: token),
-               let jpeg = try? MediaCrypto.openFile(sealed: sealed, keyData: keyData)
-            {
-                saveSealedMedia(messageID: dto.id, data: jpeg)
-                imageData = jpeg
-            }
-        }
-
-        // Never overwrite the payload cache with a caption — that drops the AES file key
-        // and ensureImageLoaded can no longer download the photo.
-        let caption = payload?.c?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let mediaText = caption.isEmpty ? "Photo" : caption
-
-        // If we still lack bytes, keep a clear failed state only when payload is missing.
-        if imageData == nil, payload == nil {
-            return ChatMessage(
-                id: dto.id,
-                peerUserID: peerUserID,
-                senderUserID: dto.senderUserId,
-                text: "Media",
-                createdAt: dto.createdAt,
-                isMine: isMine,
-                deleted: false,
-                receipt: receipt,
-                kind: .image,
-                mediaObjectId: dto.mediaObjectId
-            )
-        }
-
-        return ChatMessage(
-            id: dto.id,
-            peerUserID: peerUserID,
-            senderUserID: dto.senderUserId,
-            text: mediaText,
-            createdAt: dto.createdAt,
-            isMine: isMine,
-            deleted: false,
-            receipt: receipt,
-            kind: .image,
-            mediaObjectId: dto.mediaObjectId,
-            imageWidth: width,
-            imageHeight: height,
-            imageData: imageData
         )
-    }
-
-    /// True when `data` looks like a media payload JSON (`{"t":"image"|...}`), not a caption string.
-    private func isMediaPayloadData(_ data: Data) -> Bool {
-        (try? JSONDecoder().decode(MediaMessagePayload.self, from: data)) != nil
     }
 
     private func resolvePeerIdentityPublicKey(peerUserID: UUID, token: String) async throws -> Data {
@@ -1967,144 +1630,50 @@ final class MessagingController {
         return data
     }
 
-    // MARK: - Local persistence (encrypted 90-day offline cache + Notes)
-
-    /// At-rest helpers — no-ops without `historyKey` so locked crypto never writes plaintext.
-    private func sealedPlaintext(for messageID: UUID) -> Data? {
-        guard let key = historyKey else { return nil }
-        return plaintextCache.data(for: messageID, historyKey: key)
-    }
-
-    private func sealedPlaintextText(for messageID: UUID) -> String? {
-        guard let key = historyKey else { return nil }
-        return plaintextCache.text(for: messageID, historyKey: key)
-    }
-
-    private func saveSealedPlaintext(messageID: UUID, data: Data) {
-        guard let key = historyKey else { return }
-        plaintextCache.save(messageID: messageID, data: data, historyKey: key)
-    }
-
-    private func saveSealedPlaintext(messageID: UUID, text: String) {
-        guard let key = historyKey else { return }
-        plaintextCache.save(messageID: messageID, text: text, historyKey: key)
-    }
-
-    private func sealedMedia(for messageID: UUID) -> Data? {
-        guard let key = historyKey else { return nil }
-        return mediaCache.data(for: messageID, historyKey: key)
-    }
-
-    private func saveSealedMedia(messageID: UUID, data: Data) {
-        guard let key = historyKey else { return }
-        mediaCache.save(messageID: messageID, data: data, historyKey: key)
-    }
+    // MARK: - Local persistence (delegates to MessagingLocalRepository)
 
     private func hydrateFromDisk() {
-        guard let userID = sessionController?.userID,
-              let key = historyKey
-        else {
-            // Crypto locked — sealed blobs stay opaque; no plaintext in memory.
-            if threads[Self.notesPeerID] == nil {
-                threads[Self.notesPeerID] = []
-            }
-            return
-        }
-        // Migrate pre-encryption UserDefaults plaintext into sealed files (never wipe first).
-        plaintextCache.migrateLegacyIfNeeded(historyKey: key)
+        let state = local.hydrate(userID: sessionController?.userID)
 
-        guard var snapshot = messageStore.load(userID: userID, historyKey: key) else {
-            if threads[Self.notesPeerID] == nil {
-                threads[Self.notesPeerID] = []
-            }
-            return
-        }
-        let pruned = messageStore.prune(snapshot)
-        snapshot = pruned.0
-        if !pruned.1.isEmpty {
-            plaintextCache.remove(messageIDs: pruned.1)
-            mediaCache.remove(messageIDs: pruned.1)
-            messageStore.save(snapshot, userID: userID, historyKey: key)
-        }
-
-        let restoredContacts = snapshot.contacts.map { $0.toDTO() }
-        let restoredRequests = snapshot.incomingRequests.map { $0.toDTO() }
-        let restoredConversations = snapshot.conversations.map { $0.toDTO() }
-
-        if contacts.isEmpty, !restoredContacts.isEmpty {
-            contacts = restoredContacts
+        if contacts.isEmpty, !state.contacts.isEmpty {
+            contacts = state.contacts
             hasLoadedContacts = true
         }
-        if incomingRequests.isEmpty, !restoredRequests.isEmpty {
-            incomingRequests = restoredRequests
+        if incomingRequests.isEmpty, !state.incomingRequests.isEmpty {
+            incomingRequests = state.incomingRequests
         }
-        if conversations.isEmpty, !restoredConversations.isEmpty {
-            conversations = restoredConversations
+        if conversations.isEmpty, !state.conversations.isEmpty {
+            conversations = state.conversations
             hasLoadedChats = true
         }
 
-        var restoredThreads: [UUID: [ChatMessage]] = threads
-        for (mapKey, stored) in snapshot.threads {
-            guard let peerID = UUID(uuidString: mapKey) else { continue }
-            // Don't clobber an already-live in-memory thread with older disk data mid-session.
+        var restoredThreads = threads
+        for (peerID, messages) in state.threads {
             if restoredThreads[peerID]?.isEmpty == false { continue }
-            let messages = stored.map {
-                $0.toChatMessage(media: mediaCache, historyKey: key)
-            }
             restoredThreads[peerID] = messages
-            // Warm the one-shot plaintext cache from snapshot text so loadThread never
-            // re-runs the Double Ratchet for messages we already read.
-            for message in messages where !message.deleted && message.kind == .text {
-                if !isFailedDecryptText(message.text) {
-                    saveSealedPlaintext(messageID: message.id, text: message.text)
-                }
-            }
         }
         if restoredThreads[Self.notesPeerID] == nil {
             restoredThreads[Self.notesPeerID] = []
         }
         threads = restoredThreads
 
-        var unread: [UUID: Int] = unreadCountByPeer
-        for (mapKey, count) in snapshot.unreadByPeer {
-            guard let peerID = UUID(uuidString: mapKey) else { continue }
+        var unread = unreadCountByPeer
+        for (peerID, count) in state.unreadByPeer {
             unread[peerID] = count
         }
         unreadCountByPeer = unread
     }
 
     private func persistSnapshot() {
-        guard let userID = sessionController?.userID,
-              let key = historyKey
-        else { return }
-        var snapshot = LocalMessageStore.Snapshot()
-        snapshot.conversations = conversations.map(LocalMessageStore.CachedConversation.init)
-        snapshot.contacts = contacts.map(LocalMessageStore.CachedContact.init)
-        snapshot.incomingRequests = incomingRequests.map(LocalMessageStore.CachedContactRequest.init)
-        var threadMap: [String: [LocalMessageStore.StoredMessage]] = [:]
-        for (peerID, messages) in threads {
-            let mapKey = peerID.uuidString.lowercased()
-            threadMap[mapKey] = messages.map(LocalMessageStore.StoredMessage.from)
-            // Dual-write: keep sealed plaintext warm whenever we know the body.
-            for message in messages where !message.deleted && message.kind == .text {
-                if !isFailedDecryptText(message.text) {
-                    saveSealedPlaintext(messageID: message.id, text: message.text)
-                }
-            }
-        }
-        snapshot.threads = threadMap
-        var unread: [String: Int] = [:]
-        for (peerID, count) in unreadCountByPeer where count > 0 {
-            unread[peerID.uuidString.lowercased()] = count
-        }
-        snapshot.unreadByPeer = unread
-
-        let pruned = messageStore.prune(snapshot)
-        if !pruned.1.isEmpty {
-            plaintextCache.remove(messageIDs: pruned.1)
-            mediaCache.remove(messageIDs: pruned.1)
-            // Also drop pruned rows from memory.
-            let dropped = Set(pruned.1)
+        let dropped = local.persist(
+            userID: sessionController?.userID,
+            contacts: contacts,
+            incomingRequests: incomingRequests,
+            conversations: conversations,
+            threads: threads,
+            unreadByPeer: unreadCountByPeer
+        )
+        if !dropped.isEmpty {
             for (peerID, messages) in threads {
                 let kept = messages.filter { !dropped.contains($0.id) }
                 if kept.count != messages.count {
@@ -2112,50 +1681,23 @@ final class MessagingController {
                 }
             }
         }
-        messageStore.save(pruned.0, userID: userID, historyKey: key)
     }
 
-    /// True for placeholder bodies that mean "we lost the plaintext".
-    private func isFailedDecryptText(_ text: String) -> Bool {
-        text == "[Unable to decrypt]" || text == "Media" || text == "[Binary message]"
-    }
-
-    /// Never let a failed re-decrypt replace a previously readable bubble.
-    private func preferReadableMessage(
-        _ decoded: ChatMessage,
-        previous: [ChatMessage]
-    ) -> ChatMessage {
-        guard let prior = previous.first(where: { $0.id == decoded.id }) else {
-            return decoded
+    /// Persist a single peer after send/load without rewriting every thread file.
+    private func persistThread(_ peerID: UUID) {
+        guard let messages = threads[peerID] else {
+            persistSnapshot()
+            return
         }
-        let decodedFailed = isFailedDecryptText(decoded.text)
-        let priorFailed = isFailedDecryptText(prior.text)
-
-        if decodedFailed, !priorFailed, !prior.deleted {
-            var kept = prior
-            if decoded.isMine, decoded.receipt.rank > prior.receipt.rank {
-                kept.receipt = decoded.receipt
-            }
-            if kept.imageData == nil { kept.imageData = decoded.imageData }
-            if kept.voiceData == nil { kept.voiceData = decoded.voiceData }
-            if kept.mediaObjectId == nil { kept.mediaObjectId = decoded.mediaObjectId }
-            if kept.transcript == nil { kept.transcript = decoded.transcript }
-            // Re-seal so cold start has the body without needing DR.
-            if kept.kind == .text {
-                saveSealedPlaintext(messageID: kept.id, text: kept.text)
-            }
-            return kept
-        }
-
-        // Prefer whichever side still has media bytes.
-        var merged = decoded
-        if merged.imageData == nil { merged.imageData = prior.imageData }
-        if merged.voiceData == nil { merged.voiceData = prior.voiceData }
-        if merged.transcript == nil { merged.transcript = prior.transcript }
-        if !priorFailed, decodedFailed {
-            return prior
-        }
-        return merged
+        local.persistThread(
+            peerID: peerID,
+            messages: messages,
+            userID: sessionController?.userID,
+            conversations: conversations,
+            contacts: contacts,
+            incomingRequests: incomingRequests,
+            unreadByPeer: unreadCountByPeer
+        )
     }
 
     private func appendLocalNote(
@@ -2165,25 +1707,19 @@ final class MessagingController {
         todoDone: Bool? = nil
     ) {
         let me = sessionController?.userID ?? Self.notesPeerID
-        let message = ChatMessage(
-            id: UUID(),
-            peerUserID: peerUserID,
-            senderUserID: me,
+        let message = NotesLocal.makeNote(
             text: text,
-            createdAt: Date(),
-            isMine: true,
-            deleted: false,
-            receipt: .sent,
             kind: kind,
+            senderUserID: me,
             todoDone: todoDone
         )
         var list = threads[peerUserID] ?? []
         list.append(message)
         threads[peerUserID] = list
         if kind == .text {
-            saveSealedPlaintext(messageID: message.id, text: text)
+            local.saveSealedPlaintext(messageID: message.id, text: text)
         }
-        persistSnapshot()
+        persistThread(peerUserID)
     }
 
     private func deliverPendingText(
@@ -2212,7 +1748,7 @@ final class MessagingController {
             ),
             token: token
         )
-        saveSealedPlaintext(messageID: dto.id, text: text)
+        local.saveSealedPlaintext(messageID: dto.id, text: text)
         let sent = ChatMessage(
             id: dto.id,
             peerUserID: peerUserID,
@@ -2240,17 +1776,9 @@ final class MessagingController {
 
     /// Flushes queued outbound messages after reconnect.
     private func flushPendingSends() async {
-        if let existing = pendingFlushTask {
-            await existing.value
-            return
+        await outboundQueue.flush { [weak self] in
+            await self?.performPendingFlush()
         }
-        let task = Task { [weak self] in
-            guard let self else { return }
-            await self.performPendingFlush()
-        }
-        pendingFlushTask = task
-        await task.value
-        if pendingFlushTask == task { pendingFlushTask = nil }
     }
 
     private func performPendingFlush() async {
@@ -2260,64 +1788,61 @@ final class MessagingController {
               let material = cryptoController?.material
         else { return }
 
-        for (peerID, messages) in threads {
-            if isNotesChat(peerID) { continue }
-            let pending = messages.filter { $0.pendingSync && $0.isMine }
-            for message in pending {
-                switch message.kind {
-                case .text:
-                    do {
-                        try await deliverPendingText(
-                            messageID: message.id,
-                            text: message.text,
-                            peerUserID: peerID,
-                            me: me,
-                            material: material,
-                            token: token
-                        )
-                    } catch {
-                        // Leave pending; try again next reconnect.
-                    }
-                case .image:
-                    guard let data = message.imageData ?? sealedMedia(for: message.id) else {
-                        continue
-                    }
-                    let size = MediaCrypto.pixelSize(for: data)
-                    let encoded = EncodedImage(
-                        data: data,
-                        width: size?.width ?? message.imageWidth ?? 0,
-                        height: size?.height ?? message.imageHeight ?? 0,
-                        mime: MediaCrypto.mimeType(for: data)
+        let pending = OutboundPending.items(from: threads, notesPeerID: Self.notesPeerID)
+        for item in pending {
+            switch item {
+            case let .text(messageID, peerID, text):
+                do {
+                    try await deliverPendingText(
+                        messageID: messageID,
+                        text: text,
+                        peerUserID: peerID,
+                        me: me,
+                        material: material,
+                        token: token
                     )
-                    let caption = (message.text == "Photo" || message.text.isEmpty) ? "" : message.text
-                    if var list = threads[peerID],
-                       let idx = list.firstIndex(where: { $0.id == message.id })
-                    {
-                        list[idx].receipt = .sending
-                        list[idx].sendError = nil
-                        threads[peerID] = list
-                    }
-                    do {
-                        try await finishImageSend(
-                            optimisticID: message.id,
-                            peerUserID: peerID,
-                            me: me,
-                            material: material,
-                            token: token,
-                            encoded: encoded,
-                            caption: caption
-                        )
-                    } catch {
-                        markImageFailed(
-                            optimisticID: message.id,
-                            peerUserID: peerID,
-                            error: SessionController.userMessage(for: error)
-                        )
-                    }
-                case .voice, .todo:
-                    // Voice re-send needs a dedicated path (avoid double-append). Leave for retry UI.
-                    break
+                } catch {
+                    // Leave pending; try again next reconnect.
                 }
+            case let .image(messageID, peerID, caption):
+                guard let thread = threads[peerID],
+                      let message = thread.first(where: { $0.id == messageID }),
+                      let data = message.imageData ?? local.sealedMedia(for: messageID)
+                else { continue }
+                let size = MediaCrypto.pixelSize(for: data)
+                let encoded = EncodedImage(
+                    data: data,
+                    width: size?.width ?? message.imageWidth ?? 0,
+                    height: size?.height ?? message.imageHeight ?? 0,
+                    mime: MediaCrypto.mimeType(for: data)
+                )
+                if var list = threads[peerID],
+                   let idx = list.firstIndex(where: { $0.id == messageID })
+                {
+                    list[idx].receipt = .sending
+                    list[idx].sendError = nil
+                    threads[peerID] = list
+                }
+                do {
+                    try await finishImageSend(
+                        optimisticID: messageID,
+                        peerUserID: peerID,
+                        me: me,
+                        material: material,
+                        token: token,
+                        encoded: encoded,
+                        caption: caption
+                    )
+                } catch {
+                    markImageFailed(
+                        optimisticID: messageID,
+                        peerUserID: peerID,
+                        error: SessionController.userMessage(for: error)
+                    )
+                }
+            case .voice:
+                // Voice re-send needs a dedicated path (avoid double-append). Leave for retry UI.
+                break
             }
         }
         await refreshConversations(force: true)
