@@ -108,6 +108,8 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 | OutboundPending + ChatListFormatting | **done** — pure helpers for offline queue + list previews |
 | MessageDecoder + NotesLocal | **done** — decrypt pipeline and Notes CRUD pulled out of controller |
 | History key vault | **done** — biometry/passcode wrap; no plain historyKey in identity Keychain; RAM wipe on background |
+| History pagination | **done** — client walks `before_created_at`/`before_id` pages to fill 90-day window |
+| Notes multi-device | **done** — Saved Messages via `peer_user_id = self`; excluded from chats list |
 | Notes to me | **done** — local-only self chat (text / photo / voice / todos); no server replies |
 | Photo media messages | **done** — E2E AES-GCM blobs + caption compose |
 | Voice messages | **done** — record/upload/play; on-device Speech transcript (Tier 1) |

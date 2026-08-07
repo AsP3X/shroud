@@ -127,10 +127,12 @@ enum MessageDecoder {
 
         do {
             let plain: Data
-            if isMine {
+            // Notes (self): always open as sender (self dual-seal). Never advance a peer DR.
+            let isSelfNote = dto.senderUserId == context.me && peerUserID == context.me
+            if isMine || isSelfNote {
                 plain = try MessageCrypto.open(
                     envelopeData: envelopeData,
-                    peerUserID: peerUserID,
+                    peerUserID: isSelfNote ? context.me : peerUserID,
                     with: context.material.agreementPrivateKey,
                     ourIdentityPublicKey: context.material.identityPublicKeyData,
                     senderIdentityPublicKey: context.material.identityPublicKeyData,

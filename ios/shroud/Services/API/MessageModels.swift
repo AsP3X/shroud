@@ -85,10 +85,13 @@ struct MarkReadBulkResponse: Decodable, Equatable, Sendable {
 struct ListMessagesResponse: Decodable, Equatable, Sendable {
     let conversationId: UUID?
     let messages: [MessageDTO]
+    /// When false, no older page exists (or server omitted the field — treat as false).
+    let hasMore: Bool?
 
     enum CodingKeys: String, CodingKey {
         case conversationId = "conversation_id"
         case messages
+        case hasMore = "has_more"
     }
 }
 

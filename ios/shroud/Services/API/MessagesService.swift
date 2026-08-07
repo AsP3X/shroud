@@ -13,13 +13,25 @@ struct MessagesService: Sendable {
         return response.conversations
     }
 
-    func listMessages(peerUserID: UUID, token: String, limit: Int = 50) async throws -> ListMessagesResponse {
-        try await client.get(
+    /// History page. Pass both `beforeCreatedAt` and `beforeID` (oldest of previous page) to walk older.
+    func listMessages(
+        peerUserID: UUID,
+        token: String,
+        limit: Int = 50,
+        beforeCreatedAt: Date? = nil,
+        beforeID: UUID? = nil
+    ) async throws -> ListMessagesResponse {
+        var query: [String: String] = [
+            "peer_user_id": peerUserID.uuidString.lowercased(),
+            "limit": String(limit),
+        ]
+        if let beforeCreatedAt, let beforeID {
+            query["before_created_at"] = ISO8601DateFormatter.apiFractional.string(from: beforeCreatedAt)
+            query["before_id"] = beforeID.uuidString.lowercased()
+        }
+        return try await client.get(
             "messages",
-            query: [
-                "peer_user_id": peerUserID.uuidString.lowercased(),
-                "limit": String(limit),
-            ],
+            query: query,
             as: ListMessagesResponse.self,
             bearerToken: token
         )

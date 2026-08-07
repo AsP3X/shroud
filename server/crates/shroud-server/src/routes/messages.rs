@@ -21,6 +21,7 @@ use crate::state::AppState;
 
 const MAX_CIPHERTEXT_BYTES: usize = 64 * 1024;
 const DEFAULT_LIMIT: i64 = 50;
+/// Page size cap for history; clients walk `before_*` cursors for the 90-day window.
 const MAX_LIMIT: i64 = 100;
 
 #[derive(Debug, Deserialize)]
@@ -73,6 +74,8 @@ pub struct DeleteMessageQuery {
 pub struct ListMessagesResponse {
     pub conversation_id: Option<Uuid>,
     pub messages: Vec<MessageResponse>,
+    /// True when another page may exist (caller got a full page).
+    pub has_more: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -124,9 +127,7 @@ pub async fn send_message(
         )
         .await?;
 
-    if body.peer_user_id == auth.user_id {
-        return Err(AppError::validation("Cannot message yourself."));
-    }
+    let is_notes = body.peer_user_id == auth.user_id;
 
     let content_type = body.content_type.as_str();
     if content_type != "text" && content_type != "media" {
@@ -161,13 +162,16 @@ pub async fn send_message(
         return Ok((StatusCode::OK, Json(message_to_response(existing))));
     }
 
-    if !are_contacts(&state.pool, auth.user_id, body.peer_user_id).await? {
-        return Err(AppError::forbidden(
-            "You can only message accepted contacts.",
-        ));
-    }
-    if is_blocked_either_way(&state.pool, auth.user_id, body.peer_user_id).await? {
-        return Err(AppError::forbidden("Cannot message while blocked."));
+    // Saved Messages (Notes): peer_user_id == self — no contact/block gate.
+    if !is_notes {
+        if !are_contacts(&state.pool, auth.user_id, body.peer_user_id).await? {
+            return Err(AppError::forbidden(
+                "You can only message accepted contacts.",
+            ));
+        }
+        if is_blocked_either_way(&state.pool, auth.user_id, body.peer_user_id).await? {
+            return Err(AppError::forbidden("Cannot message while blocked."));
+        }
     }
 
     let mut tx = state
@@ -375,14 +379,15 @@ pub async fn send_message(
 }
 
 /// `GET /messages`
+///
+/// Peer may be **self** (Saved Messages / Notes). Cursor: pass both `before_created_at` and
+/// `before_id` from the oldest item of the previous page.
 pub async fn list_messages(
     State(state): State<AppState>,
     auth: AuthContext,
     Query(query): Query<ListMessagesQuery>,
 ) -> Result<Json<ListMessagesResponse>, AppError> {
-    if query.peer_user_id == auth.user_id {
-        return Err(AppError::validation("peer_user_id cannot be yourself."));
-    }
+    // Self peer is allowed (Notes). Contacts gate only applies to other users (send path).
 
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
 
@@ -391,6 +396,7 @@ pub async fn list_messages(
         return Ok(Json(ListMessagesResponse {
             conversation_id: None,
             messages: vec![],
+            has_more: false,
         }));
     };
 
@@ -451,13 +457,19 @@ pub async fn list_messages(
         .filter(|row| row.sender_user_id == auth.user_id)
         .map(|row| row.id)
         .collect();
-    let receipt_map =
-        peer_receipt_status_batch(&state.pool, &outbound_ids, query.peer_user_id).await?;
+    // Notes (self peer): receipts are meaningless; skip batch lookup.
+    let is_notes = query.peer_user_id == auth.user_id;
+    let receipt_map = if is_notes || outbound_ids.is_empty() {
+        HashMap::new()
+    } else {
+        peer_receipt_status_batch(&state.pool, &outbound_ids, query.peer_user_id).await?
+    };
 
+    let page_len = rows.len() as i64;
     let mut messages = Vec::with_capacity(rows.len());
     for row in rows {
         let mut response = message_to_response(row);
-        if response.sender_user_id == auth.user_id {
+        if !is_notes && response.sender_user_id == auth.user_id {
             let (delivered, read) = receipt_map
                 .get(&response.id)
                 .copied()
@@ -471,6 +483,7 @@ pub async fn list_messages(
     Ok(Json(ListMessagesResponse {
         conversation_id: Some(conversation_id),
         messages,
+        has_more: page_len >= limit,
     }))
 }
 
@@ -501,7 +514,8 @@ pub async fn list_conversations(
         FROM conversations c
         INNER JOIN users ua ON ua.id = c.user_a_id
         INNER JOIN users ub ON ub.id = c.user_b_id
-        WHERE c.user_a_id = $1 OR c.user_b_id = $1
+        WHERE (c.user_a_id = $1 OR c.user_b_id = $1)
+          AND c.user_a_id <> c.user_b_id
         ORDER BY c.last_message_at DESC NULLS LAST, c.created_at DESC
         "#,
     )
@@ -839,7 +853,10 @@ async fn ensure_conversation(
     user_x: Uuid,
     user_y: Uuid,
 ) -> Result<Uuid, AppError> {
-    let (user_a, user_b) = if user_x < user_y {
+    // Notes: equal ids (self conversation). Otherwise ordered pair a < b.
+    let (user_a, user_b) = if user_x == user_y {
+        (user_x, user_y)
+    } else if user_x < user_y {
         (user_x, user_y)
     } else {
         (user_y, user_x)
@@ -883,7 +900,9 @@ async fn find_conversation(
     user_x: Uuid,
     user_y: Uuid,
 ) -> Result<Option<Uuid>, AppError> {
-    let (user_a, user_b) = if user_x < user_y {
+    let (user_a, user_b) = if user_x == user_y {
+        (user_x, user_y)
+    } else if user_x < user_y {
         (user_x, user_y)
     } else {
         (user_y, user_x)

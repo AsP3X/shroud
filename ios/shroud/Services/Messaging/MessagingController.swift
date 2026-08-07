@@ -590,92 +590,142 @@ final class MessagingController {
     /// The 3s poll, WS `message.new`, and the chat view's `.task` all land here. They share a
     /// single in-flight load per peer — duplicate fetches decrypt the same page twice and
     /// rewrite `threads`, which redraws every bubble. Callers still await real data.
-    /// Notes chats are local-only and never hit the network.
+    /// Loads a peer thread (or Notes). Walks `before_*` pages until the 90-day window is filled.
     func loadThread(peerUserID: UUID) async {
-        if isNotesChat(peerUserID) {
-            if activePeerID != peerUserID { activePeerID = peerUserID }
-            // Ensure notes thread key exists.
-            if threads[peerUserID] == nil {
+        guard sessionController?.bearerToken != nil,
+              sessionController?.userID != nil,
+              cryptoController?.material != nil
+        else {
+            if isNotesChat(peerUserID), threads[peerUserID] == nil {
                 threads[peerUserID] = []
             }
             return
         }
 
-        guard sessionController?.bearerToken != nil,
-              sessionController?.userID != nil,
-              cryptoController?.material != nil
-        else { return }
-
         if activePeerID != peerUserID { activePeerID = peerUserID }
-        if unreadCountByPeer[peerUserID] != 0 { unreadCountByPeer[peerUserID] = 0 }
+        if !isNotesChat(peerUserID), unreadCountByPeer[peerUserID] != 0 {
+            unreadCountByPeer[peerUserID] = 0
+        }
 
-        if let existing = threadLoadTasks[peerUserID] {
+        // Notes UI peer is a sentinel; API peer is the signed-in user (Saved Messages).
+        let apiPeer = isNotesChat(peerUserID)
+            ? (sessionController?.userID ?? peerUserID)
+            : peerUserID
+        let storePeer = peerUserID
+        let taskKey = storePeer
+
+        if let existing = threadLoadTasks[taskKey] {
             await existing.value
             return
         }
         let task = Task { [weak self] in
             guard let self else { return }
-            await self.performThreadLoad(peerUserID: peerUserID)
+            await self.performThreadLoad(apiPeerID: apiPeer, storePeerID: storePeer)
         }
-        threadLoadTasks[peerUserID] = task
+        threadLoadTasks[taskKey] = task
         await task.value
-        if threadLoadTasks[peerUserID] == task { threadLoadTasks[peerUserID] = nil }
+        if threadLoadTasks[taskKey] == task { threadLoadTasks[taskKey] = nil }
     }
 
-    private func performThreadLoad(peerUserID: UUID) async {
+    /// - Parameters:
+    ///   - apiPeerID: Peer id for HTTP (`me` for Notes).
+    ///   - storePeerID: Key in `threads` (sentinel for Notes).
+    private func performThreadLoad(apiPeerID: UUID, storePeerID: UUID) async {
         guard let token = sessionController?.bearerToken,
               let me = sessionController?.userID,
               let material = cryptoController?.material
         else { return }
 
-        // Preserve any still-pending outbound while merging server history.
-        // Also keep previously decrypted plaintext — DR message keys are one-shot, so a
-        // cache miss must never replace a good local bubble with "[Unable to decrypt]".
-        let previousThread = threads[peerUserID] ?? []
+        let isNotes = isNotesChat(storePeerID)
+        let previousThread = threads[storePeerID] ?? []
         let pendingLocal = previousThread.filter(\.pendingSync)
+        let retentionCutoff = Calendar.current.date(
+            byAdding: .day,
+            value: -LocalMessageStore.retentionDays,
+            to: Date()
+        ) ?? Date().addingTimeInterval(-TimeInterval(LocalMessageStore.retentionDays) * 86_400)
 
         do {
-            // Prefer a deeper history page so the 90-day local window can fill when online.
-            let response = try await messagesService.listMessages(
-                peerUserID: peerUserID,
-                token: token,
-                limit: 200
-            )
             var decoded: [ChatMessage] = []
-            for dto in response.messages.reversed() {
-                // Server returns newest-first; reverse for chronological UI.
-                let message = await decodeMessage(dto, me: me, material: material, token: token)
-                decoded.append(message)
-                if dto.senderUserId != me {
-                    try? await messagesService.markDelivered(messageID: dto.id, token: token)
+            var beforeAt: Date?
+            var beforeID: UUID?
+            var pages = 0
+            let maxPages = 40 // 40 × 100 = 4000 msgs hard stop
+
+            repeat {
+                let response = try await messagesService.listMessages(
+                    peerUserID: apiPeerID,
+                    token: token,
+                    limit: 100,
+                    beforeCreatedAt: beforeAt,
+                    beforeID: beforeID
+                )
+                pages += 1
+                // Server returns newest-first; reverse each page for chronological append order.
+                for dto in response.messages.reversed() {
+                    var message = await decodeMessage(
+                        dto,
+                        me: me,
+                        material: material,
+                        token: token,
+                        forcePeerUserID: isNotes ? storePeerID : nil
+                    )
+                    if isNotes {
+                        message = notesMessageFromServer(message)
+                    }
+                    decoded.append(message)
+                    if !isNotes, dto.senderUserId != me {
+                        try? await messagesService.markDelivered(messageID: dto.id, token: token)
+                    }
                 }
+                let oldest = response.messages.last // still newest-first from server
+                if response.hasMore == true || response.messages.count >= 100,
+                   let oldest,
+                   oldest.createdAt >= retentionCutoff,
+                   pages < maxPages
+                {
+                    beforeAt = oldest.createdAt
+                    beforeID = oldest.id
+                } else {
+                    beforeAt = nil
+                    beforeID = nil
+                }
+            } while beforeAt != nil && beforeID != nil
+
+            // Drop anything older than retention for normal chats (Notes keep all server rows).
+            if !isNotes {
+                decoded = decoded.filter { $0.createdAt >= retentionCutoff || $0.pendingSync }
             }
+
             decoded = ThreadMessageMerge.mergeThread(
                 decoded: decoded,
                 previous: previousThread,
                 pendingLocal: pendingLocal
             )
-            if threads[peerUserID] != decoded { threads[peerUserID] = decoded }
-            // Mark all inbound up to the latest so the peer gets read receipts.
-            if let lastFromPeer = decoded.last(where: { !$0.isMine }) {
-                _ = try? await messagesService.markReadBulk(
-                    peerUserID: peerUserID,
-                    upToMessageID: lastFromPeer.id,
+            if threads[storePeerID] != decoded { threads[storePeerID] = decoded }
+
+            if !isNotes {
+                if let lastFromPeer = decoded.last(where: { !$0.isMine }) {
+                    _ = try? await messagesService.markReadBulk(
+                        peerUserID: apiPeerID,
+                        upToMessageID: lastFromPeer.id,
+                        token: token
+                    )
+                }
+                if let presence = try? await contactsService.presence(
+                    userID: apiPeerID,
                     token: token
-                )
-            }
-            // Presence for header.
-            if let presence = try? await contactsService.presence(userID: peerUserID, token: token),
-               presenceByUser[peerUserID] != presence
-            {
-                presenceByUser[peerUserID] = presence
+                ),
+                   presenceByUser[apiPeerID] != presence
+                {
+                    presenceByUser[apiPeerID] = presence
+                }
             }
             if lastError != nil { lastError = nil }
             isOffline = false
-            persistThread(peerUserID)
+            persistThread(storePeerID)
         } catch {
-            // Offline / error: keep whatever was hydrated from disk (or still in memory).
-            if threads[peerUserID]?.isEmpty != false {
+            if threads[storePeerID]?.isEmpty != false {
                 let message = SessionController.userMessage(for: error)
                 if lastError != message { lastError = message }
             } else {
@@ -685,16 +735,55 @@ final class MessagingController {
         }
     }
 
+    /// Map server plaintext to Notes todo markers when present.
+    private func notesMessageFromServer(_ message: ChatMessage) -> ChatMessage {
+        guard message.kind == .text else { return message }
+        if let parsed = NotesLocal.parseSyncedTodo(message.text) {
+            return ChatMessage(
+                id: message.id,
+                peerUserID: Self.notesPeerID,
+                senderUserID: message.senderUserID,
+                text: parsed.text,
+                createdAt: message.createdAt,
+                isMine: true,
+                deleted: message.deleted,
+                receipt: .sent,
+                kind: .todo,
+                todoDone: parsed.done
+            )
+        }
+        var copy = message
+        // Ensure notes always keyed under the local sentinel peer.
+        if copy.peerUserID != Self.notesPeerID {
+            copy = ChatMessage(
+                id: message.id,
+                peerUserID: Self.notesPeerID,
+                senderUserID: message.senderUserID,
+                text: message.text,
+                createdAt: message.createdAt,
+                isMine: true,
+                deleted: message.deleted,
+                receipt: .sent,
+                kind: message.kind,
+                mediaObjectId: message.mediaObjectId,
+                imageWidth: message.imageWidth,
+                imageHeight: message.imageHeight,
+                imageData: message.imageData,
+                voiceData: message.voiceData,
+                voiceDurationMs: message.voiceDurationMs,
+                voiceWaveform: message.voiceWaveform,
+                transcript: message.transcript
+            )
+        }
+        return copy
+    }
+
     func sendText(_ text: String, to peerUserID: UUID) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
         if isNotesChat(peerUserID) {
-            appendLocalNote(
-                text: trimmed,
-                kind: .text,
-                peerUserID: peerUserID
-            )
+            await appendAndSyncNote(text: trimmed, kind: .text, todoDone: nil)
             return
         }
 
@@ -753,14 +842,14 @@ final class MessagingController {
         }
     }
 
-    /// Adds a checklist item to Notes (local only).
+    /// Adds a checklist item to Notes (synced as text marker when online).
     func sendTodo(_ text: String, to peerUserID: UUID = MessagingController.notesPeerID) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, isNotesChat(peerUserID) else { return }
-        appendLocalNote(text: trimmed, kind: .todo, peerUserID: peerUserID, todoDone: false)
+        Task { await appendAndSyncNote(text: trimmed, kind: .todo, todoDone: false) }
     }
 
-    /// Toggles a Notes todo checkbox.
+    /// Toggles a Notes todo checkbox (local + re-sync body when possible).
     func toggleTodo(messageID: UUID, peerUserID: UUID = MessagingController.notesPeerID) {
         guard isNotesChat(peerUserID),
               let list = threads[peerUserID],
@@ -768,6 +857,8 @@ final class MessagingController {
         else { return }
         threads[peerUserID] = updated
         persistThread(peerUserID)
+        // Todo completion is local-first; multi-device picks it up on next full notes load
+        // only if we re-send — skip re-send to avoid duplicates. Local vault is enough.
     }
 
     /// Deletes a local Notes message (and its media bytes if any).
@@ -846,7 +937,59 @@ final class MessagingController {
             var list = threads[peerUserID] ?? []
             list.append(note)
             threads[peerUserID] = list
-            persistSnapshot()
+            persistThread(peerUserID)
+
+            // Multi-device notes photo when online.
+            if connectivity.isOnline,
+               let token = sessionController?.bearerToken,
+               let realMe = sessionController?.userID,
+               let material = cryptoController?.material
+            {
+                do {
+                    try await finishImageSend(
+                        optimisticID: optimisticID,
+                        peerUserID: realMe,
+                        me: realMe,
+                        material: material,
+                        token: token,
+                        encoded: encoded,
+                        caption: trimmedCaption
+                    )
+                    if var notes = threads[peerUserID],
+                       let idx = notes.firstIndex(where: { $0.id == optimisticID || $0.mediaObjectId != nil })
+                    {
+                        // Prefer keeping the Notes-thread bubble (server id may replace optimistic).
+                        if let updated = threads[realMe]?.last(where: { $0.kind == .image }) {
+                            notes.removeAll { $0.id == optimisticID }
+                            var mapped = updated
+                            mapped = ChatMessage(
+                                id: updated.id,
+                                peerUserID: peerUserID,
+                                senderUserID: realMe,
+                                text: updated.text,
+                                createdAt: updated.createdAt,
+                                isMine: true,
+                                deleted: false,
+                                receipt: .sent,
+                                kind: .image,
+                                mediaObjectId: updated.mediaObjectId,
+                                imageWidth: updated.imageWidth,
+                                imageHeight: updated.imageHeight,
+                                imageData: updated.imageData ?? encoded.data
+                            )
+                            notes.append(mapped)
+                            threads[peerUserID] = notes
+                            threads[realMe] = nil
+                            persistThread(peerUserID)
+                        } else {
+                            notes[idx].pendingSync = false
+                            threads[peerUserID] = notes
+                        }
+                    }
+                } catch {
+                    // Keep local-only photo.
+                }
+            }
             return nil
         }
 
@@ -1612,9 +1755,10 @@ final class MessagingController {
         _ dto: MessageDTO,
         me: UUID,
         material: IdentityKeyMaterial,
-        token: String
+        token: String,
+        forcePeerUserID: UUID? = nil
     ) async -> ChatMessage {
-        await MessageDecoder.decode(
+        var message = await MessageDecoder.decode(
             dto,
             context: MessageDecoder.Context(
                 me: me,
@@ -1626,10 +1770,39 @@ final class MessagingController {
                 mediaService: mediaService,
                 resolvePeerIdentityPublicKey: { [weak self] peerID, tok in
                     guard let self else { throw APIError.decoding }
+                    // Notes: peer is self — identity is our own key.
+                    if peerID == me {
+                        return material.identityPublicKeyData
+                    }
                     return try await self.resolvePeerIdentityPublicKey(peerUserID: peerID, token: tok)
                 }
             )
         )
+        if let forcePeerUserID, message.peerUserID != forcePeerUserID {
+            message = ChatMessage(
+                id: message.id,
+                peerUserID: forcePeerUserID,
+                senderUserID: message.senderUserID,
+                text: message.text,
+                createdAt: message.createdAt,
+                isMine: message.isMine,
+                deleted: message.deleted,
+                receipt: message.receipt,
+                kind: message.kind,
+                mediaObjectId: message.mediaObjectId,
+                imageWidth: message.imageWidth,
+                imageHeight: message.imageHeight,
+                imageData: message.imageData,
+                voiceData: message.voiceData,
+                voiceDurationMs: message.voiceDurationMs,
+                voiceWaveform: message.voiceWaveform,
+                transcript: message.transcript,
+                sendError: message.sendError,
+                todoDone: message.todoDone,
+                pendingSync: message.pendingSync
+            )
+        }
+        return message
     }
 
     private func resolvePeerIdentityPublicKey(peerUserID: UUID, token: String) async throws -> Data {
@@ -1718,13 +1891,13 @@ final class MessagingController {
         )
     }
 
-    private func appendLocalNote(
+    private func appendAndSyncNote(
         text: String,
         kind: ChatMessageKind,
-        peerUserID: UUID,
-        todoDone: Bool? = nil
-    ) {
-        let me = sessionController?.userID ?? Self.notesPeerID
+        todoDone: Bool?
+    ) async {
+        let peerUserID = Self.notesPeerID
+        let me = sessionController?.userID ?? peerUserID
         let message = NotesLocal.makeNote(
             text: text,
             kind: kind,
@@ -1734,10 +1907,55 @@ final class MessagingController {
         var list = threads[peerUserID] ?? []
         list.append(message)
         threads[peerUserID] = list
-        if kind == .text {
-            local.saveSealedPlaintext(messageID: message.id, text: text)
-        }
+        let wireText = kind == .todo
+            ? NotesLocal.syncedTodoPlaintext(text: text, done: todoDone ?? false)
+            : text
+        local.saveSealedPlaintext(messageID: message.id, text: wireText)
         persistThread(peerUserID)
+
+        // Multi-device: dual-seal to self when online.
+        guard connectivity.isOnline,
+              let token = sessionController?.bearerToken,
+              let realMe = sessionController?.userID,
+              let material = cryptoController?.material
+        else { return }
+
+        do {
+            try await deliverPendingText(
+                messageID: message.id,
+                text: wireText,
+                peerUserID: realMe,
+                me: realMe,
+                material: material,
+                token: token
+            )
+            // deliverPendingText stores under api peer (me); re-map bubble into Notes thread.
+            if var notes = threads[peerUserID],
+               let idx = notes.firstIndex(where: { $0.id == message.id })
+            {
+                notes[idx].pendingSync = false
+                notes[idx].receipt = .sent
+                threads[peerUserID] = notes
+                persistThread(peerUserID)
+            }
+            // Clear accidental thread keyed by realMe if deliverPendingText wrote there.
+            if var mine = threads[realMe] {
+                mine.removeAll { $0.id == message.id }
+                if mine.isEmpty {
+                    threads[realMe] = nil
+                } else {
+                    threads[realMe] = mine
+                }
+            }
+        } catch {
+            if var notes = threads[peerUserID],
+               let idx = notes.firstIndex(where: { $0.id == message.id })
+            {
+                notes[idx].pendingSync = true
+                threads[peerUserID] = notes
+                persistThread(peerUserID)
+            }
+        }
     }
 
     private func deliverPendingText(

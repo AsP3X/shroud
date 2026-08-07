@@ -53,4 +53,23 @@ enum NotesLocal {
         list.removeAll { $0.id == messageID }
         return (list, list.count != before)
     }
+
+    // MARK: - Multi-device todo wire format
+
+    /// Plaintext sealed for server Notes (text content_type).
+    static func syncedTodoPlaintext(text: String, done: Bool) -> String {
+        let flag = done ? "1" : "0"
+        return "[todo:\(flag)]\(text)"
+    }
+
+    /// Parse synced todo marker; returns nil if not a todo payload.
+    static func parseSyncedTodo(_ plaintext: String) -> (text: String, done: Bool)? {
+        guard plaintext.hasPrefix("[todo:") else { return nil }
+        let rest = plaintext.dropFirst("[todo:".count)
+        guard let close = rest.firstIndex(of: "]") else { return nil }
+        let flag = rest[..<close]
+        let body = String(rest[rest.index(after: close)...])
+        let done = flag == "1"
+        return (body, done)
+    }
 }

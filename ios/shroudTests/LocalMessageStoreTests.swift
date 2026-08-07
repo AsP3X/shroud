@@ -147,6 +147,16 @@ final class LocalMessageStoreTests: XCTestCase {
 }
 
 final class NotesLocalTests: XCTestCase {
+    func testTodoWireFormatRoundTrip() {
+        let wire = NotesLocal.syncedTodoPlaintext(text: "Buy milk", done: false)
+        let parsed = NotesLocal.parseSyncedTodo(wire)
+        XCTAssertEqual(parsed?.text, "Buy milk")
+        XCTAssertEqual(parsed?.done, false)
+        let doneWire = NotesLocal.syncedTodoPlaintext(text: "Buy milk", done: true)
+        XCTAssertEqual(NotesLocal.parseSyncedTodo(doneWire)?.done, true)
+        XCTAssertNil(NotesLocal.parseSyncedTodo("plain note"))
+    }
+
     func testToggleTodo() {
         let note = NotesLocal.makeNote(
             text: "Buy milk",
