@@ -166,9 +166,13 @@ final class MessagingController {
         peerID == Self.notesPeerID
     }
 
+    /// Retained while messaging is running so sealed caches keep working even if the weak
+    /// `cryptoController` reference is temporarily unavailable during teardown races.
+    private var cachedHistoryKey: SymmetricKey?
+
     /// Phrase-derived AES key for at-rest local history. Nil when messaging crypto is locked.
     private var historyKey: SymmetricKey? {
-        cryptoController?.material?.historyKey
+        cryptoController?.material?.historyKey ?? cachedHistoryKey
     }
 
 
@@ -183,6 +187,7 @@ final class MessagingController {
 
     func start() {
         guard let token = sessionController?.bearerToken else { return }
+        cachedHistoryKey = cryptoController?.material?.historyKey
         connectivity.start()
         isOffline = !connectivity.isOnline
         // Paint cached chats/contacts immediately so offline / cold start feels instant.
@@ -230,6 +235,7 @@ final class MessagingController {
         lastError = nil
         isOffline = false
         lastPresenceSweep = nil
+        cachedHistoryKey = nil
         if wipeDisk {
             clearLocalData()
         } else {
@@ -623,7 +629,10 @@ final class MessagingController {
         else { return }
 
         // Preserve any still-pending outbound while merging server history.
-        let pendingLocal = (threads[peerUserID] ?? []).filter(\.pendingSync)
+        // Also keep previously decrypted plaintext — DR message keys are one-shot, so a
+        // cache miss must never replace a good local bubble with "[Unable to decrypt]".
+        let previousThread = threads[peerUserID] ?? []
+        let pendingLocal = previousThread.filter(\.pendingSync)
 
         do {
             // Prefer a deeper history page so the 90-day local window can fill when online.
@@ -636,7 +645,7 @@ final class MessagingController {
             for dto in response.messages.reversed() {
                 // Server returns newest-first; reverse for chronological UI.
                 let message = await decodeMessage(dto, me: me, material: material, token: token)
-                decoded.append(message)
+                decoded.append(preferReadableMessage(message, previous: previousThread))
                 if dto.senderUserId != me {
                     try? await messagesService.markDelivered(messageID: dto.id, token: token)
                 }
@@ -644,6 +653,12 @@ final class MessagingController {
             // Re-attach unsynced locals that the server does not know about yet.
             for pending in pendingLocal where !decoded.contains(where: { $0.id == pending.id }) {
                 decoded.append(pending)
+            }
+            // Keep local-only messages the server page did not return (still within retention).
+            for prior in previousThread where !decoded.contains(where: { $0.id == prior.id }) {
+                if !isFailedDecryptText(prior.text) {
+                    decoded.append(prior)
+                }
             }
             decoded.sort { $0.createdAt < $1.createdAt }
             if threads[peerUserID] != decoded { threads[peerUserID] = decoded }
@@ -1652,8 +1667,11 @@ final class MessagingController {
             )
         }
 
-        // Prefer in-memory message (optimistic send / already decoded) with upgraded receipt.
-        if let existing = threads[peerUserID]?.first(where: { $0.id == dto.id }) {
+        // Prefer in-memory / hydrated message (already decoded) with upgraded receipt.
+        // Search this peer first, then any thread — snapshot hydrate must win over re-decrypt.
+        let existing = threads[peerUserID]?.first(where: { $0.id == dto.id })
+            ?? threads.values.lazy.flatMap({ $0 }).first(where: { $0.id == dto.id })
+        if let existing {
             var merged = existing
             if isMine {
                 let serverReceipt = receiptStatus(from: dto)
@@ -1670,10 +1688,13 @@ final class MessagingController {
                 && !existing.deleted
                 && sealedPlaintext(for: dto.id) != nil
             if !existing.deleted,
-               existing.text != "[Unable to decrypt]",
-               existing.text != "Media",
+               !isFailedDecryptText(existing.text),
                !needsMediaBytes
             {
+                // Backfill sealed plaintext so a later cold start does not need DR again.
+                if !isMedia, sealedPlaintext(for: dto.id) == nil {
+                    saveSealedPlaintext(messageID: dto.id, text: existing.text)
+                }
                 return merged
             }
         }
@@ -1798,6 +1819,14 @@ final class MessagingController {
                     receipt: receipt,
                     token: token
                 )
+            }
+            // Last resort: keep a previously good bubble (hydrate / earlier load) instead of
+            // burning the UI with a permanent "[Unable to decrypt]" after a one-shot DR miss.
+            if let existing,
+               !existing.deleted,
+               !isFailedDecryptText(existing.text)
+            {
+                return existing
             }
             return ChatMessage(
                 id: dto.id,
@@ -1981,8 +2010,8 @@ final class MessagingController {
             }
             return
         }
-        // Scrub any pre-encryption UserDefaults leftovers once per unlock.
-        plaintextCache.wipeLegacyUserDefaults()
+        // Migrate pre-encryption UserDefaults plaintext into sealed files (never wipe first).
+        plaintextCache.migrateLegacyIfNeeded(historyKey: key)
 
         guard var snapshot = messageStore.load(userID: userID, historyKey: key) else {
             if threads[Self.notesPeerID] == nil {
@@ -2019,8 +2048,16 @@ final class MessagingController {
             guard let peerID = UUID(uuidString: mapKey) else { continue }
             // Don't clobber an already-live in-memory thread with older disk data mid-session.
             if restoredThreads[peerID]?.isEmpty == false { continue }
-            restoredThreads[peerID] = stored.map {
+            let messages = stored.map {
                 $0.toChatMessage(media: mediaCache, historyKey: key)
+            }
+            restoredThreads[peerID] = messages
+            // Warm the one-shot plaintext cache from snapshot text so loadThread never
+            // re-runs the Double Ratchet for messages we already read.
+            for message in messages where !message.deleted && message.kind == .text {
+                if !isFailedDecryptText(message.text) {
+                    saveSealedPlaintext(messageID: message.id, text: message.text)
+                }
             }
         }
         if restoredThreads[Self.notesPeerID] == nil {
@@ -2048,6 +2085,12 @@ final class MessagingController {
         for (peerID, messages) in threads {
             let mapKey = peerID.uuidString.lowercased()
             threadMap[mapKey] = messages.map(LocalMessageStore.StoredMessage.from)
+            // Dual-write: keep sealed plaintext warm whenever we know the body.
+            for message in messages where !message.deleted && message.kind == .text {
+                if !isFailedDecryptText(message.text) {
+                    saveSealedPlaintext(messageID: message.id, text: message.text)
+                }
+            }
         }
         snapshot.threads = threadMap
         var unread: [String: Int] = [:]
@@ -2070,6 +2113,49 @@ final class MessagingController {
             }
         }
         messageStore.save(pruned.0, userID: userID, historyKey: key)
+    }
+
+    /// True for placeholder bodies that mean "we lost the plaintext".
+    private func isFailedDecryptText(_ text: String) -> Bool {
+        text == "[Unable to decrypt]" || text == "Media" || text == "[Binary message]"
+    }
+
+    /// Never let a failed re-decrypt replace a previously readable bubble.
+    private func preferReadableMessage(
+        _ decoded: ChatMessage,
+        previous: [ChatMessage]
+    ) -> ChatMessage {
+        guard let prior = previous.first(where: { $0.id == decoded.id }) else {
+            return decoded
+        }
+        let decodedFailed = isFailedDecryptText(decoded.text)
+        let priorFailed = isFailedDecryptText(prior.text)
+
+        if decodedFailed, !priorFailed, !prior.deleted {
+            var kept = prior
+            if decoded.isMine, decoded.receipt.rank > prior.receipt.rank {
+                kept.receipt = decoded.receipt
+            }
+            if kept.imageData == nil { kept.imageData = decoded.imageData }
+            if kept.voiceData == nil { kept.voiceData = decoded.voiceData }
+            if kept.mediaObjectId == nil { kept.mediaObjectId = decoded.mediaObjectId }
+            if kept.transcript == nil { kept.transcript = decoded.transcript }
+            // Re-seal so cold start has the body without needing DR.
+            if kept.kind == .text {
+                saveSealedPlaintext(messageID: kept.id, text: kept.text)
+            }
+            return kept
+        }
+
+        // Prefer whichever side still has media bytes.
+        var merged = decoded
+        if merged.imageData == nil { merged.imageData = prior.imageData }
+        if merged.voiceData == nil { merged.voiceData = prior.voiceData }
+        if merged.transcript == nil { merged.transcript = prior.transcript }
+        if !priorFailed, decodedFailed {
+            return prior
+        }
+        return merged
     }
 
     private func appendLocalNote(

@@ -83,16 +83,16 @@ enum LocalHistoryCrypto {
 // MARK: - File protection helpers
 
 enum LocalDataProtection {
-    /// Marks a file complete-protected and excluded from iCloud / device backups.
+    /// Marks a file excluded from iCloud / device backups.
+    ///
+    /// File-protection class is left at the default for Application Support. At-rest secrecy
+    /// comes from AES-GCM with the phrase-derived history key — over-aggressive NSFileProtection
+    /// can make sealed blobs unreadable across launches even though the AES key is available.
     static func lockDown(url: URL) {
-        try? (url as NSURL).setResourceValue(
-            true,
-            forKey: .isExcludedFromBackupKey
-        )
-        try? FileManager.default.setAttributes(
-            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
-            ofItemAtPath: url.path
-        )
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        var mutable = url
+        try? mutable.setResourceValues(values)
     }
 
     static func prepareDirectory(_ url: URL) {
