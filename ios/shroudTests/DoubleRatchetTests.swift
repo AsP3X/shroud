@@ -3,7 +3,29 @@ import Foundation
 import Testing
 @testable import shroud
 
-struct DoubleRatchetTests {
+final class DoubleRatchetTests: Sendable {
+    /// Peer ids for the Keychain-backed session store, fresh for every test case.
+    ///
+    /// `RatchetSessionStore` is process-global and keyed only by peer user id, so tests
+    /// sharing fixed ids share ratchet state. swift-testing runs cases in parallel and the
+    /// suite can run more than once per session, which left tests decrypting against another
+    /// case's session (built from different identity keys). Unique ids give each case its own
+    /// slice of the store; `deinit` clears it again.
+    private let aliceUser: UUID
+    private let bobUser: UUID
+
+    init() {
+        // Initiator election compares uuidString, so keep alice the deterministic initiator.
+        let ids = [UUID(), UUID()].sorted { $0.uuidString.lowercased() < $1.uuidString.lowercased() }
+        aliceUser = ids[0]
+        bobUser = ids[1]
+    }
+
+    deinit {
+        RatchetSessionStore.delete(peerUserID: aliceUser)
+        RatchetSessionStore.delete(peerUserID: bobUser)
+    }
+
     @Test
     func rootSeedIsSymmetric() throws {
         let alice = Curve25519.KeyAgreement.PrivateKey()
@@ -71,10 +93,6 @@ struct DoubleRatchetTests {
         // Lower UUID is deterministic initiator → v3.
         let alice = Curve25519.KeyAgreement.PrivateKey()
         let bob = Curve25519.KeyAgreement.PrivateKey()
-        let aliceUser = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
-        let bobUser = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
-        RatchetSessionStore.delete(peerUserID: bobUser)
-        RatchetSessionStore.delete(peerUserID: aliceUser)
 
         let sealed = try MessageCrypto.seal(
             plaintext: Data("hello".utf8),
@@ -96,9 +114,6 @@ struct DoubleRatchetTests {
             as: .recipient
         )
         #expect(opened == Data("hello".utf8))
-
-        RatchetSessionStore.delete(peerUserID: bobUser)
-        RatchetSessionStore.delete(peerUserID: aliceUser)
     }
 
     @Test
@@ -106,9 +121,6 @@ struct DoubleRatchetTests {
         // Higher UUID must not create a poison initiator session.
         let alice = Curve25519.KeyAgreement.PrivateKey()
         let bob = Curve25519.KeyAgreement.PrivateKey()
-        let aliceUser = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
-        let bobUser = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
-        RatchetSessionStore.delete(peerUserID: aliceUser)
 
         let sealed = try MessageCrypto.seal(
             plaintext: Data("bob first".utf8),
@@ -131,7 +143,6 @@ struct DoubleRatchetTests {
             as: .recipient
         )
         #expect(opened == Data("bob first".utf8))
-        RatchetSessionStore.delete(peerUserID: aliceUser)
     }
 
     @Test
@@ -139,10 +150,6 @@ struct DoubleRatchetTests {
         // Both send before either opens — lower UUID uses DR, higher uses v2.
         let alice = Curve25519.KeyAgreement.PrivateKey()
         let bob = Curve25519.KeyAgreement.PrivateKey()
-        let aliceUser = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
-        let bobUser = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
-        RatchetSessionStore.delete(peerUserID: aliceUser)
-        RatchetSessionStore.delete(peerUserID: bobUser)
 
         let fromBob = try MessageCrypto.seal(
             plaintext: Data("bob first".utf8),
@@ -205,19 +212,12 @@ struct DoubleRatchetTests {
             as: .recipient
         )
         #expect(aliceOpens2 == Data("bob second".utf8))
-
-        RatchetSessionStore.delete(peerUserID: aliceUser)
-        RatchetSessionStore.delete(peerUserID: bobUser)
     }
 
     @Test
     func fullChatSimulationAlternating() throws {
         let alice = Curve25519.KeyAgreement.PrivateKey()
         let bob = Curve25519.KeyAgreement.PrivateKey()
-        let aliceUser = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
-        let bobUser = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
-        RatchetSessionStore.delete(peerUserID: aliceUser)
-        RatchetSessionStore.delete(peerUserID: bobUser)
 
         func send(
             from: Curve25519.KeyAgreement.PrivateKey,
@@ -281,18 +281,12 @@ struct DoubleRatchetTests {
             e3, as: bob, userPub: bob.publicKey.rawRepresentation,
             senderPub: alice.publicKey.rawRepresentation, storeAsPeer: aliceUser
         ) == "A2")
-
-        RatchetSessionStore.delete(peerUserID: aliceUser)
-        RatchetSessionStore.delete(peerUserID: bobUser)
     }
 
     @Test
     func selfBoxOpensOnV3() throws {
         let alice = Curve25519.KeyAgreement.PrivateKey()
         let bob = Curve25519.KeyAgreement.PrivateKey()
-        let aliceUser = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
-        let bobUser = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
-        RatchetSessionStore.delete(peerUserID: bobUser)
 
         let plain = Data("own history".utf8)
         let sealed = try MessageCrypto.seal(
@@ -312,7 +306,6 @@ struct DoubleRatchetTests {
             as: .sender
         )
         #expect(asSender == plain)
-        RatchetSessionStore.delete(peerUserID: bobUser)
     }
 
     @Test
@@ -355,10 +348,6 @@ struct DoubleRatchetTests {
         // Regression: second message (e.g. photo) must open after a successful text.
         let alice = Curve25519.KeyAgreement.PrivateKey()
         let bob = Curve25519.KeyAgreement.PrivateKey()
-        let aliceUser = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
-        let bobUser = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
-        RatchetSessionStore.delete(peerUserID: aliceUser)
-        RatchetSessionStore.delete(peerUserID: bobUser)
 
         let textEnv = try MessageCrypto.seal(
             plaintext: Data("hi".utf8),
@@ -417,8 +406,5 @@ struct DoubleRatchetTests {
             as: .recipient
         )
         #expect(openedImage == imagePayload)
-
-        RatchetSessionStore.delete(peerUserID: aliceUser)
-        RatchetSessionStore.delete(peerUserID: bobUser)
     }
 }
