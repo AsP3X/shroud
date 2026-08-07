@@ -135,13 +135,36 @@ nonisolated enum MediaCrypto {
         return downsampled(source, maxEdge: maxEdge) ?? UIImage(data: data)
     }
 
+    /// Hard cap for `MediaMessagePayload.th` (JPEG bytes, not Base64).
+    ///
+    /// Server rejects message envelopes over 64 KiB. v2 dual-seal and v3 (DR + self box)
+    /// each encrypt the full payload twice, so a large preview makes ciphertext fail with
+    /// "ciphertext must decode to 1–65536 bytes". Keep the thumb tiny.
+    static let maxEnvelopePreviewBytes = 6 * 1024
+
     /// Tiny JPEG for the chat bubble / payload (`MediaMessagePayload.th`).
     ///
-    /// Kept under ~40 KB so the encrypted envelope stays small; recipients show this until
-    /// they explicitly download the full media blob.
-    static func chatPreviewJPEG(from data: Data, maxEdge: CGFloat = 360, quality: CGFloat = 0.52) -> Data? {
-        guard let image = previewImage(from: data, maxEdge: maxEdge) else { return nil }
-        return image.jpegData(compressionQuality: min(0.85, max(0.2, quality)))
+    /// Recipients show this until they explicitly download the full media blob.
+    static func chatPreviewJPEG(
+        from data: Data,
+        maxEdge: CGFloat = 160,
+        quality: CGFloat = 0.42
+    ) -> Data? {
+        var edge = maxEdge
+        var q = quality
+        for _ in 0 ..< 5 {
+            guard let image = previewImage(from: data, maxEdge: edge),
+                  let jpeg = image.jpegData(compressionQuality: min(0.85, max(0.15, q)))
+            else { return nil }
+            if jpeg.count <= maxEnvelopePreviewBytes {
+                return jpeg
+            }
+            edge = max(80, edge * 0.7)
+            q = max(0.15, q - 0.08)
+        }
+        // Last resort: return the smallest attempt even if slightly over — caller may drop `th`.
+        return previewImage(from: data, maxEdge: 80)?
+            .jpegData(compressionQuality: 0.15)
     }
 
     /// Human-readable size for the Telegram-style download chip.

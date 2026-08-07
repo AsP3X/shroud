@@ -1436,32 +1436,29 @@ final class MessagingController {
 
         let trimmedCaption = caption.trimmingCharacters(in: .whitespacesAndNewlines)
         let displayText = trimmedCaption.isEmpty ? "Video" : trimmedCaption
-        let previewJPEG: Data?
+        // Shrink the 720px encode poster into an envelope-safe thumb (server 64 KiB CT cap).
+        let rawThumb: Data?
         if let thumb = encoded.thumbnailJPEG {
-            previewJPEG = thumb
+            rawThumb = thumb
         } else {
-            previewJPEG = await VideoMedia.thumbnailJPEG(from: encoded.data)
+            rawThumb = await VideoMedia.thumbnailJPEG(from: encoded.data, maxEdge: 320)
         }
-        let payload = MediaMessagePayload(
-            t: MediaMessagePayload.kindVideo,
-            mime: encoded.mime,
-            w: encoded.width,
-            h: encoded.height,
-            k: fileKey.base64EncodedString(),
-            c: trimmedCaption.isEmpty ? nil : trimmedCaption,
-            d: encoded.durationMs,
-            th: previewJPEG?.base64EncodedString(),
-            s: encoded.data.count
-        )
-        let payloadData = try JSONEncoder().encode(payload)
+        let previewJPEG = rawThumb.flatMap { MediaCrypto.chatPreviewJPEG(from: $0) }
         let peerPub = try await resolvePeerIdentityPublicKey(peerUserID: peerUserID, token: token)
-        let sealed = try MessageCrypto.seal(
-            plaintext: payloadData,
+        let (payloadData, sealed, usedPreview) = try Self.sealMediaPayload(
+            kind: MediaMessagePayload.kindVideo,
+            mime: encoded.mime,
+            width: encoded.width,
+            height: encoded.height,
+            fileKey: fileKey,
+            caption: trimmedCaption.isEmpty ? nil : trimmedCaption,
+            durationMs: encoded.durationMs,
+            previewJPEG: previewJPEG,
+            mediaByteCount: encoded.data.count,
             peerUserID: peerUserID,
-            toPeerIdentityPublicKey: peerPub,
-            ourPrivateKey: material.agreementPrivateKey,
-            ourIdentityPublicKey: material.identityPublicKeyData,
-            ourUserID: me
+            peerPub: peerPub,
+            material: material,
+            me: me
         )
         let dto = try await messagesService.send(
             SendMessageRequest(
@@ -1492,8 +1489,8 @@ final class MessagingController {
             mediaObjectId: upload.mediaObjectId,
             imageWidth: encoded.width,
             imageHeight: encoded.height,
-            imageData: previewJPEG,
-            previewData: previewJPEG,
+            imageData: usedPreview,
+            previewData: usedPreview,
             mediaByteCount: encoded.data.count,
             videoData: encoded.data,
             voiceDurationMs: encoded.durationMs,
@@ -1731,25 +1728,21 @@ final class MessagingController {
         let trimmedCaption = caption.trimmingCharacters(in: .whitespacesAndNewlines)
         let displayText = trimmedCaption.isEmpty ? "Photo" : trimmedCaption
         let previewJPEG = MediaCrypto.chatPreviewJPEG(from: encoded.data)
-        let payload = MediaMessagePayload(
-            t: MediaMessagePayload.kindImage,
-            mime: encoded.mime,
-            w: encoded.width,
-            h: encoded.height,
-            k: fileKey.base64EncodedString(),
-            c: trimmedCaption.isEmpty ? nil : trimmedCaption,
-            th: previewJPEG?.base64EncodedString(),
-            s: encoded.data.count
-        )
-        let payloadData = try JSONEncoder().encode(payload)
         let peerPub = try await resolvePeerIdentityPublicKey(peerUserID: peerUserID, token: token)
-        let sealed = try MessageCrypto.seal(
-            plaintext: payloadData,
+        let (payloadData, sealed, usedPreview) = try Self.sealMediaPayload(
+            kind: MediaMessagePayload.kindImage,
+            mime: encoded.mime,
+            width: encoded.width,
+            height: encoded.height,
+            fileKey: fileKey,
+            caption: trimmedCaption.isEmpty ? nil : trimmedCaption,
+            durationMs: nil,
+            previewJPEG: previewJPEG,
+            mediaByteCount: encoded.data.count,
             peerUserID: peerUserID,
-            toPeerIdentityPublicKey: peerPub,
-            ourPrivateKey: material.agreementPrivateKey,
-            ourIdentityPublicKey: material.identityPublicKeyData,
-            ourUserID: me
+            peerPub: peerPub,
+            material: material,
+            me: me
         )
         let dto = try await messagesService.send(
             SendMessageRequest(
@@ -1784,7 +1777,7 @@ final class MessagingController {
             imageWidth: encoded.width,
             imageHeight: encoded.height,
             imageData: encoded.data,
-            previewData: previewJPEG,
+            previewData: usedPreview,
             mediaByteCount: encoded.data.count,
             sendError: nil
         )
@@ -1797,6 +1790,88 @@ final class MessagingController {
         persistSnapshot()
         await refreshConversations(force: true)
         return sent
+    }
+
+    /// Server hard-cap on decoded message ciphertext (see `MAX_CIPHERTEXT_BYTES` = 64 KiB).
+    /// Dual-seal / v3+self roughly doubles payload size — keep sealed envelopes under this.
+    private static let maxSealedEnvelopeBytes = 60 * 1024
+    /// Payload plaintext budget before sealing (thumb Base64 is the usual offender).
+    private static let maxMediaPayloadPlaintextBytes = 20 * 1024
+
+    /// Builds + seals a media envelope, dropping the preview if it would exceed the server CT cap.
+    private static func sealMediaPayload(
+        kind: String,
+        mime: String,
+        width: Int,
+        height: Int,
+        fileKey: Data,
+        caption: String?,
+        durationMs: Int?,
+        previewJPEG: Data?,
+        mediaByteCount: Int,
+        peerUserID: UUID,
+        peerPub: Data,
+        material: IdentityKeyMaterial,
+        me: UUID
+    ) throws -> (payloadData: Data, sealed: Data, usedPreview: Data?) {
+        let safePreview: Data? = {
+            guard let previewJPEG,
+                  previewJPEG.count <= MediaCrypto.maxEnvelopePreviewBytes
+            else { return nil }
+            return previewJPEG
+        }()
+
+        func encode(includePreview: Bool) throws -> Data {
+            let payload = MediaMessagePayload(
+                t: kind,
+                mime: mime,
+                w: width,
+                h: height,
+                k: fileKey.base64EncodedString(),
+                c: caption,
+                d: durationMs,
+                th: includePreview ? safePreview?.base64EncodedString() : nil,
+                s: mediaByteCount
+            )
+            return try JSONEncoder().encode(payload)
+        }
+
+        var includePreview = safePreview != nil
+        var payloadData = try encode(includePreview: includePreview)
+        if includePreview, payloadData.count > maxMediaPayloadPlaintextBytes {
+            includePreview = false
+            payloadData = try encode(includePreview: false)
+        }
+
+        var sealed = try MessageCrypto.seal(
+            plaintext: payloadData,
+            peerUserID: peerUserID,
+            toPeerIdentityPublicKey: peerPub,
+            ourPrivateKey: material.agreementPrivateKey,
+            ourIdentityPublicKey: material.identityPublicKeyData,
+            ourUserID: me
+        )
+        // Last resort: drop preview and reseal once (advances DR by one unused step — safe).
+        if sealed.count > maxSealedEnvelopeBytes, includePreview {
+            includePreview = false
+            payloadData = try encode(includePreview: false)
+            sealed = try MessageCrypto.seal(
+                plaintext: payloadData,
+                peerUserID: peerUserID,
+                toPeerIdentityPublicKey: peerPub,
+                ourPrivateKey: material.agreementPrivateKey,
+                ourIdentityPublicKey: material.identityPublicKeyData,
+                ourUserID: me
+            )
+        }
+        if sealed.count > maxSealedEnvelopeBytes {
+            throw APIError.server(
+                code: "VALIDATION_ERROR",
+                message: "Media message is too large to send. Try a shorter video or smaller photo.",
+                statusCode: 400
+            )
+        }
+        return (payloadData, sealed, includePreview ? safePreview : nil)
     }
 
     /// Records are done by the view; this encrypts, uploads, and sends a voice message.
