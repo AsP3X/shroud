@@ -277,6 +277,7 @@ enum MessageDecoder {
             let height = payload?.h
             let caption = payload?.c?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let mediaText = caption.isEmpty ? "Video" : caption
+            let preview = payload?.previewJPEG
             return MessagingController.ChatMessage(
                 id: dto.id,
                 peerUserID: peerUserID,
@@ -290,6 +291,10 @@ enum MessageDecoder {
                 mediaObjectId: dto.mediaObjectId,
                 imageWidth: width,
                 imageHeight: height,
+                // Full video only when already downloaded to the local media cache.
+                imageData: cached != nil ? preview : nil,
+                previewData: preview,
+                mediaByteCount: payload?.s,
                 videoData: cached,
                 voiceDurationMs: payload?.d
             )
@@ -299,6 +304,7 @@ enum MessageDecoder {
         let height = payload?.h
         let caption = payload?.c?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let mediaText = caption.isEmpty ? "Photo" : caption
+        let preview = payload?.previewJPEG
 
         if cached == nil, payload == nil {
             return MessagingController.ChatMessage(
@@ -328,7 +334,10 @@ enum MessageDecoder {
             mediaObjectId: dto.mediaObjectId,
             imageWidth: width,
             imageHeight: height,
-            imageData: cached
+            // Full photo only from local cache; envelope thumb is enough for the bubble.
+            imageData: cached,
+            previewData: preview,
+            mediaByteCount: payload?.s
         )
     }
 }

@@ -38,6 +38,10 @@ struct MediaDownloadResponse: Decodable, Equatable, Sendable {
 }
 
 /// Plaintext sealed inside the message ciphertext for `content_type = media`.
+///
+/// Human: The full blob stays on the server until the user taps download. A small JPEG
+/// preview (`th`) rides in this payload so the bubble can show something Telegram-style
+/// without fetching megabytes.
 nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
     /// `"image"` / `"voice"` / `"video"`.
     var t: String
@@ -55,6 +59,10 @@ nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
     /// Base64 amplitude envelope, one byte (0…255) per bar (voice only).
     /// Optional so payloads written before waveforms existed still decode.
     var wf: String?
+    /// Base64 JPEG preview for the bubble (images/videos). Small enough to live in the envelope.
+    var th: String?
+    /// Full media plaintext size in bytes (for the download chip label).
+    var s: Int?
 
     static let kindImage = "image"
     static let kindVoice = "voice"
@@ -63,4 +71,10 @@ nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
     var isVoice: Bool { t == Self.kindVoice }
     var isImage: Bool { t == Self.kindImage }
     var isVideo: Bool { t == Self.kindVideo }
+
+    /// Decoded preview JPEG, if present.
+    var previewJPEG: Data? {
+        guard let th, !th.isEmpty else { return nil }
+        return Data(base64Encoded: th)
+    }
 }

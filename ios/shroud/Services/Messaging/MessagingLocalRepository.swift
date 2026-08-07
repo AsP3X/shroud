@@ -66,6 +66,24 @@ final class MessagingLocalRepository {
         mediaCache.save(messageID: messageID, data: data, historyKey: key)
     }
 
+    /// Fills `previewData` / `mediaByteCount` from the sealed media payload when present.
+    func attachEnvelopePreview(to message: inout MessagingController.ChatMessage) {
+        guard message.kind == .image || message.kind == .video else { return }
+        guard let plain = sealedPlaintext(for: message.id),
+              let payload = try? JSONDecoder().decode(MediaMessagePayload.self, from: plain)
+        else { return }
+        if message.previewData == nil {
+            message.previewData = payload.previewJPEG
+        }
+        if message.mediaByteCount == nil {
+            message.mediaByteCount = payload.s
+        }
+        // Video: keep a poster even when full file is already cached.
+        if message.kind == .video, message.imageData == nil, let preview = message.previewData {
+            message.imageData = preview
+        }
+    }
+
     func removeCaches(messageIDs: [UUID]) {
         plaintextCache.remove(messageIDs: messageIDs)
         mediaCache.remove(messageIDs: messageIDs)
@@ -99,8 +117,11 @@ final class MessagingLocalRepository {
 
         for (mapKey, stored) in snapshot.threads {
             guard let peerID = UUID(uuidString: mapKey) else { continue }
-            let messages = stored.map {
-                $0.toChatMessage(media: mediaCache, historyKey: key)
+            let messages = stored.map { row -> MessagingController.ChatMessage in
+                var message = row.toChatMessage(media: mediaCache, historyKey: key)
+                // Offline open: restore envelope preview/size without downloading full media.
+                attachEnvelopePreview(to: &message)
+                return message
             }
             state.threads[peerID] = messages
             for message in messages where !message.deleted && message.kind == .text {

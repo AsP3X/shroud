@@ -1,31 +1,31 @@
 import SwiftUI
 import UIKit
 
-/// Telegram-style image bubble with bottom-trailing time / receipts overlay.
+/// Telegram-style image bubble: envelope preview first, full download only on demand.
 struct ImageMessageBubble: View {
     let message: MessagingController.ChatMessage
     let time: String
-    var onAppearLoad: (() -> Void)?
+    /// Manual full-media download (not auto on appear).
+    var onDownload: (() -> Void)?
+    var isDownloading: Bool = false
     var onRetry: (() -> Void)?
-    /// Tap the photo (when loaded) — host presents the media overlay.
+    /// Tap the photo when fully loaded — host presents the media overlay.
     var onOpen: (() -> Void)?
-    /// When false, renders only the bubble (no leading/trailing row spacers) for menu hero.
     var isRowEmbedded: Bool = true
-    /// When set, reports this bubble’s global frame via `MessageBubbleFrameKey`.
     var frameReportID: UUID? = nil
 
     @Environment(\.chatRowWidth) private var chatRowWidth
 
     private var isMine: Bool { message.isMine }
     private var isFailed: Bool { message.receipt == .failed }
+    private var needsDownload: Bool { message.needsMediaDownload }
     private var canOpen: Bool {
         !message.deleted && !isFailed && message.imageData != nil
     }
 
-    /// Caption when `text` is real user text (not the default "Photo" label).
     private var hasCaption: Bool {
         let t = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !t.isEmpty && t != "Photo"
+        return !t.isEmpty && t != "Photo" && t != "Media"
     }
 
     private var caption: String {
@@ -52,7 +52,6 @@ struct ImageMessageBubble: View {
         }
     }
 
-    /// Widest the media may draw — its own cap, but never wider than the row allows.
     private var mediaWidthCap: CGFloat {
         let row = chatRowWidth > 0 ? chatRowWidth : MessageBubbleMetrics.fallbackRowWidth
         let budget = min(row, max(MessageBubbleMetrics.minBubbleWidth, row - MessageBubbleMetrics.oppositeGutter))
@@ -67,14 +66,18 @@ struct ImageMessageBubble: View {
         guard w > 0, h > 0 else { return CGSize(width: 180, height: 180) }
         let scale = min(maxW / w, maxH / h, 1)
         let size = CGSize(width: max(120, w * scale), height: max(120, h * scale))
-
-        // A caption is laid out in the media's width, and a tall photo is height-capped long
-        // before it reaches the width cap — a 9:19.5 screenshot lands at ~150pt, which leaves
-        // the text about 70pt after padding and meta, so it breaks mid-word. Captioned media
-        // takes the full width instead and center-crops into it via `scaledToFill` + `clipped`
-        // (Telegram crops very tall media in-thread too; the viewer still opens the original).
         guard hasCaption else { return size }
         return CGSize(width: maxW, height: size.height)
+    }
+
+    private var displayImage: UIImage? {
+        if let data = message.imageData {
+            return DecodedImageCache.image(forMessage: message.id, data: data)
+        }
+        if let data = message.previewData {
+            return DecodedImageCache.image(forMessage: message.id, data: data)
+        }
+        return nil
     }
 
     var body: some View {
@@ -95,37 +98,49 @@ struct ImageMessageBubble: View {
     private var bubbleCore: some View {
         VStack(alignment: isMine ? .trailing : .leading, spacing: 6) {
             VStack(alignment: .leading, spacing: 0) {
-                ZStack(alignment: .bottomTrailing) {
+                ZStack {
                     Group {
                         if message.deleted {
                             deletedPlaceholder
-                        } else if let data = message.imageData,
-                                  let ui = DecodedImageCache.image(forMessage: message.id, data: data)
-                        {
+                        } else if let ui = displayImage {
                             Image(uiImage: ui)
                                 .resizable()
                                 .scaledToFill()
                                 .frame(width: displaySize.width, height: displaySize.height)
                                 .clipped()
-                                .opacity(isFailed ? 0.55 : 1)
-                                // Decrypt + decode finishes off the main thread; dissolve the
-                                // photo in over the placeholder instead of snapping it.
+                                .opacity(isFailed ? 0.55 : (needsDownload ? 0.92 : 1))
+                                // Soften un-downloaded previews so the download chip reads clearly.
+                                .blur(radius: needsDownload && message.imageData == nil ? 0.6 : 0)
                                 .transition(.opacity)
                         } else {
-                            loadingPlaceholder
+                            emptyPlaceholder
                                 .transition(.opacity)
                         }
                     }
                     .animation(Motion.fade, value: message.imageData == nil)
+                    .animation(Motion.fade, value: message.previewData == nil)
 
                     if isFailed {
                         failedOverlay
                             .transition(.opacity)
+                    } else if needsDownload {
+                        MediaDownloadChip(
+                            byteCount: message.mediaByteCount,
+                            isDownloading: isDownloading,
+                            action: { onDownload?() }
+                        )
                     } else if !hasCaption {
-                        timeChip
+                        VStack {
+                            Spacer()
+                            HStack {
+                                Spacer()
+                                timeChip
+                            }
+                        }
                     }
                 }
                 .animation(Motion.snappy, value: isFailed)
+                .animation(Motion.snappy, value: needsDownload)
                 .frame(width: displaySize.width, height: displaySize.height)
                 .clipShape(
                     hasCaption
@@ -139,10 +154,12 @@ struct ImageMessageBubble: View {
                         : corners
                 )
                 .contentShape(Rectangle())
-                // Tap / long-press are handled on the row via UIKit
-                // (`messageContextLongPress`) so ScrollView doesn’t delay the menu ~1s.
-                // Keep a SwiftUI tap as fallback when the bubble is used outside chat rows.
                 .onTapGesture {
+                    if needsDownload {
+                        Haptics.impact(.light)
+                        onDownload?()
+                        return
+                    }
                     guard canOpen else { return }
                     Haptics.impact(.light)
                     onOpen?()
@@ -159,7 +176,6 @@ struct ImageMessageBubble: View {
                 }
             }
             .shadow(color: Color.black.opacity(0.08), radius: 3, y: 1)
-            .onAppear { onAppearLoad?() }
 
             if isFailed {
                 failedFooter
@@ -177,7 +193,6 @@ struct ImageMessageBubble: View {
         }
     }
 
-    /// Match text bubbles: muted meta for time/sent/delivered; brighter ticks when read.
     private var metaColor: Color { Color.white.opacity(0.75) }
     private var readTickColor: Color { Color.white.opacity(0.95) }
 
@@ -241,14 +256,12 @@ struct ImageMessageBubble: View {
         .transition(.opacity.combined(with: .move(edge: .top)))
     }
 
-    /// Human: The bubble already knows the photo's dimensions from the message metadata, so the
-    /// placeholder occupies the exact final frame — the thread never reflows when the image lands.
-    private var loadingPlaceholder: some View {
+    private var emptyPlaceholder: some View {
         ZStack {
             (isMine ? Theme.accent : Theme.bubbleIncoming)
-                .shimmering()
-            ProgressView()
-                .tint(isMine ? Color.white.opacity(0.9) : Theme.accent)
+            Image(systemName: "photo")
+                .font(.system(size: 28, weight: .medium))
+                .foregroundStyle(isMine ? Color.white.opacity(0.7) : Theme.textSecondary)
         }
         .frame(width: displaySize.width, height: displaySize.height)
     }
@@ -263,11 +276,6 @@ struct ImageMessageBubble: View {
         .frame(width: displaySize.width, height: 120)
     }
 
-    /// Caption strip under the photo (Telegram: text lives under media in the bubble).
-    ///
-    /// Meta sits on the **last line** via the same reservation the text bubble uses. The
-    /// previous `HStack` put the time beside the whole text block, so every line — not just
-    /// the last — lost the meta's width, which is what squeezed captions into a ragged column.
     private var captionFooter: some View {
         ZStack(alignment: .bottomTrailing) {
             Text("\(captionBodyText)\(captionMetaSpacerText)")
@@ -303,8 +311,6 @@ struct ImageMessageBubble: View {
         isMine ? Color.white.opacity(0.65) : Theme.textSecondary.opacity(0.95)
     }
 
-    /// Must stay in step with `MessageBubbleMetrics`' measuring font, or the last-line
-    /// reservation drifts away from the meta it is reserving for.
     private var captionMetaFont: Font {
         .system(size: MessageBubbleMetrics.metaFontSize, weight: .regular).monospacedDigit()
     }
@@ -315,7 +321,6 @@ struct ImageMessageBubble: View {
             .foregroundStyle(isMine ? Color.white : Theme.textPrimary)
     }
 
-    /// Invisible trailing reservation so the last caption line leaves room for time + ticks.
     private var captionMetaSpacerText: Text {
         Text(
             verbatim: MessageBubbleMetrics.metaReservation(

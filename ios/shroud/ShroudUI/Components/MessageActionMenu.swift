@@ -254,6 +254,8 @@ struct MessageMenuBackdrop: View {
 /// Populated when chat bubbles first decode; long-press reuses the same instance.
 enum DecodedImageCache {
     nonisolated(unsafe) private static var storage: [UUID: UIImage] = [:]
+    /// Byte count of the data that produced the cached image — so preview → full replaces correctly.
+    nonisolated(unsafe) private static var dataCounts: [UUID: Int] = [:]
 
     static func store(_ id: UUID, image: UIImage) {
         storage[id] = image
@@ -263,11 +265,15 @@ enum DecodedImageCache {
         storage[id]
     }
 
-    /// Cache hit, else decode once and store.
+    /// Cache hit for the same byte payload, else decode once and store.
     static func image(forMessage id: UUID, data: Data?) -> UIImage? {
-        if let cached = storage[id] { return cached }
-        guard let data, let image = UIImage(data: data) else { return nil }
+        guard let data else { return nil }
+        if let cached = storage[id], dataCounts[id] == data.count {
+            return cached
+        }
+        guard let image = UIImage(data: data) else { return nil }
         storage[id] = image
+        dataCounts[id] = data.count
         return image
     }
 }

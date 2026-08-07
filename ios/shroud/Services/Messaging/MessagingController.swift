@@ -102,7 +102,12 @@ final class MessagingController {
         var mediaObjectId: UUID?
         var imageWidth: Int?
         var imageHeight: Int?
+        /// Full-resolution image bytes after explicit download (or local send).
         var imageData: Data?
+        /// Small JPEG preview from the sealed envelope — shown before full download.
+        var previewData: Data?
+        /// Full media size in bytes (from payload) for the download chip.
+        var mediaByteCount: Int?
         /// Decrypted voice bytes (m4a) when loaded.
         var voiceData: Data?
         /// Decrypted video bytes (mp4/mov) when loaded.
@@ -135,6 +140,8 @@ final class MessagingController {
             imageWidth: Int? = nil,
             imageHeight: Int? = nil,
             imageData: Data? = nil,
+            previewData: Data? = nil,
+            mediaByteCount: Int? = nil,
             voiceData: Data? = nil,
             videoData: Data? = nil,
             voiceDurationMs: Int? = nil,
@@ -157,6 +164,8 @@ final class MessagingController {
             self.imageWidth = imageWidth
             self.imageHeight = imageHeight
             self.imageData = imageData
+            self.previewData = previewData
+            self.mediaByteCount = mediaByteCount
             self.voiceData = voiceData
             self.videoData = videoData
             self.voiceDurationMs = voiceDurationMs
@@ -165,6 +174,22 @@ final class MessagingController {
             self.sendError = sendError
             self.todoDone = todoDone
             self.pendingSync = pendingSync
+        }
+
+        /// Full media is not on device yet — show preview + download (Telegram-style).
+        var needsMediaDownload: Bool {
+            guard mediaObjectId != nil, !deleted else { return false }
+            switch kind {
+            case .image: return imageData == nil
+            case .video: return videoData == nil
+            default: return false
+            }
+        }
+
+        /// Poster/preview JPEG for the bubble (full image, payload thumb, or video poster).
+        var displayPreviewData: Data? {
+            if kind == .image, let imageData { return imageData }
+            return previewData ?? imageData
         }
     }
 
@@ -806,6 +831,8 @@ final class MessagingController {
                 imageWidth: message.imageWidth,
                 imageHeight: message.imageHeight,
                 imageData: message.imageData,
+                previewData: message.previewData,
+                mediaByteCount: message.mediaByteCount,
                 voiceData: message.voiceData,
                 videoData: message.videoData,
                 voiceDurationMs: message.voiceDurationMs,
@@ -1409,6 +1436,12 @@ final class MessagingController {
 
         let trimmedCaption = caption.trimmingCharacters(in: .whitespacesAndNewlines)
         let displayText = trimmedCaption.isEmpty ? "Video" : trimmedCaption
+        let previewJPEG: Data?
+        if let thumb = encoded.thumbnailJPEG {
+            previewJPEG = thumb
+        } else {
+            previewJPEG = await VideoMedia.thumbnailJPEG(from: encoded.data)
+        }
         let payload = MediaMessagePayload(
             t: MediaMessagePayload.kindVideo,
             mime: encoded.mime,
@@ -1416,7 +1449,9 @@ final class MessagingController {
             h: encoded.height,
             k: fileKey.base64EncodedString(),
             c: trimmedCaption.isEmpty ? nil : trimmedCaption,
-            d: encoded.durationMs
+            d: encoded.durationMs,
+            th: previewJPEG?.base64EncodedString(),
+            s: encoded.data.count
         )
         let payloadData = try JSONEncoder().encode(payload)
         let peerPub = try await resolvePeerIdentityPublicKey(peerUserID: peerUserID, token: token)
@@ -1457,7 +1492,9 @@ final class MessagingController {
             mediaObjectId: upload.mediaObjectId,
             imageWidth: encoded.width,
             imageHeight: encoded.height,
-            imageData: encoded.thumbnailJPEG,
+            imageData: previewJPEG,
+            previewData: previewJPEG,
+            mediaByteCount: encoded.data.count,
             videoData: encoded.data,
             voiceDurationMs: encoded.durationMs,
             sendError: nil
@@ -1484,7 +1521,8 @@ final class MessagingController {
         persistSnapshot()
     }
 
-    /// Loads decrypted video bytes for a media message (caches on success).
+    /// Loads decrypted full video bytes for a media message (caches on success).
+    /// Call only from an explicit download action — never on bubble appear.
     func ensureVideoLoaded(for message: ChatMessage) async {
         guard message.kind == .video,
               message.videoData == nil,
@@ -1692,13 +1730,16 @@ final class MessagingController {
 
         let trimmedCaption = caption.trimmingCharacters(in: .whitespacesAndNewlines)
         let displayText = trimmedCaption.isEmpty ? "Photo" : trimmedCaption
+        let previewJPEG = MediaCrypto.chatPreviewJPEG(from: encoded.data)
         let payload = MediaMessagePayload(
             t: MediaMessagePayload.kindImage,
             mime: encoded.mime,
             w: encoded.width,
             h: encoded.height,
             k: fileKey.base64EncodedString(),
-            c: trimmedCaption.isEmpty ? nil : trimmedCaption
+            c: trimmedCaption.isEmpty ? nil : trimmedCaption,
+            th: previewJPEG?.base64EncodedString(),
+            s: encoded.data.count
         )
         let payloadData = try JSONEncoder().encode(payload)
         let peerPub = try await resolvePeerIdentityPublicKey(peerUserID: peerUserID, token: token)
@@ -1743,6 +1784,8 @@ final class MessagingController {
             imageWidth: encoded.width,
             imageHeight: encoded.height,
             imageData: encoded.data,
+            previewData: previewJPEG,
+            mediaByteCount: encoded.data.count,
             sendError: nil
         )
         if var thread = threads[peerUserID],
@@ -2064,8 +2107,8 @@ final class MessagingController {
         persistSnapshot()
     }
 
-    /// Loads decrypted image bytes for a media message (caches on success).
-    /// Deduped so LazyVStack onAppear storms don't download the same photo twice.
+    /// Loads decrypted full image bytes for a media message (caches on success).
+    /// Call only from an explicit download action — never on bubble appear.
     func ensureImageLoaded(for message: ChatMessage) async {
         guard message.kind == .image,
               message.imageData == nil,
@@ -2472,6 +2515,8 @@ final class MessagingController {
                 imageWidth: message.imageWidth,
                 imageHeight: message.imageHeight,
                 imageData: message.imageData,
+                previewData: message.previewData,
+                mediaByteCount: message.mediaByteCount,
                 voiceData: message.voiceData,
                 videoData: message.videoData,
                 voiceDurationMs: message.voiceDurationMs,

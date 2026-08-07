@@ -135,6 +135,25 @@ nonisolated enum MediaCrypto {
         return downsampled(source, maxEdge: maxEdge) ?? UIImage(data: data)
     }
 
+    /// Tiny JPEG for the chat bubble / payload (`MediaMessagePayload.th`).
+    ///
+    /// Kept under ~40 KB so the encrypted envelope stays small; recipients show this until
+    /// they explicitly download the full media blob.
+    static func chatPreviewJPEG(from data: Data, maxEdge: CGFloat = 360, quality: CGFloat = 0.52) -> Data? {
+        guard let image = previewImage(from: data, maxEdge: maxEdge) else { return nil }
+        return image.jpegData(compressionQuality: min(0.85, max(0.2, quality)))
+    }
+
+    /// Human-readable size for the Telegram-style download chip.
+    static func byteCountLabel(_ bytes: Int) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useKB, .useMB, .useGB]
+        formatter.countStyle = .file
+        formatter.includesUnit = true
+        formatter.isAdaptive = true
+        return formatter.string(fromByteCount: Int64(max(0, bytes)))
+    }
+
     // MARK: - Encoding internals
 
     /// Returns the source bytes verbatim when they are already a shippable original.

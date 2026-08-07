@@ -1,24 +1,25 @@
 import SwiftUI
 import UIKit
 
-/// Video bubble: poster frame + play badge + duration, matching image bubble chrome.
+/// Video bubble: envelope poster + download chip until full video is fetched.
 struct VideoMessageBubble: View {
     let message: MessagingController.ChatMessage
     let time: String
-    var onAppearLoad: (() -> Void)?
+    var onDownload: (() -> Void)?
+    var isDownloading: Bool = false
     var onRetry: (() -> Void)?
     var onOpen: (() -> Void)?
     var isRowEmbedded: Bool = true
     var frameReportID: UUID? = nil
 
     @Environment(\.chatRowWidth) private var chatRowWidth
-    /// Regenerated when poster JPEG / video bytes land after hydrate.
     @State private var poster: UIImage?
 
     private var isMine: Bool { message.isMine }
     private var isFailed: Bool { message.receipt == .failed }
+    private var needsDownload: Bool { message.needsMediaDownload }
     private var canOpen: Bool {
-        !message.deleted && !isFailed && (message.videoData != nil || message.mediaObjectId != nil)
+        !message.deleted && !isFailed && message.videoData != nil
     }
 
     private var hasCaption: Bool {
@@ -38,9 +39,8 @@ struct VideoMessageBubble: View {
         return String(format: "%d:%02d", m, s)
     }
 
-    /// Drives re-load of the poster after download/decrypt.
     private var mediaEpoch: String {
-        "\(message.id.uuidString)-\(message.videoData?.count ?? 0)-\(message.imageData?.count ?? 0)"
+        "\(message.id.uuidString)-\(message.videoData?.count ?? 0)-\(message.previewData?.count ?? 0)-\(message.imageData?.count ?? 0)"
     }
 
     private var corners: UnevenRoundedRectangle {
@@ -81,10 +81,11 @@ struct VideoMessageBubble: View {
         return CGSize(width: maxW, height: size.height)
     }
 
-    /// Prefer live poster state, then message poster JPEG, then decode cache.
     private var displayedPoster: UIImage? {
         if let poster { return poster }
-        if let data = message.imageData, let ui = UIImage(data: data) { return ui }
+        if let data = message.displayPreviewData {
+            return DecodedImageCache.image(forMessage: message.id, data: data)
+        }
         return DecodedImageCache.image(for: message.id)
     }
 
@@ -101,11 +102,6 @@ struct VideoMessageBubble: View {
                 bubbleCore
             }
         }
-        // Hydrate as soon as the row appears (don't wait on poster generation).
-        .task(id: message.id) {
-            onAppearLoad?()
-        }
-        // Re-run when video/poster bytes arrive after download.
         .task(id: mediaEpoch) {
             await loadPoster()
         }
@@ -125,36 +121,44 @@ struct VideoMessageBubble: View {
                                 .frame(width: displaySize.width, height: displaySize.height)
                                 .clipped()
                                 .opacity(isFailed ? 0.55 : 1)
+                                .blur(radius: needsDownload ? 0.5 : 0)
                                 .transition(.opacity)
                         } else {
-                            loadingPlaceholder
+                            emptyPlaceholder
                                 .transition(.opacity)
                         }
                     }
                     .animation(Motion.fade, value: displayedPoster == nil)
 
-                    if !message.deleted, !isFailed {
-                        playBadge
-                    }
-
                     if isFailed {
                         failedOverlay
-                    } else if !hasCaption {
+                    } else if needsDownload {
+                        MediaDownloadChip(
+                            byteCount: message.mediaByteCount,
+                            isDownloading: isDownloading,
+                            action: { onDownload?() }
+                        )
+                    } else {
+                        playBadge
                         VStack {
                             Spacer()
                             HStack {
                                 durationChip
                                 Spacer()
-                                timeChip
+                                if !hasCaption { timeChip }
                             }
                             .padding(8)
                         }
-                    } else {
+                    }
+
+                    // Duration still visible while waiting to download.
+                    if needsDownload, !isFailed {
                         VStack {
                             Spacer()
                             HStack {
                                 durationChip
                                 Spacer()
+                                if !hasCaption { timeChip }
                             }
                             .padding(8)
                         }
@@ -174,6 +178,11 @@ struct VideoMessageBubble: View {
                 )
                 .contentShape(Rectangle())
                 .onTapGesture {
+                    if needsDownload {
+                        Haptics.impact(.light)
+                        onDownload?()
+                        return
+                    }
                     guard canOpen else { return }
                     Haptics.impact(.light)
                     onOpen?()
@@ -286,12 +295,12 @@ struct VideoMessageBubble: View {
         .padding(.horizontal, 2)
     }
 
-    private var loadingPlaceholder: some View {
+    private var emptyPlaceholder: some View {
         ZStack {
             (isMine ? Theme.accent : Theme.bubbleIncoming)
-                .shimmering()
-            ProgressView()
-                .tint(isMine ? Color.white.opacity(0.9) : Theme.accent)
+            Image(systemName: "video")
+                .font(.system(size: 28, weight: .medium))
+                .foregroundStyle(isMine ? Color.white.opacity(0.7) : Theme.textSecondary)
         }
         .frame(width: displaySize.width, height: displaySize.height)
     }
@@ -380,15 +389,12 @@ struct VideoMessageBubble: View {
     }
 
     private func loadPoster() async {
-        if let cached = DecodedImageCache.image(for: message.id) {
-            poster = cached
-            return
-        }
-        if let data = message.imageData, let ui = UIImage(data: data) {
+        if let data = message.displayPreviewData, let ui = UIImage(data: data) {
             DecodedImageCache.store(message.id, image: ui)
             poster = ui
             return
         }
+        // Only generate from full video after the user downloaded it.
         guard let video = message.videoData else {
             poster = nil
             return

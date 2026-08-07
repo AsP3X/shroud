@@ -23,6 +23,8 @@ enum ThreadMessageMerge {
                 kept.receipt = decoded.receipt
             }
             if kept.imageData == nil { kept.imageData = decoded.imageData }
+            if kept.previewData == nil { kept.previewData = decoded.previewData }
+            if kept.mediaByteCount == nil { kept.mediaByteCount = decoded.mediaByteCount }
             if kept.voiceData == nil { kept.voiceData = decoded.voiceData }
             if kept.videoData == nil { kept.videoData = decoded.videoData }
             if kept.mediaObjectId == nil { kept.mediaObjectId = decoded.mediaObjectId }
@@ -38,6 +40,8 @@ enum ThreadMessageMerge {
 
         var merged = decoded
         if merged.imageData == nil { merged.imageData = prior.imageData }
+        if merged.previewData == nil { merged.previewData = prior.previewData }
+        if merged.mediaByteCount == nil { merged.mediaByteCount = prior.mediaByteCount }
         if merged.voiceData == nil { merged.voiceData = prior.voiceData }
         if merged.videoData == nil { merged.videoData = prior.videoData }
         if merged.transcript == nil { merged.transcript = prior.transcript }

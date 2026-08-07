@@ -48,6 +48,8 @@ struct ConversationView: View {
     @State private var pickerAppendsToDraft = false
     @State private var showCamera = false
     @State private var isSendingMedia = false
+    /// Message IDs currently downloading full media (Telegram-style manual download).
+    @State private var mediaDownloadIDs: Set<UUID> = []
     /// Bumped after thread load / open so we re-pin to the newest message once layout is ready.
     @State private var pinToBottomToken = 0
     /// Thread width, so bubbles size themselves to the device instead of a fixed column.
@@ -206,8 +208,10 @@ struct ConversationView: View {
                             }
                         },
                         onLoad: { messageID in
-                            guard let message = messages.first(where: { $0.id == messageID }) else { return }
-                            Task { await messaging.ensureImageLoaded(for: message) }
+                            // Viewer only loads pages that were already downloaded (no silent fetch).
+                            guard let message = messages.first(where: { $0.id == messageID }),
+                                  message.imageData != nil
+                            else { return }
                         },
                         onComingSoon: { feature in
                             toast = "\(feature) coming soon"
@@ -527,11 +531,7 @@ struct ConversationView: View {
                                     minimumDuration: 0.25,
                                     onTap: (message.kind == .image || message.kind == .video)
                                         ? {
-                                            if message.kind == .image {
-                                                openMediaViewer(for: message)
-                                            } else {
-                                                openVideoPlayer(for: message)
-                                            }
+                                            handleMediaTap(message)
                                         }
                                         : nil
                                 ) { rowGlobalFrame in
@@ -787,9 +787,10 @@ struct ConversationView: View {
             ImageMessageBubble(
                 message: message,
                 time: messaging.clockTimeLabel(for: message.createdAt),
-                onAppearLoad: {
-                    Task { await messaging.ensureImageLoaded(for: message) }
+                onDownload: {
+                    downloadMedia(message)
                 },
+                isDownloading: mediaDownloadIDs.contains(message.id),
                 onRetry: {
                     Task {
                         isSendingMedia = true
@@ -816,9 +817,10 @@ struct ConversationView: View {
             VideoMessageBubble(
                 message: message,
                 time: messaging.clockTimeLabel(for: message.createdAt),
-                onAppearLoad: {
-                    Task { await messaging.ensureVideoLoaded(for: message) }
+                onDownload: {
+                    downloadMedia(message)
                 },
+                isDownloading: mediaDownloadIDs.contains(message.id),
                 onRetry: {
                     Task {
                         isSendingMedia = true
@@ -1410,24 +1412,72 @@ struct ConversationView: View {
             }
     }
 
+    /// Tap on media: download if needed, otherwise open.
+    private func handleMediaTap(_ message: MessagingController.ChatMessage) {
+        if message.needsMediaDownload {
+            downloadMedia(message)
+            return
+        }
+        switch message.kind {
+        case .image:
+            openMediaViewer(for: message)
+        case .video:
+            openVideoPlayer(for: message)
+        default:
+            break
+        }
+    }
+
+    /// Explicit full-blob download (never runs on scroll/appear).
+    private func downloadMedia(_ message: MessagingController.ChatMessage) {
+        guard message.needsMediaDownload else { return }
+        guard !mediaDownloadIDs.contains(message.id) else { return }
+        mediaDownloadIDs.insert(message.id)
+        Task {
+            defer { mediaDownloadIDs.remove(message.id) }
+            switch message.kind {
+            case .image:
+                await messaging.ensureImageLoaded(for: message)
+                let live = messaging.threads[peerUserID]?.first(where: { $0.id == message.id })
+                if live?.imageData == nil {
+                    toast = "Could not download that photo."
+                    Haptics.notification(.error)
+                    scheduleToastClear()
+                } else {
+                    Haptics.impact(.light)
+                }
+            case .video:
+                await messaging.ensureVideoLoaded(for: message)
+                let live = messaging.threads[peerUserID]?.first(where: { $0.id == message.id })
+                if live?.videoData == nil {
+                    toast = "Could not download that video."
+                    Haptics.notification(.error)
+                    scheduleToastClear()
+                } else {
+                    Haptics.impact(.light)
+                }
+            default:
+                break
+            }
+        }
+    }
+
     /// Presents the Telegram-style media **overlay** over the conversation (not a push).
     private func openMediaViewer(for message: MessagingController.ChatMessage) {
+        guard message.imageData != nil else {
+            downloadMedia(message)
+            return
+        }
         withAnimation(.easeOut(duration: 0.2)) {
             viewingMedia = ViewingMedia(id: message.id)
         }
-        Task { await messaging.ensureImageLoaded(for: message) }
     }
 
     private func openVideoPlayer(for message: MessagingController.ChatMessage) {
         Task {
-            // Re-fetch the live bubble — hydrate mutates `threads` in place.
-            await messaging.ensureVideoLoaded(for: message)
-            let live = messaging.threads[peerUserID]?.first(where: { $0.id == message.id })
-            let data = live?.videoData ?? message.videoData
-            guard let data, !data.isEmpty else {
-                toast = "Could not load that video."
-                Haptics.notification(.error)
-                scheduleToastClear()
+            let live = messaging.threads[peerUserID]?.first(where: { $0.id == message.id }) ?? message
+            guard let data = live.videoData, !data.isEmpty else {
+                downloadMedia(message)
                 return
             }
             withAnimation(.easeOut(duration: 0.2)) {
