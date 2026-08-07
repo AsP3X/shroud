@@ -38,6 +38,8 @@ struct RootView: View {
         .environment(serverConfig)
         .task {
             SecurityPreferences.applyToVault()
+            // Wire before any network call so 401s during validateSession count toward force-logout.
+            SessionAuthBridge.controller = sessionController
             router.sessionController = sessionController
             router.cryptoController = cryptoController
             router.messagingController = messagingController
@@ -66,12 +68,19 @@ struct RootView: View {
         }
         .onChange(of: sessionController.isSignedIn) { _, signedIn in
             if !signedIn {
+                // Repeated HTTP 401s → full wipe (keys included). User Log Out keeps identity
+                // for phrase re-unlock on the same device.
+                let fullWipe = sessionController.consumePendingFullLocalWipe()
                 router.hasUnlockedMessaging = false
-                cryptoController.lock(wipeStore: false)
-                // AppRouter.logOut already stops messaging; this covers server-driven logout (401).
-                messagingController.stop()
+                cryptoController.lock(wipeStore: fullWipe)
+                // AppRouter.logOut already stops messaging; this covers server-driven logout.
+                messagingController.stop(wipeDisk: true)
                 callController.clearLocalState()
                 PushNotificationService.shared.stop()
+                if fullWipe {
+                    router.postAuthToast = "Signed out · authentication failed · local data cleared"
+                    router.path = []
+                }
             }
         }
         .onChange(of: router.isUnlocked) { _, unlocked in

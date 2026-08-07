@@ -119,6 +119,9 @@ final class AppRouter {
     /// Ends the server session, wipes local message caches, locks crypto (identity kept for re-login).
     ///
     /// Local session + caches clear first so a force-quit mid-network never leaves you signed in.
+    ///
+    /// Note: repeated server authentication failures (HTTP 401) use a separate path in
+    /// `SessionController` + `RootView` that also wipes identity keys (`wipeStore: true`).
     func logOut() {
         guard !isLoggingOut else { return }
         isLoggingOut = true
@@ -133,7 +136,7 @@ final class AppRouter {
 
             // RootView also stops messaging on `isSignedIn` change; call again so endpoint-change
             // logout paths that only use the router still wipe caches.
-            messagingController?.stop()
+            messagingController?.stop(wipeDisk: true)
             callController?.clearLocalState()
             // Keep identity material so the same user can unlock with their phrase again.
             cryptoController?.lock(wipeStore: false)

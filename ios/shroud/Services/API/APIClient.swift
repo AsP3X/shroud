@@ -207,12 +207,25 @@ nonisolated final class APIClient: Sendable {
         do {
             (data, response) = try await session.data(for: request)
         } catch {
+            // Unreachable / offline — transport only. Never counts as auth failure.
             throw APIError.transport(error.localizedDescription)
         }
 
         guard let http = response as? HTTPURLResponse else {
             throw APIError.transport("Invalid response")
         }
+
+        // Session policy: only authenticated requests contribute to the 401 streak.
+        // Login/register (no Bearer) must not force-logout an existing local session.
+        let hadBearer = bearerToken.map { !$0.isEmpty } ?? false
+        if hadBearer {
+            if (200 ..< 300).contains(http.statusCode) {
+                SessionAuthBridge.noteAuthenticationSuccess()
+            } else if http.statusCode == 401 {
+                SessionAuthBridge.noteAuthenticationFailure()
+            }
+        }
+
         return (data, http)
     }
 
