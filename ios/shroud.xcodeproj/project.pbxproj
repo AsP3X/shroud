@@ -405,7 +405,7 @@
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Face ID unlocks your encrypted chats on this device.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Microphone access is used for voice messages and calls.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Photos you save from a chat are added to your photo library.";
-				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Photo library access is used to send photos in chats.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Photo library access is used to send photos and videos in chats.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "On-device speech recognition transcribes voice messages. Audio never leaves your device for transcription.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -445,7 +445,7 @@
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Face ID unlocks your encrypted chats on this device.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Microphone access is used for voice messages and calls.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Photos you save from a chat are added to your photo library.";
-				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Photo library access is used to send photos in chats.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Photo library access is used to send photos and videos in chats.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "On-device speech recognition transcribes voice messages. Audio never leaves your device for transcription.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;

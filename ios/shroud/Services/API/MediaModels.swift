@@ -39,18 +39,18 @@ struct MediaDownloadResponse: Decodable, Equatable, Sendable {
 
 /// Plaintext sealed inside the message ciphertext for `content_type = media`.
 nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
-    /// `"image"` for photos, `"voice"` for voice messages.
+    /// `"image"` / `"voice"` / `"video"`.
     var t: String
     var mime: String
-    /// Image width, or `0` for voice.
+    /// Image/video width, or `0` for voice.
     var w: Int
-    /// Image height, or `0` for voice.
+    /// Image/video height, or `0` for voice.
     var h: Int
     /// Base64 AES-256 key for the uploaded blob.
     var k: String
-    /// Optional caption (images) or on-device transcript (voice).
+    /// Optional caption (images/videos) or on-device transcript (voice).
     var c: String?
-    /// Voice duration in milliseconds (voice only).
+    /// Duration in milliseconds (voice / video).
     var d: Int?
     /// Base64 amplitude envelope, one byte (0…255) per bar (voice only).
     /// Optional so payloads written before waveforms existed still decode.
@@ -58,7 +58,9 @@ nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
 
     static let kindImage = "image"
     static let kindVoice = "voice"
+    static let kindVideo = "video"
 
     var isVoice: Bool { t == Self.kindVoice }
     var isImage: Bool { t == Self.kindImage }
+    var isVideo: Bool { t == Self.kindVideo }
 }

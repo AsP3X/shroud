@@ -84,6 +84,11 @@ enum MessageDecoder {
                 {
                     merged.voiceData = cached
                 }
+                if merged.videoData == nil, existing.kind == .video,
+                   let cached = local.sealedMedia(for: dto.id)
+                {
+                    merged.videoData = cached
+                }
                 return merged
             }
         }
@@ -263,6 +268,29 @@ enum MessageDecoder {
                 voiceDurationMs: payload?.d,
                 voiceWaveform: VoiceWaveform.decode(payload?.wf),
                 transcript: transcript
+            )
+        }
+
+        if payload?.isVideo == true {
+            let width = payload?.w
+            let height = payload?.h
+            let caption = payload?.c?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let mediaText = caption.isEmpty ? "Video" : caption
+            return MessagingController.ChatMessage(
+                id: dto.id,
+                peerUserID: peerUserID,
+                senderUserID: dto.senderUserId,
+                text: mediaText,
+                createdAt: dto.createdAt,
+                isMine: isMine,
+                deleted: false,
+                receipt: receipt,
+                kind: .video,
+                mediaObjectId: dto.mediaObjectId,
+                imageWidth: width,
+                imageHeight: height,
+                videoData: cached,
+                voiceDurationMs: payload?.d
             )
         }
 

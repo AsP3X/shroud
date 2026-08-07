@@ -38,6 +38,8 @@ struct ConversationView: View {
     /// Live global frames of each bubble (visual only — no row spacers).
     @State private var bubbleGlobalFrames: [UUID: CGRect] = [:]
     @State private var viewingMedia: ViewingMedia?
+    /// Full-screen video playback after decrypt.
+    @State private var viewingVideo: ViewingVideo?
     @State private var composeDraft: ComposeDraft?
     @State private var profileDestination: ProfileDestination?
     @State private var photoPickerItems: [PhotosPickerItem] = []
@@ -169,13 +171,13 @@ struct ConversationView: View {
                 selection: $photoPickerItems,
                 maxSelectionCount: Self.maxPhotosPerSend,
                 selectionBehavior: .ordered,
-                matching: .images,
+                matching: .any(of: [.images, .videos]),
                 preferredItemEncoding: .current,
                 photoLibrary: .shared()
             )
             .onChange(of: photoPickerItems) { _, items in
                 guard !items.isEmpty else { return }
-                Task { await loadPickedPhotosForCompose(items) }
+                Task { await loadPickedMedia(items) }
             }
             .fullScreenCover(isPresented: $showCamera) {
                 CameraPicker { image in
@@ -263,8 +265,23 @@ struct ConversationView: View {
                 }
             }
             .overlay {
+                if let viewingVideo {
+                    VideoPlayerOverlay(
+                        data: viewingVideo.data,
+                        onClose: {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                self.viewingVideo = nil
+                            }
+                        }
+                    )
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+                    .zIndex(55)
+                }
+            }
+            .overlay {
                 if isSendingMedia {
-                    ProgressView("Sending photo…")
+                    ProgressView("Sending media…")
                         .padding(16)
                         .background(.ultraThinMaterial)
                         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -292,6 +309,7 @@ struct ConversationView: View {
             }
             .toast($toast)
             .animation(Motion.scrim, value: viewingMedia != nil)
+            .animation(Motion.scrim, value: viewingVideo != nil)
             .animation(Motion.scrim, value: composeDraft != nil)
             .animation(Motion.snappy, value: isSendingMedia)
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { threadWidth = $0 }
@@ -312,6 +330,12 @@ struct ConversationView: View {
     /// Which photo the media overlay opened on (not a navigation destination).
     private struct ViewingMedia: Identifiable {
         let id: UUID
+    }
+
+    /// Full-screen video player payload (decrypted bytes).
+    private struct ViewingVideo: Identifiable {
+        let id: UUID
+        let data: Data
     }
 
     /// Message the delete confirmation is about (scope is picked in the dialog).
@@ -501,8 +525,14 @@ struct ConversationView: View {
                                 // UIKit long-press (0.25s). SwiftUI long-press in ScrollView is unreliable.
                                 .messageContextLongPress(
                                     minimumDuration: 0.25,
-                                    onTap: message.kind == .image
-                                        ? { openMediaViewer(for: message) }
+                                    onTap: (message.kind == .image || message.kind == .video)
+                                        ? {
+                                            if message.kind == .image {
+                                                openMediaViewer(for: message)
+                                            } else {
+                                                openVideoPlayer(for: message)
+                                            }
+                                        }
                                         : nil
                                 ) { rowGlobalFrame in
                                     // Prefer the true bubble frame; fall back to the press row.
@@ -782,6 +812,35 @@ struct ConversationView: View {
                 },
                 frameReportID: message.id
             )
+        case .video:
+            VideoMessageBubble(
+                message: message,
+                time: messaging.clockTimeLabel(for: message.createdAt),
+                onAppearLoad: {
+                    Task { await messaging.ensureVideoLoaded(for: message) }
+                },
+                onRetry: {
+                    Task {
+                        isSendingMedia = true
+                        let error = await messaging.retryFailedVideo(
+                            messageID: message.id,
+                            peerUserID: peerUserID
+                        )
+                        isSendingMedia = false
+                        if let error {
+                            toast = error
+                            Haptics.notification(.error)
+                            scheduleToastClear()
+                        } else {
+                            Haptics.notification(.success)
+                        }
+                    }
+                },
+                onOpen: {
+                    openVideoPlayer(for: message)
+                },
+                frameReportID: message.id
+            )
         case .voice:
             VoiceMessageBubble(
                 message: message,
@@ -890,36 +949,83 @@ struct ConversationView: View {
         }
     }
 
-    private func loadPickedPhotosForCompose(_ items: [PhotosPickerItem]) async {
+    private func loadPickedMedia(_ items: [PhotosPickerItem]) async {
         let appending = pickerAppendsToDraft
         defer {
             photoPickerItems = []
             pickerAppendsToDraft = false
         }
 
-        var picked: [PickedPhoto] = []
+        var pickedPhotos: [PickedPhoto] = []
+        var pickedVideos: [PickedMovie] = []
+
         for item in items {
+            if Self.isVideoPickerItem(item) {
+                if let movie = try? await item.loadTransferable(type: PickedMovie.self) {
+                    pickedVideos.append(movie)
+                }
+                continue
+            }
             // The original file's bytes — held encoded until send so "Original" stays original.
             guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
-            // Downsample off the main thread; a 48 MP decode would stutter the picker dismissal.
             let preview = await Task.detached(priority: .userInitiated) {
                 MediaCrypto.previewImage(from: data, maxEdge: 2048)
             }.value
             guard let preview else { continue }
-            picked.append(PickedPhoto(preview: preview, source: .fileData(data)))
+            pickedPhotos.append(PickedPhoto(preview: preview, source: .fileData(data)))
         }
 
-        guard !picked.isEmpty else {
-            toast = items.count > 1 ? "Could not load those photos." : "Could not load that photo."
-            scheduleToastClear()
+        // Videos skip the photo editor — compress and send immediately.
+        if !pickedVideos.isEmpty {
+            await sendPickedVideos(pickedVideos)
+        }
+
+        if pickedPhotos.isEmpty {
+            if pickedVideos.isEmpty {
+                toast = items.count > 1 ? "Could not load those items." : "Could not load that item."
+                scheduleToastClear()
+            }
             return
         }
 
         if appending, var draft = composeDraft {
-            draft.photos = Array((draft.photos + picked).prefix(Self.maxPhotosPerSend))
+            draft.photos = Array((draft.photos + pickedPhotos).prefix(Self.maxPhotosPerSend))
             withAnimation(Motion.standard) { composeDraft = draft }
         } else {
-            presentMediaCompose(picked)
+            presentMediaCompose(pickedPhotos)
+        }
+    }
+
+    private static func isVideoPickerItem(_ item: PhotosPickerItem) -> Bool {
+        item.supportedContentTypes.contains { type in
+            type.conforms(to: .movie) || type.conforms(to: .video) || type.conforms(to: .mpeg4Movie)
+        }
+    }
+
+    private func sendPickedVideos(_ movies: [PickedMovie]) async {
+        guard !movies.isEmpty else { return }
+        isSendingMedia = true
+        defer {
+            isSendingMedia = false
+            movies.forEach { $0.cleanup() }
+        }
+
+        var firstError: String?
+        for movie in movies {
+            let error = await messaging.sendVideo(sourceURL: movie.url, to: peerUserID)
+            if let error, firstError == nil { firstError = error }
+        }
+
+        if let firstError {
+            toast = firstError
+            Haptics.notification(.error)
+            Task {
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                if toast == firstError { toast = nil }
+            }
+        } else {
+            Haptics.notification(.success)
+            pinToBottomToken &+= 1
         }
     }
 
@@ -1310,6 +1416,22 @@ struct ConversationView: View {
             viewingMedia = ViewingMedia(id: message.id)
         }
         Task { await messaging.ensureImageLoaded(for: message) }
+    }
+
+    private func openVideoPlayer(for message: MessagingController.ChatMessage) {
+        Task {
+            await messaging.ensureVideoLoaded(for: message)
+            let data = messaging.threads[peerUserID]?.first(where: { $0.id == message.id })?.videoData
+                ?? message.videoData
+            guard let data else {
+                toast = "Could not load that video."
+                scheduleToastClear()
+                return
+            }
+            withAnimation(.easeOut(duration: 0.2)) {
+                viewingVideo = ViewingVideo(id: message.id, data: data)
+            }
+        }
     }
 
     private static func viewerDateLine(for date: Date) -> String {

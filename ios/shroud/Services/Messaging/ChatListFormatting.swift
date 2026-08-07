@@ -12,6 +12,8 @@ enum ChatListFormatting {
             switch last.kind {
             case .image:
                 return last.text.isEmpty || last.text == "Photo" ? "Photo" : last.text
+            case .video:
+                return last.text.isEmpty || last.text == "Video" ? "Video" : last.text
             case .voice:
                 if let t = last.transcript, !t.isEmpty { return t }
                 return "Voice message"

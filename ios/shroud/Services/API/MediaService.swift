@@ -38,7 +38,7 @@ struct MediaService: Sendable {
             let mb = max(1, data.count / 1_048_576)
             throw APIError.server(
                 code: "VALIDATION_ERROR",
-                message: "This photo is too large after encryption (\(mb) MB). Try HD quality for a smaller file.",
+                message: "This media is too large after encryption (\(mb) MB). Try a shorter video or lower photo quality.",
                 statusCode: 400
             )
         }

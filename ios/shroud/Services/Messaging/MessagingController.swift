@@ -82,6 +82,7 @@ final class MessagingController {
         case text
         case image
         case voice
+        case video
         /// Local Notes checklist item (never sent to the server).
         case todo
     }
@@ -90,7 +91,7 @@ final class MessagingController {
         let id: UUID
         let peerUserID: UUID
         let senderUserID: UUID
-        /// Caption, list preview ("Photo" / "Voice message"), or transcript snippet.
+        /// Caption, list preview ("Photo" / "Video" / "Voice message"), or transcript snippet.
         let text: String
         let createdAt: Date
         let isMine: Bool
@@ -104,7 +105,9 @@ final class MessagingController {
         var imageData: Data?
         /// Decrypted voice bytes (m4a) when loaded.
         var voiceData: Data?
-        /// Voice duration in milliseconds.
+        /// Decrypted video bytes (mp4/mov) when loaded.
+        var videoData: Data?
+        /// Voice or video duration in milliseconds.
         var voiceDurationMs: Int?
         /// Amplitude envelope captured at record time, 0…255 per bar.
         /// Nil for messages sent before waveforms were part of the payload.
@@ -133,6 +136,7 @@ final class MessagingController {
             imageHeight: Int? = nil,
             imageData: Data? = nil,
             voiceData: Data? = nil,
+            videoData: Data? = nil,
             voiceDurationMs: Int? = nil,
             voiceWaveform: [UInt8]? = nil,
             transcript: String? = nil,
@@ -154,6 +158,7 @@ final class MessagingController {
             self.imageHeight = imageHeight
             self.imageData = imageData
             self.voiceData = voiceData
+            self.videoData = videoData
             self.voiceDurationMs = voiceDurationMs
             self.voiceWaveform = voiceWaveform
             self.transcript = transcript
@@ -802,6 +807,7 @@ final class MessagingController {
                 imageHeight: message.imageHeight,
                 imageData: message.imageData,
                 voiceData: message.voiceData,
+                videoData: message.videoData,
                 voiceDurationMs: message.voiceDurationMs,
                 voiceWaveform: message.voiceWaveform,
                 transcript: message.transcript
@@ -1178,6 +1184,425 @@ final class MessagingController {
             lastError = message
             persistSnapshot()
             return message
+        }
+    }
+
+    /// Encrypts, uploads, and sends a video message (compressed to fit the media size cap).
+    /// Optional `caption` is sealed in the media payload.
+    /// Returns a user-facing error string, or `nil` on success.
+    func sendVideo(
+        sourceURL: URL,
+        to peerUserID: UUID,
+        caption: String = ""
+    ) async -> String? {
+        let trimmedCaption = caption.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayText = trimmedCaption.isEmpty ? "Video" : trimmedCaption
+
+        let optimisticID = UUID()
+        let encoded: EncodedVideo
+        do {
+            encoded = try await Task.detached(priority: .userInitiated) {
+                try await VideoMedia.encode(sourceURL: sourceURL)
+            }.value
+        } catch VideoMedia.VideoError.tooLarge {
+            return "This video is too large even after compression. Try a shorter clip."
+        } catch {
+            return "Could not prepare that video."
+        }
+
+        if isNotesChat(peerUserID) {
+            let me = sessionController?.userID ?? Self.notesPeerID
+            local.saveSealedMedia(messageID: optimisticID, data: encoded.data)
+            let note = ChatMessage(
+                id: optimisticID,
+                peerUserID: peerUserID,
+                senderUserID: me,
+                text: displayText,
+                createdAt: Date(),
+                isMine: true,
+                deleted: false,
+                receipt: .sent,
+                kind: .video,
+                imageWidth: encoded.width,
+                imageHeight: encoded.height,
+                imageData: encoded.thumbnailJPEG,
+                videoData: encoded.data,
+                voiceDurationMs: encoded.durationMs
+            )
+            var list = threads[peerUserID] ?? []
+            list.append(note)
+            threads[peerUserID] = list
+            persistThread(peerUserID)
+
+            if connectivity.isOnline,
+               let token = sessionController?.bearerToken,
+               let realMe = sessionController?.userID,
+               let material = cryptoController?.material
+            {
+                do {
+                    let sent = try await finishVideoSend(
+                        optimisticID: optimisticID,
+                        peerUserID: realMe,
+                        me: realMe,
+                        material: material,
+                        token: token,
+                        encoded: encoded,
+                        caption: trimmedCaption
+                    )
+                    if var notes = threads[peerUserID] {
+                        notes.removeAll { $0.id == optimisticID || $0.id == sent.id }
+                        notes.append(
+                            ChatMessage(
+                                id: sent.id,
+                                peerUserID: peerUserID,
+                                senderUserID: realMe,
+                                text: sent.text,
+                                createdAt: sent.createdAt,
+                                isMine: true,
+                                deleted: false,
+                                receipt: .sent,
+                                kind: .video,
+                                mediaObjectId: sent.mediaObjectId,
+                                imageWidth: sent.imageWidth,
+                                imageHeight: sent.imageHeight,
+                                imageData: sent.imageData ?? encoded.thumbnailJPEG,
+                                videoData: sent.videoData ?? encoded.data,
+                                voiceDurationMs: sent.voiceDurationMs ?? encoded.durationMs
+                            )
+                        )
+                        notes.sort { $0.createdAt < $1.createdAt }
+                        threads[peerUserID] = notes
+                        threads[realMe] = nil
+                        persistThread(peerUserID)
+                    }
+                } catch {
+                    // Keep local-only video.
+                }
+            }
+            return nil
+        }
+
+        guard let token = sessionController?.bearerToken,
+              let me = sessionController?.userID,
+              let material = cryptoController?.material
+        else { return "Not signed in." }
+
+        let optimistic = ChatMessage(
+            id: optimisticID,
+            peerUserID: peerUserID,
+            senderUserID: me,
+            text: displayText,
+            createdAt: Date(),
+            isMine: true,
+            deleted: false,
+            receipt: .sending,
+            kind: .video,
+            imageWidth: encoded.width,
+            imageHeight: encoded.height,
+            imageData: encoded.thumbnailJPEG,
+            videoData: encoded.data,
+            voiceDurationMs: encoded.durationMs,
+            pendingSync: true
+        )
+        var list = threads[peerUserID] ?? []
+        list.append(optimistic)
+        threads[peerUserID] = list
+        local.saveSealedMedia(messageID: optimisticID, data: encoded.data)
+        persistSnapshot()
+
+        if !connectivity.isOnline {
+            isOffline = true
+            markVideoFailed(optimisticID: optimisticID, peerUserID: peerUserID, error: "Waiting for connection…")
+            return nil
+        }
+
+        do {
+            try await finishVideoSend(
+                optimisticID: optimisticID,
+                peerUserID: peerUserID,
+                me: me,
+                material: material,
+                token: token,
+                encoded: encoded,
+                caption: trimmedCaption
+            )
+            lastError = nil
+            return nil
+        } catch {
+            let message = SessionController.userMessage(for: error)
+            markVideoFailed(optimisticID: optimisticID, peerUserID: peerUserID, error: message)
+            lastError = message
+            persistSnapshot()
+            return message
+        }
+    }
+
+    /// Retries a failed outbound video that still has local video data.
+    func retryFailedVideo(messageID: UUID, peerUserID: UUID) async -> String? {
+        guard let token = sessionController?.bearerToken,
+              let me = sessionController?.userID,
+              let material = cryptoController?.material,
+              var thread = threads[peerUserID],
+              let idx = thread.firstIndex(where: { $0.id == messageID && $0.isMine && $0.kind == .video })
+        else {
+            return "Nothing to retry."
+        }
+
+        let data = thread[idx].videoData ?? local.sealedMedia(for: messageID)
+        guard let data else { return "Nothing to retry." }
+
+        thread[idx].receipt = .sending
+        thread[idx].sendError = nil
+        threads[peerUserID] = thread
+
+        let encoded = EncodedVideo(
+            data: data,
+            width: thread[idx].imageWidth ?? 0,
+            height: thread[idx].imageHeight ?? 0,
+            durationMs: thread[idx].voiceDurationMs ?? 0,
+            mime: "video/mp4",
+            thumbnailJPEG: thread[idx].imageData
+        )
+
+        let existingCaption = thread[idx].text
+        let caption = (existingCaption == "Video" || existingCaption.isEmpty) ? "" : existingCaption
+
+        do {
+            try await finishVideoSend(
+                optimisticID: messageID,
+                peerUserID: peerUserID,
+                me: me,
+                material: material,
+                token: token,
+                encoded: encoded,
+                caption: caption
+            )
+            return nil
+        } catch {
+            let message = SessionController.userMessage(for: error)
+            markVideoFailed(optimisticID: messageID, peerUserID: peerUserID, error: message)
+            return message
+        }
+    }
+
+    @discardableResult
+    private func finishVideoSend(
+        optimisticID: UUID,
+        peerUserID: UUID,
+        me: UUID,
+        material: IdentityKeyMaterial,
+        token: String,
+        encoded: EncodedVideo,
+        caption: String
+    ) async throws -> ChatMessage {
+        let (fileKey, sealedFile) = try MediaCrypto.sealFile(encoded.data)
+        let upload = try await mediaService.createUpload(
+            sizeBytes: sealedFile.count,
+            contentType: "application/octet-stream",
+            token: token
+        )
+        try await mediaService.uploadContent(
+            mediaID: upload.mediaObjectId,
+            data: sealedFile,
+            token: token
+        )
+
+        let trimmedCaption = caption.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayText = trimmedCaption.isEmpty ? "Video" : trimmedCaption
+        let payload = MediaMessagePayload(
+            t: MediaMessagePayload.kindVideo,
+            mime: encoded.mime,
+            w: encoded.width,
+            h: encoded.height,
+            k: fileKey.base64EncodedString(),
+            c: trimmedCaption.isEmpty ? nil : trimmedCaption,
+            d: encoded.durationMs
+        )
+        let payloadData = try JSONEncoder().encode(payload)
+        let peerPub = try await resolvePeerIdentityPublicKey(peerUserID: peerUserID, token: token)
+        let sealed = try MessageCrypto.seal(
+            plaintext: payloadData,
+            peerUserID: peerUserID,
+            toPeerIdentityPublicKey: peerPub,
+            ourPrivateKey: material.agreementPrivateKey,
+            ourIdentityPublicKey: material.identityPublicKeyData,
+            ourUserID: me
+        )
+        let dto = try await messagesService.send(
+            SendMessageRequest(
+                peerUserId: peerUserID,
+                clientMessageId: optimisticID,
+                contentType: "media",
+                ciphertext: sealed.base64EncodedString(),
+                mediaObjectId: upload.mediaObjectId
+            ),
+            token: token
+        )
+        local.saveSealedMedia(messageID: dto.id, data: encoded.data)
+        if dto.id != optimisticID {
+            local.removeCaches(messageIDs: [optimisticID])
+        }
+        local.saveSealedPlaintext(messageID: dto.id, data: payloadData)
+
+        let sent = ChatMessage(
+            id: dto.id,
+            peerUserID: peerUserID,
+            senderUserID: me,
+            text: displayText,
+            createdAt: dto.createdAt,
+            isMine: true,
+            deleted: false,
+            receipt: receiptStatus(from: dto),
+            kind: .video,
+            mediaObjectId: upload.mediaObjectId,
+            imageWidth: encoded.width,
+            imageHeight: encoded.height,
+            imageData: encoded.thumbnailJPEG,
+            videoData: encoded.data,
+            voiceDurationMs: encoded.durationMs,
+            sendError: nil
+        )
+        if var thread = threads[peerUserID],
+           let idx = thread.firstIndex(where: { $0.id == optimisticID })
+        {
+            thread[idx] = sent
+            threads[peerUserID] = thread
+        }
+        persistSnapshot()
+        await refreshConversations(force: true)
+        return sent
+    }
+
+    private func markVideoFailed(optimisticID: UUID, peerUserID: UUID, error: String) {
+        guard var thread = threads[peerUserID],
+              let idx = thread.firstIndex(where: { $0.id == optimisticID })
+        else { return }
+        thread[idx].receipt = .failed
+        thread[idx].sendError = error
+        thread[idx].pendingSync = true
+        threads[peerUserID] = thread
+        persistSnapshot()
+    }
+
+    /// Loads decrypted video bytes for a media message (caches on success).
+    func ensureVideoLoaded(for message: ChatMessage) async {
+        guard message.kind == .video,
+              message.videoData == nil,
+              !message.deleted
+        else { return }
+
+        if let existing = mediaHydrateTasks[message.id] {
+            await existing.value
+            return
+        }
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.hydrateVideo(for: message)
+        }
+        mediaHydrateTasks[message.id] = task
+        await task.value
+        if mediaHydrateTasks[message.id] == task {
+            mediaHydrateTasks[message.id] = nil
+        }
+    }
+
+    private func hydrateVideo(for message: ChatMessage) async {
+        guard message.kind == .video,
+              message.videoData == nil,
+              !message.deleted
+        else { return }
+
+        if let cached = local.sealedMedia(for: message.id) {
+            updateMessageVideo(messageID: message.id, peerID: message.peerUserID, data: cached)
+            return
+        }
+
+        guard let mediaID = message.mediaObjectId,
+              let token = sessionController?.bearerToken,
+              let material = cryptoController?.material
+        else { return }
+
+        do {
+            guard let payloadData = try await mediaPayloadData(for: message, token: token, material: material),
+                  let payload = try? JSONDecoder().decode(MediaMessagePayload.self, from: payloadData),
+                  let keyData = Data(base64Encoded: payload.k)
+            else { return }
+
+            let sealedFile = try await mediaService.downloadContent(mediaID: mediaID, token: token)
+            let video = try MediaCrypto.openFile(sealed: sealedFile, keyData: keyData)
+            local.saveSealedMedia(messageID: message.id, data: video)
+            updateMessageVideo(
+                messageID: message.id,
+                peerID: message.peerUserID,
+                data: video,
+                durationMs: payload.d,
+                width: payload.w,
+                height: payload.h,
+                caption: payload.c
+            )
+        } catch {
+            // Leave placeholder; reopen thread to retry.
+        }
+    }
+
+    private func updateMessageVideo(
+        messageID: UUID,
+        peerID: UUID,
+        data: Data,
+        durationMs: Int? = nil,
+        width: Int? = nil,
+        height: Int? = nil,
+        caption: String? = nil
+    ) {
+        guard var thread = threads[peerID],
+              let idx = thread.firstIndex(where: { $0.id == messageID })
+        else { return }
+        thread[idx].videoData = data
+        if let durationMs { thread[idx].voiceDurationMs = durationMs }
+        if let width, width > 0 { thread[idx].imageWidth = width }
+        if let height, height > 0 { thread[idx].imageHeight = height }
+        // Caption is normally set at decode; only fill if still the generic placeholder.
+        if let caption {
+            let trimmed = caption.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty, thread[idx].text == "Video" || thread[idx].text == "Media" {
+                let m = thread[idx]
+                thread[idx] = ChatMessage(
+                    id: m.id,
+                    peerUserID: m.peerUserID,
+                    senderUserID: m.senderUserID,
+                    text: trimmed,
+                    createdAt: m.createdAt,
+                    isMine: m.isMine,
+                    deleted: m.deleted,
+                    receipt: m.receipt,
+                    kind: .video,
+                    mediaObjectId: m.mediaObjectId,
+                    imageWidth: m.imageWidth,
+                    imageHeight: m.imageHeight,
+                    imageData: m.imageData,
+                    voiceData: m.voiceData,
+                    videoData: data,
+                    voiceDurationMs: m.voiceDurationMs,
+                    sendError: m.sendError,
+                    pendingSync: m.pendingSync
+                )
+            }
+        }
+        threads[peerID] = thread
+
+        // Thumbnail for the bubble when we only have video bytes.
+        if thread[idx].imageData == nil {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if let jpeg = await VideoMedia.thumbnailJPEG(from: data),
+                   var t = self.threads[peerID],
+                   let i = t.firstIndex(where: { $0.id == messageID }),
+                   t[i].imageData == nil
+                {
+                    t[i].imageData = jpeg
+                    self.threads[peerID] = t
+                }
+            }
         }
     }
 
@@ -2289,6 +2714,43 @@ final class MessagingController {
                     )
                 } catch {
                     markImageFailed(
+                        optimisticID: messageID,
+                        peerUserID: peerID,
+                        error: SessionController.userMessage(for: error)
+                    )
+                }
+            case let .video(messageID, peerID, caption):
+                guard let thread = threads[peerID],
+                      let message = thread.first(where: { $0.id == messageID }),
+                      let data = message.videoData ?? local.sealedMedia(for: messageID)
+                else { continue }
+                let encoded = EncodedVideo(
+                    data: data,
+                    width: message.imageWidth ?? 0,
+                    height: message.imageHeight ?? 0,
+                    durationMs: message.voiceDurationMs ?? 0,
+                    mime: "video/mp4",
+                    thumbnailJPEG: message.imageData
+                )
+                if var list = threads[peerID],
+                   let idx = list.firstIndex(where: { $0.id == messageID })
+                {
+                    list[idx].receipt = .sending
+                    list[idx].sendError = nil
+                    threads[peerID] = list
+                }
+                do {
+                    try await finishVideoSend(
+                        optimisticID: messageID,
+                        peerUserID: peerID,
+                        me: me,
+                        material: material,
+                        token: token,
+                        encoded: encoded,
+                        caption: caption
+                    )
+                } catch {
+                    markVideoFailed(
                         optimisticID: messageID,
                         peerUserID: peerID,
                         error: SessionController.userMessage(for: error)

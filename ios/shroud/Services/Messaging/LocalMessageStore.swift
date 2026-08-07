@@ -122,10 +122,17 @@ struct LocalMessageStore: Sendable {
             let kind = MessagingController.ChatMessageKind(storageKey: kind) ?? .text
             var imageData: Data?
             var voiceData: Data?
-            if kind == .image {
+            var videoData: Data?
+            switch kind {
+            case .image:
                 imageData = media.data(for: id, historyKey: historyKey)
-            } else if kind == .voice {
+            case .voice:
                 voiceData = media.data(for: id, historyKey: historyKey)
+            case .video:
+                // Full video lives in the media cache; optional poster frame is not stored separately.
+                videoData = media.data(for: id, historyKey: historyKey)
+            case .text, .todo:
+                break
             }
             return MessagingController.ChatMessage(
                 id: id,
@@ -142,6 +149,7 @@ struct LocalMessageStore: Sendable {
                 imageHeight: imageHeight,
                 imageData: imageData,
                 voiceData: voiceData,
+                videoData: videoData,
                 voiceDurationMs: voiceDurationMs,
                 voiceWaveform: voiceWaveform,
                 transcript: transcript,
@@ -481,6 +489,7 @@ extension MessagingController.ChatMessageKind {
         case .text: "text"
         case .image: "image"
         case .voice: "voice"
+        case .video: "video"
         case .todo: "todo"
         }
     }
@@ -490,6 +499,7 @@ extension MessagingController.ChatMessageKind {
         case "text": self = .text
         case "image": self = .image
         case "voice": self = .voice
+        case "video": self = .video
         case "todo": self = .todo
         default: return nil
         }

@@ -288,6 +288,12 @@ struct MessageMenuHeroContent: View {
                 time: timeLabel,
                 isRowEmbedded: false
             )
+        case .video:
+            VideoMessageBubble(
+                message: message,
+                time: timeLabel,
+                isRowEmbedded: false
+            )
         case .voice:
             VoiceMessageBubble(
                 message: message,

@@ -4,6 +4,7 @@ import Foundation
 enum OutboundPendingItem: Equatable, Sendable {
     case text(messageID: UUID, peerID: UUID, text: String)
     case image(messageID: UUID, peerID: UUID, caption: String)
+    case video(messageID: UUID, peerID: UUID, caption: String)
     case voice(messageID: UUID, peerID: UUID)
 }
 
@@ -31,6 +32,15 @@ enum OutboundPending {
                         ? ""
                         : message.text
                     item = .image(
+                        messageID: message.id,
+                        peerID: peerID,
+                        caption: caption
+                    )
+                case .video:
+                    let caption = (message.text == "Video" || message.text.isEmpty)
+                        ? ""
+                        : message.text
+                    item = .video(
                         messageID: message.id,
                         peerID: peerID,
                         caption: caption
