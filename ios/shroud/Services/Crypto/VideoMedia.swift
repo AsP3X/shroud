@@ -14,10 +14,45 @@ nonisolated struct EncodedVideo: Sendable {
     let thumbnailJPEG: Data?
 }
 
+/// The slice of a source movie the user kept in the compose screen (seconds).
+nonisolated struct VideoTrim: Equatable, Sendable {
+    var start: Double
+    var end: Double
+
+    var duration: Double { max(0, end - start) }
+
+    /// True when the handles still cover (effectively) the whole clip — nothing to cut.
+    func isFullRange(of duration: Double) -> Bool {
+        start <= 0.05 && end >= duration - 0.05
+    }
+
+    var timeRange: CMTimeRange {
+        CMTimeRange(
+            start: CMTime(seconds: start, preferredTimescale: 600),
+            end: CMTime(seconds: max(start + 0.1, end), preferredTimescale: 600)
+        )
+    }
+}
+
+/// What the compose screen needs to know about a picked movie before any work is done.
+nonisolated struct VideoProbe: Sendable {
+    let durationSeconds: Double
+    let width: Int
+    let height: Int
+    let fileSizeBytes: Int
+    let hasAudio: Bool
+
+    var aspect: CGFloat {
+        guard width > 0, height > 0 else { return 16.0 / 9.0 }
+        return CGFloat(width) / CGFloat(height)
+    }
+}
+
 /// Compresses library / camera movies so the sealed blob fits the API media limit.
 ///
 /// Human: Server caps encrypted media at 25 MiB. Phone-recorded 4K clips are often larger,
-/// so we re-export to H.264 MP4 at a chat-friendly resolution before sealing.
+/// so we re-export to H.264 MP4 at a chat-friendly resolution before sealing. Trim and mute
+/// come from the compose screen and are applied here, in the same single export.
 nonisolated enum VideoMedia {
     enum VideoError: Error, Equatable {
         case unreadable
@@ -32,32 +67,111 @@ nonisolated enum VideoMedia {
     /// Longest edge for chat export (1080p class).
     private static let maxExportEdge: CGFloat = 1280
 
-    /// Prepares a file URL for sending: compress when needed, always produce MP4 when re-exporting.
-    static func encode(sourceURL: URL) async throws -> EncodedVideo {
+    /// Reads duration, pixel size and audio presence without decoding any frames.
+    static func probe(url: URL) async -> VideoProbe? {
+        let asset = AVURLAsset(url: url)
+        guard let track = try? await asset.loadTracks(withMediaType: .video).first,
+              let duration = try? await asset.load(.duration),
+              let natural = try? await track.load(.naturalSize),
+              let transform = try? await track.load(.preferredTransform)
+        else { return nil }
+
+        let display = displaySize(natural: natural, transform: transform)
+        let hasAudio = ((try? await asset.loadTracks(withMediaType: .audio)) ?? []).isEmpty == false
+        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)??.intValue
+
+        return VideoProbe(
+            durationSeconds: max(0.1, CMTimeGetSeconds(duration)),
+            width: max(1, Int(display.width.rounded())),
+            height: max(1, Int(display.height.rounded())),
+            fileSizeBytes: size ?? 0,
+            hasAudio: hasAudio
+        )
+    }
+
+    /// First frame as an image, for compose thumbnails and the optimistic bubble.
+    static func posterImage(url: URL, maxEdge: CGFloat = 640) async -> UIImage? {
+        let asset = AVURLAsset(url: url)
+        guard let jpeg = await thumbnailJPEG(from: asset, maxEdge: maxEdge) else { return nil }
+        return UIImage(data: jpeg)
+    }
+
+    /// Evenly spaced stills for the compose-screen trim strip.
+    static func filmstrip(url: URL, count: Int, maxEdge: CGFloat = 160) async -> [UIImage] {
+        guard count > 0 else { return [] }
+        let asset = AVURLAsset(url: url)
+        guard let duration = try? await asset.load(.duration) else { return [] }
+        let seconds = CMTimeGetSeconds(duration)
+        guard seconds.isFinite, seconds > 0 else { return [] }
+
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: maxEdge, height: maxEdge)
+        // A filmstrip is a rough map of the clip, so let the generator snap to the nearest
+        // sync frame instead of decoding to an exact time for every tile.
+        generator.requestedTimeToleranceBefore = CMTime(seconds: 0.6, preferredTimescale: 600)
+        generator.requestedTimeToleranceAfter = CMTime(seconds: 0.6, preferredTimescale: 600)
+
+        var frames: [UIImage] = []
+        frames.reserveCapacity(count)
+        for index in 0 ..< count {
+            if Task.isCancelled { return frames }
+            let fraction = (Double(index) + 0.5) / Double(count)
+            let time = CMTime(seconds: seconds * fraction, preferredTimescale: 600)
+            guard let cg = try? await generator.image(at: time).image else { continue }
+            frames.append(UIImage(cgImage: cg))
+        }
+        return frames
+    }
+
+    /// Prepares a file URL for sending: apply the compose trim/mute, compress when needed,
+    /// and always produce MP4 when re-exporting.
+    ///
+    /// `onProgress` reports 0…1 across the export (nothing to report on the passthrough path,
+    /// which is instant by definition).
+    static func encode(
+        sourceURL: URL,
+        trim: VideoTrim? = nil,
+        removeAudio: Bool = false,
+        onProgress: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> EncodedVideo {
         let asset = AVURLAsset(url: sourceURL)
         guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
             throw VideoError.unreadable
         }
 
         let duration = try await asset.load(.duration)
-        let durationMs = max(1, Int((CMTimeGetSeconds(duration) * 1000).rounded()))
+        let fullSeconds = CMTimeGetSeconds(duration)
         let naturalSize = try await videoTrack.load(.naturalSize)
         let transform = try await videoTrack.load(.preferredTransform)
         let display = Self.displaySize(natural: naturalSize, transform: transform)
         let width = max(1, Int(display.width.rounded()))
         let height = max(1, Int(display.height.rounded()))
 
-        let thumbnail = await thumbnailJPEG(from: asset, maxEdge: 720)
+        // Only treat the trim as real when it actually removes something.
+        let effectiveTrim = trim.flatMap { $0.isFullRange(of: fullSeconds) ? nil : $0 }
+        let keptSeconds = effectiveTrim?.duration ?? fullSeconds
+        let durationMs = max(1, Int((keptSeconds * 1000).rounded()))
+        let mustRewrite = effectiveTrim != nil || removeAudio
+
+        // Poster comes from the first frame the recipient will actually see.
+        let thumbnail = await thumbnailJPEG(
+            from: asset,
+            maxEdge: 720,
+            at: effectiveTrim.map { CMTime(seconds: $0.start, preferredTimescale: 600) } ?? .zero
+        )
 
         // Only pass through real MP4 under the size cap. Never ship raw .mov / HEVC camera
         // containers — recipients write a temp `.mp4` for playback and those formats fail to open.
-        if sourceURL.pathExtension.lowercased() == "mp4" || sourceURL.pathExtension.lowercased() == "m4v",
+        if !mustRewrite,
+           sourceURL.pathExtension.lowercased() == "mp4" || sourceURL.pathExtension.lowercased() == "m4v",
            let attrs = try? FileManager.default.attributesOfItem(atPath: sourceURL.path),
            let size = attrs[.size] as? NSNumber,
            size.intValue > 0,
            size.intValue <= maxPlaintextBytes,
            let data = try? Data(contentsOf: sourceURL, options: [.mappedIfSafe])
         {
+            onProgress?(1)
             return EncodedVideo(
                 data: data,
                 width: width,
@@ -66,6 +180,19 @@ nonisolated enum VideoMedia {
                 mime: "video/mp4",
                 thumbnailJPEG: thumbnail
             )
+        }
+
+        // Trim and mute are structural, so they go through a composition; a plain compress
+        // exports the original asset (cheaper, and keeps the source's own track layout).
+        let exportAsset: AVAsset
+        if mustRewrite {
+            exportAsset = try await composition(
+                asset: asset,
+                range: effectiveTrim?.timeRange ?? CMTimeRange(start: .zero, duration: duration),
+                includeAudio: !removeAudio
+            )
+        } else {
+            exportAsset = asset
         }
 
         // Progressive quality until under the cap (always H.264/AAC MP4).
@@ -79,9 +206,14 @@ nonisolated enum VideoMedia {
 
         var lastError: Error = VideoError.exportFailed
         for preset in presets {
+            try Task.checkCancellation()
             guard AVAssetExportSession.allExportPresets().contains(preset) else { continue }
             do {
-                let exportedURL = try await export(asset: asset, preset: preset)
+                let exportedURL = try await export(
+                    asset: exportAsset,
+                    preset: preset,
+                    onProgress: onProgress
+                )
                 defer { try? FileManager.default.removeItem(at: exportedURL) }
                 let data = try Data(contentsOf: exportedURL, options: [.mappedIfSafe])
                 guard data.count <= maxPlaintextBytes else {
@@ -108,6 +240,10 @@ nonisolated enum VideoMedia {
                     mime: "video/mp4",
                     thumbnailJPEG: thumbnail
                 )
+            } catch is CancellationError {
+                throw VideoError.cancelled
+            } catch VideoError.cancelled {
+                throw VideoError.cancelled
             } catch {
                 lastError = error
             }
@@ -129,63 +265,91 @@ nonisolated enum VideoMedia {
         }
     }
 
-    static func thumbnailJPEG(from asset: AVAsset, maxEdge: CGFloat) async -> Data? {
+    static func thumbnailJPEG(from asset: AVAsset, maxEdge: CGFloat, at time: CMTime = .zero) async -> Data? {
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
         let maxPx = max(1, Int(maxEdge))
         generator.maximumSize = CGSize(width: maxPx, height: maxPx)
-        do {
-            let cg = try generator.copyCGImage(at: .zero, actualTime: nil)
-            let image = UIImage(cgImage: cg)
-            return image.jpegData(compressionQuality: 0.72)
-        } catch {
-            return nil
-        }
+        generator.requestedTimeToleranceBefore = CMTime(seconds: 0.3, preferredTimescale: 600)
+        generator.requestedTimeToleranceAfter = CMTime(seconds: 0.3, preferredTimescale: 600)
+        guard let cg = try? await generator.image(at: time).image else { return nil }
+        return UIImage(cgImage: cg).jpegData(compressionQuality: 0.72)
     }
 
     // MARK: - Private
 
-    private static func export(asset: AVAsset, preset: String) async throws -> URL {
+    /// Video (+ optional audio) rewritten over `range` — how trim and mute are applied.
+    private static func composition(
+        asset: AVAsset,
+        range: CMTimeRange,
+        includeAudio: Bool
+    ) async throws -> AVComposition {
+        let composition = AVMutableComposition()
+        guard let sourceVideo = try await asset.loadTracks(withMediaType: .video).first,
+              let videoTrack = composition.addMutableTrack(
+                  withMediaType: .video,
+                  preferredTrackID: kCMPersistentTrackID_Invalid
+              )
+        else { throw VideoError.unreadable }
+
+        try videoTrack.insertTimeRange(range, of: sourceVideo, at: .zero)
+        // Without this a portrait clip comes back rotated — the composition track does not
+        // inherit the source's display transform.
+        videoTrack.preferredTransform = try await sourceVideo.load(.preferredTransform)
+
+        if includeAudio,
+           let sourceAudio = try await asset.loadTracks(withMediaType: .audio).first,
+           let audioTrack = composition.addMutableTrack(
+               withMediaType: .audio,
+               preferredTrackID: kCMPersistentTrackID_Invalid
+           )
+        {
+            // A missing/short audio track must not fail the whole send.
+            try? audioTrack.insertTimeRange(range, of: sourceAudio, at: .zero)
+        }
+        return composition
+    }
+
+    private static func export(
+        asset: AVAsset,
+        preset: String,
+        onProgress: (@Sendable (Double) -> Void)?
+    ) async throws -> URL {
         guard let session = AVAssetExportSession(asset: asset, presetName: preset) else {
             throw VideoError.exportFailed
         }
         let out = FileManager.default.temporaryDirectory
             .appendingPathComponent("shroud-export-\(UUID().uuidString).mp4")
-        session.outputURL = out
-        session.outputFileType = .mp4
         session.shouldOptimizeForNetworkUse = true
 
-        await session.export()
-        switch session.status {
-        case .completed:
+        // The states sequence ends with the export, so the monitor is bounded; cancelling it
+        // in `defer` covers the throwing paths.
+        let monitor: Task<Void, Never>? = onProgress.map { report in
+            Task {
+                for await state in session.states(updateInterval: 0.15) {
+                    if case let .exporting(progress) = state {
+                        report(min(1, max(0, progress.fractionCompleted)))
+                    }
+                }
+            }
+        }
+        defer { monitor?.cancel() }
+
+        do {
+            try await session.export(to: out, as: .mp4)
+            onProgress?(1)
             return out
-        case .cancelled:
+        } catch is CancellationError {
+            try? FileManager.default.removeItem(at: out)
             throw VideoError.cancelled
-        default:
-            throw session.error ?? VideoError.exportFailed
+        } catch {
+            try? FileManager.default.removeItem(at: out)
+            throw error
         }
     }
 
     private static func displaySize(natural: CGSize, transform: CGAffineTransform) -> CGSize {
         let rect = CGRect(origin: .zero, size: natural).applying(transform)
         return CGSize(width: abs(rect.width), height: abs(rect.height))
-    }
-
-    private static func isShipableContainer(url: URL) -> Bool {
-        let ext = url.pathExtension.lowercased()
-        return ["mp4", "m4v", "mov"].contains(ext)
-    }
-
-    private static func mimeType(for url: URL) -> String? {
-        let ext = url.pathExtension.lowercased()
-        switch ext {
-        case "mp4", "m4v": return "video/mp4"
-        case "mov": return "video/quicktime"
-        default:
-            if let type = UTType(filenameExtension: ext) {
-                return type.preferredMIMEType
-            }
-            return nil
-        }
     }
 }

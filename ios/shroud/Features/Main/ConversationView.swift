@@ -41,6 +41,10 @@ struct ConversationView: View {
     /// Full-screen video playback after decrypt.
     @State private var viewingVideo: ViewingVideo?
     @State private var composeDraft: ComposeDraft?
+    /// Videos staged for trim + caption + send (Telegram video compose).
+    @State private var videoDraft: VideoComposeDraft?
+    /// Photos picked in the same session as videos — shown after the video compose closes.
+    @State private var photosAfterVideoCompose: [PickedPhoto] = []
     @State private var profileDestination: ProfileDestination?
     @State private var photoPickerItems: [PhotosPickerItem] = []
     @State private var showPhotoPicker = false
@@ -95,6 +99,56 @@ struct ConversationView: View {
     }
 
     var body: some View {
+        chatSurface
+            .overlay {
+                if let focusedMenu {
+                    messageMenuOverlay(session: focusedMenu)
+                }
+            }
+            .overlay { mediaViewerLayer }
+            .overlay { photoComposeLayer }
+            .overlay { videoComposeLayer }
+            .overlay { videoPlayerLayer }
+            .overlay { sendingMediaLayer }
+            .confirmationDialog(
+                "Delete message?",
+                isPresented: deleteDialogBinding,
+                titleVisibility: .visible,
+                presenting: pendingDelete
+            ) { pending in
+                if canDeleteForEveryone(pending.message) {
+                    Button("Delete for everyone", role: .destructive) {
+                        performDelete(pending.message, scope: .everyone)
+                    }
+                }
+                Button(isNotes ? "Delete" : "Delete for me", role: .destructive) {
+                    performDelete(pending.message, scope: .me)
+                }
+                Button("Cancel", role: .cancel) { pendingDelete = nil }
+            }
+            .toast($toast)
+            .animation(Motion.scrim, value: viewingMedia != nil)
+            .animation(Motion.scrim, value: viewingVideo != nil)
+            .animation(Motion.scrim, value: composeDraft != nil)
+            .animation(Motion.scrim, value: videoDraft != nil)
+            .animation(Motion.snappy, value: isSendingMedia)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { threadWidth = $0 }
+            // Applied last so the list *and* the long-press menu hero size bubbles identically —
+            // a mismatch here shows up as the bubble re-wrapping the moment the menu opens.
+            .environment(\.chatRowWidth, max(0, threadWidth - Self.threadHorizontalInset * 2))
+    }
+
+    private var deleteDialogBinding: Binding<Bool> {
+        Binding(
+            get: { pendingDelete != nil },
+            set: { if !$0 { pendingDelete = nil } }
+        )
+    }
+
+    /// The thread itself plus its chrome and modal presentations — everything that is *not*
+    /// a full-screen layer. Split from `body` to keep either chain inside the type checker's
+    /// budget.
+    private var chatSurface: some View {
         messageList
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Theme.backgroundChat)
@@ -192,138 +246,153 @@ struct ConversationView: View {
             .navigationDestination(item: $profileDestination) { dest in
                 ContactProfileView(peerUserID: dest.peerUserID, peerUsername: dest.peerUsername)
             }
-            .overlay {
-                if let focusedMenu {
-                    messageMenuOverlay(session: focusedMenu)
-                }
-            }
-            .overlay {
-                if let viewingMedia {
-                    MediaImageViewerOverlay(
-                        items: mediaViewerItems,
-                        initialID: viewingMedia.id,
-                        onClose: {
-                            withAnimation(.easeOut(duration: 0.2)) {
-                                self.viewingMedia = nil
-                            }
-                        },
-                        onLoad: { messageID in
-                            // Viewer only loads pages that were already downloaded (no silent fetch).
-                            guard let message = messages.first(where: { $0.id == messageID }),
-                                  message.imageData != nil
-                            else { return }
-                        },
-                        onComingSoon: { feature in
-                            toast = "\(feature) coming soon"
-                            scheduleToastClear()
-                        }
-                    )
-                    // Cover chat header + composer + status bar (true Telegram overlay).
-                    .ignoresSafeArea()
-                    // Grows into place from just under full size — reads as "zoom into the photo".
-                    .transition(.scale(scale: 0.94).combined(with: .opacity))
-                    .zIndex(50)
-                }
-            }
-            .overlay {
-                if let composeDraft {
-                    MediaComposeOverlay(
-                        photos: composeDraft.photos,
-                        peerUsername: peerUsername,
-                        onCancel: {
-                            withAnimation(.easeOut(duration: 0.2)) {
-                                self.composeDraft = nil
-                            }
-                        },
-                        onSend: { caption, quality, edits in
-                            let photos = composeDraft.photos
-                            withAnimation(.easeOut(duration: 0.15)) {
-                                self.composeDraft = nil
-                            }
-                            Task {
-                                await sendPickedPhotos(
-                                    photos,
-                                    edits: edits,
-                                    caption: caption,
-                                    quality: quality
-                                )
-                            }
-                        },
-                        onAddMore: {
-                            pickerAppendsToDraft = true
-                            photoPickerItems = []
-                            showPhotoPicker = true
-                        },
-                        onRemovePhoto: { index in
-                            removeComposePhoto(at: index)
-                        },
-                        onComingSoon: { feature in
-                            toast = "\(feature) coming soon"
-                            scheduleToastClear()
-                        }
-                    )
-                    .ignoresSafeArea()
-                    // Compose is a sheet-like surface — it rises from the composer it replaces.
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .zIndex(60)
-                }
-            }
-            .overlay {
-                if let viewingVideo {
-                    VideoPlayerOverlay(
-                        data: viewingVideo.data,
-                        onClose: {
-                            withAnimation(.easeOut(duration: 0.2)) {
-                                self.viewingVideo = nil
-                            }
-                        }
-                    )
-                    .ignoresSafeArea()
-                    .transition(.opacity)
-                    .zIndex(55)
-                }
-            }
-            .overlay {
-                if isSendingMedia {
-                    ProgressView("Sending media…")
-                        .padding(16)
-                        .background(.ultraThinMaterial)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .transition(.scale(scale: 0.9).combined(with: .opacity))
-                }
-            }
-            .confirmationDialog(
-                "Delete message?",
-                isPresented: Binding(
-                    get: { pendingDelete != nil },
-                    set: { if !$0 { pendingDelete = nil } }
-                ),
-                titleVisibility: .visible,
-                presenting: pendingDelete
-            ) { pending in
-                if canDeleteForEveryone(pending.message) {
-                    Button("Delete for everyone", role: .destructive) {
-                        performDelete(pending.message, scope: .everyone)
-                    }
-                }
-                Button(isNotes ? "Delete" : "Delete for me", role: .destructive) {
-                    performDelete(pending.message, scope: .me)
-                }
-                Button("Cancel", role: .cancel) { pendingDelete = nil }
-            }
-            .toast($toast)
-            .animation(Motion.scrim, value: viewingMedia != nil)
-            .animation(Motion.scrim, value: viewingVideo != nil)
-            .animation(Motion.scrim, value: composeDraft != nil)
-            .animation(Motion.snappy, value: isSendingMedia)
-            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { threadWidth = $0 }
-            // Applied last so the list *and* the long-press menu hero size bubbles identically —
-            // a mismatch here shows up as the bubble re-wrapping the moment the menu opens.
-            .environment(\.chatRowWidth, max(0, threadWidth - Self.threadHorizontalInset * 2))
     }
 
     /// Horizontal inset on the message list; bubbles subtract it to get their row width.
     private static let threadHorizontalInset: CGFloat = 16
+
+    // MARK: - Full-screen layers
+    //
+    // Each of these is its own property rather than an inline `.overlay { … }`: the body is
+    // already a long modifier chain, and folding five presentation surfaces into it pushes the
+    // type checker past its budget.
+
+    @ViewBuilder
+    private var mediaViewerLayer: some View {
+        if let viewingMedia {
+            MediaImageViewerOverlay(
+                items: mediaViewerItems,
+                initialID: viewingMedia.id,
+                onClose: {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        self.viewingMedia = nil
+                    }
+                },
+                onLoad: { messageID in
+                    // Viewer only loads pages that were already downloaded (no silent fetch).
+                    guard let message = messages.first(where: { $0.id == messageID }),
+                          message.imageData != nil
+                    else { return }
+                },
+                onComingSoon: { feature in
+                    toast = "\(feature) coming soon"
+                    scheduleToastClear()
+                }
+            )
+            // Cover chat header + composer + status bar (true Telegram overlay).
+            .ignoresSafeArea()
+            // Grows into place from just under full size — reads as "zoom into the photo".
+            .transition(.scale(scale: 0.94).combined(with: .opacity))
+            .zIndex(50)
+        }
+    }
+
+    @ViewBuilder
+    private var photoComposeLayer: some View {
+        if let composeDraft {
+            MediaComposeOverlay(
+                photos: composeDraft.photos,
+                peerUsername: peerUsername,
+                onCancel: {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        self.composeDraft = nil
+                    }
+                },
+                onSend: { caption, quality, edits in
+                    let photos = composeDraft.photos
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        self.composeDraft = nil
+                    }
+                    Task {
+                        await sendPickedPhotos(
+                            photos,
+                            edits: edits,
+                            caption: caption,
+                            quality: quality
+                        )
+                    }
+                },
+                onAddMore: {
+                    pickerAppendsToDraft = true
+                    photoPickerItems = []
+                    showPhotoPicker = true
+                },
+                onRemovePhoto: { index in
+                    removeComposePhoto(at: index)
+                },
+                onComingSoon: { feature in
+                    toast = "\(feature) coming soon"
+                    scheduleToastClear()
+                }
+            )
+            .ignoresSafeArea()
+            // Compose is a sheet-like surface — it rises from the composer it replaces.
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .zIndex(60)
+        }
+    }
+
+    @ViewBuilder
+    private var videoComposeLayer: some View {
+        if let videoDraft {
+            VideoComposeOverlay(
+                videos: videoDraft.videos,
+                peerUsername: peerUsername,
+                onCancel: {
+                    videoDraft.videos.forEach { $0.movie.cleanup() }
+                    closeVideoCompose()
+                },
+                onSend: { plans in
+                    let movies = videoDraft.videos.map(\.movie)
+                    closeVideoCompose()
+                    // The bubbles land immediately, so pin before the first encode starts.
+                    pinToBottomToken &+= 1
+                    Task { await sendVideoPlans(plans, movies: movies) }
+                },
+                onAddMore: {
+                    pickerAppendsToDraft = true
+                    photoPickerItems = []
+                    showPhotoPicker = true
+                },
+                onRemoveVideo: { index in
+                    removeComposeVideo(at: index)
+                }
+            )
+            .ignoresSafeArea()
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .zIndex(61)
+        }
+    }
+
+    @ViewBuilder
+    private var videoPlayerLayer: some View {
+        if let viewingVideo {
+            VideoPlayerOverlay(
+                data: viewingVideo.data,
+                title: viewingVideo.title,
+                subtitle: viewingVideo.dateLine,
+                onClose: {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        self.viewingVideo = nil
+                    }
+                }
+            )
+            .ignoresSafeArea()
+            .transition(.opacity)
+            .zIndex(55)
+        }
+    }
+
+    @ViewBuilder
+    private var sendingMediaLayer: some View {
+        if isSendingMedia {
+            ProgressView("Sending media…")
+                .padding(16)
+                .background(.ultraThinMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .transition(.scale(scale: 0.9).combined(with: .opacity))
+        }
+    }
 
     private struct ProfileDestination: Identifiable, Hashable {
         let peerUserID: UUID
@@ -340,6 +409,8 @@ struct ConversationView: View {
     private struct ViewingVideo: Identifiable {
         let id: UUID
         let data: Data
+        let title: String
+        let dateLine: String
     }
 
     /// Message the delete confirmation is about (scope is picked in the dialog).
@@ -352,6 +423,12 @@ struct ConversationView: View {
     private struct ComposeDraft: Identifiable {
         let id = UUID()
         var photos: [PickedPhoto]
+    }
+
+    /// Videos staged for trim + mute + caption + send.
+    private struct VideoComposeDraft: Identifiable {
+        let id = UUID()
+        var videos: [PickedVideo]
     }
 
     /// Telegram caps an album at 10; matching that keeps one send from ballooning.
@@ -790,7 +867,10 @@ struct ConversationView: View {
                 onDownload: {
                     downloadMedia(message)
                 },
-                isDownloading: mediaDownloadIDs.contains(message.id),
+                transfer: messaging.mediaTransfers[message.id],
+                onCancelDownload: {
+                    messaging.cancelMediaDownload(messageID: message.id)
+                },
                 onRetry: {
                     Task {
                         isSendingMedia = true
@@ -820,15 +900,17 @@ struct ConversationView: View {
                 onDownload: {
                     downloadMedia(message)
                 },
-                isDownloading: mediaDownloadIDs.contains(message.id),
+                transfer: messaging.mediaTransfers[message.id],
+                onCancelDownload: {
+                    messaging.cancelMediaDownload(messageID: message.id)
+                },
                 onRetry: {
                     Task {
-                        isSendingMedia = true
+                        // The bubble carries its own ring while retrying — no modal spinner.
                         let error = await messaging.retryFailedVideo(
                             messageID: message.id,
                             peerUserID: peerUserID
                         )
-                        isSendingMedia = false
                         if let error {
                             toast = error
                             Haptics.notification(.error)
@@ -959,13 +1041,18 @@ struct ConversationView: View {
         }
 
         var pickedPhotos: [PickedPhoto] = []
-        var pickedVideos: [PickedMovie] = []
+        var pickedVideos: [PickedVideo] = []
 
         for item in items {
             if Self.isVideoPickerItem(item) {
-                if let movie = try? await item.loadTransferable(type: PickedMovie.self) {
-                    pickedVideos.append(movie)
+                guard let movie = try? await item.loadTransferable(type: PickedMovie.self) else { continue }
+                // Probing is metadata-only, so compose opens already knowing the clip.
+                guard let probe = await VideoMedia.probe(url: movie.url) else {
+                    movie.cleanup()
+                    continue
                 }
+                let poster = await VideoMedia.posterImage(url: movie.url)
+                pickedVideos.append(PickedVideo(movie: movie, probe: probe, poster: poster))
                 continue
             }
             // The original file's bytes — held encoded until send so "Original" stays original.
@@ -977,25 +1064,32 @@ struct ConversationView: View {
             pickedPhotos.append(PickedPhoto(preview: preview, source: .fileData(data)))
         }
 
-        // Videos skip the photo editor — compress and send immediately.
-        if !pickedVideos.isEmpty {
-            await sendPickedVideos(pickedVideos)
-        }
-
-        if pickedPhotos.isEmpty {
-            if pickedVideos.isEmpty {
-                toast = items.count > 1 ? "Could not load those items." : "Could not load that item."
-                scheduleToastClear()
-            }
+        guard !pickedPhotos.isEmpty || !pickedVideos.isEmpty else {
+            toast = items.count > 1 ? "Could not load those items." : "Could not load that item."
+            scheduleToastClear()
             return
         }
 
-        if appending, var draft = composeDraft {
+        // "Add" from an open compose screen extends that send instead of starting a new one.
+        if appending, var draft = videoDraft, !pickedVideos.isEmpty {
+            draft.videos = Array((draft.videos + pickedVideos).prefix(Self.maxPhotosPerSend))
+            withAnimation(Motion.standard) { videoDraft = draft }
+            return
+        }
+        if appending, var draft = composeDraft, !pickedPhotos.isEmpty {
             draft.photos = Array((draft.photos + pickedPhotos).prefix(Self.maxPhotosPerSend))
             withAnimation(Motion.standard) { composeDraft = draft }
-        } else {
-            presentMediaCompose(pickedPhotos)
+            return
         }
+
+        // Photos and videos get different compose surfaces, so one mixed pick becomes two
+        // steps: trim the clips first, then caption the photos.
+        if !pickedVideos.isEmpty {
+            photosAfterVideoCompose = pickedPhotos
+            presentVideoCompose(pickedVideos)
+            return
+        }
+        presentMediaCompose(pickedPhotos)
     }
 
     private static func isVideoPickerItem(_ item: PhotosPickerItem) -> Bool {
@@ -1004,17 +1098,15 @@ struct ConversationView: View {
         }
     }
 
-    private func sendPickedVideos(_ movies: [PickedMovie]) async {
-        guard !movies.isEmpty else { return }
-        isSendingMedia = true
-        defer {
-            isSendingMedia = false
-            movies.forEach { $0.cleanup() }
-        }
+    /// Sends the composed clips in order. Each bubble carries its own progress ring, so there
+    /// is no modal spinner here — the thread stays usable while a long clip encodes.
+    private func sendVideoPlans(_ plans: [VideoSendPlan], movies: [PickedMovie]) async {
+        guard !plans.isEmpty else { return }
+        defer { movies.forEach { $0.cleanup() } }
 
         var firstError: String?
-        for movie in movies {
-            let error = await messaging.sendVideo(sourceURL: movie.url, to: peerUserID)
+        for plan in plans {
+            let error = await messaging.sendVideo(plan, to: peerUserID)
             if let error, firstError == nil { firstError = error }
         }
 
@@ -1027,7 +1119,6 @@ struct ConversationView: View {
             }
         } else {
             Haptics.notification(.success)
-            pinToBottomToken &+= 1
         }
     }
 
@@ -1037,11 +1128,41 @@ struct ConversationView: View {
         }
     }
 
+    private func presentVideoCompose(_ picked: [PickedVideo]) {
+        withAnimation(.easeOut(duration: 0.2)) {
+            videoDraft = VideoComposeDraft(videos: Array(picked.prefix(Self.maxPhotosPerSend)))
+        }
+    }
+
+    /// Closes the video compose and hands any photos from the same pick to the photo compose.
+    private func closeVideoCompose() {
+        withAnimation(.easeOut(duration: 0.2)) { videoDraft = nil }
+        guard !photosAfterVideoCompose.isEmpty else { return }
+        let photos = photosAfterVideoCompose
+        photosAfterVideoCompose = []
+        Task {
+            // Let the video surface finish leaving before the photo one arrives.
+            try? await Task.sleep(for: .milliseconds(260))
+            presentMediaCompose(photos)
+        }
+    }
+
     private func removeComposePhoto(at index: Int) {
         guard var draft = composeDraft, draft.photos.indices.contains(index) else { return }
         draft.photos.remove(at: index)
         withAnimation(Motion.standard) {
             composeDraft = draft.photos.isEmpty ? nil : draft
+        }
+    }
+
+    private func removeComposeVideo(at index: Int) {
+        guard var draft = videoDraft, draft.videos.indices.contains(index) else { return }
+        let removed = draft.videos.remove(at: index)
+        removed.movie.cleanup()
+        if draft.videos.isEmpty {
+            closeVideoCompose()
+        } else {
+            withAnimation(Motion.standard) { videoDraft = draft }
         }
     }
 
@@ -1481,7 +1602,12 @@ struct ConversationView: View {
                 return
             }
             withAnimation(.easeOut(duration: 0.2)) {
-                viewingVideo = ViewingVideo(id: message.id, data: data)
+                viewingVideo = ViewingVideo(
+                    id: message.id,
+                    data: data,
+                    title: message.isMine ? "You" : peerUsername,
+                    dateLine: Self.viewerDateLine(for: message.createdAt)
+                )
             }
         }
     }

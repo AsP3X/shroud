@@ -193,6 +193,56 @@ final class MessagingController {
         }
     }
 
+    /// Live progress of one media message's bytes, in either direction.
+    ///
+    /// Human: A 20 MB video spends seconds compressing and seconds uploading. Telegram shows
+    /// one ring that fills across both, so the phases are modelled here rather than in the view.
+    struct MediaTransfer: Equatable, Sendable {
+        enum Phase: Equatable, Sendable {
+            /// Compressing/exporting, before anything touches the network (upload only).
+            case preparing
+            /// Bytes on the wire.
+            case transferring
+            /// Decrypting, thumbnailing or sealing — real work, but no byte counter to show.
+            case finishing
+        }
+
+        var phase: Phase
+        var isUpload: Bool
+        /// 0…1 within the current phase; nil until a length is known.
+        var fraction: Double?
+        /// Full payload size, for the "1.2 MB / 4.8 MB" readout.
+        var totalBytes: Int?
+
+        /// One 0…1 value for the ring, so compress → upload reads as a single continuous fill.
+        var ringFraction: Double {
+            switch phase {
+            case .preparing: (fraction ?? 0) * Self.prepareShare
+            case .transferring: isUpload
+                ? Self.prepareShare + (fraction ?? 0) * (1 - Self.prepareShare)
+                : (fraction ?? 0)
+            case .finishing: 1
+            }
+        }
+
+        /// No trustworthy number to draw — the ring spins instead of filling.
+        var isIndeterminate: Bool {
+            phase == .finishing || fraction == nil
+        }
+
+        /// Bytes already moved, for the readout under the ring.
+        var movedBytes: Int? {
+            guard let totalBytes, totalBytes > 0, phase == .transferring, let fraction else { return nil }
+            return Int(Double(totalBytes) * fraction)
+        }
+
+        /// How much of the ring compression owns before the upload takes over.
+        private static let prepareShare = 0.3
+    }
+
+    /// In-flight media transfers by message id (empty when nothing is moving).
+    private(set) var mediaTransfers: [UUID: MediaTransfer] = [:]
+
     func isNotesChat(_ peerID: UUID) -> Bool {
         NotesLocal.isNotes(peerID)
     }
@@ -1217,30 +1267,27 @@ final class MessagingController {
     /// Encrypts, uploads, and sends a video message (compressed to fit the media size cap).
     /// Optional `caption` is sealed in the media payload.
     /// Returns a user-facing error string, or `nil` on success.
-    func sendVideo(
-        sourceURL: URL,
-        to peerUserID: UUID,
-        caption: String = ""
-    ) async -> String? {
-        let trimmedCaption = caption.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// Sends one composed video: the bubble lands first, then compress → upload → envelope.
+    ///
+    /// Human: Compression alone can take several seconds on a long 4K clip. Blocking the whole
+    /// chat behind a modal spinner for that is exactly what Telegram doesn't do — the bubble
+    /// appears immediately with its poster and fills a progress ring in place.
+    func sendVideo(_ plan: VideoSendPlan, to peerUserID: UUID) async -> String? {
+        let trimmedCaption = plan.caption.trimmingCharacters(in: .whitespacesAndNewlines)
         let displayText = trimmedCaption.isEmpty ? "Video" : trimmedCaption
+        let notes = isNotesChat(peerUserID)
 
-        let optimisticID = UUID()
-        let encoded: EncodedVideo
-        do {
-            encoded = try await Task.detached(priority: .userInitiated) {
-                try await VideoMedia.encode(sourceURL: sourceURL)
-            }.value
-        } catch VideoMedia.VideoError.tooLarge {
-            return "This video is too large even after compression. Try a shorter clip."
-        } catch {
-            return "Could not prepare that video."
+        guard let me = sessionController?.userID ?? (notes ? Self.notesPeerID : nil) else {
+            return "Not signed in."
+        }
+        if !notes, sessionController?.bearerToken == nil || cryptoController?.material == nil {
+            return "Not signed in."
         }
 
-        if isNotesChat(peerUserID) {
-            let me = sessionController?.userID ?? Self.notesPeerID
-            local.saveSealedMedia(messageID: optimisticID, data: encoded.data)
-            let note = ChatMessage(
+        let optimisticID = UUID()
+        var list = threads[peerUserID] ?? []
+        list.append(
+            ChatMessage(
                 id: optimisticID,
                 peerUserID: peerUserID,
                 senderUserID: me,
@@ -1248,17 +1295,58 @@ final class MessagingController {
                 createdAt: Date(),
                 isMine: true,
                 deleted: false,
-                receipt: .sent,
+                receipt: .sending,
                 kind: .video,
-                imageWidth: encoded.width,
-                imageHeight: encoded.height,
-                imageData: encoded.thumbnailJPEG,
-                videoData: encoded.data,
-                voiceDurationMs: encoded.durationMs
+                imageWidth: plan.width,
+                imageHeight: plan.height,
+                imageData: plan.posterJPEG,
+                previewData: plan.posterJPEG,
+                mediaByteCount: plan.estimatedBytes,
+                voiceDurationMs: plan.durationMs,
+                pendingSync: true
             )
-            var list = threads[peerUserID] ?? []
-            list.append(note)
-            threads[peerUserID] = list
+        )
+        threads[peerUserID] = list
+        beginTransfer(
+            optimisticID,
+            isUpload: true,
+            phase: .preparing,
+            totalBytes: plan.estimatedBytes
+        )
+
+        let encoded: EncodedVideo
+        do {
+            let onProgress = progressSink(for: optimisticID)
+            encoded = try await Task.detached(priority: .userInitiated) {
+                try await VideoMedia.encode(
+                    sourceURL: plan.sourceURL,
+                    trim: plan.trim,
+                    removeAudio: plan.removeAudio,
+                    onProgress: onProgress
+                )
+            }.value
+        } catch VideoMedia.VideoError.tooLarge {
+            let message = "This video is too large even after compression. Try a shorter clip."
+            markVideoFailed(optimisticID: optimisticID, peerUserID: peerUserID, error: message)
+            return message
+        } catch {
+            let message = "Could not prepare that video."
+            markVideoFailed(optimisticID: optimisticID, peerUserID: peerUserID, error: message)
+            return message
+        }
+
+        // The bubble now has real geometry, duration and poster — no more guessing from the plan.
+        applyEncodedVideo(optimisticID: optimisticID, peerUserID: peerUserID, encoded: encoded)
+        local.saveSealedMedia(messageID: optimisticID, data: encoded.data)
+
+        if notes {
+            if var thread = threads[peerUserID],
+               let idx = thread.firstIndex(where: { $0.id == optimisticID })
+            {
+                thread[idx].receipt = .sent
+                thread[idx].pendingSync = false
+                threads[peerUserID] = thread
+            }
             persistThread(peerUserID)
 
             if connectivity.isOnline,
@@ -1306,35 +1394,17 @@ final class MessagingController {
                     // Keep local-only video.
                 }
             }
+            endTransfer(optimisticID)
             return nil
         }
 
         guard let token = sessionController?.bearerToken,
-              let me = sessionController?.userID,
               let material = cryptoController?.material
-        else { return "Not signed in." }
+        else {
+            markVideoFailed(optimisticID: optimisticID, peerUserID: peerUserID, error: "Not signed in.")
+            return "Not signed in."
+        }
 
-        let optimistic = ChatMessage(
-            id: optimisticID,
-            peerUserID: peerUserID,
-            senderUserID: me,
-            text: displayText,
-            createdAt: Date(),
-            isMine: true,
-            deleted: false,
-            receipt: .sending,
-            kind: .video,
-            imageWidth: encoded.width,
-            imageHeight: encoded.height,
-            imageData: encoded.thumbnailJPEG,
-            videoData: encoded.data,
-            voiceDurationMs: encoded.durationMs,
-            pendingSync: true
-        )
-        var list = threads[peerUserID] ?? []
-        list.append(optimistic)
-        threads[peerUserID] = list
-        local.saveSealedMedia(messageID: optimisticID, data: encoded.data)
         persistSnapshot()
 
         if !connectivity.isOnline {
@@ -1351,8 +1421,10 @@ final class MessagingController {
                 material: material,
                 token: token,
                 encoded: encoded,
-                caption: trimmedCaption
+                caption: trimmedCaption,
+                trackingTransfer: true
             )
+            endTransfer(optimisticID)
             lastError = nil
             return nil
         } catch {
@@ -1362,6 +1434,27 @@ final class MessagingController {
             persistSnapshot()
             return message
         }
+    }
+
+    /// Folds a finished encode into the optimistic bubble (poster, geometry, bytes).
+    private func applyEncodedVideo(
+        optimisticID: UUID,
+        peerUserID: UUID,
+        encoded: EncodedVideo
+    ) {
+        guard var thread = threads[peerUserID],
+              let idx = thread.firstIndex(where: { $0.id == optimisticID })
+        else { return }
+        thread[idx].imageWidth = encoded.width
+        thread[idx].imageHeight = encoded.height
+        thread[idx].voiceDurationMs = encoded.durationMs
+        thread[idx].videoData = encoded.data
+        thread[idx].mediaByteCount = encoded.data.count
+        if let thumb = encoded.thumbnailJPEG {
+            thread[idx].imageData = thumb
+            thread[idx].previewData = thumb
+        }
+        threads[peerUserID] = thread
     }
 
     /// Retries a failed outbound video that still has local video data.
@@ -1394,6 +1487,7 @@ final class MessagingController {
         let existingCaption = thread[idx].text
         let caption = (existingCaption == "Video" || existingCaption.isEmpty) ? "" : existingCaption
 
+        beginTransfer(messageID, isUpload: true, phase: .transferring, totalBytes: data.count)
         do {
             try await finishVideoSend(
                 optimisticID: messageID,
@@ -1402,8 +1496,10 @@ final class MessagingController {
                 material: material,
                 token: token,
                 encoded: encoded,
-                caption: caption
+                caption: caption,
+                trackingTransfer: true
             )
+            endTransfer(messageID)
             return nil
         } catch {
             let message = SessionController.userMessage(for: error)
@@ -1420,9 +1516,13 @@ final class MessagingController {
         material: IdentityKeyMaterial,
         token: String,
         encoded: EncodedVideo,
-        caption: String
+        caption: String,
+        trackingTransfer: Bool = false
     ) async throws -> ChatMessage {
         let (fileKey, sealedFile) = try MediaCrypto.sealFile(encoded.data)
+        if trackingTransfer {
+            advanceTransfer(optimisticID, to: .transferring, totalBytes: sealedFile.count)
+        }
         let upload = try await mediaService.createUpload(
             sizeBytes: sealedFile.count,
             contentType: "application/octet-stream",
@@ -1431,8 +1531,14 @@ final class MessagingController {
         try await mediaService.uploadContent(
             mediaID: upload.mediaObjectId,
             data: sealedFile,
-            token: token
+            token: token,
+            onProgress: trackingTransfer ? progressSink(for: optimisticID) : nil
         )
+        // Envelope sealing + send still have to happen; the ring keeps spinning rather than
+        // sitting at 100% while the message quietly finishes.
+        if trackingTransfer {
+            advanceTransfer(optimisticID, to: .finishing)
+        }
 
         let trimmedCaption = caption.trimmingCharacters(in: .whitespacesAndNewlines)
         let displayText = trimmedCaption.isEmpty ? "Video" : trimmedCaption
@@ -1508,6 +1614,7 @@ final class MessagingController {
     }
 
     private func markVideoFailed(optimisticID: UUID, peerUserID: UUID, error: String) {
+        endTransfer(optimisticID)
         guard var thread = threads[peerUserID],
               let idx = thread.firstIndex(where: { $0.id == optimisticID })
         else { return }
@@ -1516,6 +1623,65 @@ final class MessagingController {
         thread[idx].pendingSync = true
         threads[peerUserID] = thread
         persistSnapshot()
+    }
+
+    // MARK: - Transfer progress
+
+    /// Cancels an in-flight media download (the ring's X). Uploads are not cancellable —
+    /// the envelope is already committed to by the time bytes move.
+    func cancelMediaDownload(messageID: UUID) {
+        guard let task = mediaHydrateTasks[messageID] else { return }
+        task.cancel()
+        mediaHydrateTasks[messageID] = nil
+        endTransfer(messageID)
+    }
+
+    private func beginTransfer(
+        _ messageID: UUID,
+        isUpload: Bool,
+        phase: MediaTransfer.Phase,
+        totalBytes: Int? = nil
+    ) {
+        mediaTransfers[messageID] = MediaTransfer(
+            phase: phase,
+            isUpload: isUpload,
+            fraction: nil,
+            totalBytes: totalBytes
+        )
+    }
+
+    private func advanceTransfer(
+        _ messageID: UUID,
+        to phase: MediaTransfer.Phase,
+        totalBytes: Int? = nil
+    ) {
+        guard var transfer = mediaTransfers[messageID] else { return }
+        transfer.phase = phase
+        transfer.fraction = nil
+        if let totalBytes { transfer.totalBytes = totalBytes }
+        mediaTransfers[messageID] = transfer
+    }
+
+    private func updateTransfer(_ messageID: UUID, fraction: Double) {
+        guard var transfer = mediaTransfers[messageID] else { return }
+        transfer.fraction = min(1, max(0, fraction))
+        mediaTransfers[messageID] = transfer
+    }
+
+    private func endTransfer(_ messageID: UUID) {
+        mediaTransfers[messageID] = nil
+    }
+
+    /// Progress callback safe to hand to the detached encode/transport work.
+    ///
+    /// The transport calls this off the main actor, so it hops back before touching state.
+    private func progressSink(for messageID: UUID) -> @Sendable (Double) -> Void {
+        { [weak self] fraction in
+            guard let controller = self else { return }
+            Task { @MainActor in
+                controller.updateTransfer(messageID, fraction: fraction)
+            }
+        }
     }
 
     /// Loads decrypted full video bytes for a media message (caches on success).
@@ -1557,6 +1723,14 @@ final class MessagingController {
               let material = cryptoController?.material
         else { return }
 
+        beginTransfer(
+            message.id,
+            isUpload: false,
+            phase: .transferring,
+            totalBytes: message.mediaByteCount
+        )
+        defer { endTransfer(message.id) }
+
         do {
             guard let payloadData = try await mediaPayloadData(for: message, token: token, material: material),
                   let payload = try? JSONDecoder().decode(MediaMessagePayload.self, from: payloadData),
@@ -1566,7 +1740,15 @@ final class MessagingController {
                 return
             }
 
-            let sealedFile = try await mediaService.downloadContent(mediaID: mediaID, token: token)
+            let sealedFile = try await mediaService.downloadContent(
+                mediaID: mediaID,
+                token: token,
+                onProgress: progressSink(for: message.id)
+            )
+            try Task.checkCancellation()
+
+            // Decrypt + poster are seconds of CPU on a 20 MB clip — the ring keeps spinning.
+            advanceTransfer(message.id, to: .finishing)
             let video = try MediaCrypto.openFile(sealed: sealedFile, keyData: keyData)
             local.saveSealedMedia(messageID: message.id, data: video)
 
@@ -2222,6 +2404,14 @@ final class MessagingController {
               let material = cryptoController?.material
         else { return }
 
+        beginTransfer(
+            message.id,
+            isUpload: false,
+            phase: .transferring,
+            totalBytes: message.mediaByteCount
+        )
+        defer { endTransfer(message.id) }
+
         do {
             // Prefer cached media payload (file key). Never re-open as recipient — that
             // advances/desyncs the Double Ratchet after the first successful decrypt.
@@ -2230,7 +2420,13 @@ final class MessagingController {
                   let keyData = Data(base64Encoded: payload.k)
             else { return }
 
-            let sealedFile = try await mediaService.downloadContent(mediaID: mediaID, token: token)
+            let sealedFile = try await mediaService.downloadContent(
+                mediaID: mediaID,
+                token: token,
+                onProgress: progressSink(for: message.id)
+            )
+            try Task.checkCancellation()
+            advanceTransfer(message.id, to: .finishing)
             let jpeg = try MediaCrypto.openFile(sealed: sealedFile, keyData: keyData)
             local.saveSealedMedia(messageID: message.id, data: jpeg)
             updateMessageImage(messageID: message.id, peerID: message.peerUserID, data: jpeg)

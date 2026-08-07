@@ -134,6 +134,9 @@ enum MessageBubbleMetrics {
     static let oppositeGutter: CGFloat = 56
     /// Never squeeze narrower than this, even on a very small thread width.
     static let minBubbleWidth: CGFloat = 240
+    /// Widest a photo/video bubble may draw. Shared so a photo and a video sent back to back
+    /// line up on the same edge, the way they do in Telegram.
+    static let mediaWidthCap: CGFloat = 268
     /// Conservative stand-in (~iPhone SE) until the host has measured its thread.
     static let fallbackRowWidth: CGFloat = 288
     static let textLeadingPad: CGFloat = 11

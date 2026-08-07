@@ -31,7 +31,14 @@ struct MediaService: Sendable {
     }
 
     /// PUT encrypted bytes to `media/{id}/content` (API, authenticated).
-    func uploadContent(mediaID: UUID, data: Data, token: String) async throws {
+    ///
+    /// `onProgress` (0…1) drives the outbound bubble's ring; omit it for fire-and-forget sends.
+    func uploadContent(
+        mediaID: UUID,
+        data: Data,
+        token: String,
+        onProgress: (@Sendable (Double) -> Void)? = nil
+    ) async throws {
         // Server limit is 25 MiB (encrypted blob). Fail early with a clear message.
         let maxBytes = 25 * 1024 * 1024
         guard data.count <= maxBytes else {
@@ -42,19 +49,37 @@ struct MediaService: Sendable {
                 statusCode: 400
             )
         }
-        try await client.putRaw(
-            path: "media/\(mediaID.uuidString.lowercased())/content",
-            body: data,
-            contentType: "application/octet-stream",
-            bearerToken: token
-        )
+        let path = "media/\(mediaID.uuidString.lowercased())/content"
+        if let onProgress {
+            try await client.putRaw(
+                path: path,
+                body: data,
+                contentType: "application/octet-stream",
+                bearerToken: token,
+                onProgress: onProgress
+            )
+        } else {
+            try await client.putRaw(
+                path: path,
+                body: data,
+                contentType: "application/octet-stream",
+                bearerToken: token
+            )
+        }
     }
 
     /// GET encrypted bytes from `media/{id}/content` (API, authenticated).
-    func downloadContent(mediaID: UUID, token: String) async throws -> Data {
-        try await client.getRaw(
-            path: "media/\(mediaID.uuidString.lowercased())/content",
-            bearerToken: token
-        )
+    ///
+    /// `onProgress` (0…1) drives the download ring on the media bubble.
+    func downloadContent(
+        mediaID: UUID,
+        token: String,
+        onProgress: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> Data {
+        let path = "media/\(mediaID.uuidString.lowercased())/content"
+        if let onProgress {
+            return try await client.getRaw(path: path, bearerToken: token, onProgress: onProgress)
+        }
+        return try await client.getRaw(path: path, bearerToken: token)
     }
 }

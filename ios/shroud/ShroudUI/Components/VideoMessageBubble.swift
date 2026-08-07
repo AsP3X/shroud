@@ -1,12 +1,20 @@
 import SwiftUI
 import UIKit
 
-/// Video bubble: envelope poster + download chip until full video is fetched.
+/// Telegram's video bubble: poster, a play-glyph duration badge top-left, a blurred play disc
+/// in the middle, and a transfer ring in its place while bytes move.
+///
+/// Human: The badge is the piece that makes a still read as *video* rather than a photo —
+/// it carries the duration always, and the payload size until the clip is on the device
+/// ("▶ 0:12 · 4.2 MB", then "▶ 1.1 MB / 4.2 MB" while downloading).
+/// Agent: READS message + transfer state only. `onDownload`/`onCancel`/`onOpen` are the host's.
 struct VideoMessageBubble: View {
     let message: MessagingController.ChatMessage
     let time: String
     var onDownload: (() -> Void)?
-    var isDownloading: Bool = false
+    /// Live transfer for this message (download or send), when one is running.
+    var transfer: MessagingController.MediaTransfer?
+    var onCancelDownload: (() -> Void)?
     var onRetry: (() -> Void)?
     var onOpen: (() -> Void)?
     var isRowEmbedded: Bool = true
@@ -18,8 +26,11 @@ struct VideoMessageBubble: View {
     private var isMine: Bool { message.isMine }
     private var isFailed: Bool { message.receipt == .failed }
     private var needsDownload: Bool { message.needsMediaDownload }
+    /// Outbound clip still compressing or uploading — same ring, opposite direction.
+    private var isSending: Bool { transfer?.isUpload == true }
+    private var showsTransferControl: Bool { !isFailed && (needsDownload || isSending) }
     private var canOpen: Bool {
-        !message.deleted && !isFailed && message.videoData != nil
+        !message.deleted && !isFailed && !isSending && message.videoData != nil
     }
 
     private var hasCaption: Bool {
@@ -34,9 +45,27 @@ struct VideoMessageBubble: View {
     private var durationLabel: String {
         let ms = message.voiceDurationMs ?? 0
         let total = max(0, ms / 1000)
-        let m = total / 60
-        let s = total % 60
-        return String(format: "%d:%02d", m, s)
+        return String(format: "%d:%02d", total / 60, total % 60)
+    }
+
+    /// Right half of the badge: bytes moved while transferring, total size until downloaded.
+    private var sizeLabel: String? {
+        if let transfer {
+            switch transfer.phase {
+            case .preparing:
+                return "Compressing"
+            case .transferring:
+                guard let total = transfer.totalBytes, total > 0 else { return nil }
+                guard let moved = transfer.movedBytes else {
+                    return MediaCrypto.byteCountLabel(total)
+                }
+                return "\(MediaCrypto.byteCountLabel(moved)) / \(MediaCrypto.byteCountLabel(total))"
+            case .finishing:
+                return isSending ? "Sending" : "Decrypting"
+            }
+        }
+        guard needsDownload, let bytes = message.mediaByteCount, bytes > 0 else { return nil }
+        return MediaCrypto.byteCountLabel(bytes)
     }
 
     private var mediaEpoch: String {
@@ -66,17 +95,18 @@ struct VideoMessageBubble: View {
     private var mediaWidthCap: CGFloat {
         let row = chatRowWidth > 0 ? chatRowWidth : MessageBubbleMetrics.fallbackRowWidth
         let budget = min(row, max(MessageBubbleMetrics.minBubbleWidth, row - MessageBubbleMetrics.oppositeGutter))
-        return min(240, budget)
+        return min(MessageBubbleMetrics.mediaWidthCap, budget)
     }
 
     private var displaySize: CGSize {
         let maxW = mediaWidthCap
-        let maxH: CGFloat = 320
+        let maxH: CGFloat = 340
         let w = CGFloat(message.imageWidth ?? 240)
         let h = CGFloat(message.imageHeight ?? 180)
-        guard w > 0, h > 0 else { return CGSize(width: 200, height: 150) }
-        let scale = min(maxW / w, maxH / h, 1)
-        let size = CGSize(width: max(140, w * scale), height: max(100, h * scale))
+        guard w > 0, h > 0 else { return CGSize(width: maxW, height: maxW * 9 / 16) }
+        // Landscape clips fill the bubble's width; portrait ones are bounded by height.
+        let scale = min(maxW / w, maxH / h)
+        let size = CGSize(width: max(150, w * scale), height: max(110, h * scale))
         guard hasCaption else { return size }
         return CGSize(width: maxW, height: size.height)
     }
@@ -110,83 +140,21 @@ struct VideoMessageBubble: View {
     private var bubbleCore: some View {
         VStack(alignment: isMine ? .trailing : .leading, spacing: 6) {
             VStack(alignment: .leading, spacing: 0) {
-                ZStack {
-                    Group {
-                        if message.deleted {
-                            deletedPlaceholder
-                        } else if let ui = displayedPoster {
-                            Image(uiImage: ui)
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: displaySize.width, height: displaySize.height)
-                                .clipped()
-                                .opacity(isFailed ? 0.55 : 1)
-                                .blur(radius: needsDownload ? 0.5 : 0)
-                                .transition(.opacity)
-                        } else {
-                            emptyPlaceholder
-                                .transition(.opacity)
-                        }
-                    }
-                    .animation(Motion.fade, value: displayedPoster == nil)
-
-                    if isFailed {
-                        failedOverlay
-                    } else if needsDownload {
-                        MediaDownloadChip(
-                            byteCount: message.mediaByteCount,
-                            isDownloading: isDownloading,
-                            action: { onDownload?() }
-                        )
-                    } else {
-                        playBadge
-                        VStack {
-                            Spacer()
-                            HStack {
-                                durationChip
-                                Spacer()
-                                if !hasCaption { timeChip }
-                            }
-                            .padding(8)
-                        }
-                    }
-
-                    // Duration still visible while waiting to download.
-                    if needsDownload, !isFailed {
-                        VStack {
-                            Spacer()
-                            HStack {
-                                durationChip
-                                Spacer()
-                                if !hasCaption { timeChip }
-                            }
-                            .padding(8)
-                        }
-                    }
-                }
-                .frame(width: displaySize.width, height: displaySize.height)
-                .clipShape(
-                    hasCaption
-                        ? UnevenRoundedRectangle(
-                            topLeadingRadius: 17.5,
-                            bottomLeadingRadius: 0,
-                            bottomTrailingRadius: 0,
-                            topTrailingRadius: 17.5,
-                            style: .continuous
-                        )
-                        : corners
-                )
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    if needsDownload {
-                        Haptics.impact(.light)
-                        onDownload?()
-                        return
-                    }
-                    guard canOpen else { return }
-                    Haptics.impact(.light)
-                    onOpen?()
-                }
+                posterStack
+                    .frame(width: displaySize.width, height: displaySize.height)
+                    .clipShape(
+                        hasCaption
+                            ? UnevenRoundedRectangle(
+                                topLeadingRadius: 17.5,
+                                bottomLeadingRadius: 0,
+                                bottomTrailingRadius: 0,
+                                topTrailingRadius: 17.5,
+                                style: .continuous
+                            )
+                            : corners
+                    )
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: handleTap)
 
                 if hasCaption, !message.deleted {
                     captionFooter
@@ -216,26 +184,142 @@ struct VideoMessageBubble: View {
         }
     }
 
-    private var playBadge: some View {
-        Image(systemName: "play.circle.fill")
-            .font(.system(size: 52))
-            .symbolRenderingMode(.palette)
-            .foregroundStyle(Color.white, Color.black.opacity(0.45))
-            .shadow(color: .black.opacity(0.25), radius: 4, y: 1)
+    // MARK: - Poster + chrome
+
+    private var posterStack: some View {
+        ZStack {
+            Group {
+                if message.deleted {
+                    deletedPlaceholder
+                } else if let ui = displayedPoster {
+                    Image(uiImage: ui)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: displaySize.width, height: displaySize.height)
+                        .clipped()
+                        .opacity(isFailed ? 0.55 : 1)
+                        // A soft blur behind the ring is what tells you the clip isn't here yet.
+                        .blur(radius: needsDownload && !isSending ? 1.5 : 0)
+                        .scaleEffect(needsDownload && !isSending ? 1.04 : 1)
+                        .transition(.opacity)
+                } else {
+                    emptyPlaceholder
+                        .transition(.opacity)
+                }
+            }
+            .animation(Motion.fade, value: displayedPoster == nil)
+            .animation(Motion.standard, value: needsDownload)
+
+            if !message.deleted {
+                scrims
+            }
+
+            if isFailed {
+                failedOverlay
+            } else if showsTransferControl {
+                MediaTransferControl(
+                    mode: transfer.map { .busy($0) } ?? .idle(byteCount: message.mediaByteCount),
+                    onTap: transferAction,
+                    diameter: 54
+                )
+                .transition(.scale(scale: 0.8).combined(with: .opacity))
+            } else if !message.deleted {
+                playDisc
+                    .transition(.scale(scale: 0.8).combined(with: .opacity))
+            }
+
+            if !message.deleted, !isFailed {
+                chrome
+            }
+        }
+        .animation(Motion.snappy, value: showsTransferControl)
+        .animation(Motion.snappy, value: isFailed)
     }
 
-    private var durationChip: some View {
-        Text(durationLabel)
-            .font(.system(size: 11, weight: .semibold).monospacedDigit())
-            .foregroundStyle(Color.white)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(Color.black.opacity(0.45))
-            .clipShape(Capsule())
+    /// Top and bottom darkening so white badges survive a bright poster.
+    private var scrims: some View {
+        VStack(spacing: 0) {
+            LinearGradient(
+                colors: [Color.black.opacity(0.34), .clear],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 52)
+            Spacer(minLength: 0)
+            LinearGradient(
+                colors: [.clear, Color.black.opacity(0.30)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 46)
+        }
+        .allowsHitTesting(false)
     }
 
-    private var metaColor: Color { Color.white.opacity(0.75) }
-    private var readTickColor: Color { Color.white.opacity(0.95) }
+    private var chrome: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                durationBadge
+                Spacer(minLength: 0)
+            }
+            Spacer(minLength: 0)
+            if !hasCaption {
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    timeChip
+                }
+            }
+        }
+        .padding(8)
+        .allowsHitTesting(false)
+    }
+
+    /// "▶ 0:12" — plus the size while the clip is still on the server.
+    private var durationBadge: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "play.fill")
+                .font(.system(size: 8, weight: .black))
+                .foregroundStyle(Color.white)
+            Text(durationLabel)
+                .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                .foregroundStyle(Color.white)
+            if let sizeLabel {
+                Text("·")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.white.opacity(0.55))
+                Text(sizeLabel)
+                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .foregroundStyle(Color.white.opacity(0.9))
+                    .lineLimit(1)
+                    .contentTransition(.numericText())
+            }
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3.5)
+        .background(Color.black.opacity(0.45), in: Capsule())
+        .animation(Motion.snappy, value: sizeLabel)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Video, \(durationLabel)")
+    }
+
+    /// The centre play control — Telegram's is a blurred disc, not a filled SF symbol.
+    private var playDisc: some View {
+        ZStack {
+            Circle()
+                .fill(Color.black.opacity(0.35))
+                .background(.ultraThinMaterial.opacity(0.5), in: Circle())
+                .frame(width: 54, height: 54)
+            Image(systemName: "play.fill")
+                .font(.system(size: 21, weight: .semibold))
+                .foregroundStyle(Color.white)
+                // Optical centring: a triangle's visual mass sits left of its bounding box.
+                .offset(x: 1.5)
+        }
+        .shadow(color: .black.opacity(0.2), radius: 6, y: 2)
+        .allowsHitTesting(false)
+    }
+
+    private var metaColor: Color { Color.white.opacity(0.8) }
 
     private var timeChip: some View {
         HStack(spacing: 3) {
@@ -248,16 +332,17 @@ struct VideoMessageBubble: View {
                 MessageReceiptIcon(
                     receipt: message.receipt,
                     metaColor: metaColor,
-                    readColor: readTickColor,
+                    readColor: Color.white.opacity(0.95),
                     failedColor: Color.white
                 )
             }
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 3)
-        .background(Color.black.opacity(0.35))
-        .clipShape(Capsule())
+        .background(Color.black.opacity(0.35), in: Capsule())
     }
+
+    // MARK: - States
 
     private var failedOverlay: some View {
         VStack(spacing: 8) {
@@ -293,16 +378,23 @@ struct VideoMessageBubble: View {
             .pressable(scale: 0.92, haptic: .medium)
         }
         .padding(.horizontal, 2)
+        .transition(.opacity.combined(with: .move(edge: .top)))
     }
 
+    /// No poster yet — a dark plate that shimmers while the encode/decrypt runs.
     private var emptyPlaceholder: some View {
         ZStack {
-            (isMine ? Theme.accent : Theme.bubbleIncoming)
-            Image(systemName: "video")
-                .font(.system(size: 28, weight: .medium))
-                .foregroundStyle(isMine ? Color.white.opacity(0.7) : Theme.textSecondary)
+            LinearGradient(
+                colors: [Color.black.opacity(0.65), Color.black.opacity(0.45)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            Image(systemName: "video.fill")
+                .font(.system(size: 26, weight: .medium))
+                .foregroundStyle(Color.white.opacity(0.35))
         }
         .frame(width: displaySize.width, height: displaySize.height)
+        .shimmering(transfer != nil)
     }
 
     private var deletedPlaceholder: some View {
@@ -314,6 +406,8 @@ struct VideoMessageBubble: View {
         }
         .frame(width: displaySize.width, height: 120)
     }
+
+    // MARK: - Caption
 
     private var captionFooter: some View {
         ZStack(alignment: .bottomTrailing) {
@@ -386,6 +480,27 @@ struct VideoMessageBubble: View {
                 )
             }
         }
+    }
+
+    // MARK: - Actions
+
+    private func handleTap() {
+        if isSending { return }
+        if needsDownload {
+            Haptics.impact(.light)
+            transfer == nil ? onDownload?() : onCancelDownload?()
+            return
+        }
+        guard canOpen else { return }
+        Haptics.impact(.light)
+        onOpen?()
+    }
+
+    /// The disc's own tap: start a download, or cancel the one in flight. Nil while sending —
+    /// an upload is already committed to the wire.
+    private var transferAction: (() -> Void)? {
+        guard !isSending else { return nil }
+        return transfer == nil ? onDownload : onCancelDownload
     }
 
     private func loadPoster() async {

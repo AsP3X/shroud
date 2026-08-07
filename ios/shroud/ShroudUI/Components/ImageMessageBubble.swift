@@ -7,7 +7,9 @@ struct ImageMessageBubble: View {
     let time: String
     /// Manual full-media download (not auto on appear).
     var onDownload: (() -> Void)?
-    var isDownloading: Bool = false
+    /// Live transfer for this message, when one is running.
+    var transfer: MessagingController.MediaTransfer?
+    var onCancelDownload: (() -> Void)?
     var onRetry: (() -> Void)?
     /// Tap the photo when fully loaded — host presents the media overlay.
     var onOpen: (() -> Void)?
@@ -55,7 +57,7 @@ struct ImageMessageBubble: View {
     private var mediaWidthCap: CGFloat {
         let row = chatRowWidth > 0 ? chatRowWidth : MessageBubbleMetrics.fallbackRowWidth
         let budget = min(row, max(MessageBubbleMetrics.minBubbleWidth, row - MessageBubbleMetrics.oppositeGutter))
-        return min(240, budget)
+        return min(MessageBubbleMetrics.mediaWidthCap, budget)
     }
 
     private var displaySize: CGSize {
@@ -124,11 +126,11 @@ struct ImageMessageBubble: View {
                         failedOverlay
                             .transition(.opacity)
                     } else if needsDownload {
-                        MediaDownloadChip(
-                            byteCount: message.mediaByteCount,
-                            isDownloading: isDownloading,
-                            action: { onDownload?() }
+                        MediaTransferControl(
+                            mode: transfer.map { .busy($0) } ?? .idle(byteCount: message.mediaByteCount),
+                            onTap: { transfer == nil ? onDownload?() : onCancelDownload?() }
                         )
+                        .transition(.scale(scale: 0.8).combined(with: .opacity))
                     } else if !hasCaption {
                         VStack {
                             Spacer()

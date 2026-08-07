@@ -179,7 +179,87 @@ nonisolated final class APIClient: Sendable {
         return data
     }
 
+    // MARK: - Progress-reporting raw transfers
+    //
+    // These duplicate a few lines of `perform` on purpose: the progress variants need the
+    // per-task delegate, which only the `delegate:` overloads of URLSession accept.
+
+    /// PUT raw bytes, reporting how much of the body has left the device (0…1).
+    func putRaw(
+        path: String,
+        body: Data,
+        contentType: String,
+        bearerToken: String? = nil,
+        onProgress: @escaping @Sendable (Double) -> Void
+    ) async throws {
+        var request = rawRequest(path: path, method: "PUT", bearerToken: bearerToken)
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+
+        let observer = TransferProgressObserver(direction: .upload, onProgress: onProgress)
+        defer { observer.finish() }
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.upload(for: request, from: body, delegate: observer)
+        } catch {
+            throw APIError.transport(error.localizedDescription)
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError.transport("Invalid response")
+        }
+        noteAuthOutcome(status: http.statusCode, bearerToken: bearerToken)
+        try Self.throwIfNeeded(data: data, status: http.statusCode)
+    }
+
+    /// GET raw bytes, reporting how much of the body has arrived (0…1).
+    func getRaw(
+        path: String,
+        bearerToken: String? = nil,
+        onProgress: @escaping @Sendable (Double) -> Void
+    ) async throws -> Data {
+        let request = rawRequest(path: path, method: "GET", bearerToken: bearerToken)
+
+        let observer = TransferProgressObserver(direction: .download, onProgress: onProgress)
+        defer { observer.finish() }
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request, delegate: observer)
+        } catch {
+            throw APIError.transport(error.localizedDescription)
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError.transport("Invalid response")
+        }
+        noteAuthOutcome(status: http.statusCode, bearerToken: bearerToken)
+        try Self.throwIfNeeded(data: data, status: http.statusCode)
+        return data
+    }
+
     // MARK: - Internals
+
+    private func rawRequest(path: String, method: String, bearerToken: String?) -> URLRequest {
+        var request = URLRequest(url: resolveURL(path))
+        request.httpMethod = method
+        request.setValue("application/json, application/octet-stream, */*", forHTTPHeaderField: "Accept")
+        if let bearerToken, !bearerToken.isEmpty {
+            request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
+        }
+        return request
+    }
+
+    /// Session policy: only authenticated requests contribute to the 401 streak.
+    /// Login/register (no Bearer) must not force-logout an existing local session.
+    private func noteAuthOutcome(status: Int, bearerToken: String?) {
+        guard bearerToken.map({ !$0.isEmpty }) == true else { return }
+        if (200 ..< 300).contains(status) {
+            SessionAuthBridge.noteAuthenticationSuccess()
+        } else if status == 401 {
+            SessionAuthBridge.noteAuthenticationFailure()
+        }
+    }
 
     private func perform(
         _ path: String,
@@ -215,16 +295,7 @@ nonisolated final class APIClient: Sendable {
             throw APIError.transport("Invalid response")
         }
 
-        // Session policy: only authenticated requests contribute to the 401 streak.
-        // Login/register (no Bearer) must not force-logout an existing local session.
-        let hadBearer = bearerToken.map { !$0.isEmpty } ?? false
-        if hadBearer {
-            if (200 ..< 300).contains(http.statusCode) {
-                SessionAuthBridge.noteAuthenticationSuccess()
-            } else if http.statusCode == 401 {
-                SessionAuthBridge.noteAuthenticationFailure()
-            }
-        }
+        noteAuthOutcome(status: http.statusCode, bearerToken: bearerToken)
 
         return (data, http)
     }
