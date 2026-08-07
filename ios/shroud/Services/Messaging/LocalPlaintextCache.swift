@@ -29,6 +29,14 @@ struct LocalPlaintextCache: Sendable {
         save(messageID: messageID, data: Data(text.utf8))
     }
 
+    /// Drops every cached plaintext entry (logout / local wipe).
+    func clearAll() {
+        let keys = defaults.dictionaryRepresentation().keys.filter { $0.hasPrefix(prefix) }
+        for key in keys {
+            defaults.removeObject(forKey: key)
+        }
+    }
+
     private func key(_ messageID: UUID) -> String {
         prefix + messageID.uuidString.lowercased()
     }

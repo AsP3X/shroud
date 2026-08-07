@@ -17,6 +17,7 @@ struct SettingsView: View {
     @Environment(ServerConfigurationController.self) private var serverConfig
 
     @State private var scrollOffsetY: CGFloat = 0
+    @State private var showLogOutConfirm = false
 
     // MARK: - Layout metrics (title-only compact bar)
 
@@ -215,6 +216,20 @@ struct SettingsView: View {
             }
         }
         .background(Theme.backgroundGrouped)
+        .confirmationDialog(
+            "Log out of Shroud?",
+            isPresented: $showLogOutConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Log Out", role: .destructive) {
+                router.logOut()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "This ends your session on this device and clears cached messages, media, and chat keys from local storage. You’ll need your password and encryption phrase to sign in again."
+            )
+        }
     }
 
     // MARK: - Sticky chrome
@@ -466,17 +481,25 @@ struct SettingsView: View {
 
     private var logOutGroup: some View {
         Button {
-            router.logOut()
+            showLogOutConfirm = true
         } label: {
-            Text("Log Out")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Theme.danger)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-                .background(Theme.background)
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            HStack(spacing: 8) {
+                if router.isLoggingOut {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                Text(router.isLoggingOut ? "Signing out…" : "Log Out")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Theme.danger)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(Theme.background)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
+        .disabled(router.isLoggingOut)
         .pressable(scale: 0.98, dimming: 0.1, haptic: .medium)
+        .accessibilityLabel(router.isLoggingOut ? "Signing out" : "Log Out")
     }
 
     private func groupDivider(leading: CGFloat = 54) -> some View {

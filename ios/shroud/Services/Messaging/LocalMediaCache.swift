@@ -20,6 +20,12 @@ struct LocalMediaCache: Sendable {
         try? data.write(to: fileURL(messageID), options: .atomic)
     }
 
+    /// Removes the on-disk media cache directory (logout / local wipe).
+    func clearAll() {
+        try? FileManager.default.removeItem(at: directory)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
     private func fileURL(_ messageID: UUID) -> URL {
         directory.appendingPathComponent(messageID.uuidString.lowercased() + ".bin")
     }

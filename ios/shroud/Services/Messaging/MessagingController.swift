@@ -167,13 +167,34 @@ final class MessagingController {
         // cancelling would surface a spurious network error on sign-out.
         contactsRefreshTask = nil
         conversationsRefreshTask = nil
+        threadLoadTasks.values.forEach { $0.cancel() }
         threadLoadTasks.removeAll()
         // Next sign-in is a genuine first load again, so the skeleton is allowed back.
         hasLoadedContacts = false
         hasLoadedChats = false
         contactsError = nil
         chatsError = nil
+        lastError = nil
         lastPresenceSweep = nil
+        clearLocalData()
+    }
+
+    /// Wipes in-memory lists and on-device message caches (plaintext, media, ratchets, peer keys).
+    /// Called from `stop()` on sign-out so a restart never resurfaces another account’s data.
+    func clearLocalData() {
+        contacts = []
+        incomingRequests = []
+        conversations = []
+        threads = [:]
+        typingPeerIDs = []
+        presenceByUser = [:]
+        unreadCountByPeer = [:]
+        isLoadingContacts = false
+        isLoadingChats = false
+        plaintextCache.clearAll()
+        mediaCache.clearAll()
+        peerKeys.clear()
+        RatchetSessionStore.deleteAll()
     }
 
     /// Call when the app returns to the foreground.

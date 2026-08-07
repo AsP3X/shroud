@@ -54,12 +54,20 @@ nonisolated struct AuthService: Sendable {
         return try persist(response)
     }
 
-    /// Best-effort server logout, then clears Keychain.
+    /// Clears the Keychain session immediately, then best-effort server revoke in the background.
+    ///
+    /// Local clear must not wait on the network: a hung `/auth/logout` used to leave the
+    /// token on disk so force-quit mid-logout still restored a signed-in session.
     func logout() async {
-        if let session = sessionStore.load() {
-            try? await client.postNoContent(path: "auth/logout", bearerToken: session.token)
-        }
+        let token = sessionStore.load()?.token
         sessionStore.clear()
+        guard let token else { return }
+
+        let client = self.client
+        // Fire-and-forget: UI and Keychain must not depend on server reachability.
+        Task {
+            try? await client.postNoContent(path: "auth/logout", bearerToken: token)
+        }
     }
 
     func fetchMe(session: SessionStore.Session) async throws -> MeResponse {

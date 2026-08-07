@@ -17,10 +17,20 @@ final class AppRouter {
     var sessionController: SessionController?
     /// Injected crypto; messaging unlock requires identity material.
     var cryptoController: CryptoController?
+    /// Injected messaging; local caches are wiped on logout.
+    var messagingController: MessagingController?
+    /// Injected calls; recent list is wiped on logout.
+    var callController: CallController?
 
     /// Human: Server session ≠ messaging unlock. Need phrase-derived keys (or Keychain restore).
     /// Agent: True only after unlockMessages() / cold-start crypto restore.
     var hasUnlockedMessaging = false
+
+    /// True while logout is in flight (disables the Log Out control).
+    private(set) var isLoggingOut = false
+
+    /// One-shot toast after returning to Welcome (e.g. "Signed out · local data cleared").
+    var postAuthToast: String?
 
     /// Ready for the main shell: API session present **and** local crypto unlocked.
     var isUnlocked: Bool {
@@ -71,13 +81,30 @@ final class AppRouter {
         path = []
     }
 
-    /// Ends the server session, locks crypto (keeps Keychain keys for re-login), returns to Welcome.
+    /// Ends the server session, wipes local message caches, locks crypto (identity kept for re-login).
+    ///
+    /// Local session + caches clear first so a force-quit mid-network never leaves you signed in.
     func logOut() {
+        guard !isLoggingOut else { return }
+        isLoggingOut = true
+        postAuthToast = nil
+
         Task {
+            // Clears Keychain session immediately; server revoke is best-effort in the background.
             await sessionController?.logout()
+
+            // Publish feedback as soon as the session is gone so Welcome can show it on appear.
+            postAuthToast = "Signed out · local data cleared"
+
+            // RootView also stops messaging on `isSignedIn` change; call again so endpoint-change
+            // logout paths that only use the router still wipe caches.
+            messagingController?.stop()
+            callController?.clearLocalState()
+            // Keep identity material so the same user can unlock with their phrase again.
             cryptoController?.lock(wipeStore: false)
             hasUnlockedMessaging = false
             path = []
+            isLoggingOut = false
         }
     }
 }

@@ -31,6 +31,8 @@ final class SessionController {
     }
 
     func logout() async {
+        // Keychain first (sync), then in-memory — so a force-quit mid-logout cannot restore a token.
+        // Server revoke is fire-and-forget inside AuthService and never blocks this path.
         await authService.logout()
         session = nil
         sessionValidated = false

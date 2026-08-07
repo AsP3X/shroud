@@ -2,13 +2,15 @@ import SwiftUI
 
 /// Welcome screen — maps to `Welcome` in `iOS-App.pen`.
 struct WelcomeView: View {
-    let router: AppRouter
+    @Bindable var router: AppRouter
 
     @Environment(ServerConfigurationController.self) private var serverConfig
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showServerSettings = false
     /// Drives the one-shot arrival choreography (logo → copy → tiles → actions).
     @State private var hasArrived = false
+    @State private var toastMessage: String?
+    @State private var toastDismissTask: Task<Void, Never>?
 
     var body: some View {
         GroupedScreen {
@@ -40,18 +42,38 @@ struct WelcomeView: View {
             }
         }
         .navigationBarHidden(true)
+        .toast($toastMessage)
         .onAppear {
             guard !hasArrived else { return }
             // The app's first frame: elements settle in reading order, then the CTAs arrive.
             withAnimation(Motion.respecting(reduceMotion, Motion.gentle).delay(0.05)) {
                 hasArrived = true
             }
+            presentPostAuthToastIfNeeded()
+        }
+        .onChange(of: router.postAuthToast) { _, _ in
+            presentPostAuthToastIfNeeded()
+        }
+        .onDisappear {
+            toastDismissTask?.cancel()
         }
         .serverSettingsSheet(
             isPresented: $showServerSettings,
             context: .onboarding,
             serverConfig: serverConfig
         )
+    }
+
+    private func presentPostAuthToastIfNeeded() {
+        guard let message = router.postAuthToast else { return }
+        router.postAuthToast = nil
+        toastDismissTask?.cancel()
+        toastMessage = message
+        toastDismissTask = Task {
+            try? await Task.sleep(nanoseconds: 2_400_000_000)
+            guard !Task.isCancelled else { return }
+            toastMessage = nil
+        }
     }
 
     private var navRow: some View {

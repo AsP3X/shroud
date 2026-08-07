@@ -62,13 +62,18 @@ nonisolated struct SessionStore: Sendable {
         }
     }
 
+    /// Removes every Keychain item for this service (not only known account keys).
+    /// Prefer this over piecemeal deletes so a partial write can never leave a loadable session.
     func clear() {
-        delete(key: Key.token)
-        delete(key: Key.userID)
-        delete(key: Key.username)
-        delete(key: Key.shareCode)
-        delete(key: Key.deviceID)
-        delete(key: Key.deviceName)
+        let allForService: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+        ]
+        SecItemDelete(allForService as CFDictionary)
+        // Belt-and-suspenders for accounts written under older clients.
+        for key in Key.all {
+            delete(key: key)
+        }
     }
 
     // MARK: - Keychain
@@ -80,6 +85,8 @@ nonisolated struct SessionStore: Sendable {
         static let shareCode = "share_code"
         static let deviceID = "device_id"
         static let deviceName = "device_name"
+
+        static let all = [token, userID, username, shareCode, deviceID, deviceName]
     }
 
     private func read(key: String) -> String? {

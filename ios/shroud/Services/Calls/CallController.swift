@@ -36,6 +36,17 @@ final class CallController {
     /// Recent ended calls for the Calls tab (local session memory).
     private(set) var recent: [RecentCall] = []
 
+    /// Drops call UI + recent list (sign-out). Does not touch Keychain.
+    func clearLocalState() {
+        engine.hangup()
+        enginePrepared = false
+        pendingRemoteOffer = nil
+        iceBuffer.removeAll()
+        active = nil
+        lastError = nil
+        recent = []
+    }
+
     struct RecentCall: Identifiable, Equatable {
         let id: UUID
         let peerUserID: UUID

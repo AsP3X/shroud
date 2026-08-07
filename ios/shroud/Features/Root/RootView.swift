@@ -39,6 +39,8 @@ struct RootView: View {
         .task {
             router.sessionController = sessionController
             router.cryptoController = cryptoController
+            router.messagingController = messagingController
+            router.callController = callController
             messagingController.bind(
                 session: sessionController,
                 crypto: cryptoController,
@@ -47,7 +49,12 @@ struct RootView: View {
             callController.bind(session: sessionController, messaging: messagingController)
             PushNotificationService.shared.bind(session: sessionController, calls: callController)
             await sessionController.validateSessionIfNeeded()
-            router.restoreUnlockedSessionIfNeeded()
+            // Only restore if Keychain still has a session (logout clears it first).
+            if sessionController.isSignedIn {
+                router.restoreUnlockedSessionIfNeeded()
+            } else {
+                router.hasUnlockedMessaging = false
+            }
             if router.isUnlocked {
                 messagingController.start()
                 PushNotificationService.shared.start()
@@ -57,7 +64,9 @@ struct RootView: View {
             if !signedIn {
                 router.hasUnlockedMessaging = false
                 cryptoController.lock(wipeStore: false)
+                // AppRouter.logOut already stops messaging; this covers server-driven logout (401).
                 messagingController.stop()
+                callController.clearLocalState()
                 PushNotificationService.shared.stop()
             }
         }
