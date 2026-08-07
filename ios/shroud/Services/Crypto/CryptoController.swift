@@ -34,21 +34,17 @@ final class CryptoController {
         self.keyBundleService = keyBundleService
     }
 
-    /// Cold start: restore identity + unwrap history key (biometry/passcode when configured).
-    @discardableResult
-    func restoreIfPossible(for userID: UUID) async -> Bool {
-        await unlockHistoryIfPossible(for: userID, automatic: true)
-    }
-
     /// Re-open history (biometry/passcode). Identity must still match.
-    /// - Parameter automatic: When true, no-ops if the user previously cancelled this lock cycle.
+    /// Always user-initiated — automatic Face ID prompts were removed (they stacked / stuck).
+    /// - Parameter automatic: Kept for call-site compatibility; when true, still respects
+    ///   `suppressAutomaticVaultPrompt` if any residual auto path fires.
     @discardableResult
     func unlockHistoryIfPossible(for userID: UUID, automatic: Bool = false) async -> Bool {
         if automatic, suppressAutomaticVaultPrompt {
             needsHistoryUnlock = store.hasIdentity(for: userID)
             return false
         }
-        // Coalesce concurrent automatic prompts (scene active + Welcome onAppear).
+        // Coalesce concurrent prompts so the system sheet cannot stack on itself.
         if vaultUnlockInFlight {
             return material != nil
         }
@@ -79,7 +75,6 @@ final class CryptoController {
         } catch HistoryKeyVault.VaultError.userCancelled {
             material = nil
             needsHistoryUnlock = true
-            // Only the first automatic attempt shows the system sheet; cancel → button only.
             if automatic {
                 suppressAutomaticVaultPrompt = true
             }
@@ -87,7 +82,6 @@ final class CryptoController {
         } catch {
             material = nil
             needsHistoryUnlock = store.hasIdentity(for: userID)
-            // Missing vault / auth failure: don't loop automatic prompts.
             if automatic {
                 suppressAutomaticVaultPrompt = true
             }
@@ -161,7 +155,6 @@ final class CryptoController {
     func lock(wipeStore: Bool = false) {
         material = nil
         needsHistoryUnlock = !wipeStore && (store.load() != nil)
-        // Next unlock cycle may auto-prompt Face ID once.
         suppressAutomaticVaultPrompt = false
         if wipeStore {
             store.clear()
@@ -174,7 +167,6 @@ final class CryptoController {
     func lockHistoryInMemory() {
         material = nil
         needsHistoryUnlock = store.load() != nil
-        // Allow one automatic Face ID prompt when returning from background.
         suppressAutomaticVaultPrompt = false
     }
 

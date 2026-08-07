@@ -70,17 +70,18 @@ final class AppRouter {
         path = []
     }
 
-    /// Cold start: session + vault-unlocked history (biometry/passcode) → main shell.
-    /// Falls back to phrase entry when the vault is missing or auth is cancelled.
+    /// Cold start: if crypto is already unlocked in memory, enter the main shell.
+    /// Otherwise stay on Welcome so the user can tap Face ID / phrase (no auto biometry prompt).
     func restoreUnlockedSessionIfNeeded() async {
-        guard let session = sessionController?.session else { return }
+        guard sessionController?.session != nil else { return }
         guard let crypto = cryptoController else {
             hasUnlockedMessaging = false
             return
         }
-        let ok = await crypto.restoreIfPossible(for: session.userID)
-        hasUnlockedMessaging = ok
-        if ok {
+        // Do not call vault unlock here — automatic Face ID on launch was getting stuck.
+        // Welcome shows a Face ID icon button for an explicit unlock.
+        hasUnlockedMessaging = crypto.isUnlocked
+        if crypto.isUnlocked {
             path = []
         }
     }

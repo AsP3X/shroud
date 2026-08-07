@@ -99,24 +99,12 @@ struct RootView: View {
                 }
             case .active:
                 guard sessionController.isSignedIn else { return }
-                Task {
-                    if !cryptoController.isUnlocked,
-                       let userID = sessionController.userID
-                    {
-                        // One automatic Face ID per lock cycle; cancel → Welcome button only.
-                        let ok = await cryptoController.unlockHistoryIfPossible(
-                            for: userID,
-                            automatic: true
-                        )
-                        if ok {
-                            router.hasUnlockedMessaging = true
-                            messagingController.start()
-                        } else if cryptoController.needsHistoryUnlock {
-                            router.hasUnlockedMessaging = false
-                        }
-                    } else if router.isUnlocked {
-                        messagingController.handleAppBecameActive()
-                    }
+                // Face ID is opt-in via the Welcome unlock button — never auto-prompt here
+                // (auto-prompt raced with Welcome and left the system sheet stuck).
+                if !cryptoController.isUnlocked {
+                    router.hasUnlockedMessaging = false
+                } else if router.isUnlocked {
+                    messagingController.handleAppBecameActive()
                 }
             case .inactive:
                 break

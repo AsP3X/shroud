@@ -1,3 +1,4 @@
+import LocalAuthentication
 import SwiftUI
 
 /// Welcome screen — maps to `Welcome` in `iOS-App.pen`.
@@ -19,6 +20,40 @@ struct WelcomeView: View {
         sessionController.isSignedIn && !cryptoController.isUnlocked
     }
 
+    /// SF Symbol for the device biometry (Face ID / Touch ID), falling back to a lock when none.
+    private var biometryUnlockSymbol: String {
+        let context = LAContext()
+        var error: NSError?
+        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else {
+            return "lock.open.fill"
+        }
+        switch context.biometryType {
+        case .faceID:
+            return "faceid"
+        case .touchID:
+            return "touchid"
+        case .opticID:
+            return "opticid"
+        case .none:
+            return "lock.open.fill"
+        @unknown default:
+            return "lock.open.fill"
+        }
+    }
+
+    private var biometryUnlockAccessibilityLabel: String {
+        switch biometryUnlockSymbol {
+        case "faceid":
+            return "Unlock with Face ID"
+        case "touchid":
+            return "Unlock with Touch ID"
+        case "opticid":
+            return "Unlock with Optic ID"
+        default:
+            return "Unlock with device passcode"
+        }
+    }
+
     var body: some View {
         GroupedScreen {
             VStack(spacing: 0) {
@@ -38,14 +73,32 @@ struct WelcomeView: View {
                     .padding(.top, 8)
                 }
 
-                VStack(spacing: 12) {
+                VStack(spacing: 16) {
                     if needsChatUnlock {
-                        PrimaryButton(
-                            title: isUnlocking ? "Unlocking…" : "Unlock with Face ID / Passcode"
-                        ) {
-                            Task { await unlockWithVault(automatic: false) }
+                        // Face ID / Touch ID is opt-in via icon tap — auto-prompt was getting stuck.
+                        Button {
+                            Task { await unlockWithVault() }
+                        } label: {
+                            Group {
+                                if isUnlocking {
+                                    ProgressView()
+                                        .tint(Theme.accent)
+                                } else {
+                                    Image(systemName: biometryUnlockSymbol)
+                                        .font(.system(size: 52, weight: .regular))
+                                        .foregroundStyle(Theme.accent)
+                                        .symbolRenderingMode(.monochrome)
+                                }
+                            }
+                            .frame(width: 64, height: 64)
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
+                        .pressable(scale: 0.88)
                         .disabled(isUnlocking)
+                        .accessibilityLabel(biometryUnlockAccessibilityLabel)
+                        .frame(maxWidth: .infinity)
+
                         SecondaryButton(title: "Use encryption phrase") {
                             router.showLogIn()
                         }
@@ -74,13 +127,6 @@ struct WelcomeView: View {
                 }
             }
             presentPostAuthToastIfNeeded()
-            // Signed in + chats locked: auto Face ID once per lock cycle (not after cancel).
-            if needsChatUnlock,
-               !isUnlocking,
-               !cryptoController.suppressAutomaticVaultPrompt
-            {
-                Task { await unlockWithVault(automatic: true) }
-            }
         }
         .onChange(of: router.postAuthToast) { _, _ in
             presentPostAuthToastIfNeeded()
@@ -113,7 +159,7 @@ struct WelcomeView: View {
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
             Text(
-                "Your session is still signed in. Authenticate to open encrypted chat history on this device, or enter your 12-word phrase."
+                "Your session is still signed in. Tap the unlock icon to open encrypted chats with Face ID, Touch ID, or your device passcode — or enter your 12-word phrase."
             )
             .font(.system(size: 14))
             .foregroundStyle(Theme.textSecondary)
@@ -125,27 +171,23 @@ struct WelcomeView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
-    private func unlockWithVault(automatic: Bool) async {
+    private func unlockWithVault() async {
         guard let userID = sessionController.userID else {
             router.showLogIn()
-            return
-        }
-        if automatic, cryptoController.suppressAutomaticVaultPrompt {
             return
         }
         isUnlocking = true
         defer { isUnlocking = false }
         let ok = await cryptoController.unlockHistoryIfPossible(
             for: userID,
-            automatic: automatic
+            automatic: false
         )
         if ok {
             router.unlockMessages()
-        } else if !automatic {
-            // Manual tap: surface why unlock failed (cancel / no vault / etc.).
+        } else {
+            // Surface cancel / missing vault / auth failure so the user can try again or use phrase.
             toastMessage = CryptoController.userMessage(for: CryptoControllerError.historyLocked)
         }
-        // Automatic cancel: stay quiet — user taps the button when ready.
     }
 
     private var navRow: some View {
