@@ -14,6 +14,8 @@ struct ImageMessageBubble: View {
     /// When set, reports this bubble’s global frame via `MessageBubbleFrameKey`.
     var frameReportID: UUID? = nil
 
+    @Environment(\.chatRowWidth) private var chatRowWidth
+
     private var isMine: Bool { message.isMine }
     private var isFailed: Bool { message.receipt == .failed }
     private var canOpen: Bool {
@@ -50,14 +52,29 @@ struct ImageMessageBubble: View {
         }
     }
 
+    /// Widest the media may draw — its own cap, but never wider than the row allows.
+    private var mediaWidthCap: CGFloat {
+        let row = chatRowWidth > 0 ? chatRowWidth : MessageBubbleMetrics.fallbackRowWidth
+        let budget = min(row, max(MessageBubbleMetrics.minBubbleWidth, row - MessageBubbleMetrics.oppositeGutter))
+        return min(240, budget)
+    }
+
     private var displaySize: CGSize {
-        let maxW: CGFloat = 240
+        let maxW = mediaWidthCap
         let maxH: CGFloat = 320
         let w = CGFloat(message.imageWidth ?? 240)
         let h = CGFloat(message.imageHeight ?? 240)
         guard w > 0, h > 0 else { return CGSize(width: 180, height: 180) }
         let scale = min(maxW / w, maxH / h, 1)
-        return CGSize(width: max(120, w * scale), height: max(120, h * scale))
+        let size = CGSize(width: max(120, w * scale), height: max(120, h * scale))
+
+        // A caption is laid out in the media's width, and a tall photo is height-capped long
+        // before it reaches the width cap — a 9:19.5 screenshot lands at ~150pt, which leaves
+        // the text about 70pt after padding and meta, so it breaks mid-word. Captioned media
+        // takes the full width instead and center-crops into it via `scaledToFill` + `clipped`
+        // (Telegram crops very tall media in-thread too; the viewer still opens the original).
+        guard hasCaption else { return size }
+        return CGSize(width: maxW, height: size.height)
     }
 
     var body: some View {
@@ -247,34 +264,26 @@ struct ImageMessageBubble: View {
     }
 
     /// Caption strip under the photo (Telegram: text lives under media in the bubble).
+    ///
+    /// Meta sits on the **last line** via the same reservation the text bubble uses. The
+    /// previous `HStack` put the time beside the whole text block, so every line — not just
+    /// the last — lost the meta's width, which is what squeezed captions into a ragged column.
     private var captionFooter: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            Text(caption)
-                .font(.system(size: 16))
-                .foregroundStyle(isMine ? Color.white : Theme.textPrimary)
+        ZStack(alignment: .bottomTrailing) {
+            Text("\(captionBodyText)\(captionMetaSpacerText)")
                 .multilineTextAlignment(.leading)
+                .lineSpacing(2.5)
                 .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, MessageBubbleMetrics.textLeadingPad)
+                .padding(.trailing, MessageBubbleMetrics.textTrailingPad)
+                .padding(.top, 7)
+                .padding(.bottom, 6)
 
-            Spacer(minLength: 4)
-
-            HStack(spacing: 3) {
-                Text(time)
-                    .font(.system(size: 11, weight: .regular))
-                    .foregroundStyle(isMine ? Color.white.opacity(0.65) : Theme.textSecondary)
-                    .monospacedDigit()
-                if isMine {
-                    MessageReceiptIcon(
-                        receipt: message.receipt,
-                        metaColor: Color.white.opacity(0.65),
-                        readColor: Color.white.opacity(0.95)
-                    )
-                }
-            }
-            .fixedSize()
+            captionMetaRow
+                .padding(.trailing, MessageBubbleMetrics.metaTrailingPad)
+                .padding(.bottom, 5)
         }
-        .padding(.horizontal, 11)
-        .padding(.top, 7)
-        .padding(.bottom, 6)
         .frame(width: displaySize.width, alignment: .leading)
         .background(isMine ? Theme.accent : Theme.bubbleIncoming)
         .clipShape(
@@ -288,4 +297,50 @@ struct ImageMessageBubble: View {
         )
     }
 
+    private var showsCaptionReceipt: Bool { isMine && !message.deleted }
+
+    private var captionMetaColor: Color {
+        isMine ? Color.white.opacity(0.65) : Theme.textSecondary.opacity(0.95)
+    }
+
+    /// Must stay in step with `MessageBubbleMetrics`' measuring font, or the last-line
+    /// reservation drifts away from the meta it is reserving for.
+    private var captionMetaFont: Font {
+        .system(size: MessageBubbleMetrics.metaFontSize, weight: .regular).monospacedDigit()
+    }
+
+    private var captionBodyText: Text {
+        Text(MessageBubbleMetrics.normalizedForDisplay(caption))
+            .font(.system(size: MessageBubbleMetrics.bodyFontSize))
+            .foregroundStyle(isMine ? Color.white : Theme.textPrimary)
+    }
+
+    /// Invisible trailing reservation so the last caption line leaves room for time + ticks.
+    private var captionMetaSpacerText: Text {
+        Text(
+            verbatim: MessageBubbleMetrics.metaReservation(
+                time: time,
+                showsReceipt: showsCaptionReceipt
+            )
+        )
+        .font(captionMetaFont)
+        .foregroundStyle(Color.clear)
+    }
+
+    private var captionMetaRow: some View {
+        HStack(spacing: MessageBubbleMetrics.metaSpacing) {
+            Text(time)
+                .font(captionMetaFont)
+                .foregroundStyle(captionMetaColor)
+                .fixedSize()
+
+            if showsCaptionReceipt {
+                MessageReceiptIcon(
+                    receipt: message.receipt,
+                    metaColor: captionMetaColor,
+                    readColor: Color.white.opacity(0.95)
+                )
+            }
+        }
+    }
 }
