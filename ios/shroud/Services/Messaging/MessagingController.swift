@@ -44,8 +44,18 @@ final class MessagingController {
     /// Peer whose conversation is currently on screen (suppresses unread increments).
     private(set) var activePeerID: UUID?
 
+    /// Server-side consent: when true, a contact's "delete for both" also wipes this
+    /// account's copy of the chat. Off until the account opts in — see `PrivacySettingsDTO`.
+    private(set) var allowsPeerChatDelete = false
+    /// False until the flag has been read from the server once (the toggle stays disabled).
+    private(set) var hasLoadedPrivacySettings = false
+    /// Users this account has blocked; drives the unblock list in Privacy & Security.
+    private(set) var blockedUsers: [BlockItemDTO] = []
+
     private let contactsService = ContactsService()
     private let messagesService = MessagesService()
+    private let privacyService = PrivacyService()
+    private let blocksService = BlocksService()
     private let mediaService = MediaService()
     private let keyBundleService = KeyBundleService()
     private let peerKeys = PeerIdentityStore()
@@ -269,6 +279,7 @@ final class MessagingController {
         Task {
             await refreshContacts()
             await refreshConversations()
+            await refreshPrivacySettings()
             await flushPendingSends()
         }
     }
@@ -300,6 +311,9 @@ final class MessagingController {
         // Next sign-in is a genuine first load again, so the skeleton is allowed back.
         hasLoadedContacts = false
         hasLoadedChats = false
+        hasLoadedPrivacySettings = false
+        allowsPeerChatDelete = false
+        blockedUsers = []
         contactsError = nil
         chatsError = nil
         lastError = nil
@@ -347,6 +361,7 @@ final class MessagingController {
         Task {
             await refreshContacts()
             await refreshConversations()
+            await refreshPrivacySettings()
             if let peer = activePeerID, !isNotesChat(peer) {
                 await loadThread(peerUserID: peer)
             }
@@ -1089,6 +1104,192 @@ final class MessagingController {
     /// Which thread holds a message id (delete events carry no peer id).
     private func peerID(forMessage messageID: UUID) -> UUID? {
         threads.first { $0.value.contains { $0.id == messageID } }?.key
+    }
+
+    // MARK: - Whole-chat delete
+
+    /// What a chat delete actually did, so the UI can say so honestly.
+    enum ChatDeleteOutcome: Equatable, Sendable {
+        /// `.me` scope, or a chat that only ever existed on this device.
+        case clearedForMe
+        /// `.everyone` and the peer allowed it — the chat is gone on both sides.
+        case clearedForBoth
+        /// `.everyone` but the peer withheld consent: our messages became "Message deleted"
+        /// for them, and their own messages stay in their copy of the chat.
+        case unsentForPeer
+        case failed(String)
+    }
+
+    /// Deletes an entire chat here and on the server.
+    ///
+    /// Human: `.everyone` always drops the contact link, whatever the peer allowed — that is
+    /// what makes the next conversation a genuinely new one instead of a continuation.
+    /// Saved Messages have no second party, so they only accept `.me`.
+    /// Agent: CALLS MessagesService.deleteConversation; WRITES threads/conversations/contacts;
+    /// purges the sealed plaintext + media caches of every message it drops.
+    func deleteConversation(
+        peerUserID: UUID,
+        scope: ConversationDeleteScope
+    ) async -> ChatDeleteOutcome {
+        let isNotes = isNotesChat(peerUserID)
+        if isNotes, scope == .everyone {
+            return .failed("Saved Messages can only be deleted for you.")
+        }
+        guard let token = sessionController?.bearerToken, let me = sessionController?.userID else {
+            return .failed("Sign in to delete chats.")
+        }
+
+        // Notes are a self-conversation on the wire; every other chat is keyed by the peer.
+        let apiPeer = isNotes ? me : peerUserID
+
+        let response: DeleteConversationResponse
+        do {
+            response = try await messagesService.deleteConversation(
+                peerUserID: apiPeer,
+                scope: scope,
+                token: token
+            )
+        } catch let APIError.server(_, _, statusCode) where statusCode == 404 {
+            // Peer account is gone, or the chat never reached the server — clearing the
+            // local copy is still the right outcome.
+            clearChatLocally(peerUserID: peerUserID)
+            return .clearedForMe
+        } catch {
+            let text = SessionController.userMessage(for: error)
+            lastError = text
+            return .failed(text)
+        }
+
+        clearChatLocally(peerUserID: peerUserID)
+        if scope == .everyone {
+            // The server dropped the edge both ways; mirror it so Contacts doesn't flash
+            // the stale row until the refresh lands.
+            contacts.removeAll { $0.userId == peerUserID }
+        }
+        lastError = nil
+
+        await refreshConversations(force: true)
+        if scope == .everyone {
+            await refreshContacts(force: true)
+        }
+
+        switch scope {
+        case .me:
+            return .clearedForMe
+        case .everyone:
+            return response.clearedForPeer ? .clearedForBoth : .unsentForPeer
+        }
+    }
+
+    /// Drops a whole thread from memory, disk, and the chat list, purging its caches.
+    ///
+    /// Agent: WRITES threads/conversations/unreadCountByPeer; CALLS local.removeCaches +
+    /// persistThread. Notes keep their list row (it is a fixture, not a server conversation).
+    private func clearChatLocally(peerUserID: UUID) {
+        threadLoadTasks[peerUserID]?.cancel()
+        threadLoadTasks[peerUserID] = nil
+
+        let messageIDs = (threads[peerUserID] ?? []).map(\.id)
+        threads[peerUserID] = []
+        if !messageIDs.isEmpty {
+            local.removeCaches(messageIDs: messageIDs)
+        }
+        if unreadCountByPeer[peerUserID] != nil {
+            unreadCountByPeer[peerUserID] = nil
+        }
+        if !isNotesChat(peerUserID) {
+            conversations.removeAll { $0.peer.id == peerUserID }
+            typingPeerIDs.remove(peerUserID)
+        }
+        persistThread(peerUserID)
+    }
+
+    // MARK: - Privacy consent
+
+    /// Loads the account's chat-delete consent flag. Silent on failure: an unreachable
+    /// server must not flip a consent switch, so the last known value stands.
+    func refreshPrivacySettings() async {
+        guard let token = sessionController?.bearerToken else { return }
+        guard let settings = try? await privacyService.settings(token: token) else { return }
+        if allowsPeerChatDelete != settings.allowPeerChatDelete {
+            allowsPeerChatDelete = settings.allowPeerChatDelete
+        }
+        if !hasLoadedPrivacySettings { hasLoadedPrivacySettings = true }
+    }
+
+    /// Writes the consent flag. Returns a user-facing error, or nil on success; the local
+    /// value only moves once the server confirms, so the toggle can never lie.
+    func setAllowsPeerChatDelete(_ value: Bool) async -> String? {
+        guard let token = sessionController?.bearerToken else {
+            return "Sign in to change privacy settings."
+        }
+        do {
+            let settings = try await privacyService.update(
+                allowPeerChatDelete: value,
+                token: token
+            )
+            allowsPeerChatDelete = settings.allowPeerChatDelete
+            hasLoadedPrivacySettings = true
+            lastError = nil
+            return nil
+        } catch {
+            let text = SessionController.userMessage(for: error)
+            lastError = text
+            return text
+        }
+    }
+
+    // MARK: - Blocking
+
+    func refreshBlocks() async {
+        guard let token = sessionController?.bearerToken else { return }
+        guard let list = try? await blocksService.list(token: token) else { return }
+        if blockedUsers != list { blockedUsers = list }
+    }
+
+    /// Blocks a user. Returns a user-facing error, or nil on success.
+    ///
+    /// Human: Deleting a chat for both only unlinks the accounts — either side can send a new
+    /// contact request afterwards. Blocking is what stops that, so it stays a separate,
+    /// explicit action rather than a side effect of deleting.
+    /// Agent: CALLS BlocksService.block (server also drops contacts + cancels requests);
+    /// WRITES contacts/blockedUsers; REFRESHES contacts and chats.
+    func blockUser(_ userID: UUID, username: String) async -> String? {
+        guard let token = sessionController?.bearerToken else {
+            return "Sign in to block contacts."
+        }
+        do {
+            try await blocksService.block(userID: userID, token: token)
+        } catch {
+            let text = SessionController.userMessage(for: error)
+            lastError = text
+            return text
+        }
+        contacts.removeAll { $0.userId == userID }
+        typingPeerIDs.remove(userID)
+        lastError = nil
+        await refreshBlocks()
+        await refreshContacts(force: true)
+        await refreshConversations(force: true)
+        return nil
+    }
+
+    /// Lifts a block. Contacts are **not** restored — the pair has to reconnect.
+    func unblockUser(_ userID: UUID) async -> String? {
+        guard let token = sessionController?.bearerToken else {
+            return "Sign in to manage blocked contacts."
+        }
+        do {
+            try await blocksService.unblock(userID: userID, token: token)
+        } catch {
+            let text = SessionController.userMessage(for: error)
+            lastError = text
+            return text
+        }
+        blockedUsers.removeAll { $0.userId == userID }
+        lastError = nil
+        await refreshBlocks()
+        return nil
     }
 
     func setTyping(peerUserID: UUID, isTyping: Bool) {
@@ -2566,6 +2767,8 @@ final class MessagingController {
                 handleReadEvent(json)
             } else if type == "message.deleted" {
                 handleDeletedEvent(json)
+            } else if type == "conversation.deleted" {
+                handleConversationDeletedEvent(json)
             } else if type == "typing" {
                 handleTyping(json)
             } else if type == "presence.update" {
@@ -2611,6 +2814,42 @@ final class MessagingController {
         else { return }
         tombstoneMessage(messageID: messageID, peerUserID: peer)
         Task { await refreshConversations(force: true) }
+    }
+
+    /// A whole chat was deleted — by the peer, or by one of our own other devices.
+    ///
+    /// Human: Three cases. Our other device deleted it → drop it here too. The peer deleted
+    /// it and we had consented → drop it here too. The peer deleted it and we had not →
+    /// keep our own messages and reload, so their bubbles turn into "Message deleted".
+    /// Agent: READS json(user_id, peer_user_id, cleared_for_peer, scope); WRITES threads via
+    /// clearChatLocally; CALLS loadThread / refreshContacts / refreshConversations.
+    private func handleConversationDeletedEvent(_ json: [String: Any]) {
+        guard let me = sessionController?.userID,
+              let initiatorString = json["user_id"] as? String,
+              let initiator = UUID(uuidString: initiatorString),
+              let otherString = json["peer_user_id"] as? String,
+              let other = UUID(uuidString: otherString)
+        else { return }
+
+        let initiatedHere = initiator == me
+        // The chat this is about is always "the participant that isn't me".
+        let peer = initiatedHere ? other : initiator
+        // Saved Messages arrive as a self-conversation; they live under the local sentinel.
+        let threadPeer = peer == me ? Self.notesPeerID : peer
+        let clearedForPeer = json["cleared_for_peer"] as? Bool ?? false
+        let forEveryone = (json["scope"] as? String) == "everyone"
+
+        if initiatedHere || clearedForPeer {
+            clearChatLocally(peerUserID: threadPeer)
+        } else {
+            // We keep our own history; refetch so their messages come back as tombstones.
+            Task { await loadThread(peerUserID: threadPeer) }
+        }
+
+        Task {
+            await refreshConversations(force: true)
+            if forEveryone { await refreshContacts(force: true) }
+        }
     }
 
     private func handleReadEvent(_ json: [String: Any]) {

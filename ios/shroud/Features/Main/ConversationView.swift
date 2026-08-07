@@ -35,6 +35,8 @@ struct ConversationView: View {
     @State private var menuOpenedAt: Date?
     /// Message waiting on the delete-scope confirmation.
     @State private var pendingDelete: PendingDelete?
+    /// Whole-chat delete confirmation (scope is picked in the dialog).
+    @State private var showChatDeleteConfirm = false
     /// Live global frames of each bubble (visual only — no row spacers).
     @State private var bubbleGlobalFrames: [UUID: CGRect] = [:]
     @State private var viewingMedia: ViewingMedia?
@@ -125,6 +127,23 @@ struct ConversationView: View {
                     performDelete(pending.message, scope: .me)
                 }
                 Button("Cancel", role: .cancel) { pendingDelete = nil }
+            }
+            .confirmationDialog(
+                isNotes ? "Delete Saved Messages?" : "Delete chat with \(peerUsername)?",
+                isPresented: $showChatDeleteConfirm,
+                titleVisibility: .visible
+            ) {
+                if !isNotes {
+                    Button("Delete for me and \(peerUsername)", role: .destructive) {
+                        performChatDelete(scope: .everyone)
+                    }
+                }
+                Button(isNotes ? "Delete" : "Delete for me", role: .destructive) {
+                    performChatDelete(scope: .me)
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(chatDeleteExplanation)
             }
             .toast($toast)
             .animation(Motion.scrim, value: viewingMedia != nil)
@@ -561,6 +580,25 @@ struct ConversationView: View {
                     .pressable(scale: 0.82, haptic: .medium)
                     .accessibilityLabel("Call")
                 }
+
+                // Chat-level actions. Notes are local Saved Messages, so they only clear.
+                Menu {
+                    Button(role: .destructive) {
+                        showChatDeleteConfirm = true
+                    } label: {
+                        Label(
+                            isNotes ? "Delete Saved Messages" : "Delete Chat",
+                            systemImage: "trash"
+                        )
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(Theme.accent)
+                        .frame(width: 30, height: 34)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel("More")
             }
             .padding(.horizontal, 16)
             .padding(.top, 6)
@@ -1498,6 +1536,39 @@ struct ConversationView: View {
                 Haptics.notification(.success)
             }
             scheduleToastClear()
+        }
+    }
+
+    /// Spells out the asymmetric outcome before the tap: "for both" always disconnects the
+    /// two accounts, but the peer's own messages only vanish if they allowed that.
+    private var chatDeleteExplanation: String {
+        if isNotes {
+            return "Removes every saved message from this device and your account."
+        }
+        return """
+        Deleting for both unsends your messages in \(peerUsername)'s chat and removes them as \
+        a contact — you'd both have to add each other again. Their own messages stay unless \
+        they allow chats to be cleared for them.
+        """
+    }
+
+    /// Deletes the whole thread and leaves the screen — there is nothing left to show here.
+    private func performChatDelete(scope: ConversationDeleteScope) {
+        showChatDeleteConfirm = false
+        Task {
+            let outcome = await messaging.deleteConversation(peerUserID: peerUserID, scope: scope)
+            if case let .failed(message) = outcome {
+                toast = message
+                Haptics.notification(.error)
+                scheduleToastClear()
+                return
+            }
+            Haptics.notification(.success)
+            if let onBack {
+                onBack()
+            } else {
+                dismiss()
+            }
         }
     }
 

@@ -12,12 +12,14 @@ pub mod auth;
 pub mod blocks;
 pub mod calls;
 pub mod contacts;
+pub mod conversations;
 pub mod devices;
 pub mod health;
 pub mod keys;
 pub mod media;
 pub mod messages;
 pub mod presence;
+pub mod privacy;
 pub mod push;
 pub mod users;
 pub mod ws;
@@ -76,7 +78,13 @@ pub fn router() -> Router<AppState> {
             .route("/messages/{id}/delivered", post(messages::mark_delivered))
             .route("/messages/{id}/read", post(messages::mark_read))
             .route("/messages/{id}", delete(messages::delete_message))
-            .route("/conversations", get(messages::list_conversations))
+            .route("/conversations", get(conversations::list_conversations))
+            .route(
+                "/conversations/{peer_user_id}",
+                delete(conversations::delete_conversation),
+            )
+            .route("/privacy/settings", get(privacy::get_settings))
+            .route("/privacy/settings", put(privacy::put_settings))
             .route("/media/uploads", post(media::create_upload))
             .route("/media/{id}/download", post(media::create_download))
             // Axum’s default body limit is 2 MiB — raise to match MAX_MEDIA_BYTES so HD photos work.

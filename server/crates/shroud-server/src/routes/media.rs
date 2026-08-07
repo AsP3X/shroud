@@ -197,29 +197,30 @@ pub async fn get_content(
 
     // Multi-replica: when Nebular is primary, try shared object store first so any
     // API replica can serve blobs uploaded on another node.
-    if state.media_prefer_nebular && state.nebular_url.is_some() {
-        if let Ok(bytes) = read_blob_nebular(&state, &media).await {
-            state
-                .metrics
-                .media_nebular_hits_total
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            state
-                .metrics
-                .media_gets_total
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            tracing::info!(
-                user_id = %auth.user_id,
-                media_object_id = %media_id,
-                bytes = bytes.len(),
-                "media.content_get ok (nebular primary)"
-            );
-            return Ok((
-                StatusCode::OK,
-                [(header::CONTENT_TYPE, "application/octet-stream")],
-                bytes,
-            )
-                .into_response());
-        }
+    if state.media_prefer_nebular
+        && state.nebular_url.is_some()
+        && let Ok(bytes) = read_blob_nebular(&state, &media).await
+    {
+        state
+            .metrics
+            .media_nebular_hits_total
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        state
+            .metrics
+            .media_gets_total
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        tracing::info!(
+            user_id = %auth.user_id,
+            media_object_id = %media_id,
+            bytes = bytes.len(),
+            "media.content_get ok (nebular primary)"
+        );
+        return Ok((
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "application/octet-stream")],
+            bytes,
+        )
+            .into_response());
     }
 
     let path = blob_path(&media);

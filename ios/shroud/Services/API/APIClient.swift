@@ -117,6 +117,24 @@ nonisolated final class APIClient: Sendable {
         return try Self.decode(T.self, from: data)
     }
 
+    /// Performs a PUT with a JSON body and decodes the response.
+    func put<Body: Encodable, T: Decodable>(
+        _ path: String,
+        body: Body,
+        as type: T.Type,
+        bearerToken: String? = nil
+    ) async throws -> T {
+        let bodyData = try JSONEncoder.api.encode(body)
+        let (data, http) = try await perform(
+            path,
+            method: "PUT",
+            bodyData: bodyData,
+            bearerToken: bearerToken
+        )
+        try Self.throwIfNeeded(data: data, status: http.statusCode)
+        return try Self.decode(T.self, from: data)
+    }
+
     /// Performs a PUT with a JSON body and expects 2xx with no meaningful body (e.g. 204).
     func putNoContent<Body: Encodable>(
         path: String,
@@ -147,6 +165,24 @@ nonisolated final class APIClient: Sendable {
             query: query
         )
         try Self.throwIfNeeded(data: data, status: http.statusCode)
+    }
+
+    /// Performs a DELETE and decodes a JSON result body (e.g. chat delete outcome).
+    func delete<T: Decodable>(
+        path: String,
+        query: [String: String]? = nil,
+        as type: T.Type,
+        bearerToken: String? = nil
+    ) async throws -> T {
+        let (data, http) = try await perform(
+            path,
+            method: "DELETE",
+            bodyData: nil,
+            bearerToken: bearerToken,
+            query: query
+        )
+        try Self.throwIfNeeded(data: data, status: http.statusCode)
+        return try Self.decode(T.self, from: data)
     }
 
     /// PUT raw bytes (e.g. encrypted media) with an explicit Content-Type.

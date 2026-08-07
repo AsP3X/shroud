@@ -9,9 +9,15 @@ struct ContactProfileView: View {
     @Environment(CallController.self) private var calls
     @Environment(\.dismiss) private var dismiss
     @State private var toast: String?
+    @State private var showBlockConfirm = false
+    @State private var isBlocking = false
 
     private var isOnline: Bool {
         messaging.presenceByUser[peerUserID]?.online == true
+    }
+
+    private var isBlocked: Bool {
+        messaging.blockedUsers.contains { $0.userId == peerUserID }
     }
 
     private var statusLine: String {
@@ -64,6 +70,7 @@ struct ContactProfileView: View {
         .toast($toast)
         .task {
             await messaging.refreshPresence(for: [peerUserID])
+            await messaging.refreshBlocks()
         }
     }
 
@@ -219,21 +226,66 @@ struct ContactProfileView: View {
         .padding(.vertical, 10)
     }
 
+    /// Blocking is the stronger form of "delete chat for both": that only unlinks the
+    /// accounts, while this also stops new contact requests and messages from this user.
     private var blockCard: some View {
         Button {
-            toast = "Block coming soon"
-            scheduleClear()
+            showBlockConfirm = true
         } label: {
-            Text("Block \(peerUsername)")
-                .font(.system(size: 16))
-                .foregroundStyle(Theme.danger)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 13)
-                .background(Theme.background)
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            HStack(spacing: 8) {
+                if isBlocking {
+                    ProgressView().controlSize(.small)
+                }
+                Text(isBlocked ? "Unblock \(peerUsername)" : "Block \(peerUsername)")
+                    .font(.system(size: 16))
+                    .foregroundStyle(isBlocked ? Theme.accent : Theme.danger)
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 13)
+            .background(Theme.background)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(isBlocking)
+        .confirmationDialog(
+            isBlocked ? "Unblock \(peerUsername)?" : "Block \(peerUsername)?",
+            isPresented: $showBlockConfirm,
+            titleVisibility: .visible
+        ) {
+            if isBlocked {
+                Button("Unblock") { performBlockChange(block: false) }
+            } else {
+                Button("Block", role: .destructive) { performBlockChange(block: true) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                isBlocked
+                    ? "They can send you a contact request again. Your existing messages are unaffected."
+                    : "They can't message you or send contact requests. You'll also stop being contacts."
+            )
+        }
+    }
+
+    private func performBlockChange(block: Bool) {
+        isBlocking = true
+        Task {
+            let error = block
+                ? await messaging.blockUser(peerUserID, username: peerUsername)
+                : await messaging.unblockUser(peerUserID)
+            isBlocking = false
+            if let error {
+                toast = error
+                Haptics.notification(.error)
+            } else {
+                toast = block ? "\(peerUsername) blocked" : "\(peerUsername) unblocked"
+                Haptics.notification(.success)
+            }
+            scheduleClear()
+        }
     }
 
     private func scheduleClear() {

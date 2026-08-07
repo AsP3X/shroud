@@ -70,6 +70,33 @@ enum MessageDeleteScope: String, Equatable, Sendable {
     case everyone
 }
 
+/// `scope` on `DELETE /conversations/:peer_user_id` — the whole chat, not one message.
+enum ConversationDeleteScope: String, Equatable, Sendable {
+    /// Clears the chat for this account only; the peer keeps everything.
+    case me
+    /// Clears it here, unsends our messages on the peer's side, and drops the contact link.
+    /// Whether the peer's *own* messages go too depends on their `allowPeerChatDelete`.
+    case everyone
+}
+
+struct DeleteConversationResponse: Decodable, Equatable, Sendable {
+    /// False only when there was no server-side conversation to clear.
+    let clearedForMe: Bool
+    /// `everyone` scope: the peer consented, so their copy of the chat is gone as well.
+    let clearedForPeer: Bool
+    /// `everyone` scope: how many of our messages became "Message deleted" for the peer.
+    let tombstoned: UInt64
+    /// `everyone` scope: the contact link existed and was dropped in both directions.
+    let contactRemoved: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case clearedForMe = "cleared_for_me"
+        case clearedForPeer = "cleared_for_peer"
+        case tombstoned
+        case contactRemoved = "contact_removed"
+    }
+}
+
 struct MarkReadBulkBody: Encodable, Equatable, Sendable {
     let peerUserId: UUID
     let upToMessageId: UUID

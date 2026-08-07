@@ -207,6 +207,7 @@ final class RealtimeClient {
                 onEvent?(.raw(type: type, json: json))
             }
         case "message.delivered", "message.read", "message.deleted",
+             "conversation.deleted",
              "typing", "presence.update", "call.ring", "call.accepted",
              "call.ended", "call.signal",
              "contact.request", "contact.accepted", "contact.rejected",

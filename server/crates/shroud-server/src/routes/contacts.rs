@@ -185,7 +185,10 @@ pub async fn create_request(
             status: "accepted".into(),
             created_at: now,
             responded_at: Some(now),
-            user: load_peer_user(&state.pool, auth.user_id).await.ok().flatten(),
+            user: load_peer_user(&state.pool, auth.user_id)
+                .await
+                .ok()
+                .flatten(),
         };
         // Both users become contacts immediately — refresh both UIs.
         publish_contact_event(
@@ -242,7 +245,10 @@ pub async fn create_request(
     );
 
     // Include requester profile so the recipient can render the pending row immediately.
-    let from_user = load_peer_user(&state.pool, auth.user_id).await.ok().flatten();
+    let from_user = load_peer_user(&state.pool, auth.user_id)
+        .await
+        .ok()
+        .flatten();
     let response = ContactRequestResponse {
         id: request_id,
         from_user_id: auth.user_id,
@@ -254,14 +260,7 @@ pub async fn create_request(
     };
 
     // Fan-out to the target user so their Contacts "Pending" section updates live.
-    publish_contact_event(
-        &state,
-        "contact.request",
-        &response,
-        [body.user_id],
-        None,
-    )
-    .await;
+    publish_contact_event(&state, "contact.request", &response, [body.user_id], None).await;
     // Sender's other devices: keep outgoing request state in sync.
     publish_contact_event(
         &state,
@@ -689,13 +688,12 @@ async fn respond_as_recipient(
 
 /// Loads a minimal peer card for contact-request WS/API payloads.
 async fn load_peer_user(pool: &sqlx::PgPool, user_id: Uuid) -> Result<Option<PeerUser>, AppError> {
-    let row: Option<(Uuid, String)> = sqlx::query_as(
-        r#"SELECT id, username FROM users WHERE id = $1"#,
-    )
-    .bind(user_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|err| AppError::Internal(format!("load peer user failed: {err}")))?;
+    let row: Option<(Uuid, String)> =
+        sqlx::query_as(r#"SELECT id, username FROM users WHERE id = $1"#)
+            .bind(user_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|err| AppError::Internal(format!("load peer user failed: {err}")))?;
     Ok(row.map(|(id, username)| PeerUser { id, username }))
 }
 

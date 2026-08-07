@@ -8,9 +8,21 @@ struct ChatsView: View {
     @Binding var path: [ChatRoute]
     @State private var searchText = ""
     @State private var showNewChat = false
+    /// Chat waiting on the delete-scope confirmation (scope is picked in the dialog).
+    @State private var pendingChatDelete: PendingChatDelete?
+    @State private var toast: String?
 
     init(path: Binding<[ChatRoute]> = .constant([])) {
         _path = path
+    }
+
+    /// The chat a long-press asked to delete. Notes have no second party, so they only
+    /// offer the single "delete for me" verb.
+    private struct PendingChatDelete: Identifiable {
+        let peerID: UUID
+        let username: String
+        let isNotes: Bool
+        var id: UUID { peerID }
     }
 
     /// Skeleton stands in only for the *first* load — a refresh over existing rows keeps the
@@ -85,6 +97,13 @@ struct ChatsView: View {
                         }
                         .buttonStyle(HighlightRowButtonStyle())
                         .entranceRow(index: 0)
+                        .contextMenu {
+                            deleteChatButton(
+                                peerID: MessagingController.notesPeerID,
+                                username: MessagingController.notesDisplayName,
+                                isNotes: true
+                            )
+                        }
 
                         if !filtered.isEmpty || showsSkeleton {
                             listSeparator
@@ -112,6 +131,15 @@ struct ChatsView: View {
                         }
                         .buttonStyle(HighlightRowButtonStyle())
                         .entranceRow(index: index + (showsNotesRow ? 1 : 0))
+                        // Telegram's long-press entry point — the list is a LazyVStack, not a
+                        // List, so `.swipeActions` is not available here.
+                        .contextMenu {
+                            deleteChatButton(
+                                peerID: conversation.peer.id,
+                                username: conversation.peer.username,
+                                isNotes: false
+                            )
+                        }
 
                         if index < filtered.count - 1 {
                             listSeparator
@@ -159,6 +187,25 @@ struct ChatsView: View {
                     }
                 }
             }
+            .confirmationDialog(
+                chatDeleteTitle,
+                isPresented: chatDeleteBinding,
+                titleVisibility: .visible,
+                presenting: pendingChatDelete
+            ) { pending in
+                if !pending.isNotes {
+                    Button("Delete for me and \(pending.username)", role: .destructive) {
+                        performChatDelete(pending, scope: .everyone)
+                    }
+                }
+                Button(pending.isNotes ? "Delete" : "Delete for me", role: .destructive) {
+                    performChatDelete(pending, scope: .me)
+                }
+                Button("Cancel", role: .cancel) { pendingChatDelete = nil }
+            } message: { pending in
+                Text(chatDeleteExplanation(pending))
+            }
+            .toast($toast)
         }
         .refreshable {
             // Explicit pull always fetches, even if a background poll is mid-flight.
@@ -166,6 +213,72 @@ struct ChatsView: View {
         }
         .task {
             await messaging.refreshConversations()
+        }
+    }
+
+    // MARK: - Delete chat
+
+    @ViewBuilder
+    private func deleteChatButton(peerID: UUID, username: String, isNotes: Bool) -> some View {
+        Button(role: .destructive) {
+            pendingChatDelete = PendingChatDelete(
+                peerID: peerID,
+                username: username,
+                isNotes: isNotes
+            )
+        } label: {
+            Label(isNotes ? "Delete Saved Messages" : "Delete Chat", systemImage: "trash")
+        }
+    }
+
+    private var chatDeleteBinding: Binding<Bool> {
+        Binding(
+            get: { pendingChatDelete != nil },
+            set: { if !$0 { pendingChatDelete = nil } }
+        )
+    }
+
+    private var chatDeleteTitle: String {
+        guard let pending = pendingChatDelete else { return "Delete chat?" }
+        return pending.isNotes ? "Delete Saved Messages?" : "Delete chat with \(pending.username)?"
+    }
+
+    /// Spells out the asymmetric outcome up front: deleting for both always disconnects the
+    /// two accounts, but the peer's own messages only disappear if they allowed it.
+    private func chatDeleteExplanation(_ pending: PendingChatDelete) -> String {
+        if pending.isNotes {
+            return "Removes every saved message from this device and your account."
+        }
+        return """
+        Deleting for both unsends your messages in \(pending.username)'s chat and removes them \
+        as a contact — you'd both have to add each other again. Their own messages stay unless \
+        they allow chats to be cleared for them.
+        """
+    }
+
+    private func performChatDelete(_ pending: PendingChatDelete, scope: ConversationDeleteScope) {
+        pendingChatDelete = nil
+        Task {
+            let outcome = await messaging.deleteConversation(
+                peerUserID: pending.peerID,
+                scope: scope
+            )
+            switch outcome {
+            case .clearedForMe:
+                toast = "Chat deleted"
+                Haptics.notification(.success)
+            case .clearedForBoth:
+                toast = "Chat deleted for both"
+                Haptics.notification(.success)
+            case .unsentForPeer:
+                toast = "Deleted · \(pending.username) keeps their own messages"
+                Haptics.notification(.success)
+            case let .failed(message):
+                toast = message
+                Haptics.notification(.error)
+            }
+            try? await Task.sleep(nanoseconds: 2_400_000_000)
+            toast = nil
         }
     }
 

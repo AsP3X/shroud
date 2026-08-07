@@ -51,6 +51,22 @@ struct MessagesService: Sendable {
         )
     }
 
+    /// Deletes a whole chat. `.me` moves this account's clear watermark; `.everyone` also
+    /// unsends our messages for the peer, clears their copy when they allowed it, and drops
+    /// the contact link so a later chat starts fresh.
+    func deleteConversation(
+        peerUserID: UUID,
+        scope: ConversationDeleteScope,
+        token: String
+    ) async throws -> DeleteConversationResponse {
+        try await client.delete(
+            path: "conversations/\(peerUserID.uuidString.lowercased())",
+            query: ["scope": scope.rawValue],
+            as: DeleteConversationResponse.self,
+            bearerToken: token
+        )
+    }
+
     func markDelivered(messageID: UUID, token: String) async throws {
         try await client.postNoContent(
             path: "messages/\(messageID.uuidString.lowercased())/delivered",

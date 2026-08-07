@@ -17,6 +17,7 @@ use crate::auth::session::AuthContext;
 use crate::error::AppError;
 use crate::rate_limit::budgets;
 use crate::routes::contacts::{are_contacts, is_blocked_either_way};
+use crate::routes::conversations::clear_watermark;
 use crate::state::AppState;
 
 const MAX_CIPHERTEXT_BYTES: usize = 64 * 1024;
@@ -76,26 +77,6 @@ pub struct ListMessagesResponse {
     pub messages: Vec<MessageResponse>,
     /// True when another page may exist (caller got a full page).
     pub has_more: bool,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ConversationsResponse {
-    pub conversations: Vec<ConversationItem>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ConversationItem {
-    pub id: Uuid,
-    pub peer: PeerCard,
-    pub created_at: DateTime<Utc>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_message_at: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct PeerCard {
-    pub id: Uuid,
-    pub username: String,
 }
 
 #[derive(Debug, FromRow)]
@@ -400,6 +381,11 @@ pub async fn list_messages(
         }));
     };
 
+    // Human: A cleared chat stays empty for this caller until newer messages arrive; the peer
+    // keeps whatever their own watermark still allows.
+    // Agent: READS conversation_clears via conversations::clear_watermark; NULL = never cleared.
+    let cleared_at = clear_watermark(&state.pool, auth.user_id, conversation_id).await?;
+
     // Ensure requester is a participant (always true if find matched).
     let rows =
         if let (Some(before_at), Some(before_id)) = (query.before_created_at, query.before_id) {
@@ -411,6 +397,7 @@ pub async fn list_messages(
             FROM messages m
             WHERE m.conversation_id = $1
               AND (m.created_at, m.id) < ($2, $3)
+              AND ($6::timestamptz IS NULL OR m.created_at > $6::timestamptz)
               AND NOT EXISTS (
                 SELECT 1 FROM message_hides h
                 WHERE h.message_id = m.id AND h.user_id = $5
@@ -424,6 +411,7 @@ pub async fn list_messages(
             .bind(before_id)
             .bind(limit)
             .bind(auth.user_id)
+            .bind(cleared_at)
             .fetch_all(&state.pool)
             .await
         } else {
@@ -434,6 +422,7 @@ pub async fn list_messages(
                    m.deleted_for_everyone_at, m.created_at
             FROM messages m
             WHERE m.conversation_id = $1
+              AND ($4::timestamptz IS NULL OR m.created_at > $4::timestamptz)
               AND NOT EXISTS (
                 SELECT 1 FROM message_hides h
                 WHERE h.message_id = m.id AND h.user_id = $3
@@ -445,6 +434,7 @@ pub async fn list_messages(
             .bind(conversation_id)
             .bind(limit)
             .bind(auth.user_id)
+            .bind(cleared_at)
             .fetch_all(&state.pool)
             .await
         }
@@ -485,59 +475,6 @@ pub async fn list_messages(
         messages,
         has_more: page_len >= limit,
     }))
-}
-
-/// `GET /conversations`
-pub async fn list_conversations(
-    State(state): State<AppState>,
-    auth: AuthContext,
-) -> Result<Json<ConversationsResponse>, AppError> {
-    #[derive(FromRow)]
-    struct Row {
-        id: Uuid,
-        peer_id: Uuid,
-        peer_username: String,
-        created_at: DateTime<Utc>,
-        last_message_at: Option<DateTime<Utc>>,
-    }
-
-    // Human: Join peer username; use denormalized last_message_at (no correlated subquery).
-    // Agent: SELECT conversations JOIN users; RETURNS ConversationItem list.
-    let rows = sqlx::query_as::<_, Row>(
-        r#"
-        SELECT
-            c.id,
-            CASE WHEN c.user_a_id = $1 THEN c.user_b_id ELSE c.user_a_id END AS peer_id,
-            CASE WHEN c.user_a_id = $1 THEN ub.username ELSE ua.username END AS peer_username,
-            c.created_at,
-            c.last_message_at
-        FROM conversations c
-        INNER JOIN users ua ON ua.id = c.user_a_id
-        INNER JOIN users ub ON ub.id = c.user_b_id
-        WHERE (c.user_a_id = $1 OR c.user_b_id = $1)
-          AND c.user_a_id <> c.user_b_id
-        ORDER BY c.last_message_at DESC NULLS LAST, c.created_at DESC
-        "#,
-    )
-    .bind(auth.user_id)
-    .fetch_all(&state.pool)
-    .await
-    .map_err(|err| AppError::Internal(format!("list conversations failed: {err}")))?;
-
-    let conversations = rows
-        .into_iter()
-        .map(|row| ConversationItem {
-            id: row.id,
-            peer: PeerCard {
-                id: row.peer_id,
-                username: row.peer_username,
-            },
-            created_at: row.created_at,
-            last_message_at: row.last_message_at,
-        })
-        .collect();
-
-    Ok(Json(ConversationsResponse { conversations }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -854,9 +791,7 @@ async fn ensure_conversation(
     user_y: Uuid,
 ) -> Result<Uuid, AppError> {
     // Notes: equal ids (self conversation). Otherwise ordered pair a < b.
-    let (user_a, user_b) = if user_x == user_y {
-        (user_x, user_y)
-    } else if user_x < user_y {
+    let (user_a, user_b) = if user_x <= user_y {
         (user_x, user_y)
     } else {
         (user_y, user_x)
@@ -895,14 +830,12 @@ async fn ensure_conversation(
     Ok(id)
 }
 
-async fn find_conversation(
+pub(crate) async fn find_conversation(
     pool: &sqlx::PgPool,
     user_x: Uuid,
     user_y: Uuid,
 ) -> Result<Option<Uuid>, AppError> {
-    let (user_a, user_b) = if user_x == user_y {
-        (user_x, user_y)
-    } else if user_x < user_y {
+    let (user_a, user_b) = if user_x <= user_y {
         (user_x, user_y)
     } else {
         (user_y, user_x)

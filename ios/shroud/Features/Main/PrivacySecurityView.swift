@@ -10,6 +10,10 @@ struct PrivacySecurityView: View {
 
     @State private var lockOnBackground = SecurityPreferences.lockChatsOnBackground
     @State private var toast: String?
+    /// True while the server round-trip for the chat-delete consent flag is in flight.
+    @State private var isSavingChatDeleteConsent = false
+    /// Unblock calls in flight, so a row can't be tapped twice.
+    @State private var unblockingUserIDs: Set<UUID> = []
 
     var body: some View {
         GroupedScreen {
@@ -39,6 +43,10 @@ struct PrivacySecurityView: View {
                                 SecurityPreferences.lockChatsOnBackground = value
                                 Haptics.impact(.light)
                             }
+                        }
+
+                        settingsCard {
+                            chatDeleteConsentToggle
                         }
 
                         settingsCard {
@@ -96,6 +104,12 @@ struct PrivacySecurityView: View {
                             .buttonStyle(HighlightRowButtonStyle())
                         }
 
+                        if !messaging.blockedUsers.isEmpty {
+                            settingsCard {
+                                blockedContactsSection
+                            }
+                        }
+
                         settingsCard {
                             VStack(alignment: .leading, spacing: 8) {
                                 Label("Encrypted on this device", systemImage: "checkmark.shield.fill")
@@ -119,6 +133,115 @@ struct PrivacySecurityView: View {
             }
         }
         .toast($toast)
+        .task {
+            // The flag lives on the server (only it can enforce a peer's request), so the
+            // switch reflects stored state rather than a local default.
+            await messaging.refreshPrivacySettings()
+            await messaging.refreshBlocks()
+        }
+    }
+
+    /// Blocked users with a way back out. Blocking happens on the contact profile; this is
+    /// the only place it can be undone, so the section exists whenever the list is non-empty.
+    private var blockedContactsSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Blocked")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
+                .padding(.horizontal, 14)
+                .padding(.top, 12)
+                .padding(.bottom, 6)
+
+            ForEach(messaging.blockedUsers) { blocked in
+                HStack(spacing: 12) {
+                    AvatarView(
+                        initials: AvatarView.initials(for: blocked.username),
+                        size: 32,
+                        gradient: AvatarView.gradient(for: blocked.username),
+                        fontSize: 13
+                    )
+                    Text(blocked.username)
+                        .font(.system(size: 16))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Button("Unblock") {
+                        unblock(blocked)
+                    }
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(Theme.accent)
+                    .disabled(unblockingUserIDs.contains(blocked.userId))
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("\(blocked.username), blocked")
+
+                if blocked.id != messaging.blockedUsers.last?.id {
+                    Rectangle()
+                        .fill(Theme.separator)
+                        .frame(height: 1)
+                        .padding(.leading, 58)
+                }
+            }
+            Color.clear.frame(height: 6)
+        }
+    }
+
+    private func unblock(_ blocked: BlockItemDTO) {
+        unblockingUserIDs.insert(blocked.userId)
+        Task {
+            let error = await messaging.unblockUser(blocked.userId)
+            unblockingUserIDs.remove(blocked.userId)
+            if let error {
+                toast = error
+                Haptics.notification(.error)
+            } else {
+                toast = "\(blocked.username) unblocked"
+                Haptics.impact(.light)
+            }
+        }
+    }
+
+    /// Opt-in consent for a contact's "delete chat for both" to also clear this account.
+    ///
+    /// Human: Off by default. With it off you still lose *their* messages when they delete
+    /// for both — those become "Message deleted" — but your own side of the chat survives.
+    /// Agent: READS messaging.allowsPeerChatDelete; CALLS setAllowsPeerChatDelete (HTTP PUT).
+    private var chatDeleteConsentToggle: some View {
+        Toggle(isOn: Binding(
+            get: { messaging.allowsPeerChatDelete },
+            set: { newValue in
+                guard newValue != messaging.allowsPeerChatDelete else { return }
+                isSavingChatDeleteConsent = true
+                Task {
+                    let error = await messaging.setAllowsPeerChatDelete(newValue)
+                    isSavingChatDeleteConsent = false
+                    if let error {
+                        toast = error
+                        Haptics.notification(.error)
+                    } else {
+                        Haptics.impact(.light)
+                    }
+                }
+            }
+        )) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Let contacts clear chats for me")
+                    .font(.system(size: 16))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(
+                    "When a contact deletes a chat for both of you, your copy is deleted too. Leave this off to keep your own messages — theirs are replaced with “Message deleted” either way, and deleting for both always removes the contact."
+                )
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .tint(Theme.accent)
+        .disabled(isSavingChatDeleteConsent || !messaging.hasLoadedPrivacySettings)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
     }
 
     private var navRow: some View {
