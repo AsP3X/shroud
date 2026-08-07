@@ -76,8 +76,13 @@ struct RootView: View {
                 router.path = []
                 messagingController.start()
                 PushNotificationService.shared.start()
+            } else if sessionController.isSignedIn {
+                // Keep the 90-day local cache + Notes when only messaging is locked.
+                messagingController.stop(wipeDisk: false)
+                PushNotificationService.shared.stop()
             } else {
-                messagingController.stop()
+                messagingController.stop(wipeDisk: true)
+                PushNotificationService.shared.stop()
             }
         }
         .onChange(of: scenePhase) { _, phase in

@@ -56,17 +56,23 @@ struct ConversationView: View {
         messages.last?.id
     }
 
+    private var isNotes: Bool {
+        messaging.isNotesChat(peerUserID)
+    }
+
     private var isPeerTyping: Bool {
-        messaging.typingPeerIDs.contains(peerUserID)
+        !isNotes && messaging.typingPeerIDs.contains(peerUserID)
     }
 
     private var isOnline: Bool {
-        messaging.presenceByUser[peerUserID]?.online == true
+        !isNotes && messaging.presenceByUser[peerUserID]?.online == true
     }
 
     private var presenceLabel: String {
+        if isNotes { return "Only you · stored on this device" }
         if isPeerTyping { return "typing…" }
         if isOnline { return "online" }
+        if messaging.isOffline { return "offline · local copy" }
         if let presence = messaging.presenceByUser[peerUserID] {
             if let last = presence.lastSeenAt {
                 return "last seen \(messaging.timeLabel(for: last))"
@@ -88,16 +94,25 @@ struct ConversationView: View {
                 topChrome
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                ChatComposerView(
-                    draft: $draft,
-                    recorder: voiceRecorder,
-                    onAttach: { showAttach = true },
-                    onSend: sendDraft,
-                    onRecordStart: startRecording,
-                    onRecordCancel: cancelRecording,
-                    onRecordSend: sendRecording,
-                    onDraftChange: { scheduleTyping(!$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
-                )
+                VStack(spacing: 0) {
+                    if isNotes {
+                        notesToolbar
+                    }
+                    ChatComposerView(
+                        draft: $draft,
+                        recorder: voiceRecorder,
+                        onAttach: { showAttach = true },
+                        onSend: sendDraft,
+                        onRecordStart: startRecording,
+                        onRecordCancel: cancelRecording,
+                        onRecordSend: sendRecording,
+                        onDraftChange: { text in
+                            if !isNotes {
+                                scheduleTyping(!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            }
+                        }
+                    )
+                }
             }
             .navigationBarBackButtonHidden(true)
             .toolbar(.hidden, for: .navigationBar)
@@ -120,7 +135,9 @@ struct ConversationView: View {
                 voiceRecorder.cancel()
                 VoicePlaybackCoordinator.shared.stop()
                 menuAnimationTask?.cancel()
-                messaging.setTyping(peerUserID: peerUserID, isTyping: false)
+                if !isNotes {
+                    messaging.setTyping(peerUserID: peerUserID, isTyping: false)
+                }
                 if messaging.activePeerID == peerUserID {
                     messaging.setActivePeer(nil)
                 }
@@ -297,90 +314,112 @@ struct ConversationView: View {
                 .pressable(scale: 0.82)
                 .accessibilityLabel("Back")
 
-                Button {
-                    profileDestination = ProfileDestination(
-                        peerUserID: peerUserID,
-                        peerUsername: peerUsername
-                    )
-                } label: {
-                    HStack(spacing: 10) {
-                        AvatarView(
-                            initials: AvatarView.initials(for: peerUsername),
-                            size: 40,
-                            gradient: AvatarView.gradient(for: peerUsername),
-                            fontSize: 14
-                        )
-
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(peerUsername)
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundStyle(Theme.textPrimary)
-                                .lineLimit(1)
-                            HStack(spacing: 4) {
-                                if isOnline || isPeerTyping {
-                                    PresenceDot(isTyping: isPeerTyping)
-                                        .transition(Motion.iconSwap)
-                                }
+                Group {
+                    if isNotes {
+                        HStack(spacing: 10) {
+                            notesHeaderAvatar
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(peerUsername)
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundStyle(Theme.textPrimary)
+                                    .lineLimit(1)
                                 Text(presenceLabel)
                                     .font(.system(size: 12))
-                                    .foregroundStyle(presenceAccent ? Theme.accent : Theme.textSecondary)
+                                    .foregroundStyle(Theme.textSecondary)
                                     .lineLimit(1)
-                                    // "online" → "typing…" swaps in place.
-                                    .contentTransition(.opacity)
                             }
-                            // Presence is the header's only live state — animate every part of it.
-                            .animation(Motion.snappy, value: presenceLabel)
-                            .animation(Motion.snappy, value: isOnline || isPeerTyping)
+                            Spacer(minLength: 0)
                         }
-                    }
-                    .contentShape(Rectangle())
-                }
-                .pressable(scale: 0.98, dimming: 0.12)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Button {
+                            profileDestination = ProfileDestination(
+                                peerUserID: peerUserID,
+                                peerUsername: peerUsername
+                            )
+                        } label: {
+                            HStack(spacing: 10) {
+                                AvatarView(
+                                    initials: AvatarView.initials(for: peerUsername),
+                                    size: 40,
+                                    gradient: AvatarView.gradient(for: peerUsername),
+                                    fontSize: 14
+                                )
 
-                Button {
-                    Task {
-                        await calls.startCall(
-                            peerUserID: peerUserID,
-                            peerUsername: peerUsername,
-                            modality: .video
-                        )
-                        if let err = calls.lastError {
-                            toast = err
-                            scheduleToastClear()
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(peerUsername)
+                                        .font(.system(size: 16, weight: .semibold))
+                                        .foregroundStyle(Theme.textPrimary)
+                                        .lineLimit(1)
+                                    HStack(spacing: 4) {
+                                        if isOnline || isPeerTyping {
+                                            PresenceDot(isTyping: isPeerTyping)
+                                                .transition(Motion.iconSwap)
+                                        }
+                                        Text(presenceLabel)
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(presenceAccent ? Theme.accent : Theme.textSecondary)
+                                            .lineLimit(1)
+                                            // "online" → "typing…" swaps in place.
+                                            .contentTransition(.opacity)
+                                    }
+                                    // Presence is the header's only live state — animate every part of it.
+                                    .animation(Motion.snappy, value: presenceLabel)
+                                    .animation(Motion.snappy, value: isOnline || isPeerTyping)
+                                }
+                            }
+                            .contentShape(Rectangle())
                         }
+                        .pressable(scale: 0.98, dimming: 0.12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                } label: {
-                    Image(systemName: "video.fill")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(Theme.accent)
-                        .frame(width: 34, height: 34)
-                        .contentShape(Rectangle())
                 }
-                .pressable(scale: 0.82, haptic: .medium)
-                .accessibilityLabel("Video call")
 
-                Button {
-                    Task {
-                        await calls.startCall(
-                            peerUserID: peerUserID,
-                            peerUsername: peerUsername,
-                            modality: .voice
-                        )
-                        if let err = calls.lastError {
-                            toast = err
-                            scheduleToastClear()
+                if !isNotes {
+                    Button {
+                        Task {
+                            await calls.startCall(
+                                peerUserID: peerUserID,
+                                peerUsername: peerUsername,
+                                modality: .video
+                            )
+                            if let err = calls.lastError {
+                                toast = err
+                                scheduleToastClear()
+                            }
                         }
+                    } label: {
+                        Image(systemName: "video.fill")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(Theme.accent)
+                            .frame(width: 34, height: 34)
+                            .contentShape(Rectangle())
                     }
-                } label: {
-                    Image(systemName: "phone.fill")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(Theme.accent)
-                        .frame(width: 34, height: 34)
-                        .contentShape(Rectangle())
+                    .pressable(scale: 0.82, haptic: .medium)
+                    .accessibilityLabel("Video call")
+
+                    Button {
+                        Task {
+                            await calls.startCall(
+                                peerUserID: peerUserID,
+                                peerUsername: peerUsername,
+                                modality: .voice
+                            )
+                            if let err = calls.lastError {
+                                toast = err
+                                scheduleToastClear()
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "phone.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Theme.accent)
+                            .frame(width: 34, height: 34)
+                            .contentShape(Rectangle())
+                    }
+                    .pressable(scale: 0.82, haptic: .medium)
+                    .accessibilityLabel("Call")
                 }
-                .pressable(scale: 0.82, haptic: .medium)
-                .accessibilityLabel("Call")
             }
             .padding(.horizontal, 16)
             .padding(.top, 6)
@@ -729,10 +768,74 @@ struct ConversationView: View {
                 time: messaging.clockTimeLabel(for: message.createdAt),
                 isMine: message.isMine,
                 isDeleted: message.deleted,
-                receipt: message.receipt,
+                receipt: isNotes ? .sent : message.receipt,
                 frameReportID: message.id
             )
+        case .todo:
+            TodoMessageBubble(
+                text: message.text,
+                time: messaging.clockTimeLabel(for: message.createdAt),
+                isDone: message.todoDone == true,
+                onToggle: {
+                    messaging.toggleTodo(messageID: message.id, peerUserID: peerUserID)
+                    Haptics.impact(.light)
+                }
+            )
         }
+    }
+
+    private var notesHeaderAvatar: some View {
+        ZStack {
+            Circle()
+                .fill(
+                    LinearGradient(
+                        colors: [Theme.accent, Theme.accentSoft],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .frame(width: 40, height: 40)
+            Image(systemName: "bookmark.fill")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Color.white)
+        }
+        .accessibilityHidden(true)
+    }
+
+    private var notesToolbar: some View {
+        HStack(spacing: 10) {
+            Button {
+                let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else {
+                    toast = "Type a todo, then tap Todo."
+                    scheduleToastClear()
+                    return
+                }
+                messaging.sendTodo(text, to: peerUserID)
+                draft = ""
+                Haptics.notification(.success)
+                pinToBottomToken &+= 1
+            } label: {
+                Label("Todo", systemImage: "checklist")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Theme.backgroundGrouped)
+                    .clipShape(Capsule())
+            }
+            .pressable(scale: 0.94)
+            .accessibilityLabel("Add as todo")
+
+            Text("Saved only on this device")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.textSecondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 8)
+        .padding(.bottom, 2)
+        .background(Theme.background)
     }
 
     private func handleAttach(_ option: ChatAttachOption) {

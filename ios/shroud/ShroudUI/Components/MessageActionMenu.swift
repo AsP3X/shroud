@@ -302,6 +302,13 @@ struct MessageMenuHeroContent: View {
                 receipt: message.receipt,
                 isRowEmbedded: false
             )
+        case .todo:
+            TodoMessageBubble(
+                text: message.text,
+                time: timeLabel,
+                isDone: message.todoDone == true,
+                onToggle: {}
+            )
         }
     }
 }

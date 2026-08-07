@@ -1,6 +1,6 @@
 import Foundation
 
-struct UserCardDTO: Decodable, Equatable, Sendable, Identifiable {
+struct UserCardDTO: Codable, Equatable, Sendable, Identifiable {
     let id: UUID
     let username: String
     /// Present on `/users/*` lookups; omitted on contact-request peer cards.
@@ -13,7 +13,7 @@ struct UserCardDTO: Decodable, Equatable, Sendable, Identifiable {
     }
 }
 
-struct ContactRequestDTO: Decodable, Equatable, Sendable, Identifiable {
+struct ContactRequestDTO: Codable, Equatable, Sendable, Identifiable {
     let id: UUID
     let fromUserId: UUID
     let toUserId: UUID
@@ -37,7 +37,7 @@ struct ContactRequestsResponse: Decodable, Equatable, Sendable {
     let requests: [ContactRequestDTO]
 }
 
-struct ContactItemDTO: Decodable, Equatable, Sendable, Identifiable {
+struct ContactItemDTO: Codable, Equatable, Sendable, Identifiable {
     var id: UUID { userId }
     let userId: UUID
     let username: String

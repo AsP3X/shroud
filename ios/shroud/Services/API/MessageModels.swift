@@ -92,12 +92,12 @@ struct ListMessagesResponse: Decodable, Equatable, Sendable {
     }
 }
 
-struct ConversationPeerDTO: Decodable, Equatable, Sendable, Identifiable {
+struct ConversationPeerDTO: Codable, Equatable, Sendable, Identifiable {
     let id: UUID
     let username: String
 }
 
-struct ConversationItemDTO: Decodable, Equatable, Sendable, Identifiable {
+struct ConversationItemDTO: Codable, Equatable, Sendable, Identifiable {
     let id: UUID
     let peer: ConversationPeerDTO
     let createdAt: Date

@@ -27,7 +27,10 @@ final class CryptoController {
             material = nil
             return false
         }
-        material = IdentityKeyMaterial(stored: stored)
+        let restored = IdentityKeyMaterial(stored: stored)
+        material = restored
+        // Re-write Keychain items under current accessibility (e.g. WhenUnlockedThisDeviceOnly).
+        try? store.save(restored)
         return true
     }
 

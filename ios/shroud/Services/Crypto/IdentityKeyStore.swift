@@ -147,12 +147,15 @@ nonisolated struct IdentityKeyStore: Sendable {
 
     private func writeData(key: String, value: Data) throws {
         delete(key: key)
+        // ThisDeviceOnly: never leaves the device via backup restore.
+        // WhenUnlocked: unavailable while the device is locked (seized locked device
+        // cannot use Keychain-held history/identity keys to open sealed chat files).
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
             kSecValueData as String: value,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
         ]
         let status = SecItemAdd(query as CFDictionary, nil)
         guard status == errSecSuccess else {

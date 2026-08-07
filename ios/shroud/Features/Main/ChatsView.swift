@@ -29,6 +29,15 @@ struct ChatsView: View {
         }
     }
 
+    private var showsNotesRow: Bool {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return true }
+        let name = MessagingController.notesDisplayName
+        let preview = messaging.preview(forPeer: MessagingController.notesPeerID)
+        return name.localizedCaseInsensitiveContains(query)
+            || preview.localizedCaseInsensitiveContains(query)
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             MainScrollScreen(title: "Chats", collapsesTitle: true) {
@@ -46,11 +55,42 @@ struct ChatsView: View {
                 .pressable(scale: 0.88)
                 .accessibilityLabel("New chat")
             } accessory: {
-                SearchField(text: $searchText)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 10)
+                VStack(spacing: 8) {
+                    if messaging.isOffline {
+                        offlineBanner
+                            .padding(.horizontal, 16)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                    SearchField(text: $searchText)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 10)
+                }
+                .animation(Motion.fade, value: messaging.isOffline)
             } content: {
                 LazyVStack(spacing: 0) {
+                    if showsNotesRow {
+                        NavigationLink(
+                            value: ChatRoute.conversation(
+                                peerID: MessagingController.notesPeerID,
+                                username: MessagingController.notesDisplayName
+                            )
+                        ) {
+                            ChatRowView(
+                                title: MessagingController.notesDisplayName,
+                                subtitle: messaging.preview(forPeer: MessagingController.notesPeerID),
+                                time: messaging.timeLabel(for: messaging.notesLastActivity()),
+                                avatarGradient: notesAvatarGradient,
+                                avatarSystemImage: "bookmark.fill"
+                            )
+                        }
+                        .buttonStyle(HighlightRowButtonStyle())
+                        .entranceRow(index: 0)
+
+                        if !filtered.isEmpty || showsSkeleton {
+                            listSeparator
+                        }
+                    }
+
                     ForEach(Array(filtered.enumerated()), id: \.element.id) { index, conversation in
                         NavigationLink(
                             value: ChatRoute.conversation(
@@ -71,7 +111,7 @@ struct ChatsView: View {
                             )
                         }
                         .buttonStyle(HighlightRowButtonStyle())
-                        .entranceRow(index: index)
+                        .entranceRow(index: index + (showsNotesRow ? 1 : 0))
 
                         if index < filtered.count - 1 {
                             listSeparator
@@ -80,15 +120,18 @@ struct ChatsView: View {
 
                     if showsSkeleton {
                         SkeletonChatList()
-                    } else if let error = messaging.chatsError, messaging.conversations.isEmpty {
+                    } else if let error = messaging.chatsError, messaging.conversations.isEmpty, !showsNotesRow {
                         // Nothing loaded *and* the load failed — don't claim the account is empty.
                         ListLoadErrorView(
                             title: "Can't load chats",
                             message: error,
                             retry: { await messaging.refreshConversations(force: true) }
                         )
-                    } else if filtered.isEmpty {
+                    } else if filtered.isEmpty, !showsNotesRow {
                         emptyState
+                    } else if filtered.isEmpty, showsNotesRow, messaging.conversations.isEmpty, !showsSkeleton {
+                        // Only Notes is available — still fine when the account has no chats yet.
+                        Color.clear.frame(height: 8)
                     }
 
                     Color.clear.frame(height: 16)
@@ -131,6 +174,31 @@ struct ChatsView: View {
             return "typing…"
         }
         return messaging.preview(for: conversation)
+    }
+
+    private var notesAvatarGradient: LinearGradient {
+        LinearGradient(
+            colors: [Theme.accent, Theme.accentSoft],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    private var offlineBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "wifi.slash")
+                .font(.system(size: 13, weight: .semibold))
+            Text("Offline — showing last \(LocalMessageStore.retentionDays) days on this device")
+                .font(.system(size: 13, weight: .medium))
+                .lineLimit(2)
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(Theme.textPrimary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Theme.backgroundGrouped)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .accessibilityLabel("Offline. Showing cached messages.")
     }
 
     private var listSeparator: some View {

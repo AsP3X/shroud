@@ -47,14 +47,16 @@ High-level structure for the E2E encrypted messenger.
 
 ## Security invariants
 
-1. Message plaintext exists **only on devices**.
+1. Message plaintext exists **only on devices**, and **only in memory** while messaging is unlocked.
 2. Private keys and the 12-word encryption phrase **never leave the device**.
 3. Server stores ciphertext envelopes, encrypted media references, and minimal delivery metadata.
-4. Voice transcription is **on-device** for v1 (no server transcript APIs yet).
-5. Contact requests and blocks are enforced on the server before full messaging.
-6. Push payloads are **opaque references only** (no content or keys).
-7. Sessions are **device-bound opaque tokens** with no time-based logout (revoke on logout / device remove / password change of other devices).
-8. Presence is visible only to **accepted contacts**.
+4. **Local at-rest:** chats, notes, media, and decrypt caches on disk are AES-256-GCM sealed with the BIP39-derived `historyKey` (HKDF `shroud-history-aes`). Files use completeUntilFirstUserAuthentication protection and are excluded from backups. Without the history key (Keychain + unlock), sealed blobs are unreadable.
+5. Voice transcription is **on-device** for v1 (no server transcript APIs yet).
+6. Contact requests and blocks are enforced on the server before full messaging.
+7. Push payloads are **opaque references only** (no content or keys).
+8. Sessions are **device-bound opaque tokens** with no time-based logout (revoke on logout / device remove / password change of other devices).
+9. Presence is visible only to **accepted contacts**.
+10. Identity Keychain items use `WhenUnlockedThisDeviceOnly` (no backup restore; unavailable while device locked).
 
 ## Local development
 
@@ -98,6 +100,9 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 | Identity keys + `PUT /keys/bundle` | **done** (CryptoKit X25519/Ed25519 + AES-GCM seal) |
 | Session ≠ messaging unlock | **done** (phrase or Keychain identity restore) |
 | Live contacts + chats | **done** (requests/list, conversations, sealed send/recv, WS) |
+| Offline local cache | **done** — 90 days of peer chats + media on device; hydrate offline, merge online |
+| Local at-rest encryption | **done** — AES-256-GCM under phrase-derived `historyKey`; no plaintext on disk |
+| Notes to me | **done** — local-only self chat (text / photo / voice / todos); no server replies |
 | Photo media messages | **done** — E2E AES-GCM blobs + caption compose |
 | Voice messages | **done** — record/upload/play; on-device Speech transcript (Tier 1) |
 | Calls UI / WebRTC | **done** — signaling + WKWebView WebRTC + CallKit; voice & video |

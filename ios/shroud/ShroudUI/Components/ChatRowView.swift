@@ -8,6 +8,8 @@ struct ChatRowView: View {
     var unreadCount: Int? = nil
     var subtitleAccent: Bool = false
     var avatarGradient: LinearGradient? = nil
+    /// When set, shows a symbol instead of initials (e.g. Notes bookmark).
+    var avatarSystemImage: String? = nil
 
     private var initials: String { AvatarView.initials(for: title) }
     private var gradient: LinearGradient {
@@ -16,7 +18,19 @@ struct ChatRowView: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            AvatarView(initials: initials, gradient: gradient)
+            if let avatarSystemImage {
+                ZStack {
+                    Circle()
+                        .fill(gradient)
+                        .frame(width: 52, height: 52)
+                    Image(systemName: avatarSystemImage)
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(Color.white)
+                }
+                .accessibilityHidden(true)
+            } else {
+                AvatarView(initials: initials, gradient: gradient)
+            }
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
