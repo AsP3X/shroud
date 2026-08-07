@@ -132,6 +132,16 @@ struct ContactsView: View {
 
                     if showsSkeleton {
                         SkeletonChatList(count: 8)
+                    } else if let error = messaging.contactsError,
+                              messaging.contacts.isEmpty,
+                              messaging.incomingRequests.isEmpty
+                    {
+                        // Nothing loaded *and* the load failed — don't claim the roster is empty.
+                        ListLoadErrorView(
+                            title: "Can't load contacts",
+                            message: error,
+                            retry: { await messaging.refreshContacts(force: true) }
+                        )
                     } else if sections.isEmpty && messaging.incomingRequests.isEmpty {
                         emptyState
                     }
@@ -143,6 +153,7 @@ struct ContactsView: View {
                 .animation(Motion.standard, value: sortAscending)
                 .animation(Motion.standard, value: messaging.incomingRequests.map(\.id))
                 .animation(Motion.fade, value: showsSkeleton)
+                .animation(Motion.fade, value: messaging.contactsError)
             }
             .listEntranceHost(resetOn: messaging.contacts.isEmpty)
             .background(Theme.background)

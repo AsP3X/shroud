@@ -16,6 +16,11 @@ final class MessagingController {
     /// and so a failing server shows the empty state instead of shimmering forever.
     private(set) var hasLoadedContacts = false
     private(set) var hasLoadedChats = false
+    /// Why the last list load failed, per list — nil once one succeeds. Separate from
+    /// `lastError` (which any action can overwrite) because the lists render these directly:
+    /// an unreachable server has to say so instead of claiming the account is empty.
+    private(set) var contactsError: String?
+    private(set) var chatsError: String?
     private(set) var lastError: String?
 
     /// Decrypted messages by peer user id (newest last).
@@ -166,6 +171,8 @@ final class MessagingController {
         // Next sign-in is a genuine first load again, so the skeleton is allowed back.
         hasLoadedContacts = false
         hasLoadedChats = false
+        contactsError = nil
+        chatsError = nil
         lastPresenceSweep = nil
     }
 
@@ -263,7 +270,13 @@ final class MessagingController {
     /// identical value still invalidates every view that reads it, and a poll that returns
     /// unchanged data would otherwise redraw the list a few times a second.
     private func performContactsRefresh() async {
-        guard let token = sessionController?.bearerToken else { return }
+        guard let token = sessionController?.bearerToken else {
+            // Nothing to wait for without a token, so the first load is settled. Returning
+            // with the flag still false left the skeleton shimmering with no request in
+            // flight to ever clear it.
+            hasLoadedContacts = true
+            return
+        }
         // Loading chrome belongs to the first load only; polls refresh in place.
         let showsLoading = !hasLoadedContacts
         if showsLoading { isLoadingContacts = true }
@@ -282,6 +295,7 @@ final class MessagingController {
             let rosterChanged = contacts.map(\.userId) != sorted.map(\.userId)
             if contacts != sorted { contacts = sorted }
             if incomingRequests != requests { incomingRequests = requests }
+            if contactsError != nil { contactsError = nil }
             if lastError != nil { lastError = nil }
             // Rows are publishable now — don't hold the skeleton up for the presence fan-out.
             if !hasLoadedContacts { hasLoadedContacts = true }
@@ -289,6 +303,7 @@ final class MessagingController {
             await sweepPresenceIfNeeded(token: token, force: rosterChanged)
         } catch {
             let message = SessionController.userMessage(for: error)
+            if contactsError != message { contactsError = message }
             if lastError != message { lastError = message }
         }
     }
@@ -409,7 +424,11 @@ final class MessagingController {
     }
 
     private func performConversationsRefresh() async {
-        guard let token = sessionController?.bearerToken else { return }
+        guard let token = sessionController?.bearerToken else {
+            // See performContactsRefresh: settle the flag so the skeleton can't outlive the load.
+            hasLoadedChats = true
+            return
+        }
         let showsLoading = !hasLoadedChats
         if showsLoading { isLoadingChats = true }
         defer {
@@ -420,9 +439,11 @@ final class MessagingController {
             let list = try await messagesService.listConversations(token: token)
             // Same-value writes still invalidate observers — only publish real changes.
             if conversations != list { conversations = list }
+            if chatsError != nil { chatsError = nil }
             if lastError != nil { lastError = nil }
         } catch {
             let message = SessionController.userMessage(for: error)
+            if chatsError != message { chatsError = message }
             if lastError != message { lastError = message }
         }
     }

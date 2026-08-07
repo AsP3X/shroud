@@ -21,12 +21,20 @@ nonisolated final class APIClient: Sendable {
         return APIClient(baseURL: url, session: Self.makeSession())
     }
 
-    /// Longer timeouts for media uploads (encrypted HD JPEGs can be multi‑MB).
+    /// Fails fast on an unreachable server, but stays patient once bytes are moving.
+    ///
+    /// `timeoutIntervalForRequest` is an *idle* timer (it resets on every chunk), so 20s is
+    /// generous for a multi-MB encrypted upload while still surfacing a dead server quickly;
+    /// `timeoutIntervalForResource` is what actually bounds a long upload.
+    ///
+    /// `waitsForConnectivity` stays off on purpose: it suppresses "cannot connect" and parks
+    /// the request for up to `timeoutIntervalForResource`, which read as an app that loads
+    /// forever instead of one that says the server is down.
     private static func makeSession() -> URLSession {
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 120
+        config.timeoutIntervalForRequest = 20
         config.timeoutIntervalForResource = 300
-        config.waitsForConnectivity = true
+        config.waitsForConnectivity = false
         return URLSession(configuration: config)
     }
 

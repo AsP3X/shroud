@@ -80,6 +80,13 @@ struct ChatsView: View {
 
                     if showsSkeleton {
                         SkeletonChatList()
+                    } else if let error = messaging.chatsError, messaging.conversations.isEmpty {
+                        // Nothing loaded *and* the load failed — don't claim the account is empty.
+                        ListLoadErrorView(
+                            title: "Can't load chats",
+                            message: error,
+                            retry: { await messaging.refreshConversations(force: true) }
+                        )
                     } else if filtered.isEmpty {
                         emptyState
                     }
@@ -89,6 +96,7 @@ struct ChatsView: View {
                 // Rows reorder on new messages (newest chat jumps to the top) — animate the move.
                 .animation(Motion.standard, value: filtered.map(\.id))
                 .animation(Motion.fade, value: showsSkeleton)
+                .animation(Motion.fade, value: messaging.chatsError)
             }
             // Re-arms the staggered entrance the moment the first page of chats lands.
             .listEntranceHost(resetOn: messaging.conversations.isEmpty)
