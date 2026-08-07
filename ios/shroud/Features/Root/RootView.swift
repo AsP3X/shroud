@@ -66,6 +66,12 @@ struct RootView: View {
                 PushNotificationService.shared.start()
             }
         }
+        // While signed in but messaging is locked, messaging polls are stopped — so re-probe
+        // `/auth/me` here. Repeated 401s still force-logout + full wipe; offline never counts.
+        .task(id: lockScreenSessionProbeActive) {
+            guard lockScreenSessionProbeActive else { return }
+            await runLockScreenSessionValidationLoop()
+        }
         .onChange(of: sessionController.isSignedIn) { _, signedIn in
             if !signedIn {
                 // Repeated HTTP 401s → full wipe (keys included). User Log Out keeps identity
@@ -115,6 +121,8 @@ struct RootView: View {
                 // (auto-prompt raced with Welcome and left the system sheet stuck).
                 if !cryptoController.isUnlocked {
                     router.hasUnlockedMessaging = false
+                    // Immediate probe when returning to the lock screen (don't wait for loop sleep).
+                    Task { await sessionController.validateSessionIfNeeded() }
                 } else if router.isUnlocked {
                     messagingController.handleAppBecameActive()
                 }
@@ -125,6 +133,16 @@ struct RootView: View {
             }
         }
     }
+
+    /// True when a server session exists but the main shell is not shown (lock / Welcome).
+    /// Drives the lock-screen auth probe task — messaging is stopped so it would not see 401s.
+    private var lockScreenSessionProbeActive: Bool {
+        sessionController.isSignedIn && !router.isUnlocked
+    }
+
+    /// Interval between `/auth/me` probes on the lock screen.
+    /// Short enough that three consecutive 401s force-logout within ~12s; long enough offline.
+    private static let lockScreenSessionProbeInterval: Duration = .seconds(4)
 
     /// Pre-auth flow only — path elements are always `AppRoute`.
     private var onboardingStack: some View {
@@ -140,6 +158,23 @@ struct RootView: View {
                         LogInFlowView(router: router)
                     }
                 }
+        }
+    }
+
+    /// Keeps validating the session while the user sits on the locked Welcome UI.
+    ///
+    /// Each probe goes through `APIClient` → `SessionAuthBridge`, so real 401s accumulate toward
+    /// force-logout; transport/offline errors never do.
+    private func runLockScreenSessionValidationLoop() async {
+        while !Task.isCancelled {
+            guard sessionController.isSignedIn, !router.isUnlocked else { return }
+            await sessionController.validateSessionIfNeeded()
+            guard sessionController.isSignedIn else { return }
+            do {
+                try await Task.sleep(for: Self.lockScreenSessionProbeInterval)
+            } catch {
+                return
+            }
         }
     }
 }
