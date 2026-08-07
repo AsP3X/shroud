@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Receipt state for outbound bubbles (Telegram-style ticks).
 enum MessageReceiptStatus: Equatable, Sendable, Comparable {
@@ -59,12 +60,15 @@ struct MessageReceiptIcon: View {
                 .controlSize(.mini)
                 .tint(metaColor)
                 .scaleEffect(0.65)
-                .frame(width: 12, height: 11)
+                .frame(width: MessageBubbleMetrics.tickWidth, height: 11)
         case .sent:
-            // Single thin check — Telegram “sent to server”
+            // Single thin check — Telegram “sent to server”.
+            // Padded to the double-check width so a sent → delivered hop swaps the glyph
+            // without changing the meta width (which would re-wrap the bubble's last line).
             Image(systemName: "checkmark")
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(metaColor)
+                .frame(width: MessageBubbleMetrics.tickWidth, alignment: .leading)
         case .delivered:
             telegramDoubleCheck(color: metaColor)
         case .read:
@@ -82,7 +86,7 @@ struct MessageReceiptIcon: View {
                 .offset(x: 4)
         }
         .foregroundStyle(color)
-        .frame(width: 14, height: 10, alignment: .leading)
+        .frame(width: MessageBubbleMetrics.tickWidth, height: 10, alignment: .leading)
     }
 }
 
@@ -96,9 +100,123 @@ struct MessageBubbleFrameKey: PreferenceKey {
     }
 }
 
+/// Width of one chat row (the thread's width minus its horizontal insets).
+///
+/// Human: Bubbles used to cap at a hard-coded 280pt, so on anything wider than an iPhone 13
+/// a long message wrapped into a narrow ragged column with a third of the screen left empty.
+/// `ConversationView` measures the thread once and publishes it here instead.
+private struct ChatRowWidthKey: EnvironmentKey {
+    static let defaultValue: CGFloat = MessageBubbleMetrics.fallbackRowWidth
+}
+
+extension EnvironmentValues {
+    /// Set by `ConversationView`; read by bubbles to size their max width.
+    var chatRowWidth: CGFloat {
+        get { self[ChatRowWidthKey.self] }
+        set { self[ChatRowWidthKey.self] = newValue }
+    }
+}
+
+/// Shared geometry for the text bubble.
+///
+/// Human: The time+ticks overlay and the invisible run that reserves room for it on the last
+/// line are two views that must agree on a width to the point. They only stay in sync because
+/// both measure from the constants here.
+enum MessageBubbleMetrics {
+    /// Width of the tick block — every receipt glyph is padded to this so a receipt
+    /// upgrade never re-flows the text.
+    static let tickWidth: CGFloat = 14
+    /// Gap between the time and the ticks inside `metaRow`.
+    static let metaSpacing: CGFloat = 3
+    static let metaFontSize: CGFloat = 11
+    static let bodyFontSize: CGFloat = 16
+    /// Empty strip left on the opposite side of the row so direction reads at a glance.
+    static let oppositeGutter: CGFloat = 56
+    /// Never squeeze narrower than this, even on a very small thread width.
+    static let minBubbleWidth: CGFloat = 240
+    /// Conservative stand-in (~iPhone SE) until the host has measured its thread.
+    static let fallbackRowWidth: CGFloat = 288
+    static let textLeadingPad: CGFloat = 11
+    static let textTrailingPad: CGFloat = 11
+    /// Meta sits a touch closer to the edge than the body text (Telegram does the same).
+    static let metaTrailingPad: CGFloat = 10
+    /// Clear space between the end of the last line and the time.
+    static let metaGap: CGFloat = 8
+
+    private static let metaUIFont = UIFont.monospacedDigitSystemFont(
+        ofSize: metaFontSize,
+        weight: .regular
+    )
+    private static let digitWidth = ("0" as NSString)
+        .size(withAttributes: [.font: metaUIFont]).width
+
+    /// Rendered width of `metaRow`, measured in the font it actually draws with.
+    static func metaWidth(time: String, showsReceipt: Bool) -> CGFloat {
+        let timeWidth = (time as NSString).size(withAttributes: [.font: metaUIFont]).width
+        return timeWidth.rounded(.up) + (showsReceipt ? metaSpacing + tickWidth : 0)
+    }
+
+    /// Filler appended to the body so the last line keeps clear of the meta overlay.
+    ///
+    /// Human: It has to be built from *glyphs*, not spaces — the text engine drops trailing
+    /// whitespace when it breaks a line, which silently collapses a space-based reservation
+    /// and drops the timestamp on top of the words. Clear-coloured zeroes in the meta's own
+    /// monospaced-digit font give an exact, un-trimmable width.
+    static func metaReservation(time: String, showsReceipt: Bool) -> String {
+        let needed = metaWidth(time: time, showsReceipt: showsReceipt)
+            + (textTrailingPad - metaTrailingPad)
+            + metaGap
+        let count = max(1, Int((needed / max(digitWidth, 1)).rounded(.up)))
+        // Leading plain space is a legal break point, so a reservation that no longer fits
+        // moves to its own line instead of dragging the last word down with it.
+        return " " + String(repeating: "0", count: count)
+    }
+
+    /// Display normalisation for pasted content.
+    ///
+    /// Human: People paste assistant answers and flattened markdown tables in here. Raw tabs
+    /// jump to the text engine's default tab stops, which in a bubble scatters cells across
+    /// lines and leaves craters after list bullets. Collapsing horizontal whitespace turns
+    /// that back into ordinary prose. Presentation only — `message.text` is what gets copied,
+    /// forwarded and re-encrypted.
+    static func normalizedForDisplay(_ raw: String) -> String {
+        var out = ""
+        out.reserveCapacity(raw.count)
+        var pendingNewlines = 0
+        var pendingSpace = false
+        var wroteAny = false
+
+        for character in raw {
+            if character == "\r" { continue }
+            if character.isNewline {
+                pendingNewlines += 1
+                pendingSpace = false
+                continue
+            }
+            if character == "\t" || character == " " {
+                pendingSpace = true
+                continue
+            }
+            if wroteAny {
+                if pendingNewlines > 0 {
+                    // Keep one blank line as a paragraph break; drop the rest.
+                    out.append(String(repeating: "\n", count: min(pendingNewlines, 2)))
+                } else if pendingSpace {
+                    out.append(" ")
+                }
+            }
+            pendingNewlines = 0
+            pendingSpace = false
+            out.append(character)
+            wroteAny = true
+        }
+        return out
+    }
+}
+
 /// Message bubble styled close to Telegram iOS:
 /// - Content-hugging width for short text
-/// - Wraps long text at a max width
+/// - Wraps long text at a max width that follows the thread's own width
 /// - Time (+ ticks) sit on the **last line** of the message (not a separate row)
 /// - Soft tail corner toward the speaker, flat fill, light meta type
 struct MessageBubbleView: View {
@@ -112,11 +230,27 @@ struct MessageBubbleView: View {
     /// When set, reports this bubble’s global frame via `MessageBubbleFrameKey`.
     var frameReportID: UUID? = nil
 
-    /// Max width of the full bubble (including padding), ~Telegram on a 390pt phone.
-    private let maxBubbleWidth: CGFloat = 280
+    @Environment(\.chatRowWidth) private var chatRowWidth
+
+    /// Max width of the full bubble (including padding) — the row minus the opposite gutter.
+    private var maxBubbleWidth: CGFloat {
+        // A host that hasn't measured yet reports 0; fall back rather than collapse the bubble.
+        let row = chatRowWidth > 0 ? chatRowWidth : MessageBubbleMetrics.fallbackRowWidth
+        return min(row, max(MessageBubbleMetrics.minBubbleWidth, row - MessageBubbleMetrics.oppositeGutter))
+    }
 
     private var displayText: String {
-        isDeleted ? "Message deleted" : text
+        isDeleted ? "Message deleted" : MessageBubbleMetrics.normalizedForDisplay(text)
+    }
+
+    /// Explicit line breaks force the wrapping layout: the compact row is `lineLimit(1)`
+    /// and would truncate everything after the first line away.
+    private var isMultiline: Bool {
+        displayText.contains { $0.isNewline }
+    }
+
+    private var showsReceipt: Bool {
+        isMine && !isDeleted
     }
 
     private var bubbleFill: Color {
@@ -171,10 +305,8 @@ struct MessageBubbleView: View {
 
     /// Invisible trailing reservation so the last text line leaves room for time + ticks.
     private var metaSpacerText: Text {
-        // Match meta font metrics so reservation width ≈ real meta.
-        let ticks = (isMine && !isDeleted) ? " ✓✓" : ""
-        return Text(" \(time)\(ticks)")
-            .font(.system(size: 11))
+        Text(verbatim: MessageBubbleMetrics.metaReservation(time: time, showsReceipt: showsReceipt))
+            .font(metaFont)
             .foregroundStyle(Color.clear)
     }
 
@@ -182,9 +314,9 @@ struct MessageBubbleView: View {
         Group {
             if isRowEmbedded {
                 HStack(alignment: .bottom, spacing: 0) {
-                    if isMine { Spacer(minLength: 56) }
+                    if isMine { Spacer(minLength: MessageBubbleMetrics.oppositeGutter) }
                     bubbleCore
-                    if !isMine { Spacer(minLength: 56) }
+                    if !isMine { Spacer(minLength: MessageBubbleMetrics.oppositeGutter) }
                 }
                 .frame(maxWidth: .infinity, alignment: isMine ? .trailing : .leading)
             } else {
@@ -197,18 +329,30 @@ struct MessageBubbleView: View {
 
     /// Compact single-line when it fits; otherwise multi-line body with meta on the last line.
     private var bubbleCore: some View {
-        ViewThatFits(in: .horizontal) {
-            compactBubble
-            wrappingBubble
-        }
-        .background {
-            if let frameReportID {
-                GeometryReader { geo in
-                    Color.clear.preference(
-                        key: MessageBubbleFrameKey.self,
-                        value: [frameReportID: geo.frame(in: .global)]
-                    )
+        Group {
+            if isMultiline {
+                wrappingBubble
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    compactBubble
+                    wrappingBubble
                 }
+            }
+        }
+        // Clamps the width proposed to `ViewThatFits`, so the compact row is only chosen when
+        // it fits inside the bubble's real budget rather than the whole row.
+        .frame(maxWidth: maxBubbleWidth, alignment: isMine ? .trailing : .leading)
+    }
+
+    /// Reports the drawn bubble (not the row slot) so the long-press menu hero lines up.
+    @ViewBuilder
+    private var frameReporter: some View {
+        if let frameReportID {
+            GeometryReader { geo in
+                Color.clear.preference(
+                    key: MessageBubbleFrameKey.self,
+                    value: [frameReportID: geo.frame(in: .global)]
+                )
             }
         }
     }
@@ -228,53 +372,55 @@ struct MessageBubbleView: View {
             metaRow
                 .alignmentGuide(.firstTextBaseline) { d in d[VerticalAlignment.center] + 1 }
         }
-        .padding(.leading, 11)
-        .padding(.trailing, 9)
+        .padding(.leading, MessageBubbleMetrics.textLeadingPad)
+        .padding(.trailing, MessageBubbleMetrics.metaTrailingPad)
         .padding(.vertical, 6)
         .background(bubbleFill)
         .clipShape(corners)
+        .background { frameReporter }
         .fixedSize(horizontal: true, vertical: false)
     }
 
     // MARK: - Wrapping (long messages)
 
     /// Multi-line text; time/ticks sit on the last line (Telegram layout).
+    ///
+    /// Human: The bubble hugs its longest line rather than snapping to the cap, so a two-line
+    /// reply stays a two-line bubble. The cap comes from the `bubbleCore` frame above, which
+    /// is what the wrapping is measured against.
     private var wrappingBubble: some View {
         ZStack(alignment: .bottomTrailing) {
             // Text + clear spacer on the last line reserves space for meta.
             Text("\(bodyText)\(metaSpacerText)")
                 .multilineTextAlignment(.leading)
-                .lineSpacing(1)
+                // Wide paragraphs of pasted text read as a wall without a little extra leading.
+                .lineSpacing(2.5)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 11)
+                .padding(.leading, MessageBubbleMetrics.textLeadingPad)
+                .padding(.trailing, MessageBubbleMetrics.textTrailingPad)
                 .padding(.top, 7)
                 .padding(.bottom, 6)
 
             metaRow
-                .padding(.trailing, 9)
+                .padding(.trailing, MessageBubbleMetrics.metaTrailingPad)
                 .padding(.bottom, 5)
         }
-        .frame(maxWidth: maxBubbleWidth, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
         .background(bubbleFill)
         .clipShape(corners)
-        // Keep the bubble from stretching to the full row when text is only medium-length:
-        // measure ideal width via background preference is heavy; ViewThatFits already
-        // preferred compact. For wrapping, allow up to maxBubbleWidth.
-        .frame(maxWidth: maxBubbleWidth, alignment: isMine ? .trailing : .leading)
+        .background { frameReporter }
     }
 
     // MARK: - Meta (time + ticks)
 
     private var metaRow: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: MessageBubbleMetrics.metaSpacing) {
             Text(time)
-                .font(.system(size: 11, weight: .regular))
+                .font(metaFont)
                 .foregroundStyle(metaColor)
-                .monospacedDigit()
                 .fixedSize()
 
-            if isMine, !isDeleted {
+            if showsReceipt {
                 receiptIcon
             }
         }
@@ -282,7 +428,13 @@ struct MessageBubbleView: View {
 
     private var messageFont: Font {
         // Telegram iOS message body is ~17pt SF; 16 keeps density close without feeling large.
-        .system(size: 16)
+        .system(size: MessageBubbleMetrics.bodyFontSize)
+    }
+
+    /// Must stay in step with `MessageBubbleMetrics`' measuring font, or the last-line
+    /// reservation drifts away from the meta it is reserving for.
+    private var metaFont: Font {
+        .system(size: MessageBubbleMetrics.metaFontSize, weight: .regular).monospacedDigit()
     }
 
     private var receiptIcon: some View {
@@ -309,32 +461,45 @@ struct MessageBubbleView: View {
 }
 
 #Preview("Telegram-style bubbles") {
-    ScrollView {
-        VStack(spacing: 8) {
-            MessageBubbleView(text: "a", time: "11:00", isMine: false)
-            MessageBubbleView(text: "👍", time: "11:01", isMine: true, receipt: .sent)
-            MessageBubbleView(text: "Hi", time: "11:02", isMine: false)
-            MessageBubbleView(text: "Ok", time: "11:03", isMine: true, receipt: .delivered)
-            MessageBubbleView(text: "See you at 10", time: "11:05", isMine: true, receipt: .read)
-            MessageBubbleView(
-                text: "Hey! Are we still on for tomorrow? Parking near the trailhead fills up fast on weekends so let's leave early.",
-                time: "12:10",
-                isMine: true,
-                receipt: .read
-            )
-            MessageBubbleView(
-                text: "Sounds good, see you tomorrow! I'll bring snacks.",
-                time: "12:11",
-                isMine: false
-            )
-            MessageBubbleView(
-                text: String(repeating: "longword ", count: 12),
-                time: "12:15",
-                isMine: false
-            )
+    GeometryReader { geo in
+        ScrollView {
+            VStack(spacing: 8) {
+                MessageBubbleView(text: "a", time: "11:00", isMine: false)
+                MessageBubbleView(text: "👍", time: "11:01", isMine: true, receipt: .sent)
+                MessageBubbleView(text: "Ok", time: "11:03", isMine: true, receipt: .delivered)
+                MessageBubbleView(
+                    text: "Two lines\nand the time must clear the second one",
+                    time: "11:06",
+                    isMine: false
+                )
+                MessageBubbleView(
+                    text: "Hey! Are we still on for tomorrow? Parking near the trailhead fills up fast on weekends so let's leave early.",
+                    time: "12:10",
+                    isMine: true,
+                    receipt: .read
+                )
+                MessageBubbleView(
+                    text: "Sounds good, see you tomorrow! I'll bring snacks.",
+                    time: "12:11",
+                    isMine: false
+                )
+                // Pasted table: tabs would otherwise scatter the cells across lines.
+                MessageBubbleView(
+                    text: "Key takeaways:\nMetric\tValue\nDurchschnittsgehalt\t41.000 € brutto / Jahr\nMonatsgehalt\t≈ 3.417 €\n\t•\tPersonalverantwortung bringt im Schnitt +19 %.",
+                    time: "15:58",
+                    isMine: false
+                )
+                MessageBubbleView(
+                    text: String(repeating: "longword ", count: 12),
+                    time: "12:15",
+                    isMine: true,
+                    receipt: .sending
+                )
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity)
         }
-        .padding(16)
-        .frame(maxWidth: .infinity)
+        .environment(\.chatRowWidth, geo.size.width - 32)
+        .background(Theme.backgroundChat)
     }
-    .background(Theme.backgroundChat)
 }

@@ -19,6 +19,13 @@ final class CryptoController {
     /// True when identity keys exist for the user but history vault has not been opened.
     private(set) var needsHistoryUnlock: Bool = false
 
+    /// After the user **cancels** Face ID / passcode, automatic vault prompts stop until the
+    /// next explicit lock (background or "Lock chats now"). Manual button unlock always works.
+    private(set) var suppressAutomaticVaultPrompt: Bool = false
+
+    /// Prevents RootView + Welcome from stacking two Face ID sheets at once.
+    private var vaultUnlockInFlight = false
+
     init(
         store: IdentityKeyStore = IdentityKeyStore(),
         keyBundleService: KeyBundleService = KeyBundleService()
@@ -30,6 +37,24 @@ final class CryptoController {
     /// Cold start: restore identity + unwrap history key (biometry/passcode when configured).
     @discardableResult
     func restoreIfPossible(for userID: UUID) async -> Bool {
+        await unlockHistoryIfPossible(for: userID, automatic: true)
+    }
+
+    /// Re-open history (biometry/passcode). Identity must still match.
+    /// - Parameter automatic: When true, no-ops if the user previously cancelled this lock cycle.
+    @discardableResult
+    func unlockHistoryIfPossible(for userID: UUID, automatic: Bool = false) async -> Bool {
+        if automatic, suppressAutomaticVaultPrompt {
+            needsHistoryUnlock = store.hasIdentity(for: userID)
+            return false
+        }
+        // Coalesce concurrent automatic prompts (scene active + Welcome onAppear).
+        if vaultUnlockInFlight {
+            return material != nil
+        }
+        vaultUnlockInFlight = true
+        defer { vaultUnlockInFlight = false }
+
         guard let stored = store.load(), stored.userID == userID else {
             material = nil
             needsHistoryUnlock = false
@@ -48,33 +73,24 @@ final class CryptoController {
             let restored = IdentityKeyMaterial(stored: stored, historyKey: historyKey)
             material = restored
             needsHistoryUnlock = false
-            // Refresh identity keychain attrs without re-storing plain history.
+            suppressAutomaticVaultPrompt = false
             try? store.save(restored)
             return true
         } catch HistoryKeyVault.VaultError.userCancelled {
             material = nil
             needsHistoryUnlock = true
+            // Only the first automatic attempt shows the system sheet; cancel → button only.
+            if automatic {
+                suppressAutomaticVaultPrompt = true
+            }
             return false
         } catch {
-            // No vault yet or auth failed — user must enter the encryption phrase.
             material = nil
             needsHistoryUnlock = store.hasIdentity(for: userID)
-            return false
-        }
-    }
-
-    /// Re-open history after background lock (biometry/passcode). Identity must still match.
-    @discardableResult
-    func unlockHistoryIfPossible(for userID: UUID) async -> Bool {
-        guard let stored = store.load(), stored.userID == userID else { return false }
-        do {
-            let historyKey = try await HistoryKeyVault.unlock(userID: userID)
-            rewrapHistoryIfNeeded(historyKey, userID: userID)
-            material = IdentityKeyMaterial(stored: stored, historyKey: historyKey)
-            needsHistoryUnlock = false
-            return true
-        } catch {
-            needsHistoryUnlock = true
+            // Missing vault / auth failure: don't loop automatic prompts.
+            if automatic {
+                suppressAutomaticVaultPrompt = true
+            }
             return false
         }
     }
@@ -94,6 +110,7 @@ final class CryptoController {
         try await keyBundleService.putBundle(request, bearerToken: bearerToken)
         material = established
         needsHistoryUnlock = false
+        suppressAutomaticVaultPrompt = false
     }
 
     /// Login phrase step: validate phrase; reuse Keychain keys if same identity, else re-establish.
@@ -118,6 +135,7 @@ final class CryptoController {
             try persistUnlocked(shell)
             material = shell
             needsHistoryUnlock = false
+            suppressAutomaticVaultPrompt = false
             try await uploadBundleIfNeeded(bearerToken: bearerToken)
             return
         }
@@ -136,12 +154,15 @@ final class CryptoController {
         try await keyBundleService.putBundle(request, bearerToken: bearerToken)
         material = established
         needsHistoryUnlock = false
+        suppressAutomaticVaultPrompt = false
     }
 
     /// Clears in-memory keys. Keychain identity is kept unless `wipeStore`.
     func lock(wipeStore: Bool = false) {
         material = nil
         needsHistoryUnlock = !wipeStore && (store.load() != nil)
+        // Next unlock cycle may auto-prompt Face ID once.
+        suppressAutomaticVaultPrompt = false
         if wipeStore {
             store.clear()
             HistoryKeyVault.clear()
@@ -153,6 +174,8 @@ final class CryptoController {
     func lockHistoryInMemory() {
         material = nil
         needsHistoryUnlock = store.load() != nil
+        // Allow one automatic Face ID prompt when returning from background.
+        suppressAutomaticVaultPrompt = false
     }
 
     private func persistUnlocked(_ material: IdentityKeyMaterial) throws {

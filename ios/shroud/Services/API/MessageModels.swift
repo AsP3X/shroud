@@ -62,6 +62,14 @@ struct MessageDTO: Decodable, Equatable, Sendable, Identifiable {
     }
 }
 
+/// `scope` on `DELETE /messages/:id`.
+enum MessageDeleteScope: String, Equatable, Sendable {
+    /// Hides the message for this account only; the peer keeps their copy.
+    case me
+    /// Tombstones it for both sides. Server rejects this from anyone but the sender.
+    case everyone
+}
+
 struct MarkReadBulkBody: Encodable, Equatable, Sendable {
     let peerUserId: UUID
     let upToMessageId: UUID

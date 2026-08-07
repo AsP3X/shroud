@@ -134,8 +134,18 @@ nonisolated final class APIClient: Sendable {
     }
 
     /// Performs a DELETE that expects 2xx with no meaningful body.
-    func deleteNoContent(path: String, bearerToken: String? = nil) async throws {
-        let (data, http) = try await perform(path, method: "DELETE", bodyData: nil, bearerToken: bearerToken)
+    func deleteNoContent(
+        path: String,
+        query: [String: String]? = nil,
+        bearerToken: String? = nil
+    ) async throws {
+        let (data, http) = try await perform(
+            path,
+            method: "DELETE",
+            bodyData: nil,
+            bearerToken: bearerToken,
+            query: query
+        )
         try Self.throwIfNeeded(data: data, status: http.statusCode)
     }
 

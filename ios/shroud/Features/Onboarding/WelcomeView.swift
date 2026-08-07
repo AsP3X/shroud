@@ -43,7 +43,7 @@ struct WelcomeView: View {
                         PrimaryButton(
                             title: isUnlocking ? "Unlocking…" : "Unlock with Face ID / Passcode"
                         ) {
-                            Task { await unlockWithVault() }
+                            Task { await unlockWithVault(automatic: false) }
                         }
                         .disabled(isUnlocking)
                         SecondaryButton(title: "Use encryption phrase") {
@@ -74,9 +74,12 @@ struct WelcomeView: View {
                 }
             }
             presentPostAuthToastIfNeeded()
-            // Signed in + chats locked: offer vault unlock immediately.
-            if needsChatUnlock, !isUnlocking {
-                Task { await unlockWithVault() }
+            // Signed in + chats locked: auto Face ID once per lock cycle (not after cancel).
+            if needsChatUnlock,
+               !isUnlocking,
+               !cryptoController.suppressAutomaticVaultPrompt
+            {
+                Task { await unlockWithVault(automatic: true) }
             }
         }
         .onChange(of: router.postAuthToast) { _, _ in
@@ -122,19 +125,27 @@ struct WelcomeView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
-    private func unlockWithVault() async {
+    private func unlockWithVault(automatic: Bool) async {
         guard let userID = sessionController.userID else {
             router.showLogIn()
             return
         }
+        if automatic, cryptoController.suppressAutomaticVaultPrompt {
+            return
+        }
         isUnlocking = true
         defer { isUnlocking = false }
-        let ok = await cryptoController.unlockHistoryIfPossible(for: userID)
+        let ok = await cryptoController.unlockHistoryIfPossible(
+            for: userID,
+            automatic: automatic
+        )
         if ok {
             router.unlockMessages()
-        } else {
+        } else if !automatic {
+            // Manual tap: surface why unlock failed (cancel / no vault / etc.).
             toastMessage = CryptoController.userMessage(for: CryptoControllerError.historyLocked)
         }
+        // Automatic cancel: stay quiet — user taps the button when ready.
     }
 
     private var navRow: some View {

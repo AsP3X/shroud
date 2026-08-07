@@ -872,6 +872,110 @@ final class MessagingController {
         persistThread(peer)
     }
 
+    /// Deletes a message here and on the server. Returns a user-facing error, or nil on success.
+    ///
+    /// The server call goes first: `.me` is durable as a hide row, so applying it locally
+    /// before the round-trip would let the next history page resurrect the bubble.
+    func deleteMessage(_ message: ChatMessage, scope: MessageDeleteScope) async -> String? {
+        if isNotesChat(message.peerUserID) {
+            return await deleteNote(message)
+        }
+
+        // Never reached the server — nothing to delete there. Dropping it from `threads`
+        // also takes it out of the outbound queue, which is derived from these lists.
+        if message.pendingSync || message.receipt == .failed {
+            removeMessageLocally(messageID: message.id, peerUserID: message.peerUserID)
+            await refreshConversations(force: true)
+            return nil
+        }
+
+        guard let token = sessionController?.bearerToken else {
+            return "Sign in to delete messages."
+        }
+
+        do {
+            try await messagesService.delete(messageID: message.id, scope: scope, token: token)
+        } catch {
+            let text = SessionController.userMessage(for: error)
+            lastError = text
+            return text
+        }
+
+        switch scope {
+        case .me:
+            removeMessageLocally(messageID: message.id, peerUserID: message.peerUserID)
+        case .everyone:
+            // Server keeps the row as a tombstone, so match it rather than dropping the
+            // bubble — otherwise the next load would pop "Message deleted" back in.
+            tombstoneMessage(messageID: message.id, peerUserID: message.peerUserID)
+        }
+        lastError = nil
+        await refreshConversations(force: true)
+        return nil
+    }
+
+    /// Deletes a note locally and, when it was mirrored to the server, there too.
+    ///
+    /// Notes are Saved Messages (`peer_user_id = self`), so a local-only removal comes back
+    /// on the next sync. `scope: me` is the right verb for a self-conversation: it hides the
+    /// row for the only participant instead of leaving a "Message deleted" tombstone.
+    /// A note that never reached the server answers 404, which is nothing left to delete.
+    private func deleteNote(_ message: ChatMessage) async -> String? {
+        if let token = sessionController?.bearerToken, connectivity.isOnline {
+            do {
+                try await messagesService.delete(messageID: message.id, scope: .me, token: token)
+            } catch let APIError.server(_, _, statusCode) where statusCode == 404 {
+                // Local-only note (written offline, or synced under a client id the server
+                // re-keyed). Nothing on the server to hide.
+            } catch {
+                let text = SessionController.userMessage(for: error)
+                lastError = text
+                return text
+            }
+        }
+        deleteLocalNote(messageID: message.id)
+        return nil
+    }
+
+    /// Drops a message from its thread and purges its cached plaintext / media bytes.
+    private func removeMessageLocally(messageID: UUID, peerUserID: UUID) {
+        guard var list = threads[peerUserID] else { return }
+        let before = list.count
+        list.removeAll { $0.id == messageID }
+        guard list.count != before else { return }
+        threads[peerUserID] = list
+        local.removeCaches(messageIDs: [messageID])
+        persistThread(peerUserID)
+    }
+
+    /// Replaces a message with the same tombstone a history page would decode for it.
+    private func tombstoneMessage(messageID: UUID, peerUserID: UUID) {
+        guard var list = threads[peerUserID],
+              let idx = list.firstIndex(where: { $0.id == messageID }),
+              !list[idx].deleted
+        else { return }
+        let old = list[idx]
+        list[idx] = ChatMessage(
+            id: old.id,
+            peerUserID: old.peerUserID,
+            senderUserID: old.senderUserID,
+            text: "Message deleted",
+            createdAt: old.createdAt,
+            isMine: old.isMine,
+            deleted: true,
+            receipt: old.receipt,
+            kind: old.kind == .image ? .image : .text
+        )
+        threads[peerUserID] = list
+        local.removeCaches(messageIDs: [messageID])
+        persistThread(peerUserID)
+    }
+
+    /// Which thread holds a message id (delete events carry no peer id).
+    private func peerID(forMessage messageID: UUID) -> UUID? {
+        threads.first { $0.value.contains { $0.id == messageID } }?.key
+    }
+
     func setTyping(peerUserID: UUID, isTyping: Bool) {
         realtime.sendTyping(peerUserID: peerUserID, isTyping: isTyping)
     }
@@ -1583,6 +1687,8 @@ final class MessagingController {
                 handleDeliveredEvent(json)
             } else if type == "message.read" {
                 handleReadEvent(json)
+            } else if type == "message.deleted" {
+                handleDeletedEvent(json)
             } else if type == "typing" {
                 handleTyping(json)
             } else if type == "presence.update" {
@@ -1618,6 +1724,16 @@ final class MessagingController {
               let messageID = UUID(uuidString: idString)
         else { return }
         updateReceipt(messageID: messageID, atLeast: .delivered)
+    }
+
+    /// Peer (or one of our other devices) deleted for everyone — tombstone it here too.
+    private func handleDeletedEvent(_ json: [String: Any]) {
+        guard let idString = json["message_id"] as? String,
+              let messageID = UUID(uuidString: idString),
+              let peer = peerID(forMessage: messageID)
+        else { return }
+        tombstoneMessage(messageID: messageID, peerUserID: peer)
+        Task { await refreshConversations(force: true) }
     }
 
     private func handleReadEvent(_ json: [String: Any]) {
@@ -1921,7 +2037,7 @@ final class MessagingController {
         else { return }
 
         do {
-            try await deliverPendingText(
+            let sent = try await deliverPendingText(
                 messageID: message.id,
                 text: wireText,
                 peerUserID: realMe,
@@ -1930,12 +2046,27 @@ final class MessagingController {
                 token: token
             )
             // deliverPendingText stores under api peer (me); re-map bubble into Notes thread.
+            //
+            // Re-key to the server's id while doing it: the sealed plaintext is already
+            // stored under that id, and both delete and the next reload match on it. Keeping
+            // the client id here is what let a synced note come back after it was deleted.
             if var notes = threads[peerUserID],
                let idx = notes.firstIndex(where: { $0.id == message.id })
             {
-                notes[idx].pendingSync = false
-                notes[idx].receipt = .sent
+                notes[idx] = ChatMessage(
+                    id: sent.id,
+                    peerUserID: peerUserID,
+                    senderUserID: sent.senderUserID,
+                    text: message.text,
+                    createdAt: sent.createdAt,
+                    isMine: true,
+                    deleted: false,
+                    receipt: .sent,
+                    kind: message.kind,
+                    todoDone: message.todoDone
+                )
                 threads[peerUserID] = notes
+                local.removeCaches(messageIDs: [message.id])
                 persistThread(peerUserID)
             }
             // Clear accidental thread keyed by realMe if deliverPendingText wrote there.
@@ -1958,6 +2089,8 @@ final class MessagingController {
         }
     }
 
+    /// Returns the delivered message as the server keyed it (`dto.id` ≠ the client id).
+    @discardableResult
     private func deliverPendingText(
         messageID: UUID,
         text: String,
@@ -1965,7 +2098,7 @@ final class MessagingController {
         me: UUID,
         material: IdentityKeyMaterial,
         token: String
-    ) async throws {
+    ) async throws -> ChatMessage {
         let peerPub = try await resolvePeerIdentityPublicKey(peerUserID: peerUserID, token: token)
         let sealed = try MessageCrypto.seal(
             plaintext: Data(text.utf8),
@@ -2008,6 +2141,7 @@ final class MessagingController {
             }
         }
         persistSnapshot()
+        return sent
     }
 
     /// Flushes queued outbound messages after reconnect.

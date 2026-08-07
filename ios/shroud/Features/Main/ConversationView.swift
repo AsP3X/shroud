@@ -33,6 +33,8 @@ struct ConversationView: View {
     @State private var menuAnimationGeneration = 0
     /// When the current menu opened — used to ignore the release of the finger that opened it.
     @State private var menuOpenedAt: Date?
+    /// Message waiting on the delete-scope confirmation.
+    @State private var pendingDelete: PendingDelete?
     /// Live global frames of each bubble (visual only — no row spacers).
     @State private var bubbleGlobalFrames: [UUID: CGRect] = [:]
     @State private var viewingMedia: ViewingMedia?
@@ -46,6 +48,8 @@ struct ConversationView: View {
     @State private var isSendingMedia = false
     /// Bumped after thread load / open so we re-pin to the newest message once layout is ready.
     @State private var pinToBottomToken = 0
+    /// Thread width, so bubbles size themselves to the device instead of a fixed column.
+    @State private var threadWidth: CGFloat = 0
 
     private var messages: [MessagingController.ChatMessage] {
         messaging.threads[peerUserID] ?? []
@@ -267,11 +271,37 @@ struct ConversationView: View {
                         .transition(.scale(scale: 0.9).combined(with: .opacity))
                 }
             }
+            .confirmationDialog(
+                "Delete message?",
+                isPresented: Binding(
+                    get: { pendingDelete != nil },
+                    set: { if !$0 { pendingDelete = nil } }
+                ),
+                titleVisibility: .visible,
+                presenting: pendingDelete
+            ) { pending in
+                if canDeleteForEveryone(pending.message) {
+                    Button("Delete for everyone", role: .destructive) {
+                        performDelete(pending.message, scope: .everyone)
+                    }
+                }
+                Button(isNotes ? "Delete" : "Delete for me", role: .destructive) {
+                    performDelete(pending.message, scope: .me)
+                }
+                Button("Cancel", role: .cancel) { pendingDelete = nil }
+            }
             .toast($toast)
             .animation(Motion.scrim, value: viewingMedia != nil)
             .animation(Motion.scrim, value: composeDraft != nil)
             .animation(Motion.snappy, value: isSendingMedia)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { threadWidth = $0 }
+            // Applied last so the list *and* the long-press menu hero size bubbles identically —
+            // a mismatch here shows up as the bubble re-wrapping the moment the menu opens.
+            .environment(\.chatRowWidth, max(0, threadWidth - Self.threadHorizontalInset * 2))
     }
+
+    /// Horizontal inset on the message list; bubbles subtract it to get their row width.
+    private static let threadHorizontalInset: CGFloat = 16
 
     private struct ProfileDestination: Identifiable, Hashable {
         let peerUserID: UUID
@@ -282,6 +312,12 @@ struct ConversationView: View {
     /// Which photo the media overlay opened on (not a navigation destination).
     private struct ViewingMedia: Identifiable {
         let id: UUID
+    }
+
+    /// Message the delete confirmation is about (scope is picked in the dialog).
+    private struct PendingDelete: Identifiable {
+        let message: MessagingController.ChatMessage
+        var id: UUID { message.id }
     }
 
     /// Photos staged for caption + edit + send (Telegram media compose).
@@ -486,7 +522,7 @@ struct ConversationView: View {
                         .frame(height: 1)
                         .id("thread-bottom")
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, Self.threadHorizontalInset)
                 .padding(.vertical, 12)
                 // Drives the bubble insertion transition above. Keyed on the newest id (not
                 // just `count`) so a same-count reload still resolves without re-animating
@@ -1205,7 +1241,33 @@ struct ConversationView: View {
         case .reply, .edit, .pin, .forward, .select, .moreReactions:
             showComingSoon(action.title)
         case .delete:
-            toast = "Delete coming soon"
+            pendingDelete = PendingDelete(message: message)
+        }
+    }
+
+    /// Delete-for-everyone is the sender's call only, and only once the server has the
+    /// message — the server rejects anything else.
+    private func canDeleteForEveryone(_ message: MessagingController.ChatMessage) -> Bool {
+        !isNotes
+            && message.isMine
+            && !message.deleted
+            && !message.pendingSync
+            && message.receipt != .failed
+    }
+
+    private func performDelete(
+        _ message: MessagingController.ChatMessage,
+        scope: MessageDeleteScope
+    ) {
+        pendingDelete = nil
+        Task {
+            if let error = await messaging.deleteMessage(message, scope: scope) {
+                toast = error
+                Haptics.notification(.error)
+            } else {
+                toast = scope == .everyone ? "Deleted for everyone" : "Deleted"
+                Haptics.notification(.success)
+            }
             scheduleToastClear()
         }
     }

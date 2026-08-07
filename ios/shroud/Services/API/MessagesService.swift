@@ -41,6 +41,16 @@ struct MessagesService: Sendable {
         try await client.post("messages", body: body, as: MessageDTO.self, bearerToken: token)
     }
 
+    /// Deletes a message. `.me` adds a hide row (history pages skip it from then on);
+    /// `.everyone` tombstones it for both sides and is rejected for anyone but the sender.
+    func delete(messageID: UUID, scope: MessageDeleteScope, token: String) async throws {
+        try await client.deleteNoContent(
+            path: "messages/\(messageID.uuidString.lowercased())",
+            query: ["scope": scope.rawValue],
+            bearerToken: token
+        )
+    }
+
     func markDelivered(messageID: UUID, token: String) async throws {
         try await client.postNoContent(
             path: "messages/\(messageID.uuidString.lowercased())/delivered",

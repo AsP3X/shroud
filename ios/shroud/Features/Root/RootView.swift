@@ -103,12 +103,15 @@ struct RootView: View {
                     if !cryptoController.isUnlocked,
                        let userID = sessionController.userID
                     {
-                        let ok = await cryptoController.unlockHistoryIfPossible(for: userID)
+                        // One automatic Face ID per lock cycle; cancel → Welcome button only.
+                        let ok = await cryptoController.unlockHistoryIfPossible(
+                            for: userID,
+                            automatic: true
+                        )
                         if ok {
                             router.hasUnlockedMessaging = true
                             messagingController.start()
                         } else if cryptoController.needsHistoryUnlock {
-                            // Cancelled biometry or missing vault — phrase unlock onboarding.
                             router.hasUnlockedMessaging = false
                         }
                     } else if router.isUnlocked {
