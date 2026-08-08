@@ -265,6 +265,14 @@ enum DecodedImageCache {
         storage[id]
     }
 
+    /// Drop decoded bitmaps for deleted messages so nothing stays in RAM.
+    static func remove(ids: [UUID]) {
+        for id in ids {
+            storage.removeValue(forKey: id)
+            dataCounts.removeValue(forKey: id)
+        }
+    }
+
     /// Cache hit for the same byte payload, else decode once and store.
     static func image(forMessage id: UUID, data: Data?) -> UIImage? {
         guard let data else { return nil }

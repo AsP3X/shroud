@@ -991,14 +991,23 @@ final class MessagingController {
         // only if we re-send — skip re-send to avoid duplicates. Local vault is enough.
     }
 
-    /// Deletes a local Notes message (and its media bytes if any).
+    /// Deletes a local Notes message and **all** related local artifacts (media, plaintext,
+    /// decode cache, in-flight transfer). Nothing may remain on disk for that note.
     func deleteLocalNote(messageID: UUID) {
         let peer = Self.notesPeerID
-        guard let list = threads[peer] else { return }
+        guard let list = threads[peer] else {
+            // Thread already empty — still scrub caches in case of a half-deleted media note.
+            purgeLocalMessageArtifacts(messageIDs: [messageID])
+            return
+        }
         let result = NotesLocal.delete(messageID: messageID, in: list)
-        guard result.removed else { return }
+        // Always purge artifacts even if the row was already gone (stale media after re-key).
+        purgeLocalMessageArtifacts(messageIDs: [messageID])
+        guard result.removed else {
+            persistThread(peer)
+            return
+        }
         threads[peer] = result.messages
-        local.removeCaches(messageIDs: [messageID])
         persistThread(peer)
     }
 
@@ -1044,38 +1053,83 @@ final class MessagingController {
         return nil
     }
 
-    /// Deletes a note locally and, when it was mirrored to the server, there too.
+    /// Deletes a note locally and hard-deletes it on the server (including media blobs).
     ///
-    /// Notes are Saved Messages (`peer_user_id = self`), so a local-only removal comes back
-    /// on the next sync. `scope: me` is the right verb for a self-conversation: it hides the
-    /// row for the only participant instead of leaving a "Message deleted" tombstone.
+    /// Notes are Saved Messages (`peer_user_id = self`). The server permanently removes the
+    /// row and linked media so multi-device sync cannot resurrect it. Locally we purge sealed
+    /// media, plaintext, decode cache, and transfer state — no bytes may remain.
     /// A note that never reached the server answers 404, which is nothing left to delete.
     private func deleteNote(_ message: ChatMessage) async -> String? {
+        // Capture ids before local removal so we scrub every alias we know about.
+        let idsToPurge = [message.id]
         if let token = sessionController?.bearerToken, connectivity.isOnline {
             do {
                 try await messagesService.delete(messageID: message.id, scope: .me, token: token)
             } catch let APIError.server(_, _, statusCode) where statusCode == 404 {
-                // Local-only note (written offline, or synced under a client id the server
-                // re-keyed). Nothing on the server to hide.
+                // Local-only note (written offline, or never mirrored).
             } catch {
                 let text = SessionController.userMessage(for: error)
                 lastError = text
                 return text
             }
         }
-        deleteLocalNote(messageID: message.id)
+        // Drop from the notes thread + self-API thread if a half-send parked a copy there.
+        var peers: [UUID] = [Self.notesPeerID]
+        if let me = sessionController?.userID, me != Self.notesPeerID {
+            peers.append(me)
+        }
+        for peer in peers {
+            guard var list = threads[peer], list.contains(where: { $0.id == message.id }) else {
+                continue
+            }
+            list.removeAll { $0.id == message.id }
+            if peer == Self.notesPeerID {
+                threads[peer] = list
+            } else {
+                // Stray under real user id must not leave an empty ghost thread.
+                threads[peer] = list.isEmpty ? nil : list
+            }
+        }
+        purgeLocalMessageArtifacts(messageIDs: idsToPurge)
+        persistThread(Self.notesPeerID)
+        if let me = sessionController?.userID, me != Self.notesPeerID, threads[me] != nil {
+            persistThread(me)
+        }
+        // Clear list preview residue for Notes.
+        await refreshConversations(force: true)
         return nil
     }
 
     /// Drops a message from its thread and purges its cached plaintext / media bytes.
     private func removeMessageLocally(messageID: UUID, peerUserID: UUID) {
-        guard var list = threads[peerUserID] else { return }
+        guard var list = threads[peerUserID] else {
+            purgeLocalMessageArtifacts(messageIDs: [messageID])
+            return
+        }
         let before = list.count
         list.removeAll { $0.id == messageID }
-        guard list.count != before else { return }
+        guard list.count != before else {
+            purgeLocalMessageArtifacts(messageIDs: [messageID])
+            return
+        }
         threads[peerUserID] = list
-        local.removeCaches(messageIDs: [messageID])
+        purgeLocalMessageArtifacts(messageIDs: [messageID])
         persistThread(peerUserID)
+    }
+
+    /// Scrubs every on-device artifact for the given message ids.
+    ///
+    /// Sealed media files, sealed plaintext (payload keys), decode cache bitmaps, hydrate
+    /// tasks, and transfer progress rings — so delete leaves nothing recoverable.
+    private func purgeLocalMessageArtifacts(messageIDs: [UUID]) {
+        guard !messageIDs.isEmpty else { return }
+        local.removeCaches(messageIDs: messageIDs)
+        DecodedImageCache.remove(ids: messageIDs)
+        for id in messageIDs {
+            mediaHydrateTasks[id]?.cancel()
+            mediaHydrateTasks[id] = nil
+            endTransfer(id)
+        }
     }
 
     /// Replaces a message with the same tombstone a history page would decode for it.
@@ -1097,7 +1151,8 @@ final class MessagingController {
             kind: (old.kind == .image || old.kind == .video || old.kind == .voice) ? old.kind : .text
         )
         threads[peerUserID] = list
-        local.removeCaches(messageIDs: [messageID])
+        // Media + payload keys must not survive an unsend.
+        purgeLocalMessageArtifacts(messageIDs: [messageID])
         persistThread(peerUserID)
     }
 
@@ -1192,7 +1247,16 @@ final class MessagingController {
         let messageIDs = (threads[peerUserID] ?? []).map(\.id)
         threads[peerUserID] = []
         if !messageIDs.isEmpty {
-            local.removeCaches(messageIDs: messageIDs)
+            purgeLocalMessageArtifacts(messageIDs: messageIDs)
+        }
+        // Notes may also have been mirrored under the real user id during send.
+        if isNotesChat(peerUserID), let me = sessionController?.userID, me != peerUserID {
+            let stray = (threads[me] ?? []).map(\.id)
+            threads[me] = nil
+            if !stray.isEmpty {
+                purgeLocalMessageArtifacts(messageIDs: stray)
+            }
+            persistThread(me)
         }
         if unreadCountByPeer[peerUserID] != nil {
             unreadCountByPeer[peerUserID] = nil

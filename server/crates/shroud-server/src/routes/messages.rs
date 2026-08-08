@@ -982,25 +982,34 @@ async fn delete_for_me(
     user_id: Uuid,
     message_id: Uuid,
 ) -> Result<StatusCode, AppError> {
-    let allowed: bool = sqlx::query_scalar(
+    #[derive(FromRow)]
+    struct DeleteTarget {
+        user_a_id: Uuid,
+        user_b_id: Uuid,
+        media_object_id: Option<Uuid>,
+    }
+
+    let target = sqlx::query_as::<_, DeleteTarget>(
         r#"
-        SELECT EXISTS(
-            SELECT 1
-            FROM messages m
-            INNER JOIN conversations c ON c.id = m.conversation_id
-            WHERE m.id = $1
-              AND (c.user_a_id = $2 OR c.user_b_id = $2)
-        )
+        SELECT c.user_a_id, c.user_b_id, m.media_object_id
+        FROM messages m
+        INNER JOIN conversations c ON c.id = m.conversation_id
+        WHERE m.id = $1
+          AND (c.user_a_id = $2 OR c.user_b_id = $2)
         "#,
     )
     .bind(message_id)
     .bind(user_id)
-    .fetch_one(&state.pool)
+    .fetch_optional(&state.pool)
     .await
-    .map_err(|err| AppError::Internal(format!("delete-for-me ACL failed: {err}")))?;
+    .map_err(|err| AppError::Internal(format!("delete-for-me ACL failed: {err}")))?
+    .ok_or_else(|| AppError::not_found("Message not found."))?;
 
-    if !allowed {
-        return Err(AppError::not_found("Message not found."));
+    // Saved Messages (self conversation): hide is not enough — hard-delete the row and
+    // its media so nothing can resurface on another device or via orphaned blobs.
+    let is_notes = target.user_a_id == target.user_b_id && target.user_a_id == user_id;
+    if is_notes {
+        return hard_delete_notes_message(state, message_id, target.media_object_id).await;
     }
 
     sqlx::query(
@@ -1015,6 +1024,82 @@ async fn delete_for_me(
     .execute(&state.pool)
     .await
     .map_err(|err| AppError::Internal(format!("hide message failed: {err}")))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Fully erases a Saved Messages row + linked media (DB + blob). No hide tombstone left.
+async fn hard_delete_notes_message(
+    state: &AppState,
+    message_id: Uuid,
+    media_object_id: Option<Uuid>,
+) -> Result<StatusCode, AppError> {
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|err| AppError::Internal(format!("begin notes delete failed: {err}")))?;
+
+    // Collect every media id that still points at this message (plus the message pointer).
+    let mut media_ids: Vec<Uuid> = sqlx::query_scalar(
+        r#"
+        SELECT id FROM media_objects
+        WHERE message_id = $1
+        "#,
+    )
+    .bind(message_id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("list notes media failed: {err}")))?;
+
+    if let Some(mid) = media_object_id {
+        if !media_ids.contains(&mid) {
+            media_ids.push(mid);
+        }
+    }
+
+    // Break FKs before deleting the message row.
+    sqlx::query(
+        r#"
+        UPDATE messages
+        SET media_object_id = NULL, ciphertext = NULL
+        WHERE id = $1
+        "#,
+    )
+    .bind(message_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("unlink notes message media failed: {err}")))?;
+
+    sqlx::query(
+        r#"
+        UPDATE media_objects
+        SET message_id = NULL
+        WHERE message_id = $1
+        "#,
+    )
+    .bind(message_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("unlink notes media row failed: {err}")))?;
+
+    // Cascades message_hides + message_deliveries.
+    sqlx::query(r#"DELETE FROM messages WHERE id = $1"#)
+        .bind(message_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| AppError::Internal(format!("delete notes message failed: {err}")))?;
+
+    tx.commit()
+        .await
+        .map_err(|err| AppError::Internal(format!("commit notes delete failed: {err}")))?;
+
+    let purged = crate::routes::media::purge_media_ids(state, &media_ids).await?;
+    tracing::info!(
+        message_id = %message_id,
+        media_purged = purged,
+        "messages.notes_hard_delete ok"
+    );
 
     Ok(StatusCode::NO_CONTENT)
 }

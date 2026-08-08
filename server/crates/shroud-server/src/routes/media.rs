@@ -377,6 +377,66 @@ async fn authorize_download(
     Ok(())
 }
 
+/// Immediately delete media rows + on-disk blobs (Saved Messages hard-delete, etc.).
+///
+/// Caller must already have unlinked `messages.media_object_id` / `media_objects.message_id`
+/// so FK order does not block the DELETE. Safe to call with an empty slice.
+pub async fn purge_media_ids(state: &AppState, media_ids: &[Uuid]) -> Result<u64, AppError> {
+    if media_ids.is_empty() {
+        return Ok(0);
+    }
+
+    let rows = sqlx::query_as::<_, MediaRow>(
+        r#"
+        SELECT id, uploader_user_id, bucket, object_key, message_id, size_bytes
+        FROM media_objects
+        WHERE id = ANY($1)
+        "#,
+    )
+    .bind(media_ids)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("load media for purge failed: {err}")))?;
+
+    let mut purged = 0_u64;
+    for media in rows {
+        let path = blob_path(&media);
+        if Path::new(&path).exists()
+            && let Err(err) = tokio::fs::remove_file(&path).await
+        {
+            tracing::warn!(
+                error = %err,
+                path = %path.display(),
+                media_object_id = %media.id,
+                "media purge blob delete failed"
+            );
+        }
+        // Best-effort Nebular delete when mirrored.
+        if let Some(base) = &state.nebular_url {
+            let base = base.trim_end_matches('/');
+            let url = format!("{base}/{}/{}", media.bucket, media.object_key);
+            if let Err(err) = state.http_client.delete(&url).send().await {
+                tracing::warn!(
+                    error = %err,
+                    %url,
+                    media_object_id = %media.id,
+                    "media purge nebular delete failed"
+                );
+            }
+        }
+
+        let result = sqlx::query(r#"DELETE FROM media_objects WHERE id = $1"#)
+            .bind(media.id)
+            .execute(&state.pool)
+            .await
+            .map_err(|err| AppError::Internal(format!("delete media row failed: {err}")))?;
+        if result.rows_affected() > 0 {
+            purged += 1;
+        }
+    }
+    Ok(purged)
+}
+
 /// Delete unlinked media older than [`ORPHAN_TTL_MINUTES`] (DB row + local blob).
 ///
 /// Human: Stops abandoned uploads from filling disk indefinitely.
