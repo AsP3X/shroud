@@ -6,8 +6,24 @@ import {
   useState,
   type FormEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
-import { ArrowDown, Check, CheckCheck, ChevronLeft, Clock, Info, Paperclip, Send, ShieldCheck } from "lucide-react";
+import {
+  ArrowDown,
+  Check,
+  CheckCheck,
+  ChevronLeft,
+  Clock,
+  Image,
+  Info,
+  Mic,
+  Paperclip,
+  Plus,
+  Search,
+  Send,
+  ShieldCheck,
+  X,
+} from "lucide-react";
 import { clockTime, dayLabel, fullTimestamp, sameDay, MINUTE } from "../format";
 import type { ChatMessage } from "../messaging";
 import { Avatar } from "./Avatar";
@@ -46,6 +62,26 @@ function buildRows(messages: ChatMessage[]): Row[] {
     });
   }
   return rows;
+}
+
+/** Wraps every case-insensitive hit in <mark> so matches are findable by eye. */
+function Highlight({ text, query }: { text: string; query: string }) {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return <>{text}</>;
+  const parts: ReactNode[] = [];
+  const haystack = text.toLowerCase();
+  let cursor = 0;
+  for (;;) {
+    const at = haystack.indexOf(needle, cursor);
+    if (at === -1) {
+      parts.push(text.slice(cursor));
+      break;
+    }
+    if (at > cursor) parts.push(text.slice(cursor, at));
+    parts.push(<mark key={at}>{text.slice(at, at + needle.length)}</mark>);
+    cursor = at + needle.length;
+  }
+  return <>{parts}</>;
 }
 
 function Receipt({ message }: { message: ChatMessage }) {
@@ -88,6 +124,9 @@ export function Thread({
   const field = useRef<HTMLTextAreaElement>(null);
   const [pinned, setPinned] = useState(true);
   const [unseen, setUnseen] = useState(0);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchField = useRef<HTMLInputElement>(null);
   const seenCount = useRef(0);
 
   const toBottom = useCallback((behavior: ScrollBehavior = "auto") => {
@@ -107,13 +146,17 @@ export function Thread({
     if (atBottom) setUnseen(0);
   }, []);
 
+  const finePointer = () => window.matchMedia?.("(pointer: fine)").matches ?? false;
+
   useLayoutEffect(() => {
     seenCount.current = 0;
     setUnseen(0);
+    setSearchOpen(false);
+    setSearchQuery("");
     toBottom("auto");
     // Only on pointer devices: focusing here would raise the on-screen keyboard
     // every time a chat is opened on a phone.
-    if (window.matchMedia?.("(pointer: fine)").matches) field.current?.focus();
+    if (finePointer()) field.current?.focus();
   }, [peer.id, toBottom]);
 
   useLayoutEffect(() => {
@@ -124,6 +167,24 @@ export function Thread({
     if (pinned || last?.isMine) toBottom(messages.length === added ? "auto" : "smooth");
     else setUnseen((count) => count + added);
   }, [messages, pinned, toBottom]);
+
+  useLayoutEffect(() => {
+    if (searchOpen) searchField.current?.focus();
+  }, [searchOpen]);
+
+  const query = searchOpen ? searchQuery.trim() : "";
+  const visible = useMemo(() => {
+    if (!query) return messages;
+    const needle = query.toLowerCase();
+    return messages.filter((m) => !m.deleted && m.text.toLowerCase().includes(needle));
+  }, [messages, query]);
+  const rows = useMemo(() => buildRows(visible), [visible]);
+
+  /* Filtering shrinks the thread; if we were pinned, stay on the latest match
+     (and jump back to the real bottom when the query is cleared). */
+  useLayoutEffect(() => {
+    if (pinned) toBottom("auto");
+  }, [query, pinned, toBottom]);
 
   /* Clicking Send moves focus to the button, so hand it back to the field —
      otherwise the composer goes cold after every message. */
@@ -143,7 +204,11 @@ export function Thread({
     send();
   }
 
-  const rows = useMemo(() => buildRows(messages), [messages]);
+  function closeSearch() {
+    setSearchOpen(false);
+    setSearchQuery("");
+    if (finePointer()) field.current?.focus();
+  }
 
   return (
     <section className="thread">
@@ -160,10 +225,53 @@ export function Thread({
           <ShieldCheck size={13} aria-hidden="true" />
           Encrypted
         </span>
-        <button className="icon-btn" aria-label="Contact info" title="Contact info" onClick={onShowInfo}>
+        <button
+          className="icon-btn search-in-chat"
+          type="button"
+          aria-label="Search in chat"
+          title="Search in chat"
+          aria-pressed={searchOpen}
+          onClick={() => {
+            if (searchOpen) closeSearch();
+            else setSearchOpen(true);
+          }}
+        >
+          <Search size={18} />
+        </button>
+        <button className="icon-btn" type="button" aria-label="Contact info" title="Contact info" onClick={onShowInfo}>
           <Info size={18} />
         </button>
       </header>
+
+      {searchOpen ? (
+        <div className="thread-search">
+          <Search size={15} aria-hidden="true" />
+          <input
+            ref={searchField}
+            type="search"
+            value={searchQuery}
+            aria-label="Search in this conversation"
+            placeholder={`Search in ${peer.username}`}
+            autoComplete="off"
+            autoCorrect="off"
+            enterKeyHint="search"
+            onChange={(event) => setSearchQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") closeSearch();
+            }}
+          />
+          {query ? (
+            <span className="thread-search-count" aria-live="polite">
+              {visible.length === 0
+                ? "No matches"
+                : `${visible.length} message${visible.length > 1 ? "s" : ""}`}
+            </span>
+          ) : null}
+          <button className="icon-btn" type="button" aria-label="Close search" onClick={closeSearch}>
+            <X size={16} />
+          </button>
+        </div>
+      ) : null}
 
       <div className="messages" ref={scroller} onScroll={onScroll}>
         <div className="messages-inner">
@@ -171,6 +279,8 @@ export function Thread({
             <p className="thread-note">Decrypting history…</p>
           ) : error && messages.length === 0 ? (
             <p className="thread-note thread-note-error">{error}</p>
+          ) : query && visible.length === 0 ? (
+            <p className="thread-note">No messages match “{query}”.</p>
           ) : messages.length === 0 ? (
             <div className="thread-empty">
               <Avatar name={peer.username} seed={peer.id} size="lg" />
@@ -200,7 +310,9 @@ export function Thread({
                     .filter(Boolean)
                     .join(" ")}
                 >
-                  <p className="bubble-text">{row.message.text}</p>
+                  <p className="bubble-text">
+                    <Highlight text={row.message.text} query={query} />
+                  </p>
                   <span className="bubble-meta" title={fullTimestamp(row.message.createdAt)}>
                     <time dateTime={row.message.createdAt}>{clockTime(row.message.createdAt)}</time>
                     {row.message.isMine && !row.message.deleted ? (
@@ -227,15 +339,39 @@ export function Thread({
         </button>
       ) : null}
 
-      <form className="compose" onSubmit={submit} aria-busy={sending}>
+      <form
+        className={draft.trim() ? "compose has-draft" : "compose"}
+        onSubmit={submit}
+        aria-busy={sending}
+      >
+        {/* The design shows attach + photo on desktop and one plus on mobile;
+            all three stay disabled until the sealed media path lands on web. */}
         <button
-          className="icon-btn"
+          className="icon-btn compose-plus"
+          type="button"
+          aria-label="Attach"
+          title="Media is coming to the web client soon"
+          disabled
+        >
+          <Plus size={20} />
+        </button>
+        <button
+          className="icon-btn compose-wide"
           type="button"
           aria-label="Attach a file"
           title="Media is coming to the web client soon"
           disabled
         >
           <Paperclip size={18} />
+        </button>
+        <button
+          className="icon-btn compose-wide"
+          type="button"
+          aria-label="Send a photo"
+          title="Media is coming to the web client soon"
+          disabled
+        >
+          <Image size={18} />
         </button>
         <div className="compose-grow" data-value={`${draft} `}>
           <textarea
@@ -251,6 +387,15 @@ export function Thread({
             disabled={!canSend}
           />
         </div>
+        <button
+          className="icon-btn compose-mic"
+          type="button"
+          aria-label="Record a voice message"
+          title="Voice messages are coming to the web client soon"
+          disabled
+        >
+          <Mic size={18} />
+        </button>
         <button className="send" type="submit" aria-label="Send" disabled={!canSend || !draft.trim()}>
           <Send size={16} />
         </button>
