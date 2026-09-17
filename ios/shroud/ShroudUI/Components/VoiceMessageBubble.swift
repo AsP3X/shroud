@@ -16,6 +16,7 @@ struct VoiceMessageBubble: View {
     var onRequestTranscript: (() async -> String?)? = nil
 
     @State private var playback = VoicePlaybackCoordinator.shared
+    @State private var install = TranscriptionModelInstall.shared
     @State private var localTranscript: String?
     @State private var isTranscribing = false
     /// Non-nil while the finger is on the waveform; overrides coordinator progress.
@@ -308,6 +309,8 @@ struct VoiceMessageBubble: View {
             .frame(maxWidth: 260, alignment: isMine ? .trailing : .leading)
             .padding(.horizontal, 4)
             .transition(.opacity.combined(with: .move(edge: .top)))
+        } else if isWorkingOnTranscript {
+            transcriptProgress
         } else if onRequestTranscript != nil, message.voiceData != nil {
             Button {
                 isTranscribing = true
@@ -317,26 +320,64 @@ struct VoiceMessageBubble: View {
                     withAnimation(Motion.standard) { localTranscript = result }
                 }
             } label: {
-                HStack(spacing: 5) {
-                    if isTranscribing {
-                        ProgressView()
-                            .controlSize(.mini)
-                            .tint(Theme.accent)
-                    }
-                    Text(isTranscribing ? "Transcribing…" : "Transcribe on device")
-                        .font(.system(size: 12, weight: .medium))
-                        .contentTransition(.opacity)
-                }
-                .foregroundStyle(Theme.accent)
-                .padding(.horizontal, 4)
-                .padding(.vertical, 4)
-                .contentShape(Rectangle())
+                Text("Transcribe on device")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.accent)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
             }
             .pressable(scale: 0.94)
-            .disabled(isTranscribing)
-            .animation(Motion.snappy, value: isTranscribing)
             .transition(.opacity)
         }
+    }
+
+    private var isWorkingOnTranscript: Bool {
+        isTranscribing || install.isActive(for: message.id)
+    }
+
+    private var transcriptProgress: some View {
+        let downloading = install.isActive(for: message.id) && install.phase == .downloading
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                if !downloading || !install.isDeterminate {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .tint(Theme.accent)
+                }
+                Text(transcriptProgressLabel(downloading: downloading))
+                    .font(.system(size: 12, weight: .medium))
+                    .contentTransition(.opacity)
+            }
+            if downloading, install.isDeterminate {
+                ProgressView(value: max(install.fractionCompleted, 0.02))
+                    .progressViewStyle(.linear)
+                    .tint(Theme.accent)
+                    .frame(width: contentWidth)
+            }
+        }
+        .foregroundStyle(Theme.accent)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 4)
+        .animation(Motion.snappy, value: install.phase)
+        .animation(Motion.snappy, value: install.fractionCompleted)
+        .transition(.opacity)
+        .accessibilityLabel(transcriptProgressLabel(downloading: downloading))
+    }
+
+    private func transcriptProgressLabel(downloading: Bool) -> String {
+        if downloading {
+            let percent = Int((install.fractionCompleted * 100).rounded())
+            if let name = install.languageName {
+                return install.isDeterminate && percent > 0
+                    ? "Downloading \(name)… \(percent)%"
+                    : "Downloading \(name)…"
+            }
+            return install.isDeterminate && percent > 0
+                ? "Downloading model… \(percent)%"
+                : "Downloading model…"
+        }
+        return "Transcribing…"
     }
 
     // MARK: - Actions

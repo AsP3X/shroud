@@ -1,22 +1,90 @@
 import AVFoundation
+import CoreMedia
 import Foundation
 import NaturalLanguage
+import Observation
 import Speech
+
+/// Live install/transcribe status for the voice-bubble progress UI.
+///
+/// Human: Model assets are hundreds of megabytes. A spinner that says "Transcribing…" while the
+/// phone is actually downloading looks like a hang. This is the single source of that progress
+/// so the bubble that kicked off the job can show a determinate bar.
+@MainActor
+@Observable
+final class TranscriptionModelInstall {
+    static let shared = TranscriptionModelInstall()
+
+    enum Phase: Equatable {
+        case idle
+        case downloading
+        case transcribing
+    }
+
+    private(set) var phase: Phase = .idle
+    /// 0…1 while `phase == .downloading`. Ignored when `isDeterminate` is false.
+    private(set) var fractionCompleted: Double = 0
+    private(set) var isDeterminate = false
+    private(set) var languageName: String?
+    private(set) var messageID: UUID?
+    private var sessionCount = 0
+
+    var isBusy: Bool { phase != .idle }
+
+    func isActive(for id: UUID) -> Bool {
+        isBusy && messageID == id
+    }
+
+    func begin(messageID: UUID?) {
+        sessionCount += 1
+        if let messageID { self.messageID = messageID }
+        if phase == .idle {
+            phase = .transcribing
+            fractionCompleted = 0
+            isDeterminate = false
+            languageName = nil
+        }
+    }
+
+    func downloading(languageName: String, fraction: Double, determinate: Bool) {
+        phase = .downloading
+        self.languageName = languageName
+        isDeterminate = determinate
+        fractionCompleted = min(1, max(0, fraction))
+    }
+
+    func transcribing() {
+        phase = .transcribing
+        fractionCompleted = 1
+    }
+
+    func finish() {
+        sessionCount = max(0, sessionCount - 1)
+        guard sessionCount == 0 else { return }
+        phase = .idle
+        fractionCompleted = 0
+        isDeterminate = false
+        languageName = nil
+        messageID = nil
+    }
+}
 
 /// On-device speech-to-text for voice messages (Tier 1 — audio never leaves the device).
 ///
-/// Two engines, best first:
+/// Two `SpeechAnalyzer` modules, best first:
 ///
-/// 1. **`SpeechAnalyzer` + `SpeechTranscriber`** (iOS 26). Apple's long-form stack — the one
-///    Notes and Voice Memos use. No practical duration limit, punctuation and capitalisation
-///    from the model, markedly better accuracy than dictation. Needs a per-locale model asset.
-/// 2. **`SFSpeechRecognizer`** (legacy), only for locales the new stack does not serve. Apple
-///    documents a one-minute audio ceiling on it (`SFSpeechRecognizer.h`), so it is a fallback,
-///    not a peer.
+/// 1. **`SpeechTranscriber`** (iOS 26, A14+/16-core Neural Engine). Long-form model used by
+///    Notes and Voice Memos. Unavailable on Simulator (no ANE) and on A13 devices.
+/// 2. **`DictationTranscriber`**. Same on-device models as `SFSpeechRecognizer` with
+///    `requiresOnDeviceRecognition`, but Apple's documented fallback when `SpeechTranscriber`
+///    cannot run. Does **not** require Keyboard Dictation to be enabled in Settings.
 ///
-/// Human: Two things decide whether the output is usable, and both used to be wrong here —
-/// the audio must be resampled into the format the model expects (see `analyze`), and it must
-/// be transcribed in the language actually being spoken (see `resolveLocale`).
+/// `SFSpeechRecognizer` is not used. `SFSpeechURLRecognitionRequest` on AAC/M4A is what produced
+/// `kAFAssistantErrorDomain` 1101 / `SFSpeechRecognitionTask speechRecordingDidFail` here.
+///
+/// Human: Two things decide whether the output is usable — the audio must be in the format the
+/// model expects (see `feed`), and it must be transcribed in the language actually being spoken
+/// (see `resolveLocale`).
 /// Agent: READS a local audio file; WRITES only the UserDefaults key owned by
 /// `TranscriptionLanguage`. The only network traffic is Apple's model asset download, which
 /// carries no user audio. Never add a server-side path (`security-crypto.mdc`).
@@ -30,8 +98,14 @@ enum VoiceTranscriber {
         var errorDescription: String? {
             switch self {
             case .permissionDenied: "Speech recognition permission is required."
-            case .unavailable: "On-device transcription is not available."
-            case .modelUnavailable: "The transcription model for this language is not installed."
+            case .unavailable:
+                #if targetEnvironment(simulator)
+                "On-device transcription isn't available in the Simulator. Run Shroud on an iPhone."
+                #else
+                "On-device transcription is not available on this device."
+                #endif
+            case .modelUnavailable:
+                "Couldn't download the transcription model. Check your connection and try again."
             case let .failed(msg): msg
             }
         }
@@ -54,6 +128,11 @@ enum VoiceTranscriber {
     /// Upper bound on how many languages we are willing to probe.
     private static let maxDetectionCandidates = 4
 
+    private enum Engine {
+        case longForm
+        case dictation
+    }
+
     // MARK: - Entry points
 
     /// Transcribes a local audio file on-device.
@@ -65,63 +144,92 @@ enum VoiceTranscriber {
     static func transcribe(
         fileURL: URL,
         contextualStrings: [String] = [],
-        conversationID: UUID? = nil
+        conversationID: UUID? = nil,
+        tracking: UUID? = nil
     ) async throws -> String {
-        let candidates = await candidateLocales()
+        // `SFSpeechRecognizer.requestAuthorization` must run on the main thread. Callers are
+        // SwiftUI (main actor); do this before hopping off for converter/analyzer work.
+        let status = await requestAuthorization()
+        guard status == .authorized else { throw TranscribeError.permissionDenied }
 
-        guard !candidates.isEmpty else {
-            // No long-form model available at all — try the legacy engine in the device locale.
-            return VoiceTranscript.cleaned(
-                try await recognizeWithDictation(
-                    fileURL: fileURL,
-                    locale: .current,
-                    contextualStrings: contextualStrings
-                )
-            )
+        #if targetEnvironment(simulator)
+        // No Neural Engine, and DictationTranscriber assets do not install here.
+        // Pretending to download produced "Couldn't download the transcription model".
+        if !SpeechTranscriber.isAvailable {
+            throw TranscribeError.unavailable
+        }
+        #endif
+
+        await TranscriptionModelInstall.shared.begin(messageID: tracking)
+        defer {
+            Task { @MainActor in TranscriptionModelInstall.shared.finish() }
         }
 
-        let duration = audioDuration(of: fileURL)
-        let locale = try await resolveLocale(
-            from: candidates,
-            fileURL: fileURL,
-            contextualStrings: contextualStrings,
-            conversationID: conversationID,
-            audioSeconds: duration
-        )
+        // AssetInventory / model download must not run inside `Task.detached` — those APIs
+        // fail closed off the main thread and we were mapping that to "Couldn't download".
+        let candidates = await candidateLocales()
+        guard !candidates.isEmpty else { throw TranscribeError.unavailable }
+        let prepared = try await prepareEngine(for: candidates[0])
+        await TranscriptionModelInstall.shared.transcribing()
 
-        do {
-            let attempt = try await analyze(
+        return try await Task.detached(priority: .userInitiated) {
+            try await Self.transcribeOffMain(
                 fileURL: fileURL,
-                locale: locale,
                 contextualStrings: contextualStrings,
-                limitSeconds: nil,
                 conversationID: conversationID,
-                audioSeconds: duration,
+                engine: prepared.engine,
+                fallbackLocale: prepared.locale,
                 candidates: candidates
             )
-            let text = VoiceTranscript.cleaned(attempt.text)
-            // Teach the memory only from results that were actually decisive.
-            let weight = VoiceTranscript.learningWeight(
-                audioSeconds: duration,
-                score: attempt.score
-            )
-            if !text.isEmpty, weight > 0 {
-                TranscriptionLanguageMemory.record(
-                    languageCode: attempt.languageCode,
-                    peerID: conversationID,
-                    weight: weight
-                )
-            }
-            return text
-        } catch TranscribeError.modelUnavailable {
-            return VoiceTranscript.cleaned(
-                try await recognizeWithDictation(
-                    fileURL: fileURL,
-                    locale: locale,
-                    contextualStrings: contextualStrings
-                )
+        }.value
+    }
+
+    private static func transcribeOffMain(
+        fileURL: URL,
+        contextualStrings: [String],
+        conversationID: UUID?,
+        engine: Engine,
+        fallbackLocale: Locale,
+        candidates: [Locale]
+    ) async throws -> String {
+        let duration = audioDuration(of: fileURL)
+
+        let locale: Locale
+        if candidates.count > 1, await localeIsInstalled(fallbackLocale, engine: engine) {
+            locale = (try? await resolveLocale(
+                from: candidates,
+                fileURL: fileURL,
+                contextualStrings: contextualStrings,
+                conversationID: conversationID,
+                audioSeconds: duration
+            )) ?? fallbackLocale
+        } else {
+            locale = fallbackLocale
+        }
+
+        let attempt = try await analyze(
+            fileURL: fileURL,
+            locale: locale,
+            engine: engine,
+            contextualStrings: contextualStrings,
+            limitSeconds: nil,
+            conversationID: conversationID,
+            audioSeconds: duration,
+            candidates: candidates
+        )
+        let text = VoiceTranscript.cleaned(attempt.text)
+        let weight = VoiceTranscript.learningWeight(
+            audioSeconds: duration,
+            score: attempt.score
+        )
+        if !text.isEmpty, weight > 0 {
+            TranscriptionLanguageMemory.record(
+                languageCode: attempt.languageCode,
+                peerID: conversationID,
+                weight: weight
             )
         }
+        return text
     }
 
     /// Duration in seconds, or 0 when the file cannot be read.
@@ -136,7 +244,8 @@ enum VoiceTranscriber {
         audioData: Data,
         fileExtension: String = "m4a",
         contextualStrings: [String] = [],
-        conversationID: UUID? = nil
+        conversationID: UUID? = nil,
+        tracking: UUID? = nil
     ) async throws -> String {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("shroud-tx-\(UUID().uuidString).\(fileExtension)")
@@ -145,32 +254,46 @@ enum VoiceTranscriber {
         return try await transcribe(
             fileURL: url,
             contextualStrings: contextualStrings,
-            conversationID: conversationID
+            conversationID: conversationID,
+            tracking: tracking
         )
     }
 
-    /// Downloads and reserves the long-form model for `locale` if it isn't installed yet.
+    /// Downloads and reserves the model for `locale` if it isn't installed yet.
     /// Safe to call repeatedly; a no-op once installed.
     @discardableResult
     static func prepareModel(locale: Locale? = nil) async -> Bool {
         let target = locale ?? TranscriptionLanguage.override ?? .current
-        guard let supported = await analyzerLocale(equivalentTo: target) else { return false }
+        let alreadyBusy = await MainActor.run { TranscriptionModelInstall.shared.isBusy }
+        if !alreadyBusy {
+            await TranscriptionModelInstall.shared.begin(messageID: nil)
+        }
+        defer {
+            if !alreadyBusy {
+                Task { @MainActor in TranscriptionModelInstall.shared.finish() }
+            }
+        }
         do {
-            try await installModelIfNeeded(
-                for: makeTranscriber(locale: supported),
-                locale: supported
-            )
+            _ = try await prepareEngine(for: target)
             return true
         } catch {
             return false
         }
     }
 
-    /// Locales the long-form engine can serve on this device, for a settings picker.
+    /// Locales the active engine can serve on this device, for a settings picker.
     static func availableLocales() async -> [Locale] {
-        guard SpeechTranscriber.isAvailable else { return [] }
-        return await SpeechTranscriber.supportedLocales
-            .sorted { TranscriptionLanguage.displayName(for: $0) < TranscriptionLanguage.displayName(for: $1) }
+        guard let engine = await activeEngine() else { return [] }
+        let locales: [Locale]
+        switch engine {
+        case .longForm:
+            locales = await SpeechTranscriber.supportedLocales
+        case .dictation:
+            locales = await DictationTranscriber.supportedLocales
+        }
+        return locales.sorted {
+            TranscriptionLanguage.displayName(for: $0) < TranscriptionLanguage.displayName(for: $1)
+        }
     }
 
     /// Whether the long-form engine can serve `locale` at all.
@@ -178,12 +301,45 @@ enum VoiceTranscriber {
         await analyzerLocale(equivalentTo: locale) != nil
     }
 
-    /// Whether the long-form model for `locale` is already on disk (no download needed).
+    /// Whether the active engine's model for `locale` is already on disk (no download needed).
     static func modelIsInstalled(locale: Locale = .current) async -> Bool {
-        guard let supported = await analyzerLocale(equivalentTo: locale) else { return false }
-        return await AssetInventory.status(
-            forModules: [makeTranscriber(locale: supported)]
-        ) == .installed
+        #if targetEnvironment(simulator)
+        if !SpeechTranscriber.isAvailable { return false }
+        #endif
+        guard let engine = await activeEngine() else { return false }
+        switch engine {
+        case .longForm:
+            guard let supported = await analyzerLocale(equivalentTo: locale) else { return false }
+            return await localeIsInstalled(supported, engine: .longForm)
+        case .dictation:
+            guard let supported = await dictationLocale(equivalentTo: locale) else { return false }
+            return await localeIsInstalled(supported, engine: .dictation)
+        }
+    }
+
+    private static func localeIsInstalled(_ locale: Locale, engine: Engine) async -> Bool {
+        let module: any SpeechModule = switch engine {
+        case .longForm: makeTranscriber(locale: locale)
+        case .dictation: makeDictationTranscriber(locale: locale)
+        }
+        guard await AssetInventory.status(forModules: [module]) == .installed else {
+            return false
+        }
+        return await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [module]) != nil
+    }
+
+    // MARK: - Engine selection
+
+    /// Long-form when the hardware can run it *and* it actually lists locales. `isAvailable`
+    /// alone is not enough: on Simulator it is false (no ANE) and `supportedLocales` is empty,
+    /// which previously dumped us into `SFSpeechRecognizer` and 1101.
+    private static func activeEngine() async -> Engine? {
+        if SpeechTranscriber.isAvailable {
+            let locales = await SpeechTranscriber.supportedLocales
+            if !locales.isEmpty { return .longForm }
+        }
+        let locales = await DictationTranscriber.supportedLocales
+        return locales.isEmpty ? nil : .dictation
     }
 
     // MARK: - Language selection
@@ -195,8 +351,10 @@ enum VoiceTranscriber {
     /// is what makes detection useful, because someone who dictates in German has the German
     /// model even when their phone's UI language is English.
     static func candidateLocales() async -> [Locale] {
+        guard let engine = await activeEngine() else { return [] }
+
         if let override = TranscriptionLanguage.override,
-           let resolved = await analyzerLocale(equivalentTo: override)
+           let resolved = await locale(equivalentTo: override, engine: engine)
         {
             return [resolved]
         }
@@ -211,16 +369,20 @@ enum VoiceTranscriber {
         }
 
         for identifier in Locale.preferredLanguages {
-            if let resolved = await analyzerLocale(equivalentTo: Locale(identifier: identifier)) {
+            if let resolved = await locale(equivalentTo: Locale(identifier: identifier), engine: engine) {
                 add(resolved)
             }
         }
-        if let current = await analyzerLocale(equivalentTo: .current) {
+        if let current = await locale(equivalentTo: .current, engine: engine) {
             add(current)
         }
-        // Installed models cost nothing to probe and cover languages the user actually dictates in.
-        if SpeechTranscriber.isAvailable {
+        switch engine {
+        case .longForm:
             for installed in await SpeechTranscriber.installedLocales {
+                add(installed)
+            }
+        case .dictation:
+            for installed in await DictationTranscriber.installedLocales {
                 add(installed)
             }
         }
@@ -252,6 +414,7 @@ enum VoiceTranscriber {
             guard let attempt = try? await analyze(
                 fileURL: fileURL,
                 locale: candidate,
+                engine: await activeEngine() ?? .dictation,
                 contextualStrings: contextualStrings,
                 limitSeconds: detectionWindow,
                 conversationID: conversationID,
@@ -313,7 +476,14 @@ enum VoiceTranscriber {
         return hypotheses[NLLanguage(code)] ?? 0
     }
 
-    // MARK: - Long-form engine
+    // MARK: - Locale resolution
+
+    private static func locale(equivalentTo locale: Locale, engine: Engine) async -> Locale? {
+        switch engine {
+        case .longForm: await analyzerLocale(equivalentTo: locale)
+        case .dictation: await dictationLocale(equivalentTo: locale)
+        }
+    }
 
     /// Resolves `locale` to one the long-form engine can actually serve, or nil.
     ///
@@ -326,90 +496,99 @@ enum VoiceTranscriber {
             return nil
         }
         let supported = await SpeechTranscriber.supportedLocales
-        let match = supported.contains { $0.identifier(.bcp47) == candidate.identifier(.bcp47) }
-        return match ? candidate : nil
+        // Use the array's own Locale object. A reconstructed equivalent can fail
+        // AssetInventory reservation ("unallocated locales").
+        return supported.first { $0.identifier(.bcp47) == candidate.identifier(.bcp47) }
+    }
+
+    private static func dictationLocale(equivalentTo locale: Locale) async -> Locale? {
+        guard let candidate = await DictationTranscriber.supportedLocale(equivalentTo: locale) else {
+            return nil
+        }
+        let supported = await DictationTranscriber.supportedLocales
+        return supported.first { $0.identifier(.bcp47) == candidate.identifier(.bcp47) }
     }
 
     private static func makeTranscriber(locale: Locale) -> SpeechTranscriber {
-        SpeechTranscriber(
-            locale: locale,
-            // `etiquetteReplacements` masks profanity — deliberately off, a messenger transcript
-            // should say what was actually said.
-            transcriptionOptions: [],
-            // Final results only; we transcribe a finished file, so volatile reporting is churn.
-            reportingOptions: [],
-            // Confidence is what lets us compare candidate languages against each other.
-            attributeOptions: [.transcriptionConfidence]
-        )
+        // Apple's `.transcription` preset is the configuration AssetInventory actually
+        // downloads. Extra options (confidence, custom reporting) made status `.unsupported`
+        // so `assetInstallationRequest` threw and the bubble showed "Couldn't download".
+        SpeechTranscriber(locale: locale, preset: .transcription)
     }
+
+    private static func makeDictationTranscriber(locale: Locale) -> DictationTranscriber {
+        DictationTranscriber(locale: locale, preset: .longDictation)
+    }
+
+    // MARK: - Analysis
 
     private static func analyze(
         fileURL: URL,
         locale: Locale,
+        engine: Engine,
         contextualStrings: [String],
         limitSeconds: Double?,
         conversationID: UUID?,
         audioSeconds: Double,
         candidates: [Locale]
     ) async throws -> Attempt {
-        let transcriber = makeTranscriber(locale: locale)
-        try await installModelIfNeeded(for: transcriber, locale: locale)
-
-        let file = try AVAudioFile(forReading: fileURL)
-
-        // Human: This is the step whose absence produced transcripts of pure punctuation. Voice
-        // messages are recorded at 44.1 kHz; the model wants its own (typically 16 kHz) format.
-        // Handing it the file's buffers unconverted makes speech unintelligible to the model,
-        // which then emits only pause punctuation.
-        guard let analyzerFormat = await SpeechAnalyzer.bestAvailableAudioFormat(
-            compatibleWith: [transcriber],
-            considering: file.processingFormat
-        ) else {
-            throw TranscribeError.modelUnavailable
-        }
-
-        let analyzer = SpeechAnalyzer(modules: [transcriber])
-
+        let context = AnalysisContext()
         if !contextualStrings.isEmpty {
-            let context = AnalysisContext()
             context.contextualStrings = [.general: contextualStrings]
-            try? await analyzer.setContext(context)
         }
 
-        // Results stream while the input is consumed, so collect concurrently.
-        let collector = Task {
-            var transcript = AttributedString()
-            for try await result in transcriber.results {
-                transcript.append(result.text)
+        let transcript: AttributedString
+        switch engine {
+        case .longForm:
+            let transcriber = makeTranscriber(locale: locale)
+            try await installModelIfNeeded(for: transcriber, locale: locale, engine: .longForm)
+            let collector = Task {
+                var combined = AttributedString()
+                for try await result in transcriber.results {
+                    combined.append(result.text)
+                }
+                return combined
             }
-            return transcript
+            do {
+                try await feed(
+                    fileURL: fileURL,
+                    module: transcriber,
+                    locale: locale,
+                    engine: .longForm,
+                    context: context,
+                    limitSeconds: limitSeconds
+                )
+            } catch {
+                collector.cancel()
+                throw (error as? TranscribeError) ?? TranscribeError.failed(error.localizedDescription)
+            }
+            transcript = try await collector.value
+        case .dictation:
+            let transcriber = makeDictationTranscriber(locale: locale)
+            try await installModelIfNeeded(for: transcriber, locale: locale, engine: .dictation)
+            let collector = Task {
+                var combined = AttributedString()
+                for try await result in transcriber.results {
+                    combined.append(result.text)
+                }
+                return combined
+            }
+            do {
+                try await feed(
+                    fileURL: fileURL,
+                    module: transcriber,
+                    locale: locale,
+                    engine: .dictation,
+                    context: context,
+                    limitSeconds: limitSeconds
+                )
+            } catch {
+                collector.cancel()
+                throw (error as? TranscribeError) ?? TranscribeError.failed(error.localizedDescription)
+            }
+            transcript = try await collector.value
         }
 
-        do {
-            let (stream, continuation) = AsyncStream<AnalyzerInput>.makeStream()
-            // A voice message is small enough to convert up front; the stream buffers it.
-            for buffer in try resampledBuffers(
-                from: file,
-                to: analyzerFormat,
-                limitSeconds: limitSeconds
-            ) {
-                continuation.yield(AnalyzerInput(buffer: buffer))
-            }
-            continuation.finish()
-
-            let lastSample = try await analyzer.analyzeSequence(stream)
-            if let lastSample {
-                try await analyzer.finalizeAndFinish(through: lastSample)
-            } else {
-                await analyzer.cancelAndFinishNow()
-            }
-        } catch {
-            collector.cancel()
-            await analyzer.cancelAndFinishNow()
-            throw TranscribeError.failed(error.localizedDescription)
-        }
-
-        let transcript = try await collector.value
         let text = String(transcript.characters)
         let confidence = meanConfidence(of: transcript)
         return Attempt(
@@ -434,21 +613,97 @@ enum VoiceTranscriber {
         )
     }
 
-    /// Length-weighted mean of the model's per-run confidence.
-    private static func meanConfidence(of transcript: AttributedString) -> Double {
-        var weighted = 0.0
-        var weight = 0.0
-        for run in transcript.runs {
-            guard let confidence = run.transcriptionConfidence else { continue }
-            let length = Double(transcript[run.range].characters.count)
-            weighted += confidence * length
-            weight += length
+    /// Pushes `fileURL` through `module`. Uses Apple's file API when the file is already in the
+    /// analyzer format; otherwise converts in memory and streams PCM. Never hands AAC/M4A to
+    /// `SFSpeechURLRecognitionRequest` (that path is what FigExport -12785 / 1101 was).
+    private static func feed(
+        fileURL: URL,
+        module: any SpeechModule,
+        locale: Locale,
+        engine: Engine,
+        context: AnalysisContext,
+        limitSeconds: Double?
+    ) async throws {
+        let file = try AVAudioFile(forReading: fileURL)
+        // Do **not** pass `considering: file.processingFormat`. Voice notes are 44.1 kHz AAC;
+        // the model assets are typically 16 kHz. `considering` the file made this return nil
+        // even with the model installed, which we then mapped to "Couldn't download".
+        var analyzerFormat = await SpeechAnalyzer.bestAvailableAudioFormat(
+            compatibleWith: [module]
+        )
+        if analyzerFormat == nil {
+            try await installModelIfNeeded(for: module, locale: locale, engine: engine)
+            analyzerFormat = await SpeechAnalyzer.bestAvailableAudioFormat(
+                compatibleWith: [module]
+            )
         }
-        guard weight > 0 else { return 0 }
-        return weighted / weight
+        guard let analyzerFormat else {
+            throw TranscribeError.unavailable
+        }
+
+        let analyzer = SpeechAnalyzer(modules: [module])
+        try await analyzer.setContext(context)
+        try await analyzer.prepareToAnalyze(in: analyzerFormat, withProgressReadyHandler: nil)
+
+        let lastSample: CMTime?
+        if limitSeconds == nil, formatsMatch(file.processingFormat, analyzerFormat) {
+            lastSample = try await analyzer.analyzeSequence(from: file)
+        } else {
+            let buffers = try resampledBuffers(
+                from: file,
+                to: analyzerFormat,
+                limitSeconds: limitSeconds
+            )
+            guard !buffers.isEmpty else {
+                throw TranscribeError.failed("The recording could not be read.")
+            }
+            lastSample = try await analyzeConvertedBuffers(
+                buffers,
+                format: analyzerFormat,
+                analyzer: analyzer
+            )
+        }
+
+        if let lastSample {
+            try await analyzer.finalizeAndFinish(through: lastSample)
+        } else {
+            try await analyzer.finalizeAndFinishThroughEndOfInput()
+        }
     }
 
-    /// Reads `file` and converts it into `targetFormat`, optionally stopping after `limitSeconds`.
+    /// Starts `analyzeSequence` *before* finishing the stream — Apple's documented order.
+    /// Timestamps are monotonic so the analyzer does not see the input as discontiguous.
+    private static func analyzeConvertedBuffers(
+        _ buffers: [AVAudioPCMBuffer],
+        format: AVAudioFormat,
+        analyzer: SpeechAnalyzer
+    ) async throws -> CMTime? {
+        let (stream, continuation) = AsyncStream<AnalyzerInput>.makeStream()
+        let analysis = Task {
+            try await analyzer.analyzeSequence(stream)
+        }
+
+        var start = CMTime.zero
+        let timescale = CMTimeScale(max(Int32(format.sampleRate.rounded()), 1))
+        for buffer in buffers {
+            continuation.yield(AnalyzerInput(buffer: buffer, bufferStartTime: start))
+            let seconds = Double(buffer.frameLength) / format.sampleRate
+            start = start + CMTime(seconds: seconds, preferredTimescale: timescale)
+        }
+        continuation.finish()
+
+        return try await analysis.value
+    }
+
+    private static func formatsMatch(_ a: AVAudioFormat, _ b: AVAudioFormat) -> Bool {
+        a.sampleRate == b.sampleRate
+            && a.channelCount == b.channelCount
+            && a.commonFormat == b.commonFormat
+            && a.isInterleaved == b.isInterleaved
+    }
+
+    /// Converts `file` into the analyzer format. Always flushes the converter — skipping that
+    /// drop the last AAC packet and the model sees truncated PCM (punctuation-only transcripts).
     private static func resampledBuffers(
         from file: AVAudioFile,
         to targetFormat: AVAudioFormat,
@@ -458,7 +713,6 @@ enum VoiceTranscriber {
         guard let converter = AVAudioConverter(from: sourceFormat, to: targetFormat) else {
             throw TranscribeError.failed("Could not convert the recording for transcription.")
         }
-        // Resampling quality directly affects recognition accuracy; this is not a hot path.
         converter.sampleRateConverterQuality = AVAudioQuality.max.rawValue
 
         let frameLimit: AVAudioFramePosition = limitSeconds
@@ -480,148 +734,265 @@ enum VoiceTranscriber {
             guard input.frameLength > 0 else { break }
             framesRead += AVAudioFramePosition(input.frameLength)
 
-            let capacity = AVAudioFrameCount(Double(input.frameLength) * ratio) + 4096
-            guard let output = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: capacity) else {
-                break
-            }
+            try convertChunk(input, with: converter, into: &buffers, ratio: ratio, targetFormat: targetFormat)
+        }
 
+        try flushConverter(converter, into: &buffers, targetFormat: targetFormat)
+        return buffers
+    }
+
+    private static func convertChunk(
+        _ input: AVAudioPCMBuffer,
+        with converter: AVAudioConverter,
+        into buffers: inout [AVAudioPCMBuffer],
+        ratio: Double,
+        targetFormat: AVAudioFormat
+    ) throws {
+        let capacity = AVAudioFrameCount(Double(input.frameLength) * ratio) + 4096
+        guard let output = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: capacity) else {
+            return
+        }
+        var conversionError: NSError?
+        var consumed = false
+        let status = converter.convert(to: output, error: &conversionError) { _, inputStatus in
+            if consumed {
+                inputStatus.pointee = .noDataNow
+                return nil
+            }
+            consumed = true
+            inputStatus.pointee = .haveData
+            return input
+        }
+        if let conversionError {
+            throw TranscribeError.failed(conversionError.localizedDescription)
+        }
+        guard status != .error else {
+            throw TranscribeError.failed("Audio conversion failed.")
+        }
+        if output.frameLength > 0 {
+            buffers.append(output)
+        }
+    }
+
+    private static func flushConverter(
+        _ converter: AVAudioConverter,
+        into buffers: inout [AVAudioPCMBuffer],
+        targetFormat: AVAudioFormat
+    ) throws {
+        var more = true
+        while more {
+            guard let output = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: 8192) else {
+                return
+            }
             var conversionError: NSError?
-            var consumed = false
             let status = converter.convert(to: output, error: &conversionError) { _, inputStatus in
-                if consumed {
-                    inputStatus.pointee = .noDataNow
-                    return nil
-                }
-                consumed = true
-                inputStatus.pointee = .haveData
-                return input
+                inputStatus.pointee = .endOfStream
+                return nil
             }
-
             if let conversionError {
                 throw TranscribeError.failed(conversionError.localizedDescription)
-            }
-            guard status != .error else {
-                throw TranscribeError.failed("Audio conversion failed.")
             }
             if output.frameLength > 0 {
                 buffers.append(output)
             }
+            more = status == .haveData
         }
-
-        return buffers
     }
 
-    /// Ensures the locale's model is on disk, reserving it so the system doesn't evict it.
-    private static func installModelIfNeeded(
-        for transcriber: SpeechTranscriber,
-        locale: Locale
-    ) async throws {
-        switch await AssetInventory.status(forModules: [transcriber]) {
-        case .installed:
-            return
-        case .unsupported:
-            throw TranscribeError.modelUnavailable
-        case .supported, .downloading:
+    /// Length-weighted mean of the model's per-run confidence.
+    private static func meanConfidence(of transcript: AttributedString) -> Double {
+        var weighted = 0.0
+        var weight = 0.0
+        for run in transcript.runs {
+            guard let confidence = run.transcriptionConfidence else { continue }
+            let length = Double(transcript[run.range].characters.count)
+            weighted += confidence * length
+            weight += length
+        }
+        guard weight > 0 else { return 0 }
+        return weighted / weight
+    }
+
+    /// Picks an engine whose model is on disk, downloading if needed. Long-form first; if that
+    /// download fails, DictationTranscriber (system dictation assets) is the documented fallback.
+    private static func prepareEngine(for locale: Locale) async throws -> (engine: Engine, locale: Locale) {
+        if let longLocale = await analyzerLocale(equivalentTo: locale) {
+            let module = makeTranscriber(locale: longLocale)
             do {
-                if let request = try await AssetInventory.assetInstallationRequest(
-                    supporting: [transcriber]
-                ) {
-                    try await request.downloadAndInstall()
+                try await installModelIfNeeded(for: module, locale: longLocale, engine: .longForm)
+                if await localeIsInstalled(longLocale, engine: .longForm) {
+                    return (.longForm, longLocale)
                 }
             } catch {
-                throw TranscribeError.modelUnavailable
+                // Fall through to dictation rather than failing the Transcribe tap.
             }
-        @unknown default:
-            throw TranscribeError.modelUnavailable
         }
 
-        // Reserving keeps the model resident for later messages. Failure is not fatal —
-        // the reservation pool is small and shared across apps.
-        _ = try? await AssetInventory.reserve(locale: locale)
+        if let dictationLocale = await dictationLocale(equivalentTo: locale) {
+            let module = makeDictationTranscriber(locale: dictationLocale)
+            try await installModelIfNeeded(for: module, locale: dictationLocale, engine: .dictation)
+            return (.dictation, dictationLocale)
+        }
+
+        throw TranscribeError.modelUnavailable
     }
 
-    // MARK: - Dictation fallback (legacy locales)
+    private static func installForLocale(_ locale: Locale) async throws {
+        _ = try await prepareEngine(for: locale)
+    }
 
-    /// Requests speech authorization if needed.
+    private static func installModelIfNeeded(
+        for module: any SpeechModule,
+        locale: Locale,
+        engine: Engine
+    ) async throws {
+        if await localeIsInstalled(locale, engine: engine) {
+            try await ensureReserved(locale)
+            return
+        }
+
+        try await ensureReserved(locale)
+        try await downloadAssets(for: module, locale: locale, engine: engine)
+
+        if await localeIsInstalled(locale, engine: engine) {
+            return
+        }
+        if engine == .dictation,
+           await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [module]) != nil
+        {
+            return
+        }
+        throw TranscribeError.modelUnavailable
+    }
+
+    private static func downloadAssets(
+        for module: any SpeechModule,
+        locale: Locale,
+        engine: Engine
+    ) async throws {
+        var lastError: Error?
+        for attempt in 0..<3 {
+            do {
+                try await requestAndDownload(module, locale: locale, engine: engine)
+                if await localeIsInstalled(locale, engine: engine) { return }
+                if engine == .dictation,
+                   await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [module]) != nil
+                {
+                    return
+                }
+            } catch {
+                lastError = error
+                try await ensureReserved(locale, forceSlot: true)
+            }
+            if attempt < 2 {
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+        if engine == .dictation,
+           await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [module]) != nil
+        {
+            return
+        }
+        if let lastError {
+            throw TranscribeError.failed(lastError.localizedDescription)
+        }
+        throw TranscribeError.modelUnavailable
+    }
+
+    private static func requestAndDownload(
+        _ module: any SpeechModule,
+        locale: Locale,
+        engine: Engine
+    ) async throws {
+        if let request = try await AssetInventory.assetInstallationRequest(supporting: [module]) {
+            try await performDownload(request, locale: locale)
+            return
+        }
+        if await localeIsInstalled(locale, engine: engine) { return }
+        await waitUntilInstalled(module, locale: locale, engine: engine)
+    }
+
+    private static func performDownload(
+        _ request: AssetInstallationRequest,
+        locale: Locale
+    ) async throws {
+        let progress = request.progress
+        let languageName = TranscriptionLanguage.displayName(for: locale)
+        await MainActor.run {
+            TranscriptionModelInstall.shared.downloading(
+                languageName: languageName,
+                fraction: progress.fractionCompleted,
+                determinate: progress.totalUnitCount > 0
+            )
+        }
+        let observation = progress.observe(\.fractionCompleted, options: [.new]) { prog, _ in
+            let fraction = prog.fractionCompleted
+            let determinate = prog.totalUnitCount > 0
+            Task { @MainActor in
+                TranscriptionModelInstall.shared.downloading(
+                    languageName: languageName,
+                    fraction: fraction,
+                    determinate: determinate
+                )
+            }
+        }
+        defer { observation.invalidate() }
+        try await request.downloadAndInstall()
+    }
+
+    private static func waitUntilInstalled(
+        _ module: any SpeechModule,
+        locale: Locale,
+        engine: Engine
+    ) async {
+        let languageName = TranscriptionLanguage.displayName(for: locale)
+        await MainActor.run {
+            TranscriptionModelInstall.shared.downloading(
+                languageName: languageName,
+                fraction: 0,
+                determinate: false
+            )
+        }
+        for _ in 0..<40 {
+            if await localeIsInstalled(locale, engine: engine) { return }
+            if await AssetInventory.status(forModules: [module]) == .installed { return }
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+    }
+
+    /// The app is allowed a small number of locale reservations. `assetInstallationRequest`
+    /// auto-reserves, but throws when the pool is full — which we used to map to "not installed".
+    private static func ensureReserved(_ locale: Locale, forceSlot: Bool = false) async throws {
+        let reserved = await AssetInventory.reservedLocales
+        if reserved.contains(where: { $0.identifier(.bcp47) == locale.identifier(.bcp47) }) {
+            return
+        }
+
+        let maxCount = await AssetInventory.maximumReservedLocales
+        if reserved.count >= maxCount || forceSlot {
+            if let victim = reserved.first(where: { $0.identifier(.bcp47) != locale.identifier(.bcp47) }) {
+                _ = await AssetInventory.release(reservedLocale: victim)
+            }
+        }
+
+        do {
+            _ = try await AssetInventory.reserve(locale: locale)
+        } catch {
+            if !forceSlot {
+                try await ensureReserved(locale, forceSlot: true)
+            }
+        }
+    }
+
+    // MARK: - Authorization
+
+    /// Requests speech authorization if needed. Required for both `SpeechTranscriber` and
+    /// `DictationTranscriber` — they share the Speech Recognition privacy permission.
     static func requestAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
         await withCheckedContinuation { cont in
             SFSpeechRecognizer.requestAuthorization { status in
                 cont.resume(returning: status)
             }
-        }
-    }
-
-    private static func recognizeWithDictation(
-        fileURL: URL,
-        locale: Locale,
-        contextualStrings: [String]
-    ) async throws -> String {
-        let status = await requestAuthorization()
-        guard status == .authorized else { throw TranscribeError.permissionDenied }
-
-        guard let recognizer = SFSpeechRecognizer(locale: locale), recognizer.isAvailable else {
-            throw TranscribeError.unavailable
-        }
-
-        // Human: Refusing here is deliberate. `SFSpeechRecognizer` defaults to Apple's *server*
-        // recognition, so leaving `requiresOnDeviceRecognition` false on a device or locale
-        // without an on-device model would upload decrypted voice audio. `security-crypto.mdc`
-        // forbids that outright, so no transcript is the correct outcome.
-        guard recognizer.supportsOnDeviceRecognition else {
-            throw TranscribeError.unavailable
-        }
-
-        let request = SFSpeechURLRecognitionRequest(url: fileURL)
-        request.requiresOnDeviceRecognition = true
-        request.addsPunctuation = true
-        request.taskHint = .dictation
-        if !contextualStrings.isEmpty {
-            request.contextualStrings = contextualStrings
-        }
-        // Human: Partials are not shown anywhere — they are kept so a recognizer that gives up
-        // part-way through still yields the text it managed, instead of losing everything.
-        request.shouldReportPartialResults = true
-
-        return try await withCheckedThrowingContinuation { cont in
-            let box = ResultBox()
-            recognizer.recognitionTask(with: request) { result, error in
-                if let result {
-                    let text = result.bestTranscription.formattedString
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    box.latest = text
-                    if result.isFinal {
-                        box.finish(cont) { $0.resume(returning: text) }
-                        return
-                    }
-                }
-                guard let error else { return }
-                if let partial = box.latest, !partial.isEmpty {
-                    box.finish(cont) { $0.resume(returning: partial) }
-                } else {
-                    box.finish(cont) {
-                        $0.resume(throwing: TranscribeError.failed(error.localizedDescription))
-                    }
-                }
-            }
-        }
-    }
-
-    /// Guards single-resumption of the recognition continuation across many callback firings.
-    private final class ResultBox: @unchecked Sendable {
-        private let lock = NSLock()
-        private var resumed = false
-        var latest: String?
-
-        func finish(
-            _ continuation: CheckedContinuation<String, Error>,
-            _ body: (CheckedContinuation<String, Error>) -> Void
-        ) {
-            lock.lock()
-            let alreadyResumed = resumed
-            resumed = true
-            lock.unlock()
-            guard !alreadyResumed else { return }
-            body(continuation)
         }
     }
 }

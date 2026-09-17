@@ -130,26 +130,51 @@ extension PushNotificationService: PKPushRegistryDelegate {
         for type: PKPushType,
         completion: @escaping () -> Void
     ) {
-        // VoIP push must report a CallKit call promptly; CallController also handles WS ring.
-        Task { @MainActor in
-            defer { completion() }
-            guard type == .voIP else { return }
-            let dict = payload.dictionaryPayload
-            // Opaque payload: { "call_id": "...", "from_user_id": "...", "modality": "voice" }
-            guard let callIDString = dict["call_id"] as? String,
-                  let callID = UUID(uuidString: callIDString)
-            else { return }
-            let modality = (dict["modality"] as? String).flatMap(CallModality.init(rawValue:)) ?? .voice
-            let fromName = dict["from_username"] as? String ?? "Incoming call"
-            // CallKit must be reported promptly for VoIP pushes; live ring also arrives on WS.
-            if callController?.active == nil {
-                callController?.handleVoipPush(
-                    callID: callID,
-                    peerUsername: fromName,
-                    modality: modality
-                )
+        // CallKit must be reported before this method returns. The registry is created on
+        // the main queue, but hop synchronously if we are ever invoked off-main.
+        let deliver = {
+            MainActor.assumeIsolated {
+                self.deliverIncomingVoipPush(payload: payload, type: type, completion: completion)
             }
         }
+        if Thread.isMainThread {
+            deliver()
+        } else {
+            DispatchQueue.main.sync(execute: deliver)
+        }
+    }
+
+    @MainActor
+    private func deliverIncomingVoipPush(
+        payload: PKPushPayload,
+        type: PKPushType,
+        completion: @escaping () -> Void
+    ) {
+        guard type == .voIP else {
+            completion()
+            return
+        }
+        let dict = payload.dictionaryPayload
+        let callID = (dict["call_id"] as? String).flatMap(UUID.init(uuidString:)) ?? UUID()
+        let modality = (dict["modality"] as? String).flatMap(CallModality.init(rawValue:)) ?? .voice
+        let fromName = dict["from_username"] as? String ?? "Incoming call"
+        let peerUserID = (dict["from_user_id"] as? String).flatMap(UUID.init(uuidString:))
+
+        // reportNewIncomingCall is invoked synchronously; that satisfies PushKit. The system
+        // completion can run now — waiting on CXProvider's async result delayed the report.
+        CallKitManager.shared.reportIncoming(
+            callID: callID,
+            peerUsername: fromName,
+            hasVideo: modality == .video
+        )
+        callController?.handleVoipPush(
+            callID: callID,
+            peerUserID: peerUserID,
+            peerUsername: fromName,
+            modality: modality,
+            alreadyReported: true
+        )
+        completion()
     }
 
     nonisolated func pushRegistry(

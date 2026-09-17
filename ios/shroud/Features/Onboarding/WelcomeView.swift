@@ -125,9 +125,11 @@ struct WelcomeView: View {
                         PrimaryButton(title: "Start Messaging") {
                             router.showSignUp()
                         }
+                        .accessibilityIdentifier("welcome.startMessaging")
                         SecondaryButton(title: "Log In") {
                             router.showLogIn()
                         }
+                        .accessibilityIdentifier("welcome.logIn")
                     }
                 }
                 .screenContent()

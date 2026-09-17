@@ -19,9 +19,9 @@ final class CallController {
 
     struct ActiveCall: Equatable, Identifiable {
         let id: UUID
-        let peerUserID: UUID
+        var peerUserID: UUID
         var peerUsername: String
-        let modality: CallModality
+        var modality: CallModality
         let isOutgoing: Bool
         var phase: Phase
         var isMuted: Bool
@@ -95,8 +95,7 @@ final class CallController {
 
     @discardableResult
     private func ensureCallKit() -> CallKitManager {
-        if let callKit { return callKit }
-        let manager = CallKitManager()
+        let manager = CallKitManager.shared
         manager.delegate = self
         callKit = manager
         return manager
@@ -124,11 +123,19 @@ final class CallController {
     }
 
     /// Seed an incoming call from a VoIP push when WS ring has not arrived yet.
-    func handleVoipPush(callID: UUID, peerUsername: String, modality: CallModality) {
+    /// - Parameter alreadyReported: True when CallKit was notified in the PushKit callback.
+    func handleVoipPush(
+        callID: UUID,
+        peerUserID: UUID? = nil,
+        peerUsername: String,
+        modality: CallModality,
+        alreadyReported: Bool = false
+    ) {
+        ensureCallKit()
         guard active == nil else { return }
         active = ActiveCall(
             id: callID,
-            peerUserID: UUID(), // filled when WS ring arrives
+            peerUserID: peerUserID ?? UUID(),
             peerUsername: peerUsername,
             modality: modality,
             isOutgoing: false,
@@ -138,11 +145,13 @@ final class CallController {
             connectionState: "new",
             startedAt: nil
         )
-        ensureCallKit().reportIncoming(
-            callID: callID,
-            peerUsername: peerUsername,
-            hasVideo: modality == .video
-        )
+        if !alreadyReported {
+            CallKitManager.shared.reportIncoming(
+                callID: callID,
+                peerUsername: peerUsername,
+                hasVideo: modality == .video
+            )
+        }
     }
 
     // MARK: - Outgoing
@@ -281,8 +290,7 @@ final class CallController {
     // MARK: - Realtime handlers
 
     private func handleRing(_ json: [String: Any]) {
-        guard active == nil,
-              let me = sessionController?.userID,
+        guard let me = sessionController?.userID,
               let call = parseCall(json["call"]),
               call.calleeUserId == me
         else { return }
@@ -290,6 +298,19 @@ final class CallController {
         pendingRemoteOffer = json["sdp_offer"] as? String
         let username = messagingController?.contacts.first(where: { $0.userId == call.callerUserId })?.username
             ?? "Shroud user"
+
+        if var current = active, current.id == call.id {
+            current.peerUserID = call.callerUserId
+            if current.peerUsername == "Incoming call" || current.peerUsername.isEmpty {
+                current.peerUsername = username
+            }
+            current.modality = call.callModality
+            current.isVideoEnabled = call.callModality == .video
+            active = current
+            return
+        }
+
+        guard active == nil else { return }
 
         active = ActiveCall(
             id: call.id,

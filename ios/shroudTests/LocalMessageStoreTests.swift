@@ -230,6 +230,33 @@ final class OutboundPendingTests: XCTestCase {
         }
     }
 
+    func testCollectsPendingVoice() {
+        let peer = UUID()
+        let me = UUID()
+        let voice = MessagingController.ChatMessage(
+            id: UUID(),
+            peerUserID: peer,
+            senderUserID: me,
+            text: "Voice message",
+            createdAt: Date(),
+            isMine: true,
+            deleted: false,
+            receipt: .failed,
+            kind: .voice,
+            voiceData: Data("audio".utf8),
+            voiceDurationMs: 1200,
+            pendingSync: true
+        )
+        let items = OutboundPending.items(from: [peer: [voice]])
+        XCTAssertEqual(items.count, 1)
+        if case let .voice(id, peerID) = items[0] {
+            XCTAssertEqual(id, voice.id)
+            XCTAssertEqual(peerID, peer)
+        } else {
+            XCTFail("expected pending voice")
+        }
+    }
+
     func testSkipsNotesPeer() {
         let notes = LocalMessageStore.notesPeerID
         let me = UUID()

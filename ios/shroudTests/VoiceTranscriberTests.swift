@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import Speech
 import Testing
 @testable import shroud
 
@@ -231,5 +232,17 @@ struct VoiceTranscriberTests {
         let nonsense = Locale(identifier: "zz-ZZ")
         #expect(await VoiceTranscriber.supportsLongForm(locale: nonsense) == false)
         #expect(await VoiceTranscriber.modelIsInstalled(locale: nonsense) == false)
+    }
+
+    /// The 1101 spam was this: Simulator has no ANE so `SpeechTranscriber` lists no locales,
+    /// `candidateLocales()` returned `[]`, and we called `SFSpeechRecognizer` on the AAC file.
+    /// DictationTranscriber is Apple's fallback; if it has locales, we must use them.
+    @Test
+    func candidateLocalesDoNotGoEmptyWhenDictationCanServe() async {
+        guard !(await VoiceTranscriber.supportsLongForm(locale: englishUS)) else { return }
+        let dictation = await DictationTranscriber.supportedLocales
+        guard !dictation.isEmpty else { return }
+        let candidates = await VoiceTranscriber.candidateLocales()
+        #expect(!candidates.isEmpty)
     }
 }

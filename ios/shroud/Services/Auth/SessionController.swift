@@ -43,6 +43,8 @@ final class SessionController {
 
     private let authService: AuthService
     private var isForceLoggingOut = false
+    /// When true, logout skips Keychain so unit tests never wipe a real session.
+    private var usesEphemeralSession = false
 
     var isSignedIn: Bool { session != nil }
     var username: String? { session?.username }
@@ -70,10 +72,22 @@ final class SessionController {
     func logout() async {
         // Keychain first (sync), then in-memory — so a force-quit mid-logout cannot restore a token.
         // Server revoke is fire-and-forget inside AuthService and never blocks this path.
-        await authService.logout()
+        if !usesEphemeralSession {
+            await authService.logout()
+        }
         session = nil
         sessionValidated = false
         consecutiveAuthenticationFailures = 0
+    }
+
+    /// Testing seam: inject a session without going through Keychain.
+    func applySessionForTests(_ session: SessionStore.Session?) {
+        usesEphemeralSession = true
+        self.session = session
+        sessionValidated = session != nil
+        consecutiveAuthenticationFailures = 0
+        pendingFullLocalWipe = false
+        isForceLoggingOut = false
     }
 
     /// Probes `/auth/me`; does **not** logout on a single 401 — repeated 401s are handled by
@@ -139,6 +153,9 @@ final class SessionController {
             case .decoding:
                 return "Could not read the server response."
             }
+        }
+        if error as? PeerIdentityError == .changed {
+            return "This contact's encryption key changed. Verify their safety number before sending."
         }
         return "Something went wrong. Try again."
     }

@@ -10,6 +10,7 @@ struct ContactProfileView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var toast: String?
     @State private var showBlockConfirm = false
+    @State private var showAcceptIdentityConfirm = false
     @State private var isBlocking = false
 
     private var isOnline: Bool {
@@ -34,6 +35,9 @@ struct ContactProfileView: View {
             VStack(spacing: 12) {
                 profileHead
                 actionRow
+                if messaging.identityChange(for: peerUserID) != nil {
+                    identityWarningCard
+                }
                 infoCard
                 optionsCard
                 blockCard
@@ -71,6 +75,7 @@ struct ContactProfileView: View {
         .task {
             await messaging.refreshPresence(for: [peerUserID])
             await messaging.refreshBlocks()
+            await messaging.refreshPeerIdentity(peerUserID)
         }
     }
 
@@ -185,6 +190,26 @@ struct ContactProfileView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 9)
+
+            if let number = messaging.safetyNumber(for: peerUserID) {
+                Rectangle()
+                    .fill(Theme.separator)
+                    .frame(height: 1)
+                    .padding(.leading, 14)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("safety number")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.textSecondary)
+                    Text(number)
+                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Theme.textPrimary)
+                        .textSelection(.enabled)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .accessibilityIdentifier("contact.safetyNumber")
+            }
         }
         .background(Theme.background)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -224,6 +249,43 @@ struct ContactProfileView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    private var identityWarningCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Encryption key changed", systemImage: "exclamationmark.triangle.fill")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Theme.danger)
+            Text(
+                "This contact's identity key no longer matches the one saved on this device. Compare safety numbers in person before trusting new messages."
+            )
+            .font(.system(size: 14))
+            .foregroundStyle(Theme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+            Button("I verified this contact") {
+                showAcceptIdentityConfirm = true
+            }
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(Theme.accent)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.background)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .confirmationDialog(
+            "Trust the new key?",
+            isPresented: $showAcceptIdentityConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Trust new key", role: .destructive) {
+                messaging.acceptNewPeerIdentity(peerUserID)
+                toast = "New encryption key saved"
+                scheduleClear()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Only do this if you confirmed this contact's safety number through another channel.")
+        }
     }
 
     /// Blocking is the stronger form of "delete chat for both": that only unlinks the

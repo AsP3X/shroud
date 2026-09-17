@@ -38,13 +38,16 @@ nonisolated struct AuthService: Sendable {
 
     /// Logs in and stores the session; reuses `device_id` when Keychain still has one.
     func login(username: String, password: String) async throws -> SessionStore.Session {
+        let normalizedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let existing = sessionStore.load()
         let deviceName = await Self.currentDeviceName()
+        let reusedDeviceID = existing?.deviceID
+            ?? sessionStore.loadDeviceID(matchingUsername: normalizedUsername)
         let body = LoginRequest(
-            username: username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+            username: normalizedUsername,
             password: password,
             deviceName: deviceName,
-            deviceId: existing?.deviceID
+            deviceId: reusedDeviceID
         )
         let response: AuthSessionResponse = try await client.post(
             "auth/login",
@@ -86,6 +89,7 @@ nonisolated struct AuthService: Sendable {
             deviceName: response.device.name
         )
         try sessionStore.save(session)
+        sessionStore.saveDeviceAnchor(username: session.username, deviceID: session.deviceID)
         return session
     }
 
@@ -101,6 +105,7 @@ nonisolated struct AuthService: Sendable {
             deviceName: me.device.name ?? session.deviceName
         )
         try sessionStore.save(updated)
+        sessionStore.saveDeviceAnchor(username: updated.username, deviceID: updated.deviceID)
         return updated
     }
 

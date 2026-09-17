@@ -26,7 +26,7 @@ struct MessagesService: Sendable {
             "limit": String(limit),
         ]
         if let beforeCreatedAt, let beforeID {
-            query["before_created_at"] = ISO8601DateFormatter.apiFractional.string(from: beforeCreatedAt)
+            query["before_created_at"] = ISO8601DateFormatter.string(fromAPI: beforeCreatedAt)
             query["before_id"] = beforeID.uuidString.lowercased()
         }
         return try await client.get(

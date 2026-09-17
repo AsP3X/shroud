@@ -8,14 +8,23 @@ import UIKit
 /// Agent: CXProvider reports outgoing/incoming; actions call back into CallController.
 @MainActor
 final class CallKitManager: NSObject {
+    /// One provider for the process so a VoIP push and CallController share call UUIDs.
+    static let shared = CallKitManager()
+
     private let provider: CXProvider
     private let controller = CXCallController()
     private var callUUIDByCallID: [UUID: UUID] = [:]
     private var callIDByUUID: [UUID: UUID] = [:]
+    private var pendingAnswerCallID: UUID?
+    private var pendingEndCallID: UUID?
 
-    weak var delegate: CallKitManagerDelegate?
+    weak var delegate: CallKitManagerDelegate? {
+        didSet {
+            flushPendingDelegateActions()
+        }
+    }
 
-    override init() {
+    private override init() {
         let config = CXProviderConfiguration()
         config.supportsVideo = true
         config.maximumCallsPerCallGroup = 1
@@ -60,18 +69,22 @@ final class CallKitManager: NSObject {
     func reportIncoming(
         callID: UUID,
         peerUsername: String,
-        hasVideo: Bool
+        hasVideo: Bool,
+        onReported: (@Sendable () -> Void)? = nil
     ) {
         let uuid = mappedUUID(for: callID)
         let update = CXCallUpdate()
         update.remoteHandle = CXHandle(type: .generic, value: peerUsername)
         update.hasVideo = hasVideo
         update.localizedCallerName = peerUsername
-        provider.reportNewIncomingCall(with: uuid, update: update) { [weak self] error in
-            guard let self, let error else { return }
-            Task { @MainActor in
-                self.delegate?.callKit(didFail: error.localizedDescription)
+        let notify = onReported
+        provider.reportNewIncomingCall(with: uuid, update: update) { error in
+            if let message = error?.localizedDescription {
+                Task { @MainActor in
+                    CallKitManager.shared.delegate?.callKit(didFail: message)
+                }
             }
+            notify?()
         }
     }
 
@@ -88,6 +101,17 @@ final class CallKitManager: NSObject {
         callUUIDByCallID[callID] = uuid
         callIDByUUID[uuid] = callID
         return uuid
+    }
+
+    private func flushPendingDelegateActions() {
+        if let id = pendingAnswerCallID {
+            pendingAnswerCallID = nil
+            delegate?.callKit(answer: id)
+        }
+        if let id = pendingEndCallID {
+            pendingEndCallID = nil
+            delegate?.callKit(end: id)
+        }
     }
 }
 
@@ -110,7 +134,11 @@ extension CallKitManager: CXProviderDelegate {
     nonisolated func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
         Task { @MainActor in
             if let callID = callIDByUUID[action.callUUID] {
-                delegate?.callKit(answer: callID)
+                if let delegate {
+                    delegate.callKit(answer: callID)
+                } else {
+                    pendingAnswerCallID = callID
+                }
             }
             action.fulfill()
         }
@@ -119,7 +147,11 @@ extension CallKitManager: CXProviderDelegate {
     nonisolated func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
         Task { @MainActor in
             if let callID = callIDByUUID[action.callUUID] {
-                delegate?.callKit(end: callID)
+                if let delegate {
+                    delegate.callKit(end: callID)
+                } else {
+                    pendingEndCallID = callID
+                }
             }
             action.fulfill()
         }

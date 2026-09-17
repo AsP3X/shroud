@@ -872,11 +872,12 @@ struct ConversationView: View {
                     // Best-effort on-device transcript (Tier 1) — never blocks send on failure.
                     // Runs after the bubble is on screen (see `sendVoice`), so a long recording
                     // appears immediately instead of waiting on the transcriber.
-                    transcriptProvider: {
+                    transcriptProvider: { messageID in
                         try? await VoiceTranscriber.transcribe(
                             audioData: take.data,
                             contextualStrings: transcriptionHints,
-                            conversationID: peerUserID
+                            conversationID: peerUserID,
+                            tracking: messageID
                         )
                     }
                 )
@@ -972,11 +973,19 @@ struct ConversationView: View {
                 },
                 onRequestTranscript: {
                     guard let data = message.voiceData else { return nil }
-                    return try? await VoiceTranscriber.transcribe(
-                        audioData: data,
-                        contextualStrings: transcriptionHints,
-                        conversationID: peerUserID
-                    )
+                    do {
+                        return try await VoiceTranscriber.transcribe(
+                            audioData: data,
+                            contextualStrings: transcriptionHints,
+                            conversationID: peerUserID,
+                            tracking: message.id
+                        )
+                    } catch {
+                        toast = error.localizedDescription
+                        Haptics.notification(.error)
+                        scheduleToastClear()
+                        return nil
+                    }
                 }
             )
         case .text:

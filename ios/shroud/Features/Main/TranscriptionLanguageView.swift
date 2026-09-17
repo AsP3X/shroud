@@ -16,6 +16,7 @@ struct TranscriptionLanguageView: View {
     @State private var selection: Locale?
     @State private var isLoading = true
     @State private var downloading: String?
+    @State private var install = TranscriptionModelInstall.shared
     @State private var toast: String?
 
     var body: some View {
@@ -32,6 +33,9 @@ struct TranscriptionLanguageView: View {
                         } else if available.isEmpty {
                             unavailableCard
                         } else {
+                            if install.phase == .downloading {
+                                downloadProgressCard
+                            }
                             automaticCard
                             languageCard
                         }
@@ -76,7 +80,7 @@ struct TranscriptionLanguageView: View {
             Text("Transcription")
                 .font(.system(size: 32, weight: .bold))
                 .foregroundStyle(Theme.textPrimary)
-            Text("Voice messages are transcribed on this device. Audio never leaves it.")
+            Text("Voice messages are transcribed on this device. Audio never leaves it. The language model downloads automatically the first time you transcribe.")
                 .font(.system(size: 14))
                 .foregroundStyle(Theme.textSecondary)
         }
@@ -114,13 +118,45 @@ struct TranscriptionLanguageView: View {
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
+    private var downloadProgressCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(downloadProgressTitle)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
+            if install.isDeterminate {
+                ProgressView(value: max(install.fractionCompleted, 0.02))
+                    .progressViewStyle(.linear)
+                    .tint(Theme.accent)
+            } else {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(Theme.accent)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(Theme.background)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private var downloadProgressTitle: String {
+        let percent = Int((install.fractionCompleted * 100).rounded())
+        if let name = install.languageName {
+            return install.isDeterminate && percent > 0
+                ? "Downloading \(name)… \(percent)%"
+                : "Downloading \(name)…"
+        }
+        return "Downloading transcription model…"
+    }
+
     private var automaticCard: some View {
         VStack(spacing: 0) {
             row(
                 title: "Automatic",
-                subtitle: "Detects the spoken language from the languages installed here.",
+                subtitle: automaticSubtitle,
                 isSelected: selection == nil,
-                isInstalled: true
+                isInstalled: true,
+                isDownloading: downloading != nil && selection == nil
             ) {
                 choose(nil)
             }
@@ -142,7 +178,8 @@ struct TranscriptionLanguageView: View {
                     title: TranscriptionLanguage.displayName(for: locale),
                     subtitle: subtitle(for: locale),
                     isSelected: selection?.identifier(.bcp47) == locale.identifier(.bcp47),
-                    isInstalled: installed.contains(locale.identifier(.bcp47))
+                    isInstalled: installed.contains(locale.identifier(.bcp47)),
+                    isDownloading: downloading == locale.identifier(.bcp47)
                 ) {
                     choose(locale)
                 }
@@ -152,9 +189,14 @@ struct TranscriptionLanguageView: View {
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
+    private var automaticSubtitle: String {
+        if downloading != nil, selection == nil { return "Downloading model…" }
+        return "Detects the spoken language. Downloads a model if one isn't on this device yet."
+    }
+
     private func subtitle(for locale: Locale) -> String? {
         if downloading == locale.identifier(.bcp47) { return "Downloading model…" }
-        return installed.contains(locale.identifier(.bcp47)) ? nil : "Downloads on first use"
+        return installed.contains(locale.identifier(.bcp47)) ? "On this device" : "Tap to download"
     }
 
     private func row(
@@ -162,6 +204,7 @@ struct TranscriptionLanguageView: View {
         subtitle: String?,
         isSelected: Bool,
         isInstalled: Bool,
+        isDownloading: Bool,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -180,11 +223,18 @@ struct TranscriptionLanguageView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                if isSelected {
+                if isDownloading {
+                    ProgressView()
+                        .controlSize(.mini)
+                } else if isSelected {
                     Image(systemName: "checkmark")
                         .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(Theme.accent)
                         .transition(Motion.iconSwap)
+                } else if !isInstalled {
+                    Image(systemName: "arrow.down.circle")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(Theme.accent)
                 }
             }
             .padding(.horizontal, 14)
@@ -192,8 +242,15 @@ struct TranscriptionLanguageView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(HighlightRowButtonStyle())
+        .disabled(isDownloading)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .accessibilityLabel(isInstalled ? title : "\(title), downloads on first use")
+        .accessibilityLabel(accessibilityLabel(title: title, isInstalled: isInstalled, isDownloading: isDownloading))
+    }
+
+    private func accessibilityLabel(title: String, isInstalled: Bool, isDownloading: Bool) -> String {
+        if isDownloading { return "\(title), downloading" }
+        if isInstalled { return title }
+        return "\(title), tap to download"
     }
 
     // MARK: - Actions
@@ -204,24 +261,7 @@ struct TranscriptionLanguageView: View {
         }
         TranscriptionLanguage.override = locale
         Haptics.impact(.light)
-
-        guard let locale, !installed.contains(locale.identifier(.bcp47)) else { return }
-        // Fetch the model now rather than stalling the next voice message.
-        downloading = locale.identifier(.bcp47)
-        Task {
-            let ok = await VoiceTranscriber.prepareModel(locale: locale)
-            downloading = nil
-            if ok {
-                installed.insert(locale.identifier(.bcp47))
-                Haptics.notification(.success)
-            } else {
-                toast = "Could not download that language."
-                Task {
-                    try? await Task.sleep(nanoseconds: 2_500_000_000)
-                    toast = nil
-                }
-            }
-        }
+        Task { await downloadIfNeeded(locale) }
     }
 
     private func load() async {
@@ -234,6 +274,30 @@ struct TranscriptionLanguageView: View {
         installed = installedSet
         selection = TranscriptionLanguage.override
         withAnimation(Motion.fade) { isLoading = false }
+        await downloadIfNeeded(selection)
+    }
+
+    /// Downloads the model for the selected language, or the device language when Automatic is on.
+    private func downloadIfNeeded(_ locale: Locale?) async {
+        let target = locale ?? Locale.current
+        if await VoiceTranscriber.modelIsInstalled(locale: target) {
+            installed.insert(target.identifier(.bcp47))
+            return
+        }
+
+        downloading = target.identifier(.bcp47)
+        let ok = await VoiceTranscriber.prepareModel(locale: locale)
+        downloading = nil
+        if ok {
+            installed.insert(target.identifier(.bcp47))
+            Haptics.notification(.success)
+        } else if !available.isEmpty {
+            toast = "Could not download that language. Check your connection and try again."
+            Task {
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                toast = nil
+            }
+        }
     }
 }
 

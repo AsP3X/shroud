@@ -34,10 +34,10 @@ nonisolated struct ServerConfiguration: Equatable, Codable, Sendable {
         #else
         ServerConfiguration(
             mode: .official,
-            host: "127.0.0.1",
-            port: "8080",
+            host: "api.shroud.app",
+            port: "443",
             apiPath: "/api/v1",
-            useHTTPS: false
+            useHTTPS: true
         )
         #endif
     }

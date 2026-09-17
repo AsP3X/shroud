@@ -369,15 +369,13 @@ nonisolated final class APIClient: Sendable {
 // MARK: - Coders
 
 extension JSONDecoder {
-    /// Shared API decoder (ISO-8601 dates with fractional seconds when present).
-    nonisolated static let api: JSONDecoder = {
+    /// Fresh decoder per call - `JSONDecoder` is not safe to share across concurrent tasks.
+    nonisolated static var api: JSONDecoder {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
             let string = try container.decode(String.self)
-            if let date = ISO8601DateFormatter.apiFractional.date(from: string)
-                ?? ISO8601DateFormatter.api.date(from: string)
-            {
+            if let date = ISO8601DateFormatter.date(fromAPI: string) {
                 return date
             }
             throw DecodingError.dataCorruptedError(
@@ -386,29 +384,44 @@ extension JSONDecoder {
             )
         }
         return decoder
-    }()
+    }
 }
 
 extension JSONEncoder {
-    nonisolated static let api: JSONEncoder = {
+    nonisolated static var api: JSONEncoder {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         return encoder
-    }()
+    }
 }
 
 extension ISO8601DateFormatter {
-    nonisolated(unsafe) static let api: ISO8601DateFormatter = {
+    nonisolated private static let lock = NSLock()
+
+    nonisolated(unsafe) private static let api: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
         return formatter
     }()
 
-    nonisolated(unsafe) static let apiFractional: ISO8601DateFormatter = {
+    nonisolated(unsafe) private static let apiFractional: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
     }()
+
+    /// `ISO8601DateFormatter` is not thread-safe; all API date parsing goes through this lock.
+    nonisolated static func date(fromAPI string: String) -> Date? {
+        lock.lock()
+        defer { lock.unlock() }
+        return apiFractional.date(from: string) ?? api.date(from: string)
+    }
+
+    nonisolated static func string(fromAPI date: Date) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return apiFractional.string(from: date)
+    }
 }
 
 /// Health probe payload matching the server route.

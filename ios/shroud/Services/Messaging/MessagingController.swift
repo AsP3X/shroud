@@ -51,6 +51,9 @@ final class MessagingController {
     private(set) var hasLoadedPrivacySettings = false
     /// Users this account has blocked; drives the unblock list in Privacy & Security.
     private(set) var blockedUsers: [BlockItemDTO] = []
+    /// Peers whose server identity key no longer matches the first-seen (TOFU) key.
+    private(set) var identityChanges: [UUID: PeerIdentityChange] = [:]
+    private var verifiedPeerIDs: Set<UUID> = []
 
     private let contactsService = ContactsService()
     private let messagesService = MessagesService()
@@ -314,6 +317,8 @@ final class MessagingController {
         hasLoadedPrivacySettings = false
         allowsPeerChatDelete = false
         blockedUsers = []
+        identityChanges = [:]
+        verifiedPeerIDs = []
         contactsError = nil
         chatsError = nil
         lastError = nil
@@ -344,6 +349,8 @@ final class MessagingController {
         typingPeerIDs = []
         presenceByUser = [:]
         unreadCountByPeer = [:]
+        identityChanges = [:]
+        verifiedPeerIDs = []
         isLoadingContacts = false
         isLoadingChats = false
     }
@@ -1815,7 +1822,7 @@ final class MessagingController {
             rawThumb = await VideoMedia.thumbnailJPEG(from: encoded.data, maxEdge: 320)
         }
         let previewJPEG = rawThumb.flatMap { MediaCrypto.chatPreviewJPEG(from: $0) }
-        let peerPub = try await resolvePeerIdentityPublicKey(peerUserID: peerUserID, token: token)
+        let peerPub = try await peerIdentityForSending(peerUserID: peerUserID, token: token)
         let (payloadData, sealed, usedPreview) = try Self.sealMediaPayload(
             kind: MediaMessagePayload.kindVideo,
             mime: encoded.mime,
@@ -2175,7 +2182,7 @@ final class MessagingController {
         let trimmedCaption = caption.trimmingCharacters(in: .whitespacesAndNewlines)
         let displayText = trimmedCaption.isEmpty ? "Photo" : trimmedCaption
         let previewJPEG = MediaCrypto.chatPreviewJPEG(from: encoded.data)
-        let peerPub = try await resolvePeerIdentityPublicKey(peerUserID: peerUserID, token: token)
+        let peerPub = try await peerIdentityForSending(peerUserID: peerUserID, token: token)
         let (payloadData, sealed, usedPreview) = try Self.sealMediaPayload(
             kind: MediaMessagePayload.kindImage,
             mime: encoded.mime,
@@ -2333,7 +2340,7 @@ final class MessagingController {
         to peerUserID: UUID,
         waveform: [UInt8]? = nil,
         transcript: String? = nil,
-        transcriptProvider: (() async -> String?)? = nil
+        transcriptProvider: ((UUID) async -> String?)? = nil
     ) async -> String? {
         let optimisticID = UUID()
         let me = sessionController?.userID ?? Self.notesPeerID
@@ -2362,7 +2369,7 @@ final class MessagingController {
         // Bubble is visible now; only then pay for transcription.
         var resolved = transcript?.trimmingCharacters(in: .whitespacesAndNewlines)
         if resolved?.isEmpty != false, let transcriptProvider {
-            resolved = (await transcriptProvider())?
+            resolved = (await transcriptProvider(optimisticID))?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         }
         let trimmedTranscript = (resolved?.isEmpty == false) ? resolved : nil
@@ -2436,80 +2443,18 @@ final class MessagingController {
         }
 
         do {
-            let (fileKey, sealedFile) = try MediaCrypto.sealFile(audioData)
-            let upload = try await mediaService.createUpload(
-                sizeBytes: sealedFile.count,
-                contentType: "application/octet-stream",
-                token: token
-            )
-            try await mediaService.uploadContent(
-                mediaID: upload.mediaObjectId,
-                data: sealedFile,
-                token: token
-            )
-
-            let payload = MediaMessagePayload(
-                t: MediaMessagePayload.kindVoice,
-                mime: "audio/mp4",
-                w: 0,
-                h: 0,
-                k: fileKey.base64EncodedString(),
-                c: (trimmedTranscript?.isEmpty == false) ? trimmedTranscript : nil,
-                d: durationMs,
-                wf: waveform.flatMap(VoiceWaveform.encode)
-            )
-            let payloadData = try JSONEncoder().encode(payload)
-            let peerPub = try await resolvePeerIdentityPublicKey(peerUserID: peerUserID, token: token)
-            let sealed = try MessageCrypto.seal(
-                plaintext: payloadData,
+            try await finishVoiceSend(
+                optimisticID: optimisticID,
                 peerUserID: peerUserID,
-                toPeerIdentityPublicKey: peerPub,
-                ourPrivateKey: material.agreementPrivateKey,
-                ourIdentityPublicKey: material.identityPublicKeyData,
-                ourUserID: realMe
+                me: realMe,
+                material: material,
+                token: token,
+                audioData: audioData,
+                durationMs: durationMs,
+                waveform: waveform,
+                transcript: trimmedTranscript,
+                displayText: displayText
             )
-            let dto = try await messagesService.send(
-                SendMessageRequest(
-                    peerUserId: peerUserID,
-                    // Same idempotency key as photos — a retried voice send must not become
-                    // a second message.
-                    clientMessageId: optimisticID,
-                    contentType: "media",
-                    ciphertext: sealed.base64EncodedString(),
-                    mediaObjectId: upload.mediaObjectId
-                ),
-                token: token
-            )
-            local.saveSealedMedia(messageID: dto.id, data: audioData)
-            if dto.id != optimisticID {
-                local.removeCaches(messageIDs: [optimisticID])
-            }
-            local.saveSealedPlaintext(messageID: dto.id, data: payloadData)
-
-            let sent = ChatMessage(
-                id: dto.id,
-                peerUserID: peerUserID,
-                senderUserID: realMe,
-                text: displayText,
-                createdAt: dto.createdAt,
-                isMine: true,
-                deleted: false,
-                receipt: receiptStatus(from: dto),
-                kind: .voice,
-                mediaObjectId: upload.mediaObjectId,
-                voiceData: audioData,
-                voiceDurationMs: durationMs,
-                voiceWaveform: waveform,
-                transcript: trimmedTranscript
-            )
-            if var thread = threads[peerUserID],
-               let idx = thread.firstIndex(where: { $0.id == optimisticID })
-            {
-                thread[idx] = sent
-                threads[peerUserID] = thread
-            }
-            await refreshConversations(force: true)
-            persistSnapshot()
             lastError = nil
             return nil
         } catch {
@@ -2542,6 +2487,105 @@ final class MessagingController {
             persistSnapshot()
             return message
         }
+    }
+
+    @discardableResult
+    private func finishVoiceSend(
+        optimisticID: UUID,
+        peerUserID: UUID,
+        me: UUID,
+        material: IdentityKeyMaterial,
+        token: String,
+        audioData: Data,
+        durationMs: Int,
+        waveform: [UInt8]?,
+        transcript: String?,
+        displayText: String
+    ) async throws -> ChatMessage {
+        let (fileKey, sealedFile) = try MediaCrypto.sealFile(audioData)
+        let upload = try await mediaService.createUpload(
+            sizeBytes: sealedFile.count,
+            contentType: "application/octet-stream",
+            token: token
+        )
+        try await mediaService.uploadContent(
+            mediaID: upload.mediaObjectId,
+            data: sealedFile,
+            token: token
+        )
+
+        let payload = MediaMessagePayload(
+            t: MediaMessagePayload.kindVoice,
+            mime: "audio/mp4",
+            w: 0,
+            h: 0,
+            k: fileKey.base64EncodedString(),
+            c: (transcript?.isEmpty == false) ? transcript : nil,
+            d: durationMs,
+            wf: waveform.flatMap(VoiceWaveform.encode)
+        )
+        let payloadData = try JSONEncoder().encode(payload)
+        let peerPub = try await peerIdentityForSending(peerUserID: peerUserID, token: token)
+        let sealed = try MessageCrypto.seal(
+            plaintext: payloadData,
+            peerUserID: peerUserID,
+            toPeerIdentityPublicKey: peerPub,
+            ourPrivateKey: material.agreementPrivateKey,
+            ourIdentityPublicKey: material.identityPublicKeyData,
+            ourUserID: me
+        )
+        let dto = try await messagesService.send(
+            SendMessageRequest(
+                peerUserId: peerUserID,
+                clientMessageId: optimisticID,
+                contentType: "media",
+                ciphertext: sealed.base64EncodedString(),
+                mediaObjectId: upload.mediaObjectId
+            ),
+            token: token
+        )
+        local.saveSealedMedia(messageID: dto.id, data: audioData)
+        if dto.id != optimisticID {
+            local.removeCaches(messageIDs: [optimisticID])
+        }
+        local.saveSealedPlaintext(messageID: dto.id, data: payloadData)
+
+        let sent = ChatMessage(
+            id: dto.id,
+            peerUserID: peerUserID,
+            senderUserID: me,
+            text: displayText,
+            createdAt: dto.createdAt,
+            isMine: true,
+            deleted: false,
+            receipt: receiptStatus(from: dto),
+            kind: .voice,
+            mediaObjectId: upload.mediaObjectId,
+            voiceData: audioData,
+            voiceDurationMs: durationMs,
+            voiceWaveform: waveform,
+            transcript: transcript
+        )
+        if var thread = threads[peerUserID],
+           let idx = thread.firstIndex(where: { $0.id == optimisticID })
+        {
+            thread[idx] = sent
+            threads[peerUserID] = thread
+        }
+        await refreshConversations(force: true)
+        persistSnapshot()
+        return sent
+    }
+
+    private func markVoiceFailed(optimisticID: UUID, peerUserID: UUID, error: String) {
+        guard var thread = threads[peerUserID],
+              let idx = thread.firstIndex(where: { $0.id == optimisticID })
+        else { return }
+        thread[idx].receipt = .failed
+        thread[idx].sendError = error
+        thread[idx].pendingSync = true
+        threads[peerUserID] = thread
+        persistSnapshot()
     }
 
     /// Loads decrypted voice bytes for playback (deduped; safe to call from many onAppears).
@@ -3104,16 +3148,74 @@ final class MessagingController {
         return message
     }
 
+    /// Cached (TOFU) key for decrypt. Fetches in the background to detect identity rotation.
     private func resolvePeerIdentityPublicKey(peerUserID: UUID, token: String) async throws -> Data {
         if let cached = peerKeys.publicKeyData(for: peerUserID) {
+            if !verifiedPeerIDs.contains(peerUserID) {
+                verifiedPeerIDs.insert(peerUserID)
+                Task { await self.verifyPeerIdentity(peerUserID, token: token) }
+            }
             return cached
         }
-        // Identity-only endpoint — does not consume OTPKs.
+        let fetched = try await fetchPeerIdentityKey(peerUserID: peerUserID, token: token)
+        peerKeys.save(userID: peerUserID, publicKeyBase64: fetched.base64EncodedString())
+        return fetched
+    }
+
+    /// Sending must not use a superseded key, and must not silently switch to a new one.
+    private func peerIdentityForSending(peerUserID: UUID, token: String) async throws -> Data {
+        await verifyPeerIdentity(peerUserID, token: token)
+        if identityChanges[peerUserID] != nil {
+            throw PeerIdentityError.changed
+        }
+        return try await resolvePeerIdentityPublicKey(peerUserID: peerUserID, token: token)
+    }
+
+    func identityChange(for peerUserID: UUID) -> PeerIdentityChange? {
+        identityChanges[peerUserID]
+    }
+
+    func safetyNumber(for peerUserID: UUID) -> String? {
+        guard let local = cryptoController?.material?.identityPublicKeyData,
+              let peer = peerKeys.publicKeyData(for: peerUserID)
+        else { return nil }
+        return IdentitySafetyNumber.displayString(localIdentity: local, peerIdentity: peer)
+    }
+
+    func refreshPeerIdentity(_ peerUserID: UUID) async {
+        guard let token = sessionController?.bearerToken else { return }
+        await verifyPeerIdentity(peerUserID, token: token)
+        if peerKeys.publicKeyData(for: peerUserID) == nil {
+            _ = try? await resolvePeerIdentityPublicKey(peerUserID: peerUserID, token: token)
+        }
+    }
+
+    /// Caller has verified the new key (safety number) out of band.
+    func acceptNewPeerIdentity(_ peerUserID: UUID) {
+        guard let change = identityChanges[peerUserID] else { return }
+        peerKeys.save(userID: peerUserID, publicKeyBase64: change.currentKey.base64EncodedString())
+        RatchetSessionStore.delete(peerUserID: peerUserID)
+        identityChanges[peerUserID] = nil
+        verifiedPeerIDs.insert(peerUserID)
+    }
+
+    private func verifyPeerIdentity(_ peerUserID: UUID, token: String) async {
+        do {
+            let fetched = try await fetchPeerIdentityKey(peerUserID: peerUserID, token: token)
+            verifiedPeerIDs.insert(peerUserID)
+            if let cached = peerKeys.publicKeyData(for: peerUserID), cached != fetched {
+                identityChanges[peerUserID] = PeerIdentityChange(previousKey: cached, currentKey: fetched)
+            }
+        } catch {
+            // Unreachable server: keep the cached key; do not invent a change.
+        }
+    }
+
+    private func fetchPeerIdentityKey(peerUserID: UUID, token: String) async throws -> Data {
         let identity = try await keyBundleService.fetchIdentity(
             userID: peerUserID,
             bearerToken: token
         )
-        peerKeys.save(userID: peerUserID, publicKeyBase64: identity.identityKey)
         guard let data = Data(base64Encoded: identity.identityKey) else {
             throw APIError.decoding
         }
@@ -3282,7 +3384,7 @@ final class MessagingController {
         material: IdentityKeyMaterial,
         token: String
     ) async throws -> ChatMessage {
-        let peerPub = try await resolvePeerIdentityPublicKey(peerUserID: peerUserID, token: token)
+        let peerPub = try await peerIdentityForSending(peerUserID: peerUserID, token: token)
         let sealed = try MessageCrypto.seal(
             plaintext: Data(text.utf8),
             peerUserID: peerUserID,
@@ -3430,9 +3532,38 @@ final class MessagingController {
                         error: SessionController.userMessage(for: error)
                     )
                 }
-            case .voice:
-                // Voice re-send needs a dedicated path (avoid double-append). Leave for retry UI.
-                break
+            case let .voice(messageID, peerID):
+                guard let thread = threads[peerID],
+                      let message = thread.first(where: { $0.id == messageID }),
+                      let data = message.voiceData ?? local.sealedMedia(for: messageID)
+                else { continue }
+                if var list = threads[peerID],
+                   let idx = list.firstIndex(where: { $0.id == messageID })
+                {
+                    list[idx].receipt = .sending
+                    list[idx].sendError = nil
+                    threads[peerID] = list
+                }
+                do {
+                    try await finishVoiceSend(
+                        optimisticID: messageID,
+                        peerUserID: peerID,
+                        me: me,
+                        material: material,
+                        token: token,
+                        audioData: data,
+                        durationMs: message.voiceDurationMs ?? 0,
+                        waveform: message.voiceWaveform,
+                        transcript: message.transcript,
+                        displayText: message.text
+                    )
+                } catch {
+                    markVoiceFailed(
+                        optimisticID: messageID,
+                        peerUserID: peerID,
+                        error: SessionController.userMessage(for: error)
+                    )
+                }
             }
         }
         await refreshConversations(force: true)

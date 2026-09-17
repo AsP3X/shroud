@@ -190,11 +190,12 @@ final class VoiceRecorder {
         meterTask = nil
         recorder.stop()
         resetState()
-        // Hand the route back so playback does not stay stuck on the earpiece.
-        try? AVAudioSession.sharedInstance().setActive(
-            false,
-            options: [.notifyOthersOnDeactivation]
-        )
+        // `.defaultToSpeaker` is only valid with `.playAndRecord`. Pairing it with `.playback`
+        // is rejected (SessionCore: "only applicable with category 'playAndRecord'") and leaves
+        // the session poisoned for the speech daemon. `.playback` already routes to the speaker.
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+        try? session.setActive(true)
     }
 
     /// Human: Deliberately does **not** clear `envelope` — that is owned by `start()`. Clearing
