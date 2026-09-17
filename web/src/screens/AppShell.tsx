@@ -208,6 +208,7 @@ export function AppShell({ session }: { session: Session }) {
     loadHistory(session.token, session.user.id, peerId, material)
       .then((msgs) => {
         if (cancelled) return;
+        if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
         setThread(msgs);
         setPreviewRev((n) => n + 1);
       })
@@ -319,7 +320,7 @@ export function AppShell({ session }: { session: Session }) {
       cancelled = true;
       window.clearInterval(tick);
     };
-  }, [selected, session.token, session.user.id]);
+  }, [selected?.id, session.token, session.user.id]);
 
   const filteredChats = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -504,6 +505,7 @@ export function AppShell({ session }: { session: Session }) {
                     const online = presenceByUser[c.peer.id.toLowerCase()]?.online;
                     return (
                     <button
+                      type="button"
                       key={c.id}
                       className={
                         selected?.id.toLowerCase() === c.peer.id.toLowerCase()
@@ -537,6 +539,7 @@ export function AppShell({ session }: { session: Session }) {
                     const online = presenceByUser[c.user_id.toLowerCase()]?.online;
                     return (
                     <button
+                      type="button"
                       key={c.user_id}
                       className={
                         selected?.id.toLowerCase() === c.user_id.toLowerCase()
