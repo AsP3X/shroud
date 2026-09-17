@@ -202,6 +202,14 @@ struct SettingsView: View {
                     }
                 }
                 .scrollIndicators(.hidden)
+                // GeometryReader does not reliably inherit MainTabView's tab-bar
+                // `safeAreaPadding`, so Log Out sat under the floating bar.
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    Color.clear
+                        .frame(height: 88)
+                        .accessibilityHidden(true)
+                        .allowsHitTesting(false)
+                }
                 .onScrollGeometryChange(for: CGFloat.self) { geometry in
                     // Include top content inset so progress is 0 when pinned at rest.
                     max(0, geometry.contentOffset.y + geometry.contentInsets.top)
@@ -501,6 +509,7 @@ struct SettingsView: View {
             .padding(.vertical, 14)
             .background(Theme.background)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .contentShape(Rectangle())
         }
         .disabled(router.isLoggingOut)
         .pressable(scale: 0.98, dimming: 0.1, haptic: .medium)
