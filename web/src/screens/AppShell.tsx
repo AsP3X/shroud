@@ -199,15 +199,17 @@ export function AppShell({ session }: { session: Session }) {
       setThreadError(material ? null : "Unlock this browser with your encryption phrase to read chats.");
       return;
     }
+    const peerId = selected.id;
     let cancelled = false;
+    setThread([]);
+    setDraft("");
     setThreadLoading(true);
     setThreadError(null);
-    loadHistory(session.token, session.user.id, selected.id, material)
+    loadHistory(session.token, session.user.id, peerId, material)
       .then((msgs) => {
-        if (!cancelled) {
-          setThread((prev) => mergeMessages(msgs, prev));
-          setPreviewRev((n) => n + 1);
-        }
+        if (cancelled) return;
+        setThread(msgs);
+        setPreviewRev((n) => n + 1);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -219,7 +221,7 @@ export function AppShell({ session }: { session: Session }) {
     return () => {
       cancelled = true;
     };
-  }, [selected, session.token, session.user.id]);
+  }, [selected?.id, session.token, session.user.id]);
 
   useEffect(() => {
     const stop = connectRealtime({
@@ -263,7 +265,7 @@ export function AppShell({ session }: { session: Session }) {
               );
               const open = selectedRef.current;
               setPreviewRev((n) => n + 1);
-              if (open && open.id.toLowerCase() === peer) {
+              if (open && open.id.toLowerCase() === peer.toLowerCase()) {
                 setThread((prev) => mergeMessages(prev, [msg]));
               }
             } catch {
@@ -302,9 +304,12 @@ export function AppShell({ session }: { session: Session }) {
       const open = selectedRef.current;
       if (!material || !open) return;
       const known = new Set(threadRef.current.map((m) => m.id));
-      fetchLatest(session.token, session.user.id, open.id, material, known)
+      const peerId = open.id;
+      fetchLatest(session.token, session.user.id, peerId, material, known)
         .then((extra) => {
-          if (!cancelled && extra.length) setThread((prev) => mergeMessages(prev, extra));
+          if (cancelled || extra.length === 0) return;
+          if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
+          setThread((prev) => mergeMessages(prev, extra));
         })
         .catch(() => {
           /* keep current thread */
@@ -500,7 +505,11 @@ export function AppShell({ session }: { session: Session }) {
                     return (
                     <button
                       key={c.id}
-                      className={selected?.id === c.peer.id ? "chat-row active" : "chat-row"}
+                      className={
+                        selected?.id.toLowerCase() === c.peer.id.toLowerCase()
+                          ? "chat-row active"
+                          : "chat-row"
+                      }
                       onClick={() => setSelected({ id: c.peer.id, username: c.peer.username })}
                     >
                       <div className="avatar">
@@ -529,7 +538,11 @@ export function AppShell({ session }: { session: Session }) {
                     return (
                     <button
                       key={c.user_id}
-                      className={selected?.id === c.user_id ? "chat-row active" : "chat-row"}
+                      className={
+                        selected?.id.toLowerCase() === c.user_id.toLowerCase()
+                          ? "chat-row active"
+                          : "chat-row"
+                      }
                       onClick={() => setSelected({ id: c.user_id, username: c.username })}
                     >
                       <div className="avatar">
@@ -605,7 +618,7 @@ export function AppShell({ session }: { session: Session }) {
             </div>
           </main>
         ) : selected ? (
-          <section className="thread">
+          <section className="thread" key={selected.id}>
             <header className="thread-head">
               <div className="peer">
                 <button
