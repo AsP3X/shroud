@@ -28,4 +28,10 @@ const p3 = utf8("alice again");
 const e3 = await ratchetEncrypt(p3, aliceS);
 if (utf8decode(await ratchetDecrypt(e3, bobS)) !== "alice again") throw new Error("p3");
 
+const { sealBox, openBox } = await import("./sealedBox");
+const msg = utf8("sealed hello");
+const box = await sealBox(msg, bPub, aPub, bPub);
+const opened = await openBox(box, bob, aPub, bPub);
+if (utf8decode(opened) !== "sealed hello") throw new Error("sealed box roundtrip");
+
 console.log("ratchet selftest ok");

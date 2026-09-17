@@ -187,7 +187,7 @@ export async function ratchetDecrypt(
   if (message.v !== RATCHET_VERSION) throw new Error("ratchet: bad version");
   const dhData = b64ToBytes(message.dh);
   const ctData = b64ToBytes(message.ct);
-  const skipKey = `${message.dh}:${message.n}`;
+  const skipKey = `${bytesToB64(dhData)}:${message.n}`;
   const skipped = session.skipped[skipKey];
   if (skipped) {
     delete session.skipped[skipKey];

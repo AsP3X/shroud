@@ -16,6 +16,23 @@ export type ChatMessage = {
 };
 
 const peerKeyCache = new Map<string, Uint8Array>();
+const peerLocks = new Map<string, Promise<unknown>>();
+
+async function withPeerLock<T>(peerUserId: string, fn: () => Promise<T>): Promise<T> {
+  const key = peerUserId.toLowerCase();
+  const prev = peerLocks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const next = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  peerLocks.set(key, prev.then(() => next));
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
 
 export async function peerIdentityPublic(
   token: string,
@@ -51,7 +68,7 @@ async function decodeOne(
   }
   const cached = loadPlaintext(dto.id);
   if (cached != null) {
-    return { ...base, text: cached.startsWith("{") && dto.content_type === "media" ? "Photo" : cached };
+    return { ...base, text: dto.content_type === "media" ? "Photo" : cached };
   }
   if (!dto.ciphertext) {
     return { ...base, text: dto.content_type === "media" ? "Photo" : "[Unable to decrypt]", failed: true };
@@ -88,36 +105,38 @@ export async function loadHistory(
   peerUserId: string,
   material: IdentityMaterial,
 ): Promise<ChatMessage[]> {
-  const pages: WireMessage[][] = [];
-  let beforeAt: string | undefined;
-  let beforeId: string | undefined;
-  for (let i = 0; i < 40; i++) {
-    const extra: Record<string, string> = {};
-    if (beforeAt && beforeId) {
-      extra.before_created_at = beforeAt;
-      extra.before_id = beforeId;
+  const peer = peerUserId.toLowerCase();
+  return withPeerLock(peer, async () => {
+    const pages: WireMessage[][] = [];
+    let beforeAt: string | undefined;
+    let beforeId: string | undefined;
+    for (let i = 0; i < 40; i++) {
+      const extra: Record<string, string> = {};
+      if (beforeAt && beforeId) {
+        extra.before_created_at = beforeAt;
+        extra.before_id = beforeId.toLowerCase();
+      }
+      const res = await api.listMessages(token, peer, extra);
+      pages.push(res.messages);
+      const oldest = res.messages[res.messages.length - 1];
+      const full = res.messages.length >= 100;
+      if ((res.has_more || full) && oldest) {
+        beforeAt = oldest.created_at;
+        beforeId = oldest.id;
+      } else {
+        break;
+      }
     }
-    const res = await api.listMessages(token, peerUserId, extra);
-    pages.push(res.messages);
-    const oldest = res.messages[res.messages.length - 1];
-    const full = res.messages.length >= 100;
-    if ((res.has_more || full) && oldest) {
-      beforeAt = oldest.created_at;
-      beforeId = oldest.id;
-    } else {
-      break;
+    const chronological: WireMessage[] = [];
+    for (let i = pages.length - 1; i >= 0; i--) {
+      chronological.push(...[...pages[i]].reverse());
     }
-  }
-  // pages[0] is newest batch (newest-first). Reverse each page, prepend older pages.
-  const chronological: WireMessage[] = [];
-  for (let i = pages.length - 1; i >= 0; i--) {
-    chronological.push(...[...pages[i]].reverse());
-  }
-  const out: ChatMessage[] = [];
-  for (const dto of chronological) {
-    out.push(await decodeOne(dto, me, peerUserId, token, material));
-  }
-  return out;
+    const out: ChatMessage[] = [];
+    for (const dto of chronological) {
+      out.push(await decodeOne(dto, me, peer, token, material));
+    }
+    return out;
+  });
 }
 
 export async function sendText(opts: {
@@ -127,31 +146,35 @@ export async function sendText(opts: {
   text: string;
   material: IdentityMaterial;
 }): Promise<ChatMessage> {
-  const peerPub = await peerIdentityPublic(opts.token, opts.peerUserId);
-  const envelope = await sealMessage({
-    plaintext: utf8(opts.text),
-    peerUserId: opts.peerUserId,
-    ourUserId: opts.me,
-    ourPrivate: opts.material.agreementPrivate,
-    ourIdentityPublic: opts.material.agreementPublic,
-    peerIdentityPublic: peerPub,
+  const peer = opts.peerUserId.toLowerCase();
+  const me = opts.me.toLowerCase();
+  return withPeerLock(peer, async () => {
+    const peerPub = await peerIdentityPublic(opts.token, peer);
+    const envelope = await sealMessage({
+      plaintext: utf8(opts.text),
+      peerUserId: peer,
+      ourUserId: me,
+      ourPrivate: opts.material.agreementPrivate,
+      ourIdentityPublic: opts.material.agreementPublic,
+      peerIdentityPublic: peerPub,
+    });
+    const clientId = crypto.randomUUID();
+    const dto = await api.sendMessage(opts.token, {
+      peer_user_id: peer,
+      client_message_id: clientId,
+      content_type: "text",
+      ciphertext: envelopeToWireB64(envelope),
+    });
+    savePlaintext(dto.id, opts.text);
+    return {
+      id: dto.id,
+      senderUserId: dto.sender_user_id,
+      text: opts.text,
+      createdAt: dto.created_at,
+      isMine: true,
+      deleted: false,
+      failed: false,
+      kind: "text",
+    };
   });
-  const clientId = crypto.randomUUID();
-  const dto = await api.sendMessage(opts.token, {
-    peer_user_id: opts.peerUserId,
-    client_message_id: clientId,
-    content_type: "text",
-    ciphertext: envelopeToWireB64(envelope),
-  });
-  savePlaintext(dto.id, opts.text);
-  return {
-    id: dto.id,
-    senderUserId: dto.sender_user_id,
-    text: opts.text,
-    createdAt: dto.created_at,
-    isMine: true,
-    deleted: false,
-    failed: false,
-    kind: "text",
-  };
 }
