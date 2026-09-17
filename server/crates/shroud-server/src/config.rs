@@ -37,6 +37,9 @@ pub struct Config {
     pub redis_url: Option<String>,
     /// When true, honor `X-Forwarded-For` / `X-Real-IP` for rate-limit keys (trusted proxy only).
     pub trust_forwarded_headers: bool,
+    /// Browser origins allowed to call the API directly (empty = same-origin / no CORS).
+    /// Set from `CORS_ALLOWED_ORIGINS` and/or `WEB_PUBLIC_URL` by the deploy wizard.
+    pub cors_allowed_origins: Vec<String>,
     /// STUN/TURN servers for WebRTC clients.
     pub ice_servers: Vec<IceServer>,
 }
@@ -98,6 +101,7 @@ impl Config {
         )?;
 
         let ice_servers = ice_servers_from_env();
+        let cors_allowed_origins = cors_origins_from_env();
 
         Ok(Self {
             database_url,
@@ -109,6 +113,7 @@ impl Config {
             nebular_media_bucket,
             redis_url,
             trust_forwarded_headers,
+            cors_allowed_origins,
             ice_servers,
         })
     }
@@ -117,6 +122,49 @@ impl Config {
     pub fn socket_addr(&self) -> Result<SocketAddr, AppError> {
         Ok(SocketAddr::new(self.host, self.port))
     }
+}
+
+/// Browser origins that may call this API cross-origin.
+///
+/// `CORS_ALLOWED_ORIGINS` is a comma-separated list. `WEB_PUBLIC_URL` is also
+/// accepted so a single deploy-wizard value covers the official web client.
+pub fn cors_origins_from_env() -> Vec<String> {
+    parse_cors_origins(
+        std::env::var("CORS_ALLOWED_ORIGINS").ok().as_deref(),
+        std::env::var("WEB_PUBLIC_URL").ok().as_deref(),
+    )
+}
+
+/// Normalize `https://host[:port]/path` down to a CORS origin (`https://host[:port]`).
+pub fn parse_cors_origins(cors_allowed: Option<&str>, web_public_url: Option<&str>) -> Vec<String> {
+    let mut origins = Vec::new();
+    for raw in [cors_allowed, web_public_url].into_iter().flatten() {
+        for part in raw.split(',') {
+            let Some(origin) = origin_from_url(part) else {
+                continue;
+            };
+            if !origins.iter().any(|existing| existing == &origin) {
+                origins.push(origin);
+            }
+        }
+    }
+    origins
+}
+
+fn origin_from_url(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let (scheme, rest) = trimmed.split_once("://")?;
+    if scheme != "http" && scheme != "https" {
+        return None;
+    }
+    let hostport = rest.split('/').next().unwrap_or("").trim();
+    if hostport.is_empty() || hostport.contains(' ') {
+        return None;
+    }
+    Some(format!("{scheme}://{hostport}"))
 }
 
 /// Parse ICE servers from env.
@@ -216,5 +264,26 @@ mod tests {
         );
         assert_eq!(parse_u32_env("DATABASE_POOL_MAX", None, 10).unwrap(), 10);
         assert!(parse_u32_env("DATABASE_POOL_MAX", Some("nope"), 10).is_err());
+    }
+
+    #[test]
+    fn parse_cors_origins_strips_paths_and_dedupes() {
+        let origins = parse_cors_origins(
+            Some("https://web.example.com/app, http://localhost:8081"),
+            Some("https://web.example.com/"),
+        );
+        assert_eq!(
+            origins,
+            vec![
+                "https://web.example.com".to_string(),
+                "http://localhost:8081".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_cors_origins_skips_scheme_less_and_empty() {
+        let origins = parse_cors_origins(Some("web.example.com, , ftp://nope"), Some(""));
+        assert!(origins.is_empty());
     }
 }

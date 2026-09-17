@@ -1,27 +1,19 @@
-# Full stack: Postgres, Redis, Nebular OS (object storage), and shroud-server API.
-# Agent: READS env defaults below; WRITES volumes; no production use.
+# Full stack: Postgres, Redis, Nebular OS, shroud-server API, and the web client.
+# Agent: READS .env; WRITES volumes. Public entry is either host ports (local overlay)
+#        or Nginx Proxy Manager (npm overlay) — see ./deploy.sh.
 #
-# Networks
-#   shroud-internal — private bridge for DB, Redis, and service-to-service traffic
-#   proxy-network   — external network shared with Nginx Proxy Manager (public entry)
+#   ./deploy.sh                         wizard on first run, then up
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+#   docker compose -f docker-compose.yml -f docker-compose.npm.yml up -d --build
 #
-# Create the proxy network once if NPM has not already:
-#   docker network create proxy-network
-#
-# NPM reverse-proxy targets (container DNS names on proxy-network):
-#   http://shroud-api:8080   → API  (/api/v1, /api/v1/ws)
-#   http://shroud-nebular:9000 → optional object store (server-side mirror; clients use API)
-#
-# Optional host ports for local tools / iOS Simulator without NPM
-# (postgres/redis stay internal-only — never on proxy-network):
-#   docker compose -f docker-compose.yml -f docker-compose.host-ports.yml up -d
+# NPM targets (npm overlay, container DNS on proxy-network):
+#   http://shroud-web:80     → web client (also reverse-proxies /api/v1)
+#   http://shroud-api:8080   → API for the iOS app (/api/v1, /api/v1/ws)
 #
 # Nebular build context defaults to the sibling Ownly checkout (`../ownly/nebular-os`).
-# Override with NEBULAR_CONTEXT=/path/to/nebular-os if needed.
 
 x-shroud-logging: &shroud-logging
-  # Ownly-style verbose defaults for local compose; override with RUST_LOG=...
-  RUST_LOG: ${RUST_LOG:-debug}
+  RUST_LOG: ${RUST_LOG:-info}
   RUST_LOG_FORMAT: ${RUST_LOG_FORMAT:-text}
 
 services:
@@ -29,15 +21,15 @@ services:
     image: postgres:16-alpine
     container_name: shroud-postgres
     environment:
-      POSTGRES_USER: shroud
-      POSTGRES_PASSWORD: shroud
-      POSTGRES_DB: shroud
+      POSTGRES_USER: ${POSTGRES_USER:-shroud}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shroud}
+      POSTGRES_DB: ${POSTGRES_DB:-shroud}
     volumes:
       - shroud_pg_data:/var/lib/postgresql/data
     networks:
       - shroud-internal
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U shroud -d shroud"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shroud} -d ${POSTGRES_DB:-shroud}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -57,8 +49,6 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # Nebular OS object storage (same binary Ownly uses). Optional mirror for API replicas;
-  # clients always upload/download via shroud-api `/media/{id}/content`.
   nebular:
     build:
       context: ${NEBULAR_CONTEXT:-../ownly/nebular-os}
@@ -69,16 +59,14 @@ services:
       NOS_BIND_ADDR: 0.0.0.0:9000
       NOS_DATA_DIR: /data/blobs
       NOS_META_PATH: /data/meta/metadata.db
-      # Local-only secrets — not for production.
-      NOS_JWT_SECRET: shroud-compose-local-dev-nos-jwt-secret-not-for-production
-      NOS_SIGNING_SECRET: shroud-compose-local-dev-nos-signing-secret-not-for-production
-      JWT_SECRET: shroud-compose-local-dev-nos-jwt-secret-not-for-production
-      SIGNING_SECRET: shroud-compose-local-dev-nos-signing-secret-not-for-production
+      NOS_JWT_SECRET: ${NOS_JWT_SECRET:-shroud-compose-local-dev-nos-jwt-secret-not-for-production}
+      NOS_SIGNING_SECRET: ${NOS_SIGNING_SECRET:-shroud-compose-local-dev-nos-signing-secret-not-for-production}
+      JWT_SECRET: ${NOS_JWT_SECRET:-shroud-compose-local-dev-nos-jwt-secret-not-for-production}
+      SIGNING_SECRET: ${NOS_SIGNING_SECRET:-shroud-compose-local-dev-nos-signing-secret-not-for-production}
     volumes:
       - shroud_nebular_data:/data
     networks:
       - shroud-internal
-      - proxy-network
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/health/ready >/dev/null"]
       interval: 10s
@@ -87,7 +75,6 @@ services:
       start_period: 120s
     restart: unless-stopped
 
-  # Public API — on proxy-network for NPM; on shroud-internal for Postgres/Redis/Nebular.
   api:
     build:
       context: ./server
@@ -102,29 +89,24 @@ services:
         condition: service_healthy
     environment:
       <<: *shroud-logging
-      # Docker network hostnames on shroud-internal (not localhost).
-      DATABASE_URL: postgres://shroud:shroud@postgres:5432/shroud
+      DATABASE_URL: postgres://${POSTGRES_USER:-shroud}:${POSTGRES_PASSWORD:-shroud}@postgres:5432/${POSTGRES_DB:-shroud}
       DATABASE_POOL_MAX: "10"
-      # Single compose replica runs migrations; set false on extra API replicas when scaling.
       RUN_MIGRATIONS: "true"
-      # API sits behind NPM / reverse proxy — honor X-Forwarded-For for rate-limit keys.
       TRUST_FORWARDED_HEADERS: "true"
       REDIS_URL: redis://redis:6379
       NEBULAR_URL: http://nebular:9000
       NEBULAR_MEDIA_BUCKET: shroud-media
-      # Encrypted blobs on the API volume; clients always use /media/{id}/content (API proxy).
-      # Multi-replica deployments need a shared volume or Nebular as primary store.
       MEDIA_DATA_DIR: /data/shroud-media
       HOST: 0.0.0.0
       PORT: "8080"
-      # Optional live APNs (pass through host env when set). Unset = register only / log send.
+      WEB_PUBLIC_URL: ${WEB_PUBLIC_URL:-http://localhost:8081}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8081}
       APNS_KEY_PATH: ${APNS_KEY_PATH:-}
       APNS_KEY_PEM: ${APNS_KEY_PEM:-}
       APNS_KEY_ID: ${APNS_KEY_ID:-}
       APNS_TEAM_ID: ${APNS_TEAM_ID:-}
       APNS_TOPIC: ${APNS_TOPIC:-}
       APNS_ENVIRONMENT: ${APNS_ENVIRONMENT:-sandbox}
-      # WebRTC ICE (default public STUN; set TURN_* when coturn profile is enabled).
       TURN_URLS: ${TURN_URLS:-}
       TURN_USERNAME: ${TURN_USERNAME:-}
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
@@ -133,7 +115,6 @@ services:
       - shroud_media_data:/data/shroud-media
     networks:
       - shroud-internal
-      - proxy-network
     healthcheck:
       test:
         [
@@ -146,10 +127,27 @@ services:
       start_period: 15s
     restart: unless-stopped
 
-  # Optional TURN for WebRTC when P2P fails. Enable with:
-  #   docker compose --profile calls up -d
-  # Then set TURN_URLS / TURN_USERNAME / TURN_CREDENTIAL and restart api.
-  # host network: public media relay; not attached to compose bridges.
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: shroud-web
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      API_UPSTREAM: http://api:8080
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-26214400}
+    networks:
+      - shroud-internal
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80/ >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
+
   coturn:
     profiles: ["calls"]
     image: coturn/coturn:4.6
@@ -169,17 +167,9 @@ services:
     restart: unless-stopped
 
 networks:
-  # Private service mesh: Postgres, Redis, and API↔Nebular over Docker DNS.
   shroud-internal:
     name: shroud-internal
     driver: bridge
-
-  # Shared with Nginx Proxy Manager — only reverse-proxied services join this.
-  # Must exist before `compose up` (NPM usually creates it):
-  #   docker network create proxy-network
-  proxy-network:
-    name: proxy-network
-    external: true
 
 volumes:
   shroud_pg_data:

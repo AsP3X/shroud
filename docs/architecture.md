@@ -15,11 +15,14 @@ High-level structure for the E2E encrypted messenger.
 │  Swift/SwiftUI  │  ◄─────────────────────────────────────── │  Axum           │
 │  CryptoKit      │     delivery metadata only (no plaintext) │                 │
 └────────┬────────┘                                           └────────┬────────┘
-         │                                                             │
-         ▼                                                             │
-  Keychain / Secure Enclave                              ┌─────────────┼─────────────┐
-  (identity keys, encryption phrase                        ▼             ▼             ▼
-   — never on wire)                                   Postgres        Redis      Nebular OS
+         │                       ┌─────────────────┐                   │
+         │                       │  Web client     │  same-origin      │
+         │                       │  Vite/React     │  /api/v1 via nginx│
+         │                       │  WebCrypto      │ ──────────────────┤
+         ▼                       └────────┬────────┘                   │
+  Keychain / Secure Enclave               ▼              ┌─────────────┼─────────────┐
+  (identity keys, encryption phrase   IndexedDB sealed   ▼             ▼             ▼
+   — never on wire)                   + PIN / idle lock Postgres     Redis      Nebular OS
                                                       (durable)    (fan-out,    (ciphertext
                                                                     limits,       blobs)
                                                                     presence)
@@ -31,10 +34,11 @@ High-level structure for the E2E encrypted messenger.
 
 | Layer | Location | Responsibility |
 | --- | --- | --- |
-| Design | `design/iOS-App.pen` | Screen specs, tokens, components |
+| Design | `design/iOS-App.pen`, `design/webclient.pen` | Screen specs, tokens, components |
 | iOS UI | `ios/shroud/ShroudUI/` | Reusable SwiftUI components + `Theme` |
 | iOS features | `ios/shroud/Features/` | Screens (MVVM), 1:1 with design |
 | iOS services | `ios/shroud/Services/` | API client, crypto, persistence |
+| Web | `web/` | Vite + React SPA; nginx same-origin `/api/v1` |
 | API | `server/crates/shroud-server/` | HTTP `/api/v1`, WebSocket, auth, relay |
 | Schema | `server/migrations/postgres/` | Forward-only sqlx migrations |
 | Docs | `docs/` | Architecture, server plan, protocol notes |

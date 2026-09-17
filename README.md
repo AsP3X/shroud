@@ -1,93 +1,83 @@
 # Shroud
 
-End-to-end encrypted messenger: **Rust + PostgreSQL** server and a **native iOS** app (Swift/SwiftUI).
+End-to-end encrypted messenger: **Rust + PostgreSQL** server, a **native iOS** app, and a **web client**.
 
 ## Repository layout
 
 | Path | Purpose |
 | --- | --- |
-| `design/iOS-App.pen` | Design source of truth (Pencil) |
+| `design/iOS-App.pen` | iOS design source (Pencil) |
+| `design/webclient.pen` | Web client frames (desktop three-pane + mobile) |
 | `server/` | Rust workspace — Axum API, migrations, integration tests |
+| `web/` | Vite + React web client (same-origin `/api/v1` via nginx) |
 | `ios/` | Native iOS app — SwiftUI, ShroudUI component library |
-| `docs/` | Architecture + [server plan](docs/server-plan.md) (API decisions, milestones) |
+| `docs/` | Architecture, [server plan](docs/server-plan.md), [web client](docs/web-client.md) |
 
 ## Prerequisites
 
-- **Docker** + Docker Compose — full API stack (Postgres, Redis, API)
+- **Docker** + Docker Compose v2 — API, web, Postgres, Redis, Nebular
 - **Xcode 16+** — iOS app (full Xcode, not Command Line Tools only)
 - **Rust** (optional) — native `cargo run` / tests without rebuilding the API image
 
-## Server (Docker Compose — recommended)
+## Deploy (recommended)
 
-### Networks
-
-| Network | Type | Purpose |
-| --- | --- | --- |
-| `shroud-internal` | Compose bridge | Postgres, Redis, and private service-to-service traffic |
-| `proxy-network` | **External** | Shared with **Nginx Proxy Manager** — only services that should be public |
+Same shape as Ownly / pzserver: a wizard writes `.env`, then Compose builds the stack.
 
 ```bash
-# Once per machine (skip if NPM already created it)
-docker network create proxy-network
+./deploy.sh            # first run: wizard; later runs: rebuild/start
+./deploy.sh --status   # web URL + API URL + container table
+./deploy.sh --logs api
+.\deploy.ps1           # Windows
 ```
 
-| Service | Networks | NPM target (example) |
-| --- | --- | --- |
-| `postgres` | `shroud-internal` only | — |
-| `redis` | `shroud-internal` only | — |
-| `api` (`shroud-api`) | internal + **proxy** | `http://shroud-api:8080` |
-| `nebular` (`shroud-nebular`) | internal + **proxy** | optional mirror; clients use API `/media/{id}/content` |
+| `PROXY_MODE` | How you reach it |
+| --- | --- |
+| `local` (default) | Web `http://localhost:8081`, API `http://localhost:8080/api/v1` |
+| `npm` | Joins the external `proxy-network`. NPM hosts: `http://shroud-web:80`, `http://shroud-api:8080` |
 
-### Start
+The wizard asks for the **public web URL** (and API URL for iOS). The browser always talks same-origin (`/api/v1` proxied by web nginx). `WEB_PUBLIC_URL` is also sent to the API as CORS for split-origin setups.
 
-From the **repository root**:
+Nebular is built from `../ownly/nebular-os` (override with `NEBULAR_CONTEXT`).
+
+### Manual Compose
 
 ```bash
-# Build and start Postgres + Redis + Nebular + API
-# Nebular is built from ../ownly/nebular-os (override with NEBULAR_CONTEXT=...)
-docker compose up -d --build
+# Local ports (iOS Simulator / curl, no NPM):
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
 
-# Local host ports (iOS Simulator / curl without NPM):
-docker compose -f docker-compose.yml -f docker-compose.host-ports.yml up -d --build
+# Behind Nginx Proxy Manager (create the network once if NPM has not):
+docker network create proxy-network
+docker compose -f docker-compose.yml -f docker-compose.npm.yml up -d --build
 
-# Follow API + Nebular logs (Ownly-style RUST_LOG=debug by default)
-docker compose logs -f api nebular
-
-# Health check (host ports profile, or via your NPM hostname)
 curl http://127.0.0.1:8080/api/v1/health/live
 # {"status":"ok"}
-curl http://127.0.0.1:8080/api/v1/health/ready
-# {"status":"ok","database":"ok","redis":"ok"|"skipped"}
 ```
 
-| Service | Default host port | Notes |
+| Service | Local port | Notes |
 | --- | --- | --- |
-| `api` | none (use NPM or `host-ports` file → `8080`) | Axum `/api/v1`; migrations on startup; `x-request-id` |
-| `nebular` | none (or `9000` with host-ports) | Object storage; needs Ownly checkout or `NEBULAR_CONTEXT` |
-| `postgres` | none (or `5432` with host-ports) | User/db/password: `shroud` |
-| `redis` | none (or `6379` with host-ports) | Multi-replica WS fan-out |
+| `web` | `8081` | SPA + reverse-proxy `/api/v1` (incl. WebSocket) |
+| `api` | `8080` | Axum `/api/v1`; iOS talks here; migrations on startup |
+| `nebular` | `9000` | Object storage; clients still use API `/media/{id}/content` |
+| `postgres` | `5432` | User/db from `.env` |
+| `redis` | `6379` | Multi-replica WS fan-out |
 
-Logging: compose sets `RUST_LOG=debug` for `api` and `nebular`. Override with `RUST_LOG=info docker compose up`.
+Logging: set `RUST_LOG` in `.env` (wizard default `info`).
 
 Stop:
 
 ```bash
-docker compose down          # keep data volumes
-docker compose down -v       # wipe Postgres/Redis data
+./deploy.sh --down           # keep data volumes
+docker compose -f docker-compose.yml -f docker-compose.local.yml down -v   # wipe volumes
 ```
 
-Rebuild after server code changes:
-
-```bash
-docker compose up -d --build api
-```
+Rebuild after server or web changes: `./deploy.sh --rebuild`.
 
 ## Server (native Cargo — optional)
 
 Useful for fast iteration without rebuilding the image. Keep Compose infra running with host ports:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.host-ports.yml up -d postgres redis nebular
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d postgres redis nebular
 
 cp server/.env.example server/.env
 # Point at host-mapped ports (defaults already do):

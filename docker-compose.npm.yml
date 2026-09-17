@@ -1,0 +1,24 @@
+# Nginx Proxy Manager overlay: no host ports. API + web join the external proxy-network.
+#
+#   docker network create proxy-network   # once, if NPM has not already
+#   docker compose -f docker-compose.yml -f docker-compose.npm.yml up -d --build
+#
+# NPM proxy hosts:
+#   web  → http://shroud-web:80
+#   api  → http://shroud-api:8080   (iOS and any client that does not go through the web nginx)
+
+services:
+  api:
+    networks:
+      - shroud-internal
+      - proxy-network
+
+  web:
+    networks:
+      - shroud-internal
+      - proxy-network
+
+networks:
+  proxy-network:
+    name: proxy-network
+    external: true

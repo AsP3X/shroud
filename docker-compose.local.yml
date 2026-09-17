@@ -1,5 +1,6 @@
-# Backward-compatible alias of docker-compose.local.yml.
-# Prefer: docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+# Local / first-run overlay: publish host ports. Used by ./deploy.sh when PROXY_MODE=local.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
 
 services:
   postgres:

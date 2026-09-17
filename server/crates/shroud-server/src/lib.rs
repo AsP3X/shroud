@@ -20,10 +20,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::http::{HeaderName, HeaderValue, Method, header};
 use axum::{Router, extract::Request, middleware};
 use sqlx::postgres::PgPoolOptions;
 use tower_http::LatencyUnit;
 use tower_http::classify::ServerErrorsFailureClass;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::{DefaultOnResponse, TraceLayer};
 use tracing::{Level, Span};
 
@@ -200,8 +202,8 @@ pub async fn run() -> Result<(), AppError> {
     };
 
     // Human: Last `.layer` is outermost — request-id runs first, then metrics, then TraceLayer.
-    // Agent: OUTER request_id_middleware → metrics → TraceLayer → routes.
-    let app = Router::new()
+    // Agent: OUTER CORS (if any) → request_id → metrics → TraceLayer → routes.
+    let mut app = Router::new()
         .merge(routes::router())
         .layer(
             TraceLayer::new_for_http()
@@ -228,6 +230,16 @@ pub async fn run() -> Result<(), AppError> {
         .layer(middleware::from_fn(request_tracking::request_id_middleware))
         .with_state(state);
 
+    if !config.cors_allowed_origins.is_empty() {
+        tracing::info!(
+            origins = ?config.cors_allowed_origins,
+            "cors: allowing web client origins"
+        );
+        if let Some(layer) = cors_layer(&config.cors_allowed_origins) {
+            app = app.layer(layer);
+        }
+    }
+
     let addr: SocketAddr = config.socket_addr()?;
     if let Some(ref url) = config.nebular_url {
         tracing::info!(
@@ -252,6 +264,37 @@ pub async fn run() -> Result<(), AppError> {
 
     tracing::info!("shroud-server shut down");
     Ok(())
+}
+
+/// Browser web client talking to a split API host (web.shroud.app → api.shroud.app).
+/// Same-origin deploys (nginx proxying `/api/v1`) leave `CORS_ALLOWED_ORIGINS` empty.
+fn cors_layer(origins: &[String]) -> Option<CorsLayer> {
+    let parsed: Vec<HeaderValue> = origins
+        .iter()
+        .filter_map(|origin| HeaderValue::from_str(origin).ok())
+        .collect();
+    if parsed.is_empty() {
+        return None;
+    }
+    Some(
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::list(parsed))
+            .allow_methods([
+                Method::GET,
+                Method::POST,
+                Method::PUT,
+                Method::PATCH,
+                Method::DELETE,
+                Method::OPTIONS,
+            ])
+            .allow_headers([
+                header::AUTHORIZATION,
+                header::CONTENT_TYPE,
+                header::ACCEPT,
+                HeaderName::from_static("x-request-id"),
+            ])
+            .max_age(Duration::from_secs(3600)),
+    )
 }
 
 /// Waits for Ctrl-C or SIGTERM before returning.

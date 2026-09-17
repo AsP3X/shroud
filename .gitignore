@@ -19,6 +19,10 @@
 .env.*
 !.env.example
 
+# Web client
+/web/node_modules/
+/web/dist/
+
 # OS
 .DS_Store
 Thumbs.db

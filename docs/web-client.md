@@ -1,0 +1,45 @@
+# Shroud web client
+
+Desktop + mobile browser client. Visual source: `design/webclient.pen`.
+Deploy: `./deploy.sh` / `.\deploy.ps1`.
+
+## Key decisions
+
+| Decision | Choice | Why |
+| --- | --- | --- |
+| Device model | First-class device (Telegram-style) | Server already has per-device identity keys, OTPKs, and a 5-device cap. The browser is a real device: username/password login, 12-word phrase unlock. |
+| Crypto | TypeScript + WebCrypto, golden-tested against iOS vectors | Two implementations, one wire format. Shared WASM is a later unification, not v1. |
+| At rest | Sealed IndexedDB + PIN, auto-lock | Ciphertext persists. Plaintext is RAM-only. Lock after 5 minutes idle **and** when the tab is hidden. |
+| Layout | iOS dark tokens in a WhatsApp-Web three-pane | Rail + chat list + thread on desktop; stacked list/thread + tab bar on mobile. PWA-installable. |
+| Hosting | `./deploy.sh` configures the public URL | Same-origin: web nginx reverse-proxies `/api/v1` (and WebSocket) to the API. iOS still talks to the API host. `WEB_PUBLIC_URL` also seeds CORS if someone splits origins. |
+| v1 product | Chats, contacts, requests, Notes, media, privacy/devices/safety numbers | No calls, no on-device transcripts in v1. |
+| Add contact | Paste invite / share code; optional webcam QR | Server has no username directory. |
+| Stack | Vite + React + TypeScript | Static SPA. No SSR (nothing to render server-side without plaintext). |
+
+## Security (must match iOS on the wire)
+
+- Server stores ciphertext envelopes only. Phrase never leaves the device.
+- Web is weaker **at rest** than iOS Keychain / Secure Enclave. Mitigations: non-extractable WebCrypto keys where the API allows, history sealed under the phrase-derived key, PIN wrap, idle + hidden-tab lock, no plaintext in IndexedDB.
+- Identity TOFU + safety numbers: same `IdentitySafetyNumber` (SHA-256 of sorted X25519 pubs) as iOS. Sending blocks on `PeerIdentityError.changed` until the user accepts.
+- This browser counts toward the 5-device cap. Settings can revoke other devices.
+
+## Deploy
+
+```bash
+./deploy.sh            # wizard on first run, then compose up
+./deploy.sh --status   # print web + API URLs
+.\deploy.ps1           # Windows
+```
+
+`PROXY_MODE=local` publishes `:8081` (web) and `:8080` (API).
+`PROXY_MODE=npm` joins `proxy-network`; point Nginx Proxy Manager at `shroud-web:80` and `shroud-api:8080`.
+
+## PR plan
+
+1. **Deploy + SPA shell** (this change) — compose overlays, wizard, nginx same-origin proxy, welcome/login/unlock/chats chrome.
+2. **WebCrypto port** — BIP39 phrase, identity keys, X3DH + Double Ratchet, media AES-GCM, golden vectors from `ios/shroudTests`.
+3. **Sealed IndexedDB + PIN vault** — history key wrap, idle lock wired to wipe RAM.
+4. **Live messaging** — send/recv text, WS, receipts, Notes.
+5. **Media** — photo / video / voice upload-download on the existing sealed blob path.
+6. **Privacy** — blocks, delete chat, safety numbers, device list/revoke, identity-change banner.
+7. **PWA polish** — service worker (no caching of `/api`), add-to-dock, responsive QA against `design/webclient.pen`.
