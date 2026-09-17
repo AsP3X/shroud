@@ -169,4 +169,36 @@ export const api = {
       signed_pre_key_id: number | null;
       otpk_count: number;
     }>("/keys/status", { token }),
+  peerIdentity: (token: string, userId: string) =>
+    request<{ user_id: string; device_id: string; registration_id: number; identity_key: string }>(
+      `/keys/identity/${userId}`,
+      { token },
+    ),
+  listMessages: (token: string, peerUserId: string, extra: Record<string, string> = {}) => {
+    const q = new URLSearchParams({ peer_user_id: peerUserId, limit: "100", ...extra });
+    return request<{
+      conversation_id: string | null;
+      messages: WireMessage[];
+      has_more: boolean;
+    }>(`/messages?${q.toString()}`, { token });
+  },
+  sendMessage: (
+    token: string,
+    body: { peer_user_id: string; client_message_id: string; content_type: string; ciphertext: string },
+  ) => request<WireMessage>("/messages", { method: "POST", token, body: JSON.stringify(body) }),
+};
+
+export type WireMessage = {
+  id: string;
+  conversation_id: string;
+  sender_user_id: string;
+  sender_device_id: string;
+  client_message_id: string;
+  content_type: string;
+  ciphertext: string | null;
+  media_object_id?: string | null;
+  deleted_for_everyone: boolean;
+  created_at: string;
+  delivered?: boolean | null;
+  read?: boolean | null;
 };

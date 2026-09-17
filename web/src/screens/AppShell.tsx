@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Shield,
@@ -27,6 +27,7 @@ import { initials } from "../config";
 import { bytesToB64 } from "../crypto/bytes";
 import { loadIdentity } from "../crypto/store";
 import { parseInvite } from "../invite";
+import { loadHistory, sendText, type ChatMessage } from "../messaging";
 import { clearSession } from "../session";
 
 type Tab = "chats" | "contacts" | "settings";
@@ -45,6 +46,11 @@ export function AppShell({ session }: { session: Session }) {
   const [invite, setInvite] = useState("");
   const [addBusy, setAddBusy] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+  const [thread, setThread] = useState<ChatMessage[]>([]);
+  const [threadLoading, setThreadLoading] = useState(false);
+  const [threadError, setThreadError] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
   const mobileShowThread = Boolean(selected) && tab !== "settings";
   const identity = loadIdentity(session.user.id);
   const alive = useRef(true);
@@ -92,6 +98,32 @@ export function AppShell({ session }: { session: Session }) {
     };
   }, [refresh, navigate]);
 
+  useEffect(() => {
+    const material = loadIdentity(session.user.id);
+    if (!selected || !material) {
+      setThread([]);
+      setThreadError(material ? null : "Unlock this browser with your encryption phrase to read chats.");
+      return;
+    }
+    let cancelled = false;
+    setThreadLoading(true);
+    setThreadError(null);
+    loadHistory(session.token, session.user.id, selected.id, material)
+      .then((msgs) => {
+        if (!cancelled) setThread(msgs);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setThreadError(err instanceof ApiError ? err.message : "Could not load messages.");
+      })
+      .finally(() => {
+        if (!cancelled) setThreadLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected, session.token, session.user.id]);
+
   const filteredChats = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return conversations;
@@ -136,6 +168,29 @@ export function AppShell({ session }: { session: Session }) {
       setAddError(err instanceof ApiError ? err.message : "Could not send request.");
     } finally {
       setAddBusy(false);
+    }
+  }
+
+  async function submitMessage(event: FormEvent) {
+    event.preventDefault();
+    const text = draft.trim();
+    if (!text || !selected || !identity || sending) return;
+    setSending(true);
+    try {
+      const msg = await sendText({
+        token: session.token,
+        me: session.user.id,
+        peerUserId: selected.id,
+        text,
+        material: identity,
+      });
+      setThread((prev) => [...prev, msg]);
+      setDraft("");
+      await refresh();
+    } catch (err) {
+      setThreadError(err instanceof ApiError ? err.message : "Could not send.");
+    } finally {
+      setSending(false);
     }
   }
 
@@ -366,28 +421,49 @@ export function AppShell({ session }: { session: Session }) {
               </button>
             </header>
             <div className="messages">
-              <div className="empty-thread">
-                History ciphertext will decrypt on this device the same way as iOS. Sending is the
-                next slice — you can already see who you chat with.
-              </div>
+              {threadLoading && thread.length === 0 ? (
+                <div className="empty-thread">Decrypting history…</div>
+              ) : threadError && thread.length === 0 ? (
+                <div className="empty-thread">{threadError}</div>
+              ) : thread.length === 0 ? (
+                <div className="empty-thread">No messages yet. Say hello.</div>
+              ) : (
+                thread.map((m) => (
+                  <div key={m.id} className={m.isMine ? "bubble out" : "bubble in"}>
+                    {m.text}
+                    <time>
+                      {new Date(m.createdAt).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </time>
+                  </div>
+                ))
+              )}
             </div>
-            <form
-              className="compose"
-              onSubmit={(e) => {
-                e.preventDefault();
-              }}
-            >
+            <form className="compose" onSubmit={submitMessage}>
               <button className="icon-btn" type="button" aria-label="Attach">
                 <Paperclip size={18} />
               </button>
               <button className="icon-btn" type="button" aria-label="Photo">
                 <Image size={18} />
               </button>
-              <input className="compose-field" placeholder="Message" disabled />
+              <input
+                className="compose-field"
+                placeholder={identity ? "Message" : "Unlock keys to send"}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                disabled={!identity || sending}
+              />
               <button className="icon-btn" type="button" aria-label="Voice">
                 <Mic size={18} />
               </button>
-              <button className="send" type="submit" aria-label="Send" disabled>
+              <button
+                className="send"
+                type="submit"
+                aria-label="Send"
+                disabled={!identity || sending || !draft.trim()}
+              >
                 <Send size={16} />
               </button>
             </form>
