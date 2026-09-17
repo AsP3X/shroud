@@ -1,95 +1,190 @@
-import { useState, type FormEvent } from "react";
-import { Lock } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Lock, Delete } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { hasPin, loadSession, setLocked, setPin, verifyPin } from "../session";
+
+const PIN_LEN = 6;
+const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "del"] as const;
 
 export function Unlock() {
   const navigate = useNavigate();
   const session = loadSession();
   const creating = Boolean(session && !hasPin(session.user.id));
+  const [phase, setPhase] = useState<"enter" | "confirm">("enter");
   const [pin, setPinValue] = useState("");
-  const [confirm, setConfirm] = useState("");
+  const [firstPin, setFirstPin] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [shake, setShake] = useState(false);
+  const [ready, setReady] = useState(false);
+  const inflight = useRef(false);
+
+  const fail = useCallback((message: string) => {
+    setError(message);
+    setShake(true);
+    setPinValue("");
+    window.setTimeout(() => setShake(false), 420);
+  }, []);
+
+  useEffect(() => {
+    const id = window.requestAnimationFrame(() => setReady(true));
+    return () => window.cancelAnimationFrame(id);
+  }, []);
+
+  useEffect(() => {
+    const userId = session?.user.id;
+    if (!userId) return;
+    if (creating) {
+      if (pin.length === PIN_LEN) {
+        void (async () => {
+          if (inflight.current) return;
+          inflight.current = true;
+          setError(null);
+          try {
+            if (phase === "enter") {
+              setFirstPin(pin);
+              setPinValue("");
+              setPhase("confirm");
+              return;
+            }
+            if (pin !== firstPin) {
+              setPhase("enter");
+              setFirstPin("");
+              fail("PINs did not match. Try again.");
+              return;
+            }
+            setBusy(true);
+            await setPin(userId, pin);
+            setLocked(false);
+            navigate("/app", { replace: true });
+          } catch {
+            fail("Could not store the PIN. Open Shroud over HTTPS (or localhost).");
+          } finally {
+            inflight.current = false;
+            setBusy(false);
+          }
+        })();
+      }
+      return;
+    }
+    if (pin.length < 4) return;
+    const wait = pin.length === PIN_LEN ? 40 : 300;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        if (inflight.current) return;
+        inflight.current = true;
+        try {
+          const ok = await verifyPin(userId, pin);
+          if (ok) {
+            setBusy(true);
+            setLocked(false);
+            navigate("/app", { replace: true });
+            return;
+          }
+          if (pin.length >= PIN_LEN) fail("Wrong PIN.");
+        } finally {
+          inflight.current = false;
+          setBusy(false);
+        }
+      })();
+    }, wait);
+    return () => window.clearTimeout(timer);
+  }, [pin, creating, phase, firstPin, session?.user.id, fail, navigate]);
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.key >= "0" && event.key <= "9") {
+        event.preventDefault();
+        setError(null);
+        setPinValue((p) => (p + event.key).slice(0, PIN_LEN));
+      } else if (event.key === "Backspace") {
+        event.preventDefault();
+        setPinValue((p) => p.slice(0, -1));
+        setError(null);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   if (!session) return null;
-  const userId = session.user.id;
 
-  async function onSubmit(event: FormEvent) {
-    event.preventDefault();
+  function pushDigit(digit: string) {
+    if (busy) return;
     setError(null);
-    if (pin.length < 4) {
-      setError("Use at least 4 digits.");
-      return;
-    }
-    if (creating && pin !== confirm) {
-      setError("PINs do not match.");
-      return;
-    }
-    setBusy(true);
-    try {
-      if (creating) {
-        await setPin(userId, pin);
-      } else if (!(await verifyPin(userId, pin))) {
-        setError("Wrong PIN.");
-        return;
-      }
-      setLocked(false);
-      navigate("/app", { replace: true });
-    } catch {
-      setError("Could not store the PIN. Open Shroud over HTTPS (or localhost).");
-    } finally {
-      setBusy(false);
-    }
+    setPinValue((p) => (p + digit).slice(0, PIN_LEN));
   }
 
+  function popDigit() {
+    if (busy) return;
+    setPinValue((p) => p.slice(0, -1));
+    setError(null);
+  }
+
+  const title =
+    creating && phase === "confirm"
+      ? "Confirm your PIN"
+      : creating
+        ? "Choose a PIN"
+        : "Chats are locked";
+  const lede =
+    creating && phase === "confirm"
+      ? "Enter the same 6 digits again."
+      : creating
+        ? "This PIN unlocks Shroud in this browser. Idle and hidden tabs lock after 5 minutes."
+        : `Signed in as @${session.user.username}. Enter your PIN to decrypt this browser.`;
+
   return (
-    <div className="screen">
-      <form className="stack" onSubmit={onSubmit}>
-        <div className="mark" style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>
-          <Lock size={24} />
+    <div className={`lock-screen${ready ? " in" : ""}`}>
+      <div className="lock-glow" aria-hidden />
+      <div className="lock-body">
+        <div className="lock-mark">
+          <Lock size={28} strokeWidth={1.75} />
         </div>
-        <div>
-          <h1>{creating ? "Choose a PIN" : "Chats are locked"}</h1>
-          <p className="lede">
-            {creating
-              ? "This PIN unlocks Shroud on this browser. Idle and hidden tabs lock after 5 minutes."
-              : "Enter your PIN to unlock this browser. Idle and hidden tabs lock after 5 minutes."}
-          </p>
-        </div>
-        <div className="pin-row" aria-hidden>
-          {Array.from({ length: 6 }, (_, i) => (
-            <span key={i} className={i < pin.length ? "pin-dot filled" : "pin-dot"} />
+        <h1>{title}</h1>
+        <p className="lede">{lede}</p>
+
+        <div className={`lock-dots${shake ? " shake" : ""}`} role="img" aria-label={`${pin.length} of ${PIN_LEN} digits entered`}>
+          {Array.from({ length: PIN_LEN }, (_, i) => (
+            <span
+              key={i}
+              className={`lock-dot${i < pin.length ? " filled" : ""}`}
+              style={{ transitionDelay: `${i * 30}ms` }}
+            />
           ))}
         </div>
-        <input
-          className="field"
-          inputMode="numeric"
-          autoComplete="off"
-          maxLength={6}
-          placeholder="PIN"
-          value={pin}
-          onChange={(e) => setPinValue(e.target.value.replace(/\D/g, "").slice(0, 6))}
-          autoFocus
-        />
-        {creating ? (
-          <input
-            className="field"
-            inputMode="numeric"
-            autoComplete="off"
-            maxLength={6}
-            placeholder="Confirm PIN"
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value.replace(/\D/g, "").slice(0, 6))}
-          />
-        ) : null}
-        {error ? <p className="err">{error}</p> : null}
-        <div className="actions">
-          <button className="btn btn-primary" type="submit" disabled={busy}>
-            {busy ? "Please wait…" : creating ? "Save PIN" : "Unlock"}
-          </button>
+        {error ? <p className="lock-err">{error}</p> : <p className="lock-err spacer">&nbsp;</p>}
+
+        <div className="lock-pad">
+          {KEYS.map((key, i) =>
+            key === "" ? (
+              <span key={`empty-${i}`} className="lock-key ghost" />
+            ) : key === "del" ? (
+              <button
+                key="del"
+                type="button"
+                className="lock-key del"
+                aria-label="Delete"
+                disabled={busy || pin.length === 0}
+                onClick={popDigit}
+              >
+                <Delete size={22} />
+              </button>
+            ) : (
+              <button
+                key={key}
+                type="button"
+                className="lock-key"
+                disabled={busy}
+                onClick={() => pushDigit(key)}
+              >
+                {key}
+              </button>
+            ),
+          )}
         </div>
-      </form>
+      </div>
     </div>
   );
 }
