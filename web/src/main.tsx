@@ -4,6 +4,9 @@ import { BrowserRouter } from "react-router-dom";
 import "@fontsource-variable/inter";
 import "./index.css";
 import { App } from "./App";
+import { installTheme } from "./theme";
+
+installTheme();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

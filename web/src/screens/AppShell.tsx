@@ -1,20 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import {
-  Shield,
-  MessageCircle,
-  Users,
-  Settings,
-  SquarePen,
-  Search,
-  Paperclip,
-  Image,
-  Mic,
-  Send,
-  Info,
-  X,
-  ChevronLeft,
-} from "lucide-react";
+import { Shield } from "lucide-react";
 import {
   api,
   ApiError,
@@ -24,8 +10,13 @@ import {
   type Session,
   type WireMessage,
 } from "../api/client";
-import { initials } from "../config";
-import { bytesToB64 } from "../crypto/bytes";
+import { Avatar } from "../components/Avatar";
+import { ChatList, type ListEntry } from "../components/ChatList";
+import { Modal } from "../components/Modal";
+import { Rail, TabBar, type Tab } from "../components/Rail";
+import { SettingsPane } from "../components/SettingsPane";
+import { Thread } from "../components/Thread";
+import { listTimestamp, presenceLabel, type Presence } from "../format";
 import { loadIdentity } from "../crypto/store";
 import { parseInvite } from "../invite";
 import {
@@ -41,30 +32,18 @@ import {
 import { connectRealtime } from "../realtime";
 import { clearSession } from "../session";
 
-type Tab = "chats" | "contacts" | "settings";
 type PeerRef = { id: string; username: string };
-type Presence = { online: boolean; lastSeenAt: string | null };
-
-function formatPresence(p: Presence | undefined): string {
-  if (!p) return "";
-  if (p.online) return "online";
-  if (!p.lastSeenAt) return "offline";
-  const at = new Date(p.lastSeenAt);
-  if (Number.isNaN(at.getTime())) return "offline";
-  const now = new Date();
-  const sameDay = at.toDateString() === now.toDateString();
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-  const time = at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  if (sameDay) return `last seen ${time}`;
-  if (at.toDateString() === yesterday.toDateString()) return `last seen yesterday`;
-  return `last seen ${at.toLocaleDateString()}`;
-}
 
 function mergeMessages(primary: ChatMessage[], extra: ChatMessage[]): ChatMessage[] {
   const byId = new Map<string, ChatMessage>();
   for (const m of primary) byId.set(m.id, m);
   for (const m of extra) if (!byId.has(m.id)) byId.set(m.id, m);
+  const confirmed = new Set(
+    [...byId.values()].filter((m) => m.isMine && !m.pending && !m.failed).map((m) => m.text),
+  );
+  for (const [id, m] of [...byId]) {
+    if (m.pending && confirmed.has(m.text)) byId.delete(id);
+  }
   return [...byId.values()].sort((a, b) => {
     const t = a.createdAt.localeCompare(b.createdAt);
     return t !== 0 ? t : a.id.localeCompare(b.id);
@@ -80,7 +59,9 @@ export function AppShell({ session }: { session: Session }) {
   const [incoming, setIncoming] = useState<ContactRequest[]>([]);
   const [selected, setSelected] = useState<PeerRef | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
+  const [showInfo, setShowInfo] = useState(false);
   const [invite, setInvite] = useState("");
   const [addBusy, setAddBusy] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
@@ -88,7 +69,7 @@ export function AppShell({ session }: { session: Session }) {
   const [threadLoading, setThreadLoading] = useState(false);
   const [threadError, setThreadError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
-  const [sending, setSending] = useState(false);
+  const [sendingPeer, setSendingPeer] = useState<string | null>(null);
   const [presenceByUser, setPresenceByUser] = useState<Record<string, Presence>>({});
   const [previewRev, setPreviewRev] = useState(0);
   const mobileShowThread = Boolean(selected) && tab !== "settings";
@@ -124,6 +105,7 @@ export function AppShell({ session }: { session: Session }) {
     if (requests.status === "fulfilled") setIncoming(requests.value.requests);
     else errors.push(requests.status === "rejected" && requests.reason instanceof ApiError ? requests.reason.message : "requests");
     setError(errors.length === 3 ? errors[0] : null);
+    setLoading(false);
     const convs = nextConv ?? conversationsRef.current;
     const rosterIds = [
       ...convs.map((c) => c.peer.id),
@@ -182,6 +164,7 @@ export function AppShell({ session }: { session: Session }) {
           navigate("/", { replace: true });
           return;
         }
+        setLoading(false);
         setError(err instanceof ApiError ? err.message : "Could not load chats and contacts.");
       });
     run();
@@ -322,17 +305,39 @@ export function AppShell({ session }: { session: Session }) {
     };
   }, [selected?.id, session.token, session.user.id]);
 
-  const filteredChats = useMemo(() => {
+  const chatEntries = useMemo<ListEntry[]>(() => {
+    void previewRev;
     const q = query.trim().toLowerCase();
-    if (!q) return conversations;
-    return conversations.filter((c) => c.peer.username.toLowerCase().includes(q));
-  }, [conversations, query]);
+    return conversations
+      .map((c) => ({
+        id: c.peer.id,
+        username: c.peer.username,
+        subtitle: previewLine(session.user.id, c.peer.id),
+        timestamp: listTimestamp(c.last_message_at),
+        online: Boolean(presenceByUser[c.peer.id.toLowerCase()]?.online),
+      }))
+      .filter(
+        (entry) =>
+          !q ||
+          entry.username.toLowerCase().includes(q) ||
+          entry.subtitle.toLowerCase().includes(q),
+      );
+  }, [conversations, presenceByUser, previewRev, query, session.user.id]);
 
-  const filteredContacts = useMemo(() => {
+  const contactEntries = useMemo<ListEntry[]>(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return contacts;
-    return contacts.filter((c) => c.username.toLowerCase().includes(q));
-  }, [contacts, query]);
+    return contacts
+      .filter((c) => !q || c.username.toLowerCase().includes(q))
+      .map((c) => {
+        const presence = presenceByUser[c.user_id.toLowerCase()];
+        return {
+          id: c.user_id,
+          username: c.username,
+          subtitle: presenceLabel(presence) || "Contact",
+          online: Boolean(presence?.online),
+        };
+      });
+  }, [contacts, presenceByUser, query]);
 
   async function logout() {
     try {
@@ -369,27 +374,46 @@ export function AppShell({ session }: { session: Session }) {
     }
   }
 
-  async function submitMessage(event: FormEvent) {
-    event.preventDefault();
+  async function submitMessage() {
     const text = draft.trim();
-    if (!text || !selected || !identity || sending) return;
-    setSending(true);
+    if (!text || !selected || !identity || sendingPeer) return;
+    const peerId = selected.id;
+    const localId = `pending:${crypto.randomUUID()}`;
+    const optimistic: ChatMessage = {
+      id: localId,
+      senderUserId: session.user.id,
+      text,
+      createdAt: new Date().toISOString(),
+      isMine: true,
+      deleted: false,
+      failed: false,
+      kind: "text",
+      pending: true,
+    };
+    setThread((prev) => [...prev, optimistic]);
+    setDraft("");
+    setSendingPeer(peerId);
+    setThreadError(null);
     try {
       const msg = await sendText({
         token: session.token,
         me: session.user.id,
-        peerUserId: selected.id,
+        peerUserId: peerId,
         text,
         material: identity,
       });
-      setThread((prev) => [...prev, msg]);
-      setDraft("");
+      if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
+      setThread((prev) => mergeMessages(prev.filter((m) => m.id !== localId), [msg]));
       setPreviewRev((n) => n + 1);
       await refresh();
     } catch (err) {
+      if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
+      setThread((prev) =>
+        prev.map((m) => (m.id === localId ? { ...m, pending: false, failed: true } : m)),
+      );
       setThreadError(err instanceof ApiError ? err.message : "Could not send.");
     } finally {
-      setSending(false);
+      setSendingPeer((current) => (current === peerId ? null : current));
     }
   }
 
@@ -403,356 +427,163 @@ export function AppShell({ session }: { session: Session }) {
     }
   }
 
+  function openTab(next: Tab) {
+    setQuery("");
+    if (next === tab && selected) {
+      setSelected(null);
+      return;
+    }
+    setTab(next);
+  }
+
   const shareLink = `${window.location.origin}/u/${session.user.share_code}`;
+  const selectedPresence = selected ? presenceByUser[selected.id.toLowerCase()] : undefined;
+  const requests = incoming.map((request) => ({
+    id: request.id,
+    username: request.user?.username ?? "Unknown",
+  }));
 
   return (
     <div className="shell">
-      <nav className="rail" aria-label="Main">
-        <div className="rail-top">
-          <div className="rail-mark">
-            <Shield size={18} />
-          </div>
-          <div style={{ height: 12 }} />
-          <button
-            className={tab === "chats" ? "rail-btn active" : "rail-btn"}
-            onClick={() => setTab("chats")}
-            aria-label="Chats"
-          >
-            <MessageCircle size={20} />
-          </button>
-          <button
-            className={tab === "contacts" ? "rail-btn active" : "rail-btn"}
-            onClick={() => setTab("contacts")}
-            aria-label="Contacts"
-          >
-            <Users size={20} />
-          </button>
-          <button
-            className={tab === "settings" ? "rail-btn active" : "rail-btn"}
-            onClick={() => setTab("settings")}
-            aria-label="Settings"
-          >
-            <Settings size={20} />
-          </button>
-        </div>
-        <div className="rail-me" title={session.user.username}>
-          {initials(session.user.username)}
-        </div>
-      </nav>
+      <Rail
+        tab={tab}
+        onSelect={openTab}
+        requestCount={requests.length}
+        user={{ id: session.user.id, username: session.user.username }}
+      />
 
       <div className="shell-body">
-        {tab !== "settings" ? (
-          <section className={`pane-list ${mobileShowThread ? "hidden-mobile" : ""}`}>
-            <header className="pane-head">
-              <div className="pane-title-row">
-                <h1>{tab === "chats" ? "Chats" : "Contacts"}</h1>
-                <button className="icon-btn" aria-label="Add" onClick={() => setAdding(true)}>
-                  <SquarePen size={18} />
-                </button>
-              </div>
-              <label className="search">
-                <Search size={14} />
-                <input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search"
-                />
-              </label>
-            </header>
-            <div className="rows">
-              {error ? <p className="err" style={{ padding: 12 }}>{error}</p> : null}
-              {tab === "contacts" && incoming.length > 0 ? (
-                <>
-                  <p className="list-label">Pending</p>
-                  {incoming.map((req) => {
-                    const name = req.user?.username ?? "Unknown";
-                    return (
-                      <div key={req.id} className="chat-row request-row">
-                        <div className="avatar">{initials(name)}</div>
-                        <div className="row-copy">
-                          <strong>{name}</strong>
-                          <span>Wants to connect</span>
-                        </div>
-                        <div className="request-actions">
-                          <button type="button" className="mini-btn" onClick={() => respond(req.id, true)}>
-                            Accept
-                          </button>
-                          <button type="button" className="mini-btn ghost" onClick={() => respond(req.id, false)}>
-                            Ignore
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </>
-              ) : null}
-              {tab === "chats"
-                ? filteredChats.length === 0 && !error && (
-                    <p className="lede" style={{ padding: 16, textAlign: "left" }}>
-                      {contacts.length > 0
-                        ? "No chats yet. Open a contact to start one."
-                        : "No chats yet. Add a contact with an invite link or share code."}
-                    </p>
-                  )
-                : filteredContacts.length === 0 && incoming.length === 0 && !error && (
-                    <p className="lede" style={{ padding: 16, textAlign: "left" }}>
-                      No contacts yet. Add someone with their share code.
-                    </p>
-                  )}
-              {tab === "chats"
-                ? filteredChats.map((c) => {
-                    void previewRev;
-                    const online = presenceByUser[c.peer.id.toLowerCase()]?.online;
-                    return (
-                    <button
-                      type="button"
-                      key={c.id}
-                      className={
-                        selected?.id.toLowerCase() === c.peer.id.toLowerCase()
-                          ? "chat-row active"
-                          : "chat-row"
-                      }
-                      onClick={() => setSelected({ id: c.peer.id, username: c.peer.username })}
-                    >
-                      <div className="avatar">
-                        {initials(c.peer.username)}
-                        {online ? <span className="dot" /> : null}
-                      </div>
-                      <div className="row-copy">
-                        <strong>{c.peer.username}</strong>
-                        <span>{previewLine(session.user.id, c.peer.id)}</span>
-                      </div>
-                      <div className="row-meta">
-                        <time>
-                          {c.last_message_at
-                            ? new Date(c.last_message_at).toLocaleTimeString([], {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })
-                            : ""}
-                        </time>
-                      </div>
-                    </button>
-                    );
-                  })
-                : filteredContacts.map((c) => {
-                    const online = presenceByUser[c.user_id.toLowerCase()]?.online;
-                    return (
-                    <button
-                      type="button"
-                      key={c.user_id}
-                      className={
-                        selected?.id.toLowerCase() === c.user_id.toLowerCase()
-                          ? "chat-row active"
-                          : "chat-row"
-                      }
-                      onClick={() => setSelected({ id: c.user_id, username: c.username })}
-                    >
-                      <div className="avatar">
-                        {initials(c.username)}
-                        {online ? <span className="dot" /> : null}
-                      </div>
-                      <div className="row-copy">
-                        <strong>{c.username}</strong>
-                        <span>{online ? "online" : "Contact"}</span>
-                      </div>
-                    </button>
-                    );
-                  })}
-            </div>
-          </section>
-        ) : (
-          <section className="pane-list hidden-mobile">
-            <header className="pane-head">
-              <div className="pane-title-row">
-                <h1>Settings</h1>
-              </div>
-            </header>
-            <div className="rows">
-              <div className="chat-row active">
-                <div className="row-copy">
-                  <strong>Devices</strong>
-                  <span>This browser is a linked device</span>
-                </div>
-              </div>
-            </div>
-          </section>
-        )}
-
         {tab === "settings" ? (
-          <main className="settings-main">
-            <h2>Linked devices</h2>
-            <p className="lede">
-              This browser is a first-class device. Revoke any session you do not recognize.
-              Maximum 5.
-            </p>
-            <div className="card">
-              <div className="device-row">
-                <div>
-                  <strong>This browser · {session.device.name ?? "Web"}</strong>
-                  <span className="now">Active now · {session.user.username}</span>
-                </div>
-              </div>
-            </div>
-            <div className="warn">
-              <h3>Your share code</h3>
-              <p className="mono-key">{session.user.share_code}</p>
-              <p>{shareLink}</p>
-            </div>
-            {identity ? (
-              <div className="warn">
-                <h3>This device’s identity key</h3>
-                <p className="mono-key">{bytesToB64(identity.agreementPublic)}</p>
-                <p>
-                  Registration ID {identity.registrationId}. Same X25519 identity as iOS, derived
-                  from your 12-word phrase. The phrase itself is never stored here.
-                </p>
-              </div>
-            ) : (
-              <div className="warn">
-                <h3>No identity keys on this browser</h3>
-                <p>Log out and unlock with your 12-word encryption phrase to restore them.</p>
-              </div>
-            )}
-            <div style={{ marginTop: 24, maxWidth: 560 }}>
-              <button className="btn btn-danger" type="button" onClick={logout}>
-                Log out
-              </button>
-            </div>
-          </main>
-        ) : selected ? (
-          <section className="thread" key={selected.id}>
-            <header className="thread-head">
-              <div className="peer">
-                <button
-                  className="icon-btn back-mobile"
-                  type="button"
-                  aria-label="Back"
-                  onClick={() => setSelected(null)}
-                >
-                  <ChevronLeft size={20} />
-                </button>
-                <div className="avatar">{initials(selected.username)}</div>
-                <div>
-                  <strong>{selected.username}</strong>
-                  <em className={presenceByUser[selected.id.toLowerCase()]?.online ? "online" : undefined}>
-                    {formatPresence(presenceByUser[selected.id.toLowerCase()])}
-                  </em>
-                </div>
-              </div>
-              <button className="icon-btn" aria-label="Contact info">
-                <Info size={18} />
-              </button>
-            </header>
-            <div className="messages">
-              {threadLoading && thread.length === 0 ? (
-                <div className="empty-thread">Decrypting history…</div>
-              ) : threadError && thread.length === 0 ? (
-                <div className="empty-thread">{threadError}</div>
-              ) : thread.length === 0 ? (
-                <div className="empty-thread">No messages yet. Say hello.</div>
-              ) : (
-                thread.map((m) => (
-                  <div key={m.id} className={m.isMine ? "bubble out" : "bubble in"}>
-                    {m.text}
-                    <time>
-                      {new Date(m.createdAt).toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </time>
-                  </div>
-                ))
-              )}
-            </div>
-            <form className="compose" onSubmit={submitMessage}>
-              <button className="icon-btn" type="button" aria-label="Attach">
-                <Paperclip size={18} />
-              </button>
-              <button className="icon-btn" type="button" aria-label="Photo">
-                <Image size={18} />
-              </button>
-              <input
-                className="compose-field"
-                placeholder={identity ? "Message" : "Unlock keys to send"}
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                disabled={!identity || sending}
-              />
-              <button className="icon-btn" type="button" aria-label="Voice">
-                <Mic size={18} />
-              </button>
-              <button
-                className="send"
-                type="submit"
-                aria-label="Send"
-                disabled={!identity || sending || !draft.trim()}
-              >
-                <Send size={16} />
-              </button>
-            </form>
-          </section>
+          <SettingsPane
+            session={session}
+            identity={identity}
+            shareLink={shareLink}
+            onLogout={logout}
+          />
         ) : (
-          <section className="thread hidden-mobile">
-            <div className="empty-thread">Select a chat, or add a contact to start one.</div>
-          </section>
+          <>
+            <ChatList
+              className={mobileShowThread ? "hidden-mobile" : undefined}
+              title={tab === "chats" ? "Chats" : "Contacts"}
+              query={query}
+              onQueryChange={setQuery}
+              onAdd={() => setAdding(true)}
+              addLabel="Add contact"
+              loading={loading}
+              error={error}
+              requests={tab === "contacts" ? requests : []}
+              onRespond={respond}
+              entries={tab === "chats" ? chatEntries : contactEntries}
+              selectedId={selected?.id ?? null}
+              onSelect={(entry) => setSelected({ id: entry.id, username: entry.username })}
+              empty={
+                tab === "chats"
+                  ? {
+                      title: "No chats yet",
+                      body:
+                        contacts.length > 0
+                          ? "Open a contact to start your first conversation."
+                          : "Add someone with their invite link or share code to get started.",
+                    }
+                  : {
+                      title: "No contacts yet",
+                      body: "Add someone with their share code and they’ll show up here.",
+                    }
+              }
+            />
+            {selected ? (
+              <Thread
+                key={selected.id}
+                peer={selected}
+                presence={presenceLabel(selectedPresence)}
+                online={Boolean(selectedPresence?.online)}
+                messages={thread}
+                loading={threadLoading}
+                error={threadError}
+                canSend={Boolean(identity)}
+                sending={sendingPeer?.toLowerCase() === selected.id.toLowerCase()}
+                draft={draft}
+                onDraftChange={setDraft}
+                onSend={() => void submitMessage()}
+                onBack={() => setSelected(null)}
+                onShowInfo={() => setShowInfo(true)}
+              />
+            ) : (
+              <section className="thread thread-placeholder hidden-mobile">
+                <div className="placeholder-card">
+                  <Shield size={28} aria-hidden="true" />
+                  <strong>Select a conversation</strong>
+                  <p>Your messages are end-to-end encrypted, on this device and on theirs.</p>
+                </div>
+              </section>
+            )}
+          </>
         )}
       </div>
 
-      <nav className="tab-bar">
-        <button
-          className={tab === "chats" ? "tab active" : "tab"}
-          onClick={() => {
-            setTab("chats");
-            setSelected(null);
-          }}
-        >
-          <MessageCircle size={22} />
-          Chats
-        </button>
-        <button className={tab === "contacts" ? "tab active" : "tab"} onClick={() => setTab("contacts")}>
-          <Users size={22} />
-          Contacts
-        </button>
-        <button className={tab === "settings" ? "tab active" : "tab"} onClick={() => setTab("settings")}>
-          <Settings size={22} />
-          Settings
-        </button>
-      </nav>
+      <TabBar tab={tab} onSelect={openTab} requestCount={requests.length} />
 
       {adding ? (
-        <div
-          className="modal-scrim"
-          onClick={() => {
+        <Modal
+          title="Add contact"
+          onClose={() => {
             setAdding(false);
             setAddError(null);
           }}
         >
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <header>
-              <h2>Add contact</h2>
-              <button
-                className="icon-btn"
-                type="button"
-                onClick={() => setAdding(false)}
-                aria-label="Close"
-              >
-                <X size={18} />
-              </button>
-            </header>
-            <p>Paste an invite link, share code, or username.</p>
+          <p>Paste an invite link, share code, or username.</p>
+          <form
+            className="modal-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void sendInvite();
+            }}
+          >
             <input
               className="field"
               placeholder="shroud.corespace.de/u/… or share code"
+              aria-label="Invite link, share code, or username"
               value={invite}
-              onChange={(e) => setInvite(e.target.value)}
+              onChange={(event) => setInvite(event.target.value)}
             />
             {addError ? <p className="err">{addError}</p> : null}
-            <button className="btn btn-primary" type="button" disabled={addBusy} onClick={sendInvite}>
+            <button className="btn btn-primary" type="submit" disabled={addBusy}>
               {addBusy ? "Sending…" : "Send request"}
             </button>
+          </form>
+        </Modal>
+      ) : null}
+
+      {showInfo && selected ? (
+        <Modal title="Contact info" onClose={() => setShowInfo(false)}>
+          <div className="info-sheet">
+            <Avatar
+              name={selected.username}
+              seed={selected.id}
+              size="lg"
+              online={Boolean(selectedPresence?.online)}
+            />
+            <strong>{selected.username}</strong>
+            <span className={selectedPresence?.online ? "online" : undefined}>
+              {presenceLabel(selectedPresence) || "presence unknown"}
+            </span>
           </div>
-        </div>
+          <div className="settings-card">
+            <div className="settings-row">
+              <div className="settings-row-copy">
+                <strong>User ID</strong>
+                <code>{selected.id}</code>
+              </div>
+            </div>
+            <div className="settings-row">
+              <div className="settings-row-copy">
+                <strong>Encryption</strong>
+                <span>End-to-end encrypted with X25519 + Double Ratchet.</span>
+              </div>
+            </div>
+          </div>
+          <p className="settings-note">Safety-number verification is coming to the web client.</p>
+        </Modal>
       ) : null}
     </div>
   );

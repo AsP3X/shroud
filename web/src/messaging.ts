@@ -18,6 +18,10 @@ export type ChatMessage = {
   deleted: boolean;
   failed: boolean;
   kind: "text" | "media";
+  /** Optimistic bubble shown until the server hands back a real id. */
+  pending?: boolean;
+  delivered?: boolean;
+  read?: boolean;
 };
 
 const peerKeyCache = new Map<string, Uint8Array>();
@@ -110,6 +114,8 @@ export async function decodeIncoming(
     deleted: dto.deleted_for_everyone,
     failed: false,
     kind: dto.content_type === "media" ? ("media" as const) : ("text" as const),
+    delivered: dto.delivered ?? undefined,
+    read: dto.read ?? undefined,
   };
   if (dto.deleted_for_everyone) {
     const msg = { ...base, text: "Message deleted" };
@@ -303,6 +309,8 @@ export async function sendText(opts: {
       deleted: false,
       failed: false,
       kind: "text",
+      delivered: dto.delivered ?? false,
+      read: dto.read ?? false,
     };
     rememberPreview(me, peer, msg);
     return msg;
