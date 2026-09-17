@@ -1,4 +1,5 @@
 import { apiBase } from "../config";
+import type { Invite } from "../invite";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -118,10 +119,26 @@ export const api = {
       `/contacts/requests?box=${box}&status=pending`,
       { token },
     ),
-  lookupUser: (token: string, invite: { kind: string; value: string }) => {
-    if (invite.kind === "userId") return request<UserCard>(`/users/${invite.value}`, { token });
+  lookupUser: async (token: string, invite: Invite) => {
+    if (invite.kind === "userId") {
+      return request<UserCard>(`/users/${invite.value}`, { token });
+    }
     if (invite.kind === "shareCode") {
-      return request<UserCard>(`/users/by-code/${encodeURIComponent(invite.value)}`, { token });
+      try {
+        return await request<UserCard>(`/users/by-code/${encodeURIComponent(invite.value)}`, {
+          token,
+        });
+      } catch (err) {
+        const asName = invite.value.toLowerCase();
+        if (
+          err instanceof ApiError &&
+          err.status === 404 &&
+          /^[a-z0-9_]{3,32}$/.test(asName)
+        ) {
+          return request<UserCard>(`/users/by-username/${encodeURIComponent(asName)}`, { token });
+        }
+        throw err;
+      }
     }
     return request<UserCard>(`/users/by-username/${encodeURIComponent(invite.value)}`, { token });
   },

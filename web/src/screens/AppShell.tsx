@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Shield,
@@ -47,37 +47,47 @@ export function AppShell({ session }: { session: Session }) {
   const [addError, setAddError] = useState<string | null>(null);
   const mobileShowThread = Boolean(selected) && tab !== "settings";
   const identity = loadIdentity(session.user.id);
+  const alive = useRef(true);
 
   const refresh = useCallback(async () => {
-    const [conv, roster, requests] = await Promise.all([
+    const [conv, roster, requests] = await Promise.allSettled([
       api.conversations(session.token),
       api.contacts(session.token),
       api.contactRequests(session.token, "incoming"),
     ]);
-    setConversations(conv.conversations);
-    setContacts(roster.contacts);
-    setIncoming(requests.requests);
-    setError(null);
+    if (!alive.current) return;
+    const authFail = [conv, roster, requests].find(
+      (r) => r.status === "rejected" && r.reason instanceof ApiError && r.reason.isAuthFailure,
+    );
+    if (authFail && authFail.status === "rejected") {
+      throw authFail.reason;
+    }
+    const errors: string[] = [];
+    if (conv.status === "fulfilled") setConversations(conv.value.conversations);
+    else errors.push(conv.reason instanceof ApiError ? conv.reason.message : "chats");
+    if (roster.status === "fulfilled") setContacts(roster.value.contacts);
+    else errors.push(roster.reason instanceof ApiError ? roster.reason.message : "contacts");
+    if (requests.status === "fulfilled") setIncoming(requests.value.requests);
+    else errors.push(requests.reason instanceof ApiError ? requests.reason.message : "requests");
+    setError(errors.length === 3 ? errors[0] : null);
   }, [session.token]);
 
   useEffect(() => {
-    let cancelled = false;
-    refresh().catch((err: unknown) => {
-      if (cancelled) return;
-      if (err instanceof ApiError && err.isAuthFailure) {
-        clearSession();
-        navigate("/", { replace: true });
-        return;
-      }
-      setError(err instanceof ApiError ? err.message : "Could not load chats and contacts.");
-    });
-    const tick = window.setInterval(() => {
-      refresh().catch(() => {
-        /* keep last snapshot */
+    alive.current = true;
+    const run = () =>
+      refresh().catch((err: unknown) => {
+        if (!alive.current) return;
+        if (err instanceof ApiError && err.isAuthFailure) {
+          clearSession();
+          navigate("/", { replace: true });
+          return;
+        }
+        setError(err instanceof ApiError ? err.message : "Could not load chats and contacts.");
       });
-    }, 20_000);
+    run();
+    const tick = window.setInterval(run, 20_000);
     return () => {
-      cancelled = true;
+      alive.current = false;
       window.clearInterval(tick);
     };
   }, [refresh, navigate]);

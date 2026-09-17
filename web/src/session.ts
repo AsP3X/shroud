@@ -156,15 +156,26 @@ export function installAutoLock(onLock: () => void): () => void {
     window.clearTimeout(hideTimer);
   }
 
+  function onPageShow() {
+    unloading = false;
+    if (!document.hidden) bump();
+  }
+
+  if (document.hidden) {
+    hideTimer = window.setTimeout(lock, HIDE_LOCK_MS);
+  }
+
   const events = ["pointerdown", "keydown"] as const;
   for (const ev of events) window.addEventListener(ev, bump);
   document.addEventListener("visibilitychange", onVisibility);
   window.addEventListener("pagehide", onPageHide);
+  window.addEventListener("pageshow", onPageShow);
   return () => {
     window.clearTimeout(timer);
     window.clearTimeout(hideTimer);
     for (const ev of events) window.removeEventListener(ev, bump);
     document.removeEventListener("visibilitychange", onVisibility);
     window.removeEventListener("pagehide", onPageHide);
+    window.removeEventListener("pageshow", onPageShow);
   };
 }
