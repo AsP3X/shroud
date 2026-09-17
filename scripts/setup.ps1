@@ -52,7 +52,18 @@ if ($modeChoice -eq "2") {
     $API_PUBLIC_URL = "http://localhost:$API_PORT"
 }
 
-$POSTGRES_PASSWORD = New-Secret
+$existingPg = $null
+if (Test-Path -LiteralPath ".env") {
+    $line = Get-Content -LiteralPath ".env" | Where-Object { $_ -match "^POSTGRES_PASSWORD=" } | Select-Object -Last 1
+    if ($line) { $existingPg = $line.Substring("POSTGRES_PASSWORD=".Length).Trim() }
+}
+if ($existingPg -and $existingPg -ne "GENERATE_ME") {
+    $POSTGRES_PASSWORD = $existingPg
+    Write-Host "  Postgres password: reused from .env (volume already initialized)" -ForegroundColor Green
+} else {
+    $POSTGRES_PASSWORD = New-Secret
+    Write-Host "  Postgres password: generated" -ForegroundColor Green
+}
 $NOS_JWT_SECRET = New-Secret
 $NOS_SIGNING_SECRET = New-Secret
 $NEBULAR_CONTEXT = if ($env:NEBULAR_CONTEXT) { $env:NEBULAR_CONTEXT } else { "../ownly/nebular-os" }

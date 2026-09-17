@@ -83,10 +83,26 @@ fi
 
 echo ""
 echo "${BOLD}── Secrets ──${NC}"
-POSTGRES_PASSWORD="$(generate_secret)"
+# Postgres only hashes POSTGRES_PASSWORD on first volume init. Reuse the existing
+# password whenever .env already has one so a wizard re-run cannot lock the API out.
+EXISTING_PG=""
+if [[ -f .env ]]; then
+  EXISTING_PG="$(grep -E '^POSTGRES_PASSWORD=' .env 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '\r')"
+fi
+if [[ -n "$EXISTING_PG" && "$EXISTING_PG" != "GENERATE_ME" ]]; then
+  POSTGRES_PASSWORD="$EXISTING_PG"
+  echo "  Postgres password: ${GREEN}reused from .env${NC} (volume already initialized)"
+else
+  POSTGRES_PASSWORD="$(generate_secret)"
+  echo "  Postgres password: ${GREEN}generated${NC}"
+  if docker volume ls -q 2>/dev/null | grep -q 'shroud_pg_data$'; then
+    echo "${YELLOW}  A Postgres volume already exists. The new password will not apply to it.${NC}"
+    echo "  Wipe it first: ${BOLD}./deploy.sh --down --volumes${NC}"
+  fi
+fi
 NOS_JWT_SECRET="$(generate_secret)"
 NOS_SIGNING_SECRET="$(generate_secret)"
-echo "  Postgres password, Nebular JWT, and signing secret: ${GREEN}generated${NC}"
+echo "  Nebular JWT and signing secret: ${GREEN}generated${NC}"
 
 CORS_ALLOWED_ORIGINS="$WEB_PUBLIC_URL"
 

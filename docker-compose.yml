@@ -89,7 +89,7 @@ services:
         condition: service_healthy
     environment:
       <<: *shroud-logging
-      DATABASE_URL: postgres://${POSTGRES_USER:-shroud}:${POSTGRES_PASSWORD:-shroud}@postgres:5432/${POSTGRES_DB:-shroud}
+      DATABASE_URL: "postgres://${POSTGRES_USER:-shroud}:${POSTGRES_PASSWORD:-shroud}@postgres:5432/${POSTGRES_DB:-shroud}"
       DATABASE_POOL_MAX: "10"
       RUN_MIGRATIONS: "true"
       TRUST_FORWARDED_HEADERS: "true"

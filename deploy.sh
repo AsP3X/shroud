@@ -10,6 +10,7 @@
 #   ./deploy.sh --restart [svc]  restart
 #   ./deploy.sh --rebuild        rebuild images, then start
 #   ./deploy.sh --down           stop stack
+#   ./deploy.sh --down --volumes stop stack and wipe Postgres/Redis/media volumes
 #   ./deploy.sh --help
 
 set -Eeuo pipefail
@@ -59,6 +60,7 @@ show_help() {
     ./deploy.sh --restart [svc...] Restart all services, or the named ones
     ./deploy.sh --rebuild          Rebuild images, then start
     ./deploy.sh --down             Stop and remove all services
+    ./deploy.sh --down --volumes   Also wipe Postgres / Redis / media volumes
     ./deploy.sh --help             This help
 
   ${BOLD}Service names${NC} (for --logs / --restart):
@@ -118,6 +120,7 @@ run_wizard() {
 
 CMD=""
 PASSTHRU=()
+DOWN_VOLUMES=0
 set_cmd() {
   [[ -z "$CMD" || "$CMD" == "$1" ]] ||
     die "only one command at a time (got '$CMD' and '$1'). See ./deploy.sh --help"
@@ -133,21 +136,27 @@ while (( $# )); do
     --restart|restart)       set_cmd restart ;;
     --rebuild|rebuild)       set_cmd rebuild ;;
     --down|down|--stop|stop) set_cmd down ;;
+    --volumes)               DOWN_VOLUMES=1 ;;
     --init|init|--setup|setup) set_cmd init ;;
     --up|up)                 set_cmd up ;;
     --yes|-y)                export SHROUD_SETUP_ASSUME_YES=1 ;;
     --)                      shift; PASSTHRU+=("$@"); break ;;
     -*)                      die "unknown option: $1
-  Valid: --init --status --ps --logs --restart --rebuild --down --help" ;;
+  Valid: --init --status --ps --logs --restart --rebuild --down --volumes --help" ;;
     *)                       PASSTHRU+=("$1") ;;
   esac
   shift
 done
 CMD="${CMD:-up}"
 
+if [[ "$DOWN_VOLUMES" -eq 1 && "$CMD" != "down" ]]; then
+  die "--volumes is only valid with --down. Example: ./deploy.sh --down --volumes"
+fi
+
 case "$CMD" in
   logs|restart) ;;
   help) show_help; exit 0 ;;
+  down) ;;
   *)
     if (( ${#PASSTHRU[@]} )); then
       die "unexpected argument: ${PASSTHRU[*]}
@@ -178,7 +187,14 @@ case "$CMD" in
     shroud_info
     exit 0
     ;;
-  down) shroud_down; exit 0 ;;
+  down)
+    if [[ "$DOWN_VOLUMES" -eq 1 ]]; then
+      shroud_down --volumes
+    else
+      shroud_down
+    fi
+    exit 0
+    ;;
   init) run_wizard; exit 0 ;;
 esac
 

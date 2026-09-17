@@ -19,6 +19,7 @@ param(
     [switch]$Restart,
     [switch]$Rebuild,
     [switch]$Down,
+    [switch]$Volumes,
     [switch]$Yes,
     [switch]$NoColor,
     [switch]$Help,
@@ -106,6 +107,7 @@ function Show-Help {
     Write-Host "    .\deploy.ps1 -Restart [svc...]   Restart services"
     Write-Host "    .\deploy.ps1 -Rebuild            Rebuild images, then start"
     Write-Host "    .\deploy.ps1 -Down               Stop and remove all services"
+    Write-Host "    .\deploy.ps1 -Down -Volumes      Also wipe Postgres / Redis / media volumes"
     Write-Host "    .\deploy.ps1 -Help               This help"
     Write-Host ""
 }
@@ -122,6 +124,9 @@ if ($Rebuild) { $verbs += "rebuild" }
 if ($Down)    { $verbs += "down" }
 if ($verbs.Count -gt 1) { Write-Die "only one command at a time (got: $($verbs -join ', '))" }
 $cmd = if ($verbs.Count -eq 1) { $verbs[0] } else { "up" }
+if ($Volumes -and $cmd -ne "down") {
+    Write-Die "-Volumes is only valid with -Down. Example: .\deploy.ps1 -Down -Volumes"
+}
 
 $services = @()
 if ($Service) { $services = @($Service | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) }
@@ -164,7 +169,15 @@ try {
             Show-Info
             exit 0
         }
-        "down"    { Invoke-Compose @("down"); exit 0 }
+        "down"    {
+            if ($Volumes) {
+                Write-Step "Removing containers and named volumes (Postgres data will be wiped)..."
+                Invoke-Compose @("down", "--volumes", "--remove-orphans")
+            } else {
+                Invoke-Compose @("down")
+            }
+            exit 0
+        }
         "init"    { Invoke-Wizard; exit 0 }
     }
 
@@ -193,7 +206,23 @@ try {
         Write-Step "Rebuilding images (--pull)..."
         Invoke-Compose @("build", "--pull")
     }
-    Invoke-Compose @("up", "-d", "--build", "--remove-orphans")
+    try {
+        Invoke-Compose @("up", "-d", "--build", "--remove-orphans")
+    } catch {
+        $apiLogs = & docker logs shroud-api 2>&1 | Select-Object -Last 80
+        if ($apiLogs -match "password authentication failed") {
+            Write-Host ""
+            Write-Line "ERROR: Postgres rejected the API password." "Red"
+            Write-Host ""
+            Write-Host "  The Postgres image applies POSTGRES_PASSWORD only the first time the"
+            Write-Host "  data volume is created. A new password in .env is ignored after that."
+            Write-Host ""
+            Write-Host "  Keep data:  set POSTGRES_PASSWORD in .env to the original (old default: shroud)"
+            Write-Host "  Wipe data:  .\deploy.ps1 -Down -Volumes ; .\deploy.ps1"
+            Write-Host ""
+        }
+        throw
+    }
     $elapsed = (Get-Date) - $startedAt
     Write-Host ""
     Write-Ok ("Deploy finished in {0}m {1}s." -f [int][math]::Floor($elapsed.TotalMinutes), $elapsed.Seconds)

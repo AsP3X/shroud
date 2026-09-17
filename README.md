@@ -66,9 +66,11 @@ Logging: set `RUST_LOG` in `.env` (wizard default `info`).
 Stop:
 
 ```bash
-./deploy.sh --down           # keep data volumes
-docker compose -f docker-compose.yml -f docker-compose.local.yml down -v   # wipe volumes
+./deploy.sh --down              # keep data volumes
+./deploy.sh --down --volumes    # wipe Postgres / Redis / media (needed if POSTGRES_PASSWORD changed)
 ```
+
+Postgres only hashes `POSTGRES_PASSWORD` the first time its volume is created. Changing the password in `.env` later will make the API fail with `password authentication failed`. Either restore the original password or wipe volumes as above.
 
 Rebuild after server or web changes: `./deploy.sh --rebuild`.
 
