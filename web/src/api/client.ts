@@ -1,5 +1,8 @@
 import { apiBase } from "../config";
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 export class ApiError extends Error {
   readonly code: string;
   readonly status: number;
@@ -81,11 +84,20 @@ export const api = {
         username,
         password,
         device_name: deviceName,
-        device_id: deviceId ?? undefined,
+        ...(deviceId && UUID_RE.test(deviceId) ? { device_id: deviceId } : {}),
       }),
     }),
   me: (token: string) => request<{ user: Session["user"]; device: Session["device"] }>("/auth/me", { token }),
   logout: (token: string) => request<void>("/auth/logout", { method: "POST", token }),
   conversations: (token: string) =>
     request<{ conversations: Conversation[] }>("/conversations", { token }),
+  putBundle: (token: string, body: unknown) =>
+    request<void>("/keys/bundle", { method: "PUT", token, body: JSON.stringify(body) }),
+  keysStatus: (token: string) =>
+    request<{
+      device_id: string;
+      has_identity: boolean;
+      signed_pre_key_id: number | null;
+      otpk_count: number;
+    }>("/keys/status", { token }),
 };

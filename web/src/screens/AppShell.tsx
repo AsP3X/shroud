@@ -18,6 +18,8 @@ import {
 } from "lucide-react";
 import { api, ApiError, type Conversation, type Session } from "../api/client";
 import { initials } from "../config";
+import { bytesToB64 } from "../crypto/bytes";
+import { loadIdentity } from "../crypto/store";
 import { clearSession } from "../session";
 
 type Tab = "chats" | "contacts" | "settings";
@@ -32,6 +34,7 @@ export function AppShell({ session }: { session: Session }) {
   const [adding, setAdding] = useState(false);
   const [invite, setInvite] = useState("");
   const mobileShowThread = Boolean(selected) && tab === "chats";
+  const identity = loadIdentity(session.user.id);
 
   useEffect(() => {
     let cancelled = false;
@@ -189,13 +192,21 @@ export function AppShell({ session }: { session: Session }) {
                 </div>
               </div>
             </div>
-            <div className="warn">
-              <h3>Safety numbers</h3>
-              <p>
-                Open a contact to compare their safety number in person. If a key changes, sending
-                is blocked until you verify.
-              </p>
-            </div>
+            {identity ? (
+              <div className="warn">
+                <h3>This device’s identity key</h3>
+                <p className="mono-key">{bytesToB64(identity.agreementPublic)}</p>
+                <p>
+                  Registration ID {identity.registrationId}. Same X25519 identity as iOS, derived
+                  from your 12-word phrase. The phrase itself is never stored here.
+                </p>
+              </div>
+            ) : (
+              <div className="warn">
+                <h3>No identity keys on this browser</h3>
+                <p>Log out and unlock with your 12-word encryption phrase to restore them.</p>
+              </div>
+            )}
             <div style={{ marginTop: 24, maxWidth: 560 }}>
               <button className="btn btn-danger" type="button" onClick={logout}>
                 Log out

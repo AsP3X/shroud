@@ -1,7 +1,9 @@
 import { useEffect } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import { hasIdentity } from "./crypto/store";
 import { AppShell } from "./screens/AppShell";
 import { Auth } from "./screens/Auth";
+import { SignUp } from "./screens/SignUp";
 import { Unlock } from "./screens/Unlock";
 import { Welcome } from "./screens/Welcome";
 import { hasPin, installAutoLock, isLocked, loadSession } from "./session";
@@ -9,16 +11,17 @@ import { hasPin, installAutoLock, isLocked, loadSession } from "./session";
 export function App() {
   const navigate = useNavigate();
   const session = loadSession();
+  const keyed = Boolean(session && hasIdentity(session.user.id));
   const locked = isLocked();
-  const needsPinSetup = Boolean(session && !hasPin(session.user.id));
+  const needsPinSetup = Boolean(keyed && session && !hasPin(session.user.id));
   const sessionToken = session?.token;
 
   useEffect(() => {
-    if (!sessionToken || needsPinSetup) return;
+    if (!sessionToken || !keyed || needsPinSetup) return;
     return installAutoLock(() => {
       navigate("/unlock", { replace: true });
     });
-  }, [sessionToken, needsPinSetup, navigate]);
+  }, [sessionToken, keyed, needsPinSetup, navigate]);
 
   return (
     <Routes>
@@ -26,7 +29,7 @@ export function App() {
         path="/"
         element={
           session ? (
-            <Navigate to={locked || needsPinSetup ? "/unlock" : "/app"} replace />
+            <Navigate to={!keyed ? "/login" : locked || needsPinSetup ? "/unlock" : "/app"} replace />
           ) : (
             <Welcome />
           )
@@ -34,18 +37,23 @@ export function App() {
       />
       <Route
         path="/login"
-        element={session ? <Navigate to="/app" replace /> : <Auth mode="login" />}
+        element={keyed && !locked && !needsPinSetup ? <Navigate to="/app" replace /> : <Auth />}
       />
       <Route
         path="/signup"
-        element={session ? <Navigate to="/app" replace /> : <Auth mode="signup" />}
+        element={keyed ? <Navigate to="/app" replace /> : <SignUp />}
       />
-      <Route path="/unlock" element={session ? <Unlock /> : <Navigate to="/" replace />} />
+      <Route
+        path="/unlock"
+        element={session && keyed ? <Unlock /> : <Navigate to={session ? "/login" : "/"} replace />}
+      />
       <Route
         path="/app"
         element={
           !session ? (
             <Navigate to="/" replace />
+          ) : !keyed ? (
+            <Navigate to="/login" replace />
           ) : locked || needsPinSetup ? (
             <Navigate to="/unlock" replace />
           ) : (
