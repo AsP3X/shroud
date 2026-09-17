@@ -22,16 +22,34 @@ import {
   type ContactRequest,
   type Conversation,
   type Session,
+  type WireMessage,
 } from "../api/client";
 import { initials } from "../config";
 import { bytesToB64 } from "../crypto/bytes";
 import { loadIdentity } from "../crypto/store";
 import { parseInvite } from "../invite";
-import { loadHistory, sendText, type ChatMessage } from "../messaging";
+import {
+  decodeIncoming,
+  loadHistory,
+  peerIdForMessage,
+  sendText,
+  type ChatMessage,
+} from "../messaging";
+import { connectRealtime } from "../realtime";
 import { clearSession } from "../session";
 
 type Tab = "chats" | "contacts" | "settings";
 type PeerRef = { id: string; username: string };
+
+function mergeMessages(primary: ChatMessage[], extra: ChatMessage[]): ChatMessage[] {
+  const byId = new Map<string, ChatMessage>();
+  for (const m of primary) byId.set(m.id, m);
+  for (const m of extra) if (!byId.has(m.id)) byId.set(m.id, m);
+  return [...byId.values()].sort((a, b) => {
+    const t = a.createdAt.localeCompare(b.createdAt);
+    return t !== 0 ? t : a.id.localeCompare(b.id);
+  });
+}
 
 export function AppShell({ session }: { session: Session }) {
   const navigate = useNavigate();
@@ -54,14 +72,18 @@ export function AppShell({ session }: { session: Session }) {
   const mobileShowThread = Boolean(selected) && tab !== "settings";
   const identity = loadIdentity(session.user.id);
   const alive = useRef(true);
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  const conversationsRef = useRef(conversations);
+  conversationsRef.current = conversations;
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<Conversation[]> => {
     const [conv, roster, requests] = await Promise.allSettled([
       api.conversations(session.token),
       api.contacts(session.token),
       api.contactRequests(session.token, "incoming"),
     ]);
-    if (!alive.current) return;
+    if (!alive.current) return conversationsRef.current;
     const authFail = [conv, roster, requests].find(
       (r) => r.status === "rejected" && r.reason instanceof ApiError && r.reason.isAuthFailure,
     );
@@ -69,13 +91,15 @@ export function AppShell({ session }: { session: Session }) {
       throw authFail.reason;
     }
     const errors: string[] = [];
-    if (conv.status === "fulfilled") setConversations(conv.value.conversations);
-    else errors.push(conv.reason instanceof ApiError ? conv.reason.message : "chats");
+    const nextConv = conv.status === "fulfilled" ? conv.value.conversations : null;
+    if (nextConv) setConversations(nextConv);
+    else errors.push(conv.status === "rejected" && conv.reason instanceof ApiError ? conv.reason.message : "chats");
     if (roster.status === "fulfilled") setContacts(roster.value.contacts);
-    else errors.push(roster.reason instanceof ApiError ? roster.reason.message : "contacts");
+    else errors.push(roster.status === "rejected" && roster.reason instanceof ApiError ? roster.reason.message : "contacts");
     if (requests.status === "fulfilled") setIncoming(requests.value.requests);
-    else errors.push(requests.reason instanceof ApiError ? requests.reason.message : "requests");
+    else errors.push(requests.status === "rejected" && requests.reason instanceof ApiError ? requests.reason.message : "requests");
     setError(errors.length === 3 ? errors[0] : null);
+    return nextConv ?? conversationsRef.current;
   }, [session.token]);
 
   useEffect(() => {
@@ -110,7 +134,9 @@ export function AppShell({ session }: { session: Session }) {
     setThreadError(null);
     loadHistory(session.token, session.user.id, selected.id, material)
       .then((msgs) => {
-        if (!cancelled) setThread(msgs);
+        if (!cancelled) {
+          setThread((prev) => mergeMessages(msgs, prev));
+        }
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -123,6 +149,61 @@ export function AppShell({ session }: { session: Session }) {
       cancelled = true;
     };
   }, [selected, session.token, session.user.id]);
+
+  useEffect(() => {
+    const stop = connectRealtime({
+      token: session.token,
+      onFatalAuth: () => {
+        clearSession();
+        navigate("/", { replace: true });
+      },
+      onEvent: (event) => {
+        if (event.type === "auth.ok") return;
+        if (event.type === "message.new") {
+          const dto = event.raw.message as WireMessage | undefined;
+          if (!dto?.id) {
+            void refresh();
+            return;
+          }
+          void (async () => {
+            const convs = await refresh();
+            const material = loadIdentity(session.user.id);
+            if (!material || !alive.current) return;
+            const peer = peerIdForMessage(dto, session.user.id, convs);
+            const msg = await decodeIncoming(
+              dto,
+              session.user.id,
+              peer,
+              session.token,
+              material,
+            );
+            const open = selectedRef.current;
+            if (open && open.id.toLowerCase() === peer) {
+              setThread((prev) => mergeMessages(prev, [msg]));
+            }
+          })();
+          return;
+        }
+        if (
+          event.type.startsWith("contact.") ||
+          event.type === "conversation.deleted" ||
+          event.type === "message.deleted"
+        ) {
+          void refresh();
+          const open = selectedRef.current;
+          if (event.type === "message.deleted" && open) {
+            const id = String(event.raw.message_id ?? "");
+            if (id) {
+              setThread((prev) =>
+                prev.map((m) => (m.id === id ? { ...m, text: "Message deleted", deleted: true } : m)),
+              );
+            }
+          }
+        }
+      },
+    });
+    return stop;
+  }, [session.token, session.user.id, navigate, refresh]);
 
   const filteredChats = useMemo(() => {
     const q = query.trim().toLowerCase();

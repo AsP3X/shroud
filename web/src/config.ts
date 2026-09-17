@@ -4,6 +4,13 @@ export function apiBase(): string {
   return "/api/v1";
 }
 
+/** Same-origin `/api/v1/ws` as wss/ws. */
+export function wsUrl(): string {
+  const path = `${apiBase()}/ws`;
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${window.location.host}${path}`;
+}
+
 export function deviceName(): string {
   const ua = navigator.userAgent;
   const browser = /Edg\//.test(ua)

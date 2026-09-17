@@ -1,4 +1,4 @@
-import { api, type WireMessage } from "./api/client";
+import { api, type Conversation, type WireMessage } from "./api/client";
 import { b64ToBytes, utf8, utf8decode } from "./crypto/bytes";
 import type { IdentityMaterial } from "./crypto/identity";
 import { envelopeToWireB64, openMessage, sealMessage, wireB64ToEnvelope } from "./crypto/messageCrypto";
@@ -46,7 +46,20 @@ export async function peerIdentityPublic(
   return key;
 }
 
-async function decodeOne(
+export function peerIdForMessage(
+  dto: WireMessage,
+  me: string,
+  conversations: Conversation[],
+): string {
+  const mine = dto.sender_user_id.toLowerCase() === me.toLowerCase();
+  if (!mine) return dto.sender_user_id.toLowerCase();
+  const conv = conversations.find(
+    (c) => c.id.toLowerCase() === dto.conversation_id.toLowerCase(),
+  );
+  return (conv?.peer.id ?? dto.sender_user_id).toLowerCase();
+}
+
+export async function decodeIncoming(
   dto: WireMessage,
   me: string,
   peerUserId: string,
@@ -133,7 +146,7 @@ export async function loadHistory(
     }
     const out: ChatMessage[] = [];
     for (const dto of chronological) {
-      out.push(await decodeOne(dto, me, peer, token, material));
+      out.push(await decodeIncoming(dto, me, peer, token, material));
     }
     return out;
   });
