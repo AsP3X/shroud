@@ -64,7 +64,7 @@ export function AuthLayout({
             <br />
             fully encrypted
           </p>
-          <p>
+          <p className="auth-brand-sub">
             No phone number. No email. Just your username and a 12-word encryption phrase.
           </p>
           <ul className="auth-trust">

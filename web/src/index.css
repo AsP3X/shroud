@@ -223,18 +223,21 @@ a { color: var(--accent-text); text-decoration: none; }
    form itself. Below 960px the brand column drops and the card takes over. */
 .auth {
   height: 100%;
-  min-height: 100%;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  /* The brand column grows with the viewport but stops at a readable width, so
+     a 50/50 split can't strand the form in the middle of an ultrawide screen. */
+  grid-template-columns: clamp(320px, 40vw, 780px) minmax(0, 1fr);
   background: var(--bg);
 }
 
 .auth-brand {
   position: relative;
-  overflow: hidden;
   min-height: 0;
-  display: flex; align-items: center; justify-content: flex-end;
-  padding: 48px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: clamp(28px, 4vw, 56px);
   background: var(--surface-1);
   border-right: 1px solid var(--separator);
 }
@@ -255,15 +258,23 @@ a { color: var(--accent-text); text-decoration: none; }
   0%, 100% { opacity: 0.75; transform: scale(1); }
   50% { opacity: 1; transform: scale(1.07); }
 }
-.auth-brand-inner { position: relative; z-index: 1; width: min(420px, 100%); }
+.auth-brand-inner {
+  position: relative; z-index: 1;
+  width: min(480px, 100%);
+  margin-block: auto;
+  max-height: 100%;
+  min-height: 0;
+  overflow: auto;
+}
 .auth-brand-title {
-  margin: 22px 0 0;
-  font-size: 40px; line-height: 1.1; font-weight: 700;
+  margin: clamp(14px, 2.2vh, 22px) 0 0;
+  font-size: clamp(27px, 2.5vw, 46px);
+  line-height: 1.12; font-weight: 700;
   letter-spacing: -0.035em;
 }
-.auth-brand-inner > p {
-  margin: 14px 0 0;
-  font-size: var(--fs-lg); line-height: 1.5;
+.auth-brand-sub {
+  margin: clamp(10px, 1.6vh, 14px) 0 0;
+  font-size: clamp(var(--fs-base), 1.05vw, 19px); line-height: 1.5;
   color: var(--text-secondary);
   max-width: 38ch;
 }
@@ -277,7 +288,7 @@ a { color: var(--accent-text); text-decoration: none; }
 .auth-mark-compact { display: none; }
 .auth-mobile-kicker { display: none; }
 
-.auth-trust { list-style: none; margin: 34px 0 0; padding: 0; display: grid; gap: 16px; }
+.auth-trust { list-style: none; margin: clamp(20px, 4vh, 34px) 0 0; padding: 0; display: grid; gap: clamp(11px, 2vh, 16px); }
 .auth-trust li { display: flex; gap: 12px; align-items: flex-start; }
 .auth-trust li > span {
   width: 32px; height: 32px; border-radius: var(--r-sm);
@@ -289,14 +300,18 @@ a { color: var(--accent-text); text-decoration: none; }
 
 .auth-panel {
   min-height: 0;
-  display: flex; align-items: center; justify-content: center;
-  padding: 48px;
+  min-width: 0;
+  display: flex;
+  padding: clamp(28px, 4vw, 56px);
   overflow-y: auto;
 }
-.auth-card { width: min(420px, 100%); }
+/* `margin: auto` centres the card but, unlike `align-items: center`, still lets
+   a card taller than the pane scroll up to its own first line. */
+.auth-card { width: min(440px, 100%); margin: auto; }
 .auth-card h1 {
   margin: 0;
-  font-size: 30px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.15;
+  font-size: clamp(24px, 1.9vw, 30px);
+  font-weight: 700; letter-spacing: -0.03em; line-height: 1.15;
 }
 .auth-sub {
   margin: 10px 0 0;
@@ -325,7 +340,7 @@ a { color: var(--accent-text); text-decoration: none; }
   color: var(--text-tertiary);
 }
 
-.auth-form { display: flex; flex-direction: column; gap: 16px; margin-top: 26px; }
+.auth-form { display: flex; flex-direction: column; gap: clamp(12px, 2vh, 16px); margin-top: clamp(18px, 3vh, 26px); }
 .auth-form .btn { margin-top: 2px; }
 .auth-note { margin: 0; font-size: var(--fs-xs); color: var(--text-tertiary); line-height: 1.55; }
 .auth-foot { margin: 22px 0 0; font-size: var(--fs-sm); color: var(--text-secondary); }
@@ -1255,11 +1270,6 @@ a { color: var(--accent-text); text-decoration: none; }
 @media (max-width: 600px) {
   .phrase-grid { grid-template-columns: repeat(2, 1fr); }
   .auth-panel { padding: 24px 16px 40px; }
-}
-
-@media (max-height: 760px) and (min-width: 961px) {
-  .auth-panel { align-items: flex-start; padding-block: 40px; }
-  .auth-brand { align-items: flex-start; padding-block: 56px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
