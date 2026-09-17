@@ -3,16 +3,36 @@ import type { Session } from "./api/client";
 const TOKEN_KEY = "shroud.session";
 const DEVICE_KEY = "shroud.device-anchor";
 const LOCKED_KEY = "shroud.locked";
+const TAB_LIVE_KEY = "shroud.tab-live";
 const PIN_KEY_PREFIX = "shroud.pin.";
 const IDLE_MS = 5 * 60 * 1000;
 /** Delay before a hidden tab locks, so reload/navigation does not demand a PIN. */
 const HIDE_LOCK_MS = 15_000;
 
-// A reload fires visibilitychange(hidden) on the outgoing document, which used to
-// persist shroud.locked into the next page. A new document should start unlocked.
-if (typeof sessionStorage !== "undefined") {
-  sessionStorage.removeItem(LOCKED_KEY);
+/**
+ * Session token lives in localStorage (survives tab close, like iOS Keychain).
+ * sessionStorage marks this document as already unlocked: a reload stays in;
+ * a brand-new tab with a stored session asks for the PIN, not a full login.
+ */
+function gateSessionLock() {
+  if (typeof localStorage === "undefined" || typeof sessionStorage === "undefined") return;
+  const ephemeral = sessionStorage.getItem(TOKEN_KEY);
+  if (ephemeral && !localStorage.getItem(TOKEN_KEY)) {
+    localStorage.setItem(TOKEN_KEY, ephemeral);
+  }
+  sessionStorage.removeItem(TOKEN_KEY);
+
+  const hasSession = Boolean(localStorage.getItem(TOKEN_KEY));
+  const sameTab = sessionStorage.getItem(TAB_LIVE_KEY) === "1";
+  if (hasSession && !sameTab) {
+    sessionStorage.setItem(LOCKED_KEY, "1");
+  } else {
+    sessionStorage.removeItem(LOCKED_KEY);
+  }
+  if (hasSession) sessionStorage.setItem(TAB_LIVE_KEY, "1");
 }
+
+gateSessionLock();
 
 export type DeviceAnchor = { username: string; deviceId: string };
 
@@ -20,7 +40,7 @@ type PinRecord = { salt: string; hash: string };
 
 export function loadSession(): Session | null {
   try {
-    const raw = sessionStorage.getItem(TOKEN_KEY);
+    const raw = localStorage.getItem(TOKEN_KEY);
     if (!raw) return null;
     return JSON.parse(raw) as Session;
   } catch {
@@ -29,14 +49,17 @@ export function loadSession(): Session | null {
 }
 
 export function saveSession(session: Session): void {
-  sessionStorage.setItem(TOKEN_KEY, JSON.stringify(session));
+  localStorage.setItem(TOKEN_KEY, JSON.stringify(session));
+  sessionStorage.setItem(TAB_LIVE_KEY, "1");
   saveDeviceAnchor({ username: session.user.username, deviceId: session.device.id });
   setLocked(false);
 }
 
 export function clearSession(): void {
+  localStorage.removeItem(TOKEN_KEY);
   sessionStorage.removeItem(TOKEN_KEY);
   sessionStorage.removeItem(LOCKED_KEY);
+  sessionStorage.removeItem(TAB_LIVE_KEY);
 }
 
 export function loadDeviceAnchor(username: string): string | null {

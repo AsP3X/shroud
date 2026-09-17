@@ -143,7 +143,7 @@ export function Unlock() {
       ? "Enter the same 6 digits again."
       : creating
         ? "This PIN unlocks Shroud in this browser. Idle and hidden tabs lock after 5 minutes."
-        : `Signed in as @${session.user.username}. Enter your PIN to decrypt this browser.`;
+        : `Welcome back @${session.user.username}. Enter your PIN to unlock this browser.`;
 
   return (
     <div className={`lock-screen${ready ? " in" : ""}`}>
