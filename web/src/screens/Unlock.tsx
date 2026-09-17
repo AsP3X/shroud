@@ -18,6 +18,8 @@ export function Unlock() {
   const [shake, setShake] = useState(false);
   const [ready, setReady] = useState(false);
   const inflight = useRef(false);
+  const busyRef = useRef(false);
+  busyRef.current = busy;
 
   const fail = useCallback((message: string) => {
     setError(message);
@@ -33,20 +35,24 @@ export function Unlock() {
 
   useEffect(() => {
     const userId = session?.user.id;
-    if (!userId) return;
-    if (creating) {
-      if (pin.length === PIN_LEN) {
+    if (!userId || inflight.current) return;
+
+    if (creating && pin.length === PIN_LEN && phase === "enter") {
+      const timer = window.setTimeout(() => {
+        setFirstPin(pin);
+        setPinValue("");
+        setPhase("confirm");
+        setError(null);
+      }, 180);
+      return () => window.clearTimeout(timer);
+    }
+
+    if (creating && pin.length === PIN_LEN && phase === "confirm") {
+      const timer = window.setTimeout(() => {
         void (async () => {
           if (inflight.current) return;
           inflight.current = true;
-          setError(null);
           try {
-            if (phase === "enter") {
-              setFirstPin(pin);
-              setPinValue("");
-              setPhase("confirm");
-              return;
-            }
             if (pin !== firstPin) {
               setPhase("enter");
               setFirstPin("");
@@ -64,11 +70,14 @@ export function Unlock() {
             setBusy(false);
           }
         })();
-      }
-      return;
+      }, 180);
+      return () => window.clearTimeout(timer);
     }
+
+    if (creating) return;
     if (pin.length < 4) return;
-    const wait = pin.length === PIN_LEN ? 40 : 300;
+
+    const wait = pin.length === PIN_LEN ? 40 : 320;
     const timer = window.setTimeout(() => {
       void (async () => {
         if (inflight.current) return;
@@ -93,6 +102,7 @@ export function Unlock() {
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
+      if (busyRef.current) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.key >= "0" && event.key <= "9") {
         event.preventDefault();
@@ -145,7 +155,11 @@ export function Unlock() {
         <h1>{title}</h1>
         <p className="lede">{lede}</p>
 
-        <div className={`lock-dots${shake ? " shake" : ""}`} role="img" aria-label={`${pin.length} of ${PIN_LEN} digits entered`}>
+        <div
+          className={`lock-dots${shake ? " shake" : ""}`}
+          role="img"
+          aria-label={`${pin.length} of ${PIN_LEN} digits entered`}
+        >
           {Array.from({ length: PIN_LEN }, (_, i) => (
             <span
               key={i}
