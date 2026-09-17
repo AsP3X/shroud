@@ -46,7 +46,7 @@ type PeerRef = { id: string; username: string };
 type Presence = { online: boolean; lastSeenAt: string | null };
 
 function formatPresence(p: Presence | undefined): string {
-  if (!p) return "encrypted";
+  if (!p) return "";
   if (p.online) return "online";
   if (!p.lastSeenAt) return "offline";
   const at = new Date(p.lastSeenAt);
@@ -100,6 +100,7 @@ export function AppShell({ session }: { session: Session }) {
   conversationsRef.current = conversations;
   const threadRef = useRef(thread);
   threadRef.current = thread;
+  const lastPresenceSweep = useRef(0);
 
   const refresh = useCallback(async (): Promise<Conversation[]> => {
     const [conv, roster, requests] = await Promise.allSettled([
@@ -129,23 +130,27 @@ export function AppShell({ session }: { session: Session }) {
       ...(roster.status === "fulfilled" ? roster.value.contacts.map((c) => c.user_id) : []),
     ];
     const uniqueIds = [...new Set(rosterIds.map((id) => id.toLowerCase()))];
-    void Promise.all(
-      uniqueIds.map(async (id) => {
-        try {
-          const p = await api.presence(session.token, id);
-          return [id, { online: p.online, lastSeenAt: p.last_seen_at ?? null }] as const;
-        } catch {
-          return null;
+    const now = Date.now();
+    if (now - lastPresenceSweep.current >= 30_000) {
+      lastPresenceSweep.current = now;
+      void Promise.all(
+        uniqueIds.map(async (id) => {
+          try {
+            const p = await api.presence(session.token, id);
+            return [id, { online: p.online, lastSeenAt: p.last_seen_at ?? null }] as const;
+          } catch {
+            return null;
+          }
+        }),
+      ).then((rows) => {
+        if (!alive.current) return;
+        const updates: Record<string, Presence> = {};
+        for (const row of rows) if (row) updates[row[0]] = row[1];
+        if (Object.keys(updates).length) {
+          setPresenceByUser((prev) => ({ ...prev, ...updates }));
         }
-      }),
-    ).then((rows) => {
-      if (!alive.current) return;
-      const updates: Record<string, Presence> = {};
-      for (const row of rows) if (row) updates[row[0]] = row[1];
-      if (Object.keys(updates).length) {
-        setPresenceByUser((prev) => ({ ...prev, ...updates }));
-      }
-    });
+      });
+    }
     const material = loadIdentity(session.user.id);
     if (material) {
       void hydratePreviews(
@@ -614,7 +619,9 @@ export function AppShell({ session }: { session: Session }) {
                 <div className="avatar">{initials(selected.username)}</div>
                 <div>
                   <strong>{selected.username}</strong>
-                  <em>{formatPresence(presenceByUser[selected.id.toLowerCase()])}</em>
+                  <em className={presenceByUser[selected.id.toLowerCase()]?.online ? "online" : undefined}>
+                    {formatPresence(presenceByUser[selected.id.toLowerCase()])}
+                  </em>
                 </div>
               </div>
               <button className="icon-btn" aria-label="Contact info">

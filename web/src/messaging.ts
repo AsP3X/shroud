@@ -182,7 +182,10 @@ export async function hydratePreviews(
   const pending = peers.filter((p) => {
     if (!p.lastMessageAt) return false;
     const have = loadPreview(me, p.id);
-    return !have || have.at < p.lastMessageAt;
+    if (!have) return true;
+    const haveT = Date.parse(have.at) || 0;
+    const lastT = Date.parse(p.lastMessageAt) || 0;
+    return lastT - haveT > 1000;
   });
   for (const peer of pending) {
     try {

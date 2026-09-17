@@ -383,7 +383,8 @@ a { color: var(--accent); text-decoration: none; }
 .peer { display: flex; gap: 12px; align-items: center; min-width: 0; }
 .back-mobile { display: none; }
 .peer strong { display: block; font-size: 16px; }
-.peer em { display: block; font-size: 12px; font-style: normal; color: var(--online); }
+.peer em { display: block; font-size: 12px; font-style: normal; color: var(--text-secondary); }
+.peer em.online { color: var(--online); }
 .messages {
   flex: 1; overflow: auto; padding: 24px;
   display: flex; flex-direction: column; justify-content: flex-end; gap: 10px;

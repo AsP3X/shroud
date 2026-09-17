@@ -26,7 +26,12 @@ export function loadPreview(me: string, peer: string): ChatPreview | null {
 
 export function savePreview(me: string, peer: string, preview: ChatPreview): void {
   const existing = loadPreview(me, peer);
-  if (existing && existing.at > preview.at) return;
+  if (existing) {
+    const haveT = Date.parse(existing.at) || 0;
+    const nextT = Date.parse(preview.at) || 0;
+    if (haveT > nextT) return;
+    if (haveT === nextT && !existing.failed && preview.failed) return;
+  }
   try {
     localStorage.setItem(previewKey(me, peer), JSON.stringify(preview));
   } catch {
