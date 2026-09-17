@@ -1,13 +1,15 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { KeyRound, Shield } from "lucide-react";
+import { TriangleAlert } from "lucide-react";
 import { api, ApiError } from "../api/client";
 import { deviceName } from "../config";
-import { generateMnemonic, PhraseError, validateMnemonic } from "../crypto/bip39";
+import { generateMnemonic, PhraseError, validateMnemonic, WORD_COUNT } from "../crypto/bip39";
 import { establish, matchesMnemonic, putBundleRequest } from "../crypto/identity";
-import { PhraseGrid } from "../components/PhraseGrid";
+import { AuthLayout } from "../components/auth/AuthLayout";
+import { PasswordField, TextField } from "../components/auth/Fields";
+import { PhraseDisplay, PhraseEntry } from "../components/auth/Phrase";
 import { hasIdentity, loadIdentity, saveIdentity } from "../crypto/store";
-import { hasPin, loadDeviceAnchor, loadSession, saveSession } from "../session";
+import { hasPin, clearSession, loadDeviceAnchor, loadSession, saveSession } from "../session";
 
 export function Auth() {
   const navigate = useNavigate();
@@ -17,7 +19,7 @@ export function Auth() {
   );
   const [username, setUsername] = useState(existing?.user.username ?? "");
   const [password, setPassword] = useState("");
-  const [words, setWords] = useState<string[]>(Array.from({ length: 12 }, () => ""));
+  const [words, setWords] = useState<string[]>(Array.from({ length: WORD_COUNT }, () => ""));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [creatingPhrase, setCreatingPhrase] = useState(false);
@@ -86,118 +88,147 @@ export function Auth() {
     }
   }
 
-  const isPhrase = phase === "phrase";
+  function backToCredentials() {
+    const session = loadSession();
+    if (session) {
+      void api.logout(session.token).catch(() => {
+        /* still drop the local token */
+      });
+      clearSession();
+    }
+    setPhase("credentials");
+    setCreatingPhrase(false);
+    setWords(Array.from({ length: WORD_COUNT }, () => ""));
+    setPassword("");
+    setError(null);
+  }
+
+  if (phase === "credentials") {
+    return (
+      <AuthLayout
+        title="Welcome back"
+        subtitle="Use the same username and password as on your phone."
+        step={1}
+        steps={2}
+        onBack={() => navigate("/")}
+        footer={
+          <>
+            New to Shroud? <Link to="/signup">Create an account</Link>
+          </>
+        }
+      >
+        <form className="auth-form" onSubmit={submitCredentials}>
+          <TextField
+            label="Username"
+            name="username"
+            autoComplete="username"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            placeholder="yourname"
+            value={username}
+            onChange={setUsername}
+            required
+            minLength={3}
+            maxLength={32}
+            pattern="[a-zA-Z0-9_]+"
+            autoFocus
+          />
+          <PasswordField
+            label="Password"
+            name="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={setPassword}
+            required
+          />
+          {error ? <p className="auth-error" role="alert">{error}</p> : null}
+          <button
+            className="btn btn-primary"
+            type="submit"
+            disabled={busy || !username.trim() || !password}
+          >
+            {busy ? "Checking…" : "Continue"}
+          </button>
+          <p className="auth-note">
+            Next you’ll enter your 12-word encryption phrase. It never leaves this device.
+          </p>
+        </form>
+      </AuthLayout>
+    );
+  }
+
+  const session = loadSession();
 
   return (
-    <div className="screen screen-top">
-      <form className="stack stack-wide stack-left" onSubmit={isPhrase ? submitPhrase : submitCredentials}>
-        <div className="auth-nav">
-          {isPhrase ? (
-            <button type="button" className="linkish" onClick={() => setPhase("credentials")}>
-              Back
-            </button>
-          ) : (
-            <Link to="/" className="linkish">
-              Back
-            </Link>
-          )}
-          {!isPhrase ? (
-            <Link to="/signup" className="linkish">
-              Sign Up
-            </Link>
-          ) : (
-            <span />
-          )}
-        </div>
-        <div className="mark">
-          {isPhrase ? <KeyRound size={30} /> : <Shield size={30} />}
-        </div>
-        <div>
-          <h1>{isPhrase ? "Encryption phrase" : "Log in"}</h1>
-          <p className="lede">
-            {isPhrase
-              ? "Enter the 12 words from this account. They never leave this device."
-              : "Same username and password as on your phone. You’ll enter your encryption phrase next."}
+    <AuthLayout
+      title={creatingPhrase ? "Your new phrase" : "Encryption phrase"}
+      subtitle={
+        creatingPhrase
+          ? "Write these 12 words down. They become this account’s encryption phrase."
+          : "Enter the 12 words for this account to decrypt your chats on this browser."
+      }
+      step={2}
+      steps={2}
+      onBack={backToCredentials}
+      backLabel="Use a different account"
+    >
+      <form className="auth-form" onSubmit={submitPhrase}>
+        {session ? (
+          <p className="auth-identity">
+            Signed in as <strong>@{session.user.username}</strong>
           </p>
-        </div>
-
-        {isPhrase && loadSession() ? (
-          <div className="ok-banner">Signed in as @{loadSession()!.user.username}</div>
         ) : null}
 
-        {isPhrase ? (
+        {creatingPhrase ? (
           <>
-            <PhraseGrid
-              words={words}
-              editable={!creatingPhrase}
-              onChange={(index, value) => {
-                const parts = value.trim().split(/\s+/).filter(Boolean);
-                if (parts.length === 12) {
-                  setWords(parts.map((w) => w.toLowerCase()));
-                  return;
-                }
-                const next = [...words];
-                next[index] = value.toLowerCase();
-                setWords(next);
+            <PhraseDisplay words={words} />
+            <div className="auth-warn">
+              <TriangleAlert size={16} aria-hidden="true" />
+              <p>
+                This creates a <strong>brand-new</strong> phrase. It will not decrypt chats you
+                already have on iPhone — go back and enter that phrase instead if you have one.
+                Shroud cannot recover a lost phrase.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="auth-link"
+              onClick={() => {
+                setCreatingPhrase(false);
+                setWords(Array.from({ length: WORD_COUNT }, () => ""));
+                setError(null);
               }}
-            />
-            {creatingPhrase ? (
-              <div className="warn-card">
-                <p>
-                  Write these 12 words down. They become this browser’s identity. If you already
-                  use Shroud on iPhone, go back and enter that phrase instead — a new one will not
-                  decrypt those chats.
-                </p>
-              </div>
-            ) : (
-              <button
-                type="button"
-                className="linkish"
-                onClick={() => {
-                  setCreatingPhrase(true);
-                  setWords(generateMnemonic());
-                  setError(null);
-                }}
-              >
-                I never got a 12-word phrase
-              </button>
-            )}
+            >
+              I do have a phrase — let me type it
+            </button>
           </>
         ) : (
           <>
-            <input
-              className="field"
-              autoComplete="username"
-              autoCapitalize="none"
-              name="username"
-              placeholder="username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
-              minLength={3}
-              maxLength={32}
-              pattern="[a-zA-Z0-9_]+"
-            />
-            <input
-              className="field"
-              autoComplete="current-password"
-              name="password"
-              type="password"
-              placeholder="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
+            <PhraseEntry words={words} onChange={setWords} autoFocus />
+            <button
+              type="button"
+              className="auth-link"
+              onClick={() => {
+                setCreatingPhrase(true);
+                setWords(generateMnemonic());
+                setError(null);
+              }}
+            >
+              I never got a 12-word phrase
+            </button>
           </>
         )}
 
-        {error ? <p className="err">{error}</p> : null}
-        <div className="actions">
-          <button className="btn btn-primary" type="submit" disabled={busy}>
-            {busy ? "Please wait…" : isPhrase ? "Unlock chats" : "Continue"}
-          </button>
-        </div>
+        {error ? <p className="auth-error" role="alert">{error}</p> : null}
+        <button
+          className="btn btn-primary"
+          type="submit"
+          disabled={busy || (!creatingPhrase && words.filter(Boolean).length !== WORD_COUNT)}
+        >
+          {busy ? "Unlocking…" : creatingPhrase ? "Save phrase and continue" : "Unlock chats"}
+        </button>
       </form>
-    </div>
+    </AuthLayout>
   );
 }

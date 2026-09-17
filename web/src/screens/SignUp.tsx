@@ -1,52 +1,55 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Shield, TriangleAlert } from "lucide-react";
+import { ShieldCheck, TriangleAlert } from "lucide-react";
 import { api, ApiError } from "../api/client";
 import { deviceName } from "../config";
-import { generateMnemonic, PhraseError } from "../crypto/bip39";
+import { generateMnemonic, PhraseError, WORD_COUNT } from "../crypto/bip39";
 import { establish, putBundleRequest } from "../crypto/identity";
 import { evaluatePassword } from "../crypto/password";
 import { saveIdentity } from "../crypto/store";
-import { PhraseGrid } from "../components/PhraseGrid";
+import { AuthLayout } from "../components/auth/AuthLayout";
+import { PasswordField, RuleList, StrengthMeter, TextField } from "../components/auth/Fields";
+import { PhraseDisplay } from "../components/auth/Phrase";
 import { hasPin, saveSession } from "../session";
+
+const USERNAME_RE = /^[a-zA-Z0-9_]{3,32}$/;
+/** How many words we ask back before the account is created. */
+const CHECKS = 3;
+
+function pickCheckIndices(): number[] {
+  const all = Array.from({ length: WORD_COUNT }, (_, i) => i);
+  for (let i = all.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [all[i], all[j]] = [all[j], all[i]];
+  }
+  return all.slice(0, CHECKS).sort((a, b) => a - b);
+}
 
 export function SignUp() {
   const navigate = useNavigate();
   const words = useMemo(() => generateMnemonic(), []);
+  const checkIndices = useMemo(pickCheckIndices, []);
+  const [stepIndex, setStepIndex] = useState(0);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [wroteDown, setWroteDown] = useState(false);
+  const [answers, setAnswers] = useState<Record<number, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+
   const strength = evaluatePassword(password);
-  const canSubmit =
-    wroteDown &&
-    strength.meetsRequirements &&
-    username.trim().length >= 3 &&
-    !busy;
+  const usernameOk = USERNAME_RE.test(username.trim());
+  const accountOk = usernameOk && strength.meetsRequirements;
+  const checksOk = checkIndices.every(
+    (index) => (answers[index] ?? "").trim().toLowerCase() === words[index],
+  );
 
-  async function copyPhrase() {
-    try {
-      await navigator.clipboard.writeText(words.join(" "));
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
-    } catch {
-      setError("Couldn’t copy phrase — select the words and copy them yourself.");
-    }
-  }
-
-  async function onSubmit(event: FormEvent) {
+  async function createAccount(event: FormEvent) {
     event.preventDefault();
-    if (!canSubmit) return;
+    if (!checksOk || busy) return;
     setError(null);
     setBusy(true);
     try {
-      const session = await api.register(
-        username.trim().toLowerCase(),
-        password,
-        deviceName(),
-      );
+      const session = await api.register(username.trim().toLowerCase(), password, deviceName());
       saveSession(session);
       const material = establish(words, session.user.id);
       saveIdentity(material);
@@ -60,98 +63,148 @@ export function SignUp() {
       if (err instanceof PhraseError) setError(err.message);
       else if (err instanceof ApiError) setError(err.message);
       else setError("Something went wrong.");
+      setStepIndex(0);
     } finally {
       setBusy(false);
     }
   }
 
-  return (
-    <div className="screen screen-top">
-      <form className="stack stack-wide stack-left" onSubmit={onSubmit}>
-        <div className="auth-nav">
-          <Link to="/" className="linkish">
-            Back
-          </Link>
-          <Link to="/login" className="linkish">
-            Log In
-          </Link>
-        </div>
-        <div className="mark">
-          <Shield size={30} />
-        </div>
-        <h1>Create Account</h1>
+  if (stepIndex === 0) {
+    return (
+      <AuthLayout
+        title="Create your account"
+        subtitle="Pick a username and a password. No phone number, no email."
+        step={1}
+        steps={3}
+        onBack={() => navigate("/")}
+        footer={
+          <>
+            Already have an account? <Link to="/login">Log in</Link>
+          </>
+        }
+      >
+        <form
+          className="auth-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (accountOk) setStepIndex(1);
+          }}
+        >
+          <TextField
+            label="Username"
+            name="username"
+            autoComplete="username"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            placeholder="yourname"
+            value={username}
+            onChange={setUsername}
+            hint="3–32 characters. Letters, numbers and underscores."
+            error={
+              username && !/^[a-zA-Z0-9_]*$/.test(username)
+                ? "Letters, numbers and underscores only."
+                : null
+            }
+            required
+            autoFocus
+          />
+          <PasswordField
+            label="Password"
+            name="password"
+            autoComplete="new-password"
+            value={password}
+            onChange={setPassword}
+            required
+          />
+          {password ? <StrengthMeter score={strength.score} level={strength.level} /> : null}
+          <RuleList
+            rules={[
+              { label: "At least 12 characters", met: strength.hasMinimumLength },
+              { label: "A number and a symbol", met: strength.hasSymbolAndNumber },
+            ]}
+          />
+          {error ? <p className="auth-error" role="alert">{error}</p> : null}
+          <button className="btn btn-primary" type="submit" disabled={!accountOk}>
+            Continue
+          </button>
+        </form>
+      </AuthLayout>
+    );
+  }
 
-        <section className="auth-section">
-          <h2>
-            <span>1</span> Choose your identity
-          </h2>
-          <div className="card-form">
-            <input
-              className="field"
-              autoComplete="username"
-              autoCapitalize="none"
-              name="username"
-              placeholder="Username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
-              minLength={3}
-              maxLength={32}
-              pattern="[a-zA-Z0-9_]+"
-            />
-            <input
-              className="field"
-              autoComplete="new-password"
-              name="password"
-              type="password"
-              placeholder="Password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
-            <div className="strength">
-              <div className="strength-track">
-                <div
-                  className="strength-fill"
-                  style={{ width: `${Math.round(strength.score * 100)}%` }}
-                />
-              </div>
-              <span>{strength.level || " "}</span>
-            </div>
-            <p className="hint">
-              At least 12 characters, including a number and a symbol. No phone number or email.
-            </p>
-          </div>
-        </section>
-
-        <section className="auth-section">
-          <h2>
-            <span>2</span> Save your encryption phrase
-            <button type="button" className="copy-pill" onClick={copyPhrase}>
-              {copied ? "Copied" : "Copy"}
-            </button>
-          </h2>
-          <PhraseGrid words={words} />
-          <div className="warn-card">
-            <TriangleAlert size={16} />
+  if (stepIndex === 1) {
+    return (
+      <AuthLayout
+        title="Save your encryption phrase"
+        subtitle="These 12 words are the only way to restore your messages."
+        step={2}
+        steps={3}
+        onBack={() => setStepIndex(0)}
+      >
+        <div className="auth-form">
+          <PhraseDisplay words={words} />
+          <div className="auth-warn">
+            <TriangleAlert size={16} aria-hidden="true" />
             <p>
-              These 12 words are the only way to restore your messages. Shroud cannot recover them
-              for you. They never leave this device.
+              Write them down and keep them somewhere safe. Shroud has no copy and{" "}
+              <strong>cannot recover them for you</strong> — without the phrase your messages are
+              gone for good.
             </p>
           </div>
-        </section>
+          <button className="btn btn-primary" type="button" onClick={() => setStepIndex(2)}>
+            I’ve written it down
+          </button>
+        </div>
+      </AuthLayout>
+    );
+  }
 
-        {error ? <p className="err">{error}</p> : null}
+  return (
+    <AuthLayout
+      title="Confirm your phrase"
+      subtitle={`Type ${CHECKS} of the words back so we know you saved them.`}
+      step={3}
+      steps={3}
+      onBack={() => setStepIndex(1)}
+      backLabel="Show my phrase again"
+    >
+      <form className="auth-form" onSubmit={createAccount}>
+        <div className="auth-checks">
+          {checkIndices.map((index) => {
+            const value = answers[index] ?? "";
+            const done = value.trim().toLowerCase() === words[index];
+            const wrong = value.length >= words[index].length && !done;
+            return (
+              <TextField
+                key={index}
+                label={`Word ${index + 1}`}
+                value={value}
+                onChange={(next) => setAnswers((prev) => ({ ...prev, [index]: next }))}
+                error={wrong ? "Doesn’t match" : null}
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                autoComplete="off"
+                autoFocus={index === checkIndices[0]}
+                ok={done}
+              />
+            );
+          })}
+        </div>
 
-        <label className="check-row">
-          <input type="checkbox" checked={wroteDown} onChange={(e) => setWroteDown(e.target.checked)} />
-          I wrote down my encryption phrase
-        </label>
+        {checksOk ? (
+          <p className="auth-ok">
+            <ShieldCheck size={15} aria-hidden="true" />
+            Phrase confirmed
+          </p>
+        ) : null}
 
-        <button className="btn btn-primary" type="submit" disabled={!canSubmit}>
-          {busy ? "Creating…" : "Create Account"}
+        {error ? <p className="auth-error" role="alert">{error}</p> : null}
+        <button className="btn btn-primary" type="submit" disabled={!checksOk || busy}>
+          {busy ? "Creating account…" : "Create account"}
         </button>
       </form>
-    </div>
+    </AuthLayout>
   );
 }
