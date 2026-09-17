@@ -6,6 +6,7 @@ const LOCKED_KEY = "shroud.locked";
 const TAB_LIVE_KEY = "shroud.tab-live";
 const LAST_ACTIVE_KEY = "shroud.last-active";
 const PIN_KEY_PREFIX = "shroud.pin.";
+const LOCK_HIDDEN_KEY = "shroud.lock-on-hidden";
 const IDLE_MS = 5 * 60 * 1000;
 /** Delay before a hidden tab locks, so reload/navigation does not demand a PIN. */
 const HIDE_LOCK_MS = 15_000;
@@ -132,6 +133,27 @@ export function saveDeviceAnchor(anchor: DeviceAnchor): void {
   );
 }
 
+/** iOS calls this "Lock chats in background". Defaults on. */
+let lockOnHiddenOverride: boolean | null = null;
+
+export function lockOnHidden(): boolean {
+  if (lockOnHiddenOverride !== null) return lockOnHiddenOverride;
+  try {
+    return localStorage.getItem(LOCK_HIDDEN_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+export function setLockOnHidden(enabled: boolean): void {
+  lockOnHiddenOverride = enabled;
+  try {
+    localStorage.setItem(LOCK_HIDDEN_KEY, enabled ? "1" : "0");
+  } catch {
+    /* private mode: the in-memory override still applies for this tab */
+  }
+}
+
 export function isLocked(): boolean {
   return sessionStorage.getItem(LOCKED_KEY) === "1";
 }
@@ -219,7 +241,7 @@ export function installAutoLock(onLock: () => void): () => void {
 
   function onVisibility() {
     if (document.hidden) {
-      if (unloading) return;
+      if (unloading || !lockOnHidden()) return;
       window.clearTimeout(hideTimer);
       hideTimer = window.setTimeout(lock, HIDE_LOCK_MS);
     } else {
@@ -237,7 +259,7 @@ export function installAutoLock(onLock: () => void): () => void {
     if (!document.hidden) bump();
   }
 
-  if (document.hidden) {
+  if (document.hidden && lockOnHidden()) {
     hideTimer = window.setTimeout(lock, HIDE_LOCK_MS);
   }
 

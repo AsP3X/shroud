@@ -54,3 +54,41 @@ export function savePlaintext(messageId: string, text: string): void {
     /* quota */
   }
 }
+
+export type CacheStats = { messages: number; previews: number; bytes: number };
+
+function cacheKeys(): string[] {
+  const keys: string[] = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && (key.startsWith(prefix) || key.startsWith(previewPrefix))) keys.push(key);
+    }
+  } catch {
+    /* storage unavailable */
+  }
+  return keys;
+}
+
+export function cacheStats(): CacheStats {
+  let messages = 0;
+  let previews = 0;
+  let bytes = 0;
+  for (const key of cacheKeys()) {
+    if (key.startsWith(prefix)) messages++;
+    else previews++;
+    bytes += key.length + (localStorage.getItem(key)?.length ?? 0);
+  }
+  return { messages, previews, bytes };
+}
+
+/** Drops every decrypted message body and chat preview held on this device. */
+export function clearCache(): void {
+  for (const key of cacheKeys()) {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      /* keep going */
+    }
+  }
+}

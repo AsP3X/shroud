@@ -45,6 +45,24 @@ export type ContactRequest = {
   user?: { id: string; username: string } | null;
 };
 
+export type Device = {
+  id: string;
+  name?: string | null;
+  created_at: string;
+  last_seen_at?: string | null;
+  is_current: boolean;
+};
+
+export type BlockItem = {
+  user_id: string;
+  username: string;
+  created_at: string;
+};
+
+export type PrivacySettings = {
+  allow_peer_chat_delete: boolean;
+};
+
 export type UserCard = {
   id: string;
   username: string;
@@ -159,6 +177,19 @@ export const api = {
       method: "POST",
       token,
       body: "{}",
+    }),
+  devices: (token: string) => request<{ devices: Device[] }>("/devices", { token }),
+  revokeDevice: (token: string, deviceId: string) =>
+    request<void>(`/devices/${deviceId}`, { method: "DELETE", token }),
+  blocks: (token: string) => request<{ blocks: BlockItem[] }>("/blocks", { token }),
+  unblock: (token: string, userId: string) =>
+    request<void>(`/blocks/${userId}`, { method: "DELETE", token }),
+  privacySettings: (token: string) => request<PrivacySettings>("/privacy/settings", { token }),
+  updatePrivacySettings: (token: string, allowPeerChatDelete: boolean) =>
+    request<PrivacySettings>("/privacy/settings", {
+      method: "PUT",
+      token,
+      body: JSON.stringify({ allow_peer_chat_delete: allowPeerChatDelete }),
     }),
   putBundle: (token: string, body: unknown) =>
     request<void>("/keys/bundle", { method: "PUT", token, body: JSON.stringify(body) }),

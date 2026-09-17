@@ -30,7 +30,7 @@ import {
   type ChatMessage,
 } from "../messaging";
 import { connectRealtime } from "../realtime";
-import { clearSession } from "../session";
+import { clearSession, setLocked } from "../session";
 
 type PeerRef = { id: string; username: string };
 
@@ -341,7 +341,12 @@ export function AppShell({ session }: { session: Session }) {
       });
   }, [contacts, presenceByUser, query]);
 
-  async function logout() {
+  const lockNow = useCallback(() => {
+    setLocked(true);
+    navigate("/unlock", { replace: true });
+  }, [navigate]);
+
+  const logout = useCallback(async () => {
     try {
       await api.logout(session.token);
     } catch {
@@ -349,7 +354,7 @@ export function AppShell({ session }: { session: Session }) {
     }
     clearSession();
     navigate("/", { replace: true });
-  }
+  }, [session.token, navigate]);
 
   async function sendInvite() {
     setAddError(null);
@@ -462,6 +467,8 @@ export function AppShell({ session }: { session: Session }) {
             identity={identity}
             shareLink={shareLink}
             onLogout={logout}
+            onLockNow={lockNow}
+            onCacheCleared={() => setPreviewRev((n) => n + 1)}
           />
         ) : (
           <>
@@ -571,21 +578,21 @@ export function AppShell({ session }: { session: Session }) {
               {presenceLabel(selectedPresence) || "presence unknown"}
             </span>
           </div>
-          <div className="settings-card">
-            <div className="settings-row">
-              <div className="settings-row-copy">
+          <div className="set-card">
+            <div className="set-row">
+              <div className="set-row-copy">
                 <strong>User ID</strong>
                 <code>{selected.id}</code>
               </div>
             </div>
-            <div className="settings-row">
-              <div className="settings-row-copy">
+            <div className="set-row">
+              <div className="set-row-copy">
                 <strong>Encryption</strong>
                 <span>End-to-end encrypted with X25519 + Double Ratchet.</span>
               </div>
             </div>
           </div>
-          <p className="settings-note">Safety-number verification is coming to the web client.</p>
+          <p className="set-note">Safety-number verification is coming to the web client.</p>
         </Modal>
       ) : null}
     </div>
