@@ -19,6 +19,13 @@ const LOGOUT_AFTER_MS = 14 * 24 * 60 * 60 * 1000;
  * Closing a tab is not a logout. A reload of the same tab stays unlocked.
  * Returning after 12h asks for the PIN. 14 days idle clears the session.
  */
+function expireIfStale(): boolean {
+  if (!localStorage.getItem(TOKEN_KEY)) return false;
+  if (Date.now() - readLastActive() < LOGOUT_AFTER_MS) return false;
+  clearSession();
+  return true;
+}
+
 function gateSessionLock() {
   if (typeof localStorage === "undefined" || typeof sessionStorage === "undefined") return;
   const ephemeral = sessionStorage.getItem(TOKEN_KEY);
@@ -27,34 +34,34 @@ function gateSessionLock() {
   }
   sessionStorage.removeItem(TOKEN_KEY);
 
-  const hasSession = Boolean(localStorage.getItem(TOKEN_KEY));
-  if (!hasSession) {
+  if (expireIfStale() || !localStorage.getItem(TOKEN_KEY)) {
     sessionStorage.removeItem(LOCKED_KEY);
     sessionStorage.removeItem(TAB_LIVE_KEY);
     return;
   }
 
   const idleFor = Date.now() - readLastActive();
-  if (idleFor >= LOGOUT_AFTER_MS) {
-    localStorage.removeItem(TOKEN_KEY);
-    sessionStorage.removeItem(LOCKED_KEY);
-    sessionStorage.removeItem(TAB_LIVE_KEY);
-    return;
-  }
-
   const sameTab = sessionStorage.getItem(TAB_LIVE_KEY) === "1";
-  if (!sameTab && idleFor >= PIN_AFTER_MS) {
+  if (idleFor >= PIN_AFTER_MS) {
     sessionStorage.setItem(LOCKED_KEY, "1");
-  } else {
+  } else if (!sameTab) {
     sessionStorage.removeItem(LOCKED_KEY);
   }
+  // same-tab reload: keep LOCKED if the idle timer already locked this document
   sessionStorage.setItem(TAB_LIVE_KEY, "1");
 }
 
 function readLastActive(): number {
   const raw = localStorage.getItem(LAST_ACTIVE_KEY);
   const parsed = raw ? Number(raw) : NaN;
-  return Number.isFinite(parsed) ? parsed : Date.now();
+  const now = Date.now();
+  if (Number.isFinite(parsed) && parsed <= now + 60_000) return parsed;
+  try {
+    localStorage.setItem(LAST_ACTIVE_KEY, String(now));
+  } catch {
+    /* quota */
+  }
+  return now;
 }
 
 let lastTouchWrite = 0;
@@ -78,6 +85,7 @@ type PinRecord = { salt: string; hash: string };
 
 export function loadSession(): Session | null {
   try {
+    if (expireIfStale()) return null;
     const raw = localStorage.getItem(TOKEN_KEY);
     if (!raw) return null;
     return JSON.parse(raw) as Session;
@@ -192,7 +200,11 @@ export function installAutoLock(onLock: () => void): () => void {
   let unloading = false;
 
   function lock() {
-    if (!loadSession() || isLocked()) return;
+    if (!loadSession()) {
+      onLock();
+      return;
+    }
+    if (isLocked()) return;
     setLocked(true);
     onLock();
   }
