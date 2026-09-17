@@ -169,6 +169,11 @@ export const api = {
       signed_pre_key_id: number | null;
       otpk_count: number;
     }>("/keys/status", { token }),
+  presence: (token: string, userId: string) =>
+    request<{ user_id: string; online: boolean; last_seen_at?: string | null }>(
+      `/presence/${userId}`,
+      { token },
+    ),
   peerIdentity: (token: string, userId: string) =>
     request<{ user_id: string; device_id: string; registration_id: number; identity_key: string }>(
       `/keys/identity/${userId}`,

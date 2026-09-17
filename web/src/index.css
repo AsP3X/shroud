@@ -345,6 +345,16 @@ a { color: var(--accent); text-decoration: none; }
   position: absolute; right: 0; bottom: 0;
   width: 10px; height: 10px; border-radius: 50%;
   background: var(--online); border: 2px solid var(--bg);
+  box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.55);
+  animation: presence-pulse 2.2s ease-out infinite;
+}
+@keyframes presence-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.55); }
+  70% { box-shadow: 0 0 0 6px rgba(52, 199, 89, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .avatar .dot { animation: none; }
 }
 .row-copy { flex: 1; min-width: 0; }
 .row-copy strong { display: block; font-size: 15px; font-weight: 600; }

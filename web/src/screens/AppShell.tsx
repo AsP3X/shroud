@@ -30,9 +30,11 @@ import { loadIdentity } from "../crypto/store";
 import { parseInvite } from "../invite";
 import {
   fetchLatest,
+  hydratePreviews,
   ingestIncoming,
   loadHistory,
   peerIdForMessage,
+  previewLine,
   sendText,
   type ChatMessage,
 } from "../messaging";
@@ -41,6 +43,23 @@ import { clearSession } from "../session";
 
 type Tab = "chats" | "contacts" | "settings";
 type PeerRef = { id: string; username: string };
+type Presence = { online: boolean; lastSeenAt: string | null };
+
+function formatPresence(p: Presence | undefined): string {
+  if (!p) return "encrypted";
+  if (p.online) return "online";
+  if (!p.lastSeenAt) return "offline";
+  const at = new Date(p.lastSeenAt);
+  if (Number.isNaN(at.getTime())) return "offline";
+  const now = new Date();
+  const sameDay = at.toDateString() === now.toDateString();
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  const time = at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (sameDay) return `last seen ${time}`;
+  if (at.toDateString() === yesterday.toDateString()) return `last seen yesterday`;
+  return `last seen ${at.toLocaleDateString()}`;
+}
 
 function mergeMessages(primary: ChatMessage[], extra: ChatMessage[]): ChatMessage[] {
   const byId = new Map<string, ChatMessage>();
@@ -70,6 +89,8 @@ export function AppShell({ session }: { session: Session }) {
   const [threadError, setThreadError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [presenceByUser, setPresenceByUser] = useState<Record<string, Presence>>({});
+  const [previewRev, setPreviewRev] = useState(0);
   const mobileShowThread = Boolean(selected) && tab !== "settings";
   const identity = loadIdentity(session.user.id);
   const alive = useRef(true);
@@ -102,8 +123,42 @@ export function AppShell({ session }: { session: Session }) {
     if (requests.status === "fulfilled") setIncoming(requests.value.requests);
     else errors.push(requests.status === "rejected" && requests.reason instanceof ApiError ? requests.reason.message : "requests");
     setError(errors.length === 3 ? errors[0] : null);
-    return nextConv ?? conversationsRef.current;
-  }, [session.token]);
+    const convs = nextConv ?? conversationsRef.current;
+    const rosterIds = [
+      ...convs.map((c) => c.peer.id),
+      ...(roster.status === "fulfilled" ? roster.value.contacts.map((c) => c.user_id) : []),
+    ];
+    const uniqueIds = [...new Set(rosterIds.map((id) => id.toLowerCase()))];
+    void Promise.all(
+      uniqueIds.map(async (id) => {
+        try {
+          const p = await api.presence(session.token, id);
+          return [id, { online: p.online, lastSeenAt: p.last_seen_at ?? null }] as const;
+        } catch {
+          return null;
+        }
+      }),
+    ).then((rows) => {
+      if (!alive.current) return;
+      const updates: Record<string, Presence> = {};
+      for (const row of rows) if (row) updates[row[0]] = row[1];
+      if (Object.keys(updates).length) {
+        setPresenceByUser((prev) => ({ ...prev, ...updates }));
+      }
+    });
+    const material = loadIdentity(session.user.id);
+    if (material) {
+      void hydratePreviews(
+        session.token,
+        session.user.id,
+        convs.map((c) => ({ id: c.peer.id, lastMessageAt: c.last_message_at })),
+        material,
+      ).then(() => {
+        if (alive.current) setPreviewRev((n) => n + 1);
+      });
+    }
+    return convs;
+  }, [session.token, session.user.id]);
 
   useEffect(() => {
     alive.current = true;
@@ -146,6 +201,7 @@ export function AppShell({ session }: { session: Session }) {
       .then((msgs) => {
         if (!cancelled) {
           setThread((prev) => mergeMessages(msgs, prev));
+          setPreviewRev((n) => n + 1);
         }
       })
       .catch((err: unknown) => {
@@ -169,6 +225,18 @@ export function AppShell({ session }: { session: Session }) {
       },
       onEvent: (event) => {
         if (event.type === "auth.ok") return;
+        if (event.type === "presence.update") {
+          const id = String(event.raw.user_id ?? "").toLowerCase();
+          if (!id) return;
+          setPresenceByUser((prev) => ({
+            ...prev,
+            [id]: {
+              online: Boolean(event.raw.online),
+              lastSeenAt: typeof event.raw.last_seen_at === "string" ? event.raw.last_seen_at : null,
+            },
+          }));
+          return;
+        }
         if (event.type === "message.new") {
           const dto = event.raw.message as WireMessage | undefined;
           if (!dto?.id) {
@@ -189,6 +257,7 @@ export function AppShell({ session }: { session: Session }) {
                 material,
               );
               const open = selectedRef.current;
+              setPreviewRev((n) => n + 1);
               if (open && open.id.toLowerCase() === peer) {
                 setThread((prev) => mergeMessages(prev, [msg]));
               }
@@ -304,6 +373,7 @@ export function AppShell({ session }: { session: Session }) {
       });
       setThread((prev) => [...prev, msg]);
       setDraft("");
+      setPreviewRev((n) => n + 1);
       await refresh();
     } catch (err) {
       setThreadError(err instanceof ApiError ? err.message : "Could not send.");
@@ -419,16 +489,22 @@ export function AppShell({ session }: { session: Session }) {
                     </p>
                   )}
               {tab === "chats"
-                ? filteredChats.map((c) => (
+                ? filteredChats.map((c) => {
+                    void previewRev;
+                    const online = presenceByUser[c.peer.id.toLowerCase()]?.online;
+                    return (
                     <button
                       key={c.id}
                       className={selected?.id === c.peer.id ? "chat-row active" : "chat-row"}
                       onClick={() => setSelected({ id: c.peer.id, username: c.peer.username })}
                     >
-                      <div className="avatar">{initials(c.peer.username)}</div>
+                      <div className="avatar">
+                        {initials(c.peer.username)}
+                        {online ? <span className="dot" /> : null}
+                      </div>
                       <div className="row-copy">
                         <strong>{c.peer.username}</strong>
-                        <span>Encrypted conversation</span>
+                        <span>{previewLine(session.user.id, c.peer.id)}</span>
                       </div>
                       <div className="row-meta">
                         <time>
@@ -441,20 +517,27 @@ export function AppShell({ session }: { session: Session }) {
                         </time>
                       </div>
                     </button>
-                  ))
-                : filteredContacts.map((c) => (
+                    );
+                  })
+                : filteredContacts.map((c) => {
+                    const online = presenceByUser[c.user_id.toLowerCase()]?.online;
+                    return (
                     <button
                       key={c.user_id}
                       className={selected?.id === c.user_id ? "chat-row active" : "chat-row"}
                       onClick={() => setSelected({ id: c.user_id, username: c.username })}
                     >
-                      <div className="avatar">{initials(c.username)}</div>
+                      <div className="avatar">
+                        {initials(c.username)}
+                        {online ? <span className="dot" /> : null}
+                      </div>
                       <div className="row-copy">
                         <strong>{c.username}</strong>
-                        <span>Contact</span>
+                        <span>{online ? "online" : "Contact"}</span>
                       </div>
                     </button>
-                  ))}
+                    );
+                  })}
             </div>
           </section>
         ) : (
@@ -531,7 +614,7 @@ export function AppShell({ session }: { session: Session }) {
                 <div className="avatar">{initials(selected.username)}</div>
                 <div>
                   <strong>{selected.username}</strong>
-                  <em>encrypted</em>
+                  <em>{formatPresence(presenceByUser[selected.id.toLowerCase()])}</em>
                 </div>
               </div>
               <button className="icon-btn" aria-label="Contact info">

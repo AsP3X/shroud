@@ -2,7 +2,12 @@ import { api, type Conversation, type WireMessage } from "./api/client";
 import { b64ToBytes, utf8, utf8decode } from "./crypto/bytes";
 import type { IdentityMaterial } from "./crypto/identity";
 import { envelopeToWireB64, openMessage, sealMessage, wireB64ToEnvelope } from "./crypto/messageCrypto";
-import { loadPlaintext, savePlaintext } from "./crypto/plaintextCache";
+import {
+  loadPlaintext,
+  loadPreview,
+  savePlaintext,
+  savePreview,
+} from "./crypto/plaintextCache";
 
 export type ChatMessage = {
   id: string;
@@ -107,11 +112,15 @@ export async function decodeIncoming(
     kind: dto.content_type === "media" ? ("media" as const) : ("text" as const),
   };
   if (dto.deleted_for_everyone) {
-    return { ...base, text: "Message deleted" };
+    const msg = { ...base, text: "Message deleted" };
+    rememberPreview(me, peerUserId, msg);
+    return msg;
   }
   const cached = loadPlaintext(dto.id);
   if (cached != null) {
-    return { ...base, text: dto.content_type === "media" ? "Photo" : cached };
+    const msg = { ...base, text: dto.content_type === "media" ? "Photo" : cached };
+    rememberPreview(me, peerUserId, msg);
+    return msg;
   }
   if (!dto.ciphertext) {
     return { ...base, text: dto.content_type === "media" ? "Photo" : "[Unable to decrypt]", failed: true };
@@ -132,13 +141,86 @@ export async function decodeIncoming(
     });
     const text = dto.content_type === "media" ? "Photo" : utf8decode(plain);
     savePlaintext(dto.id, dto.content_type === "media" ? "[media]" : text);
-    return { ...base, text };
+    const msg = { ...base, text };
+    rememberPreview(me, peerUserId, msg);
+    return msg;
   } catch {
-    return {
+    const msg = {
       ...base,
       text: dto.content_type === "media" ? "Photo" : "[Unable to decrypt]",
       failed: true,
     };
+    rememberPreview(me, peerUserId, msg);
+    return msg;
+  }
+}
+
+function rememberPreview(me: string, peerUserId: string, msg: ChatMessage): void {
+  const text = msg.deleted
+    ? "Message deleted"
+    : msg.failed
+      ? "Encrypted message"
+      : msg.kind === "media"
+        ? "Photo"
+        : msg.text;
+  savePreview(me, peerUserId, { text, at: msg.createdAt, isMine: msg.isMine, failed: msg.failed });
+}
+
+export function previewLine(me: string, peerUserId: string): string {
+  const preview = loadPreview(me, peerUserId);
+  if (!preview) return "Encrypted conversation";
+  if (preview.failed) return "Encrypted message";
+  return preview.isMine ? `You: ${preview.text}` : preview.text;
+}
+
+export async function hydratePreviews(
+  token: string,
+  me: string,
+  peers: { id: string; lastMessageAt: string | null }[],
+  material: IdentityMaterial,
+): Promise<void> {
+  const pending = peers.filter((p) => {
+    if (!p.lastMessageAt) return false;
+    const have = loadPreview(me, p.id);
+    return !have || have.at < p.lastMessageAt;
+  });
+  for (const peer of pending) {
+    try {
+      const res = await api.listMessages(token, peer.id, { limit: "1" });
+      const dto = res.messages[0];
+      if (!dto) continue;
+      const mine = dto.sender_user_id.toLowerCase() === me.toLowerCase();
+      const cached = loadPlaintext(dto.id);
+      if (cached) {
+        rememberPreview(me, peer.id, {
+          id: dto.id,
+          senderUserId: dto.sender_user_id,
+          text: dto.content_type === "media" ? "Photo" : cached,
+          createdAt: dto.created_at,
+          isMine: mine,
+          deleted: Boolean(dto.deleted_for_everyone),
+          failed: false,
+          kind: dto.content_type === "media" ? "media" : "text",
+        });
+        continue;
+      }
+      if (mine || dto.deleted_for_everyone) {
+        await decodeIncoming(dto, me, peer.id, token, material);
+      } else {
+        rememberPreview(me, peer.id, {
+          id: dto.id,
+          senderUserId: dto.sender_user_id,
+          text: "Encrypted message",
+          createdAt: dto.created_at,
+          isMine: false,
+          deleted: false,
+          failed: true,
+          kind: "text",
+        });
+      }
+    } catch {
+      /* leave existing preview */
+    }
   }
 }
 
@@ -209,7 +291,7 @@ export async function sendText(opts: {
       ciphertext: envelopeToWireB64(envelope),
     });
     savePlaintext(dto.id, opts.text);
-    return {
+    const msg: ChatMessage = {
       id: dto.id,
       senderUserId: dto.sender_user_id,
       text: opts.text,
@@ -219,5 +301,7 @@ export async function sendText(opts: {
       failed: false,
       kind: "text",
     };
+    rememberPreview(me, peer, msg);
+    return msg;
   });
 }
