@@ -58,7 +58,13 @@ async function request<T>(
     throw new ApiError(code, message, res.status);
   }
   if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
+  const text = await res.text();
+  if (!text) return undefined as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new ApiError("decoding", "Could not read the server response.", res.status);
+  }
 }
 
 export const api = {

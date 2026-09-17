@@ -30,9 +30,14 @@ server {
         rewrite ^ /api/ last;
     }
 
+    # Docker embedded DNS. Variable proxy_pass re-resolves `api` when the
+    # API container is recreated (a static proxy_pass caches the old IP).
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
     location /api/ {
         include /etc/nginx/api-proxy.conf;
-        proxy_pass ${API_UPSTREAM};
+        set $shroud_api ${API_UPSTREAM};
+        proxy_pass $shroud_api;
     }
 
     location /assets/ {

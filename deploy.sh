@@ -41,7 +41,7 @@ on_error() {
   printf '  At:      %s%s:%s%s\n' "$DIM" "${src#./}" "$line" "$NC" >&2
   printf '  Inspect:  %s./deploy.sh --ps%s\n' "$DIM" "$NC" >&2
   printf '  Logs:     %s./deploy.sh --logs%s\n' "$DIM" "$NC" >&2
-  printf '  Retry:    %s./deploy.sh --down && ./deploy.sh%s\n' "$DIM" "$NC" >&2
+  printf '  Retry:    %s./deploy.sh --down [--volumes] && ./deploy.sh%s\n' "$DIM" "$NC" >&2
   exit "$rc"
 }
 trap 'on_error "$LINENO" "$BASH_COMMAND" "${BASH_SOURCE[0]}"' ERR

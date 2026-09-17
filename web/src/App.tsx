@@ -14,11 +14,11 @@ export function App() {
   const sessionToken = session?.token;
 
   useEffect(() => {
-    if (!sessionToken) return;
+    if (!sessionToken || needsPinSetup) return;
     return installAutoLock(() => {
       navigate("/unlock", { replace: true });
     });
-  }, [sessionToken, navigate]);
+  }, [sessionToken, needsPinSetup, navigate]);
 
   return (
     <Routes>

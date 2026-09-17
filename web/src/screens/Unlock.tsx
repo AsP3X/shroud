@@ -36,6 +36,8 @@ export function Unlock() {
       }
       setLocked(false);
       navigate("/app", { replace: true });
+    } catch {
+      setError("Could not store the PIN. Open Shroud over HTTPS (or localhost).");
     } finally {
       setBusy(false);
     }
