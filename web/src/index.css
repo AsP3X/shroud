@@ -385,6 +385,22 @@ a { color: var(--accent); text-decoration: none; }
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px; word-break: break-all; color: var(--text-primary);
 }
+.list-label {
+  margin: 8px 12px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.request-row { cursor: default; }
+.request-actions { display: flex; flex-direction: column; gap: 4px; }
+.mini-btn {
+  height: 26px; padding: 0 10px; border-radius: 8px; border: 0;
+  background: var(--accent); color: var(--on-accent);
+  font-size: 12px; font-weight: 600;
+}
+.mini-btn.ghost { background: var(--bg-elevated); color: var(--text-primary); }
 
 @media (max-width: 860px) {
   .rail { display: none; }

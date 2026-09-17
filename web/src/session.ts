@@ -5,6 +5,14 @@ const DEVICE_KEY = "shroud.device-anchor";
 const LOCKED_KEY = "shroud.locked";
 const PIN_KEY_PREFIX = "shroud.pin.";
 const IDLE_MS = 5 * 60 * 1000;
+/** Delay before a hidden tab locks, so reload/navigation does not demand a PIN. */
+const HIDE_LOCK_MS = 15_000;
+
+// A reload fires visibilitychange(hidden) on the outgoing document, which used to
+// persist shroud.locked into the next page. A new document should start unlocked.
+if (typeof sessionStorage !== "undefined") {
+  sessionStorage.removeItem(LOCKED_KEY);
+}
 
 export type DeviceAnchor = { username: string; deviceId: string };
 
@@ -117,6 +125,8 @@ export async function verifyPin(userId: string, pin: string): Promise<boolean> {
 /** Idle + hidden-tab lock. Returns a disposer. */
 export function installAutoLock(onLock: () => void): () => void {
   let timer = window.setTimeout(lock, IDLE_MS);
+  let hideTimer = 0;
+  let unloading = false;
 
   function lock() {
     if (!loadSession() || isLocked()) return;
@@ -127,20 +137,34 @@ export function installAutoLock(onLock: () => void): () => void {
   function bump() {
     if (isLocked()) return;
     window.clearTimeout(timer);
+    window.clearTimeout(hideTimer);
     timer = window.setTimeout(lock, IDLE_MS);
   }
 
   function onVisibility() {
-    if (document.hidden) lock();
-    else bump();
+    if (document.hidden) {
+      if (unloading) return;
+      window.clearTimeout(hideTimer);
+      hideTimer = window.setTimeout(lock, HIDE_LOCK_MS);
+    } else {
+      bump();
+    }
+  }
+
+  function onPageHide() {
+    unloading = true;
+    window.clearTimeout(hideTimer);
   }
 
   const events = ["pointerdown", "keydown"] as const;
   for (const ev of events) window.addEventListener(ev, bump);
   document.addEventListener("visibilitychange", onVisibility);
+  window.addEventListener("pagehide", onPageHide);
   return () => {
     window.clearTimeout(timer);
+    window.clearTimeout(hideTimer);
     for (const ev of events) window.removeEventListener(ev, bump);
     document.removeEventListener("visibilitychange", onVisibility);
+    window.removeEventListener("pagehide", onPageHide);
   };
 }

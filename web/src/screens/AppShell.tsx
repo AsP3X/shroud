@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Shield,
@@ -12,56 +12,87 @@ import {
   Mic,
   Send,
   Info,
-  Plus,
   X,
   ChevronLeft,
 } from "lucide-react";
-import { api, ApiError, type Conversation, type Session } from "../api/client";
+import {
+  api,
+  ApiError,
+  type Contact,
+  type ContactRequest,
+  type Conversation,
+  type Session,
+} from "../api/client";
 import { initials } from "../config";
 import { bytesToB64 } from "../crypto/bytes";
 import { loadIdentity } from "../crypto/store";
+import { parseInvite } from "../invite";
 import { clearSession } from "../session";
 
 type Tab = "chats" | "contacts" | "settings";
+type PeerRef = { id: string; username: string };
 
 export function AppShell({ session }: { session: Session }) {
   const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>("chats");
   const [query, setQuery] = useState("");
   const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [selected, setSelected] = useState<Conversation | null>(null);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [incoming, setIncoming] = useState<ContactRequest[]>([]);
+  const [selected, setSelected] = useState<PeerRef | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [invite, setInvite] = useState("");
-  const mobileShowThread = Boolean(selected) && tab === "chats";
+  const [addBusy, setAddBusy] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+  const mobileShowThread = Boolean(selected) && tab !== "settings";
   const identity = loadIdentity(session.user.id);
+
+  const refresh = useCallback(async () => {
+    const [conv, roster, requests] = await Promise.all([
+      api.conversations(session.token),
+      api.contacts(session.token),
+      api.contactRequests(session.token, "incoming"),
+    ]);
+    setConversations(conv.conversations);
+    setContacts(roster.contacts);
+    setIncoming(requests.requests);
+    setError(null);
+  }, [session.token]);
 
   useEffect(() => {
     let cancelled = false;
-    api
-      .conversations(session.token)
-      .then((res) => {
-        if (!cancelled) setConversations(res.conversations);
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        if (err instanceof ApiError && err.isAuthFailure) {
-          clearSession();
-          navigate("/", { replace: true });
-          return;
-        }
-        setError(err instanceof ApiError ? err.message : "Could not load chats.");
+    refresh().catch((err: unknown) => {
+      if (cancelled) return;
+      if (err instanceof ApiError && err.isAuthFailure) {
+        clearSession();
+        navigate("/", { replace: true });
+        return;
+      }
+      setError(err instanceof ApiError ? err.message : "Could not load chats and contacts.");
+    });
+    const tick = window.setInterval(() => {
+      refresh().catch(() => {
+        /* keep last snapshot */
       });
+    }, 20_000);
     return () => {
       cancelled = true;
+      window.clearInterval(tick);
     };
-  }, [session.token, navigate]);
+  }, [refresh, navigate]);
 
-  const filtered = useMemo(() => {
+  const filteredChats = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return conversations;
     return conversations.filter((c) => c.peer.username.toLowerCase().includes(q));
   }, [conversations, query]);
+
+  const filteredContacts = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return contacts;
+    return contacts.filter((c) => c.username.toLowerCase().includes(q));
+  }, [contacts, query]);
 
   async function logout() {
     try {
@@ -72,6 +103,43 @@ export function AppShell({ session }: { session: Session }) {
     clearSession();
     navigate("/", { replace: true });
   }
+
+  async function sendInvite() {
+    setAddError(null);
+    const parsed = parseInvite(invite);
+    if (!parsed) {
+      setAddError("Paste a share code, username, or shroud.corespace.de/u/… link.");
+      return;
+    }
+    setAddBusy(true);
+    try {
+      const user = await api.lookupUser(session.token, parsed);
+      if (user.id === session.user.id) {
+        setAddError("That’s you.");
+        return;
+      }
+      await api.createContactRequest(session.token, user.id);
+      setAdding(false);
+      setInvite("");
+      await refresh();
+    } catch (err) {
+      setAddError(err instanceof ApiError ? err.message : "Could not send request.");
+    } finally {
+      setAddBusy(false);
+    }
+  }
+
+  async function respond(id: string, accept: boolean) {
+    try {
+      if (accept) await api.acceptRequest(session.token, id);
+      else await api.rejectRequest(session.token, id);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not update request.");
+    }
+  }
+
+  const shareLink = `${window.location.origin}/u/${session.user.share_code}`;
 
   return (
     <div className="shell">
@@ -114,7 +182,7 @@ export function AppShell({ session }: { session: Session }) {
             <header className="pane-head">
               <div className="pane-title-row">
                 <h1>{tab === "chats" ? "Chats" : "Contacts"}</h1>
-                <button className="icon-btn" aria-label="New chat" onClick={() => setAdding(true)}>
+                <button className="icon-btn" aria-label="Add" onClick={() => setAdding(true)}>
                   <SquarePen size={18} />
                 </button>
               </div>
@@ -129,34 +197,81 @@ export function AppShell({ session }: { session: Session }) {
             </header>
             <div className="rows">
               {error ? <p className="err" style={{ padding: 12 }}>{error}</p> : null}
-              {filtered.length === 0 && !error ? (
-                <p className="lede" style={{ padding: 16, textAlign: "left" }}>
-                  No chats yet. Add a contact with an invite link or share code.
-                </p>
+              {tab === "contacts" && incoming.length > 0 ? (
+                <>
+                  <p className="list-label">Pending</p>
+                  {incoming.map((req) => {
+                    const name = req.user?.username ?? "Unknown";
+                    return (
+                      <div key={req.id} className="chat-row request-row">
+                        <div className="avatar">{initials(name)}</div>
+                        <div className="row-copy">
+                          <strong>{name}</strong>
+                          <span>Wants to connect</span>
+                        </div>
+                        <div className="request-actions">
+                          <button type="button" className="mini-btn" onClick={() => respond(req.id, true)}>
+                            Accept
+                          </button>
+                          <button type="button" className="mini-btn ghost" onClick={() => respond(req.id, false)}>
+                            Ignore
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
               ) : null}
-              {filtered.map((c) => (
-                <button
-                  key={c.id}
-                  className={selected?.id === c.id ? "chat-row active" : "chat-row"}
-                  onClick={() => setSelected(c)}
-                >
-                  <div className="avatar">{initials(c.peer.username)}</div>
-                  <div className="row-copy">
-                    <strong>{c.peer.username}</strong>
-                    <span>Encrypted conversation</span>
-                  </div>
-                  <div className="row-meta">
-                    <time>
-                      {c.last_message_at
-                        ? new Date(c.last_message_at).toLocaleTimeString([], {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })
-                        : ""}
-                    </time>
-                  </div>
-                </button>
-              ))}
+              {tab === "chats"
+                ? filteredChats.length === 0 && !error && (
+                    <p className="lede" style={{ padding: 16, textAlign: "left" }}>
+                      {contacts.length > 0
+                        ? "No chats yet. Open a contact to start one."
+                        : "No chats yet. Add a contact with an invite link or share code."}
+                    </p>
+                  )
+                : filteredContacts.length === 0 && incoming.length === 0 && !error && (
+                    <p className="lede" style={{ padding: 16, textAlign: "left" }}>
+                      No contacts yet. Add someone with their share code.
+                    </p>
+                  )}
+              {tab === "chats"
+                ? filteredChats.map((c) => (
+                    <button
+                      key={c.id}
+                      className={selected?.id === c.peer.id ? "chat-row active" : "chat-row"}
+                      onClick={() => setSelected({ id: c.peer.id, username: c.peer.username })}
+                    >
+                      <div className="avatar">{initials(c.peer.username)}</div>
+                      <div className="row-copy">
+                        <strong>{c.peer.username}</strong>
+                        <span>Encrypted conversation</span>
+                      </div>
+                      <div className="row-meta">
+                        <time>
+                          {c.last_message_at
+                            ? new Date(c.last_message_at).toLocaleTimeString([], {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })
+                            : ""}
+                        </time>
+                      </div>
+                    </button>
+                  ))
+                : filteredContacts.map((c) => (
+                    <button
+                      key={c.user_id}
+                      className={selected?.id === c.user_id ? "chat-row active" : "chat-row"}
+                      onClick={() => setSelected({ id: c.user_id, username: c.username })}
+                    >
+                      <div className="avatar">{initials(c.username)}</div>
+                      <div className="row-copy">
+                        <strong>{c.username}</strong>
+                        <span>Contact</span>
+                      </div>
+                    </button>
+                  ))}
             </div>
           </section>
         ) : (
@@ -192,6 +307,11 @@ export function AppShell({ session }: { session: Session }) {
                 </div>
               </div>
             </div>
+            <div className="warn">
+              <h3>Your share code</h3>
+              <p className="mono-key">{session.user.share_code}</p>
+              <p>{shareLink}</p>
+            </div>
             {identity ? (
               <div className="warn">
                 <h3>This device’s identity key</h3>
@@ -220,14 +340,14 @@ export function AppShell({ session }: { session: Session }) {
                 <button
                   className="icon-btn back-mobile"
                   type="button"
-                  aria-label="Back to chats"
+                  aria-label="Back"
                   onClick={() => setSelected(null)}
                 >
                   <ChevronLeft size={20} />
                 </button>
-                <div className="avatar">{initials(selected.peer.username)}</div>
+                <div className="avatar">{initials(selected.username)}</div>
                 <div>
-                  <strong>{selected.peer.username}</strong>
+                  <strong>{selected.username}</strong>
                   <em>encrypted</em>
                 </div>
               </div>
@@ -237,8 +357,8 @@ export function AppShell({ session }: { session: Session }) {
             </header>
             <div className="messages">
               <div className="empty-thread">
-                Message plaintext lives only on your devices. Double Ratchet send/receive for the
-                web client is the next slice — this thread will decrypt here the same way as iOS.
+                History ciphertext will decrypt on this device the same way as iOS. Sending is the
+                next slice — you can already see who you chat with.
               </div>
             </div>
             <form
@@ -270,7 +390,13 @@ export function AppShell({ session }: { session: Session }) {
       </div>
 
       <nav className="tab-bar">
-        <button className={tab === "chats" ? "tab active" : "tab"} onClick={() => { setTab("chats"); setSelected(null); }}>
+        <button
+          className={tab === "chats" ? "tab active" : "tab"}
+          onClick={() => {
+            setTab("chats");
+            setSelected(null);
+          }}
+        >
           <MessageCircle size={22} />
           Chats
         </button>
@@ -285,27 +411,35 @@ export function AppShell({ session }: { session: Session }) {
       </nav>
 
       {adding ? (
-        <div className="modal-scrim" onClick={() => setAdding(false)}>
+        <div
+          className="modal-scrim"
+          onClick={() => {
+            setAdding(false);
+            setAddError(null);
+          }}
+        >
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <header>
               <h2>Add contact</h2>
-              <button className="icon-btn" type="button" onClick={() => setAdding(false)} aria-label="Close">
+              <button
+                className="icon-btn"
+                type="button"
+                onClick={() => setAdding(false)}
+                aria-label="Close"
+              >
                 <X size={18} />
               </button>
             </header>
-            <p>Paste an invite link or share code. You can also scan their QR with the camera.</p>
+            <p>Paste an invite link, share code, or username.</p>
             <input
               className="field"
-              placeholder="shroud://u/… or share code"
+              placeholder="shroud.corespace.de/u/… or share code"
               value={invite}
               onChange={(e) => setInvite(e.target.value)}
             />
-            <button className="btn btn-primary" type="button">
-              Send request
-            </button>
-            <button className="btn btn-secondary" type="button">
-              <Plus size={16} style={{ marginRight: 8 }} />
-              Scan QR with camera
+            {addError ? <p className="err">{addError}</p> : null}
+            <button className="btn btn-primary" type="button" disabled={addBusy} onClick={sendInvite}>
+              {addBusy ? "Sending…" : "Send request"}
             </button>
           </div>
         </div>

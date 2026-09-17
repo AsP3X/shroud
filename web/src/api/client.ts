@@ -29,6 +29,27 @@ export type Conversation = {
   last_message_at: string | null;
 };
 
+export type Contact = {
+  user_id: string;
+  username: string;
+  created_at: string;
+};
+
+export type ContactRequest = {
+  id: string;
+  from_user_id: string;
+  to_user_id: string;
+  status: string;
+  created_at: string;
+  user?: { id: string; username: string } | null;
+};
+
+export type UserCard = {
+  id: string;
+  username: string;
+  share_code?: string;
+};
+
 async function request<T>(
   path: string,
   init: RequestInit & { token?: string | null } = {},
@@ -91,6 +112,37 @@ export const api = {
   logout: (token: string) => request<void>("/auth/logout", { method: "POST", token }),
   conversations: (token: string) =>
     request<{ conversations: Conversation[] }>("/conversations", { token }),
+  contacts: (token: string) => request<{ contacts: Contact[] }>("/contacts", { token }),
+  contactRequests: (token: string, box: "incoming" | "outgoing" = "incoming") =>
+    request<{ requests: ContactRequest[] }>(
+      `/contacts/requests?box=${box}&status=pending`,
+      { token },
+    ),
+  lookupUser: (token: string, invite: { kind: string; value: string }) => {
+    if (invite.kind === "userId") return request<UserCard>(`/users/${invite.value}`, { token });
+    if (invite.kind === "shareCode") {
+      return request<UserCard>(`/users/by-code/${encodeURIComponent(invite.value)}`, { token });
+    }
+    return request<UserCard>(`/users/by-username/${encodeURIComponent(invite.value)}`, { token });
+  },
+  createContactRequest: (token: string, userId: string) =>
+    request<ContactRequest>("/contacts/requests", {
+      method: "POST",
+      token,
+      body: JSON.stringify({ user_id: userId }),
+    }),
+  acceptRequest: (token: string, id: string) =>
+    request<ContactRequest>(`/contacts/requests/${id}/accept`, {
+      method: "POST",
+      token,
+      body: "{}",
+    }),
+  rejectRequest: (token: string, id: string) =>
+    request<ContactRequest>(`/contacts/requests/${id}/reject`, {
+      method: "POST",
+      token,
+      body: "{}",
+    }),
   putBundle: (token: string, body: unknown) =>
     request<void>("/keys/bundle", { method: "PUT", token, body: JSON.stringify(body) }),
   keysStatus: (token: string) =>
