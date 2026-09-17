@@ -29,7 +29,8 @@ import { bytesToB64 } from "../crypto/bytes";
 import { loadIdentity } from "../crypto/store";
 import { parseInvite } from "../invite";
 import {
-  decodeIncoming,
+  fetchLatest,
+  ingestIncoming,
   loadHistory,
   peerIdForMessage,
   sendText,
@@ -76,6 +77,8 @@ export function AppShell({ session }: { session: Session }) {
   selectedRef.current = selected;
   const conversationsRef = useRef(conversations);
   conversationsRef.current = conversations;
+  const threadRef = useRef(thread);
+  threadRef.current = thread;
 
   const refresh = useCallback(async (): Promise<Conversation[]> => {
     const [conv, roster, requests] = await Promise.allSettled([
@@ -104,9 +107,16 @@ export function AppShell({ session }: { session: Session }) {
 
   useEffect(() => {
     alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
     const run = () =>
       refresh().catch((err: unknown) => {
-        if (!alive.current) return;
+        if (cancelled) return;
         if (err instanceof ApiError && err.isAuthFailure) {
           clearSession();
           navigate("/", { replace: true });
@@ -117,7 +127,7 @@ export function AppShell({ session }: { session: Session }) {
     run();
     const tick = window.setInterval(run, 20_000);
     return () => {
-      alive.current = false;
+      cancelled = true;
       window.clearInterval(tick);
     };
   }, [refresh, navigate]);
@@ -166,20 +176,24 @@ export function AppShell({ session }: { session: Session }) {
             return;
           }
           void (async () => {
-            const convs = await refresh();
-            const material = loadIdentity(session.user.id);
-            if (!material || !alive.current) return;
-            const peer = peerIdForMessage(dto, session.user.id, convs);
-            const msg = await decodeIncoming(
-              dto,
-              session.user.id,
-              peer,
-              session.token,
-              material,
-            );
-            const open = selectedRef.current;
-            if (open && open.id.toLowerCase() === peer) {
-              setThread((prev) => mergeMessages(prev, [msg]));
+            try {
+              const convs = await refresh();
+              const material = loadIdentity(session.user.id);
+              if (!material || !alive.current) return;
+              const peer = peerIdForMessage(dto, session.user.id, convs);
+              const msg = await ingestIncoming(
+                dto,
+                session.user.id,
+                peer,
+                session.token,
+                material,
+              );
+              const open = selectedRef.current;
+              if (open && open.id.toLowerCase() === peer) {
+                setThread((prev) => mergeMessages(prev, [msg]));
+              }
+            } catch {
+              /* roster refresh already ran; next poll/WS event retries */
             }
           })();
           return;
@@ -204,6 +218,29 @@ export function AppShell({ session }: { session: Session }) {
     });
     return stop;
   }, [session.token, session.user.id, navigate, refresh]);
+
+  useEffect(() => {
+    if (!selected) return;
+    let cancelled = false;
+    const tick = window.setInterval(() => {
+      if (cancelled || document.hidden) return;
+      const material = loadIdentity(session.user.id);
+      const open = selectedRef.current;
+      if (!material || !open) return;
+      const known = new Set(threadRef.current.map((m) => m.id));
+      fetchLatest(session.token, session.user.id, open.id, material, known)
+        .then((extra) => {
+          if (!cancelled && extra.length) setThread((prev) => mergeMessages(prev, extra));
+        })
+        .catch(() => {
+          /* keep current thread */
+        });
+    }, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(tick);
+    };
+  }, [selected, session.token, session.user.id]);
 
   const filteredChats = useMemo(() => {
     const q = query.trim().toLowerCase();

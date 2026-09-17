@@ -59,6 +59,36 @@ export function peerIdForMessage(
   return (conv?.peer.id ?? dto.sender_user_id).toLowerCase();
 }
 
+export async function ingestIncoming(
+  dto: WireMessage,
+  me: string,
+  peerUserId: string,
+  token: string,
+  material: IdentityMaterial,
+): Promise<ChatMessage> {
+  return withPeerLock(peerUserId, () => decodeIncoming(dto, me, peerUserId, token, material));
+}
+
+export async function fetchLatest(
+  token: string,
+  me: string,
+  peerUserId: string,
+  material: IdentityMaterial,
+  knownIds: Set<string>,
+): Promise<ChatMessage[]> {
+  const peer = peerUserId.toLowerCase();
+  return withPeerLock(peer, async () => {
+    const res = await api.listMessages(token, peer);
+    const chronological = [...res.messages].reverse();
+    const out: ChatMessage[] = [];
+    for (const dto of chronological) {
+      if (knownIds.has(dto.id)) continue;
+      out.push(await decodeIncoming(dto, me, peer, token, material));
+    }
+    return out;
+  });
+}
+
 export async function decodeIncoming(
   dto: WireMessage,
   me: string,

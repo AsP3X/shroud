@@ -12,8 +12,13 @@ export function connectRealtime(opts: {
   let attempt = 0;
   let reconnectTimer = 0;
 
+  function onVisible() {
+    if (!document.hidden && !closed && !socket) open();
+  }
+
   function open() {
-    if (closed) return;
+    if (closed || socket) return;
+    window.clearTimeout(reconnectTimer);
     const ws = new WebSocket(wsUrl());
     socket = ws;
     ws.onopen = () => {
@@ -53,10 +58,12 @@ export function connectRealtime(opts: {
     };
   }
 
+  document.addEventListener("visibilitychange", onVisible);
   open();
   return () => {
     closed = true;
     window.clearTimeout(reconnectTimer);
+    document.removeEventListener("visibilitychange", onVisible);
     socket?.close();
     socket = null;
   };
