@@ -82,6 +82,8 @@ export function AppShell({ session }: { session: Session }) {
   const threadRef = useRef(thread);
   threadRef.current = thread;
   const lastPresenceSweep = useRef(0);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
 
   const refresh = useCallback(async (): Promise<Conversation[]> => {
     const [conv, roster, requests] = await Promise.allSettled([
@@ -375,8 +377,9 @@ export function AppShell({ session }: { session: Session }) {
   }
 
   async function submitMessage() {
-    const text = draft.trim();
-    if (!text || !selected || !identity || sendingPeer) return;
+    const text = draftRef.current.trim();
+    if (!text || !selected || !identity) return;
+    draftRef.current = "";
     const peerId = selected.id;
     const localId = `pending:${crypto.randomUUID()}`;
     const optimistic: ChatMessage = {

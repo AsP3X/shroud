@@ -125,15 +125,22 @@ export function Thread({
     else setUnseen((count) => count + added);
   }, [messages, pinned, toBottom]);
 
+  /* Clicking Send moves focus to the button, so hand it back to the field —
+     otherwise the composer goes cold after every message. */
+  function send() {
+    onSend();
+    field.current?.focus();
+  }
+
   function submit(event: FormEvent) {
     event.preventDefault();
-    onSend();
+    send();
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
     event.preventDefault();
-    onSend();
+    send();
   }
 
   const rows = useMemo(() => buildRows(messages), [messages]);
@@ -220,7 +227,7 @@ export function Thread({
         </button>
       ) : null}
 
-      <form className="compose" onSubmit={submit}>
+      <form className="compose" onSubmit={submit} aria-busy={sending}>
         <button
           className="icon-btn"
           type="button"
@@ -240,10 +247,11 @@ export function Thread({
             value={draft}
             onChange={(event) => onDraftChange(event.target.value)}
             onKeyDown={onKeyDown}
-            disabled={!canSend || sending}
+            enterKeyHint="send"
+            disabled={!canSend}
           />
         </div>
-        <button className="send" type="submit" aria-label="Send" disabled={!canSend || sending || !draft.trim()}>
+        <button className="send" type="submit" aria-label="Send" disabled={!canSend || !draft.trim()}>
           <Send size={16} />
         </button>
       </form>
