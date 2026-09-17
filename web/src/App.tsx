@@ -37,11 +37,27 @@ export function App() {
       />
       <Route
         path="/login"
-        element={keyed && !locked && !needsPinSetup ? <Navigate to="/app" replace /> : <Auth />}
+        element={
+          !session || !keyed ? (
+            <Auth />
+          ) : locked || needsPinSetup ? (
+            <Navigate to="/unlock" replace />
+          ) : (
+            <Navigate to="/app" replace />
+          )
+        }
       />
       <Route
         path="/signup"
-        element={keyed ? <Navigate to="/app" replace /> : <SignUp />}
+        element={
+          keyed ? (
+            <Navigate to="/app" replace />
+          ) : session ? (
+            <Navigate to="/login" replace />
+          ) : (
+            <SignUp />
+          )
+        }
       />
       <Route
         path="/unlock"

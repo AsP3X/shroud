@@ -47,10 +47,14 @@ export function SignUp() {
         password,
         deviceName(),
       );
-      const material = establish(words, session.user.id);
-      await api.putBundle(session.token, putBundleRequest(material));
-      saveIdentity(material);
       saveSession(session);
+      const material = establish(words, session.user.id);
+      saveIdentity(material);
+      try {
+        await api.putBundle(session.token, putBundleRequest(material));
+      } catch {
+        // Local keys are stored; the next login phrase step retries the upload.
+      }
       navigate(hasPin(session.user.id) ? "/app" : "/unlock", { replace: true });
     } catch (err) {
       if (err instanceof PhraseError) setError(err.message);

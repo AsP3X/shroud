@@ -1,7 +1,7 @@
 import { ed25519, x25519 } from "@noble/curves/ed25519.js";
 import { hkdf } from "@noble/hashes/hkdf.js";
 import { sha256 } from "@noble/hashes/sha2.js";
-import { mnemonicToSeed, validateMnemonic } from "./bip39";
+import { mnemonicToSeed } from "./bip39";
 import { bytesToB64, bytesToHex, hexToBytes, randomBytes, randomU32 } from "./bytes";
 
 const SALT = new TextEncoder().encode("shroud-v1");
@@ -80,9 +80,9 @@ export function establish(
 
 export function matchesMnemonic(material: IdentityMaterial, words: string[]): boolean {
   try {
-    validateMnemonic(words);
-    const probe = establish(words, material.userId, 0);
-    return bytesToHex(probe.agreementPublic) === bytesToHex(material.agreementPublic);
+    const seed = mnemonicToSeed(words);
+    const agreementPrivate = hkdfShroud(seed, "shroud-identity-x25519", 32);
+    return bytesToHex(x25519.getPublicKey(agreementPrivate)) === bytesToHex(material.agreementPublic);
   } catch {
     return false;
   }

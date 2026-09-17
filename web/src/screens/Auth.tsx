@@ -142,9 +142,13 @@ export function Auth() {
               }}
             />
             {creatingPhrase ? (
-              <p className="hint">
-                Write these 12 words down. This is the only way to restore this browser later.
-              </p>
+              <div className="warn-card">
+                <p>
+                  Write these 12 words down. They become this browser’s identity. If you already
+                  use Shroud on iPhone, go back and enter that phrase instead — a new one will not
+                  decrypt those chats.
+                </p>
+              </div>
             ) : (
               <button
                 type="button"
