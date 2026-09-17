@@ -4,15 +4,20 @@ const TOKEN_KEY = "shroud.session";
 const DEVICE_KEY = "shroud.device-anchor";
 const LOCKED_KEY = "shroud.locked";
 const TAB_LIVE_KEY = "shroud.tab-live";
+const LAST_ACTIVE_KEY = "shroud.last-active";
 const PIN_KEY_PREFIX = "shroud.pin.";
 const IDLE_MS = 5 * 60 * 1000;
 /** Delay before a hidden tab locks, so reload/navigation does not demand a PIN. */
 const HIDE_LOCK_MS = 15_000;
+/** Away this long → PIN on the next visit (not a full login). */
+const PIN_AFTER_MS = 12 * 60 * 60 * 1000;
+/** No activity this long → drop the token; next visit is a full login. */
+const LOGOUT_AFTER_MS = 14 * 24 * 60 * 60 * 1000;
 
 /**
- * Session token lives in localStorage (survives tab close, like iOS Keychain).
- * sessionStorage marks this document as already unlocked: a reload stays in;
- * a brand-new tab with a stored session asks for the PIN, not a full login.
+ * Session token lives in localStorage (survives tab close).
+ * Closing a tab is not a logout. A reload of the same tab stays unlocked.
+ * Returning after 12h asks for the PIN. 14 days idle clears the session.
  */
 function gateSessionLock() {
   if (typeof localStorage === "undefined" || typeof sessionStorage === "undefined") return;
@@ -23,13 +28,46 @@ function gateSessionLock() {
   sessionStorage.removeItem(TOKEN_KEY);
 
   const hasSession = Boolean(localStorage.getItem(TOKEN_KEY));
+  if (!hasSession) {
+    sessionStorage.removeItem(LOCKED_KEY);
+    sessionStorage.removeItem(TAB_LIVE_KEY);
+    return;
+  }
+
+  const idleFor = Date.now() - readLastActive();
+  if (idleFor >= LOGOUT_AFTER_MS) {
+    localStorage.removeItem(TOKEN_KEY);
+    sessionStorage.removeItem(LOCKED_KEY);
+    sessionStorage.removeItem(TAB_LIVE_KEY);
+    return;
+  }
+
   const sameTab = sessionStorage.getItem(TAB_LIVE_KEY) === "1";
-  if (hasSession && !sameTab) {
+  if (!sameTab && idleFor >= PIN_AFTER_MS) {
     sessionStorage.setItem(LOCKED_KEY, "1");
   } else {
     sessionStorage.removeItem(LOCKED_KEY);
   }
-  if (hasSession) sessionStorage.setItem(TAB_LIVE_KEY, "1");
+  sessionStorage.setItem(TAB_LIVE_KEY, "1");
+}
+
+function readLastActive(): number {
+  const raw = localStorage.getItem(LAST_ACTIVE_KEY);
+  const parsed = raw ? Number(raw) : NaN;
+  return Number.isFinite(parsed) ? parsed : Date.now();
+}
+
+let lastTouchWrite = 0;
+
+export function touchLastActive(force = false): void {
+  const now = Date.now();
+  if (!force && now - lastTouchWrite < 30_000 && lastTouchWrite !== 0) return;
+  lastTouchWrite = now;
+  try {
+    localStorage.setItem(LAST_ACTIVE_KEY, String(now));
+  } catch {
+    /* quota */
+  }
 }
 
 gateSessionLock();
@@ -51,12 +89,14 @@ export function loadSession(): Session | null {
 export function saveSession(session: Session): void {
   localStorage.setItem(TOKEN_KEY, JSON.stringify(session));
   sessionStorage.setItem(TAB_LIVE_KEY, "1");
+  touchLastActive(true);
   saveDeviceAnchor({ username: session.user.username, deviceId: session.device.id });
   setLocked(false);
 }
 
 export function clearSession(): void {
   localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(LAST_ACTIVE_KEY);
   sessionStorage.removeItem(TOKEN_KEY);
   sessionStorage.removeItem(LOCKED_KEY);
   sessionStorage.removeItem(TAB_LIVE_KEY);
@@ -159,6 +199,7 @@ export function installAutoLock(onLock: () => void): () => void {
 
   function bump() {
     if (isLocked()) return;
+    touchLastActive();
     window.clearTimeout(timer);
     window.clearTimeout(hideTimer);
     timer = window.setTimeout(lock, IDLE_MS);

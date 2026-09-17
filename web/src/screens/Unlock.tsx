@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Lock, Delete } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { hasPin, loadSession, setLocked, setPin, verifyPin } from "../session";
+import { hasPin, loadSession, setLocked, setPin, touchLastActive, verifyPin } from "../session";
 
 const PIN_LEN = 6;
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "del"] as const;
@@ -62,6 +62,7 @@ export function Unlock() {
             setBusy(true);
             await setPin(userId, pin);
             setLocked(false);
+            touchLastActive(true);
             navigate("/app", { replace: true });
           } catch {
             fail("Could not store the PIN. Open Shroud over HTTPS (or localhost).");
@@ -87,6 +88,7 @@ export function Unlock() {
           if (ok) {
             setBusy(true);
             setLocked(false);
+            touchLastActive(true);
             navigate("/app", { replace: true });
             return;
           }
