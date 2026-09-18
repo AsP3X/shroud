@@ -3,9 +3,8 @@ import Foundation
 /// User preference for which language voice messages are transcribed in.
 ///
 /// Human: Device locale is a poor proxy for the language someone *speaks* — an English UI with
-/// a German region is a common setup, and transcribing German speech with an English model
-/// produces garbage. `automatic` probes plausible languages and scores them; the explicit
-/// override exists because auto-detection can only choose between installed models.
+/// a German region is a common setup. Whisper detects language itself; the override is a hint
+/// when auto-detection is wrong for a conversation.
 /// Agent: READS/WRITES UserDefaults key `transcription.locale`; no other state.
 nonisolated enum TranscriptionLanguage {
     private static let defaultsKey = "transcription.locale"
@@ -31,6 +30,24 @@ nonisolated enum TranscriptionLanguage {
     /// Human-readable name for a locale in the user's own language, e.g. "German (Germany)".
     static func displayName(for locale: Locale) -> String {
         Locale.current.localizedString(forIdentifier: locale.identifier) ?? locale.identifier
+    }
+
+    /// Languages Whisper can transcribe. One multilingual model covers all of them — this is
+    /// only the settings picker, not a list of extra downloads.
+    static var whisperLocales: [Locale] {
+        let codes = [
+            "en", "de", "es", "fr", "it", "pt", "nl", "pl", "ru", "uk",
+            "tr", "ar", "hi", "ja", "ko", "zh", "sv", "da", "nb", "fi",
+            "cs", "el", "he", "id", "th", "vi", "ro", "hu", "ca", "hr",
+        ]
+        let preferred = Locale.preferredLanguages.compactMap { tag -> String? in
+            Locale(identifier: tag).language.languageCode?.identifier
+        }
+        var ordered: [String] = []
+        for code in preferred + codes where codes.contains(code) && !ordered.contains(code) {
+            ordered.append(code)
+        }
+        return ordered.map { Locale(identifier: $0) }
     }
 }
 

@@ -116,7 +116,7 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 | Notes multi-device | **done** — Saved Messages via `peer_user_id = self`; excluded from chats list |
 | Notes to me | **done** — local-only self chat (text / photo / voice / todos); no server replies |
 | Photo media messages | **done** — E2E AES-GCM blobs + caption compose |
-| Voice messages | **done** — record/upload/play; on-device Speech transcript (Tier 1) |
+| Voice messages | **done** — record/upload/play; on-device Whisper transcript (pluggable `TranscriptionEngine`) |
 | Calls UI / WebRTC | **done** — signaling + WKWebView WebRTC + CallKit; voice & video |
 | APNs / VoIP push register | **done** — data token + PushKit VoIP token → `PUT /push/token` |
 | Sealed messaging v2 | **done** — dual-seal (peer + self) so sender devices can decrypt history |

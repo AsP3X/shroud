@@ -1,6 +1,5 @@
 import AVFoundation
 import Foundation
-import Speech
 import Testing
 @testable import shroud
 
@@ -116,9 +115,6 @@ struct VoiceTranscriberTests {
         let original = TranscriptionLanguage.override
         defer { TranscriptionLanguage.override = original }
 
-        // Only meaningful where the engine exists; elsewhere candidates are empty either way.
-        guard await VoiceTranscriber.supportsLongForm(locale: englishUS) else { return }
-
         TranscriptionLanguage.override = englishUS
         let candidates = await VoiceTranscriber.candidateLocales()
         #expect(candidates.count == 1)
@@ -173,10 +169,10 @@ struct VoiceTranscriberTests {
         let url = try makeSilentFile(seconds: 1.5)
         defer { try? FileManager.default.removeItem(at: url) }
 
-        // Silence yields no words; the contract is that the analyzer finalizes and the results
-        // stream terminates rather than hanging.
+        // Silence should finish, not hang. Whisper may emit a short hallucination; the
+        // quality gate still returns a string (possibly empty).
         let text = try await VoiceTranscriber.transcribe(fileURL: url)
-        #expect(text.isEmpty)
+        #expect(VoiceTranscript.cleaned(text) == text)
     }
 
     /// The recording format (44.1 kHz) differs from the model's — resampling must happen, and
@@ -228,20 +224,10 @@ struct VoiceTranscriberTests {
     }
 
     @Test
-    func unsupportedLocaleReportsNoLongFormSupport() async {
-        let nonsense = Locale(identifier: "zz-ZZ")
-        #expect(await VoiceTranscriber.supportsLongForm(locale: nonsense) == false)
-        #expect(await VoiceTranscriber.modelIsInstalled(locale: nonsense) == false)
-    }
-
-    /// The 1101 spam was this: Simulator has no ANE so `SpeechTranscriber` lists no locales,
-    /// `candidateLocales()` returned `[]`, and we called `SFSpeechRecognizer` on the AAC file.
-    /// DictationTranscriber is Apple's fallback; if it has locales, we must use them.
-    @Test
-    func candidateLocalesDoNotGoEmptyWhenDictationCanServe() async {
-        guard !(await VoiceTranscriber.supportsLongForm(locale: englishUS)) else { return }
-        let dictation = await DictationTranscriber.supportedLocales
-        guard !dictation.isEmpty else { return }
+    func whisperAlwaysOffersLanguages() async {
+        let locales = await VoiceTranscriber.availableLocales()
+        #expect(!locales.isEmpty)
+        #expect(await VoiceTranscriber.supportsLongForm())
         let candidates = await VoiceTranscriber.candidateLocales()
         #expect(!candidates.isEmpty)
     }

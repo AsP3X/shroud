@@ -125,6 +125,7 @@
 			);
 			name = shroud;
 			packageProductDependencies = (
+				73WK0002305C000000000002 /* WhisperKit */,
 			);
 			productName = shroud;
 			productReference = 736BA35D3007DFB8005F6B14 /* shroud.app */;
@@ -208,6 +209,9 @@
 			);
 			mainGroup = 736BA3543007DFB8005F6B14;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				73WK0001305C000000000001 /* XCRemoteSwiftPackageReference "WhisperKit" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 736BA35E3007DFB8005F6B14 /* Products */;
 			projectDirPath = "";
@@ -613,6 +617,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		73WK0001305C000000000001 /* XCRemoteSwiftPackageReference "WhisperKit" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/argmaxinc/WhisperKit.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.13.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		73WK0002305C000000000002 /* WhisperKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 73WK0001305C000000000001 /* XCRemoteSwiftPackageReference "WhisperKit" */;
+			productName = WhisperKit;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 736BA3553007DFB8005F6B14 /* Project object */;
 }
