@@ -14,7 +14,11 @@ export function VoiceLockedBar({
   onSend: () => void;
   sending?: boolean;
 }) {
-  const bars = levels.length > 0 ? levels : [0.14, 0.2, 0.16];
+  const slots = 44;
+  const bars = Array.from({ length: slots }, (_, i) => {
+    const sample = levels[levels.length - slots + i];
+    return typeof sample === "number" ? sample : 0.08;
+  });
   return (
     <div className="voice-locked" role="group" aria-label="Recording voice message">
       <button
@@ -34,7 +38,10 @@ export function VoiceLockedBar({
             <span
               key={index}
               className="voice-bar"
-              style={{ height: `${Math.max(12, Math.min(1, sample) * 100)}%` }}
+              style={{
+                height: `${Math.max(14, Math.min(1, sample) * 100)}%`,
+                ["--played" as string]: "1",
+              }}
             />
           ))}
         </div>

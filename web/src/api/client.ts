@@ -143,7 +143,11 @@ async function putBytes(path: string, token: string, data: Uint8Array): Promise<
   });
   let res: Response;
   try {
-    res = await fetch(`${apiBase()}${path}`, { method: "PUT", headers, body: copy });
+    res = await fetch(`${apiBase()}${path}`, {
+      method: "PUT",
+      headers,
+      body: new Blob([copy], { type: "application/octet-stream" }),
+    });
   } catch (err) {
     throw new ApiError("transport", err instanceof Error ? err.message : "Network error", 0);
   }

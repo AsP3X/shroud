@@ -231,11 +231,15 @@ export function Thread({
   }
 
   function dropletTarget() {
+    const bar = composeRef.current?.querySelector(".voice-locked")?.getBoundingClientRect();
+    if (bar) {
+      return { x: bar.left + bar.width / 2, y: bar.top + bar.height / 2, w: Math.max(160, bar.width - 24), h: bar.height };
+    }
     const shell = composeRef.current?.getBoundingClientRect();
     const mic = micRef.current?.getBoundingClientRect();
     const x = shell ? shell.left + shell.width / 2 : (mic ? mic.left + mic.width / 2 : 0);
-    const y = shell ? shell.top - 8 : (mic ? mic.top : 0);
-    const w = shell ? Math.min(shell.width - 96, 320) : 220;
+    const y = shell ? shell.top - 30 : (mic ? mic.top : 0);
+    const w = shell ? Math.min(shell.width - 24, 420) : 280;
     return { x, y, w: Math.max(160, w), h: 44 };
   }
 
@@ -243,18 +247,17 @@ export function Thread({
     if (recPhase.current === "locked") return;
     recPhase.current = "locked";
     const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    const target = dropletTarget();
+    setRecUi("locked");
     if (reduce) {
       setDroplet(null);
-      setRecUi("locked");
       return;
     }
-    setDroplet(target);
-    window.setTimeout(() => {
-      if (recPhase.current !== "locked") return;
-      setDroplet(null);
-      setRecUi("locked");
-    }, 380);
+    window.requestAnimationFrame(() => {
+      setDroplet(dropletTarget());
+      window.setTimeout(() => {
+        if (recPhase.current === "locked") setDroplet(null);
+      }, 380);
+    });
   }
 
   async function beginRecording(from: DOMRect) {
@@ -331,7 +334,7 @@ export function Thread({
   }
 
   async function sendRecording() {
-    if (recPhase.current !== "locked") return;
+    if (recPhase.current === "idle") return;
     recPhase.current = "idle";
     setRecUi("idle");
     setDroplet(null);
@@ -507,8 +510,8 @@ export function Thread({
         </p>
       ) : null}
 
-      <div className="compose-shell" ref={composeRef}>
-        {recUi === "locked" ? (
+      <div className={`compose-shell${recUi !== "idle" ? " recording" : ""}`} ref={composeRef}>
+        {recUi !== "idle" ? (
           <VoiceLockedBar
             elapsed={recSnap.elapsed}
             levels={recSnap.liveLevels}
@@ -516,7 +519,7 @@ export function Thread({
             onSend={() => void sendRecording()}
             sending={sending}
           />
-        ) : (
+        ) : null}
           <form
             className={draft.trim() ? "compose has-draft" : "compose"}
             onSubmit={submit}
@@ -565,11 +568,11 @@ export function Thread({
             </div>
             <button
               ref={micRef}
-              className={`icon-btn compose-mic${recUi === "armed" ? " recording" : ""}`}
+              className={`icon-btn compose-mic${recUi !== "idle" ? " recording" : ""}`}
               type="button"
               aria-label="Record a voice message"
               title="Click or drag up to record"
-              disabled={!canSend}
+              disabled={!canSend || recUi === "locked"}
               onPointerDown={onMicDown}
               onPointerMove={onMicMove}
               onPointerUp={onMicUp}
@@ -581,7 +584,6 @@ export function Thread({
               <Send size={16} />
             </button>
           </form>
-        )}
         {droplet ? (
           <div
             className="voice-droplet"

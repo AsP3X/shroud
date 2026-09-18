@@ -30,6 +30,7 @@ let snapshot: RecState = { recording: false, elapsed: 0, liveLevels: [] };
 let stream: MediaStream | null = null;
 let ctx: AudioContext | null = null;
 let processor: ScriptProcessorNode | null = null;
+let worklet: AudioWorkletNode | null = null;
 let analyser: AnalyserNode | null = null;
 let mediaRecorder: MediaRecorder | null = null;
 let recorderChunks: Blob[] = [];
@@ -39,7 +40,6 @@ let pcmRate = TARGET_RATE;
 let envelope: number[] = [];
 let startedAt = 0;
 let meterTimer: number | null = null;
-let meterBuf: Uint8Array<ArrayBuffer> | null = null;
 let sessionId = 0;
 
 function emit(): void {
@@ -47,36 +47,54 @@ function emit(): void {
   for (const fn of listeners) fn();
 }
 
-function pickRecorderMime(): string | null {
-  if (typeof MediaRecorder === "undefined") return null;
-  for (const type of ["audio/mp4", "audio/aac"]) {
-    if (MediaRecorder.isTypeSupported(type)) return type;
-  }
-  return null;
-}
-
-function rmsLevel(data: Uint8Array): number {
+function levelFromPcm(channel: Float32Array): number {
   let sum = 0;
-  for (let i = 0; i < data.length; i++) {
-    const n = (data[i] - 128) / 128;
-    sum += n * n;
-  }
-  const rms = Math.sqrt(sum / Math.max(1, data.length));
-  return Math.min(1, Math.pow(Math.min(1, rms * 3.2), 0.6));
+  for (let i = 0; i < channel.length; i++) sum += channel[i] * channel[i];
+  const rms = Math.sqrt(sum / Math.max(1, channel.length));
+  return Math.min(1, Math.pow(Math.min(1, rms * 4), 0.55));
 }
 
-function tickMeter(): void {
-  if (!analyser || !meterBuf || !startedAt) return;
-  analyser.getByteTimeDomainData(meterBuf);
-  const level = rmsLevel(meterBuf);
+function noteLevel(level: number): void {
   envelope.push(level);
   const live = snapshot.liveLevels.concat(level);
   snapshot = {
     recording: true,
-    elapsed: (performance.now() - startedAt) / 1000,
+    elapsed: startedAt ? (performance.now() - startedAt) / 1000 : snapshot.elapsed,
     liveLevels: live.length > LIVE_WINDOW ? live.slice(live.length - LIVE_WINDOW) : live,
   };
   emit();
+}
+
+function pushPcm(channel: Float32Array): void {
+  if (!snapshot.recording) return;
+  pcmChunks.push(new Float32Array(channel));
+  noteLevel(levelFromPcm(channel));
+}
+
+function tickElapsed(): void {
+  if (!startedAt) return;
+  snapshot = { ...snapshot, elapsed: (performance.now() - startedAt) / 1000 };
+  if (pcmChunks.length === 0 && analyser) {
+    const buf = new Uint8Array(new ArrayBuffer(analyser.fftSize));
+    analyser.getByteTimeDomainData(buf);
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) {
+      const n = (buf[i] - 128) / 128;
+      sum += n * n;
+    }
+    const rms = Math.sqrt(sum / Math.max(1, buf.length));
+    noteLevel(Math.min(1, Math.pow(Math.min(1, rms * 4), 0.55)));
+    return;
+  }
+  emit();
+}
+
+function pickRecorderMime(): string | null {
+  if (typeof MediaRecorder === "undefined") return null;
+  for (const type of ["audio/mp4", "audio/aac", "audio/webm;codecs=opus", "audio/webm"]) {
+    if (MediaRecorder.isTypeSupported(type)) return type;
+  }
+  return null;
 }
 
 function teardownGraph(stopRecorder = true): void {
@@ -92,6 +110,15 @@ function teardownGraph(stopRecorder = true): void {
       /* already disconnected */
     }
     processor = null;
+  }
+  if (worklet) {
+    try {
+      worklet.port.onmessage = null;
+      worklet.disconnect();
+    } catch {
+      /* already disconnected */
+    }
+    worklet = null;
   }
   if (analyser) {
     try {
@@ -115,7 +142,75 @@ function teardownGraph(stopRecorder = true): void {
   }
   stream?.getTracks().forEach((t) => t.stop());
   stream = null;
-  meterBuf = null;
+}
+
+async function attachCapture(context: AudioContext, source: MediaStreamAudioSourceNode): Promise<void> {
+  /* MediaStreamDestination keeps the graph alive without a muted GainNode
+     (Chrome skips processing when gain is 0, which killed both the meter and PCM). */
+  const sink = context.createMediaStreamDestination();
+  analyser = context.createAnalyser();
+  analyser.fftSize = 2048;
+  source.connect(analyser);
+  analyser.connect(sink);
+
+  try {
+    await context.audioWorklet.addModule("/voice-capture-worklet.js");
+    const node = new AudioWorkletNode(context, "shroud-capture", {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      channelCount: 1,
+    });
+    worklet = node;
+    node.port.onmessage = (event) => {
+      const data = event.data;
+      if (data instanceof Float32Array) pushPcm(data);
+      else if (data instanceof ArrayBuffer) pushPcm(new Float32Array(data));
+    };
+    source.connect(node);
+    node.connect(sink);
+  } catch {
+    const proc = context.createScriptProcessor(2048, 1, 1);
+    processor = proc;
+    source.connect(proc);
+    proc.connect(sink);
+    proc.onaudioprocess = (event) => {
+      pushPcm(event.inputBuffer.getChannelData(0));
+    };
+  }
+}
+
+async function blobToWav(blob: Blob, _fallbackRate: number): Promise<Uint8Array | null> {
+  try {
+    const raw = await blob.arrayBuffer();
+    const tmp = new AudioContext();
+    try {
+      const decoded = await tmp.decodeAudioData(raw.slice(0));
+      const channel = decoded.getChannelData(0);
+      const resampled = resample(channel, decoded.sampleRate, TARGET_RATE);
+      return encodeWav(resampled, TARGET_RATE);
+    } finally {
+      void tmp.close();
+    }
+  } catch {
+    if (blob.size < 64) return null;
+    /* Last resort: ship the native container (may not play on iOS). */
+    return new Uint8Array(await blob.arrayBuffer());
+  }
+}
+
+function wavFromPcm(pcm: Float32Array[], rate: number): Uint8Array | null {
+  let total = 0;
+  for (const part of pcm) total += part.length;
+  if (total === 0) return null;
+  const merged = new Float32Array(total);
+  let offset = 0;
+  for (const part of pcm) {
+    merged.set(part, offset);
+    offset += part.length;
+  }
+  const resampled = resample(merged, rate, TARGET_RATE);
+  const data = encodeWav(resampled, TARGET_RATE);
+  return data.length > 44 ? data : null;
 }
 
 export function getVoiceRecorder(): RecState {
@@ -130,9 +225,7 @@ export function subscribeVoiceRecorder(listener: Listener): () => void {
 export async function startVoiceRecord(): Promise<boolean> {
   if (snapshot.recording) return true;
   const id = ++sessionId;
-  const media = await navigator.mediaDevices.getUserMedia({
-    audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
-  });
+  const media = await navigator.mediaDevices.getUserMedia({ audio: true });
   if (id !== sessionId) {
     media.getTracks().forEach((t) => t.stop());
     return false;
@@ -148,43 +241,35 @@ export async function startVoiceRecord(): Promise<boolean> {
       teardownGraph();
       return false;
     }
-    const source = ctx.createMediaStreamSource(stream);
-    analyser = ctx.createAnalyser();
-    analyser.fftSize = 2048;
-    analyser.smoothingTimeConstant = 0.4;
-    source.connect(analyser);
-    meterBuf = new Uint8Array(new ArrayBuffer(analyser.fftSize));
-
-    const mime = pickRecorderMime();
-    recorderChunks = [];
-    recorderMime = mime ?? "audio/wav";
     pcmChunks = [];
     pcmRate = ctx.sampleRate;
     envelope = [];
+    recorderChunks = [];
     startedAt = performance.now();
     snapshot = { recording: true, elapsed: 0, liveLevels: [] };
+    const source = ctx.createMediaStreamSource(stream);
+    await attachCapture(ctx, source);
+    if (id !== sessionId) {
+      teardownGraph();
+      return false;
+    }
+    pcmRate = ctx.sampleRate;
 
-    if (mime) {
-      mediaRecorder = new MediaRecorder(stream, { mimeType: mime });
+    const mime = pickRecorderMime();
+    recorderMime = mime ?? "";
+    if (typeof MediaRecorder !== "undefined") {
+      mediaRecorder = mime ? new MediaRecorder(media, { mimeType: mime }) : new MediaRecorder(media);
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) recorderChunks.push(event.data);
       };
-      mediaRecorder.start();
-    } else {
-      const proc = ctx.createScriptProcessor(4096, 1, 1);
-      processor = proc;
-      const mute = ctx.createGain();
-      mute.gain.value = 0;
-      analyser.connect(proc);
-      proc.connect(mute);
-      mute.connect(ctx.destination);
-      proc.onaudioprocess = (event) => {
-        if (!snapshot.recording) return;
-        pcmChunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
-      };
+      try {
+        mediaRecorder.start(100);
+      } catch {
+        mediaRecorder.start();
+      }
     }
 
-    meterTimer = window.setInterval(tickMeter, METER_MS);
+    meterTimer = window.setInterval(tickElapsed, METER_MS);
     emit();
     return true;
   } catch (err) {
@@ -201,9 +286,9 @@ export async function startVoiceRecord(): Promise<boolean> {
 export function cancelVoiceRecord(): void {
   sessionId += 1;
   teardownGraph();
-  recorderChunks = [];
   pcmChunks = [];
   envelope = [];
+  recorderChunks = [];
   startedAt = 0;
   snapshot = { recording: false, elapsed: 0, liveLevels: [] };
   emit();
@@ -212,71 +297,66 @@ export function cancelVoiceRecord(): void {
 export async function finishVoiceRecord(): Promise<VoiceTake | null> {
   const duration = snapshot.elapsed;
   const captured = downsampleEnvelope(envelope, VOICE_WAVEFORM_BUCKETS);
-  const mime = recorderMime;
   const pcm = pcmChunks.slice();
   const rate = pcmRate;
   const rec = mediaRecorder;
+  const mime = recorderMime || rec?.mimeType || "";
 
-  let recorded: Uint8Array | null = null;
+  let recordedBlob: Blob | null = null;
   if (rec && rec.state !== "inactive") {
-    recorded = await new Promise((resolve) => {
+    recordedBlob = await new Promise((resolve) => {
       const chunks = recorderChunks.slice();
-      const done = (data: Uint8Array) => resolve(data);
-      const timer = window.setTimeout(() => done(new Uint8Array()), 3000);
+      const timer = window.setTimeout(() => {
+        resolve(chunks.length ? new Blob(chunks, { type: mime }) : null);
+      }, 2500);
       rec.ondataavailable = (event) => {
         if (event.data.size > 0) chunks.push(event.data);
       };
       rec.onstop = () => {
         window.clearTimeout(timer);
-        void new Blob(chunks, { type: mime }).arrayBuffer().then(
-          (buf) => done(new Uint8Array(buf)),
-          () => done(new Uint8Array()),
-        );
+        resolve(chunks.length ? new Blob(chunks, { type: mime || rec.mimeType }) : null);
       };
       try {
         rec.stop();
       } catch {
         window.clearTimeout(timer);
-        done(new Uint8Array());
+        resolve(chunks.length ? new Blob(chunks, { type: mime }) : null);
       }
     });
   }
 
   teardownGraph(false);
-  recorderChunks = [];
   pcmChunks = [];
   envelope = [];
+  recorderChunks = [];
   startedAt = 0;
   snapshot = { recording: false, elapsed: 0, liveLevels: [] };
   emit();
 
   if (duration < VOICE_MIN_DURATION) return null;
 
-  if (recorded && recorded.length > 0) {
+  const fromPcm = wavFromPcm(pcm, rate);
+  if (fromPcm) {
     return {
-      data: recorded,
-      mime: mime || "audio/mp4",
+      data: fromPcm,
+      mime: "audio/wav",
       durationMs: Math.max(1, Math.round(duration * 1000)),
       waveform: captured,
     };
   }
 
-  let total = 0;
-  for (const part of pcm) total += part.length;
-  if (total === 0) return null;
-  const merged = new Float32Array(total);
-  let offset = 0;
-  for (const part of pcm) {
-    merged.set(part, offset);
-    offset += part.length;
+  if (recordedBlob && recordedBlob.size > 64) {
+    const wav = await blobToWav(recordedBlob, rate);
+    if (wav && wav.length > 44) {
+      const looksWav = wav[0] === 0x52 && wav[1] === 0x49;
+      return {
+        data: wav,
+        mime: looksWav ? "audio/wav" : mime || recordedBlob.type || "audio/webm",
+        durationMs: Math.max(1, Math.round(duration * 1000)),
+        waveform: captured,
+      };
+    }
   }
-  const resampled = resample(merged, rate, TARGET_RATE);
-  const data = encodeWav(resampled, TARGET_RATE);
-  if (!data.length) return null;
-  return {
-    data,
-    mime: "audio/wav",
-    durationMs: Math.max(1, Math.round(duration * 1000)),
-    waveform: captured,
-  };
+
+  return null;
 }

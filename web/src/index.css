@@ -1040,7 +1040,8 @@ a { color: var(--accent-text); text-decoration: none; }
   background: var(--accent); color: #fff;
   transform: scale(1.18);
 }
-.compose-shell { position: relative; flex-shrink: 0; }
+.compose-shell { position: relative; flex-shrink: 0; display: flex; flex-direction: column; }
+.compose-shell.recording .compose { border-top-color: transparent; }
 
 .voice-droplet {
   position: fixed; z-index: 24;
@@ -1058,7 +1059,7 @@ a { color: var(--accent-text); text-decoration: none; }
 
 .voice-locked {
   display: flex; align-items: center; gap: 10px;
-  padding: 8px 14px;
+  padding: 8px 14px 4px;
   background: var(--bg);
   border-top: 1px solid var(--separator);
   animation: voice-locked-in 0.32s var(--ease);
