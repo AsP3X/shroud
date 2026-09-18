@@ -5,7 +5,8 @@ import Foundation
 /// Harmony called WhisperKit from a pile of static helpers, so swapping models or adding a
 /// second backend meant rewriting every call site. A new engine is a new type that satisfies
 /// this protocol; `TranscriptionSession` is the single owner.
-protocol TranscriptionEngine: Sendable {
+/// `nonisolated`: engines are actors of their own, not main-actor types (the app's default).
+nonisolated protocol TranscriptionEngine: Sendable {
     var id: String { get }
 
     func prepare(

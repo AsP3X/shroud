@@ -873,7 +873,10 @@ struct ConversationView: View {
                     // Runs after the bubble is on screen (see `sendVoice`), so a long recording
                     // appears immediately instead of waiting on the transcriber.
                     transcriptProvider: { messageID in
-                        try? await VoiceTranscriber.transcribe(
+                        // Never hold a note back for the one-time Whisper download (hundreds of
+                        // megabytes); it keeps going in the background since recording began.
+                        guard await VoiceTranscriber.modelIsInstalled() else { return nil }
+                        return try? await VoiceTranscriber.transcribe(
                             audioData: take.data,
                             contextualStrings: transcriptionHints,
                             conversationID: peerUserID,

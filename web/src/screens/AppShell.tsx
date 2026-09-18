@@ -29,7 +29,6 @@ import {
   loadHistory,
   peerIdForMessage,
   previewLine,
-  rememberPreview,
   sendText,
   sendVoice,
   type ChatMessage,
@@ -42,11 +41,8 @@ import { clearSession, setLocked } from "../session";
 
 type PeerRef = { id: string; username: string };
 
-function mergeMessages(
-  primary: ChatMessage[],
-  extra: ChatMessage[],
-  preview?: { me: string; peer: string },
-): ChatMessage[] {
+/** Pure (it runs inside `setThread` updaters, which React may call twice). */
+function mergeMessages(primary: ChatMessage[], extra: ChatMessage[]): ChatMessage[] {
   const byId = new Map<string, ChatMessage>();
   for (const m of primary) byId.set(m.id, m);
   for (const m of extra) if (!byId.has(m.id)) byId.set(m.id, m);
@@ -62,16 +58,8 @@ function mergeMessages(
     const t = a.createdAt.localeCompare(b.createdAt);
     return t !== 0 ? t : a.id.localeCompare(b.id);
   });
-  const applied = applyAnnotations(sorted);
-  if (preview) {
-    const last = applied[applied.length - 1];
-    const before = sorted.filter((m) => m.kind !== "annotation");
-    const prevLast = before[before.length - 1];
-    if (last?.kind === "voice" && last.transcript && last.transcript !== prevLast?.transcript) {
-      rememberPreview(preview.me, preview.peer, last);
-    }
-  }
-  return applied;
+  // A transcript shared by the peer lands here as an annotation for a voice note.
+  return applyAnnotations(sorted);
 }
 
 export function AppShell({ session }: { session: Session }) {
@@ -277,13 +265,7 @@ export function AppShell({ session }: { session: Session }) {
               const open = selectedRef.current;
               setPreviewRev((n) => n + 1);
               if (open && open.id.toLowerCase() === peer.toLowerCase()) {
-                setThread((prev) =>
-                  mergeMessages(prev, [msg], { me: session.user.id, peer }),
-                );
-              } else {
-                const folded = applyAnnotations([msg]);
-                const voice = folded.find((m) => m.kind === "voice" && m.transcript?.trim());
-                if (voice) rememberPreview(session.user.id, peer, voice);
+                setThread((prev) => mergeMessages(prev, [msg]));
               }
             } catch {
               /* roster refresh already ran; next poll/WS event retries */
@@ -326,7 +308,9 @@ export function AppShell({ session }: { session: Session }) {
         .then((extra) => {
           if (cancelled || extra.length === 0) return;
           if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
-          setThread((prev) => mergeMessages(prev, extra, { me: session.user.id, peer: peerId }));
+          setThread((prev) => mergeMessages(prev, extra));
+          // A shared transcript may have filled in the chat preview.
+          setPreviewRev((n) => n + 1);
         })
         .catch(() => {
           /* keep current thread */
@@ -449,13 +433,7 @@ export function AppShell({ session }: { session: Session }) {
         material: identity,
       });
       if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
-      setThread((prev) =>
-        mergeMessages(
-          prev.filter((m) => m.id !== localId),
-          [msg],
-          { me: session.user.id, peer: peerId },
-        ),
-      );
+      setThread((prev) => mergeMessages(prev.filter((m) => m.id !== localId), [msg]));
       setPreviewRev((n) => n + 1);
       await refresh();
     } catch (err) {
@@ -501,13 +479,7 @@ export function AppShell({ session }: { session: Session }) {
         take,
       });
       if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
-      setThread((prev) =>
-        mergeMessages(
-          prev.filter((m) => m.id !== localId),
-          [msg],
-          { me: session.user.id, peer: peerId },
-        ),
-      );
+      setThread((prev) => mergeMessages(prev.filter((m) => m.id !== localId), [msg]));
       setPreviewRev((n) => n + 1);
       await refresh();
     } catch (err) {

@@ -10,6 +10,8 @@
  * device and share it back as an annotation.
  */
 
+import { clampTranscript } from "../crypto/mediaPayload";
+
 type RecognitionOptions = { langs: string[]; processLocally: boolean };
 type Availability = "unavailable" | "downloadable" | "downloading" | "available";
 
@@ -44,7 +46,13 @@ const FATAL_ERRORS = new Set([
   "language-not-supported",
   "audio-capture",
 ]);
-const MAX_RESTARTS = 3;
+/**
+ * Chrome ends a session after a stretch of silence, so a long note with pauses needs
+ * many restarts. Only sessions that die almost immediately count against this — that
+ * is the loop we guard against, not a talkative user.
+ */
+const MAX_QUICK_FAILURES = 3;
+const QUICK_FAILURE_MS = 1000;
 
 function onDeviceRecognition(): RecognitionConstructor | null {
   const scope = window as unknown as {
@@ -109,7 +117,8 @@ export async function startLiveTranscript(track: MediaStreamTrack): Promise<Live
   let session: string[] = [];
   let done = false;
   let fatal = false;
-  let restarts = 0;
+  let quickFailures = 0;
+  let sessionStartedAt = 0;
   let settle: () => void = () => {};
   const ended = new Promise<void>((resolve) => {
     settle = resolve;
@@ -132,11 +141,12 @@ export async function startLiveTranscript(track: MediaStreamTrack): Promise<Live
     if (FATAL_ERRORS.has(event.error)) fatal = true;
   };
   recognition.onend = () => {
-    if (!done && !fatal && restarts < MAX_RESTARTS) {
-      restarts += 1;
+    if (performance.now() - sessionStartedAt < QUICK_FAILURE_MS) quickFailures += 1;
+    if (!done && !fatal && quickFailures < MAX_QUICK_FAILURES && input.readyState === "live") {
       committed.push(...session.filter(Boolean));
       session = [];
       try {
+        sessionStartedAt = performance.now();
         recognition.start(input);
         return;
       } catch {
@@ -147,6 +157,7 @@ export async function startLiveTranscript(track: MediaStreamTrack): Promise<Live
   };
 
   try {
+    sessionStartedAt = performance.now();
     recognition.start(input);
   } catch {
     input.stop();
@@ -179,7 +190,7 @@ export async function startLiveTranscript(track: MediaStreamTrack): Promise<Live
         }
         close();
       }
-      const text = committed.join(" ").replace(/\s+/g, " ").trim().slice(0, 8000);
+      const text = clampTranscript(committed.join(" ").replace(/\s+/g, " "));
       return text || null;
     },
     cancel() {

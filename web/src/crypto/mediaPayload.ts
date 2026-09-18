@@ -40,6 +40,31 @@ export function isVoicePayload(payload: MediaPayload): boolean {
   return payload.t === "voice";
 }
 
+/**
+ * Largest transcript sealed or accepted, in UTF-8 bytes (matches iOS
+ * `MessageAnnotation.maxTranscriptBytes`). Every message is sealed twice and
+ * base64-expanded, so 16 KB of text is ~44 KB on the wire — inside the server's
+ * 64 KB limit in any script, where 8,000 CJK characters already are not.
+ */
+export const MAX_TRANSCRIPT_BYTES = 16 * 1024;
+
+/** Trims to `MAX_TRANSCRIPT_BYTES` at a code-point boundary, marking the cut with "…". */
+export function clampTranscript(text: string): string {
+  const trimmed = text.trim();
+  if (new TextEncoder().encode(trimmed).length <= MAX_TRANSCRIPT_BYTES) return trimmed;
+  const budget = MAX_TRANSCRIPT_BYTES - 3; // "…" is three bytes
+  let used = 0;
+  let kept = "";
+  for (const char of trimmed) {
+    const code = char.codePointAt(0) ?? 0;
+    const size = code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+    if (used + size > budget) break;
+    used += size;
+    kept += char;
+  }
+  return `${kept.trimEnd()}…`;
+}
+
 export function encodeWaveform(buckets: number[]): string | null {
   if (!buckets.length) return null;
   let bin = "";

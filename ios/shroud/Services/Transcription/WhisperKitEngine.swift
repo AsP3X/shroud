@@ -16,18 +16,19 @@ actor WhisperKitEngine: TranscriptionEngine {
     ) async throws {
         if preparedModel == model, kit != nil { return }
 
-        kit = nil
-        preparedModel = nil
-
         do {
+            let storage = Self.modelStorage()
             let folder = try await WhisperKit.download(
                 variant: model.whisperKitName,
+                downloadBase: storage,
                 progressCallback: { p in
                     progress?(p.fractionCompleted)
                 }
             )
-            let config = Self.makeConfig(modelFolder: folder.path)
-            kit = try await WhisperKit(config)
+            let config = Self.makeConfig(modelFolder: folder.path, downloadBase: storage)
+            let loaded = try await WhisperKit(config)
+            // Swap only once the new model is ready, so a switch never strands a running note.
+            kit = loaded
             preparedModel = model
         } catch {
             throw TranscriptionEngineError.modelUnavailable
@@ -99,8 +100,40 @@ actor WhisperKitEngine: TranscriptionEngine {
         )
     }
 
-    private static func makeConfig(modelFolder: String) -> WhisperKitConfig {
+    /// Where the model (and its tokenizer) live: Application Support, excluded from backup.
+    ///
+    /// Human: WhisperKit's default is `Documents/huggingface`, which iOS backs up to iCloud —
+    /// several hundred megabytes that can always be downloaded again, and Apple's storage
+    /// guidelines reject that. Earlier builds used the default, so an existing download is moved
+    /// here instead of fetched again.
+    nonisolated static func modelStorage() -> URL? {
+        let files = FileManager.default
+        guard let support = files.urls(for: .applicationSupportDirectory, in: .userDomainMask).first,
+              let documents = files.urls(for: .documentDirectory, in: .userDomainMask).first
+        else { return nil }
+        return modelStorage(support: support, documents: documents)
+    }
+
+    /// `modelStorage()` with the directories injected, so tests never touch a real download.
+    nonisolated static func modelStorage(support: URL, documents: URL) -> URL {
+        let files = FileManager.default
+        var base = support.appendingPathComponent("huggingface", isDirectory: true)
+        let legacy = documents.appendingPathComponent("huggingface", isDirectory: true)
+        if !files.fileExists(atPath: base.path), files.fileExists(atPath: legacy.path) {
+            try? files.createDirectory(at: support, withIntermediateDirectories: true)
+            try? files.moveItem(at: legacy, to: base)
+        }
+        try? files.createDirectory(at: base, withIntermediateDirectories: true)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? base.setResourceValues(values)
+        return base
+    }
+
+    nonisolated private static func makeConfig(modelFolder: String, downloadBase: URL?) -> WhisperKitConfig {
         let config = WhisperKitConfig(
+            // The tokenizer is fetched here too (WhisperKit falls back to Documents otherwise).
+            downloadBase: downloadBase,
             modelFolder: modelFolder,
             verbose: false,
             logLevel: .error,
@@ -119,7 +152,7 @@ actor WhisperKitEngine: TranscriptionEngine {
         return config
     }
 
-    private static func output(from results: [TranscriptionResult]) -> TranscriptionOutput {
+    nonisolated private static func output(from results: [TranscriptionResult]) -> TranscriptionOutput {
         let merged = TranscriptionUtilities.mergeTranscriptionResults(results).text
         let text = merged.trimmingCharacters(in: .whitespacesAndNewlines)
         let language = results.first.map { String($0.language.prefix(2)).lowercased() }
@@ -134,7 +167,7 @@ actor WhisperKitEngine: TranscriptionEngine {
         return TranscriptionOutput(text: text, language: language, confidence: confidence)
     }
 
-    private static func resample(_ samples: [Float], from: Double, to: Double) -> [Float] {
+    nonisolated private static func resample(_ samples: [Float], from: Double, to: Double) -> [Float] {
         if samples.isEmpty || from == to { return samples }
         let ratio = from / to
         let count = max(1, Int(Double(samples.count) / ratio))

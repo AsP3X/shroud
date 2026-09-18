@@ -63,10 +63,23 @@ struct MessageAnnotationTests {
 
     @Test
     func capsAnOverlongTranscript() throws {
-        let long = String(repeating: "a", count: MessageAnnotation.maxTranscriptLength + 500)
+        let long = String(repeating: "a", count: MessageAnnotation.maxTranscriptBytes + 500)
         let data = try JSONEncoder().encode(MessageAnnotation.transcript(long, for: UUID()))
         let parsed = try #require(MessageAnnotation.parseTranscript(data))
-        #expect(parsed.text.count == MessageAnnotation.maxTranscriptLength)
+        #expect(parsed.text.utf8.count <= MessageAnnotation.maxTranscriptBytes)
+        #expect(parsed.text.hasSuffix("…"))
+    }
+
+    /// The cap is in bytes: 8,000 CJK characters are 24 KB and would push a sealed message to
+    /// the edge of the server limit, so they must be cut too — at a character boundary.
+    @Test
+    func capCountsBytesNotCharacters() {
+        let cjk = String(repeating: "語", count: 8000)
+        let clamped = MessageAnnotation.clampTranscript(cjk)
+        #expect(clamped.utf8.count <= MessageAnnotation.maxTranscriptBytes)
+        #expect(clamped.hasSuffix("…"))
+        #expect(clamped.dropLast().allSatisfy { $0 == "語" }, "never splits a character")
+        #expect(MessageAnnotation.clampTranscript("  short  ") == "short")
     }
 
     // MARK: - Folding into a thread

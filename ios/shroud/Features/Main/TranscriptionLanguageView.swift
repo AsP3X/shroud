@@ -134,7 +134,9 @@ struct TranscriptionLanguageView: View {
                 row(
                     title: TranscriptionLanguage.displayName(for: locale),
                     subtitle: nil,
-                    isSelected: selection?.identifier(.bcp47) == locale.identifier(.bcp47)
+                    // By language, not full tag: overrides saved before Whisper carry a region
+                    // ("de-DE") while this list is plain languages ("de").
+                    isSelected: selection?.language.languageCode == locale.language.languageCode
                 ) {
                     choose(locale)
                 }

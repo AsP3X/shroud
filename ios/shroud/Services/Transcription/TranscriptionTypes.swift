@@ -2,7 +2,7 @@ import Foundation
 
 /// Named Whisper weights. Adding a case is how we ship a better model later without
 /// touching chat or recording code.
-enum TranscriptionModelID: String, CaseIterable, Sendable {
+nonisolated enum TranscriptionModelID: String, CaseIterable, Sendable {
     case base
     case small
     case medium
@@ -24,7 +24,7 @@ enum TranscriptionModelID: String, CaseIterable, Sendable {
 
 /// Decode knobs that differ between a finished voice note and a live-call chunk.
 /// Harmony buried these in the helper; keeping them named is what makes the engine tunable.
-struct TranscriptionProfile: Sendable, Equatable {
+nonisolated struct TranscriptionProfile: Sendable, Equatable {
     var compressionRatioThreshold: Float
     var logProbThreshold: Float
     var firstTokenLogProbThreshold: Float
@@ -50,7 +50,7 @@ struct TranscriptionProfile: Sendable, Equatable {
     )
 }
 
-struct TranscriptionRequest: Sendable {
+nonisolated struct TranscriptionRequest: Sendable {
     /// BCP-47 language code (`de`, `en`). Nil means the engine should detect.
     var language: String?
     /// Contact names and other terms to bias toward. Engines may ignore this.
@@ -72,13 +72,13 @@ struct TranscriptionRequest: Sendable {
     }
 }
 
-struct TranscriptionOutput: Sendable, Equatable {
+nonisolated struct TranscriptionOutput: Sendable, Equatable {
     var text: String
     var language: String?
     var confidence: Double
 }
 
-enum TranscriptionEngineError: Error, LocalizedError, Equatable {
+nonisolated enum TranscriptionEngineError: Error, LocalizedError, Equatable {
     case unavailable
     case modelUnavailable
     case failed(String)

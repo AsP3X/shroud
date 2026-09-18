@@ -4,6 +4,8 @@ const prefix = "shroud.pt.";
 const previewPrefix = "shroud.preview.";
 
 export type ChatPreview = {
+  /** Message the preview shows; lets a transcript that arrives later fill it in. */
+  id?: string;
   text: string;
   at: string;
   isMine: boolean;

@@ -18,11 +18,33 @@ nonisolated struct MessageAnnotation: Codable, Equatable, Sendable {
 
     static let contentType = "annotation"
     static let kindTranscript = "transcript"
-    /// Longest transcript accepted from a peer; a two-minute note is far below this.
-    static let maxTranscriptLength = 8000
+    /// Largest transcript we seal or accept, in UTF-8 bytes (~18 minutes of English speech).
+    ///
+    /// Human: Every message is sealed twice (ratchet + our own copy) and base64-expanded, so
+    /// 16 KB of text is ~44 KB on the wire — safely inside the server's 64 KB message limit in
+    /// any script. A character cap is not enough: 8,000 CJK characters already brush the limit,
+    /// and an over-long transcript would make the whole voice message fail to send.
+    static let maxTranscriptBytes = 16 * 1024
+
+    /// Trims `text` to `maxTranscriptBytes` at a character boundary, marking the cut with "…".
+    static func clampTranscript(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.utf8.count > maxTranscriptBytes else { return trimmed }
+        let ellipsis = "…"
+        let budget = maxTranscriptBytes - ellipsis.utf8.count
+        var used = 0
+        var kept = ""
+        for character in trimmed {
+            let size = character.utf8.count
+            if used + size > budget { break }
+            used += size
+            kept.append(character)
+        }
+        return kept.trimmingCharacters(in: .whitespacesAndNewlines) + ellipsis
+    }
 
     static func transcript(_ text: String, for messageID: UUID) -> MessageAnnotation {
-        MessageAnnotation(t: kindTranscript, r: messageID.uuidString.lowercased(), c: text)
+        MessageAnnotation(t: kindTranscript, r: messageID.uuidString.lowercased(), c: clampTranscript(text))
     }
 
     /// The shared transcript and the voice message it belongs to, or nil if `plaintext` isn't one.
@@ -31,9 +53,7 @@ nonisolated struct MessageAnnotation: Codable, Equatable, Sendable {
               annotation.t == kindTranscript,
               let messageID = UUID(uuidString: annotation.r)
         else { return nil }
-        let text = String(
-            annotation.c.trimmingCharacters(in: .whitespacesAndNewlines).prefix(maxTranscriptLength)
-        )
+        let text = clampTranscript(annotation.c)
         return text.isEmpty ? nil : (messageID, text)
     }
 

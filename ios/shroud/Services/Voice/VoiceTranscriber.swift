@@ -75,15 +75,12 @@ final class TranscriptionModelInstall {
 /// lives under `Services/Transcription`.
 enum VoiceTranscriber {
     enum TranscribeError: Error, LocalizedError {
-        case permissionDenied
         case unavailable
         case modelUnavailable
         case failed(String)
 
         var errorDescription: String? {
             switch self {
-            case .permissionDenied:
-                "Speech recognition permission is required."
             case .unavailable:
                 TranscriptionEngineError.unavailable.errorDescription
             case .modelUnavailable:
@@ -100,7 +97,7 @@ enum VoiceTranscriber {
         conversationID: UUID? = nil,
         tracking: UUID? = nil
     ) async throws -> String {
-        await TranscriptionModelInstall.shared.begin(messageID: tracking)
+        TranscriptionModelInstall.shared.begin(messageID: tracking)
         defer { Task { @MainActor in TranscriptionModelInstall.shared.finish() } }
 
         do {
@@ -119,7 +116,7 @@ enum VoiceTranscriber {
             throw TranscribeError.modelUnavailable
         }
 
-        await TranscriptionModelInstall.shared.transcribing()
+        TranscriptionModelInstall.shared.transcribing()
 
         let languageHint = TranscriptionLanguage.override.flatMap {
             $0.language.languageCode?.identifier
@@ -173,9 +170,9 @@ enum VoiceTranscriber {
 
     @discardableResult
     static func prepareModel(locale: Locale? = nil) async -> Bool {
-        let alreadyBusy = await MainActor.run { TranscriptionModelInstall.shared.isBusy }
+        let alreadyBusy = TranscriptionModelInstall.shared.isBusy
         if !alreadyBusy {
-            await TranscriptionModelInstall.shared.begin(messageID: nil)
+            TranscriptionModelInstall.shared.begin(messageID: nil)
         }
         defer {
             if !alreadyBusy {
@@ -192,7 +189,7 @@ enum VoiceTranscriber {
                     )
                 }
             }
-            await TranscriptionModelInstall.shared.transcribing()
+            TranscriptionModelInstall.shared.transcribing()
             return true
         } catch {
             return false

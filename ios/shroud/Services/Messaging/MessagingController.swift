@@ -2386,7 +2386,9 @@ final class MessagingController {
             resolved = (await transcriptProvider(optimisticID))?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        let trimmedTranscript = (resolved?.isEmpty == false) ? resolved : nil
+        // Capped so a long note's transcript can never push the sealed message past the
+        // server's size limit (which would fail the whole voice message).
+        let trimmedTranscript = resolved.map(MessageAnnotation.clampTranscript).flatMap { $0.isEmpty ? nil : $0 }
         let displayText = trimmedTranscript ?? "Voice message"
 
         if isNotesChat(peerUserID) {
@@ -2527,10 +2529,7 @@ final class MessagingController {
     /// means the other side can transcribe for themselves. Nothing is shared for Notes or for a
     /// note the server hasn't keyed yet (its id would mean nothing to the other side).
     func shareTranscript(_ transcript: String, forVoiceMessage messageID: UUID, peerUserID: UUID) async {
-        let text = String(
-            transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-                .prefix(MessageAnnotation.maxTranscriptLength)
-        )
+        let text = MessageAnnotation.clampTranscript(transcript)
         guard !text.isEmpty,
               var thread = threads[peerUserID],
               let index = thread.firstIndex(where: { $0.id == messageID }),
