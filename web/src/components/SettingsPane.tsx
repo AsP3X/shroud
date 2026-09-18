@@ -15,6 +15,7 @@ export function SettingsPane({
   shareLink,
   onLogout,
   onLockNow,
+  onShowQr,
   onCacheCleared,
 }: {
   session: Session;
@@ -22,6 +23,7 @@ export function SettingsPane({
   shareLink: string;
   onLogout: () => void;
   onLockNow: () => void;
+  onShowQr: () => void;
   onCacheCleared: () => void;
 }) {
   const [route, setRoute] = useState<SettingsRoute | null>(null);
@@ -102,6 +104,7 @@ export function SettingsPane({
             deviceCount={deviceCount}
             onNavigate={setRoute}
             onLogout={() => setConfirmLogout(true)}
+            onShowQr={onShowQr}
           />
         </div>
       )}

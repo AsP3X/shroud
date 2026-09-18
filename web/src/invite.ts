@@ -14,6 +14,28 @@ export function normalizeShareCode(raw: string): string {
     .toUpperCase();
 }
 
+/** Same host iOS uses for official / local-dev QR payloads. */
+export const OFFICIAL_SHARE_HOST = "shroud.corespace.de";
+
+/**
+ * Same shape iOS encodes (`ContactInviteParser.shareURL`). Localhost has no
+ * public web front, so we fall back to the official share host — otherwise a
+ * phone scanning this QR would try to open 127.0.0.1.
+ */
+export function shareUrl(code: string, origin = window.location.origin): string {
+  const normalized = normalizeShareCode(code);
+  let host = "";
+  try {
+    host = new URL(origin).hostname;
+  } catch {
+    /* fall through to official */
+  }
+  if (!host || host === "localhost" || host === "127.0.0.1") {
+    return `https://${OFFICIAL_SHARE_HOST}/u/${normalized}`;
+  }
+  return `${origin.replace(/\/$/, "")}/u/${normalized}`;
+}
+
 function isShareCode(code: string): boolean {
   return code.length >= 8 && code.length <= 16 && /^[A-Z0-9]+$/.test(code);
 }

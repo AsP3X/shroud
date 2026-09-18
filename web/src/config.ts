@@ -32,9 +32,12 @@ export function deviceName(): string {
   return `${browser} on ${os}`;
 }
 
+/** First letters of the first two words, else the first two letters. Splits on
+ *  `_ . -` as well as spaces so a username like `niklas_v` matches its display
+ *  name "Niklas V" (iOS `AvatarView.initials` only splits on whitespace). */
 export function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const parts = name.trim().split(/[\s_.@-]+/).filter(Boolean);
   if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  if (parts.length === 1) return [...parts[0]].slice(0, 2).join("").toUpperCase();
+  return ([...parts[0]][0] + [...parts[1]][0]).toUpperCase();
 }

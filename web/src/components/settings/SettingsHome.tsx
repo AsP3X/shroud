@@ -12,6 +12,7 @@ import {
   Lock,
   Palette,
   Phone,
+  QrCode,
   Server,
   User,
 } from "lucide-react";
@@ -43,6 +44,7 @@ export function SettingsHome({
   deviceCount,
   onNavigate,
   onLogout,
+  onShowQr,
 }: {
   session: Session;
   identity: IdentityMaterial | null;
@@ -50,6 +52,7 @@ export function SettingsHome({
   deviceCount: number | null;
   onNavigate: (route: SettingsRoute) => void;
   onLogout: () => void;
+  onShowQr: () => void;
 }) {
   const pref = useThemePref();
   const handle = `@${session.user.username}`;
@@ -95,6 +98,7 @@ export function SettingsHome({
           </span>
           <CopyButton value={shareLink} label="invite link" />
         </div>
+        <SettingsRow title="Show QR code" Icon={QrCode} tint="#6b6bf2" onClick={onShowQr} />
       </SettingsGroup>
 
       <SettingsCard>

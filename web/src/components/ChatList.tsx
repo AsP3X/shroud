@@ -1,4 +1,4 @@
-import { Search, SquarePen, X } from "lucide-react";
+import { QrCode, Search, SquarePen, X } from "lucide-react";
 import { Avatar } from "./Avatar";
 
 export type ListEntry = {
@@ -17,6 +17,7 @@ export function ChatList({
   onQueryChange,
   onAdd,
   addLabel,
+  onShowQr,
   loading,
   error,
   requests,
@@ -32,6 +33,8 @@ export function ChatList({
   onQueryChange: (value: string) => void;
   onAdd: () => void;
   addLabel: string;
+  /** Shown on Contacts, where iOS puts its QR button too. */
+  onShowQr?: () => void;
   loading: boolean;
   error: string | null;
   requests: RequestEntry[];
@@ -48,9 +51,22 @@ export function ChatList({
       <header className="pane-head">
         <div className="pane-title-row">
           <h1>{title}</h1>
-          <button type="button" className="icon-btn" aria-label={addLabel} title={addLabel} onClick={onAdd}>
-            <SquarePen size={18} />
-          </button>
+          <div className="pane-actions">
+            {onShowQr ? (
+              <button
+                type="button"
+                className="icon-btn accent"
+                aria-label="Show my QR code"
+                title="Show my QR code"
+                onClick={onShowQr}
+              >
+                <QrCode size={18} />
+              </button>
+            ) : null}
+            <button type="button" className="icon-btn" aria-label={addLabel} title={addLabel} onClick={onAdd}>
+              <SquarePen size={18} />
+            </button>
+          </div>
         </div>
         <div className="search">
           <Search size={15} aria-hidden="true" />

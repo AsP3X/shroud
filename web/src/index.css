@@ -61,8 +61,6 @@
   --shadow-md: 0 14px 40px rgba(0, 0, 0, 0.6);
   --skeleton: rgba(255, 255, 255, 0.07);
   --skeleton-shine: rgba(255, 255, 255, 0.13);
-  --avatar-bg: hsl(var(--avatar-h, 255) 42% 21%);
-  --avatar-fg: hsl(var(--avatar-h, 255) 84% 78%);
 }
 
 @media (prefers-color-scheme: light) {
@@ -98,8 +96,6 @@
     --shadow-md: 0 14px 40px rgba(15, 15, 30, 0.16);
     --skeleton: rgba(10, 10, 25, 0.07);
     --skeleton-shine: rgba(10, 10, 25, 0.03);
-    --avatar-bg: hsl(var(--avatar-h, 255) 76% 94%);
-    --avatar-fg: hsl(var(--avatar-h, 255) 48% 38%);
   }
 }
 
@@ -135,8 +131,6 @@
   --shadow-md: 0 14px 40px rgba(15, 15, 30, 0.16);
   --skeleton: rgba(10, 10, 25, 0.07);
   --skeleton-shine: rgba(10, 10, 25, 0.03);
-  --avatar-bg: hsl(var(--avatar-h, 255) 76% 94%);
-  --avatar-fg: hsl(var(--avatar-h, 255) 48% 38%);
 }
 
 /* ------------------------------------------------------------------ base -- */
@@ -639,6 +633,7 @@ a { color: var(--accent-text); text-decoration: none; }
   display: flex; flex-direction: column; gap: 12px;
 }
 .pane-title-row { display: flex; justify-content: space-between; align-items: center; }
+.pane-actions { display: flex; gap: 6px; }
 .pane-title-row h1 {
   font-size: var(--fs-2xl); margin: 0; text-align: left;
   font-weight: 700; letter-spacing: -0.02em;
@@ -744,9 +739,11 @@ a { color: var(--accent-text); text-decoration: none; }
 .avatar {
   position: relative; flex-shrink: 0;
   border-radius: var(--r-full);
-  background: var(--avatar-bg); color: var(--avatar-fg);
+  background: linear-gradient(180deg, var(--avatar-top, #7c7aff), var(--avatar-bottom, #5e5ce6));
+  color: #fff;
   display: grid; place-items: center;
-  font-weight: 650; letter-spacing: 0.01em;
+  font-weight: 600; letter-spacing: 0.01em;
+  text-shadow: 0 1px 1.5px rgb(0 0 0 / 0.18);
   user-select: none;
 }
 .avatar-sm { width: 32px; height: 32px; font-size: var(--fs-xs); }
@@ -1177,6 +1174,147 @@ a { color: var(--accent-text); text-decoration: none; }
 }
 .segment:hover { color: var(--text-primary); }
 .segment.active { background: var(--accent); color: var(--on-accent); }
+
+/* ------------------------------------------------------------ my qr code -- */
+/* Measurements follow the "Desktop — My QR code" and "Mobile — My QR code"
+   frames in design/webclient.pen; motion follows "Motion — My QR code". */
+/* `.modal` is declared later with equal specificity; qualify these so its
+   gap and 200 ms entrance don't silently win. */
+.modal.qr-modal { gap: 16px; animation-duration: 260ms; }
+.qr-modal > header .icon-btn { background: var(--surface-1); }
+
+.qr-identity { display: flex; flex-direction: column; align-items: center; margin-top: 6px; }
+.qr-identity .avatar-lg { width: 64px; height: 64px; font-size: 22px; }
+.qr-identity > div { display: flex; flex-direction: column; align-items: center; gap: 2px; padding-top: 10px; }
+.qr-identity strong { font-size: 18px; font-weight: 600; }
+/* Scoped to the handle: a bare `span` also matched the avatar's initials. */
+.qr-identity > div > span { font-size: var(--fs-sm); color: var(--text-secondary); }
+
+/* Always dark-on-white, whatever the theme: iOS's AVFoundation scanner doesn't
+   reliably read inverted codes. */
+.qr-card {
+  --qr-start: 200ms;
+  position: relative;
+  width: min(254px, 100%); aspect-ratio: 1;
+  margin: 2px auto 0;
+  background: #fff;
+  border-radius: 8.66%;
+  overflow: hidden;
+  outline-offset: 4px;
+  transition: transform 0.25s var(--ease), box-shadow 0.25s ease;
+}
+.qr-svg { display: block; width: 100%; height: 100%; }
+.qr-card:focus-visible { transform: translateY(-2px); box-shadow: 0 10px 26px rgb(0 0 0 / 0.35); }
+@media (hover: hover) {
+  .qr-card:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgb(0 0 0 / 0.35); }
+}
+
+/* Reveal: the mark pops, then rings of modules radiate out of it. Each ring
+   scales about its own bounding box — whose centre is the code's centre — so
+   the rings visibly grow outward rather than fading in place. */
+.qr-ring, .qr-eyes, .qr-mark { transform-box: fill-box; transform-origin: center; }
+.qr-mark { animation: qr-mark-in 420ms cubic-bezier(0.34, 1.56, 0.64, 1) var(--qr-start) both; }
+.qr-ring {
+  animation: qr-ring-in 380ms var(--ease) both;
+  animation-delay: calc(var(--qr-start) + 60ms + var(--ring) * 40ms);
+}
+.qr-eyes {
+  animation: qr-ring-in 380ms var(--ease) both;
+  animation-delay: calc(var(--qr-start) + 60ms + (var(--rings) - 1) * 40ms);
+}
+@keyframes qr-mark-in { from { opacity: 0; transform: scale(0.4); } }
+@keyframes qr-ring-in { from { opacity: 0; transform: scale(0.6); } }
+
+/* Sweep: two passes after the reveal, then it stops (WCAG 2.2.2 — anything
+   moving past 5 s needs a pause control). Hover or focus replays one pass; the
+   keyframes are duplicated under a second name so the replay restarts. */
+.qr-sweep {
+  position: absolute; left: 0; right: 0; top: 0; height: 22%;
+  background: linear-gradient(180deg, transparent, rgb(94 92 230 / 0.25) 50%, transparent);
+  pointer-events: none;
+  opacity: 0;
+  animation: qr-sweep 1.6s cubic-bezier(0.45, 0, 0.55, 1) calc(var(--qr-start) + 620ms) 2 both;
+}
+.qr-sweep::after {
+  content: "";
+  position: absolute; left: 5.5%; right: 5.5%; top: 50%;
+  height: 2px; margin-top: -1px; border-radius: 1px;
+  background: rgb(94 92 230 / 0.7);
+}
+.qr-card:focus-visible .qr-sweep { animation: qr-sweep-again 1.6s cubic-bezier(0.45, 0, 0.55, 1) both; }
+@media (hover: hover) {
+  .qr-card:hover .qr-sweep { animation: qr-sweep-again 1.6s cubic-bezier(0.45, 0, 0.55, 1) both; }
+}
+@keyframes qr-sweep {
+  0% { transform: translateY(-100%); opacity: 0; }
+  12%, 88% { opacity: 1; }
+  100% { transform: translateY(460%); opacity: 0; }
+}
+@keyframes qr-sweep-again {
+  0% { transform: translateY(-100%); opacity: 0; }
+  12%, 88% { opacity: 1; }
+  100% { transform: translateY(460%); opacity: 0; }
+}
+
+.modal .qr-caption {
+  margin: -2px 0 0; line-height: 1.2;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  font-size: var(--fs-sm); color: var(--text-secondary);
+}
+
+.qr-codes {
+  background: var(--bg);
+  border: 1px solid var(--separator);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.qr-code-row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; }
+.qr-code-row + .qr-code-row { border-top: 1px solid var(--separator); }
+.qr-code-row > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.qr-code-row > div > span { font-size: var(--fs-xs); font-weight: 600; color: var(--text-secondary); }
+.qr-code-row code {
+  font-family: var(--font-mono); font-size: var(--fs-sm); line-height: 1.3;
+  color: var(--text-primary); overflow-wrap: anywhere;
+}
+.qr-action { gap: 8px; }
+
+.qr-entry {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  align-self: center;
+  background: none; border: 0; padding: 4px 0 2px;
+  color: var(--accent-text); font-size: var(--fs-md); font-weight: 600;
+}
+.qr-entry:hover { text-decoration: underline; }
+.icon-btn.accent { background: var(--accent-soft); color: var(--accent-text); }
+.icon-btn.accent:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent-text); filter: brightness(1.12); }
+
+/* Below 900px a sheet-enabled modal slides up from the bottom edge instead. */
+@media (max-width: 900px) {
+  .modal-scrim.sheet { place-items: end stretch; padding: 0; }
+  .modal.sheet {
+    width: 100%;
+    max-height: 94dvh; overflow-y: auto;
+    border-radius: 24px 24px 0 0;
+    border-bottom: 0;
+    padding: 10px 18px calc(24px + env(safe-area-inset-bottom));
+    animation: sheet-up 320ms var(--ease);
+  }
+  .modal.sheet::before {
+    content: "";
+    flex-shrink: 0; align-self: center;
+    width: 36px; height: 5px; border-radius: 3px;
+    background: var(--separator);
+    margin-bottom: 2px;
+  }
+  .qr-modal.sheet { gap: 14px; }
+  .qr-card { --qr-start: 260ms; }
+}
+@keyframes sheet-up { from { transform: translateY(100%); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .qr-ring, .qr-eyes, .qr-mark, .qr-sweep { animation: none !important; }
+  .qr-card, .qr-card:hover, .qr-card:focus-visible { transform: none; }
+}
 
 /* ------------------------------------------------------- mobile tab bar -- */
 .tab-bar {

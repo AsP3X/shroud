@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Shield } from "lucide-react";
+import { QrCode, Shield } from "lucide-react";
 import {
   api,
   ApiError,
@@ -13,12 +13,13 @@ import {
 import { Avatar } from "../components/Avatar";
 import { ChatList, type ListEntry } from "../components/ChatList";
 import { Modal } from "../components/Modal";
+import { MyQrSheet } from "../components/qr/MyQrSheet";
 import { Rail, TabBar, type Tab } from "../components/Rail";
 import { SettingsPane } from "../components/SettingsPane";
 import { Thread } from "../components/Thread";
 import { listTimestamp, presenceLabel, type Presence } from "../format";
 import { loadIdentity } from "../crypto/store";
-import { parseInvite } from "../invite";
+import { parseInvite, shareUrl } from "../invite";
 import {
   fetchLatest,
   hydratePreviews,
@@ -61,6 +62,7 @@ export function AppShell({ session }: { session: Session }) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
+  const [showQr, setShowQr] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
   const [invite, setInvite] = useState("");
   const [addBusy, setAddBusy] = useState(false);
@@ -444,7 +446,7 @@ export function AppShell({ session }: { session: Session }) {
     setTab(next);
   }
 
-  const shareLink = `${window.location.origin}/u/${session.user.share_code}`;
+  const shareLink = shareUrl(session.user.share_code);
   const selectedPresence = selected ? presenceByUser[selected.id.toLowerCase()] : undefined;
   const requests = incoming.map((request) => ({
     id: request.id,
@@ -468,6 +470,7 @@ export function AppShell({ session }: { session: Session }) {
             shareLink={shareLink}
             onLogout={logout}
             onLockNow={lockNow}
+            onShowQr={() => setShowQr(true)}
             onCacheCleared={() => setPreviewRev((n) => n + 1)}
           />
         ) : (
@@ -479,6 +482,7 @@ export function AppShell({ session }: { session: Session }) {
               onQueryChange={setQuery}
               onAdd={() => setAdding(true)}
               addLabel="Add contact"
+              onShowQr={tab === "contacts" ? () => setShowQr(true) : undefined}
               loading={loading}
               error={error}
               requests={tab === "contacts" ? requests : []}
@@ -561,8 +565,22 @@ export function AppShell({ session }: { session: Session }) {
               {addBusy ? "Sending…" : "Send request"}
             </button>
           </form>
+          <button
+            type="button"
+            className="qr-entry"
+            onClick={() => {
+              setAdding(false);
+              setAddError(null);
+              setShowQr(true);
+            }}
+          >
+            <QrCode size={15} aria-hidden="true" />
+            Show my QR code instead
+          </button>
         </Modal>
       ) : null}
+
+      {showQr ? <MyQrSheet session={session} onClose={() => setShowQr(false)} /> : null}
 
       {showInfo && selected ? (
         <Modal title="Contact info" onClose={() => setShowInfo(false)}>
