@@ -1,3 +1,5 @@
+import { clearMediaBlobs } from "./mediaCache";
+
 const prefix = "shroud.pt.";
 const previewPrefix = "shroud.preview.";
 
@@ -91,4 +93,5 @@ export function clearCache(): void {
       /* keep going */
     }
   }
+  void clearMediaBlobs();
 }

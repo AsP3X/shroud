@@ -24,12 +24,14 @@ import {
   fetchLatest,
   hydratePreviews,
   ingestIncoming,
+  ensureVoiceLoaded,
   loadHistory,
   peerIdForMessage,
   previewLine,
   sendText,
   type ChatMessage,
 } from "../messaging";
+import { stopVoice } from "../voice/playback";
 import { connectRealtime } from "../realtime";
 import { clearSession, setLocked } from "../session";
 
@@ -348,6 +350,13 @@ export function AppShell({ session }: { session: Session }) {
     navigate("/unlock", { replace: true });
   }, [navigate]);
 
+  const loadVoice = useCallback(
+    (message: ChatMessage) => ensureVoiceLoaded(message, session.token),
+    [session.token],
+  );
+
+  useEffect(() => () => stopVoice(), []);
+
   const logout = useCallback(async () => {
     try {
       await api.logout(session.token);
@@ -521,6 +530,7 @@ export function AppShell({ session }: { session: Session }) {
                 onSend={() => void submitMessage()}
                 onBack={() => setSelected(null)}
                 onShowInfo={() => setShowInfo(true)}
+                onLoadVoice={loadVoice}
               />
             ) : (
               <section className="thread thread-placeholder hidden-mobile">

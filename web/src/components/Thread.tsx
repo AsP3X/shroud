@@ -27,6 +27,7 @@ import {
 import { clockTime, dayLabel, fullTimestamp, sameDay, MINUTE } from "../format";
 import type { ChatMessage } from "../messaging";
 import { Avatar } from "./Avatar";
+import { VoiceBubble } from "./VoiceBubble";
 
 /** Messages from the same sender inside this window render as one visual block. */
 const GROUP_WINDOW = 5 * MINUTE;
@@ -105,6 +106,7 @@ export function Thread({
   onSend,
   onBack,
   onShowInfo,
+  onLoadVoice,
 }: {
   peer: { id: string; username: string };
   presence: string;
@@ -118,6 +120,7 @@ export function Thread({
   onDraftChange: (value: string) => void;
   onSend: () => void;
   onBack: () => void;
+  onLoadVoice: (message: ChatMessage) => Promise<Uint8Array | null>;
   onShowInfo: () => void;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
@@ -306,19 +309,26 @@ export function Thread({
                     row.message.deleted ? "deleted" : "",
                     row.message.failed ? "failed" : "",
                     row.message.pending ? "pending" : "",
+                    row.message.kind === "voice" && !row.message.deleted ? "voice-msg" : "",
                   ]
                     .filter(Boolean)
                     .join(" ")}
                 >
-                  <p className="bubble-text">
-                    <Highlight text={row.message.text} query={query} />
-                  </p>
-                  <span className="bubble-meta" title={fullTimestamp(row.message.createdAt)}>
-                    <time dateTime={row.message.createdAt}>{clockTime(row.message.createdAt)}</time>
-                    {row.message.isMine && !row.message.deleted ? (
-                      <Receipt message={row.message} />
-                    ) : null}
-                  </span>
+                  {row.message.kind === "voice" && !row.message.deleted ? (
+                    <VoiceBubble message={row.message} loadVoice={onLoadVoice} />
+                  ) : (
+                    <>
+                      <p className="bubble-text">
+                        <Highlight text={row.message.text} query={query} />
+                      </p>
+                      <span className="bubble-meta" title={fullTimestamp(row.message.createdAt)}>
+                        <time dateTime={row.message.createdAt}>{clockTime(row.message.createdAt)}</time>
+                        {row.message.isMine && !row.message.deleted ? (
+                          <Receipt message={row.message} />
+                        ) : null}
+                      </span>
+                    </>
+                  )}
                 </div>
               ),
             )
@@ -344,8 +354,8 @@ export function Thread({
         onSubmit={submit}
         aria-busy={sending}
       >
-        {/* The design shows attach + photo on desktop and one plus on mobile;
-            all three stay disabled until the sealed media path lands on web. */}
+        {/* Attach/photo stay disabled until image send lands. Mic stays disabled
+            until recording is wired; inbound voice already plays. */}
         <button
           className="icon-btn compose-plus"
           type="button"
@@ -391,7 +401,7 @@ export function Thread({
           className="icon-btn compose-mic"
           type="button"
           aria-label="Record a voice message"
-          title="Voice messages are coming to the web client soon"
+          title="Recording voice messages is coming soon"
           disabled
         >
           <Mic size={18} />

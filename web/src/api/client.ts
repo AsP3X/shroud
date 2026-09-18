@@ -110,6 +110,29 @@ async function request<T>(
   }
 }
 
+async function requestBytes(path: string, token: string): Promise<Uint8Array> {
+  const headers = new Headers({ Accept: "*/*", Authorization: `Bearer ${token}` });
+  let res: Response;
+  try {
+    res = await fetch(`${apiBase()}${path}`, { headers });
+  } catch (err) {
+    throw new ApiError("transport", err instanceof Error ? err.message : "Network error", 0);
+  }
+  if (!res.ok) {
+    let code = "http";
+    let message = res.statusText || `HTTP ${res.status}`;
+    try {
+      const body = (await res.json()) as { error?: { code?: string; message?: string } };
+      if (body.error?.code) code = body.error.code;
+      if (body.error?.message) message = body.error.message;
+    } catch {
+      /* envelope optional */
+    }
+    throw new ApiError(code, message, res.status);
+  }
+  return new Uint8Array(await res.arrayBuffer());
+}
+
 export const api = {
   health: () => request<{ status: string }>("/health/live"),
   register: (username: string, password: string, deviceName: string) =>
@@ -220,8 +243,16 @@ export const api = {
   },
   sendMessage: (
     token: string,
-    body: { peer_user_id: string; client_message_id: string; content_type: string; ciphertext: string },
+    body: {
+      peer_user_id: string;
+      client_message_id: string;
+      content_type: string;
+      ciphertext: string;
+      media_object_id?: string;
+    },
   ) => request<WireMessage>("/messages", { method: "POST", token, body: JSON.stringify(body) }),
+  getMediaContent: (token: string, mediaId: string) =>
+    requestBytes(`/media/${mediaId.toLowerCase()}/content`, token),
 };
 
 export type WireMessage = {

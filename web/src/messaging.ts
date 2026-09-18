@@ -1,6 +1,14 @@
 import { api, type Conversation, type WireMessage } from "./api/client";
+import { aesGcmOpen } from "./crypto/aes";
 import { b64ToBytes, utf8, utf8decode } from "./crypto/bytes";
 import type { IdentityMaterial } from "./crypto/identity";
+import { loadMediaBlob, saveMediaBlob } from "./crypto/mediaCache";
+import {
+  decodeWaveform,
+  isVoicePayload,
+  parseMediaPayload,
+  type MediaPayload,
+} from "./crypto/mediaPayload";
 import { envelopeToWireB64, openMessage, sealMessage, wireB64ToEnvelope } from "./crypto/messageCrypto";
 import {
   loadPlaintext,
@@ -8,6 +16,8 @@ import {
   savePlaintext,
   savePreview,
 } from "./crypto/plaintextCache";
+
+export type ChatKind = "text" | "image" | "voice" | "video";
 
 export type ChatMessage = {
   id: string;
@@ -17,7 +27,13 @@ export type ChatMessage = {
   isMine: boolean;
   deleted: boolean;
   failed: boolean;
-  kind: "text" | "media";
+  kind: ChatKind;
+  mediaObjectId?: string | null;
+  voiceDurationMs?: number | null;
+  voiceWaveform?: number[] | null;
+  mediaKey?: string | null;
+  mime?: string | null;
+  transcript?: string | null;
   /** Optimistic bubble shown until the server hands back a real id. */
   pending?: boolean;
   delivered?: boolean;
@@ -98,6 +114,58 @@ export async function fetchLatest(
   });
 }
 
+function kindFromPayload(payload: MediaPayload | null, isMedia: boolean): ChatKind {
+  if (!isMedia) return "text";
+  if (payload?.t === "voice") return "voice";
+  if (payload?.t === "video") return "video";
+  return "image";
+}
+
+function messageFromMediaPayload(
+  base: Omit<ChatMessage, "text" | "kind">,
+  payload: MediaPayload,
+  mediaObjectId: string | null | undefined,
+): ChatMessage {
+  if (isVoicePayload(payload)) {
+    const transcript = payload.c?.trim() || null;
+    return {
+      ...base,
+      kind: "voice",
+      text: transcript || "Voice message",
+      mediaObjectId: mediaObjectId ?? null,
+      voiceDurationMs: payload.d ?? null,
+      voiceWaveform: decodeWaveform(payload.wf),
+      mediaKey: payload.k,
+      mime: payload.mime || "audio/mp4",
+      transcript,
+    };
+  }
+  const caption = payload.c?.trim() || "";
+  if (payload.t === "video") {
+    return {
+      ...base,
+      kind: "video",
+      text: caption || "Video",
+      mediaObjectId: mediaObjectId ?? null,
+    };
+  }
+  return {
+    ...base,
+    kind: "image",
+    text: caption || "Photo",
+    mediaObjectId: mediaObjectId ?? null,
+  };
+}
+
+function previewCopy(msg: ChatMessage): string {
+  if (msg.deleted) return "Message deleted";
+  if (msg.failed) return "Encrypted message";
+  if (msg.kind === "voice") return msg.transcript?.trim() || "Voice message";
+  if (msg.kind === "video") return msg.text === "Video" ? "Video" : msg.text;
+  if (msg.kind === "image") return msg.text === "Photo" ? "Photo" : msg.text;
+  return msg.text;
+}
+
 export async function decodeIncoming(
   dto: WireMessage,
   me: string,
@@ -106,6 +174,7 @@ export async function decodeIncoming(
   material: IdentityMaterial,
 ): Promise<ChatMessage> {
   const isMine = dto.sender_user_id.toLowerCase() === me.toLowerCase();
+  const isMedia = dto.content_type === "media";
   const base = {
     id: dto.id,
     senderUserId: dto.sender_user_id,
@@ -113,23 +182,39 @@ export async function decodeIncoming(
     isMine,
     deleted: dto.deleted_for_everyone,
     failed: false,
-    kind: dto.content_type === "media" ? ("media" as const) : ("text" as const),
+    kind: (isMedia ? "image" : "text") as ChatKind,
+    mediaObjectId: dto.media_object_id ?? null,
     delivered: dto.delivered ?? undefined,
     read: dto.read ?? undefined,
   };
   if (dto.deleted_for_everyone) {
-    const msg = { ...base, text: "Message deleted" };
+    const msg: ChatMessage = { ...base, text: "Message deleted" };
     rememberPreview(me, peerUserId, msg);
     return msg;
   }
   const cached = loadPlaintext(dto.id);
-  if (cached != null) {
-    const msg = { ...base, text: dto.content_type === "media" ? "Photo" : cached };
-    rememberPreview(me, peerUserId, msg);
-    return msg;
+  if (cached != null && cached !== "[media]") {
+    if (isMedia) {
+      const payload = parseMediaPayload(cached);
+      if (payload) {
+        const msg = messageFromMediaPayload(base, payload, dto.media_object_id);
+        rememberPreview(me, peerUserId, msg);
+        return msg;
+      }
+    } else {
+      const msg: ChatMessage = { ...base, text: cached };
+      rememberPreview(me, peerUserId, msg);
+      return msg;
+    }
   }
   if (!dto.ciphertext) {
-    return { ...base, text: dto.content_type === "media" ? "Photo" : "[Unable to decrypt]", failed: true };
+    const msg: ChatMessage = {
+      ...base,
+      text: isMedia ? "Media" : "[Unable to decrypt]",
+      failed: true,
+    };
+    rememberPreview(me, peerUserId, msg);
+    return msg;
   }
   try {
     const envelope = wireB64ToEnvelope(dto.ciphertext);
@@ -145,15 +230,24 @@ export async function decodeIncoming(
       senderIdentityPublic: senderPub,
       asSender: isMine,
     });
-    const text = dto.content_type === "media" ? "Photo" : utf8decode(plain);
-    savePlaintext(dto.id, dto.content_type === "media" ? "[media]" : text);
-    const msg = { ...base, text };
+    const decoded = utf8decode(plain);
+    if (isMedia) {
+      savePlaintext(dto.id, decoded);
+      const payload = parseMediaPayload(decoded);
+      const msg = payload
+        ? messageFromMediaPayload(base, payload, dto.media_object_id)
+        : { ...base, text: "Media", kind: "image" as const };
+      rememberPreview(me, peerUserId, msg);
+      return msg;
+    }
+    savePlaintext(dto.id, decoded);
+    const msg: ChatMessage = { ...base, text: decoded };
     rememberPreview(me, peerUserId, msg);
     return msg;
   } catch {
-    const msg = {
+    const msg: ChatMessage = {
       ...base,
-      text: dto.content_type === "media" ? "Photo" : "[Unable to decrypt]",
+      text: isMedia ? "Media" : "[Unable to decrypt]",
       failed: true,
     };
     rememberPreview(me, peerUserId, msg);
@@ -162,14 +256,37 @@ export async function decodeIncoming(
 }
 
 function rememberPreview(me: string, peerUserId: string, msg: ChatMessage): void {
-  const text = msg.deleted
-    ? "Message deleted"
-    : msg.failed
-      ? "Encrypted message"
-      : msg.kind === "media"
-        ? "Photo"
-        : msg.text;
-  savePreview(me, peerUserId, { text, at: msg.createdAt, isMine: msg.isMine, failed: msg.failed });
+  savePreview(me, peerUserId, {
+    text: previewCopy(msg),
+    at: msg.createdAt,
+    isMine: msg.isMine,
+    failed: msg.failed,
+  });
+}
+
+const voiceLoads = new Map<string, Promise<Uint8Array | null>>();
+
+/** Downloads and decrypts voice bytes (deduped). Safe to call from every bubble mount. */
+export function ensureVoiceLoaded(message: ChatMessage, token: string): Promise<Uint8Array | null> {
+  if (message.kind !== "voice" || message.deleted || !message.mediaObjectId || !message.mediaKey) {
+    return Promise.resolve(null);
+  }
+  const key = message.id.toLowerCase();
+  const existing = voiceLoads.get(key);
+  if (existing) return existing;
+  const task = (async () => {
+    const cached = await loadMediaBlob(message.id);
+    if (cached && cached.length > 0) return cached;
+    const sealed = await api.getMediaContent(token, message.mediaObjectId!);
+    const audio = await aesGcmOpen(b64ToBytes(message.mediaKey!), sealed);
+    await saveMediaBlob(message.id, audio);
+    return audio;
+  })().catch(() => null);
+  voiceLoads.set(key, task);
+  void task.finally(() => {
+    if (voiceLoads.get(key) === task) voiceLoads.delete(key);
+  });
+  return task;
 }
 
 export function previewLine(me: string, peerUserId: string): string {
@@ -200,16 +317,24 @@ export async function hydratePreviews(
       if (!dto) continue;
       const mine = dto.sender_user_id.toLowerCase() === me.toLowerCase();
       const cached = loadPlaintext(dto.id);
-      if (cached) {
+      if (cached && cached !== "[media]") {
+        const payload = dto.content_type === "media" ? parseMediaPayload(cached) : null;
         rememberPreview(me, peer.id, {
           id: dto.id,
           senderUserId: dto.sender_user_id,
-          text: dto.content_type === "media" ? "Photo" : cached,
+          text: payload
+            ? payload.t === "voice"
+              ? payload.c?.trim() || "Voice message"
+              : payload.t === "video"
+                ? payload.c?.trim() || "Video"
+                : payload.c?.trim() || "Photo"
+            : cached,
           createdAt: dto.created_at,
           isMine: mine,
           deleted: Boolean(dto.deleted_for_everyone),
           failed: false,
-          kind: dto.content_type === "media" ? "media" : "text",
+          kind: kindFromPayload(payload, dto.content_type === "media"),
+          transcript: payload?.t === "voice" ? payload.c?.trim() || null : null,
         });
         continue;
       }
