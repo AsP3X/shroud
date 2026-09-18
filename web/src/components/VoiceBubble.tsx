@@ -56,13 +56,19 @@ export function VoiceBubble({
   const stated = message.voiceDurationMs ?? 0;
   const durationMs = stated >= MIN_TRUSTED_MS ? stated : (measuredMs ?? stated);
   const seconds = durationMs / 1000;
-  const barCount = Math.min(38, Math.max(18, 16 + Math.round(seconds * 1.6)));
+  /** Duration still sizes the bubble; short notes keep this floor so the footer fits. */
+  const durationBars = Math.min(38, Math.max(18, 16 + Math.round(seconds * 1.6)));
   const samples = useMemo(() => {
-    const source = waveformUsable(message.voiceWaveform)
-      ? normalizeWaveform(message.voiceWaveform!)
-      : placeholderWaveform(message.id, barCount);
-    return resampleWaveform(source, barCount);
-  }, [message.id, message.voiceWaveform, barCount]);
+    if (waveformUsable(message.voiceWaveform)) {
+      const source = normalizeWaveform(message.voiceWaveform!);
+      /* Never invent bars — only downsample when the envelope is denser than the slot. */
+      return source.length > durationBars ? resampleWaveform(source, durationBars) : source;
+    }
+    return placeholderWaveform(message.id, durationBars);
+  }, [message.id, message.voiceWaveform, durationBars]);
+  const waveWidth = Math.max(148, durationBars * 5);
+  const slot = samples.length > 0 ? waveWidth / samples.length : 5;
+  const barGap = samples.length > 1 ? Math.max(1, slot * 0.4) : 0;
 
   useEffect(() => {
     let cancelled = false;
@@ -155,10 +161,11 @@ export function VoiceBubble({
           <Play size={15} fill="currentColor" aria-hidden="true" />
         )}
       </button>
-      <div className="voice-body" style={{ width: Math.max(148, barCount * 5) }}>
+      <div className="voice-body" style={{ width: waveWidth }}>
         <div
           ref={waveRef}
           className="voice-wave"
+          style={{ gap: barGap }}
           role="slider"
           aria-label="Voice waveform"
           aria-valuemin={0}

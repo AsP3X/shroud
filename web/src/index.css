@@ -914,12 +914,14 @@ a { color: var(--accent-text); text-decoration: none; }
 @keyframes voice-spin { to { transform: rotate(360deg); } }
 .voice-body { min-width: 148px; flex: 1; display: flex; flex-direction: column; gap: 5px; }
 .voice-wave {
-  display: flex; align-items: center; gap: 2px;
+  display: flex; align-items: center;
+  width: 100%;
   height: 26px; touch-action: none; cursor: pointer;
   user-select: none;
 }
 .voice-bar {
-  width: 3px; flex: 0 0 3px;
+  flex: 1 1 0;
+  min-width: 0;
   border-radius: 2px;
   background: color-mix(in srgb, var(--voice-played) calc(var(--played, 0) * 100%), var(--voice-rest));
 }
