@@ -813,13 +813,15 @@ a { color: var(--accent-text); text-decoration: none; }
 .search-in-chat[aria-pressed="true"] {
   background: var(--accent-soft); color: var(--accent-text);
 }
-.bubble-text mark {
+.bubble-text mark,
+.voice-tx-text mark {
   background: var(--accent-soft);
   color: var(--accent-text);
   border-radius: 3px;
   padding: 0 1px;
 }
-.bubble.out .bubble-text mark {
+.bubble.out .bubble-text mark,
+.bubble.out .voice-tx-text mark {
   background: rgba(255, 255, 255, 0.28);
   color: var(--on-accent);
 }
@@ -897,17 +899,6 @@ a { color: var(--accent-text); text-decoration: none; }
   padding: 8px 10px;
   max-width: 100%;
 }
-/* A voice note and its transcript. The transcript hangs under the bubble, as on
-   iOS, so it never widens the bubble (which used to stretch the waveform into fat
-   bars) and a note looks the same whichever side of the chat it is on. */
-.voice-row {
-  display: flex; flex-direction: column; gap: 4px;
-  max-width: min(420px, 82%);
-}
-.voice-row.in { align-self: flex-start; align-items: flex-start; }
-.voice-row.out { align-self: flex-end; align-items: flex-end; }
-.voice-row.first { margin-top: 10px; }
-.voice-row > .bubble.first { margin-top: 0; }
 .voice { display: flex; align-items: center; gap: 10px; }
 .voice-play {
   width: 38px; height: 38px; flex-shrink: 0;
@@ -922,11 +913,12 @@ a { color: var(--accent-text); text-decoration: none; }
 .voice-play:hover:not(:disabled) { filter: brightness(1.08); }
 .voice-spin { animation: voice-spin 0.8s linear infinite; }
 @keyframes voice-spin { to { transform: rotate(360deg); } }
-/* Width comes from the note's duration (inline style); never grow past it. */
 .voice-body { min-width: 148px; flex: 0 1 auto; display: flex; flex-direction: column; gap: 5px; }
+.voice-top { display: flex; align-items: center; gap: 8px; }
+/* Width comes from the note's duration (inline style); never grow past it. */
 .voice-wave {
+  flex: 0 1 auto; min-width: 0;
   display: flex; align-items: center;
-  width: 100%;
   height: 26px; touch-action: none; cursor: pointer;
   user-select: none;
 }
@@ -962,17 +954,100 @@ a { color: var(--accent-text); text-decoration: none; }
 }
 .bubble.out .voice-footer { color: rgba(255, 255, 255, 0.82); }
 .bubble.in .voice-footer { color: var(--text-secondary); }
-.voice-transcript {
-  margin: 0 4px;
-  padding-left: 8px;
-  max-width: 320px;
-  border-left: 2px solid color-mix(in srgb, var(--accent) 50%, transparent);
-  font-size: var(--fs-sm); line-height: 1.4;
-  color: var(--text-secondary);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  animation: bubble-in 0.22s var(--ease);
+
+/* The transcript toggle — Telegram's "→A". Its A folds into a chevron when the
+   drawer is open; a stroke laps the button while this device is still transcribing.
+   The glyph morph, the text fade and the drawer tween (VoiceBubble) share 320ms. */
+.voice-tx {
+  position: relative; flex: none;
+  width: 28px; height: 28px; margin-block: -1px;
+  display: grid; place-items: center;
+  border: 0; border-radius: 9px; padding: 0;
+  overflow: hidden;
+  color: var(--voice-tx-ink);
+  background: var(--voice-tx-fill);
+  transition: background 0.15s ease, scale 0.15s var(--ease);
 }
+.voice-tx:hover { background: var(--voice-tx-hover); }
+.voice-tx:active { scale: 0.9; }
+.voice-tx:focus-visible { outline: 2px solid var(--voice-tx-ink); outline-offset: 2px; }
+.bubble.in.voice-msg {
+  --voice-tx-ink: var(--accent-text);
+  --voice-tx-fill: color-mix(in srgb, var(--accent) 14%, transparent);
+  --voice-tx-hover: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.bubble.out.voice-msg {
+  --voice-tx-ink: #fff;
+  --voice-tx-fill: rgba(255, 255, 255, 0.2);
+  --voice-tx-hover: rgba(255, 255, 255, 0.28);
+}
+.voice-tx-enter { animation: voice-tx-in 320ms var(--ease) both; }
+@keyframes voice-tx-in {
+  from { width: 0; margin-left: -8px; opacity: 0; scale: 0.4; }
+}
+.voice-tx-glyph {
+  width: 20px; height: 20px; overflow: visible;
+  fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.voice-tx-glyph path {
+  transition: transform 320ms var(--ease), stroke-dasharray 320ms var(--ease), opacity 200ms ease;
+}
+/* Each leg is drawn from the apex (0,0): placing, turning and trimming it is
+   enough to go from the A to the chevron's arms. */
+.voice-tx-leg { stroke-dasharray: 13 20; transform: translate(17px, 6px) rotate(0deg); }
+.voice-tx-bar { transform-origin: 17px 14px; }
+.voice-tx[aria-expanded="true"] .voice-tx-leg { stroke-dasharray: 8.5 20; }
+.voice-tx[aria-expanded="true"] .voice-tx-leg-l { transform: translate(12px, 9px) rotate(24.44deg); }
+.voice-tx[aria-expanded="true"] .voice-tx-leg-r { transform: translate(12px, 9px) rotate(-24.44deg); }
+.voice-tx[aria-expanded="true"] .voice-tx-arrow { opacity: 0; transform: translateX(-4px); }
+.voice-tx[aria-expanded="true"] .voice-tx-bar { opacity: 0; transform: scaleX(0.3); transition-duration: 320ms, 320ms, 120ms; }
+.voice-tx-ring {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round;
+  stroke-dasharray: 0 92;
+  opacity: 0; transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+.voice-tx[data-busy] .voice-tx-ring { opacity: 1; animation: voice-tx-lap 1.3s linear infinite; }
+/* The rounded rect's perimeter is ~91.8 units: a comet that stretches, then catches up. */
+@keyframes voice-tx-lap {
+  0% { stroke-dasharray: 0.5 91.3; stroke-dashoffset: 0; }
+  50% { stroke-dasharray: 34 57.8; stroke-dashoffset: -23; }
+  100% { stroke-dasharray: 0.5 91.3; stroke-dashoffset: -91.8; }
+}
+
+/* The drawer is laid out at the bubble's width and never widens it; its height
+   tweens in JS, and it drops out of the a11y tree once folded. */
+.voice-tx-drawer {
+  width: 0; min-width: 100%;
+  height: 0; overflow: hidden;
+  visibility: hidden;
+  transition: visibility 0s linear 320ms;
+}
+.voice-tx-drawer[data-open] { height: auto; visibility: visible; transition: none; }
+.voice-tx-drawer > p {
+  margin: 0;
+  padding: 7px 3px 2px;
+  font-size: var(--fs-md); line-height: 1.42;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  opacity: 0; translate: 0 -6px;
+  transition: opacity 120ms ease, translate 320ms var(--ease);
+}
+/* A keyframe fade rather than a transition, so text replacing "Transcribing…"
+   (a new element) fades in as well. */
+.voice-tx-drawer[data-open] > p {
+  opacity: 1; translate: none;
+  animation: voice-tx-fade 200ms ease-out;
+}
+@keyframes voice-tx-fade { from { opacity: 0; } }
+.voice-tx-drawer > .voice-tx-wait { font-size: var(--fs-sm); }
+.voice-tx-drawer[data-open] > .voice-tx-wait {
+  animation: voice-tx-fade 200ms ease-out, voice-tx-wait 1.4s ease-in-out 200ms infinite;
+}
+.bubble.in .voice-tx-wait { color: var(--text-secondary); }
+.bubble.out .voice-tx-wait { color: rgba(255, 255, 255, 0.78); }
+@keyframes voice-tx-wait { 50% { opacity: 0.45; } }
 .receipt-read { color: #8fe3ff; }
 .bubble.in .receipt-read { color: var(--accent-text); }
 @keyframes bubble-in {
@@ -1588,6 +1663,21 @@ a { color: var(--accent-text); text-decoration: none; }
   .qr-ring, .qr-eyes, .qr-mark, .qr-sweep { animation: none !important; }
   .qr-card, .qr-card:hover, .qr-card:focus-visible { transform: none; }
   .voice-spin { animation: none !important; }
+  .voice-tx-enter { animation: none !important; }
+  .voice-tx-glyph path { transition: none !important; }
+  .voice-tx-drawer > p,
+  .voice-tx-drawer[data-open] > p,
+  .voice-tx-drawer[data-open] > .voice-tx-wait {
+    animation: none !important;
+    transition: none !important;
+    translate: none;
+  }
+  /* Still say "working on it" without the lap. */
+  .voice-tx[data-busy] .voice-tx-ring {
+    animation: none !important;
+    stroke-dasharray: 30 62;
+    opacity: 1;
+  }
 }
 
 /* ------------------------------------------------------- mobile tab bar -- */

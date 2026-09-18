@@ -42,6 +42,7 @@ import {
   raceTimeout,
   TRANSCRIBE_TIMEOUT_MS,
 } from "../voice/transcriber";
+import { rekeyTranscriptView, setTranscribing } from "../voice/transcriptView";
 import { connectRealtime } from "../realtime";
 import { clearSession, setLocked } from "../session";
 
@@ -459,6 +460,10 @@ export function AppShell({ session }: { session: Session }) {
     const material = identity;
     const localId = `pending:${crypto.randomUUID()}`;
     const pending = take.pendingTranscript ?? Promise.resolve(null);
+    /** Follows the bubble from its optimistic id to the server's. */
+    let noteId = localId;
+    // The bubble's transcript button laps a progress ring until the text lands.
+    if (!take.transcript && take.pendingTranscript) setTranscribing(localId, true);
     const optimistic: ChatMessage = {
       id: localId,
       senderUserId: session.user.id,
@@ -491,6 +496,7 @@ export function AppShell({ session }: { session: Session }) {
           );
         }
       }
+      if (sealed) setTranscribing(localId, false);
       const msg = await sendVoice({
         token: session.token,
         me: session.user.id,
@@ -498,13 +504,18 @@ export function AppShell({ session }: { session: Session }) {
         material,
         take: { ...take, transcript: sealed },
       });
+      rekeyTranscriptView(localId, msg.id);
+      noteId = msg.id;
       if (selectedRef.current?.id.toLowerCase() === peerId.toLowerCase()) {
         setThread((prev) => mergeMessages(prev.filter((m) => m.id !== localId), [msg]));
         setPreviewRev((n) => n + 1);
       }
       if (!msg.transcript) {
         void pending.then(async (text) => {
-          if (!text) return;
+          if (!text) {
+            setTranscribing(msg.id, false);
+            return;
+          }
           try {
             await shareTranscript({
               token: session.token,
@@ -517,6 +528,7 @@ export function AppShell({ session }: { session: Session }) {
           } catch (err) {
             console.warn("Could not share voice transcript:", err);
           }
+          setTranscribing(msg.id, false);
           if (!alive.current) return;
           if (selectedRef.current?.id.toLowerCase() === peerId.toLowerCase()) {
             setThread((prev) => applyAnnotations(prev));
@@ -525,6 +537,7 @@ export function AppShell({ session }: { session: Session }) {
         });
       }
     } catch (err) {
+      setTranscribing(noteId, false);
       if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
       setThread((prev) =>
         prev.map((m) => (m.id === localId ? { ...m, pending: false, failed: true } : m)),

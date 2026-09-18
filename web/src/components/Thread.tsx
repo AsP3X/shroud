@@ -7,7 +7,6 @@ import {
   useState,
   type FormEvent,
   type KeyboardEvent,
-  type ReactNode,
 } from "react";
 import {
   ArrowDown,
@@ -28,6 +27,7 @@ import {
 import { clockTime, dayLabel, fullTimestamp, sameDay, MINUTE } from "../format";
 import type { ChatMessage } from "../messaging";
 import { Avatar } from "./Avatar";
+import { Highlight } from "./Highlight";
 import { VoiceBubble } from "./VoiceBubble";
 import { VoiceDroplet, VoiceStrip } from "./VoiceRecorderBar";
 import { useVoiceRecording } from "./useVoiceRecording";
@@ -67,26 +67,6 @@ function buildRows(messages: ChatMessage[]): Row[] {
     });
   }
   return rows;
-}
-
-/** Wraps every case-insensitive hit in <mark> so matches are findable by eye. */
-function Highlight({ text, query }: { text: string; query: string }) {
-  const needle = query.trim().toLowerCase();
-  if (!needle) return <>{text}</>;
-  const parts: ReactNode[] = [];
-  const haystack = text.toLowerCase();
-  let cursor = 0;
-  for (;;) {
-    const at = haystack.indexOf(needle, cursor);
-    if (at === -1) {
-      parts.push(text.slice(cursor));
-      break;
-    }
-    if (at > cursor) parts.push(text.slice(cursor, at));
-    parts.push(<mark key={at}>{text.slice(at, at + needle.length)}</mark>);
-    cursor = at + needle.length;
-  }
-  return <>{parts}</>;
 }
 
 function Receipt({ message }: { message: ChatMessage }) {
@@ -140,6 +120,8 @@ export function Thread({
   const [searchQuery, setSearchQuery] = useState("");
   const searchField = useRef<HTMLInputElement>(null);
   const seenCount = useRef(0);
+  /** Rendered rows, for the resize observer to tell new messages from in-place growth. */
+  const rowCount = useRef(0);
 
   const toBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     const node = scroller.current;
@@ -171,15 +153,30 @@ export function Thread({
     },
   });
 
-  /* The footer grows while recording (and as the field wraps); without this the
-     newest messages would slide under it instead of staying in view. */
+  /* The footer grows while recording (and as the field wraps), and a transcript
+     unfolds in place; without this the newest messages would slide under the
+     footer or out of view instead of staying pinned to the bottom. */
   useEffect(() => {
     const node = scroller.current;
+    const inner = node?.firstElementChild;
     if (!node || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => {
-      if (pinnedRef.current) node.scrollTop = node.scrollHeight;
+    let rowsAtLastResize = rowCount.current;
+    const observer = new ResizeObserver((entries) => {
+      let follow = false;
+      for (const entry of entries) {
+        if (entry.target !== inner) {
+          follow = true;
+          continue;
+        }
+        // Rows coming or going are scrolled by the effects below (smoothly, when that
+        // is what they want); only an in-place resize is ours to follow.
+        if (rowCount.current === rowsAtLastResize) follow = true;
+        rowsAtLastResize = rowCount.current;
+      }
+      if (follow && pinnedRef.current) node.scrollTop = node.scrollHeight;
     });
     observer.observe(node);
+    if (inner) observer.observe(inner);
     if (foot.current) observer.observe(foot.current);
     return () => observer.disconnect();
   }, []);
@@ -219,6 +216,9 @@ export function Thread({
     });
   }, [messages, query]);
   const rows = useMemo(() => buildRows(visible), [visible]);
+  useLayoutEffect(() => {
+    rowCount.current = rows.length;
+  }, [rows.length]);
 
   /* Filtering shrinks the thread; if we were pinned, stay on the latest match
      (and jump back to the real bottom when the query is cleared). */
@@ -353,23 +353,10 @@ export function Thread({
                 .filter(Boolean)
                 .join(" ");
               if (voice) {
-                /* The transcript hangs under the bubble (as on iOS): it never stretches the
-                   waveform, and a note reads the same whichever side sent it. */
+                /* The transcript folds away inside the bubble, behind the →A button. */
                 return (
-                  <div
-                    key={row.key}
-                    className={["voice-row", message.isMine ? "out" : "in", row.first ? "first" : ""]
-                      .filter(Boolean)
-                      .join(" ")}
-                  >
-                    <div className={bubbleClass}>
-                      <VoiceBubble message={message} loadVoice={onLoadVoice} />
-                    </div>
-                    {message.transcript ? (
-                      <p className="voice-transcript">
-                        <Highlight text={message.transcript} query={query} />
-                      </p>
-                    ) : null}
+                  <div key={row.key} className={bubbleClass}>
+                    <VoiceBubble message={message} loadVoice={onLoadVoice} query={query} />
                   </div>
                 );
               }

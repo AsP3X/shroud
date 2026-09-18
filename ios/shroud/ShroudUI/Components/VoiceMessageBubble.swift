@@ -1,14 +1,15 @@
 import AVFoundation
 import SwiftUI
 
-/// Voice message bubble — Telegram layout: play/pause disc, scrubbable waveform,
-/// elapsed/duration readout, unplayed dot, and an on-device transcript that unfolds below.
+/// Voice message bubble — Telegram layout: play/pause disc, scrubbable waveform, a "→A"
+/// transcript toggle, elapsed/duration readout, unplayed dot, and the transcript folded inside.
 ///
 /// Human: The bubble owns no player. Everything transport-related goes through
 /// `VoicePlaybackCoordinator`, so scrolling a playing note off-screen does not kill it and
-/// starting a second note stops the first — both Telegram behaviours.
+/// starting a second note stops the first — both Telegram behaviours. The transcript starts
+/// folded; the toggle unfolds it inside the bubble, transcribing on device first when needed.
 /// Agent: READS coordinator state + `message.voiceData`; CALLS onAppearLoad to trigger decrypt.
-/// Scrubbing writes only to the coordinator.
+/// Scrubbing writes only to the coordinator; the fold lives in `VoiceTranscriptDisclosure`.
 struct VoiceMessageBubble: View {
     let message: MessagingController.ChatMessage
     let time: String
@@ -17,15 +18,28 @@ struct VoiceMessageBubble: View {
 
     @State private var playback = VoicePlaybackCoordinator.shared
     @State private var install = TranscriptionModelInstall.shared
+    @State private var disclosure = VoiceTranscriptDisclosure.shared
     @State private var localTranscript: String?
     @State private var isTranscribing = false
+    /// A transcription run on this device came back empty.
+    @State private var foundNoSpeech = false
     /// Non-nil while the finger is on the waveform; overrides coordinator progress.
     @State private var scrubProgress: Double?
     /// Duration read back from the audio itself when the payload doesn't carry one.
     @State private var resolvedDurationMs: Int?
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     private var isMine: Bool { message.isMine }
-    private var transcript: String? { localTranscript ?? message.transcript }
+
+    /// The note's text: shared by the sender or a peer, or made here on request.
+    private var transcript: String? {
+        for candidate in [localTranscript, message.transcript] {
+            let text = candidate?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !text.isEmpty { return text }
+        }
+        return nil
+    }
 
     /// Below this we assume the payload's duration is bogus rather than a real recording —
     /// the recorder itself refuses anything under `VoiceRecorder.minimumDuration`.
@@ -79,6 +93,22 @@ struct VoiceMessageBubble: View {
         max(waveformWidth, 148)
     }
 
+    /// Waveform plus the transcript toggle beside it; the footer spans both.
+    private var columnWidth: CGFloat {
+        contentWidth + (showsTranscriptButton ? Self.transcriptButtonGap + VoiceTranscriptButton.size : 0)
+    }
+
+    private static let playButtonSize: CGFloat = 38
+    private static let playButtonGap: CGFloat = 10
+    private static let transcriptButtonGap: CGFloat = 8
+    /// Transcript text sits a hair inside the bubble's padding, level with text bubbles' inset.
+    private static let transcriptInset: CGFloat = 2
+
+    /// The unfolded transcript wraps at the bubble's own width and never widens it.
+    private var transcriptWidth: CGFloat {
+        Self.playButtonSize + Self.playButtonGap + columnWidth - Self.transcriptInset * 2
+    }
+
     private var waveformSamples: [Float] {
         let source: [Float] = {
             if let stored = message.voiceWaveform, VoiceWaveform.isUsable(stored) {
@@ -107,14 +137,12 @@ struct VoiceMessageBubble: View {
         HStack {
             if isMine { Spacer(minLength: 48) }
 
-            VStack(alignment: isMine ? .trailing : .leading, spacing: 4) {
-                bubble
-                transcriptSection
-            }
+            bubble
 
             if !isMine { Spacer(minLength: 48) }
         }
-        .animation(Motion.standard, value: transcript)
+        .animation(Motion.respecting(reduceMotion, Motion.standard), value: transcript)
+        .animation(Motion.respecting(reduceMotion, Motion.standard), value: isWorkingOnTranscript)
         .onAppear(perform: onAppearLoad)
         .task(id: message.voiceData) { await resolveDurationIfNeeded() }
         .onDisappear {
@@ -128,17 +156,40 @@ struct VoiceMessageBubble: View {
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(.isButton)
         .accessibilityAction(named: isPlaying ? "Pause" : "Play") { togglePlayback() }
+        .accessibilityActions {
+            if showsTranscriptButton, transcriptButtonEnabled {
+                Button(transcriptActionName) { toggleTranscript() }
+            }
+        }
     }
 
     private var bubble: some View {
-        HStack(spacing: 10) {
-            playButton
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: Self.playButtonGap) {
+                playButton
 
-            VStack(alignment: .leading, spacing: 5) {
-                waveform
-                footer
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: Self.transcriptButtonGap) {
+                        waveform
+                            .frame(width: contentWidth)
+                        if showsTranscriptButton {
+                            transcriptButton
+                        }
+                    }
+                    footer
+                }
+                .frame(width: columnWidth)
             }
-            .frame(width: contentWidth)
+
+            if isTranscriptOpen {
+                transcriptDrawer
+                    // Laid out at its final size, so the growing bubble uncovers it top-down
+                    // (the clip below) while it fades in, rather than the text sliding around.
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .offset(y: -6)),
+                        removal: .opacity
+                    ))
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
@@ -162,7 +213,7 @@ struct VoiceMessageBubble: View {
             ZStack {
                 Circle()
                     .fill(isMine ? Color.white.opacity(0.22) : Theme.accent)
-                    .frame(width: 38, height: 38)
+                    .frame(width: Self.playButtonSize, height: Self.playButtonSize)
 
                 if isLoading {
                     ProgressView()
@@ -293,75 +344,102 @@ struct VoiceMessageBubble: View {
 
     // MARK: - Transcript
 
-    @ViewBuilder
-    private var transcriptSection: some View {
-        if let transcript, !transcript.isEmpty {
-            HStack(alignment: .top, spacing: 8) {
-                // Accent side-rule from the design system's voice recipe.
-                Capsule()
-                    .fill(Theme.accent.opacity(0.5))
-                    .frame(width: 2)
-                Text(transcript)
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: 260, alignment: isMine ? .trailing : .leading)
-            .padding(.horizontal, 4)
-            .transition(.opacity.combined(with: .move(edge: .top)))
-        } else if isWorkingOnTranscript {
-            transcriptProgress
-        } else if onRequestTranscript != nil, message.voiceData != nil {
-            Button {
-                isTranscribing = true
-                Task {
-                    let result = await onRequestTranscript?()
-                    isTranscribing = false
-                    withAnimation(Motion.standard) { localTranscript = result }
-                }
-            } label: {
-                Text("Transcribe on device")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.accent)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 4)
-                    .contentShape(Rectangle())
-            }
-            .pressable(scale: 0.94)
-            .transition(.opacity)
-        }
+    /// Every live note offers its transcript — made on device if nobody has shared one yet —
+    /// so the toggle is always there and the bubble never changes width as audio loads.
+    private var showsTranscriptButton: Bool {
+        !message.deleted
+    }
+
+    /// Dimmed until there is text to show, or audio this bubble can actually transcribe.
+    /// The long-press hero has no transcriber — leave the control inert there unless
+    /// a transcript already exists to unfold.
+    private var transcriptButtonEnabled: Bool {
+        if drawerContent != nil { return true }
+        return onRequestTranscript != nil && message.voiceData != nil
     }
 
     private var isWorkingOnTranscript: Bool {
         isTranscribing || install.isActive(for: message.id)
     }
 
+    private enum DrawerContent: Equatable {
+        case text(String)
+        case working
+        case noSpeech
+    }
+
+    private var drawerContent: DrawerContent? {
+        if let transcript { return .text(transcript) }
+        if isWorkingOnTranscript { return .working }
+        if foundNoSpeech { return .noSpeech }
+        return nil
+    }
+
+    /// Folded by default; the toggle opens it, and it only shows once there is something in it.
+    private var isTranscriptOpen: Bool {
+        disclosure.isOpen(message.id) && drawerContent != nil
+    }
+
+    private var transcriptButton: some View {
+        VoiceTranscriptButton(
+            isOpen: isTranscriptOpen,
+            isWorking: isWorkingOnTranscript,
+            ink: isMine ? Color.white : Theme.accent,
+            fill: isMine ? Color.white.opacity(0.2) : Theme.accent.opacity(0.12),
+            isEnabled: transcriptButtonEnabled,
+            action: toggleTranscript
+        )
+    }
+
+    private var transcriptActionName: String {
+        if isTranscriptOpen { return "Hide transcript" }
+        return transcript == nil && !isWorkingOnTranscript ? "Transcribe" : "Show transcript"
+    }
+
+    private var transcriptDrawer: some View {
+        ZStack(alignment: .topLeading) {
+            switch drawerContent {
+            case let .text(text):
+                Text(text)
+                    .font(.system(size: 15))
+                    .foregroundStyle(isMine ? Color.white : Theme.textPrimary)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .transition(.opacity)
+            case .working:
+                transcriptProgress
+                    .transition(.opacity)
+            case .noSpeech:
+                Text("No speech detected")
+                    .font(.system(size: 13).italic())
+                    .foregroundStyle(metaColor)
+                    .transition(.opacity)
+            case nil:
+                EmptyView()
+            }
+        }
+        .frame(width: transcriptWidth, alignment: .leading)
+        .padding(.horizontal, Self.transcriptInset)
+        .padding(.top, 8)
+        .padding(.bottom, 1)
+    }
+
     private var transcriptProgress: some View {
         let downloading = install.isActive(for: message.id) && install.phase == .downloading
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                if !downloading || !install.isDeterminate {
-                    ProgressView()
-                        .controlSize(.mini)
-                        .tint(Theme.accent)
-                }
-                Text(transcriptProgressLabel(downloading: downloading))
-                    .font(.system(size: 12, weight: .medium))
-                    .contentTransition(.opacity)
-            }
+        return VStack(alignment: .leading, spacing: 7) {
+            Text(transcriptProgressLabel(downloading: downloading))
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(metaColor)
+                .contentTransition(.numericText())
+                .shimmering()
             if downloading, install.isDeterminate {
                 ProgressView(value: max(install.fractionCompleted, 0.02))
                     .progressViewStyle(.linear)
-                    .tint(Theme.accent)
-                    .frame(width: contentWidth)
+                    .tint(isMine ? Color.white : Theme.accent)
             }
         }
-        .foregroundStyle(Theme.accent)
-        .padding(.horizontal, 4)
-        .padding(.vertical, 4)
         .animation(Motion.snappy, value: install.phase)
         .animation(Motion.snappy, value: install.fractionCompleted)
-        .transition(.opacity)
         .accessibilityLabel(transcriptProgressLabel(downloading: downloading))
     }
 
@@ -378,6 +456,36 @@ struct VoiceMessageBubble: View {
                 : "Downloading model…"
         }
         return "Transcribing…"
+    }
+
+    /// Folds or unfolds the transcript, transcribing on device first when there is none yet.
+    private func toggleTranscript() {
+        let animation = Motion.respecting(reduceMotion, Motion.standard)
+        if isTranscriptOpen {
+            withAnimation(animation) { disclosure.setOpen(false, for: message.id) }
+            return
+        }
+        let needsTranscript = drawerContent == nil
+        // The long-press hero has no transcriber; with nothing to show there is nothing to open.
+        if needsTranscript, onRequestTranscript == nil { return }
+        withAnimation(animation) {
+            disclosure.setOpen(true, for: message.id)
+            if needsTranscript { isTranscribing = true }
+        }
+        guard needsTranscript, let onRequestTranscript else { return }
+        Task {
+            let result = await onRequestTranscript()
+            withAnimation(animation) {
+                isTranscribing = false
+                if let result {
+                    localTranscript = result
+                    foundNoSpeech = result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                } else {
+                    // Failed, and the host already said why: fold back to a plain "→A".
+                    disclosure.setOpen(false, for: message.id)
+                }
+            }
+        }
     }
 
     // MARK: - Actions
