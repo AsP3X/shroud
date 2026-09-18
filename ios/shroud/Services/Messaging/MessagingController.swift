@@ -2390,6 +2390,15 @@ final class MessagingController {
         // server's size limit (which would fail the whole voice message).
         let trimmedTranscript = resolved.map(MessageAnnotation.clampTranscript).flatMap { $0.isEmpty ? nil : $0 }
         let displayText = trimmedTranscript ?? "Voice message"
+        // Show the text now: sealing and uploading the note takes a moment longer, and the
+        // bubble would otherwise fold its "Transcribing…" away only to reopen once sent.
+        if let trimmedTranscript,
+           var thread = threads[peerUserID],
+           let idx = thread.firstIndex(where: { $0.id == optimisticID })
+        {
+            thread[idx].transcript = trimmedTranscript
+            threads[peerUserID] = thread
+        }
 
         if isNotesChat(peerUserID) {
             if var thread = threads[peerUserID],
@@ -2660,6 +2669,8 @@ final class MessagingController {
         if var thread = threads[peerUserID],
            let idx = thread.firstIndex(where: { $0.id == optimisticID })
         {
+            // Same note, new id: its bubble carries on instead of landing again.
+            VoiceTranscriptDisclosure.shared.handOff(from: optimisticID, to: dto.id)
             thread[idx] = sent
             threads[peerUserID] = foldSharedTranscripts(into: thread)
         }

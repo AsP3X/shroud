@@ -70,6 +70,11 @@ struct ConversationView: View {
         messages.last?.id
     }
 
+    /// The newest voice notes with nothing newer under them; their transcripts unfold unasked.
+    private var transcriptTail: [UUID] {
+        VoiceTranscriptDisclosure.tail(of: messages)
+    }
+
     private var isNotes: Bool {
         messaging.isNotesChat(peerUserID)
     }
@@ -687,6 +692,15 @@ struct ConversationView: View {
             .onChange(of: newestMessageID) { _, _ in
                 scrollToBottom(proxy)
             }
+            .onChange(of: transcriptTail) { old, new in
+                // Pushed off the bottom by something newer: forget the reader's choice so the
+                // note folds with the rest.
+                withAnimation(Motion.standard) {
+                    for id in old where !new.contains(id) {
+                        VoiceTranscriptDisclosure.shared.clearChoice(for: id)
+                    }
+                }
+            }
             .onChange(of: isPeerTyping) { _, typing in
                 if typing { scrollToBottom(proxy) }
             }
@@ -1000,7 +1014,8 @@ struct ConversationView: View {
                         scheduleToastClear()
                         return nil
                     }
-                }
+                },
+                inTranscriptTail: transcriptTail.contains(message.id)
             )
         case .text:
             MessageBubbleView(
@@ -1498,7 +1513,8 @@ struct ConversationView: View {
                 MessageMenuHeroContent(
                     message: message,
                     timeLabel: messaging.clockTimeLabel(for: message.createdAt),
-                    heroImage: session.heroImage
+                    heroImage: session.heroImage,
+                    inTranscriptTail: transcriptTail.contains(message.id)
                 )
                 // Same size as the list bubble so progress 0 is a perfect handoff.
                 .frame(width: heroFrame.width, height: heroFrame.height)

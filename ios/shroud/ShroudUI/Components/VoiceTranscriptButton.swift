@@ -1,31 +1,5 @@
 import SwiftUI
 
-/// Which voice notes have their transcript unfolded. Transcripts start folded, as in Telegram.
-///
-/// Human: The fold lives outside the bubble's own `@State` so the long-press hero draws the
-/// same fold as the list bubble it lifts off, and an open note stays open while the thread
-/// re-renders around it.
-/// Agent: In-memory, session-only view state; nothing is persisted.
-@Observable
-@MainActor
-final class VoiceTranscriptDisclosure {
-    static let shared = VoiceTranscriptDisclosure()
-
-    private var openIDs: Set<UUID> = []
-
-    func isOpen(_ id: UUID) -> Bool {
-        openIDs.contains(id)
-    }
-
-    func setOpen(_ open: Bool, for id: UUID) {
-        if open {
-            openIDs.insert(id)
-        } else {
-            openIDs.remove(id)
-        }
-    }
-}
-
 /// Telegram's "→A" transcript toggle, sat to the right of a voice note's waveform.
 ///
 /// Human: Folded it reads "→A" (voice to text); unfolded, the arrow slides off and the A's legs

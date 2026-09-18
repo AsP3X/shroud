@@ -32,6 +32,7 @@ import { VoiceBubble } from "./VoiceBubble";
 import { VoiceDroplet, VoiceStrip } from "./VoiceRecorderBar";
 import { useVoiceRecording } from "./useVoiceRecording";
 import type { VoiceTake } from "../voice/recorder";
+import { clearTranscriptChoice, transcriptTail } from "../voice/transcriptView";
 
 /** Messages from the same sender inside this window render as one visual block. */
 const GROUP_WINDOW = 5 * MINUTE;
@@ -220,6 +221,21 @@ export function Thread({
     rowCount.current = rows.length;
   }, [rows.length]);
 
+  /* The newest voice notes show their transcript unasked. Worked out from the whole
+     thread (a search filter doesn't change what is newest), and synchronously, so
+     the server's copy of a sent note takes over its bubble without a flicker. */
+  const tailKey = useMemo(() => transcriptTail(messages).join(","), [messages]);
+  const tail = useMemo(() => new Set(tailKey ? tailKey.split(",") : []), [tailKey]);
+  const lastTail = useRef({ peer: peer.id, ids: [] as string[] });
+  useLayoutEffect(() => {
+    const before = lastTail.current;
+    const ids = [...tail];
+    lastTail.current = { peer: peer.id, ids };
+    if (before.peer !== peer.id) return;
+    // Pushed off the bottom by something newer: forget the reader's choice and fold.
+    for (const id of before.ids) if (!tail.has(id)) clearTranscriptChoice(id);
+  }, [peer.id, tail]);
+
   /* Filtering shrinks the thread; if we were pinned, stay on the latest match
      (and jump back to the real bottom when the query is cleared). */
   useLayoutEffect(() => {
@@ -356,7 +372,12 @@ export function Thread({
                 /* The transcript folds away inside the bubble, behind the →A button. */
                 return (
                   <div key={row.key} className={bubbleClass}>
-                    <VoiceBubble message={message} loadVoice={onLoadVoice} query={query} />
+                    <VoiceBubble
+                      message={message}
+                      loadVoice={onLoadVoice}
+                      query={query}
+                      inTail={tail.has(message.id)}
+                    />
                   </div>
                 );
               }

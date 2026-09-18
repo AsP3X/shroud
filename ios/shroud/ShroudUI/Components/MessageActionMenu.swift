@@ -293,6 +293,8 @@ struct MessageMenuHeroContent: View {
     let timeLabel: String
     /// Kept for API stability; image hero reads `DecodedImageCache` via `ImageMessageBubble`.
     let heroImage: UIImage?
+    /// Mirrors the list bubble so a voice note lifts off with the same fold.
+    var inTranscriptTail = false
 
     var body: some View {
         switch message.kind {
@@ -311,7 +313,9 @@ struct MessageMenuHeroContent: View {
         case .voice:
             VoiceMessageBubble(
                 message: message,
-                time: timeLabel
+                time: timeLabel,
+                inTranscriptTail: inTranscriptTail,
+                revealsArrival: false
             )
         case .text:
             MessageBubbleView(

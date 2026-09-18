@@ -15,6 +15,11 @@ struct VoiceMessageBubble: View {
     let time: String
     var onAppearLoad: () -> Void = {}
     var onRequestTranscript: (() async -> String?)? = nil
+    /// One of the newest voice notes with nothing newer under it: a short transcript unfolds unasked.
+    var inTranscriptTail = false
+    /// Lets a fresh note land before it unfolds, and streams text revealed in front of the reader.
+    /// Off for the long-press hero, which has to match the list bubble frame for frame.
+    var revealsArrival = true
 
     @State private var playback = VoicePlaybackCoordinator.shared
     @State private var install = TranscriptionModelInstall.shared
@@ -27,6 +32,10 @@ struct VoiceMessageBubble: View {
     @State private var scrubProgress: Double?
     /// Duration read back from the audio itself when the payload doesn't carry one.
     @State private var resolvedDurationMs: Int?
+    /// Pinned on appear: whether this bubble is still landing (see `landing`).
+    @State private var isLanding: Bool?
+    /// Text revealed once the bubble is on screen streams in; text there from the start doesn't.
+    @State private var hasAppeared = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -143,7 +152,24 @@ struct VoiceMessageBubble: View {
         }
         .animation(Motion.respecting(reduceMotion, Motion.standard), value: transcript)
         .animation(Motion.respecting(reduceMotion, Motion.standard), value: isWorkingOnTranscript)
-        .onAppear(perform: onAppearLoad)
+        // Covers the automatic fold too: a new message below, or a fresh note done landing.
+        .animation(Motion.respecting(reduceMotion, Motion.standard), value: isTranscriptOpen)
+        .onAppear {
+            onAppearLoad()
+            hasAppeared = true
+        }
+        .task {
+            // A note that arrives while the thread is open lands folded, then unfolds.
+            // `defer` so scrolling away mid-wait still finishes landing — otherwise the
+            // note would stay folded until the view is recreated.
+            guard isLanding == nil else { return }
+            let shouldLand = landing
+            isLanding = shouldLand
+            guard shouldLand else { return }
+            defer { isLanding = false }
+            if reduceMotion { return }
+            try? await Task.sleep(for: .milliseconds(VoiceTranscriptDisclosure.landingDelayMs))
+        }
         .task(id: message.voiceData) { await resolveDurationIfNeeded() }
         .onDisappear {
             // Only tear down if this bubble owns the player *and* is paused; a playing note
@@ -375,9 +401,30 @@ struct VoiceMessageBubble: View {
         return nil
     }
 
-    /// Folded by default; the toggle opens it, and it only shows once there is something in it.
+    /// The reader's own choice wins; otherwise the newest notes unfold by themselves. It only
+    /// shows once there is something in it.
     private var isTranscriptOpen: Bool {
-        disclosure.isOpen(message.id) && drawerContent != nil
+        guard drawerContent != nil else { return false }
+        return disclosure.choice(for: message.id) ?? opensUnasked
+    }
+
+    /// At the bottom of the thread a short transcript unfolds once the bubble has landed.
+    private var opensUnasked: Bool {
+        inTranscriptTail && !landing && VoiceTranscriptDisclosure.opensUnasked(
+            transcript: transcript,
+            durationMs: durationMs,
+            isWorking: isWorkingOnTranscript
+        )
+    }
+
+    /// Fresh off the network or the recorder — not history, and not the server's copy of a bubble
+    /// that was already on screen.
+    private var landing: Bool {
+        isLanding ?? (
+            revealsArrival
+                && !disclosure.wasHandedOff(message.id)
+                && Date().timeIntervalSince(message.createdAt) < VoiceTranscriptDisclosure.arrivalWindow
+        )
     }
 
     private var transcriptButton: some View {
@@ -400,12 +447,12 @@ struct VoiceMessageBubble: View {
         ZStack(alignment: .topLeading) {
             switch drawerContent {
             case let .text(text):
-                Text(text)
-                    .font(.system(size: 15))
-                    .foregroundStyle(isMine ? Color.white : Theme.textPrimary)
-                    .lineSpacing(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .transition(.opacity)
+                VoiceTranscriptText(
+                    text: text,
+                    color: isMine ? Color.white : Theme.textPrimary,
+                    streams: hasAppeared && revealsArrival && !reduceMotion
+                )
+                .transition(.opacity)
             case .working:
                 transcriptProgress
                     .transition(.opacity)

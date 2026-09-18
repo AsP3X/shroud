@@ -30,10 +30,12 @@ import {
 } from "../voice/playback";
 import {
   isTranscribing,
-  isTranscriptOpen,
+  opensUnasked,
   setTranscriptOpen,
   subscribeTranscriptView,
+  transcriptChoice,
   transcriptViewVersion,
+  wasHandedOff,
 } from "../voice/transcriptView";
 import { Highlight } from "./Highlight";
 
@@ -42,6 +44,13 @@ const MIN_TRUSTED_MS = 300;
 /** Drawer unfold; the glyph morph and text fade in index.css run on the same clock. */
 const UNFOLD_MS = 320;
 const UNFOLD_EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
+/** A note this new when its bubble mounts arrived while the reader was watching. */
+const FRESH_MS = 15_000;
+/** How long a new note's transcript waits for its bubble to land before unfolding. */
+const LANDING_MS = 260;
+/** Word-by-word reveal: gap between words, and the most a whole transcript may take. */
+const WORD_STEP_MS = 45;
+const WORD_SPREAD_MS = 900;
 
 function Receipt({ message }: { message: ChatMessage }) {
   if (message.pending) return <Clock size={13} aria-label="Sending" />;
@@ -62,6 +71,35 @@ function TranscriptGlyph() {
       <path className="voice-tx-leg voice-tx-leg-r" d="M0 0 4.5 12" />
       <path className="voice-tx-bar" d="M14.3 14h5.4" />
     </svg>
+  );
+}
+
+/**
+ * The transcript as words that fade up out of a blur one after another, the way
+ * AI-written text streams in. The gap between words shrinks for long transcripts
+ * so the whole reveal stays under a second.
+ */
+function StreamedWords({ text }: { text: string }) {
+  const parts = text.split(/(\s+)/);
+  const words = parts.filter((part) => part.trim()).length;
+  const step = Math.min(WORD_STEP_MS, WORD_SPREAD_MS / Math.max(1, words));
+  let index = 0;
+  return (
+    <>
+      {parts.map((part, key) =>
+        part.trim() ? (
+          <span
+            key={key}
+            className="voice-tx-word"
+            style={{ animationDelay: `${Math.round(index++ * step)}ms` }}
+          >
+            {part}
+          </span>
+        ) : (
+          part
+        ),
+      )}
+    </>
   );
 }
 
@@ -115,11 +153,14 @@ export function VoiceBubble({
   message,
   loadVoice,
   query = "",
+  inTail = false,
 }: {
   message: ChatMessage;
   loadVoice: (message: ChatMessage) => Promise<Uint8Array | null>;
   /** Active in-chat search; a transcript that matches unfolds to show the hit. */
   query?: string;
+  /** One of the newest voice notes with nothing newer under it: unfolds by itself. */
+  inTail?: boolean;
 }) {
   const playback = useSyncExternalStore(subscribeVoicePlayback, getVoicePlayback);
   useSyncExternalStore(subscribeTranscriptView, transcriptViewVersion);
@@ -158,13 +199,37 @@ export function VoiceBubble({
   const hasTranscriptUi = Boolean(transcript) || busy;
   const needle = query.trim().toLowerCase();
   const matched = Boolean(needle && transcript?.toLowerCase().includes(needle));
+  /* A note that arrives while the thread is open lands folded, then unfolds; one
+     that was already there (history, or the server's copy of a sent bubble) is
+     drawn as it is. */
+  const [landing, setLanding] = useState(
+    () => !wasHandedOff(message.id) && Date.now() - Date.parse(message.createdAt) < FRESH_MS,
+  );
+  const autoOpen = inTail && !landing && opensUnasked(transcript, durationMs, busy);
   const open =
     hasTranscriptUi &&
-    (isTranscriptOpen(message.id) || (matched && foldedFor !== needle));
+    ((transcriptChoice(message.id) ?? autoOpen) || (matched && foldedFor !== needle));
   /* The button only animates in when a transcript lands on a bubble already on
      screen; a thread opening with transcripts in it draws them in place. */
   const [toggleEnters] = useState(() => !hasTranscriptUi);
   const drawer = useHeightTween(`${open}|${transcript ? "text" : "wait"}`);
+  /* Counts transcripts revealed in front of the reader — unfolded, or text taking
+     over from "Transcribing…" — so each one streams in. Drawn in place otherwise. */
+  const [streamRun, setStreamRun] = useState(0);
+  const shown = useRef({ open, transcript });
+
+  useEffect(() => {
+    if (!landing) return;
+    const delay = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? 0 : LANDING_MS;
+    const timer = window.setTimeout(() => setLanding(false), delay);
+    return () => window.clearTimeout(timer);
+  }, [landing]);
+
+  useLayoutEffect(() => {
+    const before = shown.current;
+    shown.current = { open, transcript };
+    if (open && transcript && (!before.open || !before.transcript)) setStreamRun((n) => n + 1);
+  }, [open, transcript]);
 
   useEffect(() => {
     let cancelled = false;
@@ -217,13 +282,9 @@ export function VoiceBubble({
 
   function toggleTranscript() {
     drawer.markPress();
-    if (open) {
-      setTranscriptOpen(message.id, false);
-      if (matched) setFoldedFor(needle);
-    } else {
-      setTranscriptOpen(message.id, true);
-      setFoldedFor(null);
-    }
+    setTranscriptOpen(message.id, !open);
+    if (open && matched) setFoldedFor(needle);
+    else if (!open) setFoldedFor(null);
   }
 
   function onPointer(event: PointerEvent<HTMLDivElement>) {
@@ -353,11 +414,19 @@ export function VoiceBubble({
           data-open={open ? "" : undefined}
         >
           {transcript ? (
-            <p className="voice-tx-text">
-              <Highlight text={transcript} query={query} />
-            </p>
+            streamRun > 0 && !needle ? (
+              <p key={streamRun} className="voice-tx-text voice-tx-stream">
+                <StreamedWords text={transcript} />
+              </p>
+            ) : (
+              <p className="voice-tx-text">
+                <Highlight text={transcript} query={query} />
+              </p>
+            )
           ) : (
-            <p className="voice-tx-wait">Transcribing…</p>
+            <p className="voice-tx-wait">
+              <span>Transcribing…</span>
+            </p>
           )}
         </div>
       ) : null}
