@@ -970,8 +970,11 @@ a { color: var(--accent-text); text-decoration: none; }
   to { opacity: 1; transform: none; }
 }
 
+/* The footer holds banners, the recording strip and the composer; the pill
+   floats a fixed distance above whatever it currently contains. */
+.thread-foot { position: relative; flex-shrink: 0; }
 .jump-latest {
-  position: absolute; right: 22px; bottom: 96px;
+  position: absolute; right: 22px; bottom: calc(100% + 38px);
   display: inline-flex; align-items: center; gap: 6px;
   padding: 8px 14px; border-radius: var(--r-full); border: 1px solid var(--separator);
   background: var(--surface-2); color: var(--text-primary);
@@ -986,13 +989,17 @@ a { color: var(--accent-text); text-decoration: none; }
   background: var(--danger-soft); color: var(--danger);
   font-size: var(--fs-sm); text-align: center;
 }
+.voice-hint { animation: fade-in 0.2s ease; }
 
-.compose {
-  flex-shrink: 0;
-  display: flex; gap: 6px; align-items: flex-end;
-  padding: 8px 14px;
+.compose-shell {
+  position: relative;
+  display: flex; flex-direction: column;
   background: var(--bg);
   border-top: 1px solid var(--separator);
+}
+.compose {
+  display: flex; gap: 6px; align-items: flex-end;
+  padding: 8px 14px;
 }
 /* The ::after cell mirrors the value and sets the row height, so the field
    grows with its content without measuring anything in JS. */
@@ -1034,82 +1041,18 @@ a { color: var(--accent-text); text-decoration: none; }
 .compose-field::placeholder { color: var(--text-tertiary); }
 .compose-field:disabled { opacity: 0.6; }
 .compose .icon-btn { width: 34px; height: 34px; margin-bottom: 2px; }
-.compose-mic { touch-action: none; user-select: none; color: var(--accent-text); }
+.compose-mic {
+  touch-action: none; user-select: none;
+  -webkit-user-select: none; -webkit-touch-callout: none;
+  color: var(--accent-text);
+  transition: background 0.15s ease, color 0.15s ease, opacity 0.2s ease;
+}
 .compose-mic:disabled { color: var(--text-tertiary); }
-.compose-mic.recording {
-  background: var(--accent); color: #fff;
-  transform: scale(1.18);
-}
-.compose-shell { position: relative; flex-shrink: 0; display: flex; flex-direction: column; }
-.compose-shell.recording .compose { border-top-color: transparent; }
-
-.voice-droplet {
-  position: fixed; z-index: 24;
-  pointer-events: none;
-  border-radius: 999px;
-  background: var(--accent);
-  box-shadow: 0 12px 32px color-mix(in srgb, var(--accent) 42%, transparent);
-  transform: translate(-50%, -50%);
-  transition:
-    left 0.38s cubic-bezier(0.2, 0.8, 0.2, 1),
-    top 0.38s cubic-bezier(0.2, 0.8, 0.2, 1),
-    width 0.38s cubic-bezier(0.2, 0.8, 0.2, 1),
-    height 0.32s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-.voice-locked {
-  display: flex; align-items: center; gap: 10px;
-  padding: 8px 14px 4px;
-  background: var(--bg);
-  border-top: 1px solid var(--separator);
-  animation: voice-locked-in 0.32s var(--ease);
-}
-@keyframes voice-locked-in {
-  from { opacity: 0; transform: translateY(10px) scale(0.96); }
-  to { opacity: 1; transform: none; }
-}
-.voice-locked-discard {
-  width: 40px; height: 40px; flex-shrink: 0;
-  border: 0; border-radius: var(--r-full);
-  background: transparent; color: var(--danger);
-  display: grid; place-items: center;
-}
-.voice-locked-discard:hover { background: var(--danger-soft); }
-.voice-locked-capsule {
-  flex: 1; min-width: 0;
-  display: flex; align-items: center; gap: 10px;
-  height: 44px; padding: 0 14px;
-  background: var(--surface-2);
-  border: 1px solid var(--separator);
-  border-radius: var(--r-full);
-  --voice-played: var(--accent);
-  --voice-rest: color-mix(in srgb, var(--accent) 40%, transparent);
-}
-.voice-rec-dot {
-  width: 9px; height: 9px; flex-shrink: 0;
-  border-radius: 50%; background: var(--danger);
-  animation: voice-rec-blink 1.2s ease-in-out infinite;
-}
-@keyframes voice-rec-blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.2; }
-}
-.voice-rec-time {
-  width: 72px; flex-shrink: 0;
-  font-size: 15px; font-weight: 500; font-variant-numeric: tabular-nums;
-  color: var(--text-primary);
-}
-.voice-live-wave {
-  flex: 1; min-width: 0;
-  display: flex; align-items: center; gap: 2px;
-  height: 24px;
-}
-.voice-live-wave .voice-bar { flex: 1 1 0; min-width: 0; }
-
-@media (prefers-reduced-motion: reduce) {
-  .voice-droplet { transition: none; }
-  .voice-locked { animation: none; }
-  .voice-rec-dot { animation: none; }
+/* A recording is open: the strip owns the controls, the mic rests. */
+.compose-mic[aria-disabled="true"],
+.compose-mic[aria-disabled="true"]:hover {
+  background: transparent; color: var(--text-tertiary);
+  opacity: 0.38; cursor: default;
 }
 .compose-plus { display: none; }
 .send {
@@ -1121,6 +1064,175 @@ a { color: var(--accent-text); text-decoration: none; }
 .send:hover:not(:disabled) { background: var(--accent-hover); }
 .send:active:not(:disabled) { transform: scale(0.94); }
 .send:disabled { background: var(--surface-3); color: var(--text-tertiary); cursor: default; }
+
+/* ------------------------------------------------------- voice recording --
+   Order of motion is described in useVoiceRecording.ts; this is its timing.
+   -------------------------------------------------------------------------- */
+
+/* Anchored to the shell's bottom-left and placed with `translate`, so `scale`
+   (bud, exit) always grows from the droplet's own centre. */
+.voice-droplet {
+  position: absolute; left: 0; bottom: 0; z-index: 3;
+  width: 38px; height: 38px;
+  border-radius: var(--r-full);
+  /* The capsule's own surface, revealed as the ink drains during the flight. */
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--separator);
+  pointer-events: none;
+  animation: voice-droplet-bud 220ms var(--ease) both;
+}
+.voice-droplet-ink {
+  position: absolute; inset: 0;
+  border-radius: inherit;
+  background: var(--accent);
+  box-shadow:
+    0 0 0 calc(var(--level, 0) * 12px) color-mix(in srgb, var(--accent) 22%, transparent),
+    0 8px 22px color-mix(in srgb, var(--accent) 36%, transparent);
+  transition: box-shadow 90ms linear;
+}
+.voice-droplet-icon {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  color: #fff;
+}
+/* Waiting on the microphone (possibly a permission prompt): breathe. */
+.voice-droplet[data-phase="arming"] .voice-droplet-ink {
+  animation: voice-droplet-wait 1.3s ease-in-out 300ms infinite;
+}
+.voice-droplet[data-phase="leaving"] { animation: voice-droplet-out 180ms ease-in both; }
+@keyframes voice-droplet-bud { from { scale: 0.4; opacity: 0; } }
+@keyframes voice-droplet-out { to { scale: 0.4; opacity: 0; } }
+@keyframes voice-droplet-wait {
+  50% {
+    box-shadow:
+      0 0 0 7px color-mix(in srgb, var(--accent) 20%, transparent),
+      0 8px 22px color-mix(in srgb, var(--accent) 36%, transparent);
+  }
+}
+
+/* Rows animate 0fr <-> 1fr and the row is bottom-anchored, so the strip rises
+   out of the composer while the capsule's position never moves. */
+.voice-strip {
+  display: grid; grid-template-rows: 1fr;
+  animation: voice-strip-open 300ms var(--ease) both;
+}
+.voice-strip[data-state="closing"] {
+  animation: voice-strip-close 260ms cubic-bezier(0.4, 0, 0.2, 1) 120ms both;
+}
+.voice-strip[data-close="discard"] { animation-delay: 240ms; }
+@keyframes voice-strip-open { from { grid-template-rows: 0fr; } }
+@keyframes voice-strip-close { to { grid-template-rows: 0fr; } }
+.voice-strip-clip {
+  min-height: 0; overflow: hidden;
+  display: flex; flex-direction: column; justify-content: flex-end;
+}
+.voice-strip-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px 4px;
+  /* Stay full-size inside a 0fr track so the droplet can measure the capsule. */
+  flex-shrink: 0;
+}
+.voice-strip-discard {
+  width: 38px; height: 38px; flex-shrink: 0;
+  border: 0; border-radius: var(--r-full);
+  background: transparent; color: var(--danger);
+  display: grid; place-items: center;
+}
+.voice-strip-discard:hover:not(:disabled) { background: var(--danger-soft); }
+.voice-strip-discard:disabled { opacity: 0.45; cursor: default; }
+.voice-strip-capsule {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 12px;
+  height: 40px; padding: 0 16px 0 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--separator);
+  border-radius: var(--r-full);
+  clip-path: inset(0 0 0 0 round 20px);
+}
+.voice-rec-meta { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.voice-rec-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--danger);
+  animation: voice-rec-pulse 1.4s ease-in-out infinite;
+}
+@keyframes voice-rec-pulse { 50% { opacity: 0.3; } }
+.voice-rec-time {
+  min-width: 56px;
+  font-size: var(--fs-base); font-weight: 500; font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.voice-live-wave { flex: 1; min-width: 0; height: 24px; overflow: hidden; }
+/* Once the track is full, old bars thin out at the left edge instead of being cut. */
+.voice-live-wave.scrolling {
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 32px);
+  mask-image: linear-gradient(90deg, transparent, #000 32px);
+}
+.voice-live-track { display: flex; align-items: center; gap: 2px; height: 100%; }
+.voice-live-bar {
+  flex: 0 0 3px;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: voice-bar-in 220ms var(--ease) both;
+}
+@keyframes voice-bar-in { from { scale: 1 0.25; opacity: 0.35; } }
+
+/* Reveal: the droplet stands in for the capsule until it lands; then the
+   readout fades in, then the controls pop in. */
+.voice-strip[data-state="opening"] .voice-strip-capsule { visibility: hidden; }
+.voice-strip-capsule > * { transition: opacity 180ms ease, translate 300ms var(--ease); }
+.voice-strip-capsule > .voice-live-wave { transition-delay: 40ms; }
+.voice-strip[data-state="opening"] .voice-strip-capsule > * { opacity: 0; translate: -8px 0; }
+.voice-strip-row > .voice-strip-discard,
+.voice-strip-row > .voice-strip-send {
+  transition:
+    background 0.15s ease, transform 0.12s ease,
+    opacity 160ms ease 70ms, scale 380ms cubic-bezier(0.34, 1.56, 0.64, 1) 70ms;
+}
+.voice-strip[data-state="opening"] :is(.voice-strip-discard, .voice-strip-send) { opacity: 0; scale: 0.4; }
+
+/* Send: the controls and readout lift away together, then the strip folds. */
+.voice-strip[data-close="send"] .voice-strip-row > * {
+  opacity: 0; translate: 0 -6px;
+  transition: opacity 140ms ease, translate 200ms var(--ease), scale 200ms var(--ease);
+}
+.voice-strip[data-close="send"] .voice-strip-send { scale: 0.8; }
+
+/* Discard: the capsule retracts into the bin, the bin catches it as it
+   arrives, then the strip folds away with it. */
+.voice-strip[data-close="discard"] .voice-strip-capsule {
+  clip-path: inset(0 100% 0 0 round 20px);
+  transition: clip-path 220ms cubic-bezier(0.45, 0, 0.8, 0.35);
+}
+.voice-strip[data-close="discard"] .voice-strip-capsule > * { opacity: 0; transition: opacity 100ms ease; }
+.voice-strip[data-close="discard"] .voice-strip-send {
+  opacity: 0; scale: 0.6;
+  transition: opacity 140ms ease, scale 200ms ease-in;
+}
+.voice-strip[data-close="discard"] .voice-strip-discard {
+  opacity: 0;
+  animation: voice-bin-catch 280ms ease-in-out 160ms;
+  transition: opacity 120ms ease 300ms;
+}
+@keyframes voice-bin-catch {
+  35% { rotate: -14deg; scale: 1.12; }
+  70% { rotate: 9deg; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-rec-dot, .voice-live-bar, .voice-droplet, .voice-strip,
+  .voice-strip[data-state="closing"], .voice-strip[data-close="discard"] .voice-strip-discard {
+    animation: none;
+  }
+  .voice-strip-capsule > *,
+  .voice-strip-row > .voice-strip-discard,
+  .voice-strip-row > .voice-strip-send,
+  .voice-strip[data-close="send"] .voice-strip-row > *,
+  .voice-strip[data-close="discard"] .voice-strip-capsule,
+  .voice-strip[data-close="discard"] .voice-strip-send,
+  .voice-strip[data-close="discard"] .voice-strip-discard {
+    transition: none;
+  }
+}
 
 .thread-placeholder { display: grid; place-items: center; }
 .placeholder-card {
@@ -1532,12 +1644,12 @@ a { color: var(--accent-text); text-decoration: none; }
   .messages-inner { padding: 14px 12px 16px; }
   .bubble { max-width: 84%; }
   .compose { padding: 7px 10px; }
-  .voice-locked { padding: 7px 10px; }
+  .voice-strip-row { padding: 7px 10px 3px; }
   .compose-wide { display: none; }
   .compose-plus { display: grid; }
   .compose.has-draft .compose-mic { display: none; }
   .compose:not(.has-draft) .send { display: none; }
-  .jump-latest { right: 14px; bottom: 72px; }
+  .jump-latest { right: 14px; bottom: calc(100% + 16px); }
   .set-body { padding: 16px 12px 48px; }
   .set-nav { height: 52px; }
   .pane-head { padding: 14px 12px 10px; }

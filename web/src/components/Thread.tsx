@@ -5,10 +5,8 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
   type FormEvent,
   type KeyboardEvent,
-  type PointerEvent,
   type ReactNode,
 } from "react";
 import {
@@ -31,17 +29,9 @@ import { clockTime, dayLabel, fullTimestamp, sameDay, MINUTE } from "../format";
 import type { ChatMessage } from "../messaging";
 import { Avatar } from "./Avatar";
 import { VoiceBubble } from "./VoiceBubble";
-import { VoiceLockedBar } from "./VoiceRecorderBar";
-import { stopVoice } from "../voice/playback";
-import {
-  VOICE_LOCK_PX,
-  cancelVoiceRecord,
-  finishVoiceRecord,
-  getVoiceRecorder,
-  startVoiceRecord,
-  subscribeVoiceRecorder,
-  type VoiceTake,
-} from "../voice/recorder";
+import { VoiceDroplet, VoiceStrip } from "./VoiceRecorderBar";
+import { useVoiceRecording } from "./useVoiceRecording";
+import type { VoiceTake } from "../voice/recorder";
 
 /** Messages from the same sender inside this window render as one visual block. */
 const GROUP_WINDOW = 5 * MINUTE;
@@ -140,17 +130,11 @@ export function Thread({
   onShowInfo: () => void;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
+  const foot = useRef<HTMLDivElement>(null);
   const field = useRef<HTMLTextAreaElement>(null);
-  const composeRef = useRef<HTMLDivElement>(null);
-  const micRef = useRef<HTMLButtonElement>(null);
-  const recPhase = useRef<"idle" | "armed" | "locked">("idle");
-  const dragOrigin = useRef<{ x: number; y: number } | null>(null);
-  const holding = useRef(false);
-  const [recUi, setRecUi] = useState<"idle" | "armed" | "locked">("idle");
-  const [droplet, setDroplet] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
-  const [recHint, setRecHint] = useState<string | null>(null);
-  const recSnap = useSyncExternalStore(subscribeVoiceRecorder, getVoiceRecorder);
   const [pinned, setPinned] = useState(true);
+  /** Mirrors `pinned` for the resize observer, which outlives renders. */
+  const pinnedRef = useRef(true);
   const [unseen, setUnseen] = useState(0);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -161,6 +145,7 @@ export function Thread({
     const node = scroller.current;
     if (!node) return;
     node.scrollTo({ top: node.scrollHeight, behavior });
+    pinnedRef.current = true;
     setPinned(true);
     setUnseen(0);
   }, []);
@@ -170,11 +155,34 @@ export function Thread({
     if (!node) return;
     const distance = node.scrollHeight - node.scrollTop - node.clientHeight;
     const atBottom = distance <= PIN_SLACK;
+    pinnedRef.current = atBottom;
     setPinned(atBottom);
     if (atBottom) setUnseen(0);
   }, []);
 
   const finePointer = () => window.matchMedia?.("(pointer: fine)").matches ?? false;
+
+  const voice = useVoiceRecording({
+    canSend,
+    onSendVoice,
+    resetKey: peer.id,
+    onSettled: () => {
+      if (finePointer()) field.current?.focus();
+    },
+  });
+
+  /* The footer grows while recording (and as the field wraps); without this the
+     newest messages would slide under it instead of staying in view. */
+  useEffect(() => {
+    const node = scroller.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (pinnedRef.current) node.scrollTop = node.scrollHeight;
+    });
+    observer.observe(node);
+    if (foot.current) observer.observe(foot.current);
+    return () => observer.disconnect();
+  }, []);
 
   useLayoutEffect(() => {
     seenCount.current = 0;
@@ -186,15 +194,6 @@ export function Thread({
     // every time a chat is opened on a phone.
     if (finePointer()) field.current?.focus();
   }, [peer.id, toBottom]);
-
-  useEffect(() => {
-    recPhase.current = "idle";
-    setRecUi("idle");
-    setDroplet(null);
-    cancelVoiceRecord();
-  }, [peer.id]);
-
-  useEffect(() => () => cancelVoiceRecord(), []);
 
   useLayoutEffect(() => {
     const added = messages.length - seenCount.current;
@@ -228,127 +227,6 @@ export function Thread({
   function send() {
     onSend();
     field.current?.focus();
-  }
-
-  function dropletTarget() {
-    const bar = composeRef.current?.querySelector(".voice-locked")?.getBoundingClientRect();
-    if (bar) {
-      return { x: bar.left + bar.width / 2, y: bar.top + bar.height / 2, w: Math.max(160, bar.width - 24), h: bar.height };
-    }
-    const shell = composeRef.current?.getBoundingClientRect();
-    const mic = micRef.current?.getBoundingClientRect();
-    const x = shell ? shell.left + shell.width / 2 : (mic ? mic.left + mic.width / 2 : 0);
-    const y = shell ? shell.top - 30 : (mic ? mic.top : 0);
-    const w = shell ? Math.min(shell.width - 24, 420) : 280;
-    return { x, y, w: Math.max(160, w), h: 44 };
-  }
-
-  function lockRecording() {
-    if (recPhase.current === "locked") return;
-    recPhase.current = "locked";
-    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    setRecUi("locked");
-    if (reduce) {
-      setDroplet(null);
-      return;
-    }
-    window.requestAnimationFrame(() => {
-      setDroplet(dropletTarget());
-      window.setTimeout(() => {
-        if (recPhase.current === "locked") setDroplet(null);
-      }, 380);
-    });
-  }
-
-  async function beginRecording(from: DOMRect) {
-    if (recPhase.current !== "idle") return;
-    recPhase.current = "armed";
-    setRecUi("armed");
-    setRecHint(null);
-    stopVoice();
-    setDroplet({ x: from.left + from.width / 2, y: from.top + from.height / 2, w: 38, h: 38 });
-    try {
-      const started = await startVoiceRecord();
-      if (!started) {
-        if (recPhase.current === "armed") {
-          recPhase.current = "idle";
-          setRecUi("idle");
-          setDroplet(null);
-        }
-        return;
-      }
-    } catch {
-      recPhase.current = "idle";
-      setRecUi("idle");
-      setDroplet(null);
-      holding.current = false;
-      setRecHint("Microphone access is required for voice messages.");
-      return;
-    }
-    if (recPhase.current !== "armed") return;
-    if (!holding.current) lockRecording();
-  }
-
-  function onMicDown(event: PointerEvent<HTMLButtonElement>) {
-    if (!canSend) return;
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    holding.current = true;
-    dragOrigin.current = { x: event.clientX, y: event.clientY };
-    void beginRecording(event.currentTarget.getBoundingClientRect());
-  }
-
-  function onMicMove(event: PointerEvent<HTMLButtonElement>) {
-    if (!dragOrigin.current || recPhase.current === "idle") return;
-    const dy = event.clientY - dragOrigin.current.y;
-    const progress = Math.min(1, Math.max(0, -dy / VOICE_LOCK_PX));
-    if (progress >= 1 && getVoiceRecorder().recording) {
-      lockRecording();
-      return;
-    }
-    if (recPhase.current !== "armed") return;
-    const mic = micRef.current?.getBoundingClientRect();
-    const target = dropletTarget();
-    if (!mic) return;
-    const x0 = mic.left + mic.width / 2;
-    const y0 = mic.top + mic.height / 2;
-    setDroplet({
-      x: x0 + (target.x - x0) * progress,
-      y: y0 + (target.y - y0) * progress,
-      w: 38 + (target.w - 38) * progress,
-      h: 38 + (target.h - 38) * progress * 0.4,
-    });
-  }
-
-  function onMicUp() {
-    holding.current = false;
-    dragOrigin.current = null;
-    if (recPhase.current === "armed" && getVoiceRecorder().recording) lockRecording();
-  }
-
-  function discardRecording() {
-    recPhase.current = "idle";
-    setRecUi("idle");
-    setDroplet(null);
-    cancelVoiceRecord();
-  }
-
-  async function sendRecording() {
-    if (recPhase.current === "idle") return;
-    recPhase.current = "idle";
-    setRecUi("idle");
-    setDroplet(null);
-    try {
-      const take = await finishVoiceRecord();
-      if (!take) {
-        setRecHint("That recording was too short.");
-        return;
-      }
-      onSendVoice(take);
-    } catch {
-      cancelVoiceRecord();
-      setRecHint("Could not finish the recording.");
-    }
   }
 
   function submit(event: FormEvent) {
@@ -491,35 +369,28 @@ export function Thread({
         </div>
       </div>
 
-      {error && messages.length > 0 ? (
-        <p className="thread-banner" role="status">
-          {error}
-        </p>
-      ) : null}
-
-      {!pinned && messages.length > 0 ? (
-        <button className="jump-latest" type="button" onClick={() => toBottom("smooth")}>
-          <ArrowDown size={15} aria-hidden="true" />
-          {unseen > 0 ? `${unseen} new message${unseen > 1 ? "s" : ""}` : "Latest"}
-        </button>
-      ) : null}
-
-      {recHint ? (
-        <p className="thread-banner" role="status">
-          {recHint}
-        </p>
-      ) : null}
-
-      <div className={`compose-shell${recUi !== "idle" ? " recording" : ""}`} ref={composeRef}>
-        {recUi !== "idle" ? (
-          <VoiceLockedBar
-            elapsed={recSnap.elapsed}
-            levels={recSnap.liveLevels}
-            onDiscard={discardRecording}
-            onSend={() => void sendRecording()}
-            sending={sending}
-          />
+      <div className="thread-foot" ref={foot}>
+        {!pinned && messages.length > 0 ? (
+          <button className="jump-latest" type="button" onClick={() => toBottom("smooth")}>
+            <ArrowDown size={15} aria-hidden="true" />
+            {unseen > 0 ? `${unseen} new message${unseen > 1 ? "s" : ""}` : "Latest"}
+          </button>
         ) : null}
+
+        {error && messages.length > 0 ? (
+          <p className="thread-banner" role="status">
+            {error}
+          </p>
+        ) : null}
+
+        {voice.hint ? (
+          <p className="thread-banner voice-hint" role="status">
+            {voice.hint}
+          </p>
+        ) : null}
+
+        <div className="compose-shell" ref={voice.shellRef}>
+          <VoiceStrip voice={voice} />
           <form
             className={draft.trim() ? "compose has-draft" : "compose"}
             onSubmit={submit}
@@ -566,17 +437,17 @@ export function Thread({
                 disabled={!canSend}
               />
             </div>
+            {/* Stays enabled while a recording is open (aria-disabled only), so a
+                held pointer keeps its capture until release. */}
             <button
-              ref={micRef}
-              className={`icon-btn compose-mic${recUi !== "idle" ? " recording" : ""}`}
+              ref={voice.micRef}
+              className="icon-btn compose-mic"
               type="button"
               aria-label="Record a voice message"
               title="Click or drag up to record"
-              disabled={!canSend || recUi === "locked"}
-              onPointerDown={onMicDown}
-              onPointerMove={onMicMove}
-              onPointerUp={onMicUp}
-              onPointerCancel={onMicUp}
+              disabled={!canSend}
+              aria-disabled={voice.phase !== "idle" || undefined}
+              {...voice.micHandlers}
             >
               <Mic size={18} />
             </button>
@@ -584,18 +455,8 @@ export function Thread({
               <Send size={16} />
             </button>
           </form>
-        {droplet ? (
-          <div
-            className="voice-droplet"
-            style={{
-              left: droplet.x,
-              top: droplet.y,
-              width: droplet.w,
-              height: droplet.h,
-            }}
-            aria-hidden="true"
-          />
-        ) : null}
+          <VoiceDroplet voice={voice} />
+        </div>
       </div>
     </section>
   );

@@ -4,6 +4,8 @@ import { encodeWav, resample } from "./wav";
 export const VOICE_MIN_DURATION = 0.6;
 export const VOICE_WAVEFORM_BUCKETS = 44;
 export const VOICE_LOCK_PX = 64;
+/** One live level per tick (20 Hz, like iOS), so the recording waveform scrolls at a steady pace. */
+export const VOICE_METER_MS = 50;
 
 export type VoiceTake = {
   data: Uint8Array;
@@ -14,19 +16,23 @@ export type VoiceTake = {
 
 type Listener = () => void;
 
-type RecState = {
+export type RecState = {
   recording: boolean;
   elapsed: number;
   liveLevels: number[];
+  /** Levels metered so far this take; keys the live bars so they keep their identity while scrolling. */
+  levelCount: number;
 };
 
 const TARGET_RATE = 22050;
-const LIVE_WINDOW = 44;
-const METER_MS = 50;
+/** Enough history to fill the widest recording strip. */
+const LIVE_WINDOW = 512;
 
 const listeners = new Set<Listener>();
 
-let snapshot: RecState = { recording: false, elapsed: 0, liveLevels: [] };
+const IDLE: RecState = { recording: false, elapsed: 0, liveLevels: [], levelCount: 0 };
+
+let snapshot: RecState = IDLE;
 let stream: MediaStream | null = null;
 let ctx: AudioContext | null = null;
 let processor: ScriptProcessorNode | null = null;
@@ -41,52 +47,61 @@ let envelope: number[] = [];
 let startedAt = 0;
 let meterTimer: number | null = null;
 let sessionId = 0;
+/* Sum of squares and sample count since the last tick. The worklet delivers
+   128-frame quanta (~375/s); metering each one made the live bars flicker and
+   re-rendered every subscriber hundreds of times a second. */
+let meterSum = 0;
+let meterCount = 0;
 
 function emit(): void {
-  snapshot = { ...snapshot, liveLevels: snapshot.liveLevels.slice() };
+  snapshot = { ...snapshot };
   for (const fn of listeners) fn();
 }
 
-function levelFromPcm(channel: Float32Array): number {
-  let sum = 0;
-  for (let i = 0; i < channel.length; i++) sum += channel[i] * channel[i];
-  const rms = Math.sqrt(sum / Math.max(1, channel.length));
+function levelFromRms(rms: number): number {
   return Math.min(1, Math.pow(Math.min(1, rms * 4), 0.55));
-}
-
-function noteLevel(level: number): void {
-  envelope.push(level);
-  const live = snapshot.liveLevels.concat(level);
-  snapshot = {
-    recording: true,
-    elapsed: startedAt ? (performance.now() - startedAt) / 1000 : snapshot.elapsed,
-    liveLevels: live.length > LIVE_WINDOW ? live.slice(live.length - LIVE_WINDOW) : live,
-  };
-  emit();
 }
 
 function pushPcm(channel: Float32Array): void {
   if (!snapshot.recording) return;
   pcmChunks.push(new Float32Array(channel));
-  noteLevel(levelFromPcm(channel));
+  let sum = 0;
+  for (let i = 0; i < channel.length; i++) sum += channel[i] * channel[i];
+  meterSum += sum;
+  meterCount += channel.length;
 }
 
-function tickElapsed(): void {
-  if (!startedAt) return;
-  snapshot = { ...snapshot, elapsed: (performance.now() - startedAt) / 1000 };
-  if (pcmChunks.length === 0 && analyser) {
-    const buf = new Uint8Array(new ArrayBuffer(analyser.fftSize));
-    analyser.getByteTimeDomainData(buf);
-    let sum = 0;
-    for (let i = 0; i < buf.length; i++) {
-      const n = (buf[i] - 128) / 128;
-      sum += n * n;
-    }
-    const rms = Math.sqrt(sum / Math.max(1, buf.length));
-    noteLevel(Math.min(1, Math.pow(Math.min(1, rms * 4), 0.55)));
-    return;
+function analyserLevel(): number {
+  if (!analyser) return 0;
+  const buf = new Uint8Array(new ArrayBuffer(analyser.fftSize));
+  analyser.getByteTimeDomainData(buf);
+  let sum = 0;
+  for (let i = 0; i < buf.length; i++) {
+    const n = (buf[i] - 128) / 128;
+    sum += n * n;
   }
-  emit();
+  return levelFromRms(Math.sqrt(sum / Math.max(1, buf.length)));
+}
+
+function tick(): void {
+  if (!startedAt) return;
+  if (ctx?.state === "suspended") void ctx.resume();
+  const level = meterCount > 0 ? levelFromRms(Math.sqrt(meterSum / meterCount)) : analyserLevel();
+  meterSum = 0;
+  meterCount = 0;
+  envelope.push(level);
+  const live =
+    snapshot.liveLevels.length >= LIVE_WINDOW
+      ? snapshot.liveLevels.slice(snapshot.liveLevels.length - LIVE_WINDOW + 1)
+      : snapshot.liveLevels.slice();
+  live.push(level);
+  snapshot = {
+    recording: true,
+    elapsed: (performance.now() - startedAt) / 1000,
+    liveLevels: live,
+    levelCount: snapshot.levelCount + 1,
+  };
+  for (const fn of listeners) fn();
 }
 
 function pickRecorderMime(): string | null {
@@ -245,8 +260,10 @@ export async function startVoiceRecord(): Promise<boolean> {
     pcmRate = ctx.sampleRate;
     envelope = [];
     recorderChunks = [];
+    meterSum = 0;
+    meterCount = 0;
     startedAt = performance.now();
-    snapshot = { recording: true, elapsed: 0, liveLevels: [] };
+    snapshot = { recording: true, elapsed: 0, liveLevels: [], levelCount: 0 };
     const source = ctx.createMediaStreamSource(stream);
     await attachCapture(ctx, source);
     if (id !== sessionId) {
@@ -269,14 +286,14 @@ export async function startVoiceRecord(): Promise<boolean> {
       }
     }
 
-    meterTimer = window.setInterval(tickElapsed, METER_MS);
+    meterTimer = window.setInterval(tick, VOICE_METER_MS);
     emit();
     return true;
   } catch (err) {
     media.getTracks().forEach((t) => t.stop());
     if (id === sessionId) {
       teardownGraph();
-      snapshot = { recording: false, elapsed: 0, liveLevels: [] };
+      snapshot = IDLE;
       emit();
     }
     throw err;
@@ -290,12 +307,13 @@ export function cancelVoiceRecord(): void {
   envelope = [];
   recorderChunks = [];
   startedAt = 0;
-  snapshot = { recording: false, elapsed: 0, liveLevels: [] };
+  snapshot = IDLE;
   emit();
 }
 
 export async function finishVoiceRecord(): Promise<VoiceTake | null> {
-  const duration = snapshot.elapsed;
+  /* Timers are throttled in background tabs, so the last tick can be stale. */
+  const duration = startedAt ? (performance.now() - startedAt) / 1000 : snapshot.elapsed;
   const captured = downsampleEnvelope(envelope, VOICE_WAVEFORM_BUCKETS);
   const pcm = pcmChunks.slice();
   const rate = pcmRate;
@@ -330,7 +348,7 @@ export async function finishVoiceRecord(): Promise<VoiceTake | null> {
   envelope = [];
   recorderChunks = [];
   startedAt = 0;
-  snapshot = { recording: false, elapsed: 0, liveLevels: [] };
+  snapshot = IDLE;
   emit();
 
   if (duration < VOICE_MIN_DURATION) return null;
@@ -358,5 +376,5 @@ export async function finishVoiceRecord(): Promise<VoiceTake | null> {
     }
   }
 
-  return null;
+  throw new Error("empty recording");
 }
