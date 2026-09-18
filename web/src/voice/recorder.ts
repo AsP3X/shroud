@@ -1,4 +1,5 @@
 import { downsampleEnvelope } from "../crypto/mediaPayload";
+import { startLiveTranscript, type LiveTranscript } from "./transcriber";
 import { encodeWav, resample } from "./wav";
 
 export const VOICE_MIN_DURATION = 0.6;
@@ -12,6 +13,8 @@ export type VoiceTake = {
   mime: string;
   durationMs: number;
   waveform: number[];
+  /** On-device transcript, sealed into the payload; null when the browser can't transcribe locally. */
+  transcript: string | null;
 };
 
 type Listener = () => void;
@@ -52,23 +55,38 @@ let sessionId = 0;
    re-rendered every subscriber hundreds of times a second. */
 let meterSum = 0;
 let meterCount = 0;
+let meterPeak = 0;
+let transcriptTask: Promise<LiveTranscript | null> | null = null;
 
 function emit(): void {
   snapshot = { ...snapshot };
   for (const fn of listeners) fn();
 }
 
-function levelFromRms(rms: number): number {
-  return Math.min(1, Math.pow(Math.min(1, rms * 4), 0.55));
+/**
+ * Same mapping as iOS `VoiceRecorder.normalize`: a -50 dB floor, average and peak
+ * blended 70/30, then a gentle curve. Web notes then draw the same bars as notes
+ * from iPhone instead of a flatter, quieter envelope.
+ */
+function levelFromPower(rms: number, peak: number): number {
+  const scaled = (amplitude: number) =>
+    amplitude > 0 ? Math.max(0, Math.min(1, (20 * Math.log10(amplitude) + 50) / 50)) : 0;
+  return Math.min(1, Math.pow(scaled(rms) * 0.7 + scaled(peak) * 0.3, 0.6));
 }
 
 function pushPcm(channel: Float32Array): void {
   if (!snapshot.recording) return;
   pcmChunks.push(new Float32Array(channel));
   let sum = 0;
-  for (let i = 0; i < channel.length; i++) sum += channel[i] * channel[i];
+  let peak = meterPeak;
+  for (let i = 0; i < channel.length; i++) {
+    const sample = channel[i];
+    sum += sample * sample;
+    if (Math.abs(sample) > peak) peak = Math.abs(sample);
+  }
   meterSum += sum;
   meterCount += channel.length;
+  meterPeak = peak;
 }
 
 function analyserLevel(): number {
@@ -76,19 +94,23 @@ function analyserLevel(): number {
   const buf = new Uint8Array(new ArrayBuffer(analyser.fftSize));
   analyser.getByteTimeDomainData(buf);
   let sum = 0;
+  let peak = 0;
   for (let i = 0; i < buf.length; i++) {
     const n = (buf[i] - 128) / 128;
     sum += n * n;
+    if (Math.abs(n) > peak) peak = Math.abs(n);
   }
-  return levelFromRms(Math.sqrt(sum / Math.max(1, buf.length)));
+  return levelFromPower(Math.sqrt(sum / Math.max(1, buf.length)), peak);
 }
 
 function tick(): void {
   if (!startedAt) return;
   if (ctx?.state === "suspended") void ctx.resume();
-  const level = meterCount > 0 ? levelFromRms(Math.sqrt(meterSum / meterCount)) : analyserLevel();
+  const level =
+    meterCount > 0 ? levelFromPower(Math.sqrt(meterSum / meterCount), meterPeak) : analyserLevel();
   meterSum = 0;
   meterCount = 0;
+  meterPeak = 0;
   envelope.push(level);
   const live =
     snapshot.liveLevels.length >= LIVE_WINDOW
@@ -262,6 +284,7 @@ export async function startVoiceRecord(): Promise<boolean> {
     recorderChunks = [];
     meterSum = 0;
     meterCount = 0;
+    meterPeak = 0;
     startedAt = performance.now();
     snapshot = { recording: true, elapsed: 0, liveLevels: [], levelCount: 0 };
     const source = ctx.createMediaStreamSource(stream);
@@ -287,6 +310,8 @@ export async function startVoiceRecord(): Promise<boolean> {
     }
 
     meterTimer = window.setInterval(tick, VOICE_METER_MS);
+    const track = media.getAudioTracks()[0];
+    transcriptTask = track ? startLiveTranscript(track).catch(() => null) : null;
     emit();
     return true;
   } catch (err) {
@@ -300,8 +325,15 @@ export async function startVoiceRecord(): Promise<boolean> {
   }
 }
 
+function takeTranscriptTask(): Promise<LiveTranscript | null> | null {
+  const task = transcriptTask;
+  transcriptTask = null;
+  return task;
+}
+
 export function cancelVoiceRecord(): void {
   sessionId += 1;
+  void takeTranscriptTask()?.then((live) => live?.cancel());
   teardownGraph();
   pcmChunks = [];
   envelope = [];
@@ -314,6 +346,11 @@ export function cancelVoiceRecord(): void {
 export async function finishVoiceRecord(): Promise<VoiceTake | null> {
   /* Timers are throttled in background tabs, so the last tick can be stale. */
   const duration = startedAt ? (performance.now() - startedAt) / 1000 : snapshot.elapsed;
+  // Ask for the last words now; they finalise while the audio is packaged below.
+  const task = takeTranscriptTask();
+  const transcript = task
+    ? task.then((live) => live?.finish() ?? null).catch(() => null)
+    : Promise.resolve(null);
   const captured = downsampleEnvelope(envelope, VOICE_WAVEFORM_BUCKETS);
   const pcm = pcmChunks.slice();
   const rate = pcmRate;
@@ -360,6 +397,7 @@ export async function finishVoiceRecord(): Promise<VoiceTake | null> {
       mime: "audio/wav",
       durationMs: Math.max(1, Math.round(duration * 1000)),
       waveform: captured,
+      transcript: await transcript,
     };
   }
 
@@ -372,6 +410,7 @@ export async function finishVoiceRecord(): Promise<VoiceTake | null> {
         mime: looksWav ? "audio/wav" : mime || recordedBlob.type || "audio/webm",
         durationMs: Math.max(1, Math.round(duration * 1000)),
         waveform: captured,
+        transcript: await transcript,
       };
     }
   }

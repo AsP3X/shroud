@@ -974,12 +974,23 @@ struct ConversationView: View {
                 onRequestTranscript: {
                     guard let data = message.voiceData else { return nil }
                     do {
-                        return try await VoiceTranscriber.transcribe(
+                        let transcript = try await VoiceTranscriber.transcribe(
                             audioData: data,
                             contextualStrings: transcriptionHints,
                             conversationID: peerUserID,
                             tracking: message.id
                         )
+                        if !transcript.isEmpty {
+                            // Keep it, and share it so the other side sees it too (web included).
+                            Task {
+                                await messaging.shareTranscript(
+                                    transcript,
+                                    forVoiceMessage: message.id,
+                                    peerUserID: peerUserID
+                                )
+                            }
+                        }
+                        return transcript
                     } catch {
                         toast = error.localizedDescription
                         Haptics.notification(.error)

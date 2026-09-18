@@ -21,6 +21,7 @@ import { listTimestamp, presenceLabel, type Presence } from "../format";
 import { loadIdentity } from "../crypto/store";
 import { parseInvite, shareUrl } from "../invite";
 import {
+  applyAnnotations,
   fetchLatest,
   hydratePreviews,
   ingestIncoming,
@@ -28,6 +29,7 @@ import {
   loadHistory,
   peerIdForMessage,
   previewLine,
+  rememberPreview,
   sendText,
   sendVoice,
   type ChatMessage,
@@ -40,7 +42,11 @@ import { clearSession, setLocked } from "../session";
 
 type PeerRef = { id: string; username: string };
 
-function mergeMessages(primary: ChatMessage[], extra: ChatMessage[]): ChatMessage[] {
+function mergeMessages(
+  primary: ChatMessage[],
+  extra: ChatMessage[],
+  preview?: { me: string; peer: string },
+): ChatMessage[] {
   const byId = new Map<string, ChatMessage>();
   for (const m of primary) byId.set(m.id, m);
   for (const m of extra) if (!byId.has(m.id)) byId.set(m.id, m);
@@ -52,10 +58,20 @@ function mergeMessages(primary: ChatMessage[], extra: ChatMessage[]): ChatMessag
   for (const [id, m] of [...byId]) {
     if (m.pending && m.kind === "text" && confirmed.has(m.text)) byId.delete(id);
   }
-  return [...byId.values()].sort((a, b) => {
+  const sorted = [...byId.values()].sort((a, b) => {
     const t = a.createdAt.localeCompare(b.createdAt);
     return t !== 0 ? t : a.id.localeCompare(b.id);
   });
+  const applied = applyAnnotations(sorted);
+  if (preview) {
+    const last = applied[applied.length - 1];
+    const before = sorted.filter((m) => m.kind !== "annotation");
+    const prevLast = before[before.length - 1];
+    if (last?.kind === "voice" && last.transcript && last.transcript !== prevLast?.transcript) {
+      rememberPreview(preview.me, preview.peer, last);
+    }
+  }
+  return applied;
 }
 
 export function AppShell({ session }: { session: Session }) {
@@ -261,7 +277,13 @@ export function AppShell({ session }: { session: Session }) {
               const open = selectedRef.current;
               setPreviewRev((n) => n + 1);
               if (open && open.id.toLowerCase() === peer.toLowerCase()) {
-                setThread((prev) => mergeMessages(prev, [msg]));
+                setThread((prev) =>
+                  mergeMessages(prev, [msg], { me: session.user.id, peer }),
+                );
+              } else {
+                const folded = applyAnnotations([msg]);
+                const voice = folded.find((m) => m.kind === "voice" && m.transcript?.trim());
+                if (voice) rememberPreview(session.user.id, peer, voice);
               }
             } catch {
               /* roster refresh already ran; next poll/WS event retries */
@@ -304,7 +326,7 @@ export function AppShell({ session }: { session: Session }) {
         .then((extra) => {
           if (cancelled || extra.length === 0) return;
           if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
-          setThread((prev) => mergeMessages(prev, extra));
+          setThread((prev) => mergeMessages(prev, extra, { me: session.user.id, peer: peerId }));
         })
         .catch(() => {
           /* keep current thread */
@@ -427,7 +449,13 @@ export function AppShell({ session }: { session: Session }) {
         material: identity,
       });
       if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
-      setThread((prev) => mergeMessages(prev.filter((m) => m.id !== localId), [msg]));
+      setThread((prev) =>
+        mergeMessages(
+          prev.filter((m) => m.id !== localId),
+          [msg],
+          { me: session.user.id, peer: peerId },
+        ),
+      );
       setPreviewRev((n) => n + 1);
       await refresh();
     } catch (err) {
@@ -448,7 +476,7 @@ export function AppShell({ session }: { session: Session }) {
     const optimistic: ChatMessage = {
       id: localId,
       senderUserId: session.user.id,
-      text: "Voice message",
+      text: take.transcript || "Voice message",
       createdAt: new Date().toISOString(),
       isMine: true,
       deleted: false,
@@ -457,6 +485,7 @@ export function AppShell({ session }: { session: Session }) {
       voiceDurationMs: take.durationMs,
       voiceWaveform: take.waveform,
       mime: take.mime,
+      transcript: take.transcript,
       pending: true,
     };
     await saveMediaBlob(localId, take.data);
@@ -472,7 +501,13 @@ export function AppShell({ session }: { session: Session }) {
         take,
       });
       if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
-      setThread((prev) => mergeMessages(prev.filter((m) => m.id !== localId), [msg]));
+      setThread((prev) =>
+        mergeMessages(
+          prev.filter((m) => m.id !== localId),
+          [msg],
+          { me: session.user.id, peer: peerId },
+        ),
+      );
       setPreviewRev((n) => n + 1);
       await refresh();
     } catch (err) {

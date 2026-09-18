@@ -87,6 +87,8 @@ final class MessagingController {
 
     private weak var sessionController: SessionController?
     private weak var cryptoController: CryptoController?
+    /// Shared transcripts whose voice note is not in the thread yet (annotation arrived first).
+    private var pendingSharedTranscripts: [UUID: String] = [:]
 
     /// Expose realtime health for diagnostics UI if needed.
     var isRealtimeConnected: Bool { realtime.isConnected }
@@ -785,6 +787,16 @@ final class MessagingController {
                         token: token,
                         forcePeerUserID: isNotes ? storePeerID : nil
                     )
+                    if dto.contentType == MessageAnnotation.contentType {
+                        // Not a bubble: it attaches to a message; folded in after the merge.
+                        if let shared = MessageAnnotation.parseTranscript(message.text) {
+                            noteSharedTranscript(shared.text, for: shared.messageID)
+                        }
+                        if !isNotes, dto.senderUserId != me {
+                            pendingDeliveryIDs.append(dto.id)
+                        }
+                        continue
+                    }
                     if isNotes {
                         message = notesMessageFromServer(message)
                     }
@@ -808,10 +820,12 @@ final class MessagingController {
                 // Publish immediately so the open chat shows the newest messages while older
                 // pages keep loading. Re-read the live thread each page to pick up sends.
                 let currentThread = threads[storePeerID] ?? []
-                let merged = ThreadMessageMerge.mergeThread(
-                    decoded: accumulatedNewestFirstPages,
-                    previous: currentThread,
-                    pendingLocal: currentThread.filter(\.pendingSync)
+                let merged = foldSharedTranscripts(
+                    into: ThreadMessageMerge.mergeThread(
+                        decoded: accumulatedNewestFirstPages,
+                        previous: currentThread,
+                        pendingLocal: currentThread.filter(\.pendingSync)
+                    )
                 )
                 if threads[storePeerID] != merged {
                     threads[storePeerID] = merged
@@ -2489,6 +2503,84 @@ final class MessagingController {
         }
     }
 
+    private func noteSharedTranscript(_ text: String, for messageID: UUID) {
+        if pendingSharedTranscripts[messageID] == nil {
+            pendingSharedTranscripts[messageID] = text
+        }
+    }
+
+    /// Applies any shared transcripts that now have a matching voice note, and drops those keys.
+    private func foldSharedTranscripts(into thread: [ChatMessage]) -> [ChatMessage] {
+        guard !pendingSharedTranscripts.isEmpty else { return thread }
+        let updated = ThreadMessageMerge.applySharedTranscripts(pendingSharedTranscripts, to: thread)
+        for message in updated where message.kind == .voice {
+            pendingSharedTranscripts.removeValue(forKey: message.id)
+        }
+        return updated
+    }
+
+    /// Keeps a transcript made on this device and shares it with the chat as an annotation, so
+    /// the other side — and our other devices, the web client included — show it without
+    /// transcribing again.
+    ///
+    /// Human: Best effort by design. The transcript is already visible here; a failed share only
+    /// means the other side can transcribe for themselves. Nothing is shared for Notes or for a
+    /// note the server hasn't keyed yet (its id would mean nothing to the other side).
+    func shareTranscript(_ transcript: String, forVoiceMessage messageID: UUID, peerUserID: UUID) async {
+        let text = String(
+            transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+                .prefix(MessageAnnotation.maxTranscriptLength)
+        )
+        guard !text.isEmpty,
+              var thread = threads[peerUserID],
+              let index = thread.firstIndex(where: { $0.id == messageID }),
+              thread[index].kind == .voice,
+              (thread[index].transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return }
+
+        thread[index].transcript = text
+        threads[peerUserID] = thread
+        persistThread(peerUserID)
+
+        let note = thread[index]
+        guard !isNotesChat(peerUserID),
+              !note.deleted,
+              !note.pendingSync,
+              note.receipt != .sending,
+              note.receipt != .failed,
+              connectivity.isOnline,
+              let token = sessionController?.bearerToken,
+              let me = sessionController?.userID,
+              let material = cryptoController?.material
+        else { return }
+
+        do {
+            let plaintext = try JSONEncoder().encode(MessageAnnotation.transcript(text, for: messageID))
+            let peerPub = try await peerIdentityForSending(peerUserID: peerUserID, token: token)
+            let sealed = try MessageCrypto.seal(
+                plaintext: plaintext,
+                peerUserID: peerUserID,
+                toPeerIdentityPublicKey: peerPub,
+                ourPrivateKey: material.agreementPrivateKey,
+                ourIdentityPublicKey: material.identityPublicKeyData,
+                ourUserID: me
+            )
+            let dto = try await messagesService.send(
+                SendMessageRequest(
+                    peerUserId: peerUserID,
+                    clientMessageId: UUID(),
+                    contentType: MessageAnnotation.contentType,
+                    ciphertext: sealed.base64EncodedString()
+                ),
+                token: token
+            )
+            // DR is one-shot: our own history decode reads this instead of re-opening.
+            local.saveSealedPlaintext(messageID: dto.id, data: plaintext)
+        } catch {
+            // Kept locally either way; see Human note above.
+        }
+    }
+
     @discardableResult
     private func finishVoiceSend(
         optimisticID: UUID,
@@ -2570,7 +2662,7 @@ final class MessagingController {
            let idx = thread.firstIndex(where: { $0.id == optimisticID })
         {
             thread[idx] = sent
-            threads[peerUserID] = thread
+            threads[peerUserID] = foldSharedTranscripts(into: thread)
         }
         await refreshConversations(force: true)
         persistSnapshot()
@@ -3072,9 +3164,26 @@ final class MessagingController {
             threadPeer = dto.senderUserId
         }
 
+        if dto.contentType == MessageAnnotation.contentType {
+            // A transcript shared by the other side (or our other device): not a new message,
+            // so no bubble, no unread badge — it fills in the voice note it points at.
+            if let shared = MessageAnnotation.parseTranscript(chat.text) {
+                noteSharedTranscript(shared.text, for: shared.messageID)
+            }
+            if let current = threads[threadPeer] {
+                let updated = foldSharedTranscripts(into: current)
+                if updated != current {
+                    threads[threadPeer] = updated
+                    persistThread(threadPeer)
+                }
+            }
+            return
+        }
+
         var thread = threads[threadPeer] ?? []
         if !thread.contains(where: { $0.id == chat.id }) {
             thread.append(chat)
+            thread = foldSharedTranscripts(into: thread)
             threads[threadPeer] = thread
             if !chat.isMine, activePeerID != threadPeer {
                 unreadCountByPeer[threadPeer, default: 0] += 1

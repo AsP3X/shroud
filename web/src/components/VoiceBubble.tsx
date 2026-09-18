@@ -146,8 +146,7 @@ export function VoiceBubble({
       : `${playback.rate.toFixed(1)}×`;
 
   return (
-    <div className="voice-wrap">
-      <div className="voice">
+    <div className="voice">
       <button
         type="button"
         className="voice-play"
@@ -213,9 +212,7 @@ export function VoiceBubble({
           </span>
         </div>
       </div>
-        {loadFailed && !audio ? <span className="sr-only">Could not load this voice message.</span> : null}
-      </div>
-      {message.transcript ? <p className="voice-transcript">{message.transcript}</p> : null}
+      {loadFailed && !audio ? <span className="sr-only">Could not load this voice message.</span> : null}
     </div>
   );
 }

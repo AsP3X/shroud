@@ -212,7 +212,11 @@ export function Thread({
   const visible = useMemo(() => {
     if (!query) return messages;
     const needle = query.toLowerCase();
-    return messages.filter((m) => !m.deleted && m.text.toLowerCase().includes(needle));
+    return messages.filter((m) => {
+      if (m.deleted) return false;
+      if (m.text.toLowerCase().includes(needle)) return true;
+      return Boolean(m.transcript && m.transcript.toLowerCase().includes(needle));
+    });
   }, [messages, query]);
   const rows = useMemo(() => buildRows(visible), [visible]);
 
@@ -326,45 +330,61 @@ export function Thread({
               </p>
             </div>
           ) : (
-            rows.map((row) =>
-              row.kind === "day" ? (
-                <div className="day-sep" key={row.key}>
-                  <span>{row.label}</span>
-                </div>
-              ) : (
-                <div
-                  key={row.key}
-                  className={[
-                    "bubble",
-                    row.message.isMine ? "out" : "in",
-                    row.first ? "first" : "",
-                    row.last ? "last" : "",
-                    row.message.deleted ? "deleted" : "",
-                    row.message.failed ? "failed" : "",
-                    row.message.pending ? "pending" : "",
-                    row.message.kind === "voice" && !row.message.deleted ? "voice-msg" : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
-                >
-                  {row.message.kind === "voice" && !row.message.deleted ? (
-                    <VoiceBubble message={row.message} loadVoice={onLoadVoice} />
-                  ) : (
-                    <>
-                      <p className="bubble-text">
-                        <Highlight text={row.message.text} query={query} />
+            rows.map((row) => {
+              if (row.kind === "day") {
+                return (
+                  <div className="day-sep" key={row.key}>
+                    <span>{row.label}</span>
+                  </div>
+                );
+              }
+              const { message } = row;
+              const voice = message.kind === "voice" && !message.deleted;
+              const bubbleClass = [
+                "bubble",
+                message.isMine ? "out" : "in",
+                row.first ? "first" : "",
+                row.last ? "last" : "",
+                message.deleted ? "deleted" : "",
+                message.failed ? "failed" : "",
+                message.pending ? "pending" : "",
+                voice ? "voice-msg" : "",
+              ]
+                .filter(Boolean)
+                .join(" ");
+              if (voice) {
+                /* The transcript hangs under the bubble (as on iOS): it never stretches the
+                   waveform, and a note reads the same whichever side sent it. */
+                return (
+                  <div
+                    key={row.key}
+                    className={["voice-row", message.isMine ? "out" : "in", row.first ? "first" : ""]
+                      .filter(Boolean)
+                      .join(" ")}
+                  >
+                    <div className={bubbleClass}>
+                      <VoiceBubble message={message} loadVoice={onLoadVoice} />
+                    </div>
+                    {message.transcript ? (
+                      <p className="voice-transcript">
+                        <Highlight text={message.transcript} query={query} />
                       </p>
-                      <span className="bubble-meta" title={fullTimestamp(row.message.createdAt)}>
-                        <time dateTime={row.message.createdAt}>{clockTime(row.message.createdAt)}</time>
-                        {row.message.isMine && !row.message.deleted ? (
-                          <Receipt message={row.message} />
-                        ) : null}
-                      </span>
-                    </>
-                  )}
+                    ) : null}
+                  </div>
+                );
+              }
+              return (
+                <div key={row.key} className={bubbleClass}>
+                  <p className="bubble-text">
+                    <Highlight text={message.text} query={query} />
+                  </p>
+                  <span className="bubble-meta" title={fullTimestamp(message.createdAt)}>
+                    <time dateTime={message.createdAt}>{clockTime(message.createdAt)}</time>
+                    {message.isMine && !message.deleted ? <Receipt message={message} /> : null}
+                  </span>
                 </div>
-              ),
-            )
+              );
+            })
           )}
         </div>
       </div>

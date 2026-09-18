@@ -18,7 +18,30 @@ import {
   savePreview,
 } from "./crypto/plaintextCache";
 
-export type ChatKind = "text" | "image" | "voice" | "video";
+/** `annotation` never reaches the thread: `applyAnnotations` folds it into its target. */
+export type ChatKind = "text" | "image" | "voice" | "video" | "annotation";
+
+/**
+ * Sealed JSON inside `content_type = annotation`: data one participant attaches
+ * to an earlier message. Today that is a voice transcript made on the
+ * recipient's device and shared back (matches iOS `MessageAnnotation`).
+ */
+export type Annotation = { t: "transcript"; r: string; c: string };
+
+/** Longest transcript we accept from a peer; a two-minute note is well under this. */
+const MAX_SHARED_TRANSCRIPT = 8000;
+
+export function parseAnnotation(raw: string): Annotation | null {
+  try {
+    const value = JSON.parse(raw) as Partial<Annotation> | null;
+    if (!value || value.t !== "transcript") return null;
+    if (typeof value.r !== "string" || typeof value.c !== "string") return null;
+    const text = value.c.trim().slice(0, MAX_SHARED_TRANSCRIPT);
+    return text ? { t: "transcript", r: value.r.toLowerCase(), c: text } : null;
+  } catch {
+    return null;
+  }
+}
 
 export type ChatMessage = {
   id: string;
@@ -37,12 +60,24 @@ export type ChatMessage = {
   transcript?: string | null;
   /** Optimistic bubble shown until the server hands back a real id. */
   pending?: boolean;
+  /** Set on `kind === "annotation"`; null when it could not be read. */
+  annotation?: Annotation | null;
   delivered?: boolean;
   read?: boolean;
 };
 
 const peerKeyCache = new Map<string, Uint8Array>();
+/** Annotation ids already decoded, so polling doesn't fetch them again every tick. */
+const seenAnnotations = new Set<string>();
+/** Shared transcripts whose voice note is not in the open thread yet. */
+const pendingSharedTranscripts = new Map<string, string>();
 const peerLocks = new Map<string, Promise<unknown>>();
+
+function noteSharedTranscript(annotation: Annotation): void {
+  if (!pendingSharedTranscripts.has(annotation.r)) {
+    pendingSharedTranscripts.set(annotation.r, annotation.c);
+  }
+}
 
 async function withPeerLock<T>(peerUserId: string, fn: () => Promise<T>): Promise<T> {
   const key = peerUserId.toLowerCase();
@@ -108,7 +143,7 @@ export async function fetchLatest(
     const chronological = [...res.messages].reverse();
     const out: ChatMessage[] = [];
     for (const dto of chronological) {
-      if (knownIds.has(dto.id)) continue;
+      if (knownIds.has(dto.id) || seenAnnotations.has(dto.id.toLowerCase())) continue;
       out.push(await decodeIncoming(dto, me, peer, token, material));
     }
     return out;
@@ -176,6 +211,7 @@ export async function decodeIncoming(
 ): Promise<ChatMessage> {
   const isMine = dto.sender_user_id.toLowerCase() === me.toLowerCase();
   const isMedia = dto.content_type === "media";
+  const isAnnotation = dto.content_type === "annotation";
   const base = {
     id: dto.id,
     senderUserId: dto.sender_user_id,
@@ -188,12 +224,26 @@ export async function decodeIncoming(
     delivered: dto.delivered ?? undefined,
     read: dto.read ?? undefined,
   };
+  /* Annotations never touch the chat preview: they are not messages to the user. */
+  const annotationFrom = (plain: string | null): ChatMessage => {
+    seenAnnotations.add(dto.id.toLowerCase());
+    const annotation = plain == null ? null : parseAnnotation(plain);
+    if (annotation) noteSharedTranscript(annotation);
+    return {
+      ...base,
+      kind: "annotation",
+      text: "",
+      annotation,
+    };
+  };
   if (dto.deleted_for_everyone) {
+    if (isAnnotation) return annotationFrom(null);
     const msg: ChatMessage = { ...base, text: "Message deleted" };
     rememberPreview(me, peerUserId, msg);
     return msg;
   }
   const cached = loadPlaintext(dto.id);
+  if (isAnnotation && cached != null) return annotationFrom(cached);
   if (cached != null && cached !== "[media]") {
     if (isMedia) {
       const payload = parseMediaPayload(cached);
@@ -209,6 +259,7 @@ export async function decodeIncoming(
     }
   }
   if (!dto.ciphertext) {
+    if (isAnnotation) return annotationFrom(null);
     const msg: ChatMessage = {
       ...base,
       text: isMedia ? "Media" : "[Unable to decrypt]",
@@ -232,6 +283,10 @@ export async function decodeIncoming(
       asSender: isMine,
     });
     const decoded = utf8decode(plain);
+    if (isAnnotation) {
+      savePlaintext(dto.id, decoded);
+      return annotationFrom(decoded);
+    }
     if (isMedia) {
       savePlaintext(dto.id, decoded);
       const payload = parseMediaPayload(decoded);
@@ -246,6 +301,7 @@ export async function decodeIncoming(
     rememberPreview(me, peerUserId, msg);
     return msg;
   } catch {
+    if (isAnnotation) return annotationFrom(null);
     const msg: ChatMessage = {
       ...base,
       text: isMedia ? "Media" : "[Unable to decrypt]",
@@ -256,7 +312,41 @@ export async function decodeIncoming(
   }
 }
 
-function rememberPreview(me: string, peerUserId: string, msg: ChatMessage): void {
+/**
+ * Folds annotations into the messages they point at and drops them from the list.
+ * A shared transcript only fills a gap: one sealed by the sender, or shared
+ * earlier, is never replaced (same rule as iOS and the realtime path).
+ *
+ * Transcripts whose voice note is not in `list` yet stay in
+ * `pendingSharedTranscripts` so a later merge (send completing, poll) can
+ * still attach them.
+ */
+export function applyAnnotations(list: ChatMessage[]): ChatMessage[] {
+  for (const m of list) {
+    if (m.kind === "annotation" && m.annotation?.t === "transcript") {
+      noteSharedTranscript(m.annotation);
+    }
+  }
+  const out: ChatMessage[] = [];
+  for (const m of list) {
+    if (m.kind === "annotation") continue;
+    if (m.kind === "voice" && !m.deleted) {
+      const id = m.id.toLowerCase();
+      const shared = pendingSharedTranscripts.get(id);
+      if (shared) {
+        pendingSharedTranscripts.delete(id);
+        if (!m.transcript?.trim()) {
+          out.push({ ...m, transcript: shared, text: shared });
+          continue;
+        }
+      }
+    }
+    out.push(m);
+  }
+  return out;
+}
+
+export function rememberPreview(me: string, peerUserId: string, msg: ChatMessage): void {
   savePreview(me, peerUserId, {
     text: previewCopy(msg),
     at: msg.createdAt,
@@ -314,19 +404,32 @@ export async function hydratePreviews(
   });
   for (const peer of pending) {
     try {
-      const res = await api.listMessages(token, peer.id, { limit: "1" });
-      const dto = res.messages[0];
+      // A few, so a transcript shared after the newest message can't stand in for it.
+      const res = await api.listMessages(token, peer.id, { limit: "5" });
+      const dto = res.messages.find((m) => m.content_type !== "annotation");
       if (!dto) continue;
       const mine = dto.sender_user_id.toLowerCase() === me.toLowerCase();
       const cached = loadPlaintext(dto.id);
       if (cached && cached !== "[media]") {
         const payload = dto.content_type === "media" ? parseMediaPayload(cached) : null;
+        let transcript = payload?.t === "voice" ? payload.c?.trim() || null : null;
+        if (payload?.t === "voice" && !transcript) {
+          for (const other of res.messages) {
+            if (other.content_type !== "annotation") continue;
+            const raw = loadPlaintext(other.id);
+            const shared = raw ? parseAnnotation(raw) : null;
+            if (shared?.r === dto.id.toLowerCase()) {
+              transcript = shared.c;
+              break;
+            }
+          }
+        }
         rememberPreview(me, peer.id, {
           id: dto.id,
           senderUserId: dto.sender_user_id,
           text: payload
             ? payload.t === "voice"
-              ? payload.c?.trim() || "Voice message"
+              ? transcript || "Voice message"
               : payload.t === "video"
                 ? payload.c?.trim() || "Video"
                 : payload.c?.trim() || "Photo"
@@ -336,7 +439,7 @@ export async function hydratePreviews(
           deleted: Boolean(dto.deleted_for_everyone),
           failed: false,
           kind: kindFromPayload(payload, dto.content_type === "media"),
-          transcript: payload?.t === "voice" ? payload.c?.trim() || null : null,
+          transcript,
         });
         continue;
       }
@@ -396,7 +499,10 @@ export async function loadHistory(
     for (const dto of chronological) {
       out.push(await decodeIncoming(dto, me, peer, token, material));
     }
-    return out;
+    const thread = applyAnnotations(out);
+    const newest = thread[thread.length - 1];
+    if (newest?.kind === "voice" && newest.transcript) rememberPreview(me, peer, newest);
+    return thread;
   });
 }
 
@@ -454,6 +560,7 @@ export async function sendVoice(opts: {
     mime: string;
     durationMs: number;
     waveform: number[];
+    transcript?: string | null;
   };
 }): Promise<ChatMessage> {
   const peer = opts.peerUserId.toLowerCase();
@@ -462,6 +569,7 @@ export async function sendVoice(opts: {
     const { key, sealed } = await sealFile(opts.take.data);
     const upload = await api.createMediaUpload(opts.token, sealed.byteLength);
     await api.putMediaContent(opts.token, upload.media_object_id, sealed);
+    const transcript = opts.take.transcript?.trim().slice(0, MAX_SHARED_TRANSCRIPT) || null;
     const payload: MediaPayload = {
       t: "voice",
       mime: opts.take.mime || "audio/wav",
@@ -471,6 +579,8 @@ export async function sendVoice(opts: {
       d: opts.take.durationMs,
       wf: encodeWaveform(opts.take.waveform),
       s: opts.take.data.byteLength,
+      // Sealed like the iPhone does, so the recipient never has to transcribe it.
+      ...(transcript ? { c: transcript } : {}),
     };
     const peerPub = await peerIdentityPublic(opts.token, peer);
     const envelope = await sealMessage({
@@ -494,7 +604,7 @@ export async function sendVoice(opts: {
     const msg: ChatMessage = {
       id: dto.id,
       senderUserId: dto.sender_user_id,
-      text: "Voice message",
+      text: transcript || "Voice message",
       createdAt: dto.created_at,
       isMine: true,
       deleted: false,
@@ -505,6 +615,7 @@ export async function sendVoice(opts: {
       voiceWaveform: opts.take.waveform,
       mediaKey: payload.k,
       mime: payload.mime,
+      transcript,
       delivered: dto.delivered ?? false,
       read: dto.read ?? false,
     };

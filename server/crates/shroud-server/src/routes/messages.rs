@@ -111,9 +111,9 @@ pub async fn send_message(
     let is_notes = body.peer_user_id == auth.user_id;
 
     let content_type = body.content_type.as_str();
-    if content_type != "text" && content_type != "media" {
+    if !matches!(content_type, "text" | "media" | "annotation") {
         return Err(AppError::validation(
-            "content_type must be 'text' or 'media'.",
+            "content_type must be 'text', 'media' or 'annotation'.",
         ));
     }
     if content_type == "media" && body.media_object_id.is_none() {
@@ -121,11 +121,15 @@ pub async fn send_message(
             "media_object_id is required when content_type is media.",
         ));
     }
-    if content_type == "text" && body.media_object_id.is_some() {
+    if content_type != "media" && body.media_object_id.is_some() {
         return Err(AppError::validation(
             "media_object_id is only allowed when content_type is media.",
         ));
     }
+    // Human: An annotation attaches data to an earlier message (e.g. a shared voice
+    // transcript). It is delivered like any message but is not a new message to the user:
+    // it must not reorder the chat list or wake the peer's phone.
+    let is_annotation = content_type == "annotation";
 
     let ciphertext = BASE64
         .decode(body.ciphertext.trim().as_bytes())
@@ -288,20 +292,23 @@ pub async fn send_message(
 
     // Human: Keep conversation list sort cheap — denormalized last_message_at (migration 014).
     // Agent: UPDATE conversations.last_message_at = now in same transaction as insert.
-    sqlx::query(
-        r#"
-        UPDATE conversations
-        SET last_message_at = $1
-        WHERE id = $2
-        "#,
-    )
-    .bind(now)
-    .bind(conversation_id)
-    .execute(&mut *tx)
-    .await
-    .map_err(|err| {
-        AppError::Internal(format!("touch conversation last_message_at failed: {err}"))
-    })?;
+    // Annotations are skipped so a shared transcript never moves the chat to the top.
+    if !is_annotation {
+        sqlx::query(
+            r#"
+            UPDATE conversations
+            SET last_message_at = $1
+            WHERE id = $2
+            "#,
+        )
+        .bind(now)
+        .bind(conversation_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| {
+            AppError::Internal(format!("touch conversation last_message_at failed: {err}"))
+        })?;
+    }
 
     tx.commit()
         .await
@@ -338,11 +345,19 @@ pub async fn send_message(
             .await;
     }
 
-    // Opaque APNs data push when the peer has no online WebSocket device.
-    state
-        .push
-        .notify_new_message_if_offline(body.peer_user_id, message_id, conversation_id, auth.user_id)
-        .await;
+    // Opaque APNs data push when the peer has no online WebSocket device. Annotations wait
+    // for the next sync instead; they are not worth waking a phone for.
+    if !is_annotation {
+        state
+            .push
+            .notify_new_message_if_offline(
+                body.peer_user_id,
+                message_id,
+                conversation_id,
+                auth.user_id,
+            )
+            .await;
+    }
 
     tracing::info!(
         message_id = %message_id,

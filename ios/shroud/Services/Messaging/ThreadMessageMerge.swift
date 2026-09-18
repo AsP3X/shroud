@@ -76,4 +76,26 @@ enum ThreadMessageMerge {
         result.sort { $0.createdAt < $1.createdAt }
         return result
     }
+
+    /// Folds transcripts shared as annotations into the voice messages they point at.
+    ///
+    /// A transcript sealed by the sender, or one made on this device, always wins; a shared one
+    /// only fills a gap. Returns the thread unchanged when nothing applies.
+    static func applySharedTranscripts(
+        _ transcripts: [UUID: String],
+        to thread: [MessagingController.ChatMessage]
+    ) -> [MessagingController.ChatMessage] {
+        guard !transcripts.isEmpty else { return thread }
+        var result = thread
+        for index in result.indices {
+            let message = result[index]
+            guard message.kind == .voice,
+                  !message.deleted,
+                  (message.transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  let shared = transcripts[message.id]
+            else { continue }
+            result[index].transcript = shared
+        }
+        return result
+    }
 }
