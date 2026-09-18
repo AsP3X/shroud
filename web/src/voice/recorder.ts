@@ -1,5 +1,5 @@
 import { downsampleEnvelope } from "../crypto/mediaPayload";
-import { startLiveTranscript, type LiveTranscript } from "./transcriber";
+import { transcribeVoiceNote } from "./transcriber";
 import { encodeWav, resample } from "./wav";
 
 export const VOICE_MIN_DURATION = 0.6;
@@ -56,7 +56,6 @@ let sessionId = 0;
 let meterSum = 0;
 let meterCount = 0;
 let meterPeak = 0;
-let transcriptTask: Promise<LiveTranscript | null> | null = null;
 
 function emit(): void {
   snapshot = { ...snapshot };
@@ -310,8 +309,6 @@ export async function startVoiceRecord(): Promise<boolean> {
     }
 
     meterTimer = window.setInterval(tick, VOICE_METER_MS);
-    const track = media.getAudioTracks()[0];
-    transcriptTask = track ? startLiveTranscript(track).catch(() => null) : null;
     emit();
     return true;
   } catch (err) {
@@ -325,15 +322,8 @@ export async function startVoiceRecord(): Promise<boolean> {
   }
 }
 
-function takeTranscriptTask(): Promise<LiveTranscript | null> | null {
-  const task = transcriptTask;
-  transcriptTask = null;
-  return task;
-}
-
 export function cancelVoiceRecord(): void {
   sessionId += 1;
-  void takeTranscriptTask()?.then((live) => live?.cancel());
   teardownGraph();
   pcmChunks = [];
   envelope = [];
@@ -346,11 +336,6 @@ export function cancelVoiceRecord(): void {
 export async function finishVoiceRecord(): Promise<VoiceTake | null> {
   /* Timers are throttled in background tabs, so the last tick can be stale. */
   const duration = startedAt ? (performance.now() - startedAt) / 1000 : snapshot.elapsed;
-  // Ask for the last words now; they finalise while the audio is packaged below.
-  const task = takeTranscriptTask();
-  const transcript = task
-    ? task.then((live) => live?.finish() ?? null).catch(() => null)
-    : Promise.resolve(null);
   const captured = downsampleEnvelope(envelope, VOICE_WAVEFORM_BUCKETS);
   const pcm = pcmChunks.slice();
   const rate = pcmRate;
@@ -390,6 +375,7 @@ export async function finishVoiceRecord(): Promise<VoiceTake | null> {
 
   if (duration < VOICE_MIN_DURATION) return null;
 
+  const transcript = transcribeVoiceNote(pcm, rate);
   const fromPcm = wavFromPcm(pcm, rate);
   if (fromPcm) {
     return {
