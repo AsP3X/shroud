@@ -58,15 +58,17 @@ export function VoiceBubble({
   const seconds = durationMs / 1000;
   /** Duration still sizes the bubble; short notes keep this floor so the footer fits. */
   const durationBars = Math.min(38, Math.max(18, 16 + Math.round(seconds * 1.6)));
+  const waveWidth = Math.max(148, durationBars * 5);
+  /* Pack as many real samples as the track can hold (min 3px per sample). Short
+     notes show the envelope at higher resolution instead of a few fat bars. */
+  const maxFit = Math.max(1, Math.floor(waveWidth / 3));
   const samples = useMemo(() => {
     if (waveformUsable(message.voiceWaveform)) {
       const source = normalizeWaveform(message.voiceWaveform!);
-      /* Never invent bars — only downsample when the envelope is denser than the slot. */
-      return source.length > durationBars ? resampleWaveform(source, durationBars) : source;
+      return source.length > maxFit ? resampleWaveform(source, maxFit) : source;
     }
-    return placeholderWaveform(message.id, durationBars);
-  }, [message.id, message.voiceWaveform, durationBars]);
-  const waveWidth = Math.max(148, durationBars * 5);
+    return placeholderWaveform(message.id, Math.min(durationBars, maxFit));
+  }, [message.id, message.voiceWaveform, durationBars, maxFit]);
   const slot = samples.length > 0 ? waveWidth / samples.length : 5;
   const barGap = samples.length > 1 ? Math.max(1, slot * 0.4) : 0;
 
