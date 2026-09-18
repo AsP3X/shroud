@@ -7,18 +7,19 @@
  * The first note may go out without a transcript while the model downloads
  * (same rule as iOS: never hold Send for hundreds of megabytes). Later notes
  * transcribe locally. Recipients can still transcribe on their device and
- * share the text back as an annotation.
+ * share the text back as an annotation. If this device finishes after send,
+ * we share the same annotation so the other side still sees it.
  */
 
 import { clampTranscript } from "../crypto/mediaPayload";
 import { concatPcm, transcriptionSession } from "./transcription/session";
 
-/** How long Send will wait for Whisper. A first-time download is skipped instead. */
-const TRANSCRIBE_TIMEOUT_MS = 15_000;
+/** How long Send will wait for Whisper when the model is already on disk. */
+export const TRANSCRIBE_TIMEOUT_MS = 15_000;
 
 export function prepareTranscription(): void {
-  void transcriptionSession.prepare().catch(() => {
-    /* best effort — the next note retries */
+  void transcriptionSession.prepare().catch((err) => {
+    console.warn("Whisper prepare failed:", err);
   });
 }
 
@@ -35,8 +36,9 @@ export function cleanedTranscript(text: string): string {
 }
 
 /**
- * Transcribe a recorded take. Resolves null when the model is not ready in time,
- * the clip is too short, or Whisper fails — Send still goes out.
+ * Transcribe a recorded take. Resolves null when the clip is too short or
+ * Whisper fails. Does not time out: the send path races this against
+ * `TRANSCRIBE_TIMEOUT_MS` so a first-time download never blocks Send.
  */
 export async function transcribeVoiceNote(
   chunks: Float32Array[],
@@ -46,21 +48,29 @@ export async function transcribeVoiceNote(
   const samples = concatPcm(chunks);
   if (samples.length < sampleRate * 0.3) return null;
 
-  const work = (async () => {
-    try {
-      await transcriptionSession.prepare();
-      const out = await transcriptionSession.transcribe(samples, sampleRate);
-      return cleanedTranscript(out.text) || null;
-    } catch {
-      return null;
-    }
-  })();
+  try {
+    await transcriptionSession.prepare();
+    const out = await transcriptionSession.transcribe(samples, sampleRate);
+    return cleanedTranscript(out.text) || null;
+  } catch (err) {
+    console.warn("Whisper transcription failed:", err);
+    return null;
+  }
+}
 
+/** Resolves `work` or `fallback` after `ms`. Does not cancel `work`. */
+export function raceTimeout<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
   return new Promise((resolve) => {
-    const timer = window.setTimeout(() => resolve(null), TRANSCRIBE_TIMEOUT_MS);
-    void work.then((text) => {
-      window.clearTimeout(timer);
-      resolve(text);
-    });
+    const timer = window.setTimeout(() => resolve(fallback), ms);
+    void work.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      () => {
+        window.clearTimeout(timer);
+        resolve(fallback);
+      },
+    );
   });
 }

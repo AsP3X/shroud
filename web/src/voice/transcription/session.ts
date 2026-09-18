@@ -41,11 +41,16 @@ export class TranscriptionSession {
 
   async prepare(progress?: (fraction: number) => void): Promise<void> {
     const target = this.selectedModel;
-    if (this.loaded === target) return;
     if (!this.preparing) {
-      const work = this.engine.prepare(target, progress).then(() => {
-        this.loaded = target;
-      });
+      const work = this.engine.prepare(target, progress).then(
+        () => {
+          this.loaded = target;
+        },
+        (err: unknown) => {
+          this.loaded = null;
+          throw err;
+        },
+      );
       this.preparing = work;
       void work.finally(() => {
         if (this.preparing === work) this.preparing = null;
@@ -74,6 +79,9 @@ export class TranscriptionSession {
     }
     try {
       return await this.engine.transcribe(pcm, WHISPER_RATE, request);
+    } catch (err) {
+      this.loaded = null;
+      throw err;
     } finally {
       release();
     }

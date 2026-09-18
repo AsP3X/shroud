@@ -628,3 +628,44 @@ export async function sendVoice(opts: {
     return msg;
   });
 }
+
+/**
+ * Keep a transcript made on this device and share it as an annotation, so the
+ * other side — and our other devices, iPhone included — show it without
+ * transcribing again. Best effort: the bubble already has the text locally.
+ */
+export async function shareTranscript(opts: {
+  token: string;
+  me: string;
+  peerUserId: string;
+  messageId: string;
+  transcript: string;
+  material: IdentityMaterial;
+}): Promise<void> {
+  const text = clampTranscript(opts.transcript);
+  if (!text || opts.messageId.startsWith("pending:")) return;
+  const annotation: Annotation = { t: "transcript", r: opts.messageId.toLowerCase(), c: text };
+  noteSharedTranscript(annotation);
+  previewSharedTranscript(opts.me, opts.peerUserId, annotation);
+
+  const peer = opts.peerUserId.toLowerCase();
+  const me = opts.me.toLowerCase();
+  await withPeerLock(peer, async () => {
+    const peerPub = await peerIdentityPublic(opts.token, peer);
+    const envelope = await sealMessage({
+      plaintext: utf8(JSON.stringify(annotation)),
+      peerUserId: peer,
+      ourUserId: me,
+      ourPrivate: opts.material.agreementPrivate,
+      ourIdentityPublic: opts.material.agreementPublic,
+      peerIdentityPublic: peerPub,
+    });
+    const dto = await api.sendMessage(opts.token, {
+      peer_user_id: peer,
+      client_message_id: crypto.randomUUID(),
+      content_type: "annotation",
+      ciphertext: envelopeToWireB64(envelope),
+    });
+    savePlaintext(dto.id, JSON.stringify(annotation));
+  });
+}

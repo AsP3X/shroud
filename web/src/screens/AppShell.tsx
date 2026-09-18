@@ -31,11 +31,17 @@ import {
   previewLine,
   sendText,
   sendVoice,
+  shareTranscript,
   type ChatMessage,
 } from "../messaging";
 import { saveMediaBlob } from "../crypto/mediaCache";
 import type { VoiceTake } from "../voice/recorder";
 import { stopVoice } from "../voice/playback";
+import {
+  isTranscriptionReady,
+  raceTimeout,
+  TRANSCRIBE_TIMEOUT_MS,
+} from "../voice/transcriber";
 import { connectRealtime } from "../realtime";
 import { clearSession, setLocked } from "../session";
 
@@ -450,7 +456,9 @@ export function AppShell({ session }: { session: Session }) {
   async function submitVoice(take: VoiceTake) {
     if (!selected || !identity) return;
     const peerId = selected.id;
+    const material = identity;
     const localId = `pending:${crypto.randomUUID()}`;
+    const pending = take.pendingTranscript ?? Promise.resolve(null);
     const optimistic: ChatMessage = {
       id: localId,
       senderUserId: session.user.id,
@@ -471,25 +479,66 @@ export function AppShell({ session }: { session: Session }) {
     setSendingPeer(peerId);
     setThreadError(null);
     try {
+      // Same rule as iOS: wait for Whisper only when the model is already on
+      // disk. A first-time download must not hold the note.
+      let sealed = take.transcript;
+      if (!sealed && isTranscriptionReady()) {
+        sealed = await raceTimeout(pending, TRANSCRIBE_TIMEOUT_MS, null);
+        if (sealed && selectedRef.current?.id.toLowerCase() === peerId.toLowerCase()) {
+          const text = sealed;
+          setThread((prev) =>
+            prev.map((m) => (m.id === localId ? { ...m, transcript: text, text } : m)),
+          );
+        }
+      }
       const msg = await sendVoice({
         token: session.token,
         me: session.user.id,
         peerUserId: peerId,
-        material: identity,
-        take,
+        material,
+        take: { ...take, transcript: sealed },
       });
-      if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
-      setThread((prev) => mergeMessages(prev.filter((m) => m.id !== localId), [msg]));
-      setPreviewRev((n) => n + 1);
-      await refresh();
+      if (selectedRef.current?.id.toLowerCase() === peerId.toLowerCase()) {
+        setThread((prev) => mergeMessages(prev.filter((m) => m.id !== localId), [msg]));
+        setPreviewRev((n) => n + 1);
+      }
+      if (!msg.transcript) {
+        void pending.then(async (text) => {
+          if (!text) return;
+          try {
+            await shareTranscript({
+              token: session.token,
+              me: session.user.id,
+              peerUserId: peerId,
+              messageId: msg.id,
+              transcript: text,
+              material,
+            });
+          } catch (err) {
+            console.warn("Could not share voice transcript:", err);
+          }
+          if (!alive.current) return;
+          if (selectedRef.current?.id.toLowerCase() === peerId.toLowerCase()) {
+            setThread((prev) => applyAnnotations(prev));
+          }
+          setPreviewRev((n) => n + 1);
+        });
+      }
     } catch (err) {
       if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
       setThread((prev) =>
         prev.map((m) => (m.id === localId ? { ...m, pending: false, failed: true } : m)),
       );
       setThreadError(err instanceof ApiError ? err.message : "Could not send the voice message.");
+      return;
     } finally {
       setSendingPeer((current) => (current === peerId ? null : current));
+    }
+    try {
+      await refresh();
+    } catch (err) {
+      if (!alive.current) return;
+      setThreadError(err instanceof ApiError ? err.message : "Could not refresh chats.");
     }
   }
 

@@ -1,6 +1,6 @@
 import { downsampleEnvelope } from "../crypto/mediaPayload";
 import { transcribeVoiceNote } from "./transcriber";
-import { encodeWav, resample } from "./wav";
+import { encodeWav, pcmFromWav, resample } from "./wav";
 
 export const VOICE_MIN_DURATION = 0.6;
 export const VOICE_WAVEFORM_BUCKETS = 44;
@@ -15,6 +15,11 @@ export type VoiceTake = {
   waveform: number[];
   /** On-device transcript, sealed into the payload; null when the browser can't transcribe locally. */
   transcript: string | null;
+  /**
+   * Whisper keeps going even if Send does not wait. AppShell seals this into
+   * the payload when it lands in time, or shares it as an annotation after.
+   */
+  pendingTranscript?: Promise<string | null>;
 };
 
 type Listener = () => void;
@@ -375,7 +380,6 @@ export async function finishVoiceRecord(): Promise<VoiceTake | null> {
 
   if (duration < VOICE_MIN_DURATION) return null;
 
-  const transcript = transcribeVoiceNote(pcm, rate);
   const fromPcm = wavFromPcm(pcm, rate);
   if (fromPcm) {
     return {
@@ -383,7 +387,8 @@ export async function finishVoiceRecord(): Promise<VoiceTake | null> {
       mime: "audio/wav",
       durationMs: Math.max(1, Math.round(duration * 1000)),
       waveform: captured,
-      transcript: await transcript,
+      transcript: null,
+      pendingTranscript: transcribeVoiceNote(pcm, rate),
     };
   }
 
@@ -396,10 +401,24 @@ export async function finishVoiceRecord(): Promise<VoiceTake | null> {
         mime: looksWav ? "audio/wav" : mime || recordedBlob.type || "audio/webm",
         durationMs: Math.max(1, Math.round(duration * 1000)),
         waveform: captured,
-        transcript: await transcript,
+        transcript: null,
+        pendingTranscript: transcribeFromTake(pcm, rate, looksWav ? wav : null),
       };
     }
   }
 
   throw new Error("empty recording");
+}
+
+function transcribeFromTake(
+  pcm: Float32Array[],
+  rate: number,
+  wav: Uint8Array | null,
+): Promise<string | null> {
+  let samples = 0;
+  for (const part of pcm) samples += part.length;
+  if (rate > 0 && samples >= rate * 0.3) return transcribeVoiceNote(pcm, rate);
+  if (!wav) return transcribeVoiceNote(pcm, rate);
+  const decoded = pcmFromWav(wav);
+  return decoded ? transcribeVoiceNote([decoded.samples], decoded.sampleRate) : transcribeVoiceNote(pcm, rate);
 }

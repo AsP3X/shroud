@@ -47,6 +47,25 @@ server {
         try_files $uri =404;
     }
 
+    # Hashed ONNX WASM / factory from the Whisper worker. nginx:alpine
+    # already maps these, but an explicit type keeps a custom mime.types
+    # from serving them as octet-stream (ORT then refuses to compile).
+    location ~* \.wasm$ {
+        include /etc/nginx/security-headers.conf;
+        default_type application/wasm;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    location ~* \.mjs$ {
+        include /etc/nginx/security-headers.conf;
+        default_type application/javascript;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
     location = /index.html {
         include /etc/nginx/security-headers.conf;
         add_header Cache-Control "no-cache, must-revalidate";

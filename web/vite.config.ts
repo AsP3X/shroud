@@ -3,8 +3,9 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
+  assetsInclude: ["**/*.wasm"],
   optimizeDeps: {
-    exclude: ["@huggingface/transformers"],
+    exclude: ["@huggingface/transformers", "onnxruntime-web"],
   },
   worker: {
     format: "es",

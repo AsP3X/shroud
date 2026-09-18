@@ -18,6 +18,7 @@ type WorkerOut =
 export class WhisperEngine implements TranscriptionEngine {
   readonly id = "whisper";
   private worker: Worker | null = null;
+  private preparedFor: string | null = null;
   private waiting: {
     resolve: (value: string | void) => void;
     reject: (error: Error) => void;
@@ -44,18 +45,42 @@ export class WhisperEngine implements TranscriptionEngine {
     worker.onerror = (event) => {
       const waiting = this.waiting;
       this.waiting = null;
+      this.dropWorker(worker);
       waiting?.reject(new Error(event.message || "Whisper worker failed."));
+    };
+    worker.onmessageerror = () => {
+      const waiting = this.waiting;
+      this.waiting = null;
+      this.dropWorker(worker);
+      waiting?.reject(new Error("Whisper worker message was unreadable."));
     };
     this.worker = worker;
     return worker;
   }
 
+  private dropWorker(worker: Worker): void {
+    if (this.worker === worker) {
+      this.worker = null;
+      this.preparedFor = null;
+    }
+    try {
+      worker.terminate();
+    } catch {
+      /* already dead */
+    }
+  }
+
   private send(message: WorkerIn, transfer?: Transferable[], progress?: (fraction: number) => void): Promise<string | void> {
-    const worker = this.ensureWorker();
     const run = () =>
       new Promise<string | void>((resolve, reject) => {
-        this.waiting = { resolve, reject, progress };
-        worker.postMessage(message, transfer ?? []);
+        try {
+          const worker = this.ensureWorker();
+          this.waiting = { resolve, reject, progress };
+          worker.postMessage(message, transfer ?? []);
+        } catch (err) {
+          this.waiting = null;
+          reject(err instanceof Error ? err : new Error(String(err)));
+        }
       });
     const job = this.tail.then(run, run);
     this.tail = job.then(
@@ -66,7 +91,10 @@ export class WhisperEngine implements TranscriptionEngine {
   }
 
   async prepare(model: TranscriptionModelId, progress?: (fraction: number) => void): Promise<void> {
-    await this.send({ type: "prepare", modelId: WHISPER_MODELS[model] }, undefined, progress);
+    const modelId = WHISPER_MODELS[model];
+    if (this.worker && this.preparedFor === modelId) return;
+    await this.send({ type: "prepare", modelId }, undefined, progress);
+    this.preparedFor = modelId;
   }
 
   async transcribe(
