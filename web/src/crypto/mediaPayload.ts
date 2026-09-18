@@ -40,6 +40,31 @@ export function isVoicePayload(payload: MediaPayload): boolean {
   return payload.t === "voice";
 }
 
+export function encodeWaveform(buckets: number[]): string | null {
+  if (!buckets.length) return null;
+  let bin = "";
+  for (const b of buckets) bin += String.fromCharCode(Math.max(0, Math.min(255, b | 0)));
+  return btoa(bin);
+}
+
+/** Averages a 0…1 envelope into `buckets` bytes of 0…255 (matches iOS VoiceWaveform.downsample). */
+export function downsampleEnvelope(envelope: number[], buckets: number): number[] {
+  if (buckets <= 0 || envelope.length === 0) return [];
+  const out: number[] = [];
+  const stride = envelope.length / buckets;
+  for (let bucket = 0; bucket < buckets; bucket++) {
+    const start = Math.floor(bucket * stride);
+    const end = Math.max(start + 1, Math.floor((bucket + 1) * stride));
+    const from = Math.min(start, envelope.length - 1);
+    const to = Math.min(end, envelope.length);
+    let sum = 0;
+    for (let i = from; i < to; i++) sum += envelope[i];
+    const mean = to > from ? sum / (to - from) : 0;
+    out.push(Math.max(8, Math.min(255, Math.round(mean * 255))));
+  }
+  return out;
+}
+
 export function decodeWaveform(base64: string | null | undefined): number[] | null {
   if (!base64) return null;
   try {
@@ -106,4 +131,13 @@ export function formatVoiceTime(seconds: number): string {
   const minutes = Math.floor(total / 60);
   const rest = total % 60;
   return `${minutes}:${rest.toString().padStart(2, "0")}`;
+}
+
+/** `0:07,32` — centiseconds so the recording timer visibly runs. */
+export function formatRecordingTime(seconds: number): string {
+  const total = Math.max(0, seconds);
+  const minutes = Math.floor(total / 60);
+  const secs = Math.floor(total) % 60;
+  const centis = Math.floor((total - Math.floor(total)) * 100);
+  return `${minutes}:${secs.toString().padStart(2, "0")},${centis.toString().padStart(2, "0")}`;
 }

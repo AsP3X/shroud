@@ -29,8 +29,11 @@ import {
   peerIdForMessage,
   previewLine,
   sendText,
+  sendVoice,
   type ChatMessage,
 } from "../messaging";
+import { saveMediaBlob } from "../crypto/mediaCache";
+import type { VoiceTake } from "../voice/recorder";
 import { stopVoice } from "../voice/playback";
 import { connectRealtime } from "../realtime";
 import { clearSession, setLocked } from "../session";
@@ -42,10 +45,12 @@ function mergeMessages(primary: ChatMessage[], extra: ChatMessage[]): ChatMessag
   for (const m of primary) byId.set(m.id, m);
   for (const m of extra) if (!byId.has(m.id)) byId.set(m.id, m);
   const confirmed = new Set(
-    [...byId.values()].filter((m) => m.isMine && !m.pending && !m.failed).map((m) => m.text),
+    [...byId.values()]
+      .filter((m) => m.isMine && !m.pending && !m.failed && m.kind === "text")
+      .map((m) => m.text),
   );
   for (const [id, m] of [...byId]) {
-    if (m.pending && confirmed.has(m.text)) byId.delete(id);
+    if (m.pending && m.kind === "text" && confirmed.has(m.text)) byId.delete(id);
   }
   return [...byId.values()].sort((a, b) => {
     const t = a.createdAt.localeCompare(b.createdAt);
@@ -436,6 +441,51 @@ export function AppShell({ session }: { session: Session }) {
     }
   }
 
+  async function submitVoice(take: VoiceTake) {
+    if (!selected || !identity) return;
+    const peerId = selected.id;
+    const localId = `pending:${crypto.randomUUID()}`;
+    const optimistic: ChatMessage = {
+      id: localId,
+      senderUserId: session.user.id,
+      text: "Voice message",
+      createdAt: new Date().toISOString(),
+      isMine: true,
+      deleted: false,
+      failed: false,
+      kind: "voice",
+      voiceDurationMs: take.durationMs,
+      voiceWaveform: take.waveform,
+      mime: take.mime,
+      pending: true,
+    };
+    await saveMediaBlob(localId, take.data);
+    setThread((prev) => [...prev, optimistic]);
+    setSendingPeer(peerId);
+    setThreadError(null);
+    try {
+      const msg = await sendVoice({
+        token: session.token,
+        me: session.user.id,
+        peerUserId: peerId,
+        material: identity,
+        take,
+      });
+      if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
+      setThread((prev) => mergeMessages(prev.filter((m) => m.id !== localId), [msg]));
+      setPreviewRev((n) => n + 1);
+      await refresh();
+    } catch (err) {
+      if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
+      setThread((prev) =>
+        prev.map((m) => (m.id === localId ? { ...m, pending: false, failed: true } : m)),
+      );
+      setThreadError(err instanceof ApiError ? err.message : "Could not send the voice message.");
+    } finally {
+      setSendingPeer((current) => (current === peerId ? null : current));
+    }
+  }
+
   async function respond(id: string, accept: boolean) {
     try {
       if (accept) await api.acceptRequest(session.token, id);
@@ -528,6 +578,7 @@ export function AppShell({ session }: { session: Session }) {
                 draft={draft}
                 onDraftChange={setDraft}
                 onSend={() => void submitMessage()}
+                onSendVoice={(take) => void submitVoice(take)}
                 onBack={() => setSelected(null)}
                 onShowInfo={() => setShowInfo(true)}
                 onLoadVoice={loadVoice}

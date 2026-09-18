@@ -1,11 +1,14 @@
 import {
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type FormEvent,
   type KeyboardEvent,
+  type PointerEvent,
   type ReactNode,
 } from "react";
 import {
@@ -28,6 +31,17 @@ import { clockTime, dayLabel, fullTimestamp, sameDay, MINUTE } from "../format";
 import type { ChatMessage } from "../messaging";
 import { Avatar } from "./Avatar";
 import { VoiceBubble } from "./VoiceBubble";
+import { VoiceLockedBar } from "./VoiceRecorderBar";
+import { stopVoice } from "../voice/playback";
+import {
+  VOICE_LOCK_PX,
+  cancelVoiceRecord,
+  finishVoiceRecord,
+  getVoiceRecorder,
+  startVoiceRecord,
+  subscribeVoiceRecorder,
+  type VoiceTake,
+} from "../voice/recorder";
 
 /** Messages from the same sender inside this window render as one visual block. */
 const GROUP_WINDOW = 5 * MINUTE;
@@ -104,6 +118,7 @@ export function Thread({
   draft,
   onDraftChange,
   onSend,
+  onSendVoice,
   onBack,
   onShowInfo,
   onLoadVoice,
@@ -119,12 +134,22 @@ export function Thread({
   draft: string;
   onDraftChange: (value: string) => void;
   onSend: () => void;
+  onSendVoice: (take: VoiceTake) => void;
   onBack: () => void;
   onLoadVoice: (message: ChatMessage) => Promise<Uint8Array | null>;
   onShowInfo: () => void;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const field = useRef<HTMLTextAreaElement>(null);
+  const composeRef = useRef<HTMLDivElement>(null);
+  const micRef = useRef<HTMLButtonElement>(null);
+  const recPhase = useRef<"idle" | "armed" | "locked">("idle");
+  const dragOrigin = useRef<{ x: number; y: number } | null>(null);
+  const holding = useRef(false);
+  const [recUi, setRecUi] = useState<"idle" | "armed" | "locked">("idle");
+  const [droplet, setDroplet] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const [recHint, setRecHint] = useState<string | null>(null);
+  const recSnap = useSyncExternalStore(subscribeVoiceRecorder, getVoiceRecorder);
   const [pinned, setPinned] = useState(true);
   const [unseen, setUnseen] = useState(0);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -162,6 +187,15 @@ export function Thread({
     if (finePointer()) field.current?.focus();
   }, [peer.id, toBottom]);
 
+  useEffect(() => {
+    recPhase.current = "idle";
+    setRecUi("idle");
+    setDroplet(null);
+    cancelVoiceRecord();
+  }, [peer.id]);
+
+  useEffect(() => () => cancelVoiceRecord(), []);
+
   useLayoutEffect(() => {
     const added = messages.length - seenCount.current;
     seenCount.current = messages.length;
@@ -194,6 +228,124 @@ export function Thread({
   function send() {
     onSend();
     field.current?.focus();
+  }
+
+  function dropletTarget() {
+    const shell = composeRef.current?.getBoundingClientRect();
+    const mic = micRef.current?.getBoundingClientRect();
+    const x = shell ? shell.left + shell.width / 2 : (mic ? mic.left + mic.width / 2 : 0);
+    const y = shell ? shell.top - 8 : (mic ? mic.top : 0);
+    const w = shell ? Math.min(shell.width - 96, 320) : 220;
+    return { x, y, w: Math.max(160, w), h: 44 };
+  }
+
+  function lockRecording() {
+    if (recPhase.current === "locked") return;
+    recPhase.current = "locked";
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const target = dropletTarget();
+    if (reduce) {
+      setDroplet(null);
+      setRecUi("locked");
+      return;
+    }
+    setDroplet(target);
+    window.setTimeout(() => {
+      if (recPhase.current !== "locked") return;
+      setDroplet(null);
+      setRecUi("locked");
+    }, 380);
+  }
+
+  async function beginRecording(from: DOMRect) {
+    if (recPhase.current !== "idle") return;
+    recPhase.current = "armed";
+    setRecUi("armed");
+    setRecHint(null);
+    stopVoice();
+    setDroplet({ x: from.left + from.width / 2, y: from.top + from.height / 2, w: 38, h: 38 });
+    try {
+      const started = await startVoiceRecord();
+      if (!started) {
+        if (recPhase.current === "armed") {
+          recPhase.current = "idle";
+          setRecUi("idle");
+          setDroplet(null);
+        }
+        return;
+      }
+    } catch {
+      recPhase.current = "idle";
+      setRecUi("idle");
+      setDroplet(null);
+      holding.current = false;
+      setRecHint("Microphone access is required for voice messages.");
+      return;
+    }
+    if (recPhase.current !== "armed") return;
+    if (!holding.current) lockRecording();
+  }
+
+  function onMicDown(event: PointerEvent<HTMLButtonElement>) {
+    if (!canSend) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    holding.current = true;
+    dragOrigin.current = { x: event.clientX, y: event.clientY };
+    void beginRecording(event.currentTarget.getBoundingClientRect());
+  }
+
+  function onMicMove(event: PointerEvent<HTMLButtonElement>) {
+    if (!dragOrigin.current || recPhase.current === "idle") return;
+    const dy = event.clientY - dragOrigin.current.y;
+    const progress = Math.min(1, Math.max(0, -dy / VOICE_LOCK_PX));
+    if (progress >= 1 && getVoiceRecorder().recording) {
+      lockRecording();
+      return;
+    }
+    if (recPhase.current !== "armed") return;
+    const mic = micRef.current?.getBoundingClientRect();
+    const target = dropletTarget();
+    if (!mic) return;
+    const x0 = mic.left + mic.width / 2;
+    const y0 = mic.top + mic.height / 2;
+    setDroplet({
+      x: x0 + (target.x - x0) * progress,
+      y: y0 + (target.y - y0) * progress,
+      w: 38 + (target.w - 38) * progress,
+      h: 38 + (target.h - 38) * progress * 0.4,
+    });
+  }
+
+  function onMicUp() {
+    holding.current = false;
+    dragOrigin.current = null;
+    if (recPhase.current === "armed" && getVoiceRecorder().recording) lockRecording();
+  }
+
+  function discardRecording() {
+    recPhase.current = "idle";
+    setRecUi("idle");
+    setDroplet(null);
+    cancelVoiceRecord();
+  }
+
+  async function sendRecording() {
+    if (recPhase.current !== "locked") return;
+    recPhase.current = "idle";
+    setRecUi("idle");
+    setDroplet(null);
+    try {
+      const take = await finishVoiceRecord();
+      if (!take) {
+        setRecHint("That recording was too short.");
+        return;
+      }
+      onSendVoice(take);
+    } catch {
+      cancelVoiceRecord();
+      setRecHint("Could not finish the recording.");
+    }
   }
 
   function submit(event: FormEvent) {
@@ -349,67 +501,100 @@ export function Thread({
         </button>
       ) : null}
 
-      <form
-        className={draft.trim() ? "compose has-draft" : "compose"}
-        onSubmit={submit}
-        aria-busy={sending}
-      >
-        {/* Attach/photo stay disabled until image send lands. Mic stays disabled
-            until recording is wired; inbound voice already plays. */}
-        <button
-          className="icon-btn compose-plus"
-          type="button"
-          aria-label="Attach"
-          title="Media is coming to the web client soon"
-          disabled
-        >
-          <Plus size={20} />
-        </button>
-        <button
-          className="icon-btn compose-wide"
-          type="button"
-          aria-label="Attach a file"
-          title="Media is coming to the web client soon"
-          disabled
-        >
-          <Paperclip size={18} />
-        </button>
-        <button
-          className="icon-btn compose-wide"
-          type="button"
-          aria-label="Send a photo"
-          title="Media is coming to the web client soon"
-          disabled
-        >
-          <Image size={18} />
-        </button>
-        <div className="compose-grow" data-value={`${draft} `}>
-          <textarea
-            ref={field}
-            className="compose-field"
-            rows={1}
-            placeholder={canSend ? "Message" : "Unlock your keys to send"}
-            aria-label="Message"
-            value={draft}
-            onChange={(event) => onDraftChange(event.target.value)}
-            onKeyDown={onKeyDown}
-            enterKeyHint="send"
-            disabled={!canSend}
+      {recHint ? (
+        <p className="thread-banner" role="status">
+          {recHint}
+        </p>
+      ) : null}
+
+      <div className="compose-shell" ref={composeRef}>
+        {recUi === "locked" ? (
+          <VoiceLockedBar
+            elapsed={recSnap.elapsed}
+            levels={recSnap.liveLevels}
+            onDiscard={discardRecording}
+            onSend={() => void sendRecording()}
+            sending={sending}
           />
-        </div>
-        <button
-          className="icon-btn compose-mic"
-          type="button"
-          aria-label="Record a voice message"
-          title="Recording voice messages is coming soon"
-          disabled
-        >
-          <Mic size={18} />
-        </button>
-        <button className="send" type="submit" aria-label="Send" disabled={!canSend || !draft.trim()}>
-          <Send size={16} />
-        </button>
-      </form>
+        ) : (
+          <form
+            className={draft.trim() ? "compose has-draft" : "compose"}
+            onSubmit={submit}
+            aria-busy={sending}
+          >
+            <button
+              className="icon-btn compose-plus"
+              type="button"
+              aria-label="Attach"
+              title="Media is coming to the web client soon"
+              disabled
+            >
+              <Plus size={20} />
+            </button>
+            <button
+              className="icon-btn compose-wide"
+              type="button"
+              aria-label="Attach a file"
+              title="Media is coming to the web client soon"
+              disabled
+            >
+              <Paperclip size={18} />
+            </button>
+            <button
+              className="icon-btn compose-wide"
+              type="button"
+              aria-label="Send a photo"
+              title="Media is coming to the web client soon"
+              disabled
+            >
+              <Image size={18} />
+            </button>
+            <div className="compose-grow" data-value={`${draft} `}>
+              <textarea
+                ref={field}
+                className="compose-field"
+                rows={1}
+                placeholder={canSend ? "Message" : "Unlock your keys to send"}
+                aria-label="Message"
+                value={draft}
+                onChange={(event) => onDraftChange(event.target.value)}
+                onKeyDown={onKeyDown}
+                enterKeyHint="send"
+                disabled={!canSend}
+              />
+            </div>
+            <button
+              ref={micRef}
+              className={`icon-btn compose-mic${recUi === "armed" ? " recording" : ""}`}
+              type="button"
+              aria-label="Record a voice message"
+              title="Click or drag up to record"
+              disabled={!canSend}
+              onPointerDown={onMicDown}
+              onPointerMove={onMicMove}
+              onPointerUp={onMicUp}
+              onPointerCancel={onMicUp}
+            >
+              <Mic size={18} />
+            </button>
+            <button className="send" type="submit" aria-label="Send" disabled={!canSend || !draft.trim()}>
+              <Send size={16} />
+            </button>
+          </form>
+        )}
+        {droplet ? (
+          <div
+            className="voice-droplet"
+            style={{
+              left: droplet.x,
+              top: droplet.y,
+              width: droplet.w,
+              height: droplet.h,
+            }}
+            aria-hidden="true"
+          />
+        ) : null}
+      </div>
     </section>
   );
 }

@@ -133,6 +133,34 @@ async function requestBytes(path: string, token: string): Promise<Uint8Array> {
   return new Uint8Array(await res.arrayBuffer());
 }
 
+async function putBytes(path: string, token: string, data: Uint8Array): Promise<void> {
+  const copy = new Uint8Array(data.byteLength);
+  copy.set(data);
+  const headers = new Headers({
+    Accept: "application/json",
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/octet-stream",
+  });
+  let res: Response;
+  try {
+    res = await fetch(`${apiBase()}${path}`, { method: "PUT", headers, body: copy });
+  } catch (err) {
+    throw new ApiError("transport", err instanceof Error ? err.message : "Network error", 0);
+  }
+  if (!res.ok) {
+    let code = "http";
+    let message = res.statusText || `HTTP ${res.status}`;
+    try {
+      const body = (await res.json()) as { error?: { code?: string; message?: string } };
+      if (body.error?.code) code = body.error.code;
+      if (body.error?.message) message = body.error.message;
+    } catch {
+      /* envelope optional */
+    }
+    throw new ApiError(code, message, res.status);
+  }
+}
+
 export const api = {
   health: () => request<{ status: string }>("/health/live"),
   register: (username: string, password: string, deviceName: string) =>
@@ -253,6 +281,17 @@ export const api = {
   ) => request<WireMessage>("/messages", { method: "POST", token, body: JSON.stringify(body) }),
   getMediaContent: (token: string, mediaId: string) =>
     requestBytes(`/media/${mediaId.toLowerCase()}/content`, token),
+  createMediaUpload: (token: string, sizeBytes: number, contentType = "application/octet-stream") =>
+    request<{ media_object_id: string; upload_url: string; object_key: string; expires_at: string }>(
+      "/media/uploads",
+      {
+        method: "POST",
+        token,
+        body: JSON.stringify({ size_bytes: sizeBytes, content_type: contentType }),
+      },
+    ),
+  putMediaContent: (token: string, mediaId: string, data: Uint8Array) =>
+    putBytes(`/media/${mediaId.toLowerCase()}/content`, token, data),
 };
 
 export type WireMessage = {

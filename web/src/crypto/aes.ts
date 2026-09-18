@@ -26,6 +26,12 @@ export async function aesGcmSeal(key: Uint8Array, plaintext: Uint8Array): Promis
   return out;
 }
 
+export async function sealFile(plaintext: Uint8Array): Promise<{ key: Uint8Array; sealed: Uint8Array }> {
+  const key = randomBytes(32);
+  const sealed = await aesGcmSeal(key, plaintext);
+  return { key, sealed };
+}
+
 export async function aesGcmOpen(key: Uint8Array, combined: Uint8Array): Promise<Uint8Array> {
   if (combined.length < 12 + 16) throw new Error("aes-gcm: ciphertext too short");
   const nonce = combined.slice(0, 12);

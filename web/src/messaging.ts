@@ -1,10 +1,11 @@
 import { api, type Conversation, type WireMessage } from "./api/client";
-import { aesGcmOpen } from "./crypto/aes";
-import { b64ToBytes, utf8, utf8decode } from "./crypto/bytes";
+import { aesGcmOpen, sealFile } from "./crypto/aes";
+import { b64ToBytes, bytesToB64, utf8, utf8decode } from "./crypto/bytes";
 import type { IdentityMaterial } from "./crypto/identity";
 import { loadMediaBlob, saveMediaBlob } from "./crypto/mediaCache";
 import {
   decodeWaveform,
+  encodeWaveform,
   isVoicePayload,
   parseMediaPayload,
   type MediaPayload,
@@ -268,7 +269,7 @@ const voiceLoads = new Map<string, Promise<Uint8Array | null>>();
 
 /** Downloads and decrypts voice bytes (deduped). Safe to call from every bubble mount. */
 export function ensureVoiceLoaded(message: ChatMessage, token: string): Promise<Uint8Array | null> {
-  if (message.kind !== "voice" || message.deleted || !message.mediaObjectId || !message.mediaKey) {
+  if (message.kind !== "voice" || message.deleted) {
     return Promise.resolve(null);
   }
   const key = message.id.toLowerCase();
@@ -277,8 +278,9 @@ export function ensureVoiceLoaded(message: ChatMessage, token: string): Promise<
   const task = (async () => {
     const cached = await loadMediaBlob(message.id);
     if (cached && cached.length > 0) return cached;
-    const sealed = await api.getMediaContent(token, message.mediaObjectId!);
-    const audio = await aesGcmOpen(b64ToBytes(message.mediaKey!), sealed);
+    if (!message.mediaObjectId || !message.mediaKey) return null;
+    const sealed = await api.getMediaContent(token, message.mediaObjectId);
+    const audio = await aesGcmOpen(b64ToBytes(message.mediaKey), sealed);
     await saveMediaBlob(message.id, audio);
     return audio;
   })().catch(() => null);
@@ -434,6 +436,75 @@ export async function sendText(opts: {
       deleted: false,
       failed: false,
       kind: "text",
+      delivered: dto.delivered ?? false,
+      read: dto.read ?? false,
+    };
+    rememberPreview(me, peer, msg);
+    return msg;
+  });
+}
+
+export async function sendVoice(opts: {
+  token: string;
+  me: string;
+  peerUserId: string;
+  material: IdentityMaterial;
+  take: {
+    data: Uint8Array;
+    mime: string;
+    durationMs: number;
+    waveform: number[];
+  };
+}): Promise<ChatMessage> {
+  const peer = opts.peerUserId.toLowerCase();
+  const me = opts.me.toLowerCase();
+  return withPeerLock(peer, async () => {
+    const { key, sealed } = await sealFile(opts.take.data);
+    const upload = await api.createMediaUpload(opts.token, sealed.byteLength);
+    await api.putMediaContent(opts.token, upload.media_object_id, sealed);
+    const payload: MediaPayload = {
+      t: "voice",
+      mime: opts.take.mime || "audio/wav",
+      w: 0,
+      h: 0,
+      k: bytesToB64(key),
+      d: opts.take.durationMs,
+      wf: encodeWaveform(opts.take.waveform),
+      s: opts.take.data.byteLength,
+    };
+    const peerPub = await peerIdentityPublic(opts.token, peer);
+    const envelope = await sealMessage({
+      plaintext: utf8(JSON.stringify(payload)),
+      peerUserId: peer,
+      ourUserId: me,
+      ourPrivate: opts.material.agreementPrivate,
+      ourIdentityPublic: opts.material.agreementPublic,
+      peerIdentityPublic: peerPub,
+    });
+    const clientId = crypto.randomUUID();
+    const dto = await api.sendMessage(opts.token, {
+      peer_user_id: peer,
+      client_message_id: clientId,
+      content_type: "media",
+      ciphertext: envelopeToWireB64(envelope),
+      media_object_id: upload.media_object_id,
+    });
+    savePlaintext(dto.id, JSON.stringify(payload));
+    await saveMediaBlob(dto.id, opts.take.data);
+    const msg: ChatMessage = {
+      id: dto.id,
+      senderUserId: dto.sender_user_id,
+      text: "Voice message",
+      createdAt: dto.created_at,
+      isMine: true,
+      deleted: false,
+      failed: false,
+      kind: "voice",
+      mediaObjectId: upload.media_object_id,
+      voiceDurationMs: opts.take.durationMs,
+      voiceWaveform: opts.take.waveform,
+      mediaKey: payload.k,
+      mime: payload.mime,
       delivered: dto.delivered ?? false,
       read: dto.read ?? false,
     };
