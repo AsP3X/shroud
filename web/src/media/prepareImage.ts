@@ -1,3 +1,4 @@
+import { envelopePreview, fitEdge } from "./envelopePreview";
 import { heifToJpeg, isHeif } from "./heic";
 
 /**
@@ -7,10 +8,6 @@ import { heifToJpeg, isHeif } from "./heic";
  */
 const MAX_EDGE = 2560;
 const JPEG_QUALITY = 0.85;
-/** Envelope preview (`th`), matching iOS `MediaCrypto.chatPreviewJPEG`. */
-const THUMB_EDGE = 160;
-const THUMB_QUALITY = 0.42;
-export const MAX_THUMB_BYTES = 6 * 1024;
 /** The server caps sealed blobs at 25 MiB and AES-GCM adds 28 bytes. */
 const MAX_IMAGE_BYTES = 24 * 1024 * 1024;
 /** Past this a decode alone can take the tab down; refuse before trying. */
@@ -109,25 +106,14 @@ async function render(
 }
 
 function fit(source: Source, edge: number): { width: number; height: number } {
-  const scale = Math.min(1, edge / Math.max(source.width, source.height));
-  return {
-    width: Math.max(1, Math.round(source.width * scale)),
-    height: Math.max(1, Math.round(source.height * scale)),
-  };
+  return fitEdge(source.width, source.height, edge);
 }
 
-/** Same ladder as iOS: shrink edge and quality until the preview fits the envelope. */
-async function thumbnail(source: Source): Promise<Uint8Array | null> {
-  let edge = THUMB_EDGE;
-  let quality = THUMB_QUALITY;
-  for (let attempt = 0; attempt < 5; attempt++) {
+function thumbnail(source: Source): Promise<Uint8Array | null> {
+  return envelopePreview((edge, quality) => {
     const size = fit(source, edge);
-    const jpeg = await render(source, size.width, size.height, "image/jpeg", Math.min(0.85, Math.max(0.15, quality)));
-    if (jpeg.byteLength <= MAX_THUMB_BYTES) return jpeg;
-    edge = Math.max(80, edge * 0.7);
-    quality = Math.max(0.15, quality - 0.08);
-  }
-  return null;
+    return render(source, size.width, size.height, "image/jpeg", quality);
+  });
 }
 
 /** Decodes, orients, downsizes and re-encodes one picked or pasted image for sending. */

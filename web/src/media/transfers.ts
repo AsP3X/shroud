@@ -6,6 +6,12 @@ import { useSyncExternalStore } from "react";
  */
 export type Transfer = {
   direction: "up" | "down";
+  /**
+   * Only for media with a compress step (videos): compressing, then bytes on the
+   * wire, then the CPU work after them (sealing, decrypting) with no number to
+   * show. While compressing, `loaded / total` is the encoder's own progress.
+   */
+  phase?: "preparing" | "transferring" | "finishing";
   loaded: number;
   /** Null while the size is unknown (the ring spins instead of filling). */
   total: number | null;
@@ -49,4 +55,27 @@ export function useTransfer(id: string): Transfer | null {
 export function transferFraction(transfer: Transfer | null): number | null {
   if (!transfer?.total) return null;
   return Math.min(1, Math.max(0, transfer.loaded / transfer.total));
+}
+
+/** Share of the ring compressing owns before the upload takes over (iOS `MediaTransfer.prepareShare`). */
+const PREPARE_SHARE = 0.3;
+
+/**
+ * One 0…1 value for a ring that fills across compress → upload without jumping
+ * back, or null when it should spin (size unknown, sealing or decrypting).
+ */
+export function ringFraction(transfer: Transfer | null): number | null {
+  if (!transfer) return null;
+  const fraction = transferFraction(transfer);
+  switch (transfer.phase) {
+    case undefined:
+      return fraction;
+    case "preparing":
+      return (fraction ?? 0) * PREPARE_SHARE;
+    case "transferring":
+      if (fraction == null) return null;
+      return transfer.direction === "up" ? PREPARE_SHARE + fraction * (1 - PREPARE_SHARE) : fraction;
+    case "finishing":
+      return null;
+  }
 }

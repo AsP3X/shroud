@@ -50,6 +50,21 @@ export async function loadMediaBlob(messageId: string): Promise<Uint8Array | nul
   }
 }
 
+/** Whether anything is stored under this key, without reading it (a sealed video is up to 25 MB). */
+export async function hasMediaBlob(messageId: string): Promise<boolean> {
+  try {
+    const db = await openDb();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, "readonly");
+      const req = tx.objectStore(STORE).count(id(messageId));
+      req.onsuccess = () => resolve(req.result > 0);
+      req.onerror = () => reject(req.error);
+    });
+  } catch {
+    return false;
+  }
+}
+
 export async function saveMediaBlob(messageId: string, data: Uint8Array): Promise<void> {
   try {
     const db = await openDb();

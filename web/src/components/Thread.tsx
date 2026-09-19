@@ -36,11 +36,19 @@ import {
   PHOTO_ACCEPT,
   type PreparedImage,
 } from "../media/prepareImage";
+import {
+  clipboardVideos,
+  VIDEO_ACCEPT,
+  videoFiles,
+  type VideoSendDraft,
+} from "../media/prepareVideo";
+import { cancelVideoDownload, type LoadedVideo } from "../media/videos";
 import { Avatar } from "./Avatar";
 import { Highlight } from "./Highlight";
 import { ImageBubble } from "./ImageBubble";
 import { Receipt } from "./Receipt";
 import { TypingBubble, TypingLabel } from "./Typing";
+import { VideoBubble } from "./VideoBubble";
 import { VoiceBubble } from "./VoiceBubble";
 import { VoiceDroplet, VoiceStrip } from "./VoiceRecorderBar";
 import { useVoiceRecording } from "./useVoiceRecording";
@@ -48,9 +56,13 @@ import type { PeerActivity } from "../typing";
 import type { VoiceTake } from "../voice/recorder";
 import { clearTranscriptChoice, transcriptTail } from "../voice/transcriptView";
 
-/* Only needed once a photo is opened or picked: kept out of the first download. */
+/* Only needed once a photo or video is opened or picked: kept out of the first download. */
 const ImageComposer = lazy(() => import("./ImageComposer").then((m) => ({ default: m.ImageComposer })));
 const ImageViewer = lazy(() => import("./ImageViewer").then((m) => ({ default: m.ImageViewer })));
+const VideoComposer = lazy(() => import("./VideoComposer").then((m) => ({ default: m.VideoComposer })));
+const VideoViewer = lazy(() => import("./VideoViewer").then((m) => ({ default: m.VideoViewer })));
+
+const MEDIA_ACCEPT = `${PHOTO_ACCEPT},${VIDEO_ACCEPT}`;
 
 /** Messages from the same sender inside this window render as one visual block. */
 const GROUP_WINDOW = 5 * MINUTE;
@@ -96,6 +108,10 @@ function isPhoto(message: ChatMessage): boolean {
   return Boolean(message.mediaKey) || Boolean(peekImage(message.id));
 }
 
+function isVideo(message: ChatMessage): boolean {
+  return message.kind === "video" && !message.deleted;
+}
+
 function hasFiles(event: DragEvent): boolean {
   return Array.from(event.dataTransfer?.types ?? []).includes("Files");
 }
@@ -116,10 +132,12 @@ export function Thread({
   onSendVoice,
   onRecordingChange,
   onSendImages,
+  onSendVideos,
   onBack,
   onShowInfo,
   onLoadVoice,
   onLoadImage,
+  onLoadVideo,
 }: {
   peer: { id: string; username: string };
   presence: string;
@@ -139,9 +157,12 @@ export function Thread({
   onRecordingChange?: (recording: boolean) => void;
   /** Photos prepared in the send sheet; the caption belongs to the first. */
   onSendImages: (images: PreparedImage[], caption: string) => void;
+  /** Clips from the send sheet; encoding starts after the bubbles land. */
+  onSendVideos: (drafts: VideoSendDraft[], caption: string) => void;
   onBack: () => void;
   onLoadVoice: (message: ChatMessage) => Promise<Uint8Array | null>;
   onLoadImage: (message: ChatMessage) => Promise<LoadedImage | null>;
+  onLoadVideo: (message: ChatMessage) => Promise<LoadedVideo | null>;
   onShowInfo: () => void;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
@@ -160,7 +181,11 @@ export function Thread({
   const photoPicker = useRef<HTMLInputElement>(null);
   /** Files in the send sheet; null while it is closed. */
   const [attaching, setAttaching] = useState<File[] | null>(null);
+  const [attachingVideos, setAttachingVideos] = useState<File[] | null>(null);
+  /** Photos from a mixed pick, shown after the video sheet closes. */
+  const [photosAfterVideos, setPhotosAfterVideos] = useState<File[] | null>(null);
   const [viewing, setViewing] = useState<string | null>(null);
+  const [watching, setWatching] = useState<string | null>(null);
   const [dropping, setDropping] = useState(false);
   const dragDepth = useRef(0);
 
@@ -333,11 +358,37 @@ export function Thread({
     if (finePointer()) field.current?.focus();
   }
 
-  /** Opens the send sheet with these photos, or adds them to the one already open. */
-  function attach(files: File[]) {
-    const photos = imageFiles(files);
-    if (!canSend || photos.length === 0) return;
-    setAttaching((open) => [...(open ?? []), ...photos].slice(0, MAX_PHOTOS_PER_SEND));
+  function openQueuedPhotos(queued: File[] | null) {
+    if (queued?.length) setAttaching(queued);
+    else if (finePointer()) field.current?.focus();
+  }
+
+  /** Opens the send sheet with these photos and videos, or adds them to one already open. */
+  function attach(picked: File[]) {
+    if (!canSend) return;
+    const videos = videoFiles(picked);
+    const photos = imageFiles(picked);
+    if (videos.length === 0 && photos.length === 0) return;
+
+    if (attachingVideos) {
+      if (videos.length) {
+        setAttachingVideos((open) => [...(open ?? []), ...videos].slice(0, MAX_PHOTOS_PER_SEND));
+      }
+      if (photos.length) {
+        setPhotosAfterVideos((queued) => [...(queued ?? []), ...photos].slice(0, MAX_PHOTOS_PER_SEND));
+      }
+      return;
+    }
+    if (attaching) {
+      if (photos.length) setAttaching((open) => [...(open ?? []), ...photos].slice(0, MAX_PHOTOS_PER_SEND));
+      return;
+    }
+    if (videos.length) {
+      if (photos.length) setPhotosAfterVideos(photos.slice(0, MAX_PHOTOS_PER_SEND));
+      setAttachingVideos(videos.slice(0, MAX_PHOTOS_PER_SEND));
+      return;
+    }
+    setAttaching(photos.slice(0, MAX_PHOTOS_PER_SEND));
   }
 
   const closeAttach = useCallback(() => {
@@ -354,11 +405,30 @@ export function Thread({
     [onSendImages],
   );
 
+  const closeVideoAttach = useCallback(() => {
+    setAttachingVideos(null);
+    const queued = photosAfterVideos;
+    setPhotosAfterVideos(null);
+    openQueuedPhotos(queued);
+  }, [photosAfterVideos]);
+
+  const sendAttachedVideos = useCallback(
+    (drafts: VideoSendDraft[], caption: string) => {
+      setAttachingVideos(null);
+      onSendVideos(drafts, caption);
+      const queued = photosAfterVideos;
+      setPhotosAfterVideos(null);
+      openQueuedPhotos(queued);
+    },
+    [onSendVideos, photosAfterVideos],
+  );
+
   function onPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
-    const pasted = clipboardImages(event.clipboardData);
-    if (pasted.length === 0) return;
+    const photos = clipboardImages(event.clipboardData);
+    const videos = clipboardVideos(event.clipboardData);
+    if (photos.length === 0 && videos.length === 0) return;
     event.preventDefault();
-    attach(pasted);
+    attach([...photos, ...videos]);
   }
 
   /* Photos dragged anywhere over the chat can be dropped to send. Enter and leave fire
@@ -493,6 +563,7 @@ export function Thread({
               const { message } = row;
               const voice = message.kind === "voice" && !message.deleted;
               const photo = isPhoto(message);
+              const video = isVideo(message);
               const bubbleClass = [
                 "bubble",
                 message.isMine ? "out" : "in",
@@ -514,6 +585,19 @@ export function Thread({
                     query={query}
                     loadImage={onLoadImage}
                     onOpen={(opened) => setViewing(opened.id)}
+                  />
+                );
+              }
+              if (video) {
+                return (
+                  <VideoBubble
+                    key={row.key}
+                    className={bubbleClass}
+                    message={message}
+                    query={query}
+                    onOpen={(opened) => setWatching(opened.id)}
+                    onDownload={(opened) => void onLoadVideo(opened)}
+                    onCancelDownload={cancelVideoDownload}
                   />
                 );
               }
@@ -579,8 +663,8 @@ export function Thread({
             <button
               className="icon-btn compose-plus"
               type="button"
-              aria-label="Send photos"
-              title="Send photos"
+              aria-label="Send photos or videos"
+              title="Send photos or videos"
               disabled={!canSend}
               onClick={() => photoPicker.current?.click()}
             >
@@ -598,8 +682,8 @@ export function Thread({
             <button
               className="icon-btn compose-wide"
               type="button"
-              aria-label="Send photos"
-              title="Send photos — or paste or drop them here"
+              aria-label="Send photos or videos"
+              title="Send photos or videos — or paste or drop them here"
               disabled={!canSend}
               onClick={() => photoPicker.current?.click()}
             >
@@ -641,7 +725,7 @@ export function Thread({
           <input
             ref={photoPicker}
             type="file"
-            accept={PHOTO_ACCEPT}
+            accept={MEDIA_ACCEPT}
             multiple
             hidden
             onChange={(event) => {
@@ -658,7 +742,7 @@ export function Thread({
           <div className="drop-card">
             <ImagePlus size={30} />
             <strong>Drop to send</strong>
-            <span>Photos are end-to-end encrypted</span>
+            <span>Photos and videos are end-to-end encrypted</span>
           </div>
         </div>
       ) : null}
@@ -674,6 +758,16 @@ export function Thread({
           />
         ) : null}
 
+        {attachingVideos ? (
+          <VideoComposer
+            files={attachingVideos}
+            peerName={peer.username}
+            onFilesChange={setAttachingVideos}
+            onClose={closeVideoAttach}
+            onSend={sendAttachedVideos}
+          />
+        ) : null}
+
         {viewing ? (
           <ImageViewer
             photos={photos}
@@ -681,6 +775,15 @@ export function Thread({
             peerName={peer.username}
             loadImage={onLoadImage}
             onClose={() => setViewing(null)}
+          />
+        ) : null}
+
+        {watching && messages.some((m) => m.id === watching) ? (
+          <VideoViewer
+            message={messages.find((m) => m.id === watching)!}
+            peerName={peer.username}
+            loadVideo={onLoadVideo}
+            onClose={() => setWatching(null)}
           />
         ) : null}
       </Suspense>

@@ -37,7 +37,15 @@ export function parseMediaPayload(raw: string): MediaPayload | null {
 }
 
 export function isVoicePayload(payload: MediaPayload): boolean {
-  return payload.t === "voice";
+  if (payload.t === "voice") return true;
+  if (payload.t === "image" || payload.t === "video") return false;
+  return payload.mime.startsWith("audio/");
+}
+
+export function isVideoPayload(payload: MediaPayload): boolean {
+  if (payload.t === "video") return true;
+  if (payload.t === "image" || payload.t === "voice") return false;
+  return payload.mime.startsWith("video/");
 }
 
 /**

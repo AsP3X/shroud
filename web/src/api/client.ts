@@ -118,12 +118,14 @@ async function requestBytes(
   token: string,
   onProgress?: TransferProgress,
   expectedBytes?: number,
+  signal?: AbortSignal,
 ): Promise<Uint8Array> {
   const headers = new Headers({ Accept: "*/*", Authorization: `Bearer ${token}` });
   let res: Response;
   try {
-    res = await fetch(`${apiBase()}${path}`, { headers });
+    res = await fetch(`${apiBase()}${path}`, { headers, signal });
   } catch (err) {
+    if (signal?.aborted) throw err;
     throw new ApiError("transport", err instanceof Error ? err.message : "Network error", 0);
   }
   if (!res.ok) {
@@ -147,6 +149,10 @@ async function requestBytes(
   let loaded = 0;
   onProgress(0, total);
   for (;;) {
+    if (signal?.aborted) {
+      await reader.cancel();
+      throw signal.reason ?? new DOMException("Aborted", "AbortError");
+    }
     const { done, value } = await reader.read();
     if (done) break;
     chunks.push(value);
@@ -358,7 +364,8 @@ export const api = {
     mediaId: string,
     onProgress?: TransferProgress,
     expectedBytes?: number,
-  ) => requestBytes(`/media/${mediaId.toLowerCase()}/content`, token, onProgress, expectedBytes),
+    signal?: AbortSignal,
+  ) => requestBytes(`/media/${mediaId.toLowerCase()}/content`, token, onProgress, expectedBytes, signal),
   createMediaUpload: (token: string, sizeBytes: number, contentType = "application/octet-stream") =>
     request<{ media_object_id: string; upload_url: string; object_key: string; expires_at: string }>(
       "/media/uploads",

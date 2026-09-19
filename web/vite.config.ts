@@ -5,7 +5,13 @@ export default defineConfig({
   plugins: [react()],
   assetsInclude: ["**/*.wasm"],
   optimizeDeps: {
-    exclude: ["@huggingface/transformers", "onnxruntime-web", "libheif-js"],
+    exclude: [
+      "@huggingface/transformers",
+      "onnxruntime-web",
+      "libheif-js",
+      "mediabunny",
+      "@mediabunny/aac-encoder",
+    ],
   },
   worker: {
     format: "es",

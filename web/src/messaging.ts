@@ -7,6 +7,7 @@ import {
   clampTranscript,
   decodeWaveform,
   encodeWaveform,
+  isVideoPayload,
   isVoicePayload,
   MAX_MEDIA_PAYLOAD_PLAINTEXT_BYTES,
   MAX_SEALED_ENVELOPE_BYTES,
@@ -20,8 +21,11 @@ import {
   savePlaintext,
   savePreview,
 } from "./crypto/plaintextCache";
+import { MAX_THUMB_BYTES } from "./media/envelopePreview";
 import { cacheSealedImage } from "./media/images";
-import { MAX_THUMB_BYTES, type PreparedImage } from "./media/prepareImage";
+import type { PreparedImage } from "./media/prepareImage";
+import type { EncodedVideo } from "./media/prepareVideo";
+import { cacheSealedPoster, cacheSealedVideo } from "./media/videos";
 
 /** `annotation` never reaches the thread: `applyAnnotations` folds it into its target. */
 export type ChatKind = "text" | "image" | "voice" | "video" | "annotation";
@@ -37,6 +41,7 @@ export type Annotation = { t: "transcript"; r: string; c: string };
 const VOICE_LABEL = "Voice message";
 /** Stand-in text for a photo without a caption (search, chat preview), as on iOS. */
 const PHOTO_LABEL = "Photo";
+const VIDEO_LABEL = "Video";
 
 export function parseAnnotation(raw: string): Annotation | null {
   try {
@@ -65,7 +70,7 @@ export type ChatMessage = {
   mediaKey?: string | null;
   mime?: string | null;
   transcript?: string | null;
-  /** Photo caption sealed with the image; null when there is none (`text` then reads "Photo"). */
+  /** Caption sealed with a photo or video; null when there is none (`text` then reads "Photo"/"Video"). */
   caption?: string | null;
   imageWidth?: number | null;
   imageHeight?: number | null;
@@ -73,6 +78,8 @@ export type ChatMessage = {
   thumbnail?: string | null;
   /** Size of the media file itself, in bytes. */
   mediaBytes?: number | null;
+  /** Length of a video, from its payload (`d`). */
+  videoDurationMs?: number | null;
   /** Optimistic bubble shown until the server hands back a real id. */
   pending?: boolean;
   /** Set on `kind === "annotation"`; null when it could not be read. */
@@ -178,8 +185,8 @@ export async function fetchLatest(
 
 function kindFromPayload(payload: MediaPayload | null, isMedia: boolean): ChatKind {
   if (!isMedia) return "text";
-  if (payload?.t === "voice") return "voice";
-  if (payload?.t === "video") return "video";
+  if (payload && isVoicePayload(payload)) return "voice";
+  if (payload && isVideoPayload(payload)) return "video";
   return "image";
 }
 
@@ -205,12 +212,20 @@ function messageFromMediaPayload(
     };
   }
   const caption = payload.c?.trim() || "";
-  if (payload.t === "video") {
+  if (isVideoPayload(payload)) {
     return {
       ...base,
       kind: "video",
-      text: caption || "Video",
+      text: caption || VIDEO_LABEL,
+      caption: caption || null,
       mediaObjectId: mediaObjectId ?? null,
+      mediaKey: payload.k,
+      mime: payload.mime || "video/mp4",
+      imageWidth: payload.w > 0 ? payload.w : null,
+      imageHeight: payload.h > 0 ? payload.h : null,
+      thumbnail: payload.th?.trim() || null,
+      mediaBytes: payload.s ?? null,
+      videoDurationMs: payload.d ?? null,
     };
   }
   return {
@@ -232,8 +247,8 @@ function previewCopy(msg: ChatMessage): string {
   if (msg.deleted) return "Message deleted";
   if (msg.failed) return "Encrypted message";
   if (msg.kind === "voice") return msg.transcript?.trim() || VOICE_LABEL;
-  if (msg.kind === "video") return msg.text === "Video" ? "Video" : msg.text;
-  if (msg.kind === "image") return msg.text === "Photo" ? "Photo" : msg.text;
+  if (msg.kind === "video") return msg.text || VIDEO_LABEL;
+  if (msg.kind === "image") return msg.text || PHOTO_LABEL;
   return msg.text;
 }
 
@@ -457,11 +472,11 @@ export async function hydratePreviews(
           id: dto.id,
           senderUserId: dto.sender_user_id,
           text: payload
-            ? payload.t === "voice"
+            ? isVoicePayload(payload)
               ? transcript || VOICE_LABEL
-              : payload.t === "video"
-                ? payload.c?.trim() || "Video"
-                : payload.c?.trim() || "Photo"
+              : isVideoPayload(payload)
+                ? payload.c?.trim() || VIDEO_LABEL
+                : payload.c?.trim() || PHOTO_LABEL
             : cached,
           createdAt: dto.created_at,
           isMine: mine,
@@ -686,8 +701,6 @@ export async function sendImage(opts: {
   clientMessageId?: string;
   onProgress?: TransferProgress;
 }): Promise<ChatMessage> {
-  const peer = opts.peerUserId.toLowerCase();
-  const me = opts.me.toLowerCase();
   const { image } = opts;
   const caption = opts.caption?.trim() || null;
 
@@ -706,7 +719,71 @@ export async function sendImage(opts: {
     ...(caption ? { c: caption } : {}),
     ...(thumb ? { th: thumb } : {}),
   };
+  return sendMediaEnvelope(opts, payload, upload.media_object_id, "photo", (id) => {
+    void cacheSealedImage(id, sealed);
+  });
+}
 
+/**
+ * Encrypts, uploads and sends one converted clip (same wire format as iOS
+ * `finishVideoSend`: `t: "video"`, the length in `d`). As with photos, only
+ * sealing the envelope waits for the peer lock.
+ */
+export async function sendVideo(opts: {
+  token: string;
+  me: string;
+  peerUserId: string;
+  material: IdentityMaterial;
+  video: EncodedVideo;
+  caption?: string | null;
+  /** Idempotency key: the optimistic bubble's id, so a replayed send can't land twice. */
+  clientMessageId?: string;
+  onProgress?: TransferProgress;
+  /** Every byte is up; sealing and sending the envelope remain. */
+  onUploaded?: () => void;
+}): Promise<ChatMessage> {
+  const { video } = opts;
+  const caption = opts.caption?.trim() || null;
+
+  const { key, sealed } = await sealFile(video.bytes);
+  const upload = await api.createMediaUpload(opts.token, sealed.byteLength);
+  await api.putMediaContent(opts.token, upload.media_object_id, sealed, opts.onProgress);
+  opts.onUploaded?.();
+
+  const thumb = video.thumb && video.thumb.byteLength <= MAX_THUMB_BYTES ? bytesToB64(video.thumb) : null;
+  const payload: MediaPayload = {
+    t: "video",
+    mime: video.mime,
+    w: video.width,
+    h: video.height,
+    k: bytesToB64(key),
+    d: video.durationMs,
+    s: video.bytes.byteLength,
+    ...(caption ? { c: caption } : {}),
+    ...(thumb ? { th: thumb } : {}),
+  };
+  return sendMediaEnvelope(opts, payload, upload.media_object_id, "video", (id) => {
+    void cacheSealedVideo(id, sealed);
+    if (video.poster) void cacheSealedPoster(id, key, video.poster);
+  });
+}
+
+/** Seals a media payload for the peer and sends it; `keep` stores the sent file under the server's id. */
+async function sendMediaEnvelope(
+  opts: {
+    token: string;
+    me: string;
+    peerUserId: string;
+    material: IdentityMaterial;
+    clientMessageId?: string;
+  },
+  payload: MediaPayload,
+  mediaObjectId: string,
+  noun: "photo" | "video",
+  keep: (messageId: string) => void,
+): Promise<ChatMessage> {
+  const peer = opts.peerUserId.toLowerCase();
+  const me = opts.me.toLowerCase();
   return withPeerLock(peer, async () => {
     const peerPub = await peerIdentityPublic(opts.token, peer);
     const seal = () =>
@@ -726,17 +803,17 @@ export async function sendImage(opts: {
       envelope = await seal();
     }
     if (envelope.byteLength > MAX_SEALED_ENVELOPE_BYTES) {
-      throw new Error("That caption is too long to send with a photo.");
+      throw new Error(`That caption is too long to send with a ${noun}.`);
     }
     const dto = await api.sendMessage(opts.token, {
       peer_user_id: peer,
       client_message_id: opts.clientMessageId ?? crypto.randomUUID(),
       content_type: "media",
       ciphertext: envelopeToWireB64(envelope),
-      media_object_id: upload.media_object_id,
+      media_object_id: mediaObjectId,
     });
     savePlaintext(dto.id, JSON.stringify(payload));
-    void cacheSealedImage(dto.id, sealed);
+    keep(dto.id);
     const msg = messageFromMediaPayload(
       {
         id: dto.id,
@@ -749,7 +826,7 @@ export async function sendImage(opts: {
         read: dto.read ?? false,
       },
       payload,
-      upload.media_object_id,
+      mediaObjectId,
     );
     rememberPreview(me, peer, msg);
     return msg;

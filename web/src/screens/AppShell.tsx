@@ -32,6 +32,7 @@ import {
   previewLine,
   sendImage,
   sendText,
+  sendVideo,
   sendVoice,
   shareTranscript,
   type ChatMessage,
@@ -39,7 +40,10 @@ import {
 import { saveMediaBlob } from "../crypto/mediaCache";
 import { adoptImage, ensureImage, forgetImages, rekeyImage } from "../media/images";
 import type { PreparedImage } from "../media/prepareImage";
+import { encodeVideo, resetVideoWorker, VideoCanceledError, type VideoSendDraft } from "../media/prepareVideo";
 import { setTransfer } from "../media/transfers";
+import { adoptPoster, adoptVideo, ensureVideo, forgetVideos, rekeyVideo } from "../media/videos";
+import { VideoTooLongError } from "../media/videoPlan";
 import type { VoiceTake } from "../voice/recorder";
 import { stopVoice } from "../voice/playback";
 import {
@@ -514,9 +518,21 @@ export function AppShell({ session }: { session: Session }) {
     [session.token],
   );
 
+  const loadVideo = useCallback(
+    (message: ChatMessage) => ensureVideo(message, session.token),
+    [session.token],
+  );
+
   useEffect(() => () => stopVoice(), []);
-  // Decrypted photos live only as long as the unlocked shell does.
-  useEffect(() => () => forgetImages(), []);
+  // Decrypted photos and videos live only as long as the unlocked shell does.
+  useEffect(
+    () => () => {
+      forgetImages();
+      forgetVideos();
+      resetVideoWorker();
+    },
+    [],
+  );
 
   const logout = useCallback(async () => {
     try {
@@ -776,6 +792,116 @@ export function AppShell({ session }: { session: Session }) {
     }
   }
 
+  /** Clips from the send sheet: the bubble lands first, then compress → upload. */
+  async function submitVideos(drafts: VideoSendDraft[], caption: string) {
+    if (!selected || !identity || drafts.length === 0) return;
+    typingSender.stop();
+    recordingSender.stop();
+    const peerId = selected.id;
+    const material = identity;
+    const start = Date.now();
+    const jobs = drafts.map((draft, index) => {
+      const clientId = crypto.randomUUID();
+      const localId = `pending:${clientId}`;
+      const text = index === 0 ? caption.trim() : "";
+      const kept = Math.max(0.1, (draft.trim?.end ?? draft.probe.duration) - (draft.trim?.start ?? 0));
+      if (draft.poster) adoptPoster(localId, draft.poster);
+      const optimistic: ChatMessage = {
+        id: localId,
+        senderUserId: session.user.id,
+        text: text || "Video",
+        caption: text || null,
+        createdAt: new Date(start + index).toISOString(),
+        isMine: true,
+        deleted: false,
+        failed: false,
+        kind: "video",
+        mime: "video/mp4",
+        imageWidth: draft.probe.width,
+        imageHeight: draft.probe.height,
+        mediaBytes: draft.probe.bytes,
+        videoDurationMs: Math.round(kept * 1000),
+        pending: true,
+      };
+      return { draft, clientId, localId, caption: text, optimistic };
+    });
+    setThread((prev) => [...prev, ...jobs.map((job) => job.optimistic)]);
+    setSendingPeer(peerId);
+    setThreadError(null);
+    for (const job of jobs) {
+      try {
+        setTransfer(job.localId, { direction: "up", phase: "preparing", loaded: 0, total: 1000 });
+        const encoded = await encodeVideo(job.draft.file, {
+          trim: job.draft.trim,
+          mute: job.draft.mute,
+          onProgress: (value) =>
+            setTransfer(job.localId, {
+              direction: "up",
+              phase: "preparing",
+              loaded: Math.round(value * 1000),
+              total: 1000,
+            }),
+        });
+        adoptVideo(job.localId, encoded.bytes, encoded.poster);
+        if (selectedRef.current?.id.toLowerCase() === peerId.toLowerCase()) {
+          setThread((prev) =>
+            prev.map((m) =>
+              m.id === job.localId
+                ? {
+                    ...m,
+                    imageWidth: encoded.width,
+                    imageHeight: encoded.height,
+                    mediaBytes: encoded.bytes.byteLength,
+                    videoDurationMs: encoded.durationMs,
+                  }
+                : m,
+            ),
+          );
+        }
+        const msg = await sendVideo({
+          token: session.token,
+          me: session.user.id,
+          peerUserId: peerId,
+          material,
+          video: encoded,
+          caption: job.caption,
+          clientMessageId: job.clientId,
+          onProgress: (loaded, total) =>
+            setTransfer(job.localId, { direction: "up", phase: "transferring", loaded, total }),
+          onUploaded: () =>
+            setTransfer(job.localId, { direction: "up", phase: "finishing", loaded: 0, total: null }),
+        });
+        rekeyVideo(job.localId, msg.id);
+        if (selectedRef.current?.id.toLowerCase() === peerId.toLowerCase()) {
+          setThread((prev) => mergeMessages(prev.filter((m) => m.id !== job.localId), [msg]));
+          setPreviewRev((n) => n + 1);
+        }
+      } catch (err) {
+        if (err instanceof VideoCanceledError) {
+          setThread((prev) => prev.filter((m) => m.id !== job.localId));
+        } else if (selectedRef.current?.id.toLowerCase() === peerId.toLowerCase()) {
+          setThread((prev) =>
+            prev.map((m) => (m.id === job.localId ? { ...m, pending: false, failed: true } : m)),
+          );
+          setThreadError(
+            err instanceof VideoTooLongError || err instanceof ApiError || err instanceof Error
+              ? err.message
+              : "Could not send the video.",
+          );
+        }
+      } finally {
+        setTransfer(job.localId, null);
+      }
+    }
+    setSendingPeer((current) => (current === peerId ? null : current));
+    try {
+      await refresh();
+    } catch (err) {
+      if (!alive.current) return;
+      setThreadError(err instanceof ApiError ? err.message : "Could not refresh chats.");
+    }
+  }
+
   async function respond(id: string, accept: boolean) {
     try {
       if (accept) await api.acceptRequest(session.token, id);
@@ -885,10 +1011,12 @@ export function AppShell({ session }: { session: Session }) {
                   }
                 }}
                 onSendImages={(images, caption) => void submitImages(images, caption)}
+                onSendVideos={(drafts, caption) => void submitVideos(drafts, caption)}
                 onBack={() => setSelected(null)}
                 onShowInfo={() => setShowInfo(true)}
                 onLoadVoice={loadVoice}
                 onLoadImage={loadImage}
+                onLoadVideo={loadVideo}
               />
             ) : (
               <section className="thread thread-placeholder hidden-mobile">

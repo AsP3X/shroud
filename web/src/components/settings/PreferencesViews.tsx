@@ -3,6 +3,8 @@ import { Monitor, Moon, Sun, Trash2 } from "lucide-react";
 import { apiBase } from "../../config";
 import { cacheStats, clearCache } from "../../crypto/plaintextCache";
 import { forgetImages } from "../../media/images";
+import { resetVideoWorker } from "../../media/prepareVideo";
+import { forgetVideos } from "../../media/videos";
 import { formatBytes } from "../../format";
 import { setTheme, useThemePref, type ThemePref } from "../../theme";
 import { SettingsCard, SettingsGroup, SettingsNote, SettingsRow } from "./SettingsRow";
@@ -55,6 +57,8 @@ export function DataStorageView({ onCleared }: { onCleared?: () => void }) {
   function clear() {
     clearCache();
     forgetImages();
+    forgetVideos();
+    resetVideoWorker();
     setStats(cacheStats());
     setCleared(true);
     onCleared?.();

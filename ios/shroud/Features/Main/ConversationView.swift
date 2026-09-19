@@ -269,10 +269,15 @@ struct ConversationView: View {
                 Task { await loadPickedMedia(items) }
             }
             .fullScreenCover(isPresented: $showCamera) {
-                CameraPicker { image in
+                CameraPicker { capture in
                     showCamera = false
-                    guard let image else { return }
-                    presentMediaCompose([PickedPhoto(image: image)])
+                    guard let capture else { return }
+                    switch capture {
+                    case .photo(let image):
+                        presentMediaCompose([PickedPhoto(image: image)])
+                    case .movie(let movie):
+                        Task { await presentCapturedMovie(movie) }
+                    }
                 }
                 .ignoresSafeArea()
             }
@@ -1227,6 +1232,18 @@ struct ConversationView: View {
         withAnimation(.easeOut(duration: 0.2)) {
             videoDraft = VideoComposeDraft(videos: Array(picked.prefix(Self.maxPhotosPerSend)))
         }
+    }
+
+    /// Camera movie → the same trim sheet as a library pick.
+    private func presentCapturedMovie(_ movie: PickedMovie) async {
+        guard let probe = await VideoMedia.probe(url: movie.url) else {
+            movie.cleanup()
+            toast = "Could not load that video."
+            scheduleToastClear()
+            return
+        }
+        let poster = await VideoMedia.posterImage(url: movie.url)
+        presentVideoCompose([PickedVideo(movie: movie, probe: probe, poster: poster)])
     }
 
     /// Closes the video compose and hands any photos from the same pick to the photo compose.
