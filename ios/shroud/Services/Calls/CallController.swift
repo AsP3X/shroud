@@ -431,13 +431,7 @@ final class CallController {
     }
 
     private func configureAudioSession() async throws {
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(
-            .playAndRecord,
-            mode: .voiceChat,
-            options: [.allowBluetoothHFP, .allowBluetoothA2DP, .defaultToSpeaker]
-        )
-        try session.setActive(true)
+        try await ChatAudioSession.shared.activate(.voiceCall)
     }
 }
 

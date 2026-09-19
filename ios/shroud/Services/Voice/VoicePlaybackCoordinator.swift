@@ -30,6 +30,8 @@ final class VoicePlaybackCoordinator {
 
     private var player: AVAudioPlayer?
     private var ticker: Task<Void, Never>?
+    /// Bumped so an in-flight session activate cannot start a note the user already left.
+    private var sessionGeneration = 0
 
     private init() {}
 
@@ -58,21 +60,28 @@ final class VoicePlaybackCoordinator {
     /// Play/pause `id`, loading `data` if it is not the active message.
     func toggle(id: UUID, data: Data) {
         if activeID == id {
-            isPlaying ? pause() : resume()
+            if isPlaying {
+                pause()
+            } else {
+                Task { await resume() }
+            }
             return
         }
-        start(id: id, data: data, at: 0)
+        Task { await start(id: id, data: data, at: 0) }
     }
 
     func pause() {
+        sessionGeneration += 1
         player?.pause()
         isPlaying = false
         stopTicker()
     }
 
-    func resume() {
-        guard let player else { return }
-        activateSession()
+    func resume() async {
+        sessionGeneration += 1
+        let generation = sessionGeneration
+        try? await ChatAudioSession.shared.activate(.spokenPlayback)
+        guard generation == sessionGeneration, let player else { return }
         player.enableRate = true
         player.rate = rate
         guard player.play() else { return }
@@ -85,7 +94,7 @@ final class VoicePlaybackCoordinator {
         let clamped = min(1, max(0, fraction))
         if activeID != id {
             // Scrubbing a message that is not loaded yet: load it paused at that point.
-            start(id: id, data: data, at: clamped, autoplay: false)
+            Task { await start(id: id, data: data, at: clamped, autoplay: false) }
             return
         }
         guard let player else { return }
@@ -103,6 +112,7 @@ final class VoicePlaybackCoordinator {
     }
 
     func stop() {
+        sessionGeneration += 1
         stopTicker()
         player?.stop()
         player = nil
@@ -120,11 +130,14 @@ final class VoicePlaybackCoordinator {
 
     // MARK: - Internals
 
-    private func start(id: UUID, data: Data, at fraction: Double, autoplay: Bool = true) {
+    private func start(id: UUID, data: Data, at fraction: Double, autoplay: Bool = true) async {
+        sessionGeneration += 1
+        let generation = sessionGeneration
         stopTicker()
         player?.stop()
 
-        activateSession()
+        try? await ChatAudioSession.shared.activate(.spokenPlayback)
+        guard generation == sessionGeneration else { return }
         guard let newPlayer = try? AVAudioPlayer(data: data) else {
             // Corrupt or still-encrypted bytes — leave the previous state cleared.
             stop()
@@ -151,12 +164,6 @@ final class VoicePlaybackCoordinator {
         }
         isPlaying = true
         startTicker()
-    }
-
-    private func activateSession() {
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, mode: .spokenAudio)
-        try? session.setActive(true)
     }
 
     /// 30 Hz is enough for a smooth playhead and also detects end-of-file without a delegate.

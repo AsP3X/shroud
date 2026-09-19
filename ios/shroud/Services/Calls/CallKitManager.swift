@@ -171,11 +171,12 @@ extension CallKitManager: CXProviderDelegate {
     }
 
     nonisolated func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
-        try? audioSession.setCategory(
-            .playAndRecord,
-            mode: .voiceChat,
-            options: [.allowBluetoothHFP, .allowBluetoothA2DP, .defaultToSpeaker]
-        )
-        try? audioSession.setActive(true)
+        // CallKit has already activated this session. `setActive` on the main thread
+        // while live is the hitch iOS 27 logs. Category may still be the default on an
+        // incoming answer (configureAudioSession runs after this), so apply it off-thread
+        // and leave the session active.
+        Task {
+            await ChatAudioSession.shared.applyCategory(.voiceCall)
+        }
     }
 }

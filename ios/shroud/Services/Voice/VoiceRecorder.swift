@@ -77,9 +77,7 @@ final class VoiceRecorder {
 
         guard await Self.requestPermission() else { throw RecorderError.permissionDenied }
 
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
-        try session.setActive(true)
+        try await ChatAudioSession.shared.activate(.voiceRecord)
 
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("shroud-voice-\(UUID().uuidString).m4a")
@@ -193,9 +191,7 @@ final class VoiceRecorder {
         // `.defaultToSpeaker` is only valid with `.playAndRecord`. Pairing it with `.playback`
         // is rejected (SessionCore: "only applicable with category 'playAndRecord'") and leaves
         // the session poisoned for the speech daemon. `.playback` already routes to the speaker.
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
-        try? session.setActive(true)
+        Task { try? await ChatAudioSession.shared.activate(.mixedPlayback) }
     }
 
     /// Human: Deliberately does **not** clear `envelope` — that is owned by `start()`. Clearing

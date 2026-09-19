@@ -26,6 +26,8 @@ final class ChatVideoPlayer {
     private var ownedURL: URL?
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
+    /// Bumped by `teardown` so an in-flight `start` cannot attach a player after the overlay left.
+    private var startID = 0
 
     /// Playhead as 0…1 for the scrubber.
     var progress: Double {
@@ -51,12 +53,13 @@ final class ChatVideoPlayer {
     /// Plays a file that already exists on disk (compose preview). The file is not deleted.
     func start(url: URL) async {
         guard player == nil, !failed else { return }
+        startID += 1
+        let id = startID
 
         // A clip the user deliberately tapped play on should be audible even with the ring
-        // switch flipped — same as Telegram.
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, mode: .moviePlayback)
-        try? session.setActive(true)
+        // switch flipped — same as Telegram. Must not `setActive` on the main thread (iOS 27).
+        try? await ChatAudioSession.shared.activate(.moviePlayback)
+        guard id == startID, player == nil, !failed else { return }
 
         let asset = AVURLAsset(url: url)
         let item = AVPlayerItem(asset: asset)
@@ -67,6 +70,15 @@ final class ChatVideoPlayer {
         if let loaded = try? await asset.load(.duration) {
             let seconds = CMTimeGetSeconds(loaded)
             duration = seconds.isFinite ? max(0, seconds) : 0
+        }
+
+        // Adding a periodic observer before the item has a timebase logs
+        // "cannot add handler to 0 from 0" and drops the callback.
+        let ready = await Self.waitUntilReady(item)
+        guard id == startID, player === av else { return }
+        guard ready else {
+            failed = true
+            return
         }
 
         timeObserver = av.addPeriodicTimeObserver(
@@ -97,6 +109,47 @@ final class ChatVideoPlayer {
 
         isReady = true
         play()
+    }
+
+    /// Waits until `AVPlayerItem` has a timebase so periodic observers can attach.
+    private static func waitUntilReady(_ item: AVPlayerItem) async -> Bool {
+        if item.status == .readyToPlay { return true }
+        if item.status == .failed { return false }
+        return await withCheckedContinuation { continuation in
+            final class Wait: @unchecked Sendable {
+                let lock = NSLock()
+                var resumed = false
+                var observation: NSKeyValueObservation?
+                var timeout: Task<Void, Never>?
+                let continuation: CheckedContinuation<Bool, Never>
+                init(_ continuation: CheckedContinuation<Bool, Never>) {
+                    self.continuation = continuation
+                }
+
+                func finish(_ ok: Bool) {
+                    lock.lock()
+                    defer { lock.unlock() }
+                    guard !resumed else { return }
+                    resumed = true
+                    observation?.invalidate()
+                    observation = nil
+                    timeout?.cancel()
+                    continuation.resume(returning: ok)
+                }
+            }
+            let wait = Wait(continuation)
+            wait.observation = item.observe(\.status, options: [.initial, .new]) { item, _ in
+                switch item.status {
+                case .readyToPlay: wait.finish(true)
+                case .failed: wait.finish(false)
+                default: break
+                }
+            }
+            wait.timeout = Task {
+                try? await Task.sleep(for: .seconds(8))
+                wait.finish(item.status == .readyToPlay)
+            }
+        }
     }
 
     func play() {
@@ -134,6 +187,7 @@ final class ChatVideoPlayer {
     }
 
     func teardown() {
+        startID += 1
         if let timeObserver {
             player?.removeTimeObserver(timeObserver)
             self.timeObserver = nil
