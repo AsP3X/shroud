@@ -18,6 +18,8 @@ export type RatchetEnvelope = {
   n: number;
   pn: number;
   ct: string;
+  /** Recipient identity box — the peer's other devices can open without DR state. */
+  peer?: SealedBox;
   self?: SealedBox;
 };
 
@@ -86,12 +88,19 @@ export async function sealMessage(opts: {
     opts.ourIdentityPublic,
     opts.ourIdentityPublic,
   );
+  const peerBox = await sealBox(
+    opts.plaintext,
+    opts.peerIdentityPublic,
+    opts.ourIdentityPublic,
+    opts.peerIdentityPublic,
+  );
   const envelope: RatchetEnvelope = {
     v: RATCHET_VERSION,
     dh: drMessage.dh,
     n: drMessage.n,
     pn: drMessage.pn,
     ct: drMessage.ct,
+    peer: peerBox,
     self: selfBox,
   };
   return utf8(JSON.stringify(envelope));
@@ -124,7 +133,14 @@ export async function openMessage(opts: {
       if (!v3.self) throw new Error("open: missing self box");
       return openBox(v3.self, opts.ourPrivate, opts.ourIdentityPublic, opts.ourIdentityPublic);
     }
-    return openRatchetRecipient(v3, opts);
+    try {
+      return await openRatchetRecipient(v3, opts);
+    } catch (err) {
+      if (!v3.peer) throw err;
+      // Sibling devices share IK but not ephemeral DH. Opening the identity box
+      // must not write ratchet state — a failed DR attempt may have mutated a clone.
+      return await openBox(v3.peer, opts.ourPrivate, opts.senderIdentityPublic, opts.ourIdentityPublic);
+    }
   }
   const envelope = JSON.parse(utf8decode(opts.envelopeData)) as SealedEnvelope;
   if (envelope.v === 1) {
@@ -160,8 +176,9 @@ async function openRatchetRecipient(
   const existing = loadRatchet(opts.ourUserId, opts.peerUserId);
 
   if (existing && (existing.recvChainKey || existing.touched)) {
-    const plain = await ratchetDecrypt(drData, existing);
-    saveRatchet(opts.ourUserId, opts.peerUserId, existing);
+    const clone = deserializeSession(serializeSession(existing));
+    const plain = await ratchetDecrypt(drData, clone);
+    saveRatchet(opts.ourUserId, opts.peerUserId, clone);
     return plain;
   }
 

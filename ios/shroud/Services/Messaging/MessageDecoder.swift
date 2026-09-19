@@ -24,7 +24,7 @@ enum MessageDecoder {
     }
 
     static func isMediaPayloadData(_ data: Data) -> Bool {
-        (try? JSONDecoder().decode(MediaMessagePayload.self, from: data)) != nil
+        MediaMessagePayload.parse(data) != nil
     }
 
     static func decode(
@@ -88,6 +88,23 @@ enum MessageDecoder {
                    let cached = local.sealedMedia(for: dto.id)
                 {
                     merged.videoData = cached
+                }
+                // iOS 26/27 JSONDecoder used to fail the payload and stamp every media
+                // note as a photo. Re-read `t` from the sealed JSON so a voice/video
+                // bubble is restored without wiping the thread.
+                if isMedia, existing.kind == .image,
+                   let plain = local.sealedPlaintext(for: dto.id),
+                   let payload = MediaMessagePayload.parse(plain),
+                   payload.isVoice || payload.isVideo
+                {
+                    return await decodeMedia(
+                        dto: dto,
+                        plain: plain,
+                        peerUserID: peerUserID,
+                        isMine: isMine,
+                        receipt: receipt,
+                        context: context
+                    )
                 }
                 return merged
             }
@@ -249,7 +266,7 @@ enum MessageDecoder {
         let local = context.local
         // Disk cache only — never await media download during thread history decode.
         let cached = local.sealedMedia(for: dto.id)
-        let payload = try? JSONDecoder().decode(MediaMessagePayload.self, from: plain)
+        let payload = MediaMessagePayload.parse(plain)
 
         if payload?.isVoice == true {
             let transcript = payload?.c?.trimmingCharacters(in: .whitespacesAndNewlines)

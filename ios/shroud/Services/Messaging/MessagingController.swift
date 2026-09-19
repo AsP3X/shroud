@@ -2087,7 +2087,7 @@ final class MessagingController {
 
         do {
             guard let payloadData = try await mediaPayloadData(for: message, token: token, material: material),
-                  let payload = try? JSONDecoder().decode(MediaMessagePayload.self, from: payloadData),
+                  let payload = MediaMessagePayload.parse(payloadData),
                   let keyData = Data(base64Encoded: payload.k)
             else {
                 // Payload missing (e.g. race before first decrypt finished) — retry once via history.
@@ -2332,7 +2332,9 @@ final class MessagingController {
     /// Dual-seal / v3+self roughly doubles payload size — keep sealed envelopes under this.
     private static let maxSealedEnvelopeBytes = 60 * 1024
     /// Payload plaintext budget before sealing (thumb Base64 is the usual offender).
-    private static let maxMediaPayloadPlaintextBytes = 20 * 1024
+    /// v3 envelopes carry DR + peer identity box + self box, so keep plaintext smaller
+    /// than the old dual-seal budget or the server 64 KiB cap rejects the send.
+    private static let maxMediaPayloadPlaintextBytes = 12 * 1024
 
     /// Builds + seals a media envelope, dropping the preview if it would exceed the server CT cap.
     private static func sealMediaPayload(
@@ -2369,7 +2371,7 @@ final class MessagingController {
                 th: includePreview ? safePreview?.base64EncodedString() : nil,
                 s: mediaByteCount
             )
-            return try JSONEncoder().encode(payload)
+            return try payload.encoded()
         }
 
         var includePreview = safePreview != nil
@@ -2682,7 +2684,7 @@ final class MessagingController {
             token: token
         )
 
-        let payload = MediaMessagePayload(
+        var payload = MediaMessagePayload(
             t: MediaMessagePayload.kindVoice,
             mime: "audio/mp4",
             w: 0,
@@ -2692,9 +2694,13 @@ final class MessagingController {
             d: durationMs,
             wf: waveform.flatMap(VoiceWaveform.encode)
         )
-        let payloadData = try JSONEncoder().encode(payload)
+        var payloadData = try payload.encoded()
+        if payloadData.count > Self.maxMediaPayloadPlaintextBytes, payload.c != nil {
+            payload.c = nil
+            payloadData = try payload.encoded()
+        }
         let peerPub = try await peerIdentityForSending(peerUserID: peerUserID, token: token)
-        let sealed = try MessageCrypto.seal(
+        var sealed = try MessageCrypto.seal(
             plaintext: payloadData,
             peerUserID: peerUserID,
             toPeerIdentityPublicKey: peerPub,
@@ -2702,6 +2708,25 @@ final class MessagingController {
             ourIdentityPublicKey: material.identityPublicKeyData,
             ourUserID: me
         )
+        if sealed.count > Self.maxSealedEnvelopeBytes, payload.c != nil {
+            payload.c = nil
+            payloadData = try payload.encoded()
+            sealed = try MessageCrypto.seal(
+                plaintext: payloadData,
+                peerUserID: peerUserID,
+                toPeerIdentityPublicKey: peerPub,
+                ourPrivateKey: material.agreementPrivateKey,
+                ourIdentityPublicKey: material.identityPublicKeyData,
+                ourUserID: me
+            )
+        }
+        if sealed.count > Self.maxSealedEnvelopeBytes {
+            throw APIError.server(
+                code: "VALIDATION_ERROR",
+                message: "Media message is too large to send. Try a shorter voice note.",
+                statusCode: 400
+            )
+        }
         let dto = try await messagesService.send(
             SendMessageRequest(
                 peerUserId: peerUserID,
@@ -2798,7 +2823,7 @@ final class MessagingController {
 
         do {
             guard let payloadData = try await mediaPayloadData(for: message, token: token, material: material),
-                  let payload = try? JSONDecoder().decode(MediaMessagePayload.self, from: payloadData),
+                  let payload = MediaMessagePayload.parse(payloadData),
                   let keyData = Data(base64Encoded: payload.k)
             else { return }
             let sealedFile = try await mediaService.downloadContent(mediaID: mediaID, token: token)
@@ -2895,7 +2920,7 @@ final class MessagingController {
             // Prefer cached media payload (file key). Never re-open as recipient — that
             // advances/desyncs the Double Ratchet after the first successful decrypt.
             guard let payloadData = try await mediaPayloadData(for: message, token: token, material: material),
-                  let payload = try? JSONDecoder().decode(MediaMessagePayload.self, from: payloadData),
+                  let payload = MediaMessagePayload.parse(payloadData),
                   let keyData = Data(base64Encoded: payload.k)
             else { return }
 

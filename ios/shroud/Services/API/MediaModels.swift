@@ -68,13 +68,104 @@ nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
     static let kindVoice = "voice"
     static let kindVideo = "video"
 
-    var isVoice: Bool { t == Self.kindVoice }
-    var isImage: Bool { t == Self.kindImage }
-    var isVideo: Bool { t == Self.kindVideo }
+    var isVoice: Bool {
+        if t == Self.kindVoice { return true }
+        if t == Self.kindImage || t == Self.kindVideo { return false }
+        return mime.hasPrefix("audio/")
+    }
+
+    var isImage: Bool {
+        if t == Self.kindImage { return true }
+        if t == Self.kindVoice || t == Self.kindVideo { return false }
+        return mime.hasPrefix("image/")
+    }
+
+    var isVideo: Bool {
+        if t == Self.kindVideo { return true }
+        if t == Self.kindImage || t == Self.kindVoice { return false }
+        return mime.hasPrefix("video/")
+    }
 
     /// Decoded preview JPEG, if present.
     var previewJPEG: Data? {
         guard let th, !th.isEmpty else { return nil }
         return Data(base64Encoded: th)
+    }
+
+    /// Wire JSON, matching the web client's `parseMediaPayload`.
+    ///
+    /// Human: `JSONDecoder` is not the same binary on iOS 26 and iOS 27. A payload one
+    /// phone sealed can fail to decode on the other, and the chat then draws every media
+    /// note as a photo. The web client only requires `t` and `k` strings and defaults the
+    /// rest — we do the same with `JSONSerialization`, which has been stable.
+    /// Agent: Production decode/encode of this type must go through `parse` / `encoded`.
+    static func parse(_ data: Data) -> MediaMessagePayload? {
+        var json = data
+        if json.starts(with: [0xEF, 0xBB, 0xBF] as [UInt8]) {
+            json = Data(json.dropFirst(3))
+        }
+        guard let object = try? JSONSerialization.jsonObject(with: json) as? [String: Any] else {
+            guard let raw = String(data: json, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+                raw.first == "{",
+                let trimmed = raw.data(using: .utf8),
+                let object = try? JSONSerialization.jsonObject(with: trimmed) as? [String: Any]
+            else { return nil }
+            return parse(object)
+        }
+        return parse(object)
+    }
+
+    static func parse(_ object: [String: Any]) -> MediaMessagePayload? {
+        guard let t = string(object["t"]), !t.isEmpty,
+              let k = string(object["k"]), !k.isEmpty
+        else { return nil }
+        return MediaMessagePayload(
+            t: t,
+            mime: string(object["mime"]) ?? "application/octet-stream",
+            w: int(object["w"]) ?? 0,
+            h: int(object["h"]) ?? 0,
+            k: k,
+            c: string(object["c"]),
+            d: int(object["d"]),
+            wf: string(object["wf"]),
+            th: string(object["th"]),
+            s: int(object["s"])
+        )
+    }
+
+    /// Stable object JSON (no pretty-print, omit nils) so iOS 26 and 27 seal the same bytes.
+    func encoded() throws -> Data {
+        var object: [String: Any] = [
+            "t": t,
+            "mime": mime,
+            "w": w,
+            "h": h,
+            "k": k,
+        ]
+        if let c { object["c"] = c }
+        if let d { object["d"] = d }
+        if let wf { object["wf"] = wf }
+        if let th { object["th"] = th }
+        if let s { object["s"] = s }
+        return try JSONSerialization.data(withJSONObject: object)
+    }
+
+    private static func string(_ value: Any?) -> String? {
+        if value is NSNull { return nil }
+        if let string = value as? String {
+            let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        return nil
+    }
+
+    private static func int(_ value: Any?) -> Int? {
+        if value is NSNull { return nil }
+        if let number = value as? NSNumber { return number.intValue }
+        if let int = value as? Int { return int }
+        if let double = value as? Double { return Int(double) }
+        if let string = value as? String { return Int(string) }
+        return nil
     }
 }

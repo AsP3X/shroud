@@ -8,6 +8,8 @@ import {
   decodeWaveform,
   encodeWaveform,
   isVoicePayload,
+  MAX_MEDIA_PAYLOAD_PLAINTEXT_BYTES,
+  MAX_SEALED_ENVELOPE_BYTES,
   parseMediaPayload,
   type MediaPayload,
 } from "./crypto/mediaPayload";
@@ -588,14 +590,34 @@ export async function sendVoice(opts: {
       ...(transcript ? { c: transcript } : {}),
     };
     const peerPub = await peerIdentityPublic(opts.token, peer);
-    const envelope = await sealMessage({
-      plaintext: utf8(JSON.stringify(payload)),
+    let plaintext = utf8(JSON.stringify(payload));
+    if (plaintext.byteLength > MAX_MEDIA_PAYLOAD_PLAINTEXT_BYTES && payload.c) {
+      delete payload.c;
+      plaintext = utf8(JSON.stringify(payload));
+    }
+    let envelope = await sealMessage({
+      plaintext,
       peerUserId: peer,
       ourUserId: me,
       ourPrivate: opts.material.agreementPrivate,
       ourIdentityPublic: opts.material.agreementPublic,
       peerIdentityPublic: peerPub,
     });
+    if (envelope.byteLength > MAX_SEALED_ENVELOPE_BYTES && payload.c) {
+      delete payload.c;
+      plaintext = utf8(JSON.stringify(payload));
+      envelope = await sealMessage({
+        plaintext,
+        peerUserId: peer,
+        ourUserId: me,
+        ourPrivate: opts.material.agreementPrivate,
+        ourIdentityPublic: opts.material.agreementPublic,
+        peerIdentityPublic: peerPub,
+      });
+    }
+    if (envelope.byteLength > MAX_SEALED_ENVELOPE_BYTES) {
+      throw new Error("Media message is too large to send. Try a shorter voice note.");
+    }
     const clientId = crypto.randomUUID();
     const dto = await api.sendMessage(opts.token, {
       peer_user_id: peer,

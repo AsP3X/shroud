@@ -102,8 +102,13 @@ final class DoubleRatchetTests: Sendable {
             ourIdentityPublicKey: alice.publicKey.rawRepresentation,
             ourUserID: aliceUser
         )
-        struct Peek: Decodable { let v: Int }
-        #expect(try JSONDecoder().decode(Peek.self, from: sealed).v == 3)
+        struct Peek: Decodable { let v: Int; let peer: MessageCrypto.SealedBox?; let selfBox: MessageCrypto.SealedBox?
+            enum CodingKeys: String, CodingKey { case v, peer; case selfBox = "self" }
+        }
+        let peek = try JSONDecoder().decode(Peek.self, from: sealed)
+        #expect(peek.v == 3)
+        #expect(peek.peer != nil)
+        #expect(peek.selfBox != nil)
 
         let opened = try MessageCrypto.open(
             envelopeData: sealed,
@@ -308,6 +313,183 @@ final class DoubleRatchetTests: Sendable {
         #expect(asSender == plain)
     }
 
+    /// A second device of Alice (same identity keys, no DR session) still opens Bob's
+    /// reply via the identity peer-box after Alice's phone has ratcheted.
+    @Test
+    func siblingDeviceOpensViaPeerBox() throws {
+        let alice = Curve25519.KeyAgreement.PrivateKey()
+        let bob = Curve25519.KeyAgreement.PrivateKey()
+        let alicePub = alice.publicKey.rawRepresentation
+        let bobPub = bob.publicKey.rawRepresentation
+
+        let fromAlice = try MessageCrypto.seal(
+            plaintext: Data("A1".utf8),
+            peerUserID: bobUser,
+            toPeerIdentityPublicKey: bobPub,
+            ourPrivateKey: alice,
+            ourIdentityPublicKey: alicePub,
+            ourUserID: aliceUser
+        )
+        #expect(try MessageCrypto.open(
+            envelopeData: fromAlice,
+            peerUserID: aliceUser,
+            with: bob,
+            ourIdentityPublicKey: bobPub,
+            senderIdentityPublicKey: alicePub,
+            as: .recipient
+        ) == Data("A1".utf8))
+
+        let fromBob = try MessageCrypto.seal(
+            plaintext: Data("B1".utf8),
+            peerUserID: aliceUser,
+            toPeerIdentityPublicKey: alicePub,
+            ourPrivateKey: bob,
+            ourIdentityPublicKey: bobPub,
+            ourUserID: bobUser
+        )
+        #expect(try MessageCrypto.open(
+            envelopeData: fromBob,
+            peerUserID: bobUser,
+            with: alice,
+            ourIdentityPublicKey: alicePub,
+            senderIdentityPublicKey: bobPub,
+            as: .recipient
+        ) == Data("B1".utf8))
+
+        // Alice's other device has the phrase but not this phone's ratchet state.
+        RatchetSessionStore.delete(peerUserID: bobUser)
+        #expect(try MessageCrypto.open(
+            envelopeData: fromBob,
+            peerUserID: bobUser,
+            with: alice,
+            ourIdentityPublicKey: alicePub,
+            senderIdentityPublicKey: bobPub,
+            as: .recipient
+        ) == Data("B1".utf8))
+    }
+
+    /// A sibling that already has its own DR session (different ephemeral DH) still
+    /// opens Bob's reply after the phone has ratcheted, and must not persist the
+    /// failed DH-ratchet attempt over the sibling session.
+    @Test
+    func staleSiblingSessionOpensViaPeerBoxWithoutSaving() throws {
+        let alice = Curve25519.KeyAgreement.PrivateKey()
+        let bob = Curve25519.KeyAgreement.PrivateKey()
+        let alicePub = alice.publicKey.rawRepresentation
+        let bobPub = bob.publicKey.rawRepresentation
+
+        let fromPhone = try MessageCrypto.seal(
+            plaintext: Data("A1".utf8),
+            peerUserID: bobUser,
+            toPeerIdentityPublicKey: bobPub,
+            ourPrivateKey: alice,
+            ourIdentityPublicKey: alicePub,
+            ourUserID: aliceUser
+        )
+        #expect(try MessageCrypto.open(
+            envelopeData: fromPhone,
+            peerUserID: aliceUser,
+            with: bob,
+            ourIdentityPublicKey: bobPub,
+            senderIdentityPublicKey: alicePub,
+            as: .recipient
+        ) == Data("A1".utf8))
+
+        RatchetSessionStore.delete(peerUserID: bobUser)
+        _ = try MessageCrypto.seal(
+            plaintext: Data("A-web".utf8),
+            peerUserID: bobUser,
+            toPeerIdentityPublicKey: bobPub,
+            ourPrivateKey: alice,
+            ourIdentityPublicKey: alicePub,
+            ourUserID: aliceUser
+        )
+        let webAlice = try #require(RatchetSessionStore.load(peerUserID: bobUser))
+
+        let fromBob = try MessageCrypto.seal(
+            plaintext: Data("B1".utf8),
+            peerUserID: aliceUser,
+            toPeerIdentityPublicKey: alicePub,
+            ourPrivateKey: bob,
+            ourIdentityPublicKey: bobPub,
+            ourUserID: bobUser
+        )
+        #expect(try MessageCrypto.open(
+            envelopeData: fromBob,
+            peerUserID: bobUser,
+            with: alice,
+            ourIdentityPublicKey: alicePub,
+            senderIdentityPublicKey: bobPub,
+            as: .recipient
+        ) == Data("B1".utf8))
+        #expect(RatchetSessionStore.load(peerUserID: bobUser) == webAlice)
+    }
+
+    /// Alice-web sending while Alice-phone owns the live DR session must not
+    /// overwrite Bob's session. Phone can still send the next message via DR.
+    @Test
+    func siblingSendDoesNotPoisonPeerSession() throws {
+        let alice = Curve25519.KeyAgreement.PrivateKey()
+        let bob = Curve25519.KeyAgreement.PrivateKey()
+        let alicePub = alice.publicKey.rawRepresentation
+        let bobPub = bob.publicKey.rawRepresentation
+
+        let fromPhone = try MessageCrypto.seal(
+            plaintext: Data("A1".utf8),
+            peerUserID: bobUser,
+            toPeerIdentityPublicKey: bobPub,
+            ourPrivateKey: alice,
+            ourIdentityPublicKey: alicePub,
+            ourUserID: aliceUser
+        )
+        #expect(try MessageCrypto.open(
+            envelopeData: fromPhone,
+            peerUserID: aliceUser,
+            with: bob,
+            ourIdentityPublicKey: bobPub,
+            senderIdentityPublicKey: alicePub,
+            as: .recipient
+        ) == Data("A1".utf8))
+
+        let phoneAlice = try #require(RatchetSessionStore.load(peerUserID: bobUser))
+
+        RatchetSessionStore.delete(peerUserID: bobUser)
+        let fromWeb = try MessageCrypto.seal(
+            plaintext: Data("A2".utf8),
+            peerUserID: bobUser,
+            toPeerIdentityPublicKey: bobPub,
+            ourPrivateKey: alice,
+            ourIdentityPublicKey: alicePub,
+            ourUserID: aliceUser
+        )
+        #expect(try MessageCrypto.open(
+            envelopeData: fromWeb,
+            peerUserID: aliceUser,
+            with: bob,
+            ourIdentityPublicKey: bobPub,
+            senderIdentityPublicKey: alicePub,
+            as: .recipient
+        ) == Data("A2".utf8))
+
+        RatchetSessionStore.save(phoneAlice, peerUserID: bobUser)
+        let fromPhoneAgain = try MessageCrypto.seal(
+            plaintext: Data("A3".utf8),
+            peerUserID: bobUser,
+            toPeerIdentityPublicKey: bobPub,
+            ourPrivateKey: alice,
+            ourIdentityPublicKey: alicePub,
+            ourUserID: aliceUser
+        )
+        #expect(try MessageCrypto.open(
+            envelopeData: fromPhoneAgain,
+            peerUserID: aliceUser,
+            with: bob,
+            ourIdentityPublicKey: bobPub,
+            senderIdentityPublicKey: alicePub,
+            as: .recipient
+        ) == Data("A3".utf8))
+    }
+
     @Test
     func legacyV2StillWorks() throws {
         let alice = Curve25519.KeyAgreement.PrivateKey()
@@ -366,17 +548,16 @@ final class DoubleRatchetTests: Sendable {
             as: .recipient
         ) == Data("hi".utf8))
 
-        // Simulate a failed re-open of the same text (must NOT wipe Bob's session).
-        #expect(throws: (any Error).self) {
-            _ = try MessageCrypto.open(
-                envelopeData: textEnv,
-                peerUserID: aliceUser,
-                with: bob,
-                ourIdentityPublicKey: bob.publicKey.rawRepresentation,
-                senderIdentityPublicKey: alice.publicKey.rawRepresentation,
-                as: .recipient
-            )
-        }
+        // Re-opening the same envelope succeeds via the identity peer-box (sibling
+        // devices). That path must not wipe Bob's DR session, or the next message fails.
+        #expect(try MessageCrypto.open(
+            envelopeData: textEnv,
+            peerUserID: aliceUser,
+            with: bob,
+            ourIdentityPublicKey: bob.publicKey.rawRepresentation,
+            senderIdentityPublicKey: alice.publicKey.rawRepresentation,
+            as: .recipient
+        ) == Data("hi".utf8))
 
         let imagePayload = try JSONEncoder().encode(
             MediaMessagePayload(

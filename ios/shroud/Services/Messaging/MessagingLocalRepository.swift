@@ -70,7 +70,7 @@ final class MessagingLocalRepository {
     func attachEnvelopePreview(to message: inout MessagingController.ChatMessage) {
         guard message.kind == .image || message.kind == .video else { return }
         guard let plain = sealedPlaintext(for: message.id),
-              let payload = try? JSONDecoder().decode(MediaMessagePayload.self, from: plain)
+              let payload = MediaMessagePayload.parse(plain)
         else { return }
         if message.previewData == nil {
             message.previewData = payload.previewJPEG

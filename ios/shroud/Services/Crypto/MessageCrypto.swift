@@ -5,10 +5,12 @@ import Foundation
 ///
 /// - **v1** peer-only sealed box (legacy)
 /// - **v2** dual-seal peer + self (no session state)
-/// - **v3** Double Ratchet for peer ciphertext + dual-seal self box for multi-device history
+/// - **v3** Double Ratchet for peer ciphertext + identity boxes for multi-device
 ///
-/// Live messaging uses **v3** by default. Self-box always allows the sender (and their
-/// other devices) to open history without ratchet state.
+/// Live messaging uses **v3** by default. The self-box lets the sender's other devices
+/// open history without ratchet state. The peer-box lets the recipient's other devices
+/// (same phrase, different DR session) open a message after a sibling device has
+/// ratcheted — otherwise only the device that last sent can decrypt the reply.
 ///
 /// Human: Plaintext never leaves the device unencrypted; server only sees ciphertext bytes.
 /// Agent: Seal/open; DR sessions in Keychain; self dual-seal on every v3 message.
@@ -53,17 +55,19 @@ enum MessageCrypto {
     private static let versionV2 = 2
     private static let versionV3 = DoubleRatchet.envelopeVersion
 
-    /// v3 wire: Double Ratchet body + self dual-seal for multi-device history.
+    /// v3 wire: Double Ratchet body + identity boxes for each side's other devices.
     struct RatchetEnvelope: Codable, Equatable, Sendable {
         var v: Int
         var dh: String
         var n: UInt32
         var pn: UInt32
         var ct: String
+        /// Recipient identity box — sibling devices of the peer can open without DR state.
+        var peer: SealedBox?
         var selfBox: SealedBox?
 
         enum CodingKeys: String, CodingKey {
-            case v, dh, n, pn, ct
+            case v, dh, n, pn, ct, peer
             case selfBox = "self"
         }
     }
@@ -158,6 +162,12 @@ enum MessageCrypto {
             senderIdentityPublic: ourIdentityPublicKey,
             recipientIdentityPublic: ourIdentityPublicKey
         )
+        let peerBox = try sealBox(
+            plaintext: plaintext,
+            recipientPublic: peerPublic,
+            senderIdentityPublic: ourIdentityPublicKey,
+            recipientIdentityPublic: peerPublic
+        )
         let drMessage = try JSONDecoder().decode(DoubleRatchet.Message.self, from: drBody)
         let envelope = RatchetEnvelope(
             v: versionV3,
@@ -165,6 +175,7 @@ enum MessageCrypto {
             n: drMessage.n,
             pn: drMessage.pn,
             ct: drMessage.ct,
+            peer: peerBox,
             selfBox: selfBox
         )
         return try JSONEncoder().encode(envelope)
@@ -245,8 +256,8 @@ enum MessageCrypto {
         }
 
         if version == versionV3 {
+            let v3 = try JSONDecoder().decode(RatchetEnvelope.self, from: envelopeData)
             if role == .sender {
-                let v3 = try JSONDecoder().decode(RatchetEnvelope.self, from: envelopeData)
                 guard let box = v3.selfBox else { throw CryptoError.openFailed }
                 return try openBox(
                     box,
@@ -256,17 +267,25 @@ enum MessageCrypto {
                 )
             }
 
-            // Recipient: try session strategies until one decrypts.
-            // Order matters for dual-initiator (both sealed before either opened):
-            // unused initiator sessions cannot open the peer's initiator message, so we
-            // also try a pure receiver bootstrap. Legitimate replies still hit the
-            // stored initiator session first when it works.
-            return try openRatchetV3Recipient(
-                envelopeData: envelopeData,
-                peerUserID: peerUserID,
-                ourPrivateKey: ourPrivateKey,
-                senderIdentityPublicKey: senderIdentityPublicKey
-            )
+            // Recipient: DR first (forward secrecy). If this device's session is stale —
+            // typically because a sibling device sent and the peer ratcheted to that DH —
+            // open the identity peer-box instead of wiping the local session.
+            do {
+                return try openRatchetV3Recipient(
+                    v3,
+                    peerUserID: peerUserID,
+                    ourPrivateKey: ourPrivateKey,
+                    senderIdentityPublicKey: senderIdentityPublicKey
+                )
+            } catch {
+                guard let box = v3.peer else { throw error }
+                return try openBox(
+                    box,
+                    with: ourPrivateKey,
+                    senderIdentityPublic: senderIdentityPublicKey,
+                    recipientIdentityPublic: ourIdentityPublicKey
+                )
+            }
         }
 
         return try open(
@@ -300,12 +319,11 @@ enum MessageCrypto {
     }
 
     private static func openRatchetV3Recipient(
-        envelopeData: Data,
+        _ v3: RatchetEnvelope,
         peerUserID: UUID,
         ourPrivateKey: Curve25519.KeyAgreement.PrivateKey,
         senderIdentityPublicKey: Data
     ) throws -> Data {
-        let v3 = try JSONDecoder().decode(RatchetEnvelope.self, from: envelopeData)
         guard v3.v == versionV3 else { throw CryptoError.unsupportedVersion }
 
         let drData = try JSONEncoder().encode(

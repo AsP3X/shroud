@@ -42,11 +42,16 @@ export function isVoicePayload(payload: MediaPayload): boolean {
 
 /**
  * Largest transcript sealed or accepted, in UTF-8 bytes (matches iOS
- * `MessageAnnotation.maxTranscriptBytes`). Every message is sealed twice and
- * base64-expanded, so 16 KB of text is ~44 KB on the wire — inside the server's
- * 64 KB limit in any script, where 8,000 CJK characters already are not.
+ * `MessageAnnotation.maxTranscriptBytes`). v3 seals DR + peer + self, so a
+ * 16 KB transcript is too big for the 64 KB server cap; senders drop `c` from
+ * the media payload when the envelope would overflow.
  */
 export const MAX_TRANSCRIPT_BYTES = 16 * 1024;
+
+/** Server cap is 64 KiB decoded. v3 carries DR + peer box + self box. */
+export const MAX_SEALED_ENVELOPE_BYTES = 60 * 1024;
+/** Plaintext budget before sealing; thumbs and long transcripts are the usual offenders. */
+export const MAX_MEDIA_PAYLOAD_PLAINTEXT_BYTES = 12 * 1024;
 
 /** Trims to `MAX_TRANSCRIPT_BYTES` at a code-point boundary, marking the cut with "…". */
 export function clampTranscript(text: string): string {
