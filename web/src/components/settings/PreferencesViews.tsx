@@ -2,6 +2,8 @@ import { useState } from "react";
 import { Monitor, Moon, Sun, Trash2 } from "lucide-react";
 import { apiBase } from "../../config";
 import { cacheStats, clearCache } from "../../crypto/plaintextCache";
+import { forgetImages } from "../../media/images";
+import { formatBytes } from "../../format";
 import { setTheme, useThemePref, type ThemePref } from "../../theme";
 import { SettingsCard, SettingsGroup, SettingsNote, SettingsRow } from "./SettingsRow";
 
@@ -46,18 +48,13 @@ export function AppearanceView() {
   );
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 export function DataStorageView({ onCleared }: { onCleared?: () => void }) {
   const [stats, setStats] = useState(() => cacheStats());
   const [cleared, setCleared] = useState(false);
 
   function clear() {
     clearCache();
+    forgetImages();
     setStats(cacheStats());
     setCleared(true);
     onCleared?.();

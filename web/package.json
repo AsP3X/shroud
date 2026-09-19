@@ -13,6 +13,7 @@
     "@huggingface/transformers": "^4.3.0",
     "@noble/curves": "^2.4.0",
     "@noble/hashes": "^2.4.0",
+    "libheif-js": "^1.23.2",
     "lucide-react": "^0.544.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",

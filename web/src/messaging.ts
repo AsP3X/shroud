@@ -1,4 +1,4 @@
-import { api, type Conversation, type WireMessage } from "./api/client";
+import { api, type Conversation, type TransferProgress, type WireMessage } from "./api/client";
 import { aesGcmOpen, sealFile } from "./crypto/aes";
 import { b64ToBytes, bytesToB64, utf8, utf8decode } from "./crypto/bytes";
 import type { IdentityMaterial } from "./crypto/identity";
@@ -20,6 +20,8 @@ import {
   savePlaintext,
   savePreview,
 } from "./crypto/plaintextCache";
+import { cacheSealedImage } from "./media/images";
+import { MAX_THUMB_BYTES, type PreparedImage } from "./media/prepareImage";
 
 /** `annotation` never reaches the thread: `applyAnnotations` folds it into its target. */
 export type ChatKind = "text" | "image" | "voice" | "video" | "annotation";
@@ -33,6 +35,8 @@ export type Annotation = { t: "transcript"; r: string; c: string };
 
 /** Label for a voice note without a transcript (bubble text and chat preview). */
 const VOICE_LABEL = "Voice message";
+/** Stand-in text for a photo without a caption (search, chat preview), as on iOS. */
+const PHOTO_LABEL = "Photo";
 
 export function parseAnnotation(raw: string): Annotation | null {
   try {
@@ -61,6 +65,14 @@ export type ChatMessage = {
   mediaKey?: string | null;
   mime?: string | null;
   transcript?: string | null;
+  /** Photo caption sealed with the image; null when there is none (`text` then reads "Photo"). */
+  caption?: string | null;
+  imageWidth?: number | null;
+  imageHeight?: number | null;
+  /** Base64 JPEG preview (≤ 6 KB) sealed in the envelope, shown until the photo loads. */
+  thumbnail?: string | null;
+  /** Size of the media file itself, in bytes. */
+  mediaBytes?: number | null;
   /** Optimistic bubble shown until the server hands back a real id. */
   pending?: boolean;
   /** Set on `kind === "annotation"`; null when it could not be read. */
@@ -204,8 +216,15 @@ function messageFromMediaPayload(
   return {
     ...base,
     kind: "image",
-    text: caption || "Photo",
+    text: caption || PHOTO_LABEL,
+    caption: caption || null,
     mediaObjectId: mediaObjectId ?? null,
+    mediaKey: payload.k,
+    mime: payload.mime,
+    imageWidth: payload.w > 0 ? payload.w : null,
+    imageHeight: payload.h > 0 ? payload.h : null,
+    thumbnail: payload.th?.trim() || null,
+    mediaBytes: payload.s ?? null,
   };
 }
 
@@ -646,6 +665,92 @@ export async function sendVoice(opts: {
       delivered: dto.delivered ?? false,
       read: dto.read ?? false,
     };
+    rememberPreview(me, peer, msg);
+    return msg;
+  });
+}
+
+/**
+ * Encrypts, uploads and sends one photo (same wire format as iOS `finishImageSend`).
+ * The upload runs outside the peer lock — only sealing the envelope has to wait its
+ * turn — so a slow upload never holds up decrypting what the peer sends meanwhile.
+ */
+export async function sendImage(opts: {
+  token: string;
+  me: string;
+  peerUserId: string;
+  material: IdentityMaterial;
+  image: PreparedImage;
+  caption?: string | null;
+  /** Idempotency key: the optimistic bubble's id, so a replayed send can't land twice. */
+  clientMessageId?: string;
+  onProgress?: TransferProgress;
+}): Promise<ChatMessage> {
+  const peer = opts.peerUserId.toLowerCase();
+  const me = opts.me.toLowerCase();
+  const { image } = opts;
+  const caption = opts.caption?.trim() || null;
+
+  const { key, sealed } = await sealFile(image.bytes);
+  const upload = await api.createMediaUpload(opts.token, sealed.byteLength);
+  await api.putMediaContent(opts.token, upload.media_object_id, sealed, opts.onProgress);
+
+  const thumb = image.thumb && image.thumb.byteLength <= MAX_THUMB_BYTES ? bytesToB64(image.thumb) : null;
+  const payload: MediaPayload = {
+    t: "image",
+    mime: image.mime,
+    w: image.width,
+    h: image.height,
+    k: bytesToB64(key),
+    s: image.bytes.byteLength,
+    ...(caption ? { c: caption } : {}),
+    ...(thumb ? { th: thumb } : {}),
+  };
+
+  return withPeerLock(peer, async () => {
+    const peerPub = await peerIdentityPublic(opts.token, peer);
+    const seal = () =>
+      sealMessage({
+        plaintext: utf8(JSON.stringify(payload)),
+        peerUserId: peer,
+        ourUserId: me,
+        ourPrivate: opts.material.agreementPrivate,
+        ourIdentityPublic: opts.material.agreementPublic,
+        peerIdentityPublic: peerPub,
+      });
+    // Same budget as iOS: the preview is the first thing to go when the envelope runs long.
+    if (utf8(JSON.stringify(payload)).byteLength > MAX_MEDIA_PAYLOAD_PLAINTEXT_BYTES) delete payload.th;
+    let envelope = await seal();
+    if (envelope.byteLength > MAX_SEALED_ENVELOPE_BYTES && payload.th) {
+      delete payload.th;
+      envelope = await seal();
+    }
+    if (envelope.byteLength > MAX_SEALED_ENVELOPE_BYTES) {
+      throw new Error("That caption is too long to send with a photo.");
+    }
+    const dto = await api.sendMessage(opts.token, {
+      peer_user_id: peer,
+      client_message_id: opts.clientMessageId ?? crypto.randomUUID(),
+      content_type: "media",
+      ciphertext: envelopeToWireB64(envelope),
+      media_object_id: upload.media_object_id,
+    });
+    savePlaintext(dto.id, JSON.stringify(payload));
+    void cacheSealedImage(dto.id, sealed);
+    const msg = messageFromMediaPayload(
+      {
+        id: dto.id,
+        senderUserId: dto.sender_user_id,
+        createdAt: dto.created_at,
+        isMine: true,
+        deleted: false,
+        failed: false,
+        delivered: dto.delivered ?? false,
+        read: dto.read ?? false,
+      },
+      payload,
+      upload.media_object_id,
+    );
     rememberPreview(me, peer, msg);
     return msg;
   });

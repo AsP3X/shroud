@@ -28,9 +28,10 @@ export function Modal({
     document.addEventListener("keydown", onKeyDown);
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    panel.current
-      ?.querySelector<HTMLElement>("input, textarea, button:not([disabled])")
-      ?.focus();
+    (
+      panel.current?.querySelector<HTMLElement>("[data-autofocus]") ??
+      panel.current?.querySelector<HTMLElement>("input, textarea, button:not([disabled])")
+    )?.focus();
     return () => {
       document.removeEventListener("keydown", onKeyDown);
       document.body.style.overflow = previousOverflow;

@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [react()],
   assetsInclude: ["**/*.wasm"],
   optimizeDeps: {
-    exclude: ["@huggingface/transformers", "onnxruntime-web"],
+    exclude: ["@huggingface/transformers", "onnxruntime-web", "libheif-js"],
   },
   worker: {
     format: "es",

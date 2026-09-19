@@ -71,3 +71,10 @@ export function presenceLabel(presence: Presence | undefined): string {
   if (ago === 1) return "last seen yesterday";
   return `last seen ${new Date(presence.lastSeenAt).toLocaleDateString()}`;
 }
+
+/** `812 KB`, `2.4 MB` — storage sizes and photo download chips. */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}

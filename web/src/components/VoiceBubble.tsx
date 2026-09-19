@@ -8,7 +8,7 @@ import {
   useSyncExternalStore,
   type PointerEvent,
 } from "react";
-import { Check, CheckCheck, Clock, LoaderCircle, Pause, Play } from "lucide-react";
+import { LoaderCircle, Pause, Play } from "lucide-react";
 import type { ChatMessage } from "../messaging";
 import {
   formatVoiceTime,
@@ -38,6 +38,7 @@ import {
   wasHandedOff,
 } from "../voice/transcriptView";
 import { Highlight } from "./Highlight";
+import { Receipt } from "./Receipt";
 
 
 const MIN_TRUSTED_MS = 300;
@@ -51,13 +52,6 @@ const LANDING_MS = 260;
 /** Word-by-word reveal: gap between words, and the most a whole transcript may take. */
 const WORD_STEP_MS = 45;
 const WORD_SPREAD_MS = 900;
-
-function Receipt({ message }: { message: ChatMessage }) {
-  if (message.pending) return <Clock size={13} aria-label="Sending" />;
-  if (message.read) return <CheckCheck size={14} className="receipt-read" aria-label="Read" />;
-  if (message.delivered) return <CheckCheck size={14} aria-label="Delivered" />;
-  return <Check size={14} aria-label="Sent" />;
-}
 
 /**
  * Telegram's "→A". Open, the arrow slides off and the A's legs swing into a

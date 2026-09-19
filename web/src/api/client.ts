@@ -110,7 +110,15 @@ async function request<T>(
   }
 }
 
-async function requestBytes(path: string, token: string): Promise<Uint8Array> {
+/** Bytes moved so far, and the expected total when the server (or caller) knows it. */
+export type TransferProgress = (loaded: number, total: number | null) => void;
+
+async function requestBytes(
+  path: string,
+  token: string,
+  onProgress?: TransferProgress,
+  expectedBytes?: number,
+): Promise<Uint8Array> {
   const headers = new Headers({ Accept: "*/*", Authorization: `Bearer ${token}` });
   let res: Response;
   try {
@@ -130,7 +138,69 @@ async function requestBytes(path: string, token: string): Promise<Uint8Array> {
     }
     throw new ApiError(code, message, res.status);
   }
-  return new Uint8Array(await res.arrayBuffer());
+  if (!onProgress || !res.body) return new Uint8Array(await res.arrayBuffer());
+  // Read in chunks so a photo can show how far along it is.
+  const declared = Number(res.headers.get("Content-Length"));
+  const total = declared > 0 ? declared : (expectedBytes ?? null);
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let loaded = 0;
+  onProgress(0, total);
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loaded += value.byteLength;
+    onProgress(loaded, total);
+  }
+  const out = new Uint8Array(loaded);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
+/** `fetch` can't report upload progress, so photo uploads go through XHR. */
+function putBytesWithProgress(
+  path: string,
+  token: string,
+  data: Uint8Array,
+  onProgress: TransferProgress,
+): Promise<void> {
+  const copy = new Uint8Array(data.byteLength);
+  copy.set(data);
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", `${apiBase()}${path}`);
+    xhr.setRequestHeader("Accept", "application/json");
+    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    xhr.upload.onprogress = (event) => {
+      onProgress(event.loaded, event.lengthComputable ? event.total : copy.byteLength);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+        return;
+      }
+      let code = "http";
+      let message = xhr.statusText || `HTTP ${xhr.status}`;
+      try {
+        const body = JSON.parse(xhr.responseText) as { error?: { code?: string; message?: string } };
+        if (body.error?.code) code = body.error.code;
+        if (body.error?.message) message = body.error.message;
+      } catch {
+        /* envelope optional */
+      }
+      reject(new ApiError(code, message, xhr.status));
+    };
+    xhr.onerror = () => reject(new ApiError("transport", "Network error", 0));
+    xhr.onabort = () => reject(new ApiError("transport", "Upload cancelled", 0));
+    onProgress(0, copy.byteLength);
+    xhr.send(new Blob([copy], { type: "application/octet-stream" }));
+  });
 }
 
 async function putBytes(path: string, token: string, data: Uint8Array): Promise<void> {
@@ -283,8 +353,12 @@ export const api = {
       media_object_id?: string;
     },
   ) => request<WireMessage>("/messages", { method: "POST", token, body: JSON.stringify(body) }),
-  getMediaContent: (token: string, mediaId: string) =>
-    requestBytes(`/media/${mediaId.toLowerCase()}/content`, token),
+  getMediaContent: (
+    token: string,
+    mediaId: string,
+    onProgress?: TransferProgress,
+    expectedBytes?: number,
+  ) => requestBytes(`/media/${mediaId.toLowerCase()}/content`, token, onProgress, expectedBytes),
   createMediaUpload: (token: string, sizeBytes: number, contentType = "application/octet-stream") =>
     request<{ media_object_id: string; upload_url: string; object_key: string; expires_at: string }>(
       "/media/uploads",
@@ -294,8 +368,10 @@ export const api = {
         body: JSON.stringify({ size_bytes: sizeBytes, content_type: contentType }),
       },
     ),
-  putMediaContent: (token: string, mediaId: string, data: Uint8Array) =>
-    putBytes(`/media/${mediaId.toLowerCase()}/content`, token, data),
+  putMediaContent: (token: string, mediaId: string, data: Uint8Array, onProgress?: TransferProgress) =>
+    onProgress
+      ? putBytesWithProgress(`/media/${mediaId.toLowerCase()}/content`, token, data, onProgress)
+      : putBytes(`/media/${mediaId.toLowerCase()}/content`, token, data),
 };
 
 export type WireMessage = {

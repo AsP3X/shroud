@@ -1,20 +1,22 @@
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  type ClipboardEvent,
+  type DragEvent,
   type FormEvent,
   type KeyboardEvent,
 } from "react";
 import {
   ArrowDown,
-  Check,
-  CheckCheck,
   ChevronLeft,
-  Clock,
   Image,
+  ImagePlus,
   Info,
   Mic,
   Paperclip,
@@ -26,14 +28,28 @@ import {
 } from "lucide-react";
 import { clockTime, dayLabel, fullTimestamp, sameDay, MINUTE } from "../format";
 import type { ChatMessage } from "../messaging";
+import { peekImage, type LoadedImage } from "../media/images";
+import {
+  clipboardImages,
+  imageFiles,
+  MAX_PHOTOS_PER_SEND,
+  PHOTO_ACCEPT,
+  type PreparedImage,
+} from "../media/prepareImage";
 import { Avatar } from "./Avatar";
 import { Highlight } from "./Highlight";
+import { ImageBubble } from "./ImageBubble";
+import { Receipt } from "./Receipt";
 import { TypingBubble, TypingLabel } from "./Typing";
 import { VoiceBubble } from "./VoiceBubble";
 import { VoiceDroplet, VoiceStrip } from "./VoiceRecorderBar";
 import { useVoiceRecording } from "./useVoiceRecording";
 import type { VoiceTake } from "../voice/recorder";
 import { clearTranscriptChoice, transcriptTail } from "../voice/transcriptView";
+
+/* Only needed once a photo is opened or picked: kept out of the first download. */
+const ImageComposer = lazy(() => import("./ImageComposer").then((m) => ({ default: m.ImageComposer })));
+const ImageViewer = lazy(() => import("./ImageViewer").then((m) => ({ default: m.ImageViewer })));
 
 /** Messages from the same sender inside this window render as one visual block. */
 const GROUP_WINDOW = 5 * MINUTE;
@@ -73,11 +89,14 @@ function buildRows(messages: ChatMessage[]): Row[] {
   return rows;
 }
 
-function Receipt({ message }: { message: ChatMessage }) {
-  if (message.pending) return <Clock size={13} aria-label="Sending" />;
-  if (message.read) return <CheckCheck size={14} className="receipt-read" aria-label="Read" />;
-  if (message.delivered) return <CheckCheck size={14} aria-label="Delivered" />;
-  return <Check size={14} aria-label="Sent" />;
+/** A photo we can draw: sealed with a key, or one this tab is sending right now. */
+function isPhoto(message: ChatMessage): boolean {
+  if (message.kind !== "image" || message.deleted) return false;
+  return Boolean(message.mediaKey) || Boolean(peekImage(message.id));
+}
+
+function hasFiles(event: DragEvent): boolean {
+  return Array.from(event.dataTransfer?.types ?? []).includes("Files");
 }
 
 export function Thread({
@@ -94,9 +113,11 @@ export function Thread({
   onDraftChange,
   onSend,
   onSendVoice,
+  onSendImages,
   onBack,
   onShowInfo,
   onLoadVoice,
+  onLoadImage,
 }: {
   peer: { id: string; username: string };
   presence: string;
@@ -112,8 +133,11 @@ export function Thread({
   onDraftChange: (value: string) => void;
   onSend: () => void;
   onSendVoice: (take: VoiceTake) => void;
+  /** Photos prepared in the send sheet; the caption belongs to the first. */
+  onSendImages: (images: PreparedImage[], caption: string) => void;
   onBack: () => void;
   onLoadVoice: (message: ChatMessage) => Promise<Uint8Array | null>;
+  onLoadImage: (message: ChatMessage) => Promise<LoadedImage | null>;
   onShowInfo: () => void;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
@@ -129,6 +153,12 @@ export function Thread({
   const seenCount = useRef(0);
   /** Rendered rows, for the resize observer to tell new messages from in-place growth. */
   const rowCount = useRef(0);
+  const photoPicker = useRef<HTMLInputElement>(null);
+  /** Files in the send sheet; null while it is closed. */
+  const [attaching, setAttaching] = useState<File[] | null>(null);
+  const [viewing, setViewing] = useState<string | null>(null);
+  const [dropping, setDropping] = useState(false);
+  const dragDepth = useRef(0);
 
   const toBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     const node = scroller.current;
@@ -290,8 +320,73 @@ export function Thread({
     if (finePointer()) field.current?.focus();
   }
 
+  /** Opens the send sheet with these photos, or adds them to the one already open. */
+  function attach(files: File[]) {
+    const photos = imageFiles(files);
+    if (!canSend || photos.length === 0) return;
+    setAttaching((open) => [...(open ?? []), ...photos].slice(0, MAX_PHOTOS_PER_SEND));
+  }
+
+  const closeAttach = useCallback(() => {
+    setAttaching(null);
+    if (finePointer()) field.current?.focus();
+  }, []);
+
+  const sendAttached = useCallback(
+    (images: PreparedImage[], caption: string) => {
+      setAttaching(null);
+      onSendImages(images, caption);
+      if (finePointer()) field.current?.focus();
+    },
+    [onSendImages],
+  );
+
+  function onPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const pasted = clipboardImages(event.clipboardData);
+    if (pasted.length === 0) return;
+    event.preventDefault();
+    attach(pasted);
+  }
+
+  /* Photos dragged anywhere over the chat can be dropped to send. Enter and leave fire
+     for every child the pointer crosses, so count depth rather than trust the last one. */
+  function onDragEnter(event: DragEvent<HTMLElement>) {
+    if (!canSend || !hasFiles(event)) return;
+    event.preventDefault();
+    dragDepth.current += 1;
+    setDropping(true);
+  }
+
+  function onDragOver(event: DragEvent<HTMLElement>) {
+    if (!canSend || !hasFiles(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  }
+
+  function onDragLeave(event: DragEvent<HTMLElement>) {
+    if (!hasFiles(event)) return;
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDropping(false);
+  }
+
+  function onDrop(event: DragEvent<HTMLElement>) {
+    if (!hasFiles(event)) return;
+    event.preventDefault();
+    dragDepth.current = 0;
+    setDropping(false);
+    attach(Array.from(event.dataTransfer.files));
+  }
+
+  const photos = useMemo(() => messages.filter(isPhoto), [messages]);
+
   return (
-    <section className="thread">
+    <section
+      className="thread"
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
       <header className="thread-head">
         <button className="icon-btn back-mobile" type="button" aria-label="Back to chats" onClick={onBack}>
           <ChevronLeft size={20} />
@@ -384,6 +479,7 @@ export function Thread({
               }
               const { message } = row;
               const voice = message.kind === "voice" && !message.deleted;
+              const photo = isPhoto(message);
               const bubbleClass = [
                 "bubble",
                 message.isMine ? "out" : "in",
@@ -396,6 +492,18 @@ export function Thread({
               ]
                 .filter(Boolean)
                 .join(" ");
+              if (photo) {
+                return (
+                  <ImageBubble
+                    key={row.key}
+                    className={bubbleClass}
+                    message={message}
+                    query={query}
+                    loadImage={onLoadImage}
+                    onOpen={(opened) => setViewing(opened.id)}
+                  />
+                );
+              }
               if (voice) {
                 /* The transcript folds away inside the bubble, behind the →A button. */
                 return (
@@ -458,9 +566,10 @@ export function Thread({
             <button
               className="icon-btn compose-plus"
               type="button"
-              aria-label="Attach"
-              title="Media is coming to the web client soon"
-              disabled
+              aria-label="Send photos"
+              title="Send photos"
+              disabled={!canSend}
+              onClick={() => photoPicker.current?.click()}
             >
               <Plus size={20} />
             </button>
@@ -468,7 +577,7 @@ export function Thread({
               className="icon-btn compose-wide"
               type="button"
               aria-label="Attach a file"
-              title="Media is coming to the web client soon"
+              title="Files are coming to the web client soon"
               disabled
             >
               <Paperclip size={18} />
@@ -476,9 +585,10 @@ export function Thread({
             <button
               className="icon-btn compose-wide"
               type="button"
-              aria-label="Send a photo"
-              title="Media is coming to the web client soon"
-              disabled
+              aria-label="Send photos"
+              title="Send photos — or paste or drop them here"
+              disabled={!canSend}
+              onClick={() => photoPicker.current?.click()}
             >
               <Image size={18} />
             </button>
@@ -492,6 +602,7 @@ export function Thread({
                 value={draft}
                 onChange={(event) => onDraftChange(event.target.value)}
                 onKeyDown={onKeyDown}
+                onPaste={onPaste}
                 enterKeyHint="send"
                 disabled={!canSend}
               />
@@ -514,9 +625,52 @@ export function Thread({
               <Send size={16} />
             </button>
           </form>
+          <input
+            ref={photoPicker}
+            type="file"
+            accept={PHOTO_ACCEPT}
+            multiple
+            hidden
+            onChange={(event) => {
+              attach(Array.from(event.target.files ?? []));
+              event.target.value = "";
+            }}
+          />
           <VoiceDroplet voice={voice} />
         </div>
       </div>
+
+      {dropping ? (
+        <div className="drop-zone" aria-hidden="true">
+          <div className="drop-card">
+            <ImagePlus size={30} />
+            <strong>Drop to send</strong>
+            <span>Photos are end-to-end encrypted</span>
+          </div>
+        </div>
+      ) : null}
+
+      <Suspense fallback={null}>
+        {attaching ? (
+          <ImageComposer
+            files={attaching}
+            peerName={peer.username}
+            onFilesChange={setAttaching}
+            onClose={closeAttach}
+            onSend={sendAttached}
+          />
+        ) : null}
+
+        {viewing ? (
+          <ImageViewer
+            photos={photos}
+            startId={viewing}
+            peerName={peer.username}
+            loadImage={onLoadImage}
+            onClose={() => setViewing(null)}
+          />
+        ) : null}
+      </Suspense>
     </section>
   );
 }
