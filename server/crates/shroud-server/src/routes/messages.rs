@@ -1067,10 +1067,10 @@ async fn hard_delete_notes_message(
     .await
     .map_err(|err| AppError::Internal(format!("list notes media failed: {err}")))?;
 
-    if let Some(mid) = media_object_id {
-        if !media_ids.contains(&mid) {
-            media_ids.push(mid);
-        }
+    if let Some(mid) = media_object_id
+        && !media_ids.contains(&mid)
+    {
+        media_ids.push(mid);
     }
 
     // Break FKs before deleting the message row.

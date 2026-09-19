@@ -436,7 +436,11 @@ async fn annotation_is_delivered_without_bumping_the_chat() {
     assert_eq!(list.status(), StatusCode::OK);
     let history = json_body(list).await;
     let messages = history["messages"].as_array().unwrap();
-    assert_eq!(messages.len(), 2, "annotations stay in history so every device can apply them");
+    assert_eq!(
+        messages.len(),
+        2,
+        "annotations stay in history so every device can apply them"
+    );
     assert_eq!(messages[0]["content_type"], "annotation");
 
     let with_media = post_message(
