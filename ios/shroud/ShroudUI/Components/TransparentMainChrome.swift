@@ -21,6 +21,8 @@ struct MainScrollScreen<NavLeading: View, NavTrailing: View, Accessory: View, Co
 
     @State private var scrollOffsetY: CGFloat = 0
 
+    @Environment(\.tabBarClearance) private var tabBarClearance
+
     // MARK: - Metrics
 
     private let navRowHeight: CGFloat = 44
@@ -74,6 +76,8 @@ struct MainScrollScreen<NavLeading: View, NavTrailing: View, Accessory: View, Co
                 }
             }
             .scrollDismissesKeyboard(.interactively)
+            // Last row ends at the floating tab bar's top edge instead of under it.
+            .safeAreaPadding(.bottom, tabBarClearance)
 
             stickyHeader
         }

@@ -25,7 +25,7 @@ struct CallsView: View {
                             .frame(height: 1)
                             .padding(.leading, 76)
                     }
-                    Color.clear.frame(height: 88)
+                    Color.clear.frame(height: 16)
                 }
                 // A finished call prepends a row — slide the history down instead of snapping.
                 .animation(Motion.standard, value: calls.recent.map(\.id))

@@ -5,15 +5,18 @@ import SwiftUI
 struct ContactsView: View {
     @Environment(MessagingController.self) private var messaging
     @Environment(SessionController.self) private var session
+    @Environment(\.isTabBarSearchActive) private var isTabBarSearchActive
 
     @Binding var path: [ChatRoute]
-    @State private var searchText = ""
+    /// Owned by `MainTabView` so the tab bar's search field filters this list too.
+    @Binding var searchText: String
     @State private var showAdd = false
     @State private var showMyQR = false
     @State private var sortAscending = true
 
-    init(path: Binding<[ChatRoute]> = .constant([])) {
+    init(path: Binding<[ChatRoute]> = .constant([]), searchText: Binding<String> = .constant("")) {
         _path = path
+        _searchText = searchText
     }
 
     /// Skeleton stands in only for the *first* load — a refresh over existing rows keeps the
@@ -90,9 +93,12 @@ struct ContactsView: View {
                     .accessibilityLabel("Add contact")
                 }
             } accessory: {
-                SearchField(text: $searchText)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 10)
+                if !isTabBarSearchActive {
+                    SearchField(text: $searchText)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 10)
+                        .transition(.opacity)
+                }
             } content: {
                 LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
                     if !messaging.incomingRequests.isEmpty {

@@ -16,6 +16,7 @@ struct SettingsView: View {
 
     @Environment(SessionController.self) private var sessionController
     @Environment(ServerConfigurationController.self) private var serverConfig
+    @Environment(\.tabBarClearance) private var tabBarClearance
 
     @State private var scrollOffsetY: CGFloat = 0
     @State private var showLogOutConfirm = false
@@ -202,14 +203,8 @@ struct SettingsView: View {
                     }
                 }
                 .scrollIndicators(.hidden)
-                // GeometryReader does not reliably inherit MainTabView's tab-bar
-                // `safeAreaPadding`, so Log Out sat under the floating bar.
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    Color.clear
-                        .frame(height: 88)
-                        .accessibilityHidden(true)
-                        .allowsHitTesting(false)
-                }
+                // Log Out ends at the floating tab bar's top edge instead of under it.
+                .safeAreaPadding(.bottom, tabBarClearance)
                 .onScrollGeometryChange(for: CGFloat.self) { geometry in
                     // Include top content inset so progress is 0 when pinned at rest.
                     max(0, geometry.contentOffset.y + geometry.contentInsets.top)

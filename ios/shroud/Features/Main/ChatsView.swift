@@ -4,16 +4,19 @@ import SwiftUI
 /// Opens a conversation with a standard **horizontal push / swipe** transition.
 struct ChatsView: View {
     @Environment(MessagingController.self) private var messaging
+    @Environment(\.isTabBarSearchActive) private var isTabBarSearchActive
 
     @Binding var path: [ChatRoute]
-    @State private var searchText = ""
+    /// Owned by `MainTabView` so the tab bar's search field filters this list too.
+    @Binding var searchText: String
     @State private var showNewChat = false
     /// Chat waiting on the delete-scope confirmation (scope is picked in the dialog).
     @State private var pendingChatDelete: PendingChatDelete?
     @State private var toast: String?
 
-    init(path: Binding<[ChatRoute]> = .constant([])) {
+    init(path: Binding<[ChatRoute]> = .constant([]), searchText: Binding<String> = .constant("")) {
         _path = path
+        _searchText = searchText
     }
 
     /// The chat a long-press asked to delete. Notes have no second party, so they only
@@ -73,9 +76,12 @@ struct ChatsView: View {
                             .padding(.horizontal, 16)
                             .transition(.move(edge: .top).combined(with: .opacity))
                     }
-                    SearchField(text: $searchText)
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 10)
+                    if !isTabBarSearchActive {
+                        SearchField(text: $searchText)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 10)
+                            .transition(.opacity)
+                    }
                 }
                 .animation(Motion.fade, value: messaging.isOffline)
             } content: {
