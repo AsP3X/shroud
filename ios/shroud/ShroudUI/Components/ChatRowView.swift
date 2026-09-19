@@ -7,8 +7,8 @@ struct ChatRowView: View {
     var time: String? = nil
     var unreadCount: Int? = nil
     var subtitleAccent: Bool = false
-    /// "typing" with the live dots replaces the subtitle.
-    var isTyping: Bool = false
+    /// "typing" / "recording" with the live dots replaces the subtitle.
+    var activity: ChatPeerActivity? = nil
     var avatarGradient: LinearGradient? = nil
     /// When set, shows a symbol instead of initials (e.g. Notes bookmark).
     var avatarSystemImage: String? = nil
@@ -50,9 +50,9 @@ struct ChatRowView: View {
 
                 HStack(alignment: .center, spacing: 8) {
                     ZStack(alignment: .leading) {
-                        // "typing" replaces the preview in place instead of hard-cutting.
-                        if isTyping {
-                            TypingLabel(font: .system(size: 14))
+                        // Activity replaces the preview in place instead of hard-cutting.
+                        if let activity {
+                            TypingLabel(activity: activity, font: .system(size: 14))
                                 .transition(.opacity)
                         } else {
                             Text(subtitle)
@@ -65,7 +65,7 @@ struct ChatRowView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .animation(Motion.fade, value: subtitle)
-                    .animation(Motion.fade, value: isTyping)
+                    .animation(Motion.fade, value: activity)
                     .animation(Motion.snappy, value: subtitleAccent)
 
                     if let unreadCount, unreadCount > 0 {
@@ -99,7 +99,7 @@ struct ChatRowView: View {
     }
 
     private var accessibilityLabel: String {
-        var parts = [title, isTyping ? "typing" : subtitle]
+        var parts = [title, activity?.spokenLabel ?? subtitle]
         if let time { parts.append(time) }
         if let unreadCount, unreadCount > 0 {
             parts.append("\(unreadCount) unread")
@@ -119,7 +119,8 @@ struct ChatRowView: View {
         ChatRowView(
             title: "Jane Cooper",
             subtitle: "online",
-            subtitleAccent: true
+            subtitleAccent: true,
+            activity: .recording
         )
     }
     .background(Theme.background)

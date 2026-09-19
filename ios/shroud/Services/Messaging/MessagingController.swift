@@ -45,6 +45,13 @@ final class MessagingController {
     private var typingSentTo: UUID?
     private var typingSentAt: Date?
     private var typingIdleTask: Task<Void, Never>?
+    /// Peers recording a voice note to us right now; same expiry as typing.
+    private(set) var recordingPeerIDs: Set<UUID> = []
+    private var recordingExpiryTasks: [UUID: Task<Void, Never>] = [:]
+    /// Outgoing recording: the peer we last told we were recording, and the keepalive.
+    private var recordingSentTo: UUID?
+    private var recordingSentAt: Date?
+    private var recordingKeepaliveTask: Task<Void, Never>?
     private(set) var presenceByUser: [UUID: PresenceDTO] = [:]
     /// Unread inbound counts by peer (local; cleared when the thread is opened).
     private(set) var unreadCountByPeer: [UUID: Int] = [:]
@@ -1384,21 +1391,32 @@ final class MessagingController {
         return nil
     }
 
-    // MARK: - Typing
+    // MARK: - Typing / recording
     //
-    // Human: The server relays `typing` frames to the peer's devices only (routes/ws.rs). These
-    // timings are the contract with the web client (`web/src/typing.ts`) — change them together:
+    // Human: The server relays `typing` and `recording` frames to the peer's devices only
+    // (routes/ws.rs). These timings are the contract with the web client (`web/src/typing.ts`)
+    // — change them together:
     // a sender says `true` when typing starts and again at most every `typingKeepalive` while it
     // goes on, then `false` after `typingIdle` without a keystroke, on send, and on leaving the
-    // chat. A receiver drops "typing" after `typingExpiry` without a fresh `true`, so a sender
-    // that vanishes mid-word cannot leave it stuck; a message from that peer clears it at once.
+    // chat. Recording uses the same keepalive and receiver expiry, but has no idle timeout: it
+    // stays on until the sender stops, sends, or leaves. A receiver drops the indicator after
+    // `typingExpiry` without a fresh `true`, so a sender that vanishes cannot leave it stuck; a
+    // message from that peer clears it at once.
 
     static let typingKeepalive: TimeInterval = 3
     static let typingIdle: TimeInterval = 3
     static let typingExpiry: TimeInterval = 6
 
+    /// Recording takes precedence over typing when both somehow overlap.
+    func peerActivity(for userID: UUID) -> ChatPeerActivity? {
+        if recordingPeerIDs.contains(userID) { return .recording }
+        if typingPeerIDs.contains(userID) { return .typing }
+        return nil
+    }
+
     /// Reports composer activity for `peerUserID`: `isTyping` is false once the draft is empty.
     func setTyping(peerUserID: UUID, isTyping: Bool) {
+        if isTyping { stopRecording() }
         if let sentTo = typingSentTo, sentTo != peerUserID || !isTyping {
             stopTyping()
         }
@@ -1416,6 +1434,34 @@ final class MessagingController {
         }
     }
 
+    /// Reports a live voice-note take for `peerUserID`.
+    func setRecording(peerUserID: UUID, isRecording: Bool) {
+        if !isRecording {
+            if recordingSentTo == peerUserID { stopRecording() }
+            return
+        }
+        if let sentTo = recordingSentTo, sentTo != peerUserID {
+            stopRecording()
+        }
+        stopTyping()
+        let already = recordingSentTo == peerUserID
+        recordingSentTo = peerUserID
+        if !already || recordingSentAt.map({ Date().timeIntervalSince($0) >= Self.typingKeepalive }) ?? true {
+            realtime.sendRecording(peerUserID: peerUserID, isRecording: true)
+            recordingSentAt = Date()
+        }
+        recordingKeepaliveTask?.cancel()
+        recordingKeepaliveTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(Self.typingKeepalive))
+                guard !Task.isCancelled else { return }
+                guard let self, let peer = self.recordingSentTo else { return }
+                self.realtime.sendRecording(peerUserID: peer, isRecording: true)
+                self.recordingSentAt = Date()
+            }
+        }
+    }
+
     /// Says `false` if we last said `true`.
     private func stopTyping() {
         typingIdleTask?.cancel()
@@ -1427,8 +1473,19 @@ final class MessagingController {
         typingSentAt = nil
     }
 
+    private func stopRecording() {
+        recordingKeepaliveTask?.cancel()
+        recordingKeepaliveTask = nil
+        if let peer = recordingSentTo {
+            realtime.sendRecording(peerUserID: peer, isRecording: false)
+        }
+        recordingSentTo = nil
+        recordingSentAt = nil
+    }
+
     /// A peer started or stopped typing to us; "started" lapses on its own unless refreshed.
     private func setPeerTyping(_ userID: UUID, _ isTyping: Bool) {
+        if isTyping, recordingPeerIDs.contains(userID) { setPeerRecording(userID, false) }
         typingExpiryTasks.removeValue(forKey: userID)?.cancel()
         if isTyping {
             if !typingPeerIDs.contains(userID) { typingPeerIDs.insert(userID) }
@@ -1442,11 +1499,31 @@ final class MessagingController {
         }
     }
 
+    /// A peer started or stopped recording a voice note to us.
+    private func setPeerRecording(_ userID: UUID, _ isRecording: Bool) {
+        if isRecording, typingPeerIDs.contains(userID) { setPeerTyping(userID, false) }
+        recordingExpiryTasks.removeValue(forKey: userID)?.cancel()
+        if isRecording {
+            if !recordingPeerIDs.contains(userID) { recordingPeerIDs.insert(userID) }
+            recordingExpiryTasks[userID] = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(Self.typingExpiry))
+                guard !Task.isCancelled else { return }
+                self?.setPeerRecording(userID, false)
+            }
+        } else if recordingPeerIDs.contains(userID) {
+            recordingPeerIDs.remove(userID)
+        }
+    }
+
     private func clearAllTyping() {
         stopTyping()
+        stopRecording()
         typingExpiryTasks.values.forEach { $0.cancel() }
         typingExpiryTasks.removeAll()
         typingPeerIDs = []
+        recordingExpiryTasks.values.forEach { $0.cancel() }
+        recordingExpiryTasks.removeAll()
+        recordingPeerIDs = []
     }
 
     /// Encrypts, uploads, and sends an image message to `peerUserID`.
@@ -3074,6 +3151,8 @@ final class MessagingController {
                 handleConversationDeletedEvent(json)
             } else if type == "typing" {
                 handleTyping(json)
+            } else if type == "recording" {
+                handleRecording(json)
             } else if type == "presence.update" {
                 handlePresence(json)
             } else if type.hasPrefix("call.") {
@@ -3219,6 +3298,14 @@ final class MessagingController {
         setPeerTyping(userID, isTyping)
     }
 
+    private func handleRecording(_ json: [String: Any]) {
+        guard let userString = json["user_id"] as? String,
+              let userID = UUID(uuidString: userString),
+              let isRecording = json["is_recording"] as? Bool
+        else { return }
+        setPeerRecording(userID, isRecording)
+    }
+
     private func handlePresence(_ json: [String: Any]) {
         guard let userString = json["user_id"] as? String,
               let userID = UUID(uuidString: userString),
@@ -3230,7 +3317,10 @@ final class MessagingController {
         }
         let presence = PresenceDTO(userId: userID, online: online, lastSeenAt: lastSeen)
         if presenceByUser[userID] != presence { presenceByUser[userID] = presence }
-        if !online { setPeerTyping(userID, false) }
+        if !online {
+            setPeerTyping(userID, false)
+            setPeerRecording(userID, false)
+        }
     }
 
     private func ingestIncoming(_ dto: MessageDTO) async {
@@ -3284,8 +3374,11 @@ final class MessagingController {
         if !thread.contains(where: { $0.id == chat.id }) {
             thread.append(chat)
             thread = foldSharedTranscripts(into: thread)
-            // Their message is what the typing was for: it takes the indicator's place.
-            if !chat.isMine { setPeerTyping(dto.senderUserId, false) }
+            // Their message is what the typing/recording was for: it takes the indicator's place.
+            if !chat.isMine {
+                setPeerTyping(dto.senderUserId, false)
+                setPeerRecording(dto.senderUserId, false)
+            }
             threads[threadPeer] = thread
             if !chat.isMine, activePeerID != threadPeer {
                 unreadCountByPeer[threadPeer, default: 0] += 1

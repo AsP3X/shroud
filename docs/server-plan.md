@@ -98,7 +98,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Real-time m4 | HTTP send + history (done) |
 | Real-time 4b | **WebSocket** in-process fan-out (**done**) |
 | Redis fan-out | **Optional** when `REDIS_URL` set: local hub + pub/sub on `shroud:user:{user_id}` |
-| WS events | `message.new`, `message.delivered`, `message.read`, `message.deleted`, `typing`, `presence.update` |
+| WS events | `message.new`, `message.delivered`, `message.read`, `message.deleted`, `typing`, `recording`, `presence.update` |
 | WS recipients | Peer devices + sender’s **other** devices (not the sending device for new) |
 | Delivery receipts | `POST /messages/:id/delivered` for current device (m4); read later |
 | Retention | Indefinite until user delete |
@@ -513,6 +513,7 @@ Redis: pub/sub fan-out, online sets, future rate limits.
 ### Presence and push
 
 - **Typing** — ephemeral WS only: client `{ "type": "typing", "peer_user_id", "is_typing" }` → peer gets same shape plus `user_id` / `device_id`. Contacts only; no DB.
+- **Recording** — same relay as typing: client `{ "type": "recording", "peer_user_id", "is_recording" }` → peer only. Keepalive every 3s while the mic is live; no idle timeout (silence is still a take). Receiver expires after 6s.
 - **Online / last-seen** — online = at least one live WS (in-process hub + optional Redis `shroud:online:{user_id}` HASH with TTL). `last_seen_at` = max `devices.last_seen_at`. `GET /presence/:user_id` contacts-only (self always allowed). On connect/disconnect, fan-out `presence.update` to accepted contacts.
 - **Read receipts** — user-level (`message_reads`); not per-device. Recipient only; idempotent. Single + bulk up-to cursor. WS `message.read`.
 - WS must auth within 10s.
@@ -1061,7 +1062,7 @@ Optional field: `"media_object_id": "<uuid>"` required when `content_type` is `m
 
 - Redis pub/sub — optional when `REDIS_URL` set
 - Typing / presence — **m6**
-- Client→server after auth: **`typing`** (m6); unknown types ignored
+- Client→server after auth: **`typing`** / **`recording`** (m6); unknown types ignored
 
 ### Milestone 6 — Presence & read receipts (locked)
 
@@ -1119,6 +1120,10 @@ WS `message.read` includes `up_to_message_id` + `marked` when bulk.
 { "type": "typing", "peer_user_id": "<uuid>", "is_typing": true }
 ```
 
+```json
+{ "type": "recording", "peer_user_id": "<uuid>", "is_recording": true }
+```
+
 Server → peer only (contacts required):
 
 ```json
@@ -1128,6 +1133,16 @@ Server → peer only (contacts required):
   "device_id": "<device>",
   "peer_user_id": "<uuid>",
   "is_typing": true
+}
+```
+
+```json
+{
+  "type": "recording",
+  "user_id": "<sender>",
+  "device_id": "<device>",
+  "peer_user_id": "<uuid>",
+  "is_recording": true
 }
 ```
 

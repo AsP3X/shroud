@@ -277,3 +277,67 @@ async fn websocket_typing_relays_to_contact_only() {
     let _ = shutdown_tx.send(());
     let _ = server.await;
 }
+
+/// Human: Recording a voice note uses the same relay as typing (`web/src/typing.ts`
+/// `createRecordingSender`, iOS `MessagingController.setRecording`): the sender's frame
+/// reaches the peer's devices as `recording` with `user_id` = sender, never echoes to the
+/// sender, and never reaches a non-contact.
+#[tokio::test]
+async fn websocket_recording_relays_to_contact_only() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping websocket_recording_relays_to_contact_only: DATABASE_URL unavailable");
+        return;
+    };
+    let (addr, shutdown_tx, server) = spawn_app(pool).await;
+    let client = reqwest::Client::new();
+
+    let (token_a, user_a) = register(&client, addr).await;
+    let (token_b, user_b) = register(&client, addr).await;
+    let (token_c, _user_c) = register(&client, addr).await;
+    become_contacts(&client, addr, (&token_a, &user_a), (&token_b, &user_b)).await;
+
+    let mut a = connect_authed(addr, &token_a).await;
+    let mut b = connect_authed(addr, &token_b).await;
+    let mut c = connect_authed(addr, &token_c).await;
+
+    for is_recording in [true, false] {
+        a.send(Message::Text(
+            json!({ "type": "recording", "peer_user_id": user_b, "is_recording": is_recording })
+                .to_string()
+                .into(),
+        ))
+        .await
+        .expect("send recording");
+        let event = next_of_type(&mut b, "recording", Duration::from_secs(5))
+            .await
+            .expect("peer gets recording");
+        assert_eq!(event["user_id"], user_a);
+        assert_eq!(event["peer_user_id"], user_b);
+        assert_eq!(event["is_recording"], is_recording);
+    }
+
+    assert!(
+        next_of_type(&mut a, "recording", Duration::from_millis(300))
+            .await
+            .is_none()
+    );
+
+    c.send(Message::Text(
+        json!({ "type": "recording", "peer_user_id": user_b, "is_recording": true })
+            .to_string()
+            .into(),
+    ))
+    .await
+    .expect("send stranger recording");
+    assert!(
+        next_of_type(&mut b, "recording", Duration::from_millis(500))
+            .await
+            .is_none()
+    );
+
+    for mut socket in [a, b, c] {
+        let _ = socket.close(None).await;
+    }
+    let _ = shutdown_tx.send(());
+    let _ = server.await;
+}

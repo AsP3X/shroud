@@ -124,7 +124,7 @@ struct ContactsView: View {
                                         title: contact.username,
                                         subtitle: contactStatus(contact),
                                         subtitleAccent: messaging.presenceByUser[contact.userId]?.online == true,
-                                        isTyping: messaging.typingPeerIDs.contains(contact.userId),
+                                        activity: messaging.peerActivity(for: contact.userId),
                                         avatarGradient: AvatarView.gradient(for: contact.username)
                                     )
                                 }

@@ -12,6 +12,7 @@ import {
 } from "../api/client";
 import { Avatar } from "../components/Avatar";
 import { ChatList, type ListEntry } from "../components/ChatList";
+import { TypingLabel } from "../components/Typing";
 import { Modal } from "../components/Modal";
 import { MyQrSheet } from "../components/qr/MyQrSheet";
 import { Rail, TabBar, type Tab } from "../components/Rail";
@@ -48,7 +49,12 @@ import {
 } from "../voice/transcriber";
 import { rekeyTranscriptView, setTranscribing } from "../voice/transcriptView";
 import { connectRealtime, type Realtime } from "../realtime";
-import { createTypingSender, TYPING_EXPIRE_MS } from "../typing";
+import {
+  createRecordingSender,
+  createTypingSender,
+  TYPING_EXPIRE_MS,
+  type PeerActivity,
+} from "../typing";
 import { clearSession, setLocked } from "../session";
 
 type PeerRef = { id: string; username: string };
@@ -98,6 +104,8 @@ export function AppShell({ session }: { session: Session }) {
   const [presenceByUser, setPresenceByUser] = useState<Record<string, Presence>>({});
   /** Peers typing to us right now, by lowercased user id. */
   const [typingPeers, setTypingPeers] = useState<ReadonlySet<string>>(() => new Set());
+  /** Peers recording a voice note to us right now, by lowercased user id. */
+  const [recordingPeers, setRecordingPeers] = useState<ReadonlySet<string>>(() => new Set());
   const [previewRev, setPreviewRev] = useState(0);
   const mobileShowThread = Boolean(selected) && tab !== "settings";
   const identity = loadIdentity(session.user.id);
@@ -113,6 +121,7 @@ export function AppShell({ session }: { session: Session }) {
   draftRef.current = draft;
   const realtime = useRef<Realtime | null>(null);
   const typingTimers = useRef(new Map<string, number>());
+  const recordingTimers = useRef(new Map<string, number>());
   const typingSender = useMemo(
     () =>
       createTypingSender((peerId, typing) =>
@@ -120,43 +129,82 @@ export function AppShell({ session }: { session: Session }) {
       ),
     [],
   );
+  const recordingSender = useMemo(
+    () =>
+      createRecordingSender((peerId, recording) =>
+        realtime.current?.send({
+          type: "recording",
+          peer_user_id: peerId,
+          is_recording: recording,
+        }),
+      ),
+    [],
+  );
+
+  const markFlag = useCallback(
+    (
+      peerId: string,
+      on: boolean,
+      timers: Map<string, number>,
+      setPeers: (update: (prev: ReadonlySet<string>) => ReadonlySet<string>) => void,
+    ) => {
+      const id = peerId.toLowerCase();
+      if (!id) return;
+      window.clearTimeout(timers.get(id));
+      timers.delete(id);
+      const apply = (value: boolean) =>
+        setPeers((prev) => {
+          if (prev.has(id) === value) return prev;
+          const next = new Set(prev);
+          if (value) next.add(id);
+          else next.delete(id);
+          return next;
+        });
+      if (on) {
+        timers.set(
+          id,
+          window.setTimeout(() => {
+            timers.delete(id);
+            apply(false);
+          }, TYPING_EXPIRE_MS),
+        );
+      }
+      apply(on);
+    },
+    [],
+  );
 
   /** A peer started or stopped typing; "started" lapses on its own unless refreshed (typing.ts). */
-  const markTyping = useCallback((peerId: string, typing: boolean) => {
-    const id = peerId.toLowerCase();
-    if (!id) return;
-    const timers = typingTimers.current;
-    window.clearTimeout(timers.get(id));
-    timers.delete(id);
-    const update = (on: boolean) =>
-      setTypingPeers((prev) => {
-        if (prev.has(id) === on) return prev;
-        const next = new Set(prev);
-        if (on) next.add(id);
-        else next.delete(id);
-        return next;
-      });
-    if (typing) {
-      timers.set(
-        id,
-        window.setTimeout(() => {
-          timers.delete(id);
-          update(false);
-        }, TYPING_EXPIRE_MS),
-      );
-    }
-    update(typing);
-  }, []);
+  const markTyping = useCallback(
+    (peerId: string, typing: boolean) => {
+      if (typing) markFlag(peerId, false, recordingTimers.current, setRecordingPeers);
+      markFlag(peerId, typing, typingTimers.current, setTypingPeers);
+    },
+    [markFlag],
+  );
+
+  /** A peer started or stopped recording a voice note to us. */
+  const markRecording = useCallback(
+    (peerId: string, recording: boolean) => {
+      if (recording) markFlag(peerId, false, typingTimers.current, setTypingPeers);
+      markFlag(peerId, recording, recordingTimers.current, setRecordingPeers);
+    },
+    [markFlag],
+  );
 
   useEffect(() => {
-    const timers = typingTimers.current;
+    const typing = typingTimers.current;
+    const recording = recordingTimers.current;
     return () => {
-      for (const timer of timers.values()) window.clearTimeout(timer);
-      timers.clear();
+      for (const timer of typing.values()) window.clearTimeout(timer);
+      for (const timer of recording.values()) window.clearTimeout(timer);
+      typing.clear();
+      recording.clear();
     };
   }, []);
 
-  /* Leaving a chat (or the page) ends our typing there. */
+  /* Leaving a chat (or the page) ends our typing there. A live recording keeps
+     signalling until the take itself is cancelled — hiding the tab is not that. */
   useEffect(() => {
     const hide = () => {
       if (document.hidden) typingSender.stop();
@@ -165,8 +213,9 @@ export function AppShell({ session }: { session: Session }) {
     return () => {
       document.removeEventListener("visibilitychange", hide);
       typingSender.stop();
+      recordingSender.stop();
     };
-  }, [selected?.id, typingSender]);
+  }, [selected?.id, typingSender, recordingSender]);
 
   const refresh = useCallback(async (): Promise<Conversation[]> => {
     const [conv, roster, requests] = await Promise.allSettled([
@@ -305,10 +354,17 @@ export function AppShell({ session }: { session: Session }) {
           markTyping(String(event.raw.user_id ?? ""), event.raw.is_typing !== false);
           return;
         }
+        if (event.type === "recording") {
+          markRecording(String(event.raw.user_id ?? ""), event.raw.is_recording !== false);
+          return;
+        }
         if (event.type === "presence.update") {
           const id = String(event.raw.user_id ?? "").toLowerCase();
           if (!id) return;
-          if (!event.raw.online) markTyping(id, false);
+          if (!event.raw.online) {
+            markTyping(id, false);
+            markRecording(id, false);
+          }
           setPresenceByUser((prev) => ({
             ...prev,
             [id]: {
@@ -337,9 +393,10 @@ export function AppShell({ session }: { session: Session }) {
                 session.token,
                 material,
               );
-              // Their message is what the typing was for: cleared in the same update that
-              // adds it, so it lands where the typing bubble was.
+              // Their message is what the typing/recording was for: cleared in the same
+              // update that adds it, so it lands where the activity bubble was.
               markTyping(dto.sender_user_id, false);
+              markRecording(dto.sender_user_id, false);
               const open = selectedRef.current;
               setPreviewRev((n) => n + 1);
               if (open && open.id.toLowerCase() === peer.toLowerCase()) {
@@ -348,6 +405,7 @@ export function AppShell({ session }: { session: Session }) {
             } catch {
               /* roster refresh already ran; next poll/WS event retries */
               markTyping(dto.sender_user_id, false);
+              markRecording(dto.sender_user_id, false);
             }
           })();
           return;
@@ -375,7 +433,7 @@ export function AppShell({ session }: { session: Session }) {
       realtime.current = null;
       connection.close();
     };
-  }, [session.token, session.user.id, navigate, refresh, markTyping]);
+  }, [session.token, session.user.id, navigate, refresh, markTyping, markRecording]);
 
   useEffect(() => {
     if (!selected) return;
@@ -415,7 +473,7 @@ export function AppShell({ session }: { session: Session }) {
         subtitle: previewLine(session.user.id, c.peer.id),
         timestamp: listTimestamp(c.last_message_at),
         online: Boolean(presenceByUser[c.peer.id.toLowerCase()]?.online),
-        typing: typingPeers.has(c.peer.id.toLowerCase()),
+        activity: activityFor(c.peer.id, typingPeers, recordingPeers),
       }))
       .filter(
         (entry) =>
@@ -423,7 +481,7 @@ export function AppShell({ session }: { session: Session }) {
           entry.username.toLowerCase().includes(q) ||
           entry.subtitle.toLowerCase().includes(q),
       );
-  }, [conversations, presenceByUser, previewRev, query, session.user.id, typingPeers]);
+  }, [conversations, presenceByUser, previewRev, query, session.user.id, typingPeers, recordingPeers]);
 
   const contactEntries = useMemo<ListEntry[]>(() => {
     const q = query.trim().toLowerCase();
@@ -436,10 +494,10 @@ export function AppShell({ session }: { session: Session }) {
           username: c.username,
           subtitle: presenceLabel(presence) || "Contact",
           online: Boolean(presence?.online),
-          typing: typingPeers.has(c.user_id.toLowerCase()),
+          activity: activityFor(c.user_id, typingPeers, recordingPeers),
         };
       });
-  }, [contacts, presenceByUser, query, typingPeers]);
+  }, [contacts, presenceByUser, query, typingPeers, recordingPeers]);
 
   const lockNow = useCallback(() => {
     setLocked(true);
@@ -499,6 +557,7 @@ export function AppShell({ session }: { session: Session }) {
     const text = draftRef.current.trim();
     if (!text || !selected || !identity) return;
     typingSender.stop();
+    recordingSender.stop();
     draftRef.current = "";
     const peerId = selected.id;
     const localId = `pending:${crypto.randomUUID()}`;
@@ -543,6 +602,7 @@ export function AppShell({ session }: { session: Session }) {
   async function submitVoice(take: VoiceTake) {
     if (!selected || !identity) return;
     typingSender.stop();
+    recordingSender.stop();
     const peerId = selected.id;
     const material = identity;
     const localId = `pending:${crypto.randomUUID()}`;
@@ -646,6 +706,7 @@ export function AppShell({ session }: { session: Session }) {
   async function submitImages(images: PreparedImage[], caption: string) {
     if (!selected || !identity || images.length === 0) return;
     typingSender.stop();
+    recordingSender.stop();
     const peerId = selected.id;
     const material = identity;
     const start = Date.now();
@@ -736,6 +797,9 @@ export function AppShell({ session }: { session: Session }) {
 
   const shareLink = shareUrl(session.user.share_code);
   const selectedPresence = selected ? presenceByUser[selected.id.toLowerCase()] : undefined;
+  const selectedActivity = selected
+    ? activityFor(selected.id, typingPeers, recordingPeers)
+    : undefined;
   const requests = incoming.map((request) => ({
     id: request.id,
     username: request.user?.username ?? "Unknown",
@@ -799,7 +863,7 @@ export function AppShell({ session }: { session: Session }) {
                 peer={selected}
                 presence={presenceLabel(selectedPresence)}
                 online={Boolean(selectedPresence?.online)}
-                typing={typingPeers.has(selected.id.toLowerCase())}
+                activity={selectedActivity ?? null}
                 messages={thread}
                 loading={threadLoading}
                 error={threadError}
@@ -812,6 +876,14 @@ export function AppShell({ session }: { session: Session }) {
                 }}
                 onSend={() => void submitMessage()}
                 onSendVoice={(take) => void submitVoice(take)}
+                onRecordingChange={(recording) => {
+                  if (recording) {
+                    typingSender.stop();
+                    recordingSender.set(selected.id, true);
+                  } else {
+                    recordingSender.stop();
+                  }
+                }}
                 onSendImages={(images, caption) => void submitImages(images, caption)}
                 onBack={() => setSelected(null)}
                 onShowInfo={() => setShowInfo(true)}
@@ -888,9 +960,13 @@ export function AppShell({ session }: { session: Session }) {
               online={Boolean(selectedPresence?.online)}
             />
             <strong>{selected.username}</strong>
-            <span className={selectedPresence?.online ? "online" : undefined}>
-              {presenceLabel(selectedPresence) || "presence unknown"}
-            </span>
+            {selectedActivity ? (
+              <TypingLabel word={selectedActivity} />
+            ) : (
+              <span className={selectedPresence?.online ? "online" : undefined}>
+                {presenceLabel(selectedPresence) || "presence unknown"}
+              </span>
+            )}
           </div>
           <div className="set-card">
             <div className="set-row">
@@ -911,4 +987,15 @@ export function AppShell({ session }: { session: Session }) {
       ) : null}
     </div>
   );
+}
+
+function activityFor(
+  id: string,
+  typingPeers: ReadonlySet<string>,
+  recordingPeers: ReadonlySet<string>,
+): PeerActivity | undefined {
+  const key = id.toLowerCase();
+  if (recordingPeers.has(key)) return "recording";
+  if (typingPeers.has(key)) return "typing";
+  return undefined;
 }

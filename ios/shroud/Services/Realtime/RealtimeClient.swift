@@ -62,11 +62,19 @@ final class RealtimeClient {
     }
 
     func sendTyping(peerUserID: UUID, isTyping: Bool) {
+        sendPeerFlag(type: "typing", peerUserID: peerUserID, flag: "is_typing", value: isTyping)
+    }
+
+    func sendRecording(peerUserID: UUID, isRecording: Bool) {
+        sendPeerFlag(type: "recording", peerUserID: peerUserID, flag: "is_recording", value: isRecording)
+    }
+
+    private func sendPeerFlag(type: String, peerUserID: UUID, flag: String, value: Bool) {
         guard case .connected = state, let task else { return }
         let payload: [String: Any] = [
-            "type": "typing",
+            "type": type,
             "peer_user_id": peerUserID.uuidString.lowercased(),
-            "is_typing": isTyping,
+            flag: value,
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: payload),
               let string = String(data: data, encoding: .utf8)
@@ -208,7 +216,7 @@ final class RealtimeClient {
             }
         case "message.delivered", "message.read", "message.deleted",
              "conversation.deleted",
-             "typing", "presence.update", "call.ring", "call.accepted",
+             "typing", "recording", "presence.update", "call.ring", "call.accepted",
              "call.ended", "call.signal",
              "contact.request", "contact.accepted", "contact.rejected",
              "contact.cancelled", "contact.removed", "contact.updated":

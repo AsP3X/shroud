@@ -78,8 +78,9 @@ struct ConversationView: View {
         messaging.isNotesChat(peerUserID)
     }
 
-    private var isPeerTyping: Bool {
-        !isNotes && messaging.typingPeerIDs.contains(peerUserID)
+    private var peerActivity: ChatPeerActivity? {
+        guard !isNotes else { return nil }
+        return messaging.peerActivity(for: peerUserID)
     }
 
     private var isOnline: Bool {
@@ -88,7 +89,7 @@ struct ConversationView: View {
 
     private var presenceLabel: String {
         if isNotes { return "Only you · stored on this device" }
-        if isPeerTyping { return "typing…" }
+        if let peerActivity { return "\(peerActivity.label)…" }
         if isOnline { return "online" }
         if messaging.isOffline { return "offline · local copy" }
         if let presence = messaging.presenceByUser[peerUserID] {
@@ -101,7 +102,7 @@ struct ConversationView: View {
     }
 
     private var presenceAccent: Bool {
-        isPeerTyping || isOnline
+        peerActivity != nil || isOnline
     }
 
     var body: some View {
@@ -225,9 +226,15 @@ struct ConversationView: View {
                 menuAnimationTask?.cancel()
                 if !isNotes {
                     messaging.setTyping(peerUserID: peerUserID, isTyping: false)
+                    messaging.setRecording(peerUserID: peerUserID, isRecording: false)
                 }
                 if messaging.activePeerID == peerUserID {
                     messaging.setActivePeer(nil)
+                }
+            }
+            .onChange(of: voiceRecorder.isRecording) { _, recording in
+                if !isNotes {
+                    messaging.setRecording(peerUserID: peerUserID, isRecording: recording)
                 }
             }
             .sheet(isPresented: $showAttach) {
@@ -519,10 +526,10 @@ struct ConversationView: View {
                                         .foregroundStyle(Theme.textPrimary)
                                         .lineLimit(1)
                                     HStack(spacing: 4) {
-                                        if isPeerTyping {
-                                            // "online" → "typing" swaps in place, dots riding the
-                                            // same wave as the ink bubble in the thread.
-                                            TypingLabel()
+                                        if let peerActivity {
+                                            // "online" → "typing" / "recording" swaps in place,
+                                            // its glyph moving in step with the thread bubble.
+                                            TypingLabel(activity: peerActivity)
                                                 .transition(.opacity)
                                         } else {
                                             if isOnline {
@@ -540,7 +547,7 @@ struct ConversationView: View {
                                     // Presence is the header's only live state — animate every part of it.
                                     .animation(Motion.snappy, value: presenceLabel)
                                     .animation(Motion.snappy, value: isOnline)
-                                    .animation(Motion.snappy, value: isPeerTyping)
+                                    .animation(Motion.snappy, value: peerActivity)
                                 }
                             }
                             .contentShape(Rectangle())
@@ -672,8 +679,8 @@ struct ConversationView: View {
                         }
                     }
 
-                    if isPeerTyping {
-                        TypingIndicatorBubble()
+                    if let peerActivity {
+                        TypingIndicatorBubble(activity: peerActivity)
                             .id("typing-indicator")
                     }
 
@@ -689,7 +696,7 @@ struct ConversationView: View {
                 // the whole thread. The bottom-pin below runs on the same change.
                 .animation(Motion.bouncy, value: newestMessageID)
                 // Springy, so the ink bubble pops out of its tail corner like a message landing.
-                .animation(Motion.bouncy, value: isPeerTyping)
+                .animation(Motion.bouncy, value: peerActivity)
                 .onPreferenceChange(MessageBubbleFrameKey.self) { frames in
                     bubbleGlobalFrames.merge(frames, uniquingKeysWith: { $1 })
                 }
@@ -712,8 +719,8 @@ struct ConversationView: View {
                     }
                 }
             }
-            .onChange(of: isPeerTyping) { _, typing in
-                if typing { scrollToBottom(proxy) }
+            .onChange(of: peerActivity) { _, activity in
+                if activity != nil { scrollToBottom(proxy) }
             }
             .onChange(of: pinToBottomToken) { _, _ in
                 // Opening + post-load: force pin without animation so we never flash the top.
@@ -785,7 +792,7 @@ struct ConversationView: View {
     ) {
         let pin = {
             // Prefer the fixed end anchor so Lazy/layout races cannot miss a message id.
-            if isPeerTyping {
+            if peerActivity != nil {
                 proxy.scrollTo("typing-indicator", anchor: .bottom)
             }
             proxy.scrollTo("thread-bottom", anchor: .bottom)
@@ -839,6 +846,9 @@ struct ConversationView: View {
         do {
             try await voiceRecorder.start()
             Haptics.impact(.medium)
+            if !isNotes {
+                messaging.setRecording(peerUserID: peerUserID, isRecording: true)
+            }
             // Recording is a clear signal the user wants a transcript, so start fetching the
             // language model now — it downloads while they speak instead of stalling the send.
             // No-op once installed.
@@ -854,6 +864,9 @@ struct ConversationView: View {
 
     private func cancelRecording() {
         voiceRecorder.cancel()
+        if !isNotes {
+            messaging.setRecording(peerUserID: peerUserID, isRecording: false)
+        }
     }
 
     /// Names to bias the recogniser toward — proper nouns are what transcripts most often
@@ -870,6 +883,9 @@ struct ConversationView: View {
     private func sendRecording() {
         do {
             guard let take = try voiceRecorder.finish() else {
+                if !isNotes {
+                    messaging.setRecording(peerUserID: peerUserID, isRecording: false)
+                }
                 toast = "Hold to record, release to send"
                 Haptics.notification(.warning)
                 scheduleToastClear()
@@ -877,6 +893,7 @@ struct ConversationView: View {
             }
             Haptics.impact(.light)
             if !isNotes {
+                messaging.setRecording(peerUserID: peerUserID, isRecording: false)
                 messaging.setTyping(peerUserID: peerUserID, isTyping: false)
             }
             Task {

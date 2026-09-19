@@ -97,31 +97,6 @@ struct VoiceTranscriberTests {
     // MARK: - Language preference
 
     @Test
-    func languageOverrideRoundTripsAndClears() {
-        let original = TranscriptionLanguage.override
-        defer { TranscriptionLanguage.override = original }
-
-        TranscriptionLanguage.override = Locale(identifier: "de-DE")
-        // Compare the language code, not the raw identifier — Foundation canonicalises
-        // "de-DE" to "de_DE" on the round trip.
-        #expect(TranscriptionLanguage.override?.language.languageCode?.identifier == "de")
-
-        TranscriptionLanguage.override = nil
-        #expect(TranscriptionLanguage.override == nil)
-    }
-
-    @Test
-    func overrideShortCircuitsCandidateDetection() async {
-        let original = TranscriptionLanguage.override
-        defer { TranscriptionLanguage.override = original }
-
-        TranscriptionLanguage.override = englishUS
-        let candidates = await VoiceTranscriber.candidateLocales()
-        #expect(candidates.count == 1)
-        #expect(candidates.first?.language.languageCode?.identifier == "en")
-    }
-
-    @Test
     func displayNameIsHumanReadable() {
         let name = TranscriptionLanguage.displayName(for: Locale(identifier: "de-DE"))
         #expect(!name.isEmpty)

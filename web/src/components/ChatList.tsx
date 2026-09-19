@@ -1,4 +1,5 @@
 import { QrCode, Search, SquarePen, X } from "lucide-react";
+import type { PeerActivity } from "../typing";
 import { Avatar } from "./Avatar";
 import { TypingLabel } from "./Typing";
 
@@ -8,8 +9,8 @@ export type ListEntry = {
   subtitle: string;
   timestamp?: string;
   online: boolean;
-  /** "typing" replaces the preview, as on iOS. */
-  typing?: boolean;
+  /** "typing" / "recording" replaces the preview, as on iOS. */
+  activity?: PeerActivity;
 };
 
 export type RequestEntry = { id: string; username: string };
@@ -153,7 +154,7 @@ export function ChatList({
               <Avatar name={entry.username} seed={entry.id} online={entry.online} />
               <span className="row-copy">
                 <strong>{entry.username}</strong>
-                {entry.typing ? <TypingLabel /> : <span>{entry.subtitle}</span>}
+                {entry.activity ? <TypingLabel word={entry.activity} /> : <span>{entry.subtitle}</span>}
               </span>
               {entry.timestamp ? <time className="row-time">{entry.timestamp}</time> : null}
             </button>

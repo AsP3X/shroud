@@ -12,6 +12,20 @@
  */
 
 import { clampTranscript } from "../crypto/mediaPayload";
+import {
+  challenger,
+  choose,
+  cleaned,
+  decodeHints,
+  learningWeight,
+  override,
+  prior,
+  record,
+  score as scoreTranscript,
+  MINIMUM_TRUSTED_SCORE,
+  shouldForceLanguage,
+  type Candidate,
+} from "./language";
 import { concatPcm, transcriptionSession } from "./transcription/session";
 
 /** How long Send will wait for Whisper when the model is already on disk. */
@@ -43,19 +57,83 @@ export function cleanedTranscript(text: string): string {
 export async function transcribeVoiceNote(
   chunks: Float32Array[],
   sampleRate: number,
+  opts?: { conversationId?: string },
 ): Promise<string | null> {
   if (chunks.length === 0 || sampleRate <= 0) return null;
   const samples = concatPcm(chunks);
   if (samples.length < sampleRate * 0.3) return null;
+  const audioSeconds = samples.length / sampleRate;
+  const peerId = opts?.conversationId ?? null;
 
   try {
     await transcriptionSession.prepare();
-    const out = await transcriptionSession.transcribe(samples, sampleRate);
-    return cleanedTranscript(out.text) || null;
+    const winner = await decodeVoiceNote(samples, sampleRate, peerId, audioSeconds);
+    const text = cleanedTranscript(winner.text);
+    if (text && winner.language) {
+      const scored = scoreTranscript({
+        text,
+        modelConfidence: winner.confidence,
+        audioSeconds,
+        prior: prior(winner.language, peerId),
+      });
+      const weight = learningWeight(audioSeconds, scored);
+      if (weight > 0) record(winner.language, peerId, weight);
+    }
+    return text || null;
   } catch (err) {
     console.warn("Whisper transcription failed:", err);
     return null;
   }
+}
+
+async function decodeVoiceNote(
+  samples: Float32Array,
+  sampleRate: number,
+  peerId: string | null,
+  audioSeconds: number,
+): Promise<Candidate> {
+  const hints = decodeHints(peerId);
+  const run = (language: string | null) =>
+    transcriptionSession.transcribe(samples, sampleRate, { language });
+
+  if (override() && hints[0]) {
+    const out = await run(hints[0]);
+    return { text: out.text, language: hints[0], confidence: 0.7 };
+  }
+
+  const trusted =
+    hints[0] && shouldForceLanguage(hints[0], prior(hints[0], peerId)) ? hints[0] : null;
+  if (trusted) {
+    const forced = await run(trusted);
+    const forcedCandidate: Candidate = { text: forced.text, language: trusted, confidence: 0.7 };
+    const forcedScore = scoreTranscript({
+      text: cleaned(forced.text),
+      modelConfidence: 0.7,
+      audioSeconds,
+      prior: prior(trusted, peerId),
+    });
+    if (forcedScore >= MINIMUM_TRUSTED_SCORE) return forcedCandidate;
+    const auto = await run(null);
+    return choose(
+      { text: auto.text, language: auto.language, confidence: 0.7 },
+      forcedCandidate,
+      peerId,
+      audioSeconds,
+    );
+  }
+
+  const auto = await run(null);
+  const challengeLang = challenger(auto.language, hints);
+  if (!challengeLang) {
+    return { text: auto.text, language: auto.language, confidence: 0.7 };
+  }
+  const alt = await run(challengeLang);
+  return choose(
+    { text: auto.text, language: auto.language, confidence: 0.7 },
+    { text: alt.text, language: challengeLang, confidence: 0.7 },
+    peerId,
+    audioSeconds,
+  );
 }
 
 /** Resolves `work` or `fallback` after `ms`. Does not cancel `work`. */

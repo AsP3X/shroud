@@ -44,6 +44,7 @@ import { TypingBubble, TypingLabel } from "./Typing";
 import { VoiceBubble } from "./VoiceBubble";
 import { VoiceDroplet, VoiceStrip } from "./VoiceRecorderBar";
 import { useVoiceRecording } from "./useVoiceRecording";
+import type { PeerActivity } from "../typing";
 import type { VoiceTake } from "../voice/recorder";
 import { clearTranscriptChoice, transcriptTail } from "../voice/transcriptView";
 
@@ -103,7 +104,7 @@ export function Thread({
   peer,
   presence,
   online,
-  typing = false,
+  activity = null,
   messages,
   loading,
   error,
@@ -113,6 +114,7 @@ export function Thread({
   onDraftChange,
   onSend,
   onSendVoice,
+  onRecordingChange,
   onSendImages,
   onBack,
   onShowInfo,
@@ -122,8 +124,8 @@ export function Thread({
   peer: { id: string; username: string };
   presence: string;
   online: boolean;
-  /** The peer is typing to us right now. */
-  typing?: boolean;
+  /** The peer is typing or recording a voice note to us right now. */
+  activity?: PeerActivity | null;
   messages: ChatMessage[];
   loading: boolean;
   error: string | null;
@@ -133,6 +135,8 @@ export function Thread({
   onDraftChange: (value: string) => void;
   onSend: () => void;
   onSendVoice: (take: VoiceTake) => void;
+  /** True while this tab is capturing a voice note for `peer`. */
+  onRecordingChange?: (recording: boolean) => void;
   /** Photos prepared in the send sheet; the caption belongs to the first. */
   onSendImages: (images: PreparedImage[], caption: string) => void;
   onBack: () => void;
@@ -184,6 +188,7 @@ export function Thread({
   const voice = useVoiceRecording({
     canSend,
     onSendVoice,
+    onRecordingChange,
     resetKey: peer.id,
     onSettled: () => {
       if (finePointer()) field.current?.focus();
@@ -254,23 +259,31 @@ export function Thread({
   }, [messages, query]);
   const rows = useMemo(() => buildRows(visible), [visible]);
 
-  /* The typing bubble sinks away when the peer stops, but gives way at once when
+  /* The activity bubble sinks away when the peer stops, but gives way at once when
      their message arrives, so the message lands where the bubble was. */
   const lastIncoming = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) if (!messages[i].isMine) return messages[i].id;
     return null;
   }, [messages]);
   /** Whether the bubble is still on screen, and the newest message from them while it was. */
-  const [typingSeen, setTypingSeen] = useState({ shown: typing, arrival: lastIncoming });
+  const [activitySeen, setActivitySeen] = useState({
+    shown: Boolean(activity),
+    arrival: lastIncoming,
+    word: activity ?? ("typing" as PeerActivity),
+  });
   useEffect(() => {
-    if (typing) {
-      setTypingSeen({ shown: true, arrival: lastIncoming });
+    if (activity) {
+      setActivitySeen({ shown: true, arrival: lastIncoming, word: activity });
       return;
     }
-    const timer = window.setTimeout(() => setTypingSeen((seen) => ({ ...seen, shown: false })), TYPING_OUT_MS);
+    const timer = window.setTimeout(
+      () => setActivitySeen((seen) => ({ ...seen, shown: false })),
+      TYPING_OUT_MS,
+    );
     return () => window.clearTimeout(timer);
-  }, [typing, lastIncoming]);
-  const showTyping = typing || (typingSeen.shown && typingSeen.arrival === lastIncoming);
+  }, [activity, lastIncoming]);
+  const showActivity = Boolean(activity) || (activitySeen.shown && activitySeen.arrival === lastIncoming);
+  const activityWord = activity ?? activitySeen.word;
   useLayoutEffect(() => {
     rowCount.current = rows.length;
   }, [rows.length]);
@@ -394,8 +407,8 @@ export function Thread({
         <Avatar name={peer.username} seed={peer.id} online={online} />
         <div className="thread-peer">
           <strong>{peer.username}</strong>
-          {typing ? (
-            <TypingLabel />
+          {activity ? (
+            <TypingLabel word={activity} />
           ) : (
             <span className={online ? "online" : undefined}>{presence || " "}</span>
           )}
@@ -530,8 +543,8 @@ export function Thread({
               );
             })
           )}
-          {showTyping && !query ? (
-            <TypingBubble name={peer.username} leaving={!typing} />
+          {showActivity && !query ? (
+            <TypingBubble name={peer.username} leaving={!activity} word={activityWord} />
           ) : null}
         </div>
       </div>

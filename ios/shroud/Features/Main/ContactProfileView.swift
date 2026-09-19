@@ -21,8 +21,8 @@ struct ContactProfileView: View {
         messaging.blockedUsers.contains { $0.userId == peerUserID }
     }
 
-    private var isTyping: Bool {
-        messaging.typingPeerIDs.contains(peerUserID)
+    private var peerActivity: ChatPeerActivity? {
+        messaging.peerActivity(for: peerUserID)
     }
 
     private var statusLine: String {
@@ -96,8 +96,8 @@ struct ContactProfileView: View {
                 Text(peerUsername)
                     .font(.system(size: 22, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
-                if isTyping {
-                    TypingLabel(font: .system(size: 14))
+                if let peerActivity {
+                    TypingLabel(activity: peerActivity, font: .system(size: 14))
                 } else {
                     Text(statusLine)
                         .font(.system(size: 14))

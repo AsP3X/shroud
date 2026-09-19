@@ -1,13 +1,21 @@
 import Foundation
+import NaturalLanguage
 
 /// User preference for which language voice messages are transcribed in.
 ///
-/// Human: Device locale is a poor proxy for the language someone *speaks* — an English UI with
-/// a German region is a common setup. Whisper detects language itself; the override is a hint
-/// when auto-detection is wrong for a conversation.
+/// Human: Whisper's own language ID is strongly English-biased, especially on short notes, so
+/// "Automatic" is not a coin flip — it will happily transcribe German as English. An English UI
+/// with a German region is a common setup, and that region *is* a useful *challenger* (not a
+/// forced language): we decode once with auto-detect, once with the hint, and keep the better
+/// transcript. Conversation history then takes over.
 /// Agent: READS/WRITES UserDefaults key `transcription.locale`; no other state.
 nonisolated enum TranscriptionLanguage {
     private static let defaultsKey = "transcription.locale"
+
+    /// Test seam — replaces `Locale.preferredLanguages` when non-nil.
+    static var preferredLanguageTagsOverride: [String]?
+    /// Test seam — replaces `Locale.current` when non-nil.
+    static var currentLocaleOverride: Locale?
 
     /// Explicitly chosen language, or nil for automatic detection.
     static var override: Locale? {
@@ -35,20 +43,152 @@ nonisolated enum TranscriptionLanguage {
     /// Languages Whisper can transcribe. One multilingual model covers all of them — this is
     /// only the settings picker, not a list of extra downloads.
     static var whisperLocales: [Locale] {
-        let codes = [
-            "en", "de", "es", "fr", "it", "pt", "nl", "pl", "ru", "uk",
-            "tr", "ar", "hi", "ja", "ko", "zh", "sv", "da", "nb", "fi",
-            "cs", "el", "he", "id", "th", "vi", "ro", "hu", "ca", "hr",
-        ]
-        let preferred = Locale.preferredLanguages.compactMap { tag -> String? in
+        let preferred = preferredLanguageTags.compactMap { tag -> String? in
             Locale(identifier: tag).language.languageCode?.identifier
         }
         var ordered: [String] = []
-        for code in preferred + codes where codes.contains(code) && !ordered.contains(code) {
+        for code in preferred + whisperCodeList where whisperCodes.contains(code) && !ordered.contains(code) {
             ordered.append(code)
         }
         return ordered.map { Locale(identifier: $0) }
     }
+
+    static let whisperCodeList = [
+        "en", "de", "es", "fr", "it", "pt", "nl", "pl", "ru", "uk",
+        "tr", "ar", "hi", "ja", "ko", "zh", "sv", "da", "nb", "fi",
+        "cs", "el", "he", "id", "th", "vi", "ro", "hu", "ca", "hr",
+    ]
+    static let whisperCodes = Set(whisperCodeList)
+
+    /// ISO 639-1 (`de`, `en`). Whisper sometimes emits a name (`german`); map that too.
+    static func normalize(_ code: String) -> String {
+        let raw = code.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !raw.isEmpty else { return "" }
+        if raw.count == 2, whisperCodes.contains(raw) { return raw }
+        if let mapped = languageNames[raw], whisperCodes.contains(mapped) { return mapped }
+        let prefix = String(raw.prefix(2))
+        return whisperCodes.contains(prefix) ? prefix : raw
+    }
+
+    /// Languages we should try, in priority order. Override (if set) is the only entry.
+    /// Otherwise: conversation memory, then the languages this device actually lives in —
+    /// preferred UI languages *and* the region of an English UI in Germany.
+    static func decodeHints(peerID: UUID?) -> [String] {
+        if let override = override.flatMap({ $0.language.languageCode?.identifier }) {
+            let code = normalize(override)
+            return whisperCodes.contains(code) ? [code] : []
+        }
+        var ordered: [String] = []
+        func add(_ raw: String?) {
+            guard let raw else { return }
+            let code = normalize(raw)
+            guard whisperCodes.contains(code), !ordered.contains(code) else { return }
+            ordered.append(code)
+        }
+        add(TranscriptionLanguageMemory.expectedLanguage(peerID: peerID))
+        if peerID != nil {
+            add(TranscriptionLanguageMemory.expectedLanguage(peerID: nil))
+        }
+        for tag in preferredLanguageTags {
+            add(Locale(identifier: tag).language.languageCode?.identifier)
+        }
+        for code in regionLanguageHints {
+            add(code)
+        }
+        return ordered
+    }
+
+    /// Second-pass language when auto-detect disagrees with a hint. Nil means one pass is enough.
+    /// Never challenges with English: Whisper already defaults there, and a second English pass
+    /// cannot undo an English-biased first pass.
+    static func challenger(detected: String?, hints: [String]) -> String? {
+        let detected = detected.map { normalize($0) } ?? ""
+        for hint in hints {
+            let code = normalize(hint)
+            if code.isEmpty || code == detected || code == "en" { continue }
+            return code
+        }
+        return nil
+    }
+
+    /// Above this, conversation history is trusted enough to skip auto-detect.
+    static let trustedPrior = 0.75
+
+    /// English is Whisper's default; forcing it from a poisoned memory would hide German forever.
+    static func shouldForceLanguage(_ code: String, prior: Double) -> Bool {
+        let code = normalize(code)
+        guard whisperCodes.contains(code), code != "en" else { return false }
+        return prior >= trustedPrior
+    }
+
+    static var preferredLanguageTags: [String] {
+        preferredLanguageTagsOverride ?? Locale.preferredLanguages
+    }
+
+    static var currentLocale: Locale {
+        currentLocaleOverride ?? .current
+    }
+
+    /// Spoken language implied by region, so `en-DE` still challenges Whisper's English default.
+    static var regionLanguageHints: [String] {
+        var tags = preferredLanguageTags
+        tags.append(currentLocale.identifier)
+        var codes: [String] = []
+        for tag in tags {
+            let locale = Locale(identifier: tag)
+            guard let region = locale.region?.identifier,
+                  let language = language(forRegion: region),
+                  !codes.contains(language)
+            else { continue }
+            codes.append(language)
+        }
+        return codes
+    }
+
+    /// Non-English region → likely spoken language. English-speaking regions are omitted on
+    /// purpose: Whisper already defaults to English.
+    static func language(forRegion region: String) -> String? {
+        switch region.uppercased() {
+        case "DE", "AT", "LI": "de"
+        case "FR", "MC": "fr"
+        case "ES", "MX", "AR", "CO", "CL", "PE": "es"
+        case "IT": "it"
+        case "NL": "nl"
+        case "PL": "pl"
+        case "PT", "BR": "pt"
+        case "RU": "ru"
+        case "UA": "uk"
+        case "TR": "tr"
+        case "JP": "ja"
+        case "KR": "ko"
+        case "CN", "TW": "zh"
+        case "SE": "sv"
+        case "DK": "da"
+        case "NO": "nb"
+        case "FI": "fi"
+        case "GR": "el"
+        case "IL": "he"
+        case "SA", "AE", "EG": "ar"
+        case "TH": "th"
+        case "VN": "vi"
+        case "RO": "ro"
+        case "HU": "hu"
+        case "CZ": "cs"
+        case "HR": "hr"
+        default: nil
+        }
+    }
+
+    private static let languageNames: [String: String] = [
+        "german": "de", "english": "en", "spanish": "es", "french": "fr",
+        "italian": "it", "portuguese": "pt", "dutch": "nl", "polish": "pl",
+        "russian": "ru", "ukrainian": "uk", "turkish": "tr", "arabic": "ar",
+        "hindi": "hi", "japanese": "ja", "korean": "ko", "chinese": "zh",
+        "swedish": "sv", "danish": "da", "norwegian": "nb", "finnish": "fi",
+        "czech": "cs", "greek": "el", "hebrew": "he", "indonesian": "id",
+        "thai": "th", "vietnamese": "vi", "romanian": "ro", "hungarian": "hu",
+        "catalan": "ca", "croatian": "hr",
+    ]
 }
 
 /// Remembers which language was actually spoken, per conversation and overall.
@@ -139,6 +279,8 @@ enum TranscriptionLanguageMemory {
     /// Test seam — clears learned history.
     static func reset() {
         UserDefaults.standard.removeObject(forKey: defaultsKey)
+        TranscriptionLanguage.preferredLanguageTagsOverride = nil
+        TranscriptionLanguage.currentLocaleOverride = nil
     }
 }
 
@@ -211,5 +353,80 @@ enum VoiceTranscript {
         let duration = min(1, audioSeconds / 8)
         let strength = min(1, score / 0.4)
         return duration * strength
+    }
+
+    /// Text-based language ID for `languageCode` (ISO 639-1). Neutral 0.5 when the text is
+    /// too short to tell, or when the recogniser has no opinion.
+    static func languageProbability(of languageCode: String, in text: String) -> Double {
+        let code = TranscriptionLanguage.normalize(languageCode)
+        guard !code.isEmpty, letterCount(text) >= 8 else { return 0.5 }
+        let recognizer = NLLanguageRecognizer()
+        recognizer.processString(text)
+        let hypotheses = recognizer.languageHypotheses(withMaximum: 12)
+        guard !hypotheses.isEmpty else { return 0.5 }
+        for (language, probability) in hypotheses {
+            let raw = language.rawValue.lowercased()
+            if raw == code || raw.hasPrefix(code) { return Double(probability) }
+        }
+        return 0.05
+    }
+
+    /// Auto-detect is English-biased; a non-English challenger only has to be close, not better.
+    static let englishChallengeMargin = 1.2
+
+    /// One candidate from a decode pass.
+    struct Candidate: Equatable {
+        var text: String
+        var language: String?
+        var confidence: Double
+    }
+
+    /// Picks between Whisper's auto-detect and a forced-language challenger.
+    static func choose(
+        auto: Candidate,
+        challenge: Candidate?,
+        peerID: UUID?,
+        audioSeconds: Double
+    ) -> Candidate {
+        let autoClean = cleaned(auto.text)
+        let autoLang = auto.language.map { TranscriptionLanguage.normalize($0) }
+        let autoScored = Candidate(text: autoClean, language: autoLang, confidence: auto.confidence)
+        let autoScore = score(
+            candidate: autoScored,
+            peerID: peerID,
+            audioSeconds: audioSeconds
+        )
+
+        guard var challenge else { return autoScored }
+        challenge.text = cleaned(challenge.text)
+        challenge.language = challenge.language.map { TranscriptionLanguage.normalize($0) }
+        let altScore = score(
+            candidate: challenge,
+            peerID: peerID,
+            audioSeconds: audioSeconds
+        )
+
+        var autoEffective = autoScore
+        // A missing language is Whisper's English default, not "we don't know".
+        let autoLooksEnglish = autoLang == nil || autoLang == "en"
+        if autoLooksEnglish, challenge.language != "en" {
+            autoEffective = autoScore / englishChallengeMargin
+        }
+        return altScore > autoEffective ? challenge : autoScored
+    }
+
+    static func score(
+        candidate: Candidate,
+        peerID: UUID?,
+        audioSeconds: Double
+    ) -> Double {
+        let language = candidate.language ?? ""
+        return score(
+            text: candidate.text,
+            modelConfidence: candidate.confidence,
+            languageProbability: languageProbability(of: language, in: candidate.text),
+            prior: language.isEmpty ? 0.5 : TranscriptionLanguageMemory.prior(for: language, peerID: peerID),
+            audioSeconds: audioSeconds
+        )
     }
 }

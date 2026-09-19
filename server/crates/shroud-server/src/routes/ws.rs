@@ -1,4 +1,4 @@
-//! WebSocket endpoint with first-message session auth, typing, and presence.
+//! WebSocket endpoint with first-message session auth, typing, recording, and presence.
 
 use std::time::Duration;
 
@@ -27,6 +27,7 @@ struct ClientMessage {
     token: Option<String>,
     peer_user_id: Option<Uuid>,
     is_typing: Option<bool>,
+    is_recording: Option<bool>,
 }
 
 /// `GET /ws` — upgrade to WebSocket.
@@ -206,37 +207,36 @@ async fn handle_client_text(state: &AppState, user_id: Uuid, device_id: Uuid, te
                 tracing::debug!(%user_id, "ws.typing missing peer_user_id");
                 return;
             };
-            if peer_user_id == user_id {
+            relay_contact_activity(
+                state,
+                user_id,
+                device_id,
+                peer_user_id,
+                "typing",
+                json!({
+                    "type": "typing",
+                    "is_typing": parsed.is_typing.unwrap_or(true),
+                }),
+            )
+            .await;
+        }
+        "recording" => {
+            let Some(peer_user_id) = parsed.peer_user_id else {
+                tracing::debug!(%user_id, "ws.recording missing peer_user_id");
                 return;
-            }
-            let is_typing = parsed.is_typing.unwrap_or(true);
-
-            match are_contacts(&state.pool, user_id, peer_user_id).await {
-                Ok(true) => {}
-                Ok(false) => {
-                    tracing::debug!(%user_id, %peer_user_id, "ws.typing not contacts");
-                    return;
-                }
-                Err(err) => {
-                    tracing::warn!(error = %err, "ws.typing contacts check failed");
-                    return;
-                }
-            }
-
-            let event = json!({
-                "type": "typing",
-                "user_id": user_id,
-                "device_id": device_id,
-                "peer_user_id": peer_user_id,
-                "is_typing": is_typing,
-            });
-            if let Ok(payload) = serde_json::to_string(&event) {
-                // Only the peer needs typing; exclude our own devices by not listing self.
-                state
-                    .realtime
-                    .publish_to_users([peer_user_id], None, &payload)
-                    .await;
-            }
+            };
+            relay_contact_activity(
+                state,
+                user_id,
+                device_id,
+                peer_user_id,
+                "recording",
+                json!({
+                    "type": "recording",
+                    "is_recording": parsed.is_recording.unwrap_or(true),
+                }),
+            )
+            .await;
         }
         "auth" => {
             // Already authenticated; ignore duplicate auth frames.
@@ -244,6 +244,44 @@ async fn handle_client_text(state: &AppState, user_id: Uuid, device_id: Uuid, te
         other => {
             tracing::debug!(%user_id, r#type = other, "ws.client unknown type");
         }
+    }
+}
+
+/// Relays an ephemeral activity frame (typing, recording) to the peer's devices only.
+/// Contacts required; never echoed to the sender; never stored.
+async fn relay_contact_activity(
+    state: &AppState,
+    user_id: Uuid,
+    device_id: Uuid,
+    peer_user_id: Uuid,
+    kind: &str,
+    mut event: serde_json::Value,
+) {
+    if peer_user_id == user_id {
+        return;
+    }
+
+    match are_contacts(&state.pool, user_id, peer_user_id).await {
+        Ok(true) => {}
+        Ok(false) => {
+            tracing::debug!(%user_id, %peer_user_id, kind, "ws.activity not contacts");
+            return;
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, kind, "ws.activity contacts check failed");
+            return;
+        }
+    }
+
+    event["user_id"] = json!(user_id);
+    event["device_id"] = json!(device_id);
+    event["peer_user_id"] = json!(peer_user_id);
+    if let Ok(payload) = serde_json::to_string(&event) {
+        // Only the peer needs the indicator; exclude our own devices by not listing self.
+        state
+            .realtime
+            .publish_to_users([peer_user_id], None, &payload)
+            .await;
     }
 }
 

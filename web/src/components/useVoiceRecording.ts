@@ -53,11 +53,14 @@ function micDenied(err: unknown): boolean {
 export function useVoiceRecording({
   canSend,
   onSendVoice,
+  onRecordingChange,
   onSettled,
   resetKey,
 }: {
   canSend: boolean;
   onSendVoice: (take: VoiceTake) => void;
+  /** True once the mic is live, false as soon as send/discard/cancel starts. */
+  onRecordingChange?: (recording: boolean) => void;
   /** Runs after the strip has folded away, e.g. to hand focus back to the field. */
   onSettled: () => void;
   resetKey: string;
@@ -86,8 +89,14 @@ export function useVoiceRecording({
   const releaseExit = useRef<(() => void) | null>(null);
   const onSendVoiceRef = useRef(onSendVoice);
   const onSettledRef = useRef(onSettled);
+  const onRecordingChangeRef = useRef(onRecordingChange);
   onSendVoiceRef.current = onSendVoice;
   onSettledRef.current = onSettled;
+  onRecordingChangeRef.current = onRecordingChange;
+
+  function signalRecording(recording: boolean) {
+    onRecordingChangeRef.current?.(recording);
+  }
 
   const setPhase = useCallback((next: VoicePhase) => {
     phaseRef.current = next;
@@ -109,8 +118,14 @@ export function useVoiceRecording({
       setFrozen(null);
       setLift(0);
       setHint(null);
+      signalRecording(false);
     };
   }, [resetKey]);
+
+  useEffect(() => {
+    const recording = phase === "holding" || phase === "opening" || phase === "live";
+    signalRecording(recording);
+  }, [phase]);
 
   useEffect(() => {
     if (!hint) return;
@@ -271,7 +286,7 @@ export function useVoiceRecording({
       return;
     }
     // Finishing runs alongside the exit; the bubble waits for both.
-    void Promise.all([finishVoiceRecord(), exited]).then(
+    void Promise.all([finishVoiceRecord({ conversationId: resetKey }), exited]).then(
       ([take]) => {
         if (take) onSendVoiceRef.current(take);
         else if (gen === generation.current) setHint("That recording was too short.");

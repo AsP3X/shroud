@@ -3,8 +3,8 @@ import SwiftUI
 /// Live presence indicator — a solid dot that emits a slow halo while the peer is online.
 ///
 /// Human: The halo is the only always-running animation in chat chrome; it is deliberately
-/// slow and low-contrast so it reads as "connected", not as a distraction. While the peer types,
-/// `TypingLabel` takes its place.
+/// slow and low-contrast so it reads as "connected", not as a distraction. While the peer types
+/// or records a voice note, `TypingLabel` takes its place.
 /// Agent: Pure view state (`phaseAnimator`); no controller reads. Halo is dropped under
 /// Reduce Motion.
 struct PresenceDot: View {

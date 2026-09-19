@@ -199,4 +199,164 @@ struct TranscriptionLanguageMemoryTests {
         #expect(noisy < VoiceTranscript.minimumTrustedScore)
         #expect(VoiceTranscript.learningWeight(audioSeconds: 1, score: noisy) == 0)
     }
+
+    // MARK: - Decode hints and challenger
+
+    @Test
+    func overrideIsTheOnlyDecodeHint() {
+        withCleanMemory {
+            let original = TranscriptionLanguage.override
+            defer { TranscriptionLanguage.override = original }
+            TranscriptionLanguage.preferredLanguageTagsOverride = ["en-DE"]
+            TranscriptionLanguage.override = Locale(identifier: "fr")
+            #expect(TranscriptionLanguage.decodeHints(peerID: UUID()) == ["fr"])
+        }
+    }
+
+    @Test
+    func languageOverrideRoundTripsAndClears() {
+        withCleanMemory {
+            let original = TranscriptionLanguage.override
+            defer { TranscriptionLanguage.override = original }
+            TranscriptionLanguage.override = Locale(identifier: "de-DE")
+            // Compare the language code, not the raw identifier — Foundation canonicalises
+            // "de-DE" to "de_DE" on the round trip.
+            #expect(TranscriptionLanguage.override?.language.languageCode?.identifier == "de")
+            TranscriptionLanguage.override = nil
+            #expect(TranscriptionLanguage.override == nil)
+        }
+    }
+
+    @Test
+    func overrideShortCircuitsCandidateDetection() async {
+        TranscriptionLanguageMemory.reset()
+        let original = TranscriptionLanguage.override
+        defer {
+            TranscriptionLanguage.override = original
+            TranscriptionLanguageMemory.reset()
+        }
+        TranscriptionLanguage.override = Locale(identifier: "en-US")
+        let candidates = await VoiceTranscriber.candidateLocales()
+        #expect(candidates.count == 1)
+        #expect(candidates.first?.language.languageCode?.identifier == "en")
+    }
+
+    @Test
+    func englishUIInGermanyStillHintsGerman() {
+        withCleanMemory {
+            let original = TranscriptionLanguage.override
+            defer { TranscriptionLanguage.override = original }
+            TranscriptionLanguage.override = nil
+            TranscriptionLanguage.preferredLanguageTagsOverride = ["en-DE"]
+            TranscriptionLanguage.currentLocaleOverride = Locale(identifier: "en_DE")
+            let hints = TranscriptionLanguage.decodeHints(peerID: nil)
+            #expect(hints.contains("de"), "en-DE must still challenge Whisper's English default")
+            #expect(TranscriptionLanguage.challenger(detected: "en", hints: hints) == "de")
+        }
+    }
+
+    @Test
+    func conversationMemoryOutranksTheDeviceRegion() {
+        withCleanMemory {
+            let peer = UUID()
+            for _ in 0 ..< 4 {
+                TranscriptionLanguageMemory.record(languageCode: "fr", peerID: peer, weight: 1)
+            }
+            TranscriptionLanguage.preferredLanguageTagsOverride = ["en-DE"]
+            TranscriptionLanguage.currentLocaleOverride = Locale(identifier: "en_DE")
+            let hints = TranscriptionLanguage.decodeHints(peerID: peer)
+            #expect(hints.first == "fr")
+            #expect(TranscriptionLanguage.challenger(detected: "en", hints: hints) == "fr")
+        }
+    }
+
+    @Test
+    func challengerIsNilWhenDetectionAlreadyMatches() {
+        #expect(TranscriptionLanguage.challenger(detected: "de", hints: ["de", "en"]) == nil)
+        #expect(TranscriptionLanguage.challenger(detected: "german", hints: ["de"]) == nil)
+        #expect(TranscriptionLanguage.challenger(detected: nil, hints: ["en"]) == nil)
+        #expect(TranscriptionLanguage.challenger(detected: nil, hints: ["en", "de"]) == "de")
+    }
+
+    @Test
+    func englishMemoryDoesNotSkipAGermanChallenger() {
+        withCleanMemory {
+            let peer = UUID()
+            for _ in 0 ..< 5 {
+                TranscriptionLanguageMemory.record(languageCode: "en", peerID: peer, weight: 1)
+            }
+            #expect(TranscriptionLanguageMemory.prior(for: "en", peerID: peer) >= TranscriptionLanguage.trustedPrior)
+            #expect(!TranscriptionLanguage.shouldForceLanguage("en", prior: TranscriptionLanguageMemory.prior(for: "en", peerID: peer)))
+            TranscriptionLanguage.preferredLanguageTagsOverride = ["en-DE"]
+            let hints = TranscriptionLanguage.decodeHints(peerID: peer)
+            #expect(TranscriptionLanguage.challenger(detected: "en", hints: hints) == "de")
+        }
+    }
+
+    @Test
+    func germanMemoryDoesSkipAutoDetect() {
+        #expect(TranscriptionLanguage.shouldForceLanguage("de", prior: 0.8))
+        #expect(!TranscriptionLanguage.shouldForceLanguage("de", prior: 0.5))
+        #expect(!TranscriptionLanguage.shouldForceLanguage("en", prior: 0.99))
+    }
+
+    @Test
+    func normalizeMapsWhisperLanguageNames() {
+        #expect(TranscriptionLanguage.normalize("german") == "de")
+        #expect(TranscriptionLanguage.normalize("DE") == "de")
+        #expect(TranscriptionLanguage.normalize("en") == "en")
+    }
+
+    @Test
+    func languageProbabilityPrefersMatchingText() {
+        let german = "Guten Morgen, ich wollte dir nur schnell Bescheid geben dass es später wird"
+        let english = "Good morning, I just wanted to let you know that it is going to be later"
+        let deOnGerman = VoiceTranscript.languageProbability(of: "de", in: german)
+        let enOnGerman = VoiceTranscript.languageProbability(of: "en", in: german)
+        let enOnEnglish = VoiceTranscript.languageProbability(of: "en", in: english)
+        #expect(deOnGerman > enOnGerman)
+        #expect(enOnEnglish > VoiceTranscript.languageProbability(of: "de", in: english))
+    }
+
+    /// The regression: Whisper auto-detects English, but the German decode is the real speech.
+    @Test
+    func choosePrefersAGermanChallengerOverEnglishAutoDetect() {
+        withCleanMemory {
+            let auto = VoiceTranscript.Candidate(
+                text: "House goes to the deer tonight",
+                language: "en",
+                confidence: 0.72
+            )
+            let challenge = VoiceTranscript.Candidate(
+                text: "Haus, ich gehe später noch zu dir",
+                language: "de",
+                confidence: 0.68
+            )
+            let chosen = VoiceTranscript.choose(
+                auto: auto, challenge: challenge, peerID: nil, audioSeconds: 6
+            )
+            #expect(chosen.language == "de")
+            #expect(chosen.text.contains("Haus"))
+        }
+    }
+
+    @Test
+    func chooseKeepsEnglishWhenTheChallengerIsEmpty() {
+        withCleanMemory {
+            let auto = VoiceTranscript.Candidate(
+                text: "I'll be there in five minutes",
+                language: "en",
+                confidence: 0.9
+            )
+            let challenge = VoiceTranscript.Candidate(
+                text: ", , ,",
+                language: "de",
+                confidence: 0.4
+            )
+            let chosen = VoiceTranscript.choose(
+                auto: auto, challenge: challenge, peerID: nil, audioSeconds: 8
+            )
+            #expect(chosen.language == "en")
+        }
+    }
 }

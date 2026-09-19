@@ -112,7 +112,7 @@ struct TranscriptionLanguageView: View {
         VStack(spacing: 0) {
             row(
                 title: "Automatic",
-                subtitle: "Detects the spoken language.",
+                subtitle: "Detects the spoken language. Remembers it per chat when Whisper is unsure.",
                 isSelected: selection == nil
             ) {
                 choose(nil)

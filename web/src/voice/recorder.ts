@@ -338,7 +338,7 @@ export function cancelVoiceRecord(): void {
   emit();
 }
 
-export async function finishVoiceRecord(): Promise<VoiceTake | null> {
+export async function finishVoiceRecord(opts?: { conversationId?: string }): Promise<VoiceTake | null> {
   /* Timers are throttled in background tabs, so the last tick can be stale. */
   const duration = startedAt ? (performance.now() - startedAt) / 1000 : snapshot.elapsed;
   const captured = downsampleEnvelope(envelope, VOICE_WAVEFORM_BUCKETS);
@@ -388,7 +388,7 @@ export async function finishVoiceRecord(): Promise<VoiceTake | null> {
       durationMs: Math.max(1, Math.round(duration * 1000)),
       waveform: captured,
       transcript: null,
-      pendingTranscript: transcribeVoiceNote(pcm, rate),
+      pendingTranscript: transcribeVoiceNote(pcm, rate, { conversationId: opts?.conversationId }),
     };
   }
 
@@ -402,7 +402,7 @@ export async function finishVoiceRecord(): Promise<VoiceTake | null> {
         durationMs: Math.max(1, Math.round(duration * 1000)),
         waveform: captured,
         transcript: null,
-        pendingTranscript: transcribeFromTake(pcm, rate, looksWav ? wav : null),
+        pendingTranscript: transcribeFromTake(pcm, rate, looksWav ? wav : null, opts?.conversationId),
       };
     }
   }
@@ -414,11 +414,15 @@ function transcribeFromTake(
   pcm: Float32Array[],
   rate: number,
   wav: Uint8Array | null,
+  conversationId?: string,
 ): Promise<string | null> {
+  const opts = { conversationId };
   let samples = 0;
   for (const part of pcm) samples += part.length;
-  if (rate > 0 && samples >= rate * 0.3) return transcribeVoiceNote(pcm, rate);
-  if (!wav) return transcribeVoiceNote(pcm, rate);
+  if (rate > 0 && samples >= rate * 0.3) return transcribeVoiceNote(pcm, rate, opts);
+  if (!wav) return transcribeVoiceNote(pcm, rate, opts);
   const decoded = pcmFromWav(wav);
-  return decoded ? transcribeVoiceNote([decoded.samples], decoded.sampleRate) : transcribeVoiceNote(pcm, rate);
+  return decoded
+    ? transcribeVoiceNote([decoded.samples], decoded.sampleRate, opts)
+    : transcribeVoiceNote(pcm, rate, opts);
 }
