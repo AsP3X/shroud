@@ -125,7 +125,7 @@ struct ChatsView: View {
                                     let n = messaging.unreadCount(for: conversation.peer.id)
                                     return n > 0 ? n : nil
                                 }(),
-                                subtitleAccent: messaging.typingPeerIDs.contains(conversation.peer.id),
+                                isTyping: messaging.typingPeerIDs.contains(conversation.peer.id),
                                 avatarGradient: AvatarView.gradient(for: conversation.peer.username)
                             )
                         }
@@ -283,10 +283,7 @@ struct ChatsView: View {
     }
 
     private func rowSubtitle(_ conversation: ConversationItemDTO) -> String {
-        if messaging.typingPeerIDs.contains(conversation.peer.id) {
-            return "typing…"
-        }
-        return messaging.preview(for: conversation)
+        messaging.preview(for: conversation)
     }
 
     private var notesAvatarGradient: LinearGradient {

@@ -2,12 +2,20 @@ import { wsUrl } from "./config";
 
 export type RealtimeEvent = { type: string; raw: Record<string, unknown> };
 
+export type Realtime = {
+  /** Best effort: dropped unless the socket is open and authenticated (typing and the like). */
+  send: (message: Record<string, unknown>) => void;
+  close: () => void;
+};
+
 export function connectRealtime(opts: {
   token: string;
   onEvent: (event: RealtimeEvent) => void;
   onFatalAuth?: () => void;
-}): () => void {
+}): Realtime {
   let socket: WebSocket | null = null;
+  /** The current socket has seen `auth.ok`; frames before that would be rejected. */
+  let ready = false;
   let closed = false;
   let attempt = 0;
   let reconnectTimer = 0;
@@ -35,6 +43,7 @@ export function connectRealtime(opts: {
       const type = typeof raw.type === "string" ? raw.type : "";
       if (type === "auth.ok") {
         attempt = 0;
+        ready = true;
         opts.onEvent({ type, raw });
         return;
       }
@@ -47,7 +56,10 @@ export function connectRealtime(opts: {
       if (type) opts.onEvent({ type, raw });
     };
     ws.onclose = () => {
-      if (socket === ws) socket = null;
+      if (socket === ws) {
+        socket = null;
+        ready = false;
+      }
       if (closed) return;
       const delay = Math.min(30_000, 1000 * 2 ** Math.min(attempt, 8));
       attempt += 1;
@@ -60,11 +72,18 @@ export function connectRealtime(opts: {
 
   document.addEventListener("visibilitychange", onVisible);
   open();
-  return () => {
-    closed = true;
-    window.clearTimeout(reconnectTimer);
-    document.removeEventListener("visibilitychange", onVisible);
-    socket?.close();
-    socket = null;
+  return {
+    send(message) {
+      if (!ready || socket?.readyState !== WebSocket.OPEN) return;
+      socket.send(JSON.stringify(message));
+    },
+    close() {
+      closed = true;
+      ready = false;
+      window.clearTimeout(reconnectTimer);
+      document.removeEventListener("visibilitychange", onVisible);
+      socket?.close();
+      socket = null;
+    },
   };
 }

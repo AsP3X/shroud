@@ -20,7 +20,6 @@ struct ConversationView: View {
     @Environment(\.displayScale) private var displayScale
 
     @State private var draft = ""
-    @State private var typingTask: Task<Void, Never>?
     @State private var showAttach = false
     /// Owns the mic session for this thread. The composer only reads its live state.
     @State private var voiceRecorder = VoiceRecorder()
@@ -194,7 +193,11 @@ struct ConversationView: View {
                         onRecordSend: sendRecording,
                         onDraftChange: { text in
                             if !isNotes {
-                                scheduleTyping(!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                                // Keepalive and idle timing live in `MessagingController`.
+                                messaging.setTyping(
+                                    peerUserID: peerUserID,
+                                    isTyping: !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                )
                             }
                         }
                     )
@@ -215,7 +218,6 @@ struct ConversationView: View {
                 pinToBottomToken &+= 1
             }
             .onDisappear {
-                typingTask?.cancel()
                 // Leaving the thread throws away an in-flight take and silences playback —
                 // there is no mini-player to hand either off to.
                 voiceRecorder.cancel()
@@ -517,20 +519,28 @@ struct ConversationView: View {
                                         .foregroundStyle(Theme.textPrimary)
                                         .lineLimit(1)
                                     HStack(spacing: 4) {
-                                        if isOnline || isPeerTyping {
-                                            PresenceDot(isTyping: isPeerTyping)
-                                                .transition(Motion.iconSwap)
+                                        if isPeerTyping {
+                                            // "online" → "typing" swaps in place, dots riding the
+                                            // same wave as the ink bubble in the thread.
+                                            TypingLabel()
+                                                .transition(.opacity)
+                                        } else {
+                                            if isOnline {
+                                                PresenceDot()
+                                                    .transition(Motion.iconSwap)
+                                            }
+                                            Text(presenceLabel)
+                                                .font(.system(size: 12))
+                                                .foregroundStyle(presenceAccent ? Theme.accent : Theme.textSecondary)
+                                                .lineLimit(1)
+                                                .contentTransition(.opacity)
+                                                .transition(.opacity)
                                         }
-                                        Text(presenceLabel)
-                                            .font(.system(size: 12))
-                                            .foregroundStyle(presenceAccent ? Theme.accent : Theme.textSecondary)
-                                            .lineLimit(1)
-                                            // "online" → "typing…" swaps in place.
-                                            .contentTransition(.opacity)
                                     }
                                     // Presence is the header's only live state — animate every part of it.
                                     .animation(Motion.snappy, value: presenceLabel)
-                                    .animation(Motion.snappy, value: isOnline || isPeerTyping)
+                                    .animation(Motion.snappy, value: isOnline)
+                                    .animation(Motion.snappy, value: isPeerTyping)
                                 }
                             }
                             .contentShape(Rectangle())
@@ -678,7 +688,8 @@ struct ConversationView: View {
                 // just `count`) so a same-count reload still resolves without re-animating
                 // the whole thread. The bottom-pin below runs on the same change.
                 .animation(Motion.bouncy, value: newestMessageID)
-                .animation(Motion.standard, value: isPeerTyping)
+                // Springy, so the ink bubble pops out of its tail corner like a message landing.
+                .animation(Motion.bouncy, value: isPeerTyping)
                 .onPreferenceChange(MessageBubbleFrameKey.self) { frames in
                     bubbleGlobalFrames.merge(frames, uniquingKeysWith: { $1 })
                 }
@@ -818,18 +829,6 @@ struct ConversationView: View {
         Task { await messaging.sendText(text, to: peerUserID) }
     }
 
-    private func scheduleTyping(_ isTyping: Bool) {
-        typingTask?.cancel()
-        messaging.setTyping(peerUserID: peerUserID, isTyping: isTyping)
-        guard isTyping else { return }
-        typingTask = Task {
-            try? await Task.sleep(nanoseconds: 2_500_000_000)
-            if !Task.isCancelled {
-                messaging.setTyping(peerUserID: peerUserID, isTyping: false)
-            }
-        }
-    }
-
     // MARK: - Voice recording
 
     /// Begins a take. Returns false so the composer can drop straight back to idle when the
@@ -877,6 +876,9 @@ struct ConversationView: View {
                 return
             }
             Haptics.impact(.light)
+            if !isNotes {
+                messaging.setTyping(peerUserID: peerUserID, isTyping: false)
+            }
             Task {
                 let error = await messaging.sendVoice(
                     audioData: take.data,

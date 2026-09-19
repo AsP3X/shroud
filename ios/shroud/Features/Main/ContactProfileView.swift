@@ -21,8 +21,11 @@ struct ContactProfileView: View {
         messaging.blockedUsers.contains { $0.userId == peerUserID }
     }
 
+    private var isTyping: Bool {
+        messaging.typingPeerIDs.contains(peerUserID)
+    }
+
     private var statusLine: String {
-        if messaging.typingPeerIDs.contains(peerUserID) { return "typing…" }
         if isOnline { return "online" }
         if let last = messaging.presenceByUser[peerUserID]?.lastSeenAt {
             return "last seen \(messaging.timeLabel(for: last))"
@@ -93,9 +96,13 @@ struct ContactProfileView: View {
                 Text(peerUsername)
                     .font(.system(size: 22, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
-                Text(statusLine)
-                    .font(.system(size: 14))
-                    .foregroundStyle(isOnline ? Theme.accent : Theme.textSecondary)
+                if isTyping {
+                    TypingLabel(font: .system(size: 14))
+                } else {
+                    Text(statusLine)
+                        .font(.system(size: 14))
+                        .foregroundStyle(isOnline ? Theme.accent : Theme.textSecondary)
+                }
             }
             .padding(.top, 8)
         }

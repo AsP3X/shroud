@@ -7,6 +7,8 @@ struct ChatRowView: View {
     var time: String? = nil
     var unreadCount: Int? = nil
     var subtitleAccent: Bool = false
+    /// "typing" with the live dots replaces the subtitle.
+    var isTyping: Bool = false
     var avatarGradient: LinearGradient? = nil
     /// When set, shows a symbol instead of initials (e.g. Notes bookmark).
     var avatarSystemImage: String? = nil
@@ -47,15 +49,24 @@ struct ChatRowView: View {
                 }
 
                 HStack(alignment: .center, spacing: 8) {
-                    Text(subtitle)
-                        .font(.system(size: 14))
-                        .foregroundStyle(subtitleAccent ? Theme.accent : Theme.textSecondary)
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        // "typing…" replaces the preview in place instead of hard-cutting.
-                        .contentTransition(.opacity)
-                        .animation(Motion.fade, value: subtitle)
-                        .animation(Motion.snappy, value: subtitleAccent)
+                    ZStack(alignment: .leading) {
+                        // "typing" replaces the preview in place instead of hard-cutting.
+                        if isTyping {
+                            TypingLabel(font: .system(size: 14))
+                                .transition(.opacity)
+                        } else {
+                            Text(subtitle)
+                                .font(.system(size: 14))
+                                .foregroundStyle(subtitleAccent ? Theme.accent : Theme.textSecondary)
+                                .lineLimit(1)
+                                .contentTransition(.opacity)
+                                .transition(.opacity)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .animation(Motion.fade, value: subtitle)
+                    .animation(Motion.fade, value: isTyping)
+                    .animation(Motion.snappy, value: subtitleAccent)
 
                     if let unreadCount, unreadCount > 0 {
                         Text(unreadBadgeText(unreadCount))
@@ -88,7 +99,7 @@ struct ChatRowView: View {
     }
 
     private var accessibilityLabel: String {
-        var parts = [title, subtitle]
+        var parts = [title, isTyping ? "typing" : subtitle]
         if let time { parts.append(time) }
         if let unreadCount, unreadCount > 0 {
             parts.append("\(unreadCount) unread")

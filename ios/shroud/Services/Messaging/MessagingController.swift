@@ -37,7 +37,14 @@ final class MessagingController {
 
     /// Decrypted messages by peer user id (newest last). Notes use `notesPeerID`.
     private(set) var threads: [UUID: [ChatMessage]] = [:]
+    /// Peers typing to us right now; each lapses after `typingExpiry` unless refreshed.
     private(set) var typingPeerIDs: Set<UUID> = []
+    private var typingExpiryTasks: [UUID: Task<Void, Never>] = [:]
+    /// Outgoing typing: the peer we last told we were typing, when, and the idle timer that
+    /// says we stopped.
+    private var typingSentTo: UUID?
+    private var typingSentAt: Date?
+    private var typingIdleTask: Task<Void, Never>?
     private(set) var presenceByUser: [UUID: PresenceDTO] = [:]
     /// Unread inbound counts by peer (local; cleared when the thread is opened).
     private(set) var unreadCountByPeer: [UUID: Int] = [:]
@@ -348,7 +355,7 @@ final class MessagingController {
         incomingRequests = []
         conversations = []
         threads = [:]
-        typingPeerIDs = []
+        clearAllTyping()
         presenceByUser = [:]
         unreadCountByPeer = [:]
         identityChanges = [:]
@@ -384,7 +391,7 @@ final class MessagingController {
         local.lockSensitiveMemory()
         // Drop message bodies; keep conversation list shells for a less jarring re-unlock.
         threads = [:]
-        typingPeerIDs = []
+        clearAllTyping()
         unreadCountByPeer = [:]
         activePeerID = nil
         threadLoadTasks.values.forEach { $0.cancel() }
@@ -1284,7 +1291,7 @@ final class MessagingController {
         }
         if !isNotesChat(peerUserID) {
             conversations.removeAll { $0.peer.id == peerUserID }
-            typingPeerIDs.remove(peerUserID)
+            setPeerTyping(peerUserID, false)
         }
         persistThread(peerUserID)
     }
@@ -1351,7 +1358,7 @@ final class MessagingController {
             return text
         }
         contacts.removeAll { $0.userId == userID }
-        typingPeerIDs.remove(userID)
+        setPeerTyping(userID, false)
         lastError = nil
         await refreshBlocks()
         await refreshContacts(force: true)
@@ -1377,8 +1384,69 @@ final class MessagingController {
         return nil
     }
 
+    // MARK: - Typing
+    //
+    // Human: The server relays `typing` frames to the peer's devices only (routes/ws.rs). These
+    // timings are the contract with the web client (`web/src/typing.ts`) — change them together:
+    // a sender says `true` when typing starts and again at most every `typingKeepalive` while it
+    // goes on, then `false` after `typingIdle` without a keystroke, on send, and on leaving the
+    // chat. A receiver drops "typing" after `typingExpiry` without a fresh `true`, so a sender
+    // that vanishes mid-word cannot leave it stuck; a message from that peer clears it at once.
+
+    static let typingKeepalive: TimeInterval = 3
+    static let typingIdle: TimeInterval = 3
+    static let typingExpiry: TimeInterval = 6
+
+    /// Reports composer activity for `peerUserID`: `isTyping` is false once the draft is empty.
     func setTyping(peerUserID: UUID, isTyping: Bool) {
-        realtime.sendTyping(peerUserID: peerUserID, isTyping: isTyping)
+        if let sentTo = typingSentTo, sentTo != peerUserID || !isTyping {
+            stopTyping()
+        }
+        guard isTyping else { return }
+        typingSentTo = peerUserID
+        if typingSentAt.map({ Date().timeIntervalSince($0) >= Self.typingKeepalive }) ?? true {
+            realtime.sendTyping(peerUserID: peerUserID, isTyping: true)
+            typingSentAt = Date()
+        }
+        typingIdleTask?.cancel()
+        typingIdleTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.typingIdle))
+            guard !Task.isCancelled else { return }
+            self?.stopTyping()
+        }
+    }
+
+    /// Says `false` if we last said `true`.
+    private func stopTyping() {
+        typingIdleTask?.cancel()
+        typingIdleTask = nil
+        if let peer = typingSentTo {
+            realtime.sendTyping(peerUserID: peer, isTyping: false)
+        }
+        typingSentTo = nil
+        typingSentAt = nil
+    }
+
+    /// A peer started or stopped typing to us; "started" lapses on its own unless refreshed.
+    private func setPeerTyping(_ userID: UUID, _ isTyping: Bool) {
+        typingExpiryTasks.removeValue(forKey: userID)?.cancel()
+        if isTyping {
+            if !typingPeerIDs.contains(userID) { typingPeerIDs.insert(userID) }
+            typingExpiryTasks[userID] = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(Self.typingExpiry))
+                guard !Task.isCancelled else { return }
+                self?.setPeerTyping(userID, false)
+            }
+        } else if typingPeerIDs.contains(userID) {
+            typingPeerIDs.remove(userID)
+        }
+    }
+
+    private func clearAllTyping() {
+        stopTyping()
+        typingExpiryTasks.values.forEach { $0.cancel() }
+        typingExpiryTasks.removeAll()
+        typingPeerIDs = []
     }
 
     /// Encrypts, uploads, and sends an image message to `peerUserID`.
@@ -3123,11 +3191,7 @@ final class MessagingController {
               let userID = UUID(uuidString: userString),
               let isTyping = json["is_typing"] as? Bool
         else { return }
-        if isTyping {
-            if !typingPeerIDs.contains(userID) { typingPeerIDs.insert(userID) }
-        } else if typingPeerIDs.contains(userID) {
-            typingPeerIDs.remove(userID)
-        }
+        setPeerTyping(userID, isTyping)
     }
 
     private func handlePresence(_ json: [String: Any]) {
@@ -3141,6 +3205,7 @@ final class MessagingController {
         }
         let presence = PresenceDTO(userId: userID, online: online, lastSeenAt: lastSeen)
         if presenceByUser[userID] != presence { presenceByUser[userID] = presence }
+        if !online { setPeerTyping(userID, false) }
     }
 
     private func ingestIncoming(_ dto: MessageDTO) async {
@@ -3194,6 +3259,8 @@ final class MessagingController {
         if !thread.contains(where: { $0.id == chat.id }) {
             thread.append(chat)
             thread = foldSharedTranscripts(into: thread)
+            // Their message is what the typing was for: it takes the indicator's place.
+            if !chat.isMine { setPeerTyping(dto.senderUserId, false) }
             threads[threadPeer] = thread
             if !chat.isMine, activePeerID != threadPeer {
                 unreadCountByPeer[threadPeer, default: 0] += 1

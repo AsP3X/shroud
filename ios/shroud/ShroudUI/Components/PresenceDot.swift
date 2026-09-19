@@ -3,21 +3,21 @@ import SwiftUI
 /// Live presence indicator — a solid dot that emits a slow halo while the peer is online.
 ///
 /// Human: The halo is the only always-running animation in chat chrome; it is deliberately
-/// slow and low-contrast so it reads as "connected", not as a distraction.
+/// slow and low-contrast so it reads as "connected", not as a distraction. While the peer types,
+/// `TypingLabel` takes its place.
 /// Agent: Pure view state (`phaseAnimator`); no controller reads. Halo is dropped under
-/// Reduce Motion and when `isTyping` (the typing dots already carry the motion there).
+/// Reduce Motion.
 struct PresenceDot: View {
-    var isTyping: Bool = false
     var size: CGFloat = 7
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var color: Color {
-        isTyping ? Theme.accent : Theme.online
+        Theme.online
     }
 
     private var pulses: Bool {
-        !isTyping && !reduceMotion
+        !reduceMotion
     }
 
     var body: some View {
@@ -29,7 +29,6 @@ struct PresenceDot: View {
                     halo
                 }
             }
-            .animation(Motion.snappy, value: isTyping)
             .accessibilityHidden(true)
     }
 
@@ -53,7 +52,6 @@ struct PresenceDot: View {
 #Preview {
     HStack(spacing: 20) {
         PresenceDot()
-        PresenceDot(isTyping: true)
         PresenceDot(size: 12)
     }
     .padding(40)

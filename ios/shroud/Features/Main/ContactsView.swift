@@ -118,6 +118,7 @@ struct ContactsView: View {
                                         title: contact.username,
                                         subtitle: contactStatus(contact),
                                         subtitleAccent: messaging.presenceByUser[contact.userId]?.online == true,
+                                        isTyping: messaging.typingPeerIDs.contains(contact.userId),
                                         avatarGradient: AvatarView.gradient(for: contact.username)
                                     )
                                 }
@@ -232,9 +233,6 @@ struct ContactsView: View {
     }
 
     private func contactStatus(_ contact: ContactItemDTO) -> String {
-        if messaging.typingPeerIDs.contains(contact.userId) {
-            return "typing…"
-        }
         if let presence = messaging.presenceByUser[contact.userId] {
             if presence.online { return "online" }
             if let last = presence.lastSeenAt {

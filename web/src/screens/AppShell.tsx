@@ -43,7 +43,8 @@ import {
   TRANSCRIBE_TIMEOUT_MS,
 } from "../voice/transcriber";
 import { rekeyTranscriptView, setTranscribing } from "../voice/transcriptView";
-import { connectRealtime } from "../realtime";
+import { connectRealtime, type Realtime } from "../realtime";
+import { createTypingSender, TYPING_EXPIRE_MS } from "../typing";
 import { clearSession, setLocked } from "../session";
 
 type PeerRef = { id: string; username: string };
@@ -91,6 +92,8 @@ export function AppShell({ session }: { session: Session }) {
   const [draft, setDraft] = useState("");
   const [sendingPeer, setSendingPeer] = useState<string | null>(null);
   const [presenceByUser, setPresenceByUser] = useState<Record<string, Presence>>({});
+  /** Peers typing to us right now, by lowercased user id. */
+  const [typingPeers, setTypingPeers] = useState<ReadonlySet<string>>(() => new Set());
   const [previewRev, setPreviewRev] = useState(0);
   const mobileShowThread = Boolean(selected) && tab !== "settings";
   const identity = loadIdentity(session.user.id);
@@ -104,6 +107,62 @@ export function AppShell({ session }: { session: Session }) {
   const lastPresenceSweep = useRef(0);
   const draftRef = useRef(draft);
   draftRef.current = draft;
+  const realtime = useRef<Realtime | null>(null);
+  const typingTimers = useRef(new Map<string, number>());
+  const typingSender = useMemo(
+    () =>
+      createTypingSender((peerId, typing) =>
+        realtime.current?.send({ type: "typing", peer_user_id: peerId, is_typing: typing }),
+      ),
+    [],
+  );
+
+  /** A peer started or stopped typing; "started" lapses on its own unless refreshed (typing.ts). */
+  const markTyping = useCallback((peerId: string, typing: boolean) => {
+    const id = peerId.toLowerCase();
+    if (!id) return;
+    const timers = typingTimers.current;
+    window.clearTimeout(timers.get(id));
+    timers.delete(id);
+    const update = (on: boolean) =>
+      setTypingPeers((prev) => {
+        if (prev.has(id) === on) return prev;
+        const next = new Set(prev);
+        if (on) next.add(id);
+        else next.delete(id);
+        return next;
+      });
+    if (typing) {
+      timers.set(
+        id,
+        window.setTimeout(() => {
+          timers.delete(id);
+          update(false);
+        }, TYPING_EXPIRE_MS),
+      );
+    }
+    update(typing);
+  }, []);
+
+  useEffect(() => {
+    const timers = typingTimers.current;
+    return () => {
+      for (const timer of timers.values()) window.clearTimeout(timer);
+      timers.clear();
+    };
+  }, []);
+
+  /* Leaving a chat (or the page) ends our typing there. */
+  useEffect(() => {
+    const hide = () => {
+      if (document.hidden) typingSender.stop();
+    };
+    document.addEventListener("visibilitychange", hide);
+    return () => {
+      document.removeEventListener("visibilitychange", hide);
+      typingSender.stop();
+    };
+  }, [selected?.id, typingSender]);
 
   const refresh = useCallback(async (): Promise<Conversation[]> => {
     const [conv, roster, requests] = await Promise.allSettled([
@@ -230,7 +289,7 @@ export function AppShell({ session }: { session: Session }) {
   }, [selected?.id, session.token, session.user.id]);
 
   useEffect(() => {
-    const stop = connectRealtime({
+    const connection = connectRealtime({
       token: session.token,
       onFatalAuth: () => {
         clearSession();
@@ -238,9 +297,14 @@ export function AppShell({ session }: { session: Session }) {
       },
       onEvent: (event) => {
         if (event.type === "auth.ok") return;
+        if (event.type === "typing") {
+          markTyping(String(event.raw.user_id ?? ""), event.raw.is_typing !== false);
+          return;
+        }
         if (event.type === "presence.update") {
           const id = String(event.raw.user_id ?? "").toLowerCase();
           if (!id) return;
+          if (!event.raw.online) markTyping(id, false);
           setPresenceByUser((prev) => ({
             ...prev,
             [id]: {
@@ -269,6 +333,9 @@ export function AppShell({ session }: { session: Session }) {
                 session.token,
                 material,
               );
+              // Their message is what the typing was for: cleared in the same update that
+              // adds it, so it lands where the typing bubble was.
+              markTyping(dto.sender_user_id, false);
               const open = selectedRef.current;
               setPreviewRev((n) => n + 1);
               if (open && open.id.toLowerCase() === peer.toLowerCase()) {
@@ -276,6 +343,7 @@ export function AppShell({ session }: { session: Session }) {
               }
             } catch {
               /* roster refresh already ran; next poll/WS event retries */
+              markTyping(dto.sender_user_id, false);
             }
           })();
           return;
@@ -298,8 +366,12 @@ export function AppShell({ session }: { session: Session }) {
         }
       },
     });
-    return stop;
-  }, [session.token, session.user.id, navigate, refresh]);
+    realtime.current = connection;
+    return () => {
+      realtime.current = null;
+      connection.close();
+    };
+  }, [session.token, session.user.id, navigate, refresh, markTyping]);
 
   useEffect(() => {
     if (!selected) return;
@@ -339,6 +411,7 @@ export function AppShell({ session }: { session: Session }) {
         subtitle: previewLine(session.user.id, c.peer.id),
         timestamp: listTimestamp(c.last_message_at),
         online: Boolean(presenceByUser[c.peer.id.toLowerCase()]?.online),
+        typing: typingPeers.has(c.peer.id.toLowerCase()),
       }))
       .filter(
         (entry) =>
@@ -346,7 +419,7 @@ export function AppShell({ session }: { session: Session }) {
           entry.username.toLowerCase().includes(q) ||
           entry.subtitle.toLowerCase().includes(q),
       );
-  }, [conversations, presenceByUser, previewRev, query, session.user.id]);
+  }, [conversations, presenceByUser, previewRev, query, session.user.id, typingPeers]);
 
   const contactEntries = useMemo<ListEntry[]>(() => {
     const q = query.trim().toLowerCase();
@@ -359,9 +432,10 @@ export function AppShell({ session }: { session: Session }) {
           username: c.username,
           subtitle: presenceLabel(presence) || "Contact",
           online: Boolean(presence?.online),
+          typing: typingPeers.has(c.user_id.toLowerCase()),
         };
       });
-  }, [contacts, presenceByUser, query]);
+  }, [contacts, presenceByUser, query, typingPeers]);
 
   const lockNow = useCallback(() => {
     setLocked(true);
@@ -413,6 +487,7 @@ export function AppShell({ session }: { session: Session }) {
   async function submitMessage() {
     const text = draftRef.current.trim();
     if (!text || !selected || !identity) return;
+    typingSender.stop();
     draftRef.current = "";
     const peerId = selected.id;
     const localId = `pending:${crypto.randomUUID()}`;
@@ -456,6 +531,7 @@ export function AppShell({ session }: { session: Session }) {
 
   async function submitVoice(take: VoiceTake) {
     if (!selected || !identity) return;
+    typingSender.stop();
     const peerId = selected.id;
     const material = identity;
     const localId = `pending:${crypto.randomUUID()}`;
@@ -639,13 +715,17 @@ export function AppShell({ session }: { session: Session }) {
                 peer={selected}
                 presence={presenceLabel(selectedPresence)}
                 online={Boolean(selectedPresence?.online)}
+                typing={typingPeers.has(selected.id.toLowerCase())}
                 messages={thread}
                 loading={threadLoading}
                 error={threadError}
                 canSend={Boolean(identity)}
                 sending={sendingPeer?.toLowerCase() === selected.id.toLowerCase()}
                 draft={draft}
-                onDraftChange={setDraft}
+                onDraftChange={(value) => {
+                  setDraft(value);
+                  typingSender.input(selected.id, value.trim().length > 0);
+                }}
                 onSend={() => void submitMessage()}
                 onSendVoice={(take) => void submitVoice(take)}
                 onBack={() => setSelected(null)}

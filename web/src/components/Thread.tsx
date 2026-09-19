@@ -28,6 +28,7 @@ import { clockTime, dayLabel, fullTimestamp, sameDay, MINUTE } from "../format";
 import type { ChatMessage } from "../messaging";
 import { Avatar } from "./Avatar";
 import { Highlight } from "./Highlight";
+import { TypingBubble, TypingLabel } from "./Typing";
 import { VoiceBubble } from "./VoiceBubble";
 import { VoiceDroplet, VoiceStrip } from "./VoiceRecorderBar";
 import { useVoiceRecording } from "./useVoiceRecording";
@@ -38,6 +39,8 @@ import { clearTranscriptChoice, transcriptTail } from "../voice/transcriptView";
 const GROUP_WINDOW = 5 * MINUTE;
 /** How far off the bottom the reader can be before new messages stop auto-scrolling. */
 const PIN_SLACK = 120;
+/** The typing bubble's exit animation (index.css `typing-out`). */
+const TYPING_OUT_MS = 180;
 
 type Row =
   | { kind: "day"; key: string; label: string }
@@ -81,6 +84,7 @@ export function Thread({
   peer,
   presence,
   online,
+  typing = false,
   messages,
   loading,
   error,
@@ -97,6 +101,8 @@ export function Thread({
   peer: { id: string; username: string };
   presence: string;
   online: boolean;
+  /** The peer is typing to us right now. */
+  typing?: boolean;
   messages: ChatMessage[];
   loading: boolean;
   error: string | null;
@@ -217,6 +223,24 @@ export function Thread({
     });
   }, [messages, query]);
   const rows = useMemo(() => buildRows(visible), [visible]);
+
+  /* The typing bubble sinks away when the peer stops, but gives way at once when
+     their message arrives, so the message lands where the bubble was. */
+  const lastIncoming = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) if (!messages[i].isMine) return messages[i].id;
+    return null;
+  }, [messages]);
+  /** Whether the bubble is still on screen, and the newest message from them while it was. */
+  const [typingSeen, setTypingSeen] = useState({ shown: typing, arrival: lastIncoming });
+  useEffect(() => {
+    if (typing) {
+      setTypingSeen({ shown: true, arrival: lastIncoming });
+      return;
+    }
+    const timer = window.setTimeout(() => setTypingSeen((seen) => ({ ...seen, shown: false })), TYPING_OUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [typing, lastIncoming]);
+  const showTyping = typing || (typingSeen.shown && typingSeen.arrival === lastIncoming);
   useLayoutEffect(() => {
     rowCount.current = rows.length;
   }, [rows.length]);
@@ -275,7 +299,11 @@ export function Thread({
         <Avatar name={peer.username} seed={peer.id} online={online} />
         <div className="thread-peer">
           <strong>{peer.username}</strong>
-          <span className={online ? "online" : undefined}>{presence || " "}</span>
+          {typing ? (
+            <TypingLabel />
+          ) : (
+            <span className={online ? "online" : undefined}>{presence || " "}</span>
+          )}
         </div>
         <span className="e2e-badge" title="End-to-end encrypted">
           <ShieldCheck size={13} aria-hidden="true" />
@@ -394,6 +422,9 @@ export function Thread({
               );
             })
           )}
+          {showTyping && !query ? (
+            <TypingBubble name={peer.username} leaving={!typing} />
+          ) : null}
         </div>
       </div>
 
