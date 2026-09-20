@@ -7,6 +7,7 @@ import {
   useState,
   useSyncExternalStore,
   type PointerEvent,
+  type ReactNode,
 } from "react";
 import { LoaderCircle, Pause, Play } from "lucide-react";
 import type { ChatMessage } from "../messaging";
@@ -148,6 +149,7 @@ export function VoiceBubble({
   loadVoice,
   query = "",
   inTail = false,
+  quote,
 }: {
   message: ChatMessage;
   loadVoice: (message: ChatMessage) => Promise<Uint8Array | null>;
@@ -155,6 +157,8 @@ export function VoiceBubble({
   query?: string;
   /** One of the newest voice notes with nothing newer under it: unfolds by itself. */
   inTail?: boolean;
+  /** Reply header drawn above the waveform row. */
+  quote?: ReactNode;
 }) {
   const playback = useSyncExternalStore(subscribeVoicePlayback, getVoicePlayback);
   useSyncExternalStore(subscribeTranscriptView, transcriptViewVersion);
@@ -313,6 +317,7 @@ export function VoiceBubble({
 
   return (
     <>
+      {quote}
       <div className="voice">
         <button
           type="button"

@@ -217,6 +217,68 @@ enum MessageBubbleMetrics {
     }
 }
 
+/// Stacks a reply quote over a message body at one shared width.
+///
+/// Human: A bubble with a quote has to be as wide as the *wider* of the two — the quote when it
+/// is a long line, the text when the message is long — and never wider than the row allows. A
+/// plain `VStack` cannot express that: it would either let the quote dictate an unbounded width
+/// or force the text to fill. So the three parts (quote, text, meta) are measured here and laid
+/// out against one resolved width, with the meta pinned to the bottom-trailing corner exactly
+/// as the plain bubble does.
+/// Agent: Expects exactly three subviews in that order. The text must already carry
+/// `MessageBubbleMetrics.metaReservation`, so the meta never lands on the last line.
+struct QuotedBubbleLayout: Layout {
+    /// Hard cap from the thread's width.
+    let maxWidth: CGFloat
+    /// Gap between the quote and the message text.
+    let spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) -> CGSize {
+        guard subviews.count == 3 else { return .zero }
+        let width = resolvedWidth(proposal: proposal, subviews: subviews)
+        let quoteHeight = subviews[0].sizeThatFits(ProposedViewSize(width: width, height: nil)).height
+        let textHeight = subviews[1].sizeThatFits(ProposedViewSize(width: width, height: nil)).height
+        return CGSize(width: width, height: quoteHeight + spacing + textHeight)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout Void
+    ) {
+        guard subviews.count == 3 else { return }
+        let width = bounds.width
+        let quoteHeight = subviews[0].sizeThatFits(ProposedViewSize(width: width, height: nil)).height
+        subviews[0].place(
+            at: CGPoint(x: bounds.minX, y: bounds.minY),
+            proposal: ProposedViewSize(width: width, height: quoteHeight)
+        )
+        let textHeight = subviews[1].sizeThatFits(ProposedViewSize(width: width, height: nil)).height
+        subviews[1].place(
+            at: CGPoint(x: bounds.minX, y: bounds.minY + quoteHeight + spacing),
+            proposal: ProposedViewSize(width: width, height: textHeight)
+        )
+        subviews[2].place(
+            at: CGPoint(x: bounds.maxX, y: bounds.maxY),
+            anchor: .bottomTrailing,
+            proposal: .unspecified
+        )
+    }
+
+    /// The wider of quote and text, clamped to what the row can give.
+    private func resolvedWidth(proposal: ProposedViewSize, subviews: Subviews) -> CGFloat {
+        let cap = min(maxWidth, proposal.width ?? maxWidth)
+        // The quote is one line of text with a flexible frame: its ideal width is the untruncated
+        // line, which the cap then cuts down (and the quote truncates into).
+        let quoteIdeal = subviews[0].sizeThatFits(.unspecified).width
+        // The body hugs its longest line at the cap; proposing that same width back to it keeps
+        // the line breaks identical, so the bubble hugs instead of snapping to the cap.
+        let textHug = subviews[1].sizeThatFits(ProposedViewSize(width: cap, height: nil)).width
+        return max(1, min(cap, max(quoteIdeal, textHug)))
+    }
+}
+
 /// Message bubble styled close to Telegram iOS:
 /// - Content-hugging width for short text
 /// - Wraps long text at a max width that follows the thread's own width
@@ -232,6 +294,10 @@ struct MessageBubbleView: View {
     var isRowEmbedded: Bool = true
     /// When set, reports this bubble’s global frame via `MessageBubbleFrameKey`.
     var frameReportID: UUID? = nil
+    /// Quote header for a reply; nil for an ordinary message.
+    var reply: ReplyQuoteContent? = nil
+    /// Jump to the quoted message.
+    var onReplyTap: (() -> Void)? = nil
 
     @Environment(\.chatRowWidth) private var chatRowWidth
 
@@ -333,7 +399,9 @@ struct MessageBubbleView: View {
     /// Compact single-line when it fits; otherwise multi-line body with meta on the last line.
     private var bubbleCore: some View {
         Group {
-            if isMultiline {
+            if let reply {
+                quotedBubble(reply)
+            } else if isMultiline {
                 wrappingBubble
             } else {
                 ViewThatFits(in: .horizontal) {
@@ -409,6 +477,36 @@ struct MessageBubbleView: View {
                 .padding(.bottom, 5)
         }
         .fixedSize(horizontal: false, vertical: true)
+        .background(bubbleFill)
+        .clipShape(corners)
+        .background { frameReporter }
+    }
+
+    // MARK: - Reply (quote above the message)
+
+    /// Quote on top, message below, meta in the corner — sized by `QuotedBubbleLayout`.
+    private func quotedBubble(_ reply: ReplyQuoteContent) -> some View {
+        QuotedBubbleLayout(maxWidth: maxBubbleWidth, spacing: 3) {
+            ReplyQuoteView(
+                content: reply,
+                style: isMine ? .outgoing : .incoming,
+                onTap: onReplyTap
+            )
+            .padding(.horizontal, 6)
+            .padding(.top, 6)
+
+            Text("\(bodyText)\(metaSpacerText)")
+                .multilineTextAlignment(.leading)
+                .lineSpacing(2.5)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, MessageBubbleMetrics.textLeadingPad)
+                .padding(.trailing, MessageBubbleMetrics.textTrailingPad)
+                .padding(.bottom, 6)
+
+            metaRow
+                .padding(.trailing, MessageBubbleMetrics.metaTrailingPad)
+                .padding(.bottom, 5)
+        }
         .background(bubbleFill)
         .clipShape(corners)
         .background { frameReporter }

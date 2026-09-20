@@ -49,6 +49,23 @@ High-level structure for the E2E encrypted messenger.
 - Errors: `{ "error": { "code": string, "message": string } }` (`AppError` / Swift `APIError`)
 - Auth routes and bodies: [server-plan.md — Milestone 1](./server-plan.md#milestone-1--auth-locked)
 
+## Sealed plaintext shapes
+
+The server only ever sees `content_type` (`text` / `media` / `annotation`) and an opaque
+envelope. What the two clients agree on *inside* that envelope:
+
+| Shape | Sealed plaintext | Written by |
+| --- | --- | --- |
+| Plain text | raw UTF-8, exactly as typed | every build since v1 |
+| Reply | `{"t":"text","c":<body>,"re":{"id","u","k","x"}}` | `MessageReplyReference` / `web/src/reply.ts` |
+| Media | `MediaMessagePayload` JSON (`t`, `mime`, `k`, …), with the same `re` object when it is a reply | `MediaModels.swift` / `web/src/crypto/mediaPayload.ts` |
+| Annotation | `{"t":"transcript","r":<message id>,"c":<text>}` | `MessageAnnotation` |
+
+`re` carries the quoted message's id (`id`), its author (`u`), its kind (`k`) and a ≤120-character
+snippet (`x`) so a quote still reads when the original has aged out of the local window. Anything
+that does not parse as one of these shapes is treated as plain text, which is what keeps old and
+new builds interoperable in both directions.
+
 ## Security invariants
 
 1. Message plaintext exists **only on devices**, and **only in memory** while messaging is unlocked.
@@ -117,6 +134,7 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 | Notes to me | **done** — local-only self chat (text / photo / voice / todos); no server replies |
 | Photo media messages | **done** — E2E AES-GCM blobs + caption compose |
 | Voice messages | **done** — record/upload/play; on-device Whisper on iOS and web (pluggable engines) |
+| Replies | **done** — swipe left (or the context menu) to quote; the quote is sealed **inside** the plaintext, never server metadata |
 | Calls UI / WebRTC | **done** — signaling + WKWebView WebRTC + CallKit; voice & video |
 | APNs / VoIP push register | **done** — data token + PushKit VoIP token → `PUT /push/token` |
 | Sealed messaging v2 | **done** — dual-seal (peer + self) so sender devices can decrypt history |

@@ -37,6 +37,30 @@ private struct ScrollTouchDelayDisabler: UIViewRepresentable {
     }
 }
 
+/// Lets a control *inside* a bubble claim a tap the row-level gesture also sees.
+///
+/// Human: The row installs its tap as a `simultaneousGesture`, which is what lets a tap reach a
+/// button inside the bubble. The flip side is that both handlers fire — so tapping the reply
+/// header of a photo would jump to the quoted message *and* open the photo. The header claims
+/// the tap; the row checks the claim before acting on it.
+/// Agent: WRITES a timestamp only; no view state. Main-actor isolated, so no locking.
+@MainActor
+enum MessageTapClaim {
+    private static var claimedAt: Date?
+    /// How long a claim suppresses the row's own tap — one event loop's worth, generously.
+    private static let window: TimeInterval = 0.4
+
+    static func claim() {
+        claimedAt = Date()
+    }
+
+    /// True when something inside the bubble just handled this tap.
+    static func isClaimed() -> Bool {
+        guard let claimedAt else { return false }
+        return Date().timeIntervalSince(claimedAt) < window
+    }
+}
+
 /// Chat-row context press: opens the message menu on a short hold, without stealing taps from
 /// controls inside the bubble.
 ///
@@ -86,6 +110,8 @@ private struct MessageContextLongPress: ViewModifier {
                         didLongPress = false
                         return
                     }
+                    // A control inside the bubble (the reply header) may have handled it.
+                    guard !MessageTapClaim.isClaimed() else { return }
                     onTap?()
                 },
                 isEnabled: onTap != nil

@@ -14,7 +14,8 @@ enum NotesLocal {
         text: String,
         kind: MessagingController.ChatMessageKind,
         senderUserID: UUID,
-        todoDone: Bool? = nil
+        todoDone: Bool? = nil,
+        replyTo: MessageReplyReference? = nil
     ) -> MessagingController.ChatMessage {
         MessagingController.ChatMessage(
             id: UUID(),
@@ -26,7 +27,8 @@ enum NotesLocal {
             deleted: false,
             receipt: .sent,
             kind: kind,
-            todoDone: todoDone
+            todoDone: todoDone,
+            replyTo: replyTo
         )
     }
 

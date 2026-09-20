@@ -94,6 +94,9 @@ struct LocalMessageStore: Sendable {
         var sendError: String?
         var todoDone: Bool?
         var pendingSync: Bool?
+        /// Quote carried by a reply. Optional so thread files written before replies existed
+        /// still decode (synthesized `Decodable` skips a missing optional).
+        var replyTo: MessageReplyReference?
 
         static func from(_ message: MessagingController.ChatMessage) -> StoredMessage {
             StoredMessage(
@@ -114,7 +117,8 @@ struct LocalMessageStore: Sendable {
                 transcript: message.transcript,
                 sendError: message.sendError,
                 todoDone: message.todoDone,
-                pendingSync: message.pendingSync ? true : nil
+                pendingSync: message.pendingSync ? true : nil,
+                replyTo: message.replyTo
             )
         }
 
@@ -155,7 +159,8 @@ struct LocalMessageStore: Sendable {
                 transcript: transcript,
                 sendError: sendError,
                 todoDone: todoDone,
-                pendingSync: pendingSync == true
+                pendingSync: pendingSync == true,
+                replyTo: replyTo
             )
         }
     }

@@ -1,4 +1,5 @@
 /** Sealed JSON inside a `content_type = media` message (matches iOS `MediaMessagePayload`). */
+import { parseReplyRef, replyRefWire, type ReplyRef } from "../reply";
 
 export type MediaPayload = {
   t: string;
@@ -11,6 +12,8 @@ export type MediaPayload = {
   wf?: string | null;
   th?: string | null;
   s?: number | null;
+  /** The message this one replies to; absent on payloads sealed before replies existed. */
+  re?: Record<string, string> | null;
 };
 
 export function parseMediaPayload(raw: string): MediaPayload | null {
@@ -30,6 +33,7 @@ export function parseMediaPayload(raw: string): MediaPayload | null {
       wf: parsed.wf ?? null,
       th: parsed.th ?? null,
       s: typeof parsed.s === "number" ? parsed.s : null,
+      re: (parsed as { re?: unknown }).re as Record<string, string> | undefined ?? null,
     };
   } catch {
     return null;
@@ -178,4 +182,15 @@ export function formatRecordingTime(seconds: number): string {
   const secs = Math.floor(total) % 60;
   const centis = Math.floor((total - Math.floor(total)) * 100);
   return `${minutes}:${secs.toString().padStart(2, "0")},${centis.toString().padStart(2, "0")}`;
+}
+
+/** The quote sealed with a media message, if it is one. */
+export function payloadReply(payload: MediaPayload): ReplyRef | null {
+  return parseReplyRef(payload.re);
+}
+
+/** Adds the quote to a media payload about to be sealed (no-op without one). */
+export function withReply<T extends MediaPayload>(payload: T, replyTo: ReplyRef | null | undefined): T {
+  if (!replyTo) return payload;
+  return { ...payload, re: replyRefWire(replyTo) };
 }

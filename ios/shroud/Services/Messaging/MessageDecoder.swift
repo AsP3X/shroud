@@ -72,7 +72,21 @@ enum MessageDecoder {
                !ThreadMessageMerge.isFailedDecryptText(existing.text)
             {
                 if !isMedia, local.sealedPlaintext(for: dto.id) == nil {
-                    local.saveSealedPlaintext(messageID: dto.id, text: existing.text)
+                    // Re-seal what the bubble actually carries, quote included, so a later
+                    // decode from this cache rebuilds the same reply header.
+                    local.saveSealedPlaintext(
+                        messageID: dto.id,
+                        text: MessageTextPayload.wire(body: existing.text, replyTo: existing.replyTo)
+                    )
+                }
+                // A build without reply support stored the raw envelope as the bubble's text.
+                // Read it back rather than leaving JSON on screen forever.
+                if !isMedia, merged.replyTo == nil {
+                    let parsed = MessageTextPayload.parse(existing.text)
+                    if let replyTo = parsed.replyTo {
+                        merged.text = parsed.body
+                        merged.replyTo = replyTo
+                    }
                 }
                 if merged.imageData == nil, existing.kind == .image,
                    let cached = local.sealedMedia(for: dto.id)
@@ -123,16 +137,18 @@ enum MessageDecoder {
                     context: context
                 )
             }
-            let text = String(data: cachedData, encoding: .utf8) ?? "[Binary message]"
+            let raw = String(data: cachedData, encoding: .utf8) ?? "[Binary message]"
+            let parsed = MessageTextPayload.parse(raw)
             return MessagingController.ChatMessage(
                 id: dto.id,
                 peerUserID: peerUserID,
                 senderUserID: dto.senderUserId,
-                text: text,
+                text: parsed.body,
                 createdAt: dto.createdAt,
                 isMine: isMine,
                 deleted: false,
-                receipt: receipt
+                receipt: receipt,
+                replyTo: parsed.replyTo
             )
         }
 
@@ -194,28 +210,34 @@ enum MessageDecoder {
                 )
             }
 
-            let text = String(data: plain, encoding: .utf8) ?? "[Binary message]"
+            // A reply seals its quote in the same plaintext; plain messages stay raw UTF-8.
+            let parsed = MessageTextPayload.parse(
+                String(data: plain, encoding: .utf8) ?? "[Binary message]"
+            )
             return MessagingController.ChatMessage(
                 id: dto.id,
                 peerUserID: peerUserID,
                 senderUserID: dto.senderUserId,
-                text: text,
+                text: parsed.body,
                 createdAt: dto.createdAt,
                 isMine: isMine,
                 deleted: false,
-                receipt: receipt
+                receipt: receipt,
+                replyTo: parsed.replyTo
             )
         } catch {
             if let cached = local.sealedPlaintextText(for: dto.id), !isMedia {
+                let parsed = MessageTextPayload.parse(cached)
                 return MessagingController.ChatMessage(
                     id: dto.id,
                     peerUserID: peerUserID,
                     senderUserID: dto.senderUserId,
-                    text: cached,
+                    text: parsed.body,
                     createdAt: dto.createdAt,
                     isMine: isMine,
                     deleted: false,
-                    receipt: receipt
+                    receipt: receipt,
+                    replyTo: parsed.replyTo
                 )
             }
             if isMedia, let cachedData = local.sealedPlaintext(for: dto.id) {
@@ -285,7 +307,8 @@ enum MessageDecoder {
                 voiceData: cached,
                 voiceDurationMs: payload?.d,
                 voiceWaveform: VoiceWaveform.decode(payload?.wf),
-                transcript: transcript
+                transcript: transcript,
+                replyTo: payload?.re
             )
         }
 
@@ -313,7 +336,8 @@ enum MessageDecoder {
                 previewData: preview,
                 mediaByteCount: payload?.s,
                 videoData: cached,
-                voiceDurationMs: payload?.d
+                voiceDurationMs: payload?.d,
+                replyTo: payload?.re
             )
         }
 
@@ -354,7 +378,8 @@ enum MessageDecoder {
             // Full photo only from local cache; envelope thumb is enough for the bubble.
             imageData: cached,
             previewData: preview,
-            mediaByteCount: payload?.s
+            mediaByteCount: payload?.s,
+            replyTo: payload?.re
         )
     }
 }

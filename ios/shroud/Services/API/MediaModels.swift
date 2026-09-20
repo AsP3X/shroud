@@ -63,6 +63,9 @@ nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
     var th: String?
     /// Full media plaintext size in bytes (for the download chip label).
     var s: Int?
+    /// The message this one replies to, when it was sent from the reply composer.
+    /// Optional so payloads sealed before replies existed still decode (see `MessageReplyReference`).
+    var re: MessageReplyReference?
 
     static let kindImage = "image"
     static let kindVoice = "voice"
@@ -130,7 +133,8 @@ nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
             d: int(object["d"]),
             wf: string(object["wf"]),
             th: string(object["th"]),
-            s: int(object["s"])
+            s: int(object["s"]),
+            re: (object["re"] as? [String: Any]).flatMap(MessageReplyReference.parse(wireObject:))
         )
     }
 
@@ -148,6 +152,7 @@ nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
         if let wf { object["wf"] = wf }
         if let th { object["th"] = th }
         if let s { object["s"] = s }
+        if let re { object["re"] = re.wireObject }
         return try JSONSerialization.data(withJSONObject: object)
     }
 

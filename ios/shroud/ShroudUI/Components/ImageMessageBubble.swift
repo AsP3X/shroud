@@ -15,6 +15,10 @@ struct ImageMessageBubble: View {
     var onOpen: (() -> Void)?
     var isRowEmbedded: Bool = true
     var frameReportID: UUID? = nil
+    /// Quote header for a reply; nil for an ordinary photo.
+    var reply: ReplyQuoteContent? = nil
+    /// Jump to the quoted message.
+    var onReplyTap: (() -> Void)? = nil
 
     @Environment(\.chatRowWidth) private var chatRowWidth
 
@@ -68,7 +72,9 @@ struct ImageMessageBubble: View {
         guard w > 0, h > 0 else { return CGSize(width: 180, height: 180) }
         let scale = min(maxW / w, maxH / h, 1)
         let size = CGSize(width: max(120, w * scale), height: max(120, h * scale))
-        guard hasCaption else { return size }
+        // A caption or a reply header needs a line's worth of width to read; a narrow
+        // portrait photo would truncate both into nothing.
+        guard hasCaption || reply != nil else { return size }
         return CGSize(width: maxW, height: size.height)
     }
 
@@ -100,6 +106,10 @@ struct ImageMessageBubble: View {
     private var bubbleCore: some View {
         VStack(alignment: isMine ? .trailing : .leading, spacing: 6) {
             VStack(alignment: .leading, spacing: 0) {
+                if let reply, !message.deleted {
+                    replyHeader(reply)
+                }
+
                 ZStack {
                     Group {
                         if message.deleted {
@@ -144,17 +154,7 @@ struct ImageMessageBubble: View {
                 .animation(Motion.snappy, value: isFailed)
                 .animation(Motion.snappy, value: needsDownload)
                 .frame(width: displaySize.width, height: displaySize.height)
-                .clipShape(
-                    hasCaption
-                        ? UnevenRoundedRectangle(
-                            topLeadingRadius: 17.5,
-                            bottomLeadingRadius: 0,
-                            bottomTrailingRadius: 0,
-                            topTrailingRadius: 17.5,
-                            style: .continuous
-                        )
-                        : corners
-                )
+                .clipShape(mediaShape)
                 .contentShape(Rectangle())
                 .onTapGesture {
                     if needsDownload {
@@ -193,6 +193,40 @@ struct ImageMessageBubble: View {
                 }
             }
         }
+    }
+
+    /// Corners of the photo itself: squared off wherever the bubble continues (a reply
+    /// header above it, a caption below it).
+    private var mediaShape: UnevenRoundedRectangle {
+        let hasHeader = reply != nil && !message.deleted
+        return UnevenRoundedRectangle(
+            topLeadingRadius: hasHeader ? 0 : 17.5,
+            bottomLeadingRadius: hasCaption ? 0 : (isMine ? 17.5 : 5),
+            bottomTrailingRadius: hasCaption ? 0 : (isMine ? 5 : 17.5),
+            topTrailingRadius: hasHeader ? 0 : 17.5,
+            style: .continuous
+        )
+    }
+
+    /// Reply quote drawn on the bubble fill above the photo (Telegram's layout).
+    private func replyHeader(_ reply: ReplyQuoteContent) -> some View {
+        ReplyQuoteView(
+            content: reply,
+            style: isMine ? .outgoing : .incoming,
+            onTap: onReplyTap
+        )
+        .padding(6)
+        .frame(width: displaySize.width, alignment: .leading)
+        .background(isMine ? Theme.accent : Theme.bubbleIncoming)
+        .clipShape(
+            UnevenRoundedRectangle(
+                topLeadingRadius: 17.5,
+                bottomLeadingRadius: 0,
+                bottomTrailingRadius: 0,
+                topTrailingRadius: 17.5,
+                style: .continuous
+            )
+        )
     }
 
     private var metaColor: Color { Color.white.opacity(0.75) }

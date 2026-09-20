@@ -19,6 +19,10 @@ struct VideoMessageBubble: View {
     var onOpen: (() -> Void)?
     var isRowEmbedded: Bool = true
     var frameReportID: UUID? = nil
+    /// Quote header for a reply; nil for an ordinary clip.
+    var reply: ReplyQuoteContent? = nil
+    /// Jump to the quoted message.
+    var onReplyTap: (() -> Void)? = nil
 
     @Environment(\.chatRowWidth) private var chatRowWidth
     @State private var poster: UIImage?
@@ -107,7 +111,8 @@ struct VideoMessageBubble: View {
         // Landscape clips fill the bubble's width; portrait ones are bounded by height.
         let scale = min(maxW / w, maxH / h)
         let size = CGSize(width: max(150, w * scale), height: max(110, h * scale))
-        guard hasCaption else { return size }
+        // A caption or a reply header needs a line's worth of width to read.
+        guard hasCaption || reply != nil else { return size }
         return CGSize(width: maxW, height: size.height)
     }
 
@@ -140,19 +145,13 @@ struct VideoMessageBubble: View {
     private var bubbleCore: some View {
         VStack(alignment: isMine ? .trailing : .leading, spacing: 6) {
             VStack(alignment: .leading, spacing: 0) {
+                if let reply, !message.deleted {
+                    replyHeader(reply)
+                }
+
                 posterStack
                     .frame(width: displaySize.width, height: displaySize.height)
-                    .clipShape(
-                        hasCaption
-                            ? UnevenRoundedRectangle(
-                                topLeadingRadius: 17.5,
-                                bottomLeadingRadius: 0,
-                                bottomTrailingRadius: 0,
-                                topTrailingRadius: 17.5,
-                                style: .continuous
-                            )
-                            : corners
-                    )
+                    .clipShape(mediaShape)
                     .contentShape(Rectangle())
                     .onTapGesture(perform: handleTap)
 
@@ -182,6 +181,40 @@ struct VideoMessageBubble: View {
                 }
             }
         }
+    }
+
+    /// Corners of the poster: squared off wherever the bubble continues (reply header above,
+    /// caption below).
+    private var mediaShape: UnevenRoundedRectangle {
+        let hasHeader = reply != nil && !message.deleted
+        return UnevenRoundedRectangle(
+            topLeadingRadius: hasHeader ? 0 : 17.5,
+            bottomLeadingRadius: hasCaption ? 0 : (isMine ? 17.5 : 5),
+            bottomTrailingRadius: hasCaption ? 0 : (isMine ? 5 : 17.5),
+            topTrailingRadius: hasHeader ? 0 : 17.5,
+            style: .continuous
+        )
+    }
+
+    /// Reply quote drawn on the bubble fill above the poster.
+    private func replyHeader(_ reply: ReplyQuoteContent) -> some View {
+        ReplyQuoteView(
+            content: reply,
+            style: isMine ? .outgoing : .incoming,
+            onTap: onReplyTap
+        )
+        .padding(6)
+        .frame(width: displaySize.width, alignment: .leading)
+        .background(isMine ? Theme.accent : Theme.bubbleIncoming)
+        .clipShape(
+            UnevenRoundedRectangle(
+                topLeadingRadius: 17.5,
+                bottomLeadingRadius: 0,
+                bottomTrailingRadius: 0,
+                topTrailingRadius: 17.5,
+                style: .continuous
+            )
+        )
     }
 
     // MARK: - Poster + chrome

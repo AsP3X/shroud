@@ -30,6 +30,7 @@ import {
   loadHistory,
   peerIdForMessage,
   previewLine,
+  replyRefFor,
   sendImage,
   sendText,
   sendVideo,
@@ -104,6 +105,8 @@ export function AppShell({ session }: { session: Session }) {
   const [threadLoading, setThreadLoading] = useState(false);
   const [threadError, setThreadError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  /** Message being answered in the open chat; cleared when it is sent or the chat changes. */
+  const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [sendingPeer, setSendingPeer] = useState<string | null>(null);
   const [presenceByUser, setPresenceByUser] = useState<Record<string, Presence>>({});
   /** Peers typing to us right now, by lowercased user id. */
@@ -324,6 +327,7 @@ export function AppShell({ session }: { session: Session }) {
     let cancelled = false;
     setThread([]);
     setDraft("");
+    setReplyTo(null);
     setThreadLoading(true);
     setThreadError(null);
     loadHistory(session.token, session.user.id, peerId, material)
@@ -576,6 +580,7 @@ export function AppShell({ session }: { session: Session }) {
     recordingSender.stop();
     draftRef.current = "";
     const peerId = selected.id;
+    const reference = replyTo ? replyRefFor(replyTo) : null;
     const localId = `pending:${crypto.randomUUID()}`;
     const optimistic: ChatMessage = {
       id: localId,
@@ -587,9 +592,11 @@ export function AppShell({ session }: { session: Session }) {
       failed: false,
       kind: "text",
       pending: true,
+      replyTo: reference,
     };
     setThread((prev) => [...prev, optimistic]);
     setDraft("");
+    setReplyTo(null);
     setSendingPeer(peerId);
     setThreadError(null);
     try {
@@ -599,6 +606,7 @@ export function AppShell({ session }: { session: Session }) {
         peerUserId: peerId,
         text,
         material: identity,
+        replyTo: reference,
       });
       if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
       setThread((prev) => mergeMessages(prev.filter((m) => m.id !== localId), [msg]));
@@ -621,6 +629,8 @@ export function AppShell({ session }: { session: Session }) {
     recordingSender.stop();
     const peerId = selected.id;
     const material = identity;
+    const reference = replyTo ? replyRefFor(replyTo) : null;
+    setReplyTo(null);
     const localId = `pending:${crypto.randomUUID()}`;
     const pending = take.pendingTranscript ?? Promise.resolve(null);
     /** Follows the bubble from its optimistic id to the server's. */
@@ -641,6 +651,7 @@ export function AppShell({ session }: { session: Session }) {
       mime: take.mime,
       transcript: take.transcript,
       pending: true,
+      replyTo: reference,
     };
     await saveMediaBlob(localId, take.data);
     setThread((prev) => [...prev, optimistic]);
@@ -666,6 +677,7 @@ export function AppShell({ session }: { session: Session }) {
         peerUserId: peerId,
         material,
         take: { ...take, transcript: sealed },
+        replyTo: reference,
       });
       rekeyTranscriptView(localId, msg.id);
       noteId = msg.id;
@@ -726,6 +738,8 @@ export function AppShell({ session }: { session: Session }) {
     const peerId = selected.id;
     const material = identity;
     const start = Date.now();
+    const reference = replyTo ? replyRefFor(replyTo) : null;
+    setReplyTo(null);
     const drafts = images.map((image, index) => {
       const clientId = crypto.randomUUID();
       const localId = `pending:${clientId}`;
@@ -747,6 +761,7 @@ export function AppShell({ session }: { session: Session }) {
         imageHeight: image.height,
         mediaBytes: image.bytes.byteLength,
         pending: true,
+        replyTo: index === 0 ? reference : null,
       };
       return { image, clientId, localId, caption: text, optimistic };
     });
@@ -763,6 +778,7 @@ export function AppShell({ session }: { session: Session }) {
           image: draft.image,
           caption: draft.caption,
           clientMessageId: draft.clientId,
+          replyTo: draft.optimistic.replyTo ?? null,
           onProgress: (loaded, total) => setTransfer(draft.localId, { direction: "up", loaded, total }),
         });
         rekeyImage(draft.localId, msg.id);
@@ -800,6 +816,8 @@ export function AppShell({ session }: { session: Session }) {
     const peerId = selected.id;
     const material = identity;
     const start = Date.now();
+    const reference = replyTo ? replyRefFor(replyTo) : null;
+    setReplyTo(null);
     const jobs = drafts.map((draft, index) => {
       const clientId = crypto.randomUUID();
       const localId = `pending:${clientId}`;
@@ -822,6 +840,7 @@ export function AppShell({ session }: { session: Session }) {
         mediaBytes: draft.probe.bytes,
         videoDurationMs: Math.round(kept * 1000),
         pending: true,
+        replyTo: index === 0 ? reference : null,
       };
       return { draft, clientId, localId, caption: text, optimistic };
     });
@@ -866,6 +885,7 @@ export function AppShell({ session }: { session: Session }) {
           video: encoded,
           caption: job.caption,
           clientMessageId: job.clientId,
+          replyTo: job.optimistic.replyTo ?? null,
           onProgress: (loaded, total) =>
             setTransfer(job.localId, { direction: "up", phase: "transferring", loaded, total }),
           onUploaded: () =>
@@ -1017,6 +1037,10 @@ export function AppShell({ session }: { session: Session }) {
                 onLoadVoice={loadVoice}
                 onLoadImage={loadImage}
                 onLoadVideo={loadVideo}
+                replyTo={replyTo}
+                onReply={(message) => setReplyTo(message)}
+                onCancelReply={() => setReplyTo(null)}
+                myId={session.user.id}
               />
             ) : (
               <section className="thread thread-placeholder hidden-mobile">

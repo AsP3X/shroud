@@ -121,7 +121,10 @@ final class MessagingController {
         let peerUserID: UUID
         let senderUserID: UUID
         /// Caption, list preview ("Photo" / "Video" / "Voice message"), or transcript snippet.
-        let text: String
+        ///
+        /// Mutable only so a bubble stored by a build without reply support can have its body
+        /// re-read out of the reply envelope it was saved as (`MessageDecoder`).
+        var text: String
         let createdAt: Date
         let isMine: Bool
         let deleted: Bool
@@ -154,6 +157,8 @@ final class MessagingController {
         var todoDone: Bool?
         /// True while this outbound message is waiting for network delivery.
         var pendingSync: Bool
+        /// The message this one quotes (sealed inside the plaintext, never server metadata).
+        var replyTo: MessageReplyReference?
 
         init(
             id: UUID,
@@ -178,7 +183,8 @@ final class MessagingController {
             transcript: String? = nil,
             sendError: String? = nil,
             todoDone: Bool? = nil,
-            pendingSync: Bool = false
+            pendingSync: Bool = false,
+            replyTo: MessageReplyReference? = nil
         ) {
             self.id = id
             self.peerUserID = peerUserID
@@ -203,6 +209,7 @@ final class MessagingController {
             self.sendError = sendError
             self.todoDone = todoDone
             self.pendingSync = pendingSync
+            self.replyTo = replyTo
         }
 
         /// Full media is not on device yet — show preview + download (Telegram-style).
@@ -219,6 +226,43 @@ final class MessagingController {
         var displayPreviewData: Data? {
             if kind == .image, let imageData { return imageData }
             return previewData ?? imageData
+        }
+
+        /// Whether this bubble can be quoted at all.
+        ///
+        /// Human: A message that has not reached the server yet carries a client id the other
+        /// side could never resolve, and a tombstone has nothing left to quote — no swipe for
+        /// either. Notes are local but keep `.sent`, so replying inside Saved Messages works.
+        var canBeQuoted: Bool {
+            !deleted && !pendingSync && receipt != .failed && receipt != .sending
+        }
+
+        /// The quote a reply to this message carries.
+        ///
+        /// Agent: Sealed into the reply's plaintext; the snippet is clamped by
+        /// `MessageReplyReference.init`.
+        var replyReference: MessageReplyReference? {
+            guard canBeQuoted else { return nil }
+            let quotedKind: MessageReplyReference.Kind = switch kind {
+            case .image: .image
+            case .video: .video
+            case .voice: .voice
+            case .text, .todo: .text
+            }
+            // Media bubbles keep a stand-in label in `text` ("Photo", "Video", "Voice message");
+            // the quote derives those from `kind`, so only a real caption is worth sealing.
+            let quotedSnippet: String = switch kind {
+            case .image: (text == "Photo" || text == "Media") ? "" : text
+            case .video: (text == "Video" || text == "Media") ? "" : text
+            case .voice: ""
+            case .text, .todo: text
+            }
+            return MessageReplyReference(
+                messageID: id,
+                senderUserID: senderUserID,
+                kind: quotedKind,
+                snippet: quotedSnippet
+            )
         }
     }
 
@@ -271,6 +315,10 @@ final class MessagingController {
 
     /// In-flight media transfers by message id (empty when nothing is moving).
     private(set) var mediaTransfers: [UUID: MediaTransfer] = [:]
+
+    /// Signed-in account id, for views that have to tell "You" from the peer (reply quotes).
+    /// Nil while signed out.
+    var myUserID: UUID? { sessionController?.userID }
 
     func isNotesChat(_ peerID: UUID) -> Bool {
         NotesLocal.isNotes(peerID)
@@ -911,7 +959,8 @@ final class MessagingController {
                 deleted: message.deleted,
                 receipt: .sent,
                 kind: .todo,
-                todoDone: parsed.done
+                todoDone: parsed.done,
+                replyTo: message.replyTo
             )
         }
         var copy = message
@@ -937,18 +986,27 @@ final class MessagingController {
                 videoData: message.videoData,
                 voiceDurationMs: message.voiceDurationMs,
                 voiceWaveform: message.voiceWaveform,
-                transcript: message.transcript
+                transcript: message.transcript,
+                replyTo: message.replyTo
             )
         }
         return copy
     }
 
-    func sendText(_ text: String, to peerUserID: UUID) async {
+    /// Sends a text message, optionally quoting an earlier one.
+    ///
+    /// Agent: `replyTo` is sealed into the plaintext by `MessageTextPayload.wire`; the request
+    /// body is unchanged, so the server learns nothing about the quote.
+    func sendText(
+        _ text: String,
+        to peerUserID: UUID,
+        replyTo: MessageReplyReference? = nil
+    ) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
         if isNotesChat(peerUserID) {
-            await appendAndSyncNote(text: trimmed, kind: .text, todoDone: nil)
+            await appendAndSyncNote(text: trimmed, kind: .text, todoDone: nil, replyTo: replyTo)
             return
         }
 
@@ -967,7 +1025,8 @@ final class MessagingController {
             isMine: true,
             deleted: false,
             receipt: .sending,
-            pendingSync: true
+            pendingSync: true,
+            replyTo: replyTo
         )
         var optimisticThread = threads[peerUserID] ?? []
         optimisticThread.append(optimistic)
@@ -987,7 +1046,8 @@ final class MessagingController {
                 peerUserID: peerUserID,
                 me: me,
                 material: material,
-                token: token
+                token: token,
+                replyTo: replyTo
             )
             await refreshConversations(force: true)
             lastError = nil
@@ -1536,7 +1596,8 @@ final class MessagingController {
         to peerUserID: UUID,
         caption: String = "",
         quality: MediaComposeQuality = .original,
-        edits: MediaEdits = MediaEdits()
+        edits: MediaEdits = MediaEdits(),
+        replyTo: MessageReplyReference? = nil
     ) async -> String? {
         let trimmedCaption = caption.trimmingCharacters(in: .whitespacesAndNewlines)
         let displayText = trimmedCaption.isEmpty ? "Photo" : trimmedCaption
@@ -1582,7 +1643,8 @@ final class MessagingController {
                 kind: .image,
                 imageWidth: encoded.width,
                 imageHeight: encoded.height,
-                imageData: encoded.data
+                imageData: encoded.data,
+                replyTo: replyTo
             )
             var list = threads[peerUserID] ?? []
             list.append(note)
@@ -1607,7 +1669,8 @@ final class MessagingController {
                         material: material,
                         token: token,
                         encoded: encoded,
-                        caption: trimmedCaption
+                        caption: trimmedCaption,
+                        replyTo: replyTo
                     )
                     if var notes = threads[peerUserID] {
                         notes.removeAll { $0.id == optimisticID || $0.id == sent.id }
@@ -1625,7 +1688,8 @@ final class MessagingController {
                                 mediaObjectId: sent.mediaObjectId,
                                 imageWidth: sent.imageWidth,
                                 imageHeight: sent.imageHeight,
-                                imageData: sent.imageData ?? encoded.data
+                                imageData: sent.imageData ?? encoded.data,
+                                replyTo: replyTo
                             )
                         )
                         notes.sort { $0.createdAt < $1.createdAt }
@@ -1660,7 +1724,8 @@ final class MessagingController {
             imageWidth: encoded.width,
             imageHeight: encoded.height,
             imageData: encoded.data,
-            pendingSync: true
+            pendingSync: true,
+            replyTo: replyTo
         )
         var list = threads[peerUserID] ?? []
         list.append(optimistic)
@@ -1682,7 +1747,8 @@ final class MessagingController {
                 material: material,
                 token: token,
                 encoded: encoded,
-                caption: trimmedCaption
+                caption: trimmedCaption,
+                replyTo: replyTo
             )
             lastError = nil
             return nil
@@ -1703,7 +1769,11 @@ final class MessagingController {
     /// Human: Compression alone can take several seconds on a long 4K clip. Blocking the whole
     /// chat behind a modal spinner for that is exactly what Telegram doesn't do — the bubble
     /// appears immediately with its poster and fills a progress ring in place.
-    func sendVideo(_ plan: VideoSendPlan, to peerUserID: UUID) async -> String? {
+    func sendVideo(
+        _ plan: VideoSendPlan,
+        to peerUserID: UUID,
+        replyTo: MessageReplyReference? = nil
+    ) async -> String? {
         let trimmedCaption = plan.caption.trimmingCharacters(in: .whitespacesAndNewlines)
         let displayText = trimmedCaption.isEmpty ? "Video" : trimmedCaption
         let notes = isNotesChat(peerUserID)
@@ -1734,7 +1804,8 @@ final class MessagingController {
                 previewData: plan.posterJPEG,
                 mediaByteCount: plan.estimatedBytes,
                 voiceDurationMs: plan.durationMs,
-                pendingSync: true
+                pendingSync: true,
+                replyTo: replyTo
             )
         )
         threads[peerUserID] = list
@@ -1793,7 +1864,8 @@ final class MessagingController {
                         material: material,
                         token: token,
                         encoded: encoded,
-                        caption: trimmedCaption
+                        caption: trimmedCaption,
+                        replyTo: replyTo
                     )
                     if var notes = threads[peerUserID] {
                         notes.removeAll { $0.id == optimisticID || $0.id == sent.id }
@@ -1813,7 +1885,8 @@ final class MessagingController {
                                 imageHeight: sent.imageHeight,
                                 imageData: sent.imageData ?? encoded.thumbnailJPEG,
                                 videoData: sent.videoData ?? encoded.data,
-                                voiceDurationMs: sent.voiceDurationMs ?? encoded.durationMs
+                                voiceDurationMs: sent.voiceDurationMs ?? encoded.durationMs,
+                                replyTo: replyTo
                             )
                         )
                         notes.sort { $0.createdAt < $1.createdAt }
@@ -1853,7 +1926,8 @@ final class MessagingController {
                 token: token,
                 encoded: encoded,
                 caption: trimmedCaption,
-                trackingTransfer: true
+                trackingTransfer: true,
+                replyTo: replyTo
             )
             endTransfer(optimisticID)
             lastError = nil
@@ -1917,6 +1991,8 @@ final class MessagingController {
 
         let existingCaption = thread[idx].text
         let caption = (existingCaption == "Video" || existingCaption.isEmpty) ? "" : existingCaption
+        // The bubble already carries its quote; a retry must re-seal the same one.
+        let replyTo = thread[idx].replyTo
 
         beginTransfer(messageID, isUpload: true, phase: .transferring, totalBytes: data.count)
         do {
@@ -1928,7 +2004,8 @@ final class MessagingController {
                 token: token,
                 encoded: encoded,
                 caption: caption,
-                trackingTransfer: true
+                trackingTransfer: true,
+                replyTo: replyTo
             )
             endTransfer(messageID)
             return nil
@@ -1948,7 +2025,8 @@ final class MessagingController {
         token: String,
         encoded: EncodedVideo,
         caption: String,
-        trackingTransfer: Bool = false
+        trackingTransfer: Bool = false,
+        replyTo: MessageReplyReference? = nil
     ) async throws -> ChatMessage {
         let (fileKey, sealedFile) = try MediaCrypto.sealFile(encoded.data)
         if trackingTransfer {
@@ -1995,7 +2073,8 @@ final class MessagingController {
             peerUserID: peerUserID,
             peerPub: peerPub,
             material: material,
-            me: me
+            me: me,
+            replyTo: replyTo
         )
         let dto = try await messagesService.send(
             SendMessageRequest(
@@ -2031,7 +2110,8 @@ final class MessagingController {
             mediaByteCount: encoded.data.count,
             videoData: encoded.data,
             voiceDurationMs: encoded.durationMs,
-            sendError: nil
+            sendError: nil,
+            replyTo: replyTo
         )
         if var thread = threads[peerUserID],
            let idx = thread.firstIndex(where: { $0.id == optimisticID })
@@ -2295,6 +2375,8 @@ final class MessagingController {
 
         let existingCaption = thread[idx].text
         let caption = (existingCaption == "Photo" || existingCaption.isEmpty) ? "" : existingCaption
+        // The bubble already carries its quote; a retry must re-seal the same one.
+        let replyTo = thread[idx].replyTo
 
         do {
             try await finishImageSend(
@@ -2304,7 +2386,8 @@ final class MessagingController {
                 material: material,
                 token: token,
                 encoded: encoded,
-                caption: caption
+                caption: caption,
+                replyTo: replyTo
             )
             return nil
         } catch {
@@ -2324,7 +2407,8 @@ final class MessagingController {
         material: IdentityKeyMaterial,
         token: String,
         encoded: EncodedImage,
-        caption: String
+        caption: String,
+        replyTo: MessageReplyReference? = nil
     ) async throws -> ChatMessage {
         let (fileKey, sealedFile) = try MediaCrypto.sealFile(encoded.data)
         let upload = try await mediaService.createUpload(
@@ -2355,7 +2439,8 @@ final class MessagingController {
             peerUserID: peerUserID,
             peerPub: peerPub,
             material: material,
-            me: me
+            me: me,
+            replyTo: replyTo
         )
         let dto = try await messagesService.send(
             SendMessageRequest(
@@ -2392,7 +2477,8 @@ final class MessagingController {
             imageData: encoded.data,
             previewData: usedPreview,
             mediaByteCount: encoded.data.count,
-            sendError: nil
+            sendError: nil,
+            replyTo: replyTo
         )
         if var thread = threads[peerUserID],
            let idx = thread.firstIndex(where: { $0.id == optimisticID })
@@ -2427,7 +2513,8 @@ final class MessagingController {
         peerUserID: UUID,
         peerPub: Data,
         material: IdentityKeyMaterial,
-        me: UUID
+        me: UUID,
+        replyTo: MessageReplyReference? = nil
     ) throws -> (payloadData: Data, sealed: Data, usedPreview: Data?) {
         let safePreview: Data? = {
             guard let previewJPEG,
@@ -2446,7 +2533,8 @@ final class MessagingController {
                 c: caption,
                 d: durationMs,
                 th: includePreview ? safePreview?.base64EncodedString() : nil,
-                s: mediaByteCount
+                s: mediaByteCount,
+                re: replyTo
             )
             return try payload.encoded()
         }
@@ -2501,6 +2589,7 @@ final class MessagingController {
         to peerUserID: UUID,
         waveform: [UInt8]? = nil,
         transcript: String? = nil,
+        replyTo: MessageReplyReference? = nil,
         transcriptProvider: ((UUID) async -> String?)? = nil
     ) async -> String? {
         let optimisticID = UUID()
@@ -2520,7 +2609,8 @@ final class MessagingController {
             voiceDurationMs: durationMs,
             voiceWaveform: waveform,
             transcript: nil,
-            pendingSync: !isNotesChat(peerUserID)
+            pendingSync: !isNotesChat(peerUserID),
+            replyTo: replyTo
         )
         var list = threads[peerUserID] ?? []
         list.append(optimistic)
@@ -2564,7 +2654,8 @@ final class MessagingController {
                     voiceData: audioData,
                     voiceDurationMs: durationMs,
                     voiceWaveform: waveform,
-                    transcript: trimmedTranscript
+                    transcript: trimmedTranscript,
+                    replyTo: replyTo
                 )
                 threads[peerUserID] = thread
             }
@@ -2606,7 +2697,8 @@ final class MessagingController {
                     voiceWaveform: updated.voiceWaveform,
                     transcript: trimmedTranscript,
                     sendError: "Waiting for connection…",
-                    pendingSync: true
+                    pendingSync: true,
+                    replyTo: replyTo
                 )
                 threads[peerUserID] = thread
             }
@@ -2625,7 +2717,8 @@ final class MessagingController {
                 durationMs: durationMs,
                 waveform: waveform,
                 transcript: trimmedTranscript,
-                displayText: displayText
+                displayText: displayText,
+                replyTo: replyTo
             )
             lastError = nil
             return nil
@@ -2651,7 +2744,8 @@ final class MessagingController {
                     voiceWaveform: existing.voiceWaveform ?? waveform,
                     transcript: trimmedTranscript,
                     sendError: message,
-                    pendingSync: true
+                    pendingSync: true,
+                    replyTo: replyTo
                 )
                 threads[peerUserID] = thread
             }
@@ -2747,7 +2841,8 @@ final class MessagingController {
         durationMs: Int,
         waveform: [UInt8]?,
         transcript: String?,
-        displayText: String
+        displayText: String,
+        replyTo: MessageReplyReference? = nil
     ) async throws -> ChatMessage {
         let (fileKey, sealedFile) = try MediaCrypto.sealFile(audioData)
         let upload = try await mediaService.createUpload(
@@ -2769,7 +2864,8 @@ final class MessagingController {
             k: fileKey.base64EncodedString(),
             c: (transcript?.isEmpty == false) ? transcript : nil,
             d: durationMs,
-            wf: waveform.flatMap(VoiceWaveform.encode)
+            wf: waveform.flatMap(VoiceWaveform.encode),
+            re: replyTo
         )
         var payloadData = try payload.encoded()
         if payloadData.count > Self.maxMediaPayloadPlaintextBytes, payload.c != nil {
@@ -2834,7 +2930,8 @@ final class MessagingController {
             voiceData: audioData,
             voiceDurationMs: durationMs,
             voiceWaveform: waveform,
-            transcript: transcript
+            transcript: transcript,
+            replyTo: replyTo
         )
         if var thread = threads[peerUserID],
            let idx = thread.firstIndex(where: { $0.id == optimisticID })
@@ -3446,7 +3543,8 @@ final class MessagingController {
                 transcript: message.transcript,
                 sendError: message.sendError,
                 todoDone: message.todoDone,
-                pendingSync: message.pendingSync
+                pendingSync: message.pendingSync,
+                replyTo: message.replyTo
             )
         }
         return message
@@ -3599,7 +3697,8 @@ final class MessagingController {
     private func appendAndSyncNote(
         text: String,
         kind: ChatMessageKind,
-        todoDone: Bool?
+        todoDone: Bool?,
+        replyTo: MessageReplyReference? = nil
     ) async {
         let peerUserID = Self.notesPeerID
         let me = sessionController?.userID ?? peerUserID
@@ -3607,14 +3706,16 @@ final class MessagingController {
             text: text,
             kind: kind,
             senderUserID: me,
-            todoDone: todoDone
+            todoDone: todoDone,
+            replyTo: replyTo
         )
         var list = threads[peerUserID] ?? []
         list.append(message)
         threads[peerUserID] = list
+        // A todo keeps its own marker format; only plain notes can carry a quote.
         let wireText = kind == .todo
             ? NotesLocal.syncedTodoPlaintext(text: text, done: todoDone ?? false)
-            : text
+            : MessageTextPayload.wire(body: text, replyTo: replyTo)
         local.saveSealedPlaintext(messageID: message.id, text: wireText)
         persistThread(peerUserID)
 
@@ -3652,7 +3753,8 @@ final class MessagingController {
                     deleted: false,
                     receipt: .sent,
                     kind: message.kind,
-                    todoDone: message.todoDone
+                    todoDone: message.todoDone,
+                    replyTo: message.replyTo
                 )
                 threads[peerUserID] = notes
                 local.removeCaches(messageIDs: [message.id])
@@ -3686,11 +3788,14 @@ final class MessagingController {
         peerUserID: UUID,
         me: UUID,
         material: IdentityKeyMaterial,
-        token: String
+        token: String,
+        replyTo: MessageReplyReference? = nil
     ) async throws -> ChatMessage {
         let peerPub = try await peerIdentityForSending(peerUserID: peerUserID, token: token)
+        // A reply seals body + quote together; a plain message stays raw UTF-8 on the wire.
+        let wireText = MessageTextPayload.wire(body: text, replyTo: replyTo)
         let sealed = try MessageCrypto.seal(
-            plaintext: Data(text.utf8),
+            plaintext: Data(wireText.utf8),
             peerUserID: peerUserID,
             toPeerIdentityPublicKey: peerPub,
             ourPrivateKey: material.agreementPrivateKey,
@@ -3706,7 +3811,8 @@ final class MessagingController {
             ),
             token: token
         )
-        local.saveSealedPlaintext(messageID: dto.id, text: text)
+        // Cache what was sealed (quote included) so a later decode rebuilds the same bubble.
+        local.saveSealedPlaintext(messageID: dto.id, text: wireText)
         let sent = ChatMessage(
             id: dto.id,
             peerUserID: peerUserID,
@@ -3715,7 +3821,8 @@ final class MessagingController {
             createdAt: dto.createdAt,
             isMine: true,
             deleted: false,
-            receipt: receiptStatus(from: dto)
+            receipt: receiptStatus(from: dto),
+            replyTo: replyTo
         )
         if var list = threads[peerUserID],
            let idx = list.firstIndex(where: { $0.id == messageID })
@@ -3758,7 +3865,8 @@ final class MessagingController {
                         peerUserID: peerID,
                         me: me,
                         material: material,
-                        token: token
+                        token: token,
+                        replyTo: threads[peerID]?.first(where: { $0.id == messageID })?.replyTo
                     )
                 } catch {
                     // Leave pending; try again next reconnect.
@@ -3790,7 +3898,8 @@ final class MessagingController {
                         material: material,
                         token: token,
                         encoded: encoded,
-                        caption: caption
+                        caption: caption,
+                        replyTo: message.replyTo
                     )
                 } catch {
                     markImageFailed(
@@ -3827,7 +3936,8 @@ final class MessagingController {
                         material: material,
                         token: token,
                         encoded: encoded,
-                        caption: caption
+                        caption: caption,
+                        replyTo: message.replyTo
                     )
                 } catch {
                     markVideoFailed(
@@ -3859,7 +3969,8 @@ final class MessagingController {
                         durationMs: message.voiceDurationMs ?? 0,
                         waveform: message.voiceWaveform,
                         transcript: message.transcript,
-                        displayText: message.text
+                        displayText: message.text,
+                        replyTo: message.replyTo
                     )
                 } catch {
                     markVoiceFailed(

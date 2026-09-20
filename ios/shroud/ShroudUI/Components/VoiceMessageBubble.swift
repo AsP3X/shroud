@@ -20,6 +20,10 @@ struct VoiceMessageBubble: View {
     /// Lets a fresh note land before it unfolds, and streams text revealed in front of the reader.
     /// Off for the long-press hero, which has to match the list bubble frame for frame.
     var revealsArrival = true
+    /// Quote header for a reply; nil for an ordinary note.
+    var reply: ReplyQuoteContent? = nil
+    /// Jump to the quoted message.
+    var onReplyTap: (() -> Void)? = nil
 
     @State private var playback = VoicePlaybackCoordinator.shared
     @State private var install = TranscriptionModelInstall.shared
@@ -191,6 +195,17 @@ struct VoiceMessageBubble: View {
 
     private var bubble: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if let reply {
+                ReplyQuoteView(
+                    content: reply,
+                    style: isMine ? .outgoing : .incoming,
+                    onTap: onReplyTap
+                )
+                // Matches the waveform row's width so the header never widens the bubble.
+                .frame(width: Self.playButtonSize + Self.playButtonGap + columnWidth)
+                .padding(.bottom, 5)
+            }
+
             HStack(spacing: Self.playButtonGap) {
                 playButton
 

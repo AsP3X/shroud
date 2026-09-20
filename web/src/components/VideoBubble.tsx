@@ -37,6 +37,7 @@ export function VideoBubble({
   className,
   query,
   onOpen,
+  quote,
   onDownload,
   onCancelDownload,
 }: {
@@ -44,6 +45,8 @@ export function VideoBubble({
   className: string;
   query: string;
   onOpen: (message: ChatMessage) => void;
+  /** Reply header drawn on the bubble above the poster. */
+  quote?: ReactNode;
   onDownload: (message: ChatMessage) => void;
   onCancelDownload: (id: string) => void;
 }) {
@@ -118,9 +121,10 @@ export function VideoBubble({
 
   return (
     <div
-      className={`${className} video-msg${caption ? " has-caption" : ""}`}
+      className={`${className} video-msg${caption ? " has-caption" : ""}${quote ? " has-reply" : ""}`}
       style={{ width: box.width }}
     >
+      {quote}
       <button
         type="button"
         className={`video-frame${state.poster || thumb ? "" : " is-empty"}${notSent ? " is-failed" : ""}`}

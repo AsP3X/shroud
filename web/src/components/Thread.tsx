@@ -21,6 +21,7 @@ import {
   Mic,
   Paperclip,
   Plus,
+  Reply,
   Search,
   Send,
   ShieldCheck,
@@ -46,6 +47,8 @@ import { cancelVideoDownload, type LoadedVideo } from "../media/videos";
 import { Avatar } from "./Avatar";
 import { Highlight } from "./Highlight";
 import { ImageBubble } from "./ImageBubble";
+import { quoteOf, ReplyQuote, resolveQuote } from "./ReplyQuote";
+import { useSwipeToReply } from "./useSwipeToReply";
 import { Receipt } from "./Receipt";
 import { TypingBubble, TypingLabel } from "./Typing";
 import { VideoBubble } from "./VideoBubble";
@@ -102,6 +105,157 @@ function buildRows(messages: ChatMessage[]): Row[] {
   return rows;
 }
 
+/**
+ * One message row: the bubble, its reply header, the hover reply button and the swipe
+ * gesture. A component of its own because the gesture needs hooks per row, and because a
+ * drag then re-renders only this row.
+ */
+function MessageRow({
+  row,
+  query,
+  inTail,
+  peerName,
+  myId,
+  quoted,
+  flashing,
+  onReply,
+  onJump,
+  onOpenPhoto,
+  onOpenVideo,
+  onLoadImage,
+  onLoadVideo,
+  onLoadVoice,
+}: {
+  row: Extract<Row, { kind: "message" }>;
+  query: string;
+  inTail: boolean;
+  peerName: string;
+  myId: string;
+  quoted: Map<string, ChatMessage>;
+  flashing: boolean;
+  onReply: (message: ChatMessage) => void;
+  onJump: (id: string) => void;
+  onOpenPhoto: (message: ChatMessage) => void;
+  onOpenVideo: (message: ChatMessage) => void;
+  onLoadImage: (message: ChatMessage) => Promise<LoadedImage | null>;
+  onLoadVideo: (message: ChatMessage) => Promise<LoadedVideo | null>;
+  onLoadVoice: (message: ChatMessage) => Promise<Uint8Array | null>;
+}) {
+  const { message } = row;
+  // A bubble the peer could not resolve yet (still sending, failed, deleted) is not quotable.
+  const canReply =
+    !message.deleted && !message.pending && !message.failed && !message.id.startsWith("pending:");
+  const swipe = useSwipeToReply({
+    enabled: canReply,
+    isMine: message.isMine,
+    onReply: () => onReply(message),
+  });
+
+  const voice = message.kind === "voice" && !message.deleted;
+  const photo = isPhoto(message);
+  const video = isVideo(message);
+  const bubbleClass = [
+    "bubble",
+    message.isMine ? "out" : "in",
+    row.first ? "first" : "",
+    row.last ? "last" : "",
+    message.deleted ? "deleted" : "",
+    message.failed ? "failed" : "",
+    message.pending ? "pending" : "",
+    voice ? "voice-msg" : "",
+    message.replyTo ? "has-reply" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const quote = message.replyTo ? (
+    <ReplyQuote
+      quote={resolveQuote(
+        message.replyTo,
+        quoted.get(message.replyTo.id.toLowerCase()),
+        peerName,
+        myId,
+      )}
+      onClick={() => onJump(message.replyTo!.id.toLowerCase())}
+    />
+  ) : null;
+
+  let bubble = null;
+  if (photo) {
+    bubble = (
+      <ImageBubble
+        className={bubbleClass}
+        message={message}
+        query={query}
+        loadImage={onLoadImage}
+        onOpen={onOpenPhoto}
+        quote={quote}
+      />
+    );
+  } else if (video) {
+    bubble = (
+      <VideoBubble
+        className={bubbleClass}
+        message={message}
+        query={query}
+        onOpen={onOpenVideo}
+        onDownload={(opened) => void onLoadVideo(opened)}
+        onCancelDownload={cancelVideoDownload}
+        quote={quote}
+      />
+    );
+  } else if (voice) {
+    /* The transcript folds away inside the bubble, behind the →A button. */
+    bubble = (
+      <div className={bubbleClass}>
+        <VoiceBubble message={message} loadVoice={onLoadVoice} query={query} inTail={inTail} quote={quote} />
+      </div>
+    );
+  } else {
+    bubble = (
+      <div className={bubbleClass}>
+        {quote}
+        <div className="bubble-body">
+          <p className="bubble-text">
+            <Highlight text={message.text} query={query} />
+          </p>
+          <span className="bubble-meta" title={fullTimestamp(message.createdAt)}>
+            <time dateTime={message.createdAt}>{clockTime(message.createdAt)}</time>
+            {message.isMine && !message.deleted ? <Receipt message={message} /> : null}
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      ref={swipe.rowRef}
+      className={`msg-row${message.isMine ? " mine" : ""}${flashing ? " is-flashing" : ""}`}
+      data-message-id={message.id.toLowerCase()}
+      {...swipe.handlers}
+    >
+      {bubble}
+      {canReply ? (
+        <button
+          className="bubble-reply-btn"
+          type="button"
+          aria-label="Reply to this message"
+          title="Reply"
+          onClick={() => onReply(message)}
+        >
+          <Reply size={15} aria-hidden="true" />
+        </button>
+      ) : null}
+      {swipe.swiping ? (
+        <span className="swipe-reply" aria-hidden="true">
+          <Reply size={16} />
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 /** A photo we can draw: sealed with a key, or one this tab is sending right now. */
 function isPhoto(message: ChatMessage): boolean {
   if (message.kind !== "image" || message.deleted) return false;
@@ -138,6 +292,10 @@ export function Thread({
   onLoadVoice,
   onLoadImage,
   onLoadVideo,
+  replyTo,
+  onReply,
+  onCancelReply,
+  myId,
 }: {
   peer: { id: string; username: string };
   presence: string;
@@ -164,6 +322,12 @@ export function Thread({
   onLoadImage: (message: ChatMessage) => Promise<LoadedImage | null>;
   onLoadVideo: (message: ChatMessage) => Promise<LoadedVideo | null>;
   onShowInfo: () => void;
+  /** Message being answered; its quote sits above the composer until it is sent. */
+  replyTo: ChatMessage | null;
+  onReply: (message: ChatMessage) => void;
+  onCancelReply: () => void;
+  /** Signed-in account, to tell "You" from the peer in a quote. */
+  myId: string;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const foot = useRef<HTMLDivElement>(null);
@@ -185,6 +349,11 @@ export function Thread({
   /** Photos from a mixed pick, shown after the video sheet closes. */
   const [photosAfterVideos, setPhotosAfterVideos] = useState<File[] | null>(null);
   const [viewing, setViewing] = useState<string | null>(null);
+  /** Row flashing after a jump from a reply header. */
+  const [flashing, setFlashing] = useState<string | null>(null);
+  const flashTimer = useRef(0);
+  const [jumpMiss, setJumpMiss] = useState<string | null>(null);
+  const jumpMissTimer = useRef(0);
   const [watching, setWatching] = useState<string | null>(null);
   const [dropping, setDropping] = useState(false);
   const dragDepth = useRef(0);
@@ -462,6 +631,64 @@ export function Thread({
 
   const photos = useMemo(() => messages.filter(isPhoto), [messages]);
 
+  /** Quoted messages still in the thread, so every header resolves without a scan per row. */
+  const quoted = useMemo(() => {
+    const wanted = new Set(
+      messages.map((m) => m.replyTo?.id.toLowerCase()).filter((id): id is string => Boolean(id)),
+    );
+    if (wanted.size === 0) return new Map<string, ChatMessage>();
+    const byId = new Map<string, ChatMessage>();
+    for (const m of messages) {
+      const key = m.id.toLowerCase();
+      if (wanted.has(key) && !byId.has(key)) byId.set(key, m);
+    }
+    return byId;
+  }, [messages]);
+
+  /* Scrolls to the quoted message and flashes it; says so when it is no longer here. */
+  const jumpTo = useCallback((id: string) => {
+    const key = id.toLowerCase();
+    const node = scroller.current?.querySelector<HTMLElement>(
+      `[data-message-id="${CSS.escape(key)}"]`,
+    );
+    if (!node) {
+      setJumpMiss("The original message isn’t in this chat any more.");
+      window.clearTimeout(jumpMissTimer.current);
+      jumpMissTimer.current = window.setTimeout(() => setJumpMiss(null), 2400);
+      return;
+    }
+    setJumpMiss(null);
+    node.scrollIntoView({ behavior: "smooth", block: "center" });
+    setFlashing(key);
+    window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => setFlashing(null), 1400);
+  }, []);
+
+  useEffect(
+    () => () => {
+      window.clearTimeout(flashTimer.current);
+      window.clearTimeout(jumpMissTimer.current);
+    },
+    [],
+  );
+
+  /* Escape drops the reply, the way it closes search — but search wins if both are open. */
+  useEffect(() => {
+    if (!replyTo) return;
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (searchOpen) return;
+      onCancelReply();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [replyTo, searchOpen, onCancelReply]);
+
+  /* Answering something puts the caret back in the composer, as Telegram does. */
+  useEffect(() => {
+    if (replyTo && finePointer()) field.current?.focus();
+  }, [replyTo]);
+
   return (
     <section
       className="thread"
@@ -560,70 +787,24 @@ export function Thread({
                   </div>
                 );
               }
-              const { message } = row;
-              const voice = message.kind === "voice" && !message.deleted;
-              const photo = isPhoto(message);
-              const video = isVideo(message);
-              const bubbleClass = [
-                "bubble",
-                message.isMine ? "out" : "in",
-                row.first ? "first" : "",
-                row.last ? "last" : "",
-                message.deleted ? "deleted" : "",
-                message.failed ? "failed" : "",
-                message.pending ? "pending" : "",
-                voice ? "voice-msg" : "",
-              ]
-                .filter(Boolean)
-                .join(" ");
-              if (photo) {
-                return (
-                  <ImageBubble
-                    key={row.key}
-                    className={bubbleClass}
-                    message={message}
-                    query={query}
-                    loadImage={onLoadImage}
-                    onOpen={(opened) => setViewing(opened.id)}
-                  />
-                );
-              }
-              if (video) {
-                return (
-                  <VideoBubble
-                    key={row.key}
-                    className={bubbleClass}
-                    message={message}
-                    query={query}
-                    onOpen={(opened) => setWatching(opened.id)}
-                    onDownload={(opened) => void onLoadVideo(opened)}
-                    onCancelDownload={cancelVideoDownload}
-                  />
-                );
-              }
-              if (voice) {
-                /* The transcript folds away inside the bubble, behind the →A button. */
-                return (
-                  <div key={row.key} className={bubbleClass}>
-                    <VoiceBubble
-                      message={message}
-                      loadVoice={onLoadVoice}
-                      query={query}
-                      inTail={tail.has(message.id)}
-                    />
-                  </div>
-                );
-              }
               return (
-                <div key={row.key} className={bubbleClass}>
-                  <p className="bubble-text">
-                    <Highlight text={message.text} query={query} />
-                  </p>
-                  <span className="bubble-meta" title={fullTimestamp(message.createdAt)}>
-                    <time dateTime={message.createdAt}>{clockTime(message.createdAt)}</time>
-                    {message.isMine && !message.deleted ? <Receipt message={message} /> : null}
-                  </span>
-                </div>
+                <MessageRow
+                  key={row.key}
+                  row={row}
+                  query={query}
+                  inTail={tail.has(row.message.id)}
+                  peerName={peer.username}
+                  myId={myId}
+                  quoted={quoted}
+                  flashing={flashing === row.message.id.toLowerCase()}
+                  onReply={onReply}
+                  onJump={jumpTo}
+                  onOpenPhoto={(opened) => setViewing(opened.id)}
+                  onOpenVideo={(opened) => setWatching(opened.id)}
+                  onLoadImage={onLoadImage}
+                  onLoadVideo={onLoadVideo}
+                  onLoadVoice={onLoadVoice}
+                />
               );
             })
           )}
@@ -651,6 +832,34 @@ export function Thread({
           <p className="thread-banner voice-hint" role="status">
             {voice.hint}
           </p>
+        ) : null}
+
+        {jumpMiss ? (
+          <p className="thread-banner" role="status">
+            {jumpMiss}
+          </p>
+        ) : null}
+
+        {replyTo ? (
+          <div className="reply-bar">
+            <Reply className="reply-bar-glyph" size={18} aria-hidden="true" />
+            <ReplyQuote
+              quote={quoteOf(
+                messages.find((m) => m.id.toLowerCase() === replyTo.id.toLowerCase()) ?? replyTo,
+                peer.username,
+              )}
+              variant="bar"
+              onClick={() => jumpTo(replyTo.id.toLowerCase())}
+            />
+            <button
+              className="icon-btn reply-bar-close"
+              type="button"
+              aria-label="Cancel reply"
+              onClick={onCancelReply}
+            >
+              <X size={18} />
+            </button>
+          </div>
         ) : null}
 
         <div className="compose-shell" ref={voice.shellRef}>

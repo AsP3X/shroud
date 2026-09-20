@@ -24,6 +24,15 @@ struct ChatComposerView: View {
     var onRecordCancel: () -> Void
     var onRecordSend: () -> Void
     var onDraftChange: (String) -> Void = { _ in }
+    /// Quote shown above the field while a reply is being written.
+    var reply: ReplyQuoteContent? = nil
+    /// Jump to the quoted message.
+    var onTapReply: (() -> Void)? = nil
+    /// Drop the reply; the draft stays.
+    var onCancelReply: () -> Void = {}
+    /// Bumped by the host to put the keyboard up — starting a reply focuses the field,
+    /// exactly as tapping it would.
+    var focusToken: Int = 0
 
     @FocusState private var focused: Bool
     @State private var phase: VoiceRecordingPhase = .idle
@@ -48,6 +57,12 @@ struct ChatComposerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Stays up while recording: a voice note can answer a message too.
+            if let reply {
+                ChatReplyBar(content: reply, onTapPreview: onTapReply, onCancel: onCancelReply)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
             if phase.isLocked {
                 VoiceLockedBar(
                     elapsed: recorder.elapsed,
@@ -68,6 +83,11 @@ struct ChatComposerView: View {
                 .ignoresSafeArea(edges: .bottom)
         }
         .animation(Motion.standard, value: phase.isLocked)
+        // The bar pushes the thread up as it appears; spring it so nothing snaps.
+        .animation(Motion.snappy, value: reply)
+        .onChange(of: focusToken) { _, _ in
+            focused = true
+        }
     }
 
     // MARK: - Idle / recording row

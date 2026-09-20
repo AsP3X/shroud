@@ -44,6 +44,7 @@ export function ImageBubble({
   query,
   loadImage,
   onOpen,
+  quote,
 }: {
   message: ChatMessage;
   /** The row's bubble classes (side, grouping, pending/failed). */
@@ -51,6 +52,8 @@ export function ImageBubble({
   query: string;
   loadImage: (message: ChatMessage) => Promise<LoadedImage | null>;
   onOpen: (message: ChatMessage) => void;
+  /** Reply header drawn on the bubble above the photo. */
+  quote?: ReactNode;
 }) {
   const [image, setImage] = useState<LoadedImage | null>(() => peekImage(message.id));
   const [status, setStatus] = useState<"idle" | "loading" | "failed">("idle");
@@ -165,9 +168,10 @@ export function ImageBubble({
 
   return (
     <div
-      className={`${className} photo-msg${caption ? " has-caption" : ""}`}
+      className={`${className} photo-msg${caption ? " has-caption" : ""}${quote ? " has-reply" : ""}`}
       style={{ width: box.width }}
     >
+      {quote}
       <button
         ref={frame}
         type="button"

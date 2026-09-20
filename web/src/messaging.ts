@@ -12,8 +12,11 @@ import {
   MAX_MEDIA_PAYLOAD_PLAINTEXT_BYTES,
   MAX_SEALED_ENVELOPE_BYTES,
   parseMediaPayload,
+  payloadReply,
+  withReply,
   type MediaPayload,
 } from "./crypto/mediaPayload";
+import { clampSnippet, parseTextPayload, textPayload, type ReplyRef } from "./reply";
 import { envelopeToWireB64, openMessage, sealMessage, wireB64ToEnvelope } from "./crypto/messageCrypto";
 import {
   loadPlaintext,
@@ -84,6 +87,8 @@ export type ChatMessage = {
   pending?: boolean;
   /** Set on `kind === "annotation"`; null when it could not be read. */
   annotation?: Annotation | null;
+  /** The message this one quotes, sealed inside its own plaintext (see `reply.ts`). */
+  replyTo?: ReplyRef | null;
   delivered?: boolean;
   read?: boolean;
 };
@@ -195,6 +200,7 @@ function messageFromMediaPayload(
   payload: MediaPayload,
   mediaObjectId: string | null | undefined,
 ): ChatMessage {
+  base = { ...base, replyTo: payloadReply(payload) };
   if (isVoicePayload(payload)) {
     const sealed = payload.c?.trim() || null;
     const shared = sharedTranscripts.get(base.id.toLowerCase());
@@ -306,7 +312,8 @@ export async function decodeIncoming(
         return msg;
       }
     } else {
-      const msg: ChatMessage = { ...base, text: cached };
+      const parsed = parseTextPayload(cached);
+      const msg: ChatMessage = { ...base, text: parsed.text, replyTo: parsed.replyTo };
       rememberPreview(me, peerUserId, msg);
       return msg;
     }
@@ -350,7 +357,8 @@ export async function decodeIncoming(
       return msg;
     }
     savePlaintext(dto.id, decoded);
-    const msg: ChatMessage = { ...base, text: decoded };
+    const parsed = parseTextPayload(decoded);
+    const msg: ChatMessage = { ...base, text: parsed.text, replyTo: parsed.replyTo };
     rememberPreview(me, peerUserId, msg);
     return msg;
   } catch {
@@ -477,7 +485,7 @@ export async function hydratePreviews(
               : isVideoPayload(payload)
                 ? payload.c?.trim() || VIDEO_LABEL
                 : payload.c?.trim() || PHOTO_LABEL
-            : cached,
+            : parseTextPayload(cached).text,
           createdAt: dto.created_at,
           isMine: mine,
           deleted: Boolean(dto.deleted_for_everyone),
@@ -553,13 +561,16 @@ export async function sendText(opts: {
   peerUserId: string;
   text: string;
   material: IdentityMaterial;
+  /** Quote sealed with the body; the request itself is unchanged. */
+  replyTo?: ReplyRef | null;
 }): Promise<ChatMessage> {
   const peer = opts.peerUserId.toLowerCase();
   const me = opts.me.toLowerCase();
+  const wire = textPayload(opts.text, opts.replyTo);
   return withPeerLock(peer, async () => {
     const peerPub = await peerIdentityPublic(opts.token, peer);
     const envelope = await sealMessage({
-      plaintext: utf8(opts.text),
+      plaintext: utf8(wire),
       peerUserId: peer,
       ourUserId: me,
       ourPrivate: opts.material.agreementPrivate,
@@ -573,7 +584,8 @@ export async function sendText(opts: {
       content_type: "text",
       ciphertext: envelopeToWireB64(envelope),
     });
-    savePlaintext(dto.id, opts.text);
+    // Cache what was sealed (quote included) so a reload rebuilds the same bubble.
+    savePlaintext(dto.id, wire);
     const msg: ChatMessage = {
       id: dto.id,
       senderUserId: dto.sender_user_id,
@@ -583,6 +595,7 @@ export async function sendText(opts: {
       deleted: false,
       failed: false,
       kind: "text",
+      replyTo: opts.replyTo ?? null,
       delivered: dto.delivered ?? false,
       read: dto.read ?? false,
     };
@@ -603,6 +616,7 @@ export async function sendVoice(opts: {
     waveform: number[];
     transcript?: string | null;
   };
+  replyTo?: ReplyRef | null;
 }): Promise<ChatMessage> {
   const peer = opts.peerUserId.toLowerCase();
   const me = opts.me.toLowerCase();
@@ -611,18 +625,21 @@ export async function sendVoice(opts: {
     const upload = await api.createMediaUpload(opts.token, sealed.byteLength);
     await api.putMediaContent(opts.token, upload.media_object_id, sealed);
     const transcript = opts.take.transcript ? clampTranscript(opts.take.transcript) || null : null;
-    const payload: MediaPayload = {
-      t: "voice",
-      mime: opts.take.mime || "audio/wav",
-      w: 0,
-      h: 0,
-      k: bytesToB64(key),
-      d: opts.take.durationMs,
-      wf: encodeWaveform(opts.take.waveform),
-      s: opts.take.data.byteLength,
-      // Sealed like the iPhone does, so the recipient never has to transcribe it.
-      ...(transcript ? { c: transcript } : {}),
-    };
+    const payload: MediaPayload = withReply(
+      {
+        t: "voice",
+        mime: opts.take.mime || "audio/wav",
+        w: 0,
+        h: 0,
+        k: bytesToB64(key),
+        d: opts.take.durationMs,
+        wf: encodeWaveform(opts.take.waveform),
+        s: opts.take.data.byteLength,
+        // Sealed like the iPhone does, so the recipient never has to transcribe it.
+        ...(transcript ? { c: transcript } : {}),
+      },
+      opts.replyTo,
+    );
     const peerPub = await peerIdentityPublic(opts.token, peer);
     let plaintext = utf8(JSON.stringify(payload));
     if (plaintext.byteLength > MAX_MEDIA_PAYLOAD_PLAINTEXT_BYTES && payload.c) {
@@ -677,6 +694,7 @@ export async function sendVoice(opts: {
       mediaKey: payload.k,
       mime: payload.mime,
       transcript,
+      replyTo: opts.replyTo ?? null,
       delivered: dto.delivered ?? false,
       read: dto.read ?? false,
     };
@@ -697,6 +715,8 @@ export async function sendImage(opts: {
   material: IdentityMaterial;
   image: PreparedImage;
   caption?: string | null;
+  /** Quote sealed with the photo (first item of an album only, as on iOS). */
+  replyTo?: ReplyRef | null;
   /** Idempotency key: the optimistic bubble's id, so a replayed send can't land twice. */
   clientMessageId?: string;
   onProgress?: TransferProgress;
@@ -709,16 +729,19 @@ export async function sendImage(opts: {
   await api.putMediaContent(opts.token, upload.media_object_id, sealed, opts.onProgress);
 
   const thumb = image.thumb && image.thumb.byteLength <= MAX_THUMB_BYTES ? bytesToB64(image.thumb) : null;
-  const payload: MediaPayload = {
-    t: "image",
-    mime: image.mime,
-    w: image.width,
-    h: image.height,
-    k: bytesToB64(key),
-    s: image.bytes.byteLength,
-    ...(caption ? { c: caption } : {}),
-    ...(thumb ? { th: thumb } : {}),
-  };
+  const payload: MediaPayload = withReply(
+    {
+      t: "image",
+      mime: image.mime,
+      w: image.width,
+      h: image.height,
+      k: bytesToB64(key),
+      s: image.bytes.byteLength,
+      ...(caption ? { c: caption } : {}),
+      ...(thumb ? { th: thumb } : {}),
+    },
+    opts.replyTo,
+  );
   return sendMediaEnvelope(opts, payload, upload.media_object_id, "photo", (id) => {
     void cacheSealedImage(id, sealed);
   });
@@ -736,6 +759,8 @@ export async function sendVideo(opts: {
   material: IdentityMaterial;
   video: EncodedVideo;
   caption?: string | null;
+  /** Quote sealed with the clip (first item of an album only, as on iOS). */
+  replyTo?: ReplyRef | null;
   /** Idempotency key: the optimistic bubble's id, so a replayed send can't land twice. */
   clientMessageId?: string;
   onProgress?: TransferProgress;
@@ -751,17 +776,20 @@ export async function sendVideo(opts: {
   opts.onUploaded?.();
 
   const thumb = video.thumb && video.thumb.byteLength <= MAX_THUMB_BYTES ? bytesToB64(video.thumb) : null;
-  const payload: MediaPayload = {
-    t: "video",
-    mime: video.mime,
-    w: video.width,
-    h: video.height,
-    k: bytesToB64(key),
-    d: video.durationMs,
-    s: video.bytes.byteLength,
-    ...(caption ? { c: caption } : {}),
-    ...(thumb ? { th: thumb } : {}),
-  };
+  const payload: MediaPayload = withReply(
+    {
+      t: "video",
+      mime: video.mime,
+      w: video.width,
+      h: video.height,
+      k: bytesToB64(key),
+      d: video.durationMs,
+      s: video.bytes.byteLength,
+      ...(caption ? { c: caption } : {}),
+      ...(thumb ? { th: thumb } : {}),
+    },
+    opts.replyTo,
+  );
   return sendMediaEnvelope(opts, payload, upload.media_object_id, "video", (id) => {
     void cacheSealedVideo(id, sealed);
     if (video.poster) void cacheSealedPoster(id, key, video.poster);
@@ -872,4 +900,27 @@ export async function shareTranscript(opts: {
     });
     savePlaintext(dto.id, JSON.stringify(annotation));
   });
+}
+
+/**
+ * The quote a reply to `message` should carry. Null while the message is still optimistic —
+ * its id is local, so the other side could never resolve it.
+ */
+export function replyRefFor(message: ChatMessage): ReplyRef | null {
+  if (message.pending || message.failed || message.deleted) return null;
+  if (message.id.startsWith("pending:")) return null;
+  const kind = message.kind === "annotation" ? "text" : message.kind;
+  // Media bubbles keep a stand-in label in `text`; only a real caption is worth sealing.
+  const snippet =
+    kind === "voice"
+      ? ""
+      : kind === "image" || kind === "video"
+        ? message.caption?.trim() || ""
+        : message.text;
+  return {
+    id: message.id.toLowerCase(),
+    senderUserId: message.senderUserId.toLowerCase(),
+    kind,
+    snippet: clampSnippet(snippet),
+  };
 }

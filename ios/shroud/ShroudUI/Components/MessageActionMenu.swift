@@ -295,6 +295,9 @@ struct MessageMenuHeroContent: View {
     let heroImage: UIImage?
     /// Mirrors the list bubble so a voice note lifts off with the same fold.
     var inTranscriptTail = false
+    /// The same quote header the list bubble draws — without it the hero would be shorter
+    /// than the bubble it flies out of, and the open would visibly jump.
+    var reply: ReplyQuoteContent? = nil
 
     var body: some View {
         switch message.kind {
@@ -302,20 +305,23 @@ struct MessageMenuHeroContent: View {
             ImageMessageBubble(
                 message: message,
                 time: timeLabel,
-                isRowEmbedded: false
+                isRowEmbedded: false,
+                reply: reply
             )
         case .video:
             VideoMessageBubble(
                 message: message,
                 time: timeLabel,
-                isRowEmbedded: false
+                isRowEmbedded: false,
+                reply: reply
             )
         case .voice:
             VoiceMessageBubble(
                 message: message,
                 time: timeLabel,
                 inTranscriptTail: inTranscriptTail,
-                revealsArrival: false
+                revealsArrival: false,
+                reply: reply
             )
         case .text:
             MessageBubbleView(
@@ -324,7 +330,8 @@ struct MessageMenuHeroContent: View {
                 isMine: message.isMine,
                 isDeleted: message.deleted,
                 receipt: message.receipt,
-                isRowEmbedded: false
+                isRowEmbedded: false,
+                reply: reply
             )
         case .todo:
             TodoMessageBubble(

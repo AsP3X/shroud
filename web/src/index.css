@@ -826,7 +826,7 @@ a { color: var(--accent-text); text-decoration: none; }
   color: var(--on-accent);
 }
 
-.messages { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.messages { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .messages-inner {
   min-height: 100%;
   display: flex; flex-direction: column; justify-content: flex-end;
@@ -891,6 +891,148 @@ a { color: var(--accent-text); text-decoration: none; }
 .bubble.pending { opacity: 0.68; }
 .bubble.failed.out { background: var(--danger-bg); }
 .bubble.failed.in { border-color: var(--danger); color: var(--text-secondary); }
+
+
+/* ------------------------------------------------------------------ replies --
+   A row wraps every bubble so it can be swiped (touch) or hovered (mouse) to
+   answer it. The row moves by `--swipe`, written straight onto the element by
+   useSwipeToReply, so dragging never re-renders a bubble.
+   ---------------------------------------------------------------------------- */
+.msg-row {
+  position: relative;
+  display: flex; align-items: flex-end; gap: 6px;
+  /* Vertical pans still scroll the thread; horizontal ones are the reply gesture. */
+  touch-action: pan-y;
+  transform: translateX(var(--swipe, 0px));
+}
+.msg-row.mine { justify-content: flex-end; }
+.msg-row[data-swipe-settling="true"] { transition: transform 0.24s var(--ease); }
+.msg-row > .bubble { align-self: auto; }
+
+/* Landed on from a reply header: a full-bleed wash that fades out. */
+.msg-row.is-flashing::before {
+  content: "";
+  position: absolute; inset: -2px -24px;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  animation: reply-flash 1.4s var(--ease) forwards;
+  pointer-events: none;
+}
+@keyframes reply-flash {
+  0% { opacity: 0; }
+  12% { opacity: 1; }
+  62% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* Hover affordance on pointer devices; touch uses the swipe instead. */
+.bubble-reply-btn {
+  flex: 0 0 auto;
+  width: 30px; height: 30px;
+  display: grid; place-items: center;
+  border: 1px solid var(--separator); border-radius: 50%;
+  background: var(--surface-2); color: var(--text-secondary);
+  opacity: 0; transition: opacity 0.12s var(--ease), color 0.12s var(--ease);
+}
+.msg-row.mine .bubble-reply-btn { order: -1; }
+.msg-row:hover .bubble-reply-btn, .bubble-reply-btn:focus-visible { opacity: 1; }
+.bubble-reply-btn:hover { color: var(--accent-text); border-color: var(--accent); }
+@media (hover: none) {
+  .bubble-reply-btn { display: none; }
+}
+
+/* Slides in from beyond the trailing edge as the row travels (Telegram). */
+.swipe-reply {
+  position: absolute; top: 50%; right: -44px;
+  width: 32px; height: 32px; margin-top: -16px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent-text);
+  transform: scale(calc(0.65 + 0.35 * min(1, var(--swipe-progress, 0) * 1.2)));
+  opacity: min(1, calc(var(--swipe-progress, 0) * 2));
+  pointer-events: none;
+}
+.swipe-reply::before {
+  content: "";
+  position: absolute; inset: -3px;
+  border-radius: 50%;
+  background: conic-gradient(var(--accent) calc(var(--swipe-progress, 0) * 360deg), transparent 0);
+  -webkit-mask: radial-gradient(circle, transparent 0 15px, #000 15px);
+  mask: radial-gradient(circle, transparent 0 15px, #000 15px);
+}
+.msg-row[data-swipe-armed="true"] .swipe-reply {
+  background: var(--accent); color: var(--on-accent);
+  transform: scale(1);
+  animation: swipe-armed 0.3s var(--ease);
+}
+.msg-row[data-swipe-armed="true"] .swipe-reply::before { opacity: 0; }
+@keyframes swipe-armed {
+  0% { transform: scale(0.92); }
+  55% { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+
+/* The quote itself: same block in a bubble and above the composer. */
+.reply-quote {
+  display: flex; align-items: center; gap: 7px;
+  width: 100%; min-width: 0;
+  margin: 0; padding: 4px 8px 5px 9px;
+  border: 0; border-left: 3px solid currentColor;
+  border-radius: 6px;
+  background: transparent;
+  font: inherit; font-size: var(--fs-md); line-height: 1.3;
+  text-align: left;
+}
+button.reply-quote { cursor: pointer; }
+.reply-quote-lines { display: flex; flex-direction: column; min-width: 0; }
+.reply-quote-lines strong { font-weight: 600; }
+.reply-quote-text {
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.reply-quote-thumb {
+  flex: 0 0 auto;
+  width: 32px; height: 32px;
+  border-radius: 4px; object-fit: cover;
+}
+.reply-quote-icon { flex: 0 0 auto; opacity: 0.9; }
+
+.bubble.in .reply-quote-bubble {
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.bubble.in .reply-quote-bubble .reply-quote-text { color: var(--text-primary); }
+.bubble.in .reply-quote-bubble .reply-quote-text.muted { color: var(--text-secondary); }
+.bubble.out .reply-quote-bubble {
+  color: var(--on-accent);
+  background: rgba(255, 255, 255, 0.16);
+}
+.bubble.out .reply-quote-bubble .reply-quote-text { color: rgba(255, 255, 255, 0.92); }
+.bubble.out .reply-quote-bubble .reply-quote-text.muted { color: rgba(255, 255, 255, 0.72); }
+
+/* Text bubbles become a column once they carry a quote. */
+.bubble.has-reply { flex-direction: column; align-items: stretch; gap: 5px; }
+.bubble-body { display: flex; align-items: flex-end; gap: 9px; min-width: 0; }
+/* Media bubbles are edge-to-edge, so the header needs its own inset. */
+.bubble.photo-msg .reply-quote, .bubble.video-msg .reply-quote {
+  width: auto; margin: 6px 6px 0;
+}
+.bubble.voice-msg .reply-quote { margin-bottom: 5px; }
+
+/* "Reply to …" strip above the composer. */
+.reply-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 8px 4px 16px;
+  border-top: 1px solid var(--separator);
+}
+.reply-bar-glyph { flex: 0 0 auto; color: var(--accent); }
+.reply-quote-bar {
+  color: var(--accent);
+  font-size: var(--fs-base);
+  padding-block: 1px;
+}
+.reply-quote-bar .reply-quote-text { color: var(--text-secondary); }
+.reply-bar-close { flex: 0 0 auto; }
 
 .bubble.voice-msg {
   flex-direction: column;

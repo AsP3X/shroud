@@ -59,6 +59,16 @@ struct ConversationView: View {
     @State private var pinToBottomToken = 0
     /// Thread width, so bubbles size themselves to the device instead of a fixed column.
     @State private var threadWidth: CGFloat = 0
+    /// Message being answered. The composer shows its quote until the reply is sent or dropped.
+    @State private var replyTarget: MessagingController.ChatMessage?
+    /// Bumped to raise the keyboard when a reply starts.
+    @State private var composerFocusToken = 0
+    /// Quoted message the thread should scroll to (nonce so the same one can be tapped twice).
+    @State private var jumpTarget: JumpTarget?
+    @State private var jumpNonce = 0
+    /// Row flashing after a jump, so the eye finds the message it landed on.
+    @State private var highlightedMessageID: UUID?
+    @State private var highlightTask: Task<Void, Never>?
 
     private var messages: [MessagingController.ChatMessage] {
         messaging.threads[peerUserID] ?? []
@@ -200,7 +210,13 @@ struct ConversationView: View {
                                     isTyping: !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                 )
                             }
-                        }
+                        },
+                        reply: composerReply,
+                        onTapReply: {
+                            if let replyTarget { jumpToQuoted(replyTarget.id) }
+                        },
+                        onCancelReply: { clearReply() },
+                        focusToken: composerFocusToken
                     )
                 }
             }
@@ -221,6 +237,7 @@ struct ConversationView: View {
             .onDisappear {
                 // Leaving the thread throws away an in-flight take and silences playback —
                 // there is no mini-player to hand either off to.
+                highlightTask?.cancel()
                 voiceRecorder.cancel()
                 VoicePlaybackCoordinator.shared.stop()
                 menuAnimationTask?.cancel()
@@ -338,6 +355,8 @@ struct ConversationView: View {
                 },
                 onSend: { caption, quality, edits in
                     let photos = composeDraft.photos
+                    let reference = outgoingReplyReference
+                    clearReply()
                     withAnimation(.easeOut(duration: 0.15)) {
                         self.composeDraft = nil
                     }
@@ -346,7 +365,8 @@ struct ConversationView: View {
                             photos,
                             edits: edits,
                             caption: caption,
-                            quality: quality
+                            quality: quality,
+                            replyTo: reference
                         )
                     }
                 },
@@ -382,10 +402,12 @@ struct ConversationView: View {
                 },
                 onSend: { plans in
                     let movies = videoDraft.videos.map(\.movie)
+                    let reference = outgoingReplyReference
+                    clearReply()
                     closeVideoCompose()
                     // The bubbles land immediately, so pin before the first encode starts.
                     pinToBottomToken &+= 1
-                    Task { await sendVideoPlans(plans, movies: movies) }
+                    Task { await sendVideoPlans(plans, movies: movies, replyTo: reference) }
                 },
                 onAddMore: {
                     pickerAppendsToDraft = true
@@ -645,7 +667,9 @@ struct ConversationView: View {
     // MARK: - Messages
 
     private var messageList: some View {
-        ScrollViewReader { proxy in
+        // Resolved once per pass; every reply header reads from it.
+        let quoted = quotedMessagesByID
+        return ScrollViewReader { proxy in
             ScrollView {
                 // Telegram-like density: tighter gaps between bubbles.
                 // Non-lazy VStack so the bottom anchor exists as soon as messages are set
@@ -661,8 +685,29 @@ struct ConversationView: View {
                                 .id(id)
                                 .padding(.vertical, 8)
                         case let .message(message):
-                            messageRow(message)
+                            messageRow(message, quoted: quoted)
                                 .id(message.id)
+                                // Flashes after a jump from a reply header, full-bleed so the
+                                // eye catches the row rather than the bubble alone.
+                                .background {
+                                    if highlightedMessageID == message.id {
+                                        Rectangle()
+                                            .fill(Theme.accent.opacity(0.14))
+                                            .padding(.horizontal, -Self.threadHorizontalInset)
+                                            .padding(.vertical, -1.5)
+                                            .allowsHitTesting(false)
+                                            .transition(.opacity)
+                                    }
+                                }
+                                // Swipe left to answer it (Telegram). Disabled while the
+                                // context menu owns the screen, and for bubbles the peer
+                                // could not resolve yet.
+                                .swipeToReply(
+                                    isEnabled: message.canBeQuoted && focusedMenu == nil,
+                                    isMine: message.isMine
+                                ) {
+                                    startReply(to: message)
+                                }
                                 // Arriving bubbles grow out of the corner they were "spoken" from.
                                 .transition(Motion.bubbleIn(isMine: message.isMine))
                                 // Keep layout space while focused so the list doesn’t jump.
@@ -726,6 +771,14 @@ struct ConversationView: View {
             }
             .onChange(of: peerActivity) { _, activity in
                 if activity != nil { scrollToBottom(proxy) }
+            }
+            .onChange(of: jumpTarget) { _, target in
+                guard let target else { return }
+                withAnimation(Motion.standard) {
+                    proxy.scrollTo(target.id, anchor: .center)
+                }
+                flashHighlight(target.id)
+                jumpTarget = nil
             }
             .onChange(of: pinToBottomToken) { _, _ in
                 // Opening + post-load: force pin without animation so we never flash the top.
@@ -831,14 +884,105 @@ struct ConversationView: View {
         }
     }
 
+    // MARK: - Replies
+
+    /// One scroll request. The nonce lets the same quote be tapped twice in a row.
+    private struct JumpTarget: Equatable {
+        let id: UUID
+        let nonce: Int
+    }
+
+    /// Quoted messages that are still in the thread, so every reply header resolves in one pass
+    /// instead of scanning the thread per bubble.
+    private var quotedMessagesByID: [UUID: MessagingController.ChatMessage] {
+        let wanted = Set(messages.compactMap { $0.replyTo?.messageID })
+        guard !wanted.isEmpty else { return [:] }
+        return Dictionary(
+            messages.filter { wanted.contains($0.id) }.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+    }
+
+    /// Header for a bubble that quotes something; nil for an ordinary message.
+    private func replyContent(
+        for message: MessagingController.ChatMessage,
+        quoted: [UUID: MessagingController.ChatMessage]
+    ) -> ReplyQuoteContent? {
+        guard let reference = message.replyTo else { return nil }
+        return ReplyQuoteContent.make(
+            reference: reference,
+            original: quoted[reference.messageID],
+            peerName: peerUsername,
+            myUserID: messaging.myUserID
+        )
+    }
+
+    /// The live copy of the message being answered (it may have been edited or deleted since).
+    private var liveReplyTarget: MessagingController.ChatMessage? {
+        guard let replyTarget else { return nil }
+        return messages.first(where: { $0.id == replyTarget.id }) ?? replyTarget
+    }
+
+    /// Quote shown in the composer bar.
+    private var composerReply: ReplyQuoteContent? {
+        guard let liveReplyTarget else { return nil }
+        return ReplyQuoteContent.make(original: liveReplyTarget, peerName: peerUsername)
+    }
+
+    /// What gets sealed into the next message sent from this composer.
+    ///
+    /// Human: Taken from the snapshot captured when the reply started, not the live
+    /// bubble. If the original is deleted for everyone while we are still typing, the
+    /// header reads "Deleted message" but the send still carries the quote we started with.
+    private var outgoingReplyReference: MessageReplyReference? {
+        replyTarget?.replyReference
+    }
+
+    private func startReply(to message: MessagingController.ChatMessage) {
+        guard message.canBeQuoted else { return }
+        withAnimation(Motion.snappy) { replyTarget = message }
+        // Telegram opens the keyboard the moment a reply starts.
+        composerFocusToken &+= 1
+    }
+
+    private func clearReply() {
+        guard replyTarget != nil else { return }
+        withAnimation(Motion.snappy) { replyTarget = nil }
+    }
+
+    /// Scrolls to a quoted message and flashes it. Says so when it is no longer on the device
+    /// (older than the local window, or deleted just for us).
+    private func jumpToQuoted(_ messageID: UUID) {
+        guard messages.contains(where: { $0.id == messageID }) else {
+            toast = "The original message isn't in this chat any more."
+            Haptics.notification(.warning)
+            scheduleToastClear()
+            return
+        }
+        jumpNonce &+= 1
+        jumpTarget = JumpTarget(id: messageID, nonce: jumpNonce)
+    }
+
+    private func flashHighlight(_ messageID: UUID) {
+        highlightTask?.cancel()
+        withAnimation(Motion.fade) { highlightedMessageID = messageID }
+        highlightTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(1100))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.45)) { highlightedMessageID = nil }
+        }
+    }
+
     // MARK: - Actions
 
     private func sendDraft() {
         let text = draft
+        let reference = outgoingReplyReference
         draft = ""
+        clearReply()
         messaging.setTyping(peerUserID: peerUserID, isTyping: false)
         Haptics.impact(.light)
-        Task { await messaging.sendText(text, to: peerUserID) }
+        Task { await messaging.sendText(text, to: peerUserID, replyTo: reference) }
     }
 
     // MARK: - Voice recording
@@ -901,12 +1045,15 @@ struct ConversationView: View {
                 messaging.setRecording(peerUserID: peerUserID, isRecording: false)
                 messaging.setTyping(peerUserID: peerUserID, isTyping: false)
             }
+            let reference = outgoingReplyReference
+            clearReply()
             Task {
                 let error = await messaging.sendVoice(
                     audioData: take.data,
                     durationMs: take.durationMs,
                     to: peerUserID,
                     waveform: take.waveform,
+                    replyTo: reference,
                     // Best-effort on-device transcript (Tier 1) — never blocks send on failure.
                     // Runs after the bubble is on screen (see `sendVoice`), so a long recording
                     // appears immediately instead of waiting on the transcriber.
@@ -938,7 +1085,11 @@ struct ConversationView: View {
     }
 
     @ViewBuilder
-    private func messageRow(_ message: MessagingController.ChatMessage) -> some View {
+    private func messageRow(
+        _ message: MessagingController.ChatMessage,
+        quoted: [UUID: MessagingController.ChatMessage]
+    ) -> some View {
+        let reply = replyContent(for: message, quoted: quoted)
         switch message.kind {
         case .image:
             ImageMessageBubble(
@@ -971,7 +1122,11 @@ struct ConversationView: View {
                 onOpen: {
                     openMediaViewer(for: message)
                 },
-                frameReportID: message.id
+                frameReportID: message.id,
+                reply: reply,
+                onReplyTap: message.replyTo.map { reference in
+                    { jumpToQuoted(reference.messageID) }
+                }
             )
         case .video:
             VideoMessageBubble(
@@ -1003,7 +1158,11 @@ struct ConversationView: View {
                 onOpen: {
                     openVideoPlayer(for: message)
                 },
-                frameReportID: message.id
+                frameReportID: message.id,
+                reply: reply,
+                onReplyTap: message.replyTo.map { reference in
+                    { jumpToQuoted(reference.messageID) }
+                }
             )
         case .voice:
             VoiceMessageBubble(
@@ -1039,7 +1198,11 @@ struct ConversationView: View {
                         return nil
                     }
                 },
-                inTranscriptTail: transcriptTail.contains(message.id)
+                inTranscriptTail: transcriptTail.contains(message.id),
+                reply: reply,
+                onReplyTap: message.replyTo.map { reference in
+                    { jumpToQuoted(reference.messageID) }
+                }
             )
         case .text:
             MessageBubbleView(
@@ -1048,7 +1211,11 @@ struct ConversationView: View {
                 isMine: message.isMine,
                 isDeleted: message.deleted,
                 receipt: isNotes ? .sent : message.receipt,
-                frameReportID: message.id
+                frameReportID: message.id,
+                reply: reply,
+                onReplyTap: message.replyTo.map { reference in
+                    { jumpToQuoted(reference.messageID) }
+                }
             )
         case .todo:
             TodoMessageBubble(
@@ -1200,13 +1367,22 @@ struct ConversationView: View {
 
     /// Sends the composed clips in order. Each bubble carries its own progress ring, so there
     /// is no modal spinner here — the thread stays usable while a long clip encodes.
-    private func sendVideoPlans(_ plans: [VideoSendPlan], movies: [PickedMovie]) async {
+    private func sendVideoPlans(
+        _ plans: [VideoSendPlan],
+        movies: [PickedMovie],
+        replyTo: MessageReplyReference? = nil
+    ) async {
         guard !plans.isEmpty else { return }
         defer { movies.forEach { $0.cleanup() } }
 
         var firstError: String?
-        for plan in plans {
-            let error = await messaging.sendVideo(plan, to: peerUserID)
+        for (index, plan) in plans.enumerated() {
+            // The quote goes on the first clip only, as the caption does.
+            let error = await messaging.sendVideo(
+                plan,
+                to: peerUserID,
+                replyTo: index == 0 ? replyTo : nil
+            )
             if let error, firstError == nil { firstError = error }
         }
 
@@ -1284,7 +1460,8 @@ struct ConversationView: View {
         _ photos: [PickedPhoto],
         edits: [MediaEdits],
         caption: String = "",
-        quality: MediaComposeQuality = .original
+        quality: MediaComposeQuality = .original,
+        replyTo: MessageReplyReference? = nil
     ) async {
         guard !photos.isEmpty else { return }
         isSendingMedia = true
@@ -1297,7 +1474,9 @@ struct ConversationView: View {
                 to: peerUserID,
                 caption: index == 0 ? caption : "",
                 quality: quality,
-                edits: edits.indices.contains(index) ? edits[index] : MediaEdits()
+                edits: edits.indices.contains(index) ? edits[index] : MediaEdits(),
+                // Telegram puts the caption — and the reply — on the first item of an album.
+                replyTo: index == 0 ? replyTo : nil
             )
             if let error, firstError == nil { firstError = error }
         }
@@ -1550,7 +1729,8 @@ struct ConversationView: View {
                     message: message,
                     timeLabel: messaging.clockTimeLabel(for: message.createdAt),
                     heroImage: session.heroImage,
-                    inTranscriptTail: transcriptTail.contains(message.id)
+                    inTranscriptTail: transcriptTail.contains(message.id),
+                    reply: replyContent(for: message, quoted: quotedMessagesByID)
                 )
                 // Same size as the list bubble so progress 0 is a perfect handoff.
                 .frame(width: heroFrame.width, height: heroFrame.height)
@@ -1580,7 +1760,9 @@ struct ConversationView: View {
             toast = "Copied"
             Haptics.notification(.success)
             scheduleToastClear()
-        case .reply, .edit, .pin, .forward, .select, .moreReactions:
+        case .reply:
+            startReply(to: message)
+        case .edit, .pin, .forward, .select, .moreReactions:
             showComingSoon(action.title)
         case .delete:
             pendingDelete = PendingDelete(message: message)
