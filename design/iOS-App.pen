@@ -31602,7 +31602,7 @@
           "id": "afime",
           "layoutPosition": "absolute",
           "x": 16,
-          "y": 418,
+          "y": 451,
           "name": "Focus Stack",
           "width": 250,
           "layout": "vertical",
@@ -31729,6 +31729,66 @@
                       "icon": "plus",
                       "library": "lucide",
                       "fill": "$text-secondary"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "OE3aW",
+              "name": "Focused Bubble",
+              "fill": "#FFFFFF",
+              "cornerRadius": [
+                17.5,
+                17.5,
+                17.5,
+                5
+              ],
+              "effect": {
+                "type": "shadow",
+                "shadowType": "outer",
+                "color": "#0B0B1240",
+                "offset": {
+                  "x": 0,
+                  "y": 6
+                },
+                "blur": 18
+              },
+              "gap": 7,
+              "padding": [
+                6,
+                9,
+                6,
+                11
+              ],
+              "alignItems": "end",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "aJ8BQ",
+                  "name": "Msg",
+                  "fill": "$text-primary",
+                  "content": "Hey! Are we still on for tomorrow?",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font",
+                  "fontSize": 16,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "vwrZL",
+                  "name": "Meta",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "ayiwF",
+                      "name": "Time",
+                      "fill": "$text-secondary",
+                      "content": "11:02",
+                      "fontFamily": "$font",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
                     }
                   ]
                 }
@@ -32001,66 +32061,6 @@
                       "icon": "trash-2",
                       "library": "lucide",
                       "fill": "#E0342C"
-                    }
-                  ]
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "OE3aW",
-              "name": "Focused Bubble",
-              "fill": "#FFFFFF",
-              "cornerRadius": [
-                17.5,
-                17.5,
-                17.5,
-                5
-              ],
-              "effect": {
-                "type": "shadow",
-                "shadowType": "outer",
-                "color": "#0B0B1240",
-                "offset": {
-                  "x": 0,
-                  "y": 6
-                },
-                "blur": 18
-              },
-              "gap": 7,
-              "padding": [
-                6,
-                9,
-                6,
-                11
-              ],
-              "alignItems": "end",
-              "children": [
-                {
-                  "type": "text",
-                  "id": "aJ8BQ",
-                  "name": "Msg",
-                  "fill": "$text-primary",
-                  "content": "Hey! Are we still on for tomorrow?",
-                  "lineHeight": 1.25,
-                  "fontFamily": "$font",
-                  "fontSize": 16,
-                  "fontWeight": "normal"
-                },
-                {
-                  "type": "frame",
-                  "id": "vwrZL",
-                  "name": "Meta",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "ayiwF",
-                      "name": "Time",
-                      "fill": "$text-secondary",
-                      "content": "11:02",
-                      "fontFamily": "$font",
-                      "fontSize": 11,
-                      "fontWeight": "normal"
                     }
                   ]
                 }
@@ -35633,7 +35633,8 @@
                       "id": "VWNqj",
                       "name": "Body",
                       "width": "fill_container",
-                      "gap": 7,
+                      "layout": "vertical",
+                      "gap": 1,
                       "padding": [
                         0,
                         3,
@@ -36222,7 +36223,8 @@
                       "id": "Z1941L",
                       "name": "Body",
                       "width": "fill_container",
-                      "gap": 7,
+                      "layout": "vertical",
+                      "gap": 1,
                       "padding": [
                         0,
                         3,
