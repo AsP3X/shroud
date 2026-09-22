@@ -39,6 +39,8 @@ struct LockScreenView: View {
     @State private var unlockingMethod: HistoryKeyVault.UnlockMethod?
     /// Drives the badge's breathing while the system sheet is up.
     @State private var badgeBreathing = false
+    /// Device biometry, probed once per screen — LAContext is not free and this never changes.
+    @State private var biometry = Self.detectBiometry()
 
     /// Verified → Release → Reveal, from the storyboard's time chips.
     private static let verifiedHold: Duration = .milliseconds(300)
@@ -46,34 +48,25 @@ struct LockScreenView: View {
 
     private var isBusy: Bool { phase != .idle }
 
-    private var hasBiometry: Bool {
-        let context = LAContext()
-        var error: NSError?
-        return context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error)
-    }
-
-    private var canUseDeviceAuth: Bool { HistoryKeyVault.canProtectWrapKey }
-
-    private var biometryName: String {
+    /// Name and SF Symbol of the biometry this device can evaluate; nil when it has none.
+    private static func detectBiometry() -> (name: String, symbol: String)? {
         let context = LAContext()
         var error: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else {
-            return "Face ID"
+            return nil
         }
         switch context.biometryType {
-        case .touchID: return "Touch ID"
-        case .opticID: return "Optic ID"
-        default: return "Face ID"
+        case .touchID: return ("Touch ID", "touchid")
+        case .opticID: return ("Optic ID", "opticid")
+        default: return ("Face ID", "faceid")
         }
     }
 
-    private var biometrySymbol: String {
-        switch biometryName {
-        case "Touch ID": return "touchid"
-        case "Optic ID": return "opticid"
-        default: return "faceid"
-        }
-    }
+    private var hasBiometry: Bool { biometry != nil }
+    private var biometryName: String { biometry?.name ?? "Face ID" }
+    private var biometrySymbol: String { biometry?.symbol ?? "faceid" }
+
+    private var canUseDeviceAuth: Bool { HistoryKeyVault.canProtectWrapKey }
 
     private var deviceName: String { UIDevice.current.model }
 
@@ -186,6 +179,8 @@ struct LockScreenView: View {
                 .scaleEffect(released ? 0.9 : 1)
 
             BrandLogoMark(size: 100)
+                // Zoom source for the phrase push, as Welcome's mark is for Sign Up / Log In.
+                .onboardingHeroSource()
                 .shadow(color: Theme.accent.opacity(released ? 0.4 : 0.3), radius: released ? 22 : 18, y: released ? 22 : 16)
                 .scaleEffect(markScale)
                 .offset(y: markOffset)
@@ -350,20 +345,27 @@ struct LockScreenView: View {
             }
 
             if canUseDeviceAuth {
-                HStack(spacing: 4) {
-                    Text(hasBiometry ? "Lost access to \(biometryName)?" : "Prefer another way?")
-                        .foregroundStyle(Theme.textSecondary)
-                    Button("Use encryption phrase") {
-                        router.showLogIn()
+                // The whole sentence is the control so the fallback keeps a 44 pt hit area.
+                Button {
+                    router.showLogIn()
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(hasBiometry ? "Lost access to \(biometryName)?" : "Prefer another way?")
+                            .foregroundStyle(Theme.textSecondary)
+                        Text("Use encryption phrase")
+                            .foregroundStyle(Theme.accent)
+                            .fontWeight(.semibold)
                     }
-                    .foregroundStyle(Theme.accent)
-                    .fontWeight(.semibold)
-                    .disabled(isBusy)
-                    .accessibilityIdentifier("lock.usePhrase")
+                    .font(.system(size: 13))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .contentShape(Rectangle())
                 }
-                .font(.system(size: 13))
-                .padding(.top, 10)
-                .padding(.bottom, 2)
+                .buttonStyle(.plain)
+                .disabled(isBusy)
+                .accessibilityLabel("Use encryption phrase")
+                .accessibilityIdentifier("lock.usePhrase")
+                .padding(.top, 2)
+                .padding(.bottom, -6)
             }
 
             HStack(spacing: 6) {
@@ -478,6 +480,7 @@ struct LockScreenView: View {
         if reduceMotion {
             withAnimation(Motion.reduced) { phase = .revealing }
             router.unlockMessages()
+            recoverIfStillLocked()
             return
         }
         withAnimation(Motion.bouncy) { phase = .verified }
@@ -488,6 +491,15 @@ struct LockScreenView: View {
             phase = .revealing
             router.unlockMessages()
         }
+        recoverIfStillLocked()
+    }
+
+    /// The vault can re-seal during the choreography (app backgrounded, session force-ended),
+    /// in which case `unlockMessages()` declines. Bring the controls back instead of leaving a
+    /// faded, disabled screen.
+    private func recoverIfStillLocked() {
+        guard !router.isUnlocked else { return }
+        withAnimation(Motion.gentle) { phase = .idle }
     }
 
     private func presentPostAuthToastIfNeeded() {
