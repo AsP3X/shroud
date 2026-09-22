@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Delete, KeyRound, Lock, LockOpen, Shield, ShieldCheck } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { api } from "../api/client";
 import { Avatar } from "../components/Avatar";
 import {
   clearPin,
@@ -40,6 +41,14 @@ export function Unlock() {
   const inflight = useRef(false);
   const busyRef = useRef(false);
   busyRef.current = busy;
+  /* False once the screen is gone, so a choreography that outlives it does not navigate. */
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   const fail = useCallback((message: string) => {
     setError(message);
@@ -59,8 +68,10 @@ export function Unlock() {
     setBusy(true);
     setChoreography("verified");
     await new Promise((resolve) => window.setTimeout(resolve, VERIFIED_MS));
+    if (!mounted.current) return;
     setChoreography("releasing");
     await new Promise((resolve) => window.setTimeout(resolve, RELEASE_MS));
+    if (!mounted.current) return;
     setLocked(false);
     touchLastActive(true);
     navigate("/app", { replace: true });
@@ -92,7 +103,6 @@ export function Unlock() {
               fail("PINs did not match. Try again.");
               return;
             }
-            setBusy(true);
             await setPin(userId, pin);
             await enterApp();
           } catch {
@@ -165,6 +175,9 @@ export function Unlock() {
      The phrase step re-derives the history key, and a fresh PIN is chosen on the way back. */
   function resetWithPhrase() {
     if (!session) return;
+    void api.logout(session.token).catch(() => {
+      /* still drop the local token, as Auth does */
+    });
     clearPin(session.user.id);
     clearSession();
     navigate("/login", { replace: true });

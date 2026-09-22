@@ -2959,6 +2959,8 @@ button.reply-quote { cursor: pointer; }
   .lock-hero-col .lede { font-size: var(--fs-md); max-width: 300px; }
   .lock-stage { scale: 0.72; margin: -46px 0 -52px; }
   .lock-trust { display: none; }
+  /* No hardware keyboard to type on; keep the row so the error has somewhere to land. */
+  .lock-hint { visibility: hidden; }
   .lock-card { background: transparent; border: 0; box-shadow: none; padding: 4px 0 0; gap: 14px; }
   .lock-pad { gap: 10px 14px; }
   .lock-card-label { display: none; }
