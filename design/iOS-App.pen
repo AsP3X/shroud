@@ -39001,6 +39001,3389 @@
           ]
         }
       ]
+    },
+    {
+      "type": "frame",
+      "id": "yGDcx",
+      "x": 1940,
+      "y": 2755,
+      "name": "Locked",
+      "clip": true,
+      "width": 390,
+      "height": 844,
+      "fill": "$bg",
+      "layout": "vertical",
+      "children": [
+        {
+          "id": "QDsue",
+          "type": "ref",
+          "ref": "ohoDT",
+          "name": "Status Bar",
+          "width": "fill_container"
+        },
+        {
+          "type": "frame",
+          "id": "H44O2",
+          "name": "Nav Row",
+          "width": "fill_container",
+          "padding": [
+            4,
+            16
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "udKMm",
+              "name": "Nav Spacer",
+              "width": 44,
+              "height": 44
+            },
+            {
+              "type": "frame",
+              "id": "mNjxu",
+              "name": "Settings Button",
+              "width": 44,
+              "height": 44,
+              "fill": "$bg-grouped",
+              "cornerRadius": 22,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "VBPpU",
+                  "name": "Settings Icon",
+                  "width": 22,
+                  "height": 22,
+                  "icon": "settings",
+                  "library": "lucide",
+                  "fill": "$accent"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "EME9g",
+          "name": "Hero Stage",
+          "width": "fill_container",
+          "height": 300,
+          "layout": "none",
+          "children": [
+            {
+              "type": "ellipse",
+              "id": "IlPi2",
+              "x": 45,
+              "y": 0,
+              "name": "Ring Outer",
+              "fill": "#FFFFFF00",
+              "width": 300,
+              "height": 300,
+              "stroke": "#5E5CE60F",
+              "strokeWidth": 1.5
+            },
+            {
+              "type": "ellipse",
+              "id": "wk6Ua",
+              "x": 75,
+              "y": 30,
+              "name": "Ring Mid",
+              "fill": "#FFFFFF00",
+              "width": 240,
+              "height": 240,
+              "stroke": "#5E5CE61F",
+              "strokeWidth": 1.5
+            },
+            {
+              "type": "ellipse",
+              "id": "x6BYG",
+              "x": 115,
+              "y": 70,
+              "name": "Ring Inner",
+              "fill": "$accent-soft",
+              "width": 160,
+              "height": 160
+            },
+            {
+              "type": "frame",
+              "id": "WxG2v",
+              "x": 145,
+              "y": 100,
+              "name": "Logo Mark",
+              "width": 100,
+              "height": 100,
+              "fill": {
+                "type": "gradient",
+                "gradientType": "linear",
+                "enabled": true,
+                "rotation": 180,
+                "size": {
+                  "height": 1
+                },
+                "colors": [
+                  {
+                    "color": "#7C7AFF",
+                    "position": 0
+                  },
+                  {
+                    "color": "#5E5CE6",
+                    "position": 1
+                  }
+                ]
+              },
+              "cornerRadius": 29,
+              "effect": {
+                "type": "shadow",
+                "shadowType": "outer",
+                "color": "#5E5CE64D",
+                "offset": {
+                  "x": 0,
+                  "y": 16
+                },
+                "blur": 36
+              },
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "fBETP",
+                  "name": "Shield",
+                  "width": 48,
+                  "height": 48,
+                  "icon": "shield",
+                  "library": "lucide",
+                  "fill": "#FFFFFF"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "oRJqH",
+              "x": 222,
+              "y": 178,
+              "name": "Lock Badge",
+              "width": 40,
+              "height": 40,
+              "fill": "$bg",
+              "cornerRadius": 20,
+              "effect": {
+                "type": "shadow",
+                "shadowType": "outer",
+                "color": "#0B0B1229",
+                "offset": {
+                  "x": 0,
+                  "y": 6
+                },
+                "blur": 16
+              },
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "i1PZuP",
+                  "name": "Lock Glyph",
+                  "width": 18,
+                  "height": 18,
+                  "icon": "lock",
+                  "library": "lucide",
+                  "fill": "$accent"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "NXRvJ",
+              "x": 232,
+              "y": 44,
+              "name": "Chip Locked",
+              "opacity": 0.9,
+              "rotation": -5,
+              "fill": "$accent",
+              "cornerRadius": [
+                16,
+                16,
+                4,
+                16
+              ],
+              "effect": {
+                "type": "shadow",
+                "shadowType": "outer",
+                "color": "#5E5CE64D",
+                "offset": {
+                  "x": 0,
+                  "y": 6
+                },
+                "blur": 18
+              },
+              "gap": 6,
+              "padding": [
+                9,
+                13
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "b8ViT",
+                  "name": "Chip Lock",
+                  "width": 13,
+                  "height": 13,
+                  "icon": "lock",
+                  "library": "lucide",
+                  "fill": "#FFFFFFCC"
+                },
+                {
+                  "type": "text",
+                  "id": "c5Wye",
+                  "name": "Chip Text",
+                  "fill": "#FFFFFF",
+                  "content": "•••• ••••",
+                  "fontFamily": "$font",
+                  "fontSize": 14,
+                  "fontWeight": "600",
+                  "letterSpacing": 2
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "M5AhT",
+              "x": 56,
+              "y": 206,
+              "name": "Chip Sealed",
+              "rotation": 3.0000000000000004,
+              "fill": "#FFFFFF",
+              "cornerRadius": 14,
+              "effect": {
+                "type": "shadow",
+                "shadowType": "outer",
+                "color": "#0B0B121F",
+                "offset": {
+                  "x": 0,
+                  "y": 6
+                },
+                "blur": 18
+              },
+              "gap": 5,
+              "padding": [
+                7,
+                11
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "JIjye",
+                  "name": "Sealed Icon",
+                  "width": 14,
+                  "height": 14,
+                  "icon": "shield-check",
+                  "library": "lucide",
+                  "fill": "$online"
+                },
+                {
+                  "type": "text",
+                  "id": "H6iCM",
+                  "name": "Sealed Text",
+                  "fill": "$text-secondary",
+                  "content": "Sealed",
+                  "fontFamily": "$font",
+                  "fontSize": 12,
+                  "fontWeight": "500"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "b54A0e",
+          "name": "Content",
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "gap": 20,
+          "padding": [
+            8,
+            24,
+            0,
+            24
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "vl2ZA",
+              "name": "Account Pill",
+              "fill": "$bg-grouped",
+              "cornerRadius": 18,
+              "gap": 8,
+              "padding": [
+                5,
+                12,
+                5,
+                5
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "id": "duNEG",
+                  "type": "ref",
+                  "ref": "gTywD",
+                  "name": "Account Avatar",
+                  "width": 26,
+                  "height": 26,
+                  "descendants": {
+                    "ugwnH": {
+                      "content": "NV",
+                      "fontSize": 11
+                    }
+                  }
+                },
+                {
+                  "type": "text",
+                  "id": "h5Q1Do",
+                  "name": "Account Handle",
+                  "fill": "$text-primary",
+                  "content": "@noah",
+                  "fontFamily": "$font",
+                  "fontSize": 13,
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "pGXz6",
+              "name": "Headline Block",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 10,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "tUBt8",
+                  "name": "Headline",
+                  "fill": "$text-primary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Chats are locked",
+                  "lineHeight": 1.1,
+                  "textAlign": "center",
+                  "fontFamily": "$font",
+                  "fontSize": 30,
+                  "fontWeight": "bold",
+                  "letterSpacing": -0.6
+                },
+                {
+                  "type": "text",
+                  "id": "efByA",
+                  "name": "Tagline",
+                  "fill": "$text-secondary",
+                  "textGrowth": "fixed-width",
+                  "width": 300,
+                  "content": "Your messages stay encrypted on this iPhone until you unlock them.",
+                  "lineHeight": 1.45,
+                  "textAlign": "center",
+                  "fontFamily": "$font",
+                  "fontSize": 15,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "OASln",
+          "name": "Bottom",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": [
+            8,
+            24,
+            0,
+            24
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "m8XCg",
+              "name": "Primary Button",
+              "width": "fill_container",
+              "height": 54,
+              "fill": "$accent",
+              "cornerRadius": 27,
+              "effect": {
+                "type": "shadow",
+                "shadowType": "outer",
+                "color": "#5E5CE640",
+                "offset": {
+                  "x": 0,
+                  "y": 8
+                },
+                "blur": 20
+              },
+              "gap": 10,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "lUOEp",
+                  "name": "Face ID Icon",
+                  "width": 22,
+                  "height": 22,
+                  "icon": "scan-face",
+                  "library": "lucide",
+                  "fill": "#FFFFFF"
+                },
+                {
+                  "type": "text",
+                  "id": "EeUop",
+                  "name": "Button Label",
+                  "fill": "#FFFFFF",
+                  "content": "Unlock with Face ID",
+                  "fontFamily": "$font",
+                  "fontSize": 17,
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "aZiJj",
+              "name": "Secondary Button",
+              "width": "fill_container",
+              "height": 54,
+              "fill": "$bg-grouped",
+              "cornerRadius": 27,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "C0hCE",
+                  "name": "Secondary Label",
+                  "fill": "$accent",
+                  "content": "Use device passcode",
+                  "fontFamily": "$font",
+                  "fontSize": 17,
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "o5yce",
+              "name": "Phrase Row",
+              "gap": 4,
+              "padding": [
+                10,
+                0,
+                2,
+                0
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "R0mjpD",
+                  "name": "Phrase Hint",
+                  "fill": "$text-secondary",
+                  "content": "Lost access to Face ID?",
+                  "fontFamily": "$font",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "RsGyg",
+                  "name": "Phrase Link",
+                  "fill": "$accent",
+                  "content": "Use encryption phrase",
+                  "fontFamily": "$font",
+                  "fontSize": 13,
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "VkQ7a",
+              "name": "Trust Note",
+              "gap": 6,
+              "padding": [
+                4,
+                0,
+                0,
+                0
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "u01ND",
+                  "name": "Trust Icon",
+                  "width": 12,
+                  "height": 12,
+                  "icon": "key-round",
+                  "library": "lucide",
+                  "fill": "#B0B0B6"
+                },
+                {
+                  "type": "text",
+                  "id": "IsW7p",
+                  "name": "Trust Text",
+                  "fill": "#B0B0B6",
+                  "content": "Keys never leave this device",
+                  "fontFamily": "$font",
+                  "fontSize": 11,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "cpP37",
+          "name": "Home Indicator Wrap",
+          "width": "fill_container",
+          "padding": [
+            10,
+            0,
+            8,
+            0
+          ],
+          "justifyContent": "center",
+          "children": [
+            {
+              "type": "rectangle",
+              "cornerRadius": 3,
+              "id": "gAIM5",
+              "name": "Home Indicator",
+              "fill": "$text-primary",
+              "width": 134,
+              "height": 5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "dRyqM",
+      "x": 2390,
+      "y": 2755,
+      "name": "Locked — Unlock Animation",
+      "fill": "$bg-grouped",
+      "cornerRadius": 24,
+      "gap": 40,
+      "padding": 24,
+      "children": [
+        {
+          "type": "frame",
+          "id": "jWj47",
+          "name": "Keyframe 1 · Tap",
+          "width": 390,
+          "layout": "vertical",
+          "gap": 12,
+          "children": [
+            {
+              "type": "frame",
+              "id": "hMZl2",
+              "name": "Keyframe Header",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 4,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "OcEmh",
+                  "name": "Title Row",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "k2MkD",
+                      "name": "Keyframe Title",
+                      "fill": "$text-primary",
+                      "content": "1 · Tap",
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "MocK8",
+                      "name": "Time Chip",
+                      "fill": "$accent-soft",
+                      "cornerRadius": 8,
+                      "padding": [
+                        2,
+                        8
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "FEqFJ",
+                          "name": "Time",
+                          "fill": "$accent",
+                          "content": "0 ms",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "i2hdn",
+                  "name": "Notes",
+                  "fill": "$text-secondary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Face ID button presses (scale 0.975, medium haptic). Label morphs to “Checking…”, the lock badge pulses gently while the system sheet is up.",
+                  "lineHeight": 1.4,
+                  "fontFamily": "$font",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "RjwQn",
+              "name": "Frame · Tap",
+              "clip": true,
+              "width": 390,
+              "height": 844,
+              "fill": "$bg",
+              "layout": "vertical",
+              "children": [
+                {
+                  "id": "TtscG",
+                  "type": "ref",
+                  "ref": "ohoDT",
+                  "name": "Status Bar",
+                  "width": "fill_container"
+                },
+                {
+                  "type": "frame",
+                  "id": "dXfyS",
+                  "name": "Nav Row",
+                  "width": "fill_container",
+                  "padding": [
+                    4,
+                    16
+                  ],
+                  "justifyContent": "space_between",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "BAwxd",
+                      "name": "Nav Spacer",
+                      "width": 44,
+                      "height": 44
+                    },
+                    {
+                      "type": "frame",
+                      "id": "FaNsN",
+                      "name": "Settings Button",
+                      "width": 44,
+                      "height": 44,
+                      "fill": "$bg-grouped",
+                      "cornerRadius": 22,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "Y9JL1",
+                          "name": "Settings Icon",
+                          "width": 22,
+                          "height": 22,
+                          "icon": "settings",
+                          "library": "lucide",
+                          "fill": "$accent"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "l6eYG",
+                  "name": "Hero Stage",
+                  "width": "fill_container",
+                  "height": 300,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "BQeav",
+                      "x": 45,
+                      "y": 0,
+                      "name": "Ring Outer",
+                      "fill": "#FFFFFF00",
+                      "width": 300,
+                      "height": 300,
+                      "stroke": "#5E5CE60F",
+                      "strokeWidth": 1.5
+                    },
+                    {
+                      "type": "ellipse",
+                      "id": "iIo0H",
+                      "x": 75,
+                      "y": 30,
+                      "name": "Ring Mid",
+                      "fill": "#FFFFFF00",
+                      "width": 240,
+                      "height": 240,
+                      "stroke": "#5E5CE61F",
+                      "strokeWidth": 1.5
+                    },
+                    {
+                      "type": "ellipse",
+                      "id": "jRlaf",
+                      "x": 115,
+                      "y": 70,
+                      "name": "Ring Inner",
+                      "fill": "$accent-soft",
+                      "width": 160,
+                      "height": 160
+                    },
+                    {
+                      "type": "frame",
+                      "id": "lZunj",
+                      "x": 145,
+                      "y": 100,
+                      "name": "Logo Mark",
+                      "width": 100,
+                      "height": 100,
+                      "fill": {
+                        "type": "gradient",
+                        "gradientType": "linear",
+                        "enabled": true,
+                        "rotation": 180,
+                        "size": {
+                          "height": 1
+                        },
+                        "colors": [
+                          {
+                            "color": "#7C7AFF",
+                            "position": 0
+                          },
+                          {
+                            "color": "#5E5CE6",
+                            "position": 1
+                          }
+                        ]
+                      },
+                      "cornerRadius": 29,
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#5E5CE64D",
+                        "offset": {
+                          "x": 0,
+                          "y": 16
+                        },
+                        "blur": 36
+                      },
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "m6sWG",
+                          "name": "Shield",
+                          "width": 48,
+                          "height": 48,
+                          "icon": "shield",
+                          "library": "lucide",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "WSQxY",
+                      "x": 219,
+                      "y": 175,
+                      "name": "Lock Badge",
+                      "width": 46,
+                      "height": 46,
+                      "fill": "$bg",
+                      "cornerRadius": 20,
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#0B0B1229",
+                        "offset": {
+                          "x": 0,
+                          "y": 6
+                        },
+                        "blur": 16
+                      },
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "aj1gT",
+                          "name": "Lock Glyph",
+                          "width": 20,
+                          "height": 20,
+                          "icon": "lock",
+                          "library": "lucide",
+                          "fill": "$accent"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "bM1PN",
+                      "x": 232,
+                      "y": 44,
+                      "name": "Chip Locked",
+                      "opacity": 0.9,
+                      "rotation": -5,
+                      "fill": "$accent",
+                      "cornerRadius": [
+                        16,
+                        16,
+                        4,
+                        16
+                      ],
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#5E5CE64D",
+                        "offset": {
+                          "x": 0,
+                          "y": 6
+                        },
+                        "blur": 18
+                      },
+                      "gap": 6,
+                      "padding": [
+                        9,
+                        13
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "XiNkh",
+                          "name": "Chip Lock",
+                          "width": 13,
+                          "height": 13,
+                          "icon": "lock",
+                          "library": "lucide",
+                          "fill": "#FFFFFFCC"
+                        },
+                        {
+                          "type": "text",
+                          "id": "QEAUw",
+                          "name": "Chip Text",
+                          "fill": "#FFFFFF",
+                          "content": "•••• ••••",
+                          "fontFamily": "$font",
+                          "fontSize": 14,
+                          "fontWeight": "600",
+                          "letterSpacing": 2
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "OjgvN",
+                      "x": 56,
+                      "y": 206,
+                      "name": "Chip Sealed",
+                      "rotation": 3.0000000000000004,
+                      "fill": "#FFFFFF",
+                      "cornerRadius": 14,
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#0B0B121F",
+                        "offset": {
+                          "x": 0,
+                          "y": 6
+                        },
+                        "blur": 18
+                      },
+                      "gap": 5,
+                      "padding": [
+                        7,
+                        11
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "FB8o0",
+                          "name": "Sealed Icon",
+                          "width": 14,
+                          "height": 14,
+                          "icon": "shield-check",
+                          "library": "lucide",
+                          "fill": "$online"
+                        },
+                        {
+                          "type": "text",
+                          "id": "v4wQL",
+                          "name": "Sealed Text",
+                          "fill": "$text-secondary",
+                          "content": "Sealed",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "MERgf",
+                  "name": "Content",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "layout": "vertical",
+                  "gap": 20,
+                  "padding": [
+                    8,
+                    24,
+                    0,
+                    24
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "k2QRUz",
+                      "name": "Account Pill",
+                      "fill": "$bg-grouped",
+                      "cornerRadius": 18,
+                      "gap": 8,
+                      "padding": [
+                        5,
+                        12,
+                        5,
+                        5
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "id": "xJrE9",
+                          "type": "ref",
+                          "ref": "gTywD",
+                          "name": "Account Avatar",
+                          "width": 26,
+                          "height": 26,
+                          "descendants": {
+                            "ugwnH": {
+                              "content": "NV",
+                              "fontSize": 11
+                            }
+                          }
+                        },
+                        {
+                          "type": "text",
+                          "id": "whL4P",
+                          "name": "Account Handle",
+                          "fill": "$text-primary",
+                          "content": "@noah",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "i47Bc",
+                      "name": "Headline Block",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 10,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "d7DyW",
+                          "name": "Headline",
+                          "fill": "$text-primary",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Chats are locked",
+                          "lineHeight": 1.1,
+                          "textAlign": "center",
+                          "fontFamily": "$font",
+                          "fontSize": 30,
+                          "fontWeight": "bold",
+                          "letterSpacing": -0.6
+                        },
+                        {
+                          "type": "text",
+                          "id": "jU2L7",
+                          "name": "Tagline",
+                          "fill": "$text-secondary",
+                          "textGrowth": "fixed-width",
+                          "width": 300,
+                          "content": "Your messages stay encrypted on this iPhone until you unlock them.",
+                          "lineHeight": 1.45,
+                          "textAlign": "center",
+                          "fontFamily": "$font",
+                          "fontSize": 15,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "wPvdU",
+                  "name": "Bottom",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 12,
+                  "padding": [
+                    8,
+                    24,
+                    0,
+                    24
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "W5b1j",
+                      "name": "Primary Button",
+                      "opacity": 0.92,
+                      "width": "fill_container",
+                      "height": 54,
+                      "fill": "$accent",
+                      "cornerRadius": 27,
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#5E5CE640",
+                        "offset": {
+                          "x": 0,
+                          "y": 8
+                        },
+                        "blur": 20
+                      },
+                      "gap": 10,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "L6Xi5y",
+                          "name": "Face ID Icon",
+                          "width": 22,
+                          "height": 22,
+                          "icon": "scan-face",
+                          "library": "lucide",
+                          "fill": "#FFFFFF"
+                        },
+                        {
+                          "type": "text",
+                          "id": "aY608",
+                          "name": "Button Label",
+                          "fill": "#FFFFFF",
+                          "content": "Checking…",
+                          "fontFamily": "$font",
+                          "fontSize": 17,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Lignz",
+                      "name": "Secondary Button",
+                      "width": "fill_container",
+                      "height": 54,
+                      "fill": "$bg-grouped",
+                      "cornerRadius": 27,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "qYSdN",
+                          "name": "Secondary Label",
+                          "fill": "$accent",
+                          "content": "Use device passcode",
+                          "fontFamily": "$font",
+                          "fontSize": 17,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "tmuWk",
+                      "name": "Phrase Row",
+                      "gap": 4,
+                      "padding": [
+                        10,
+                        0,
+                        2,
+                        0
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "MdJkV",
+                          "name": "Phrase Hint",
+                          "fill": "$text-secondary",
+                          "content": "Lost access to Face ID?",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "wZLMp",
+                          "name": "Phrase Link",
+                          "fill": "$accent",
+                          "content": "Use encryption phrase",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "v7nMq",
+                      "name": "Trust Note",
+                      "gap": 6,
+                      "padding": [
+                        4,
+                        0,
+                        0,
+                        0
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "uIf4a",
+                          "name": "Trust Icon",
+                          "width": 12,
+                          "height": 12,
+                          "icon": "key-round",
+                          "library": "lucide",
+                          "fill": "#B0B0B6"
+                        },
+                        {
+                          "type": "text",
+                          "id": "foxEP",
+                          "name": "Trust Text",
+                          "fill": "#B0B0B6",
+                          "content": "Keys never leave this device",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "kDp2L",
+                  "name": "Home Indicator Wrap",
+                  "width": "fill_container",
+                  "padding": [
+                    10,
+                    0,
+                    8,
+                    0
+                  ],
+                  "justifyContent": "center",
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 3,
+                      "id": "v6s6P",
+                      "name": "Home Indicator",
+                      "fill": "$text-primary",
+                      "width": 134,
+                      "height": 5
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "Tpuoc",
+          "name": "Keyframe 2 · Verified",
+          "width": 390,
+          "layout": "vertical",
+          "gap": 12,
+          "children": [
+            {
+              "type": "frame",
+              "id": "ovS8K",
+              "name": "Keyframe Header",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 4,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "t8lHiK",
+                  "name": "Title Row",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "UM33l",
+                      "name": "Keyframe Title",
+                      "fill": "$text-primary",
+                      "content": "2 · Verified",
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Z5l0Px",
+                      "name": "Time Chip",
+                      "fill": "$accent-soft",
+                      "cornerRadius": 8,
+                      "padding": [
+                        2,
+                        8
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "oASIW",
+                          "name": "Time",
+                          "fill": "$accent",
+                          "content": "0–300 ms",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "K0WxPv",
+                  "name": "Notes",
+                  "fill": "$text-secondary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Success haptic. Lock badge springs to lock-open and tints green (Motion.bouncy). Chips decrypt in place: dots → “Hey! 👋”, Sealed → Unlocked.",
+                  "lineHeight": 1.4,
+                  "fontFamily": "$font",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "YIurL",
+              "name": "Frame · Verified",
+              "clip": true,
+              "width": 390,
+              "height": 844,
+              "fill": "$bg",
+              "layout": "vertical",
+              "children": [
+                {
+                  "id": "fX8Te",
+                  "type": "ref",
+                  "ref": "ohoDT",
+                  "name": "Status Bar",
+                  "width": "fill_container"
+                },
+                {
+                  "type": "frame",
+                  "id": "l49uh",
+                  "name": "Nav Row",
+                  "width": "fill_container",
+                  "padding": [
+                    4,
+                    16
+                  ],
+                  "justifyContent": "space_between",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "yVoF4",
+                      "name": "Nav Spacer",
+                      "width": 44,
+                      "height": 44
+                    },
+                    {
+                      "type": "frame",
+                      "id": "rJ3js",
+                      "name": "Settings Button",
+                      "width": 44,
+                      "height": 44,
+                      "fill": "$bg-grouped",
+                      "cornerRadius": 22,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "nd6lK",
+                          "name": "Settings Icon",
+                          "width": 22,
+                          "height": 22,
+                          "icon": "settings",
+                          "library": "lucide",
+                          "fill": "$accent"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "p9JAOx",
+                  "name": "Hero Stage",
+                  "width": "fill_container",
+                  "height": 300,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "ciVeX",
+                      "x": 45,
+                      "y": 0,
+                      "name": "Ring Outer",
+                      "fill": "#FFFFFF00",
+                      "width": 300,
+                      "height": 300,
+                      "stroke": "#5E5CE60F",
+                      "strokeWidth": 1.5
+                    },
+                    {
+                      "type": "ellipse",
+                      "id": "M60Pa",
+                      "x": 75,
+                      "y": 30,
+                      "name": "Ring Mid",
+                      "fill": "#FFFFFF00",
+                      "width": 240,
+                      "height": 240,
+                      "stroke": "#5E5CE61F",
+                      "strokeWidth": 1.5
+                    },
+                    {
+                      "type": "ellipse",
+                      "id": "DreX5",
+                      "x": 115,
+                      "y": 70,
+                      "name": "Ring Inner",
+                      "fill": "#E3E2FF",
+                      "width": 160,
+                      "height": 160
+                    },
+                    {
+                      "type": "frame",
+                      "id": "FvuIv",
+                      "x": 145,
+                      "y": 100,
+                      "name": "Logo Mark",
+                      "width": 100,
+                      "height": 100,
+                      "fill": {
+                        "type": "gradient",
+                        "gradientType": "linear",
+                        "enabled": true,
+                        "rotation": 180,
+                        "size": {
+                          "height": 1
+                        },
+                        "colors": [
+                          {
+                            "color": "#7C7AFF",
+                            "position": 0
+                          },
+                          {
+                            "color": "#5E5CE6",
+                            "position": 1
+                          }
+                        ]
+                      },
+                      "cornerRadius": 29,
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#5E5CE64D",
+                        "offset": {
+                          "x": 0,
+                          "y": 16
+                        },
+                        "blur": 36
+                      },
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "UVk2s",
+                          "name": "Shield",
+                          "width": 48,
+                          "height": 48,
+                          "icon": "shield",
+                          "library": "lucide",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "W0ouR",
+                      "x": 220,
+                      "y": 176,
+                      "name": "Lock Badge",
+                      "width": 44,
+                      "height": 44,
+                      "fill": "$online",
+                      "cornerRadius": 20,
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#0B0B1229",
+                        "offset": {
+                          "x": 0,
+                          "y": 6
+                        },
+                        "blur": 16
+                      },
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "a2F6Z8",
+                          "name": "Lock Glyph",
+                          "width": 20,
+                          "height": 20,
+                          "icon": "lock-open",
+                          "library": "lucide",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ZvBO8",
+                      "x": 232,
+                      "y": 44,
+                      "name": "Chip Locked",
+                      "opacity": 0.9,
+                      "rotation": -5,
+                      "fill": "$accent",
+                      "cornerRadius": [
+                        16,
+                        16,
+                        4,
+                        16
+                      ],
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#5E5CE64D",
+                        "offset": {
+                          "x": 0,
+                          "y": 6
+                        },
+                        "blur": 18
+                      },
+                      "gap": 6,
+                      "padding": [
+                        9,
+                        13
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "j6DqOk",
+                          "name": "Chip Lock",
+                          "width": 13,
+                          "height": 13,
+                          "icon": "lock-open",
+                          "library": "lucide",
+                          "fill": "#FFFFFFCC"
+                        },
+                        {
+                          "type": "text",
+                          "id": "O5HOA3",
+                          "name": "Chip Text",
+                          "fill": "#FFFFFF",
+                          "content": "Hey! 👋",
+                          "fontFamily": "$font",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "hv0RJ",
+                      "x": 56,
+                      "y": 206,
+                      "name": "Chip Sealed",
+                      "rotation": 3.0000000000000004,
+                      "fill": "#FFFFFF",
+                      "cornerRadius": 14,
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#0B0B121F",
+                        "offset": {
+                          "x": 0,
+                          "y": 6
+                        },
+                        "blur": 18
+                      },
+                      "gap": 5,
+                      "padding": [
+                        7,
+                        11
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "a3pQQ",
+                          "name": "Sealed Icon",
+                          "width": 14,
+                          "height": 14,
+                          "icon": "check-check",
+                          "library": "lucide",
+                          "fill": "$online"
+                        },
+                        {
+                          "type": "text",
+                          "id": "fePXm",
+                          "name": "Sealed Text",
+                          "fill": "$text-primary",
+                          "content": "Unlocked",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "jg7TM",
+                  "name": "Content",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "layout": "vertical",
+                  "gap": 20,
+                  "padding": [
+                    8,
+                    24,
+                    0,
+                    24
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "K2aqPF",
+                      "name": "Account Pill",
+                      "fill": "$bg-grouped",
+                      "cornerRadius": 18,
+                      "gap": 8,
+                      "padding": [
+                        5,
+                        12,
+                        5,
+                        5
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "id": "tOKms",
+                          "type": "ref",
+                          "ref": "gTywD",
+                          "name": "Account Avatar",
+                          "width": 26,
+                          "height": 26,
+                          "descendants": {
+                            "ugwnH": {
+                              "content": "NV",
+                              "fontSize": 11
+                            }
+                          }
+                        },
+                        {
+                          "type": "text",
+                          "id": "Gf0Mt",
+                          "name": "Account Handle",
+                          "fill": "$text-primary",
+                          "content": "@noah",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "K3UpA",
+                      "name": "Headline Block",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 10,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "u9cdL",
+                          "name": "Headline",
+                          "fill": "$text-primary",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Chats are locked",
+                          "lineHeight": 1.1,
+                          "textAlign": "center",
+                          "fontFamily": "$font",
+                          "fontSize": 30,
+                          "fontWeight": "bold",
+                          "letterSpacing": -0.6
+                        },
+                        {
+                          "type": "text",
+                          "id": "Zmxy7",
+                          "name": "Tagline",
+                          "fill": "$text-secondary",
+                          "textGrowth": "fixed-width",
+                          "width": 300,
+                          "content": "Your messages stay encrypted on this iPhone until you unlock them.",
+                          "lineHeight": 1.45,
+                          "textAlign": "center",
+                          "fontFamily": "$font",
+                          "fontSize": 15,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Ej49W",
+                  "name": "Bottom",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 12,
+                  "padding": [
+                    8,
+                    24,
+                    0,
+                    24
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "E8UDW",
+                      "name": "Primary Button",
+                      "width": "fill_container",
+                      "height": 54,
+                      "fill": "$online",
+                      "cornerRadius": 27,
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#34C75940",
+                        "offset": {
+                          "x": 0,
+                          "y": 8
+                        },
+                        "blur": 20
+                      },
+                      "gap": 10,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "dQHqS",
+                          "name": "Face ID Icon",
+                          "width": 22,
+                          "height": 22,
+                          "icon": "check",
+                          "library": "lucide",
+                          "fill": "#FFFFFF"
+                        },
+                        {
+                          "type": "text",
+                          "id": "pf0dH",
+                          "name": "Button Label",
+                          "fill": "#FFFFFF",
+                          "content": "Unlocked",
+                          "fontFamily": "$font",
+                          "fontSize": 17,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "VEUIt",
+                      "name": "Secondary Button",
+                      "width": "fill_container",
+                      "height": 54,
+                      "fill": "$bg-grouped",
+                      "cornerRadius": 27,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Hmx6x",
+                          "name": "Secondary Label",
+                          "fill": "$accent",
+                          "content": "Use device passcode",
+                          "fontFamily": "$font",
+                          "fontSize": 17,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "y8bJnk",
+                      "name": "Phrase Row",
+                      "gap": 4,
+                      "padding": [
+                        10,
+                        0,
+                        2,
+                        0
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ajrSk",
+                          "name": "Phrase Hint",
+                          "fill": "$text-secondary",
+                          "content": "Lost access to Face ID?",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "A2tnxH",
+                          "name": "Phrase Link",
+                          "fill": "$accent",
+                          "content": "Use encryption phrase",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "w3MWdT",
+                      "name": "Trust Note",
+                      "gap": 6,
+                      "padding": [
+                        4,
+                        0,
+                        0,
+                        0
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "z7RKTp",
+                          "name": "Trust Icon",
+                          "width": 12,
+                          "height": 12,
+                          "icon": "key-round",
+                          "library": "lucide",
+                          "fill": "#B0B0B6"
+                        },
+                        {
+                          "type": "text",
+                          "id": "zclI0",
+                          "name": "Trust Text",
+                          "fill": "#B0B0B6",
+                          "content": "Keys never leave this device",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "oAtEo",
+                  "name": "Home Indicator Wrap",
+                  "width": "fill_container",
+                  "padding": [
+                    10,
+                    0,
+                    8,
+                    0
+                  ],
+                  "justifyContent": "center",
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 3,
+                      "id": "REdgG",
+                      "name": "Home Indicator",
+                      "fill": "$text-primary",
+                      "width": 134,
+                      "height": 5
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "bV5DH",
+          "name": "Keyframe 3 · Release",
+          "width": 390,
+          "layout": "vertical",
+          "gap": 12,
+          "children": [
+            {
+              "type": "frame",
+              "id": "GYaMp",
+              "name": "Keyframe Header",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 4,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "ujzVH",
+                  "name": "Title Row",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "MiFk5",
+                      "name": "Keyframe Title",
+                      "fill": "$text-primary",
+                      "content": "3 · Release",
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "c9Q8Ii",
+                      "name": "Time Chip",
+                      "fill": "$accent-soft",
+                      "cornerRadius": 8,
+                      "padding": [
+                        2,
+                        8
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "vtZc9",
+                          "name": "Time",
+                          "fill": "$accent",
+                          "content": "300–640 ms",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "LyUdc",
+                  "name": "Notes",
+                  "fill": "$text-secondary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Rings ripple outward and fade. Mark lifts and grows (scale 1.16, y −24). Pill, headline and buttons fade down and out (Motion.gentle).",
+                  "lineHeight": 1.4,
+                  "fontFamily": "$font",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "K5gC5",
+              "name": "Frame · Release",
+              "clip": true,
+              "width": 390,
+              "height": 844,
+              "fill": "$bg",
+              "layout": "vertical",
+              "children": [
+                {
+                  "id": "UFMgP",
+                  "type": "ref",
+                  "ref": "ohoDT",
+                  "name": "Status Bar",
+                  "width": "fill_container"
+                },
+                {
+                  "type": "frame",
+                  "id": "p0FA7",
+                  "name": "Nav Row",
+                  "width": "fill_container",
+                  "padding": [
+                    4,
+                    16
+                  ],
+                  "justifyContent": "space_between",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "yoLzf",
+                      "name": "Nav Spacer",
+                      "width": 44,
+                      "height": 44
+                    },
+                    {
+                      "type": "frame",
+                      "id": "X2snj",
+                      "name": "Settings Button",
+                      "width": 44,
+                      "height": 44,
+                      "fill": "$bg-grouped",
+                      "cornerRadius": 22,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "GHVzy",
+                          "name": "Settings Icon",
+                          "width": 22,
+                          "height": 22,
+                          "icon": "settings",
+                          "library": "lucide",
+                          "fill": "$accent"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "LROft",
+                  "name": "Hero Stage",
+                  "width": "fill_container",
+                  "height": 300,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "msBqn",
+                      "x": 5,
+                      "y": -40,
+                      "name": "Ring Outer",
+                      "fill": "#FFFFFF00",
+                      "width": 380,
+                      "height": 380,
+                      "stroke": "#5E5CE608",
+                      "strokeWidth": 1.5
+                    },
+                    {
+                      "type": "ellipse",
+                      "id": "pp1ep",
+                      "x": 45,
+                      "y": 0,
+                      "name": "Ring Mid",
+                      "fill": "#FFFFFF00",
+                      "width": 300,
+                      "height": 300,
+                      "stroke": "#5E5CE612",
+                      "strokeWidth": 1.5
+                    },
+                    {
+                      "type": "ellipse",
+                      "id": "K1btjp",
+                      "x": 95,
+                      "y": 50,
+                      "name": "Ring Inner",
+                      "fill": "#ECECFC80",
+                      "width": 200,
+                      "height": 200
+                    },
+                    {
+                      "type": "frame",
+                      "id": "wJmWO",
+                      "x": 137,
+                      "y": 68,
+                      "name": "Logo Mark",
+                      "width": 116,
+                      "height": 116,
+                      "fill": {
+                        "type": "gradient",
+                        "gradientType": "linear",
+                        "enabled": true,
+                        "rotation": 180,
+                        "size": {
+                          "height": 1
+                        },
+                        "colors": [
+                          {
+                            "color": "#7C7AFF",
+                            "position": 0
+                          },
+                          {
+                            "color": "#5E5CE6",
+                            "position": 1
+                          }
+                        ]
+                      },
+                      "cornerRadius": 34,
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#5E5CE666",
+                        "offset": {
+                          "x": 0,
+                          "y": 22
+                        },
+                        "blur": 44
+                      },
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "P6j42",
+                          "name": "Shield",
+                          "width": 56,
+                          "height": 56,
+                          "icon": "shield",
+                          "library": "lucide",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Wkzsp",
+                      "x": 224,
+                      "y": 150,
+                      "name": "Lock Badge",
+                      "opacity": 0,
+                      "width": 40,
+                      "height": 40,
+                      "fill": "$bg",
+                      "cornerRadius": 20,
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#0B0B1229",
+                        "offset": {
+                          "x": 0,
+                          "y": 6
+                        },
+                        "blur": 16
+                      },
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "KhXKe",
+                          "name": "Lock Glyph",
+                          "width": 18,
+                          "height": 18,
+                          "icon": "lock",
+                          "library": "lucide",
+                          "fill": "$accent"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "wJHbP",
+                      "x": 242,
+                      "y": 30,
+                      "name": "Chip Locked",
+                      "opacity": 0.35,
+                      "rotation": -5,
+                      "fill": "$accent",
+                      "cornerRadius": [
+                        16,
+                        16,
+                        4,
+                        16
+                      ],
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#5E5CE64D",
+                        "offset": {
+                          "x": 0,
+                          "y": 6
+                        },
+                        "blur": 18
+                      },
+                      "gap": 6,
+                      "padding": [
+                        9,
+                        13
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "IuO7I",
+                          "name": "Chip Lock",
+                          "width": 13,
+                          "height": 13,
+                          "icon": "lock",
+                          "library": "lucide",
+                          "fill": "#FFFFFFCC"
+                        },
+                        {
+                          "type": "text",
+                          "id": "PBIot",
+                          "name": "Chip Text",
+                          "fill": "#FFFFFF",
+                          "content": "•••• ••••",
+                          "fontFamily": "$font",
+                          "fontSize": 14,
+                          "fontWeight": "600",
+                          "letterSpacing": 2
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "SRuv0",
+                      "x": 48,
+                      "y": 214,
+                      "name": "Chip Sealed",
+                      "opacity": 0.35,
+                      "rotation": 3.0000000000000004,
+                      "fill": "#FFFFFF",
+                      "cornerRadius": 14,
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#0B0B121F",
+                        "offset": {
+                          "x": 0,
+                          "y": 6
+                        },
+                        "blur": 18
+                      },
+                      "gap": 5,
+                      "padding": [
+                        7,
+                        11
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "uAbYL",
+                          "name": "Sealed Icon",
+                          "width": 14,
+                          "height": 14,
+                          "icon": "shield-check",
+                          "library": "lucide",
+                          "fill": "$online"
+                        },
+                        {
+                          "type": "text",
+                          "id": "mOLXF",
+                          "name": "Sealed Text",
+                          "fill": "$text-secondary",
+                          "content": "Sealed",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "IVc8q",
+                  "name": "Content",
+                  "opacity": 0.35,
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "layout": "vertical",
+                  "gap": 20,
+                  "padding": [
+                    36,
+                    24,
+                    0,
+                    24
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "MzVMX",
+                      "name": "Account Pill",
+                      "fill": "$bg-grouped",
+                      "cornerRadius": 18,
+                      "gap": 8,
+                      "padding": [
+                        5,
+                        12,
+                        5,
+                        5
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "id": "lLp3a",
+                          "type": "ref",
+                          "ref": "gTywD",
+                          "name": "Account Avatar",
+                          "width": 26,
+                          "height": 26,
+                          "descendants": {
+                            "ugwnH": {
+                              "content": "NV",
+                              "fontSize": 11
+                            }
+                          }
+                        },
+                        {
+                          "type": "text",
+                          "id": "Bdz4b",
+                          "name": "Account Handle",
+                          "fill": "$text-primary",
+                          "content": "@noah",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "spwWP",
+                      "name": "Headline Block",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 10,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "uUwzV",
+                          "name": "Headline",
+                          "fill": "$text-primary",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Chats are locked",
+                          "lineHeight": 1.1,
+                          "textAlign": "center",
+                          "fontFamily": "$font",
+                          "fontSize": 30,
+                          "fontWeight": "bold",
+                          "letterSpacing": -0.6
+                        },
+                        {
+                          "type": "text",
+                          "id": "swE9Z",
+                          "name": "Tagline",
+                          "fill": "$text-secondary",
+                          "textGrowth": "fixed-width",
+                          "width": 300,
+                          "content": "Your messages stay encrypted on this iPhone until you unlock them.",
+                          "lineHeight": 1.45,
+                          "textAlign": "center",
+                          "fontFamily": "$font",
+                          "fontSize": 15,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "w8pSA5",
+                  "name": "Bottom",
+                  "opacity": 0.25,
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 12,
+                  "padding": [
+                    36,
+                    24,
+                    0,
+                    24
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "A5zZ9",
+                      "name": "Primary Button",
+                      "width": "fill_container",
+                      "height": 54,
+                      "fill": "$online",
+                      "cornerRadius": 27,
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#34C75900",
+                        "offset": {
+                          "x": 0,
+                          "y": 8
+                        },
+                        "blur": 20
+                      },
+                      "gap": 10,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "CNnwq",
+                          "name": "Face ID Icon",
+                          "width": 22,
+                          "height": 22,
+                          "icon": "check",
+                          "library": "lucide",
+                          "fill": "#FFFFFF"
+                        },
+                        {
+                          "type": "text",
+                          "id": "B5FxU6",
+                          "name": "Button Label",
+                          "fill": "#FFFFFF",
+                          "content": "Unlocked",
+                          "fontFamily": "$font",
+                          "fontSize": 17,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "LTLiO",
+                      "name": "Secondary Button",
+                      "width": "fill_container",
+                      "height": 54,
+                      "fill": "$bg-grouped",
+                      "cornerRadius": 27,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "bjVMj",
+                          "name": "Secondary Label",
+                          "fill": "$accent",
+                          "content": "Use device passcode",
+                          "fontFamily": "$font",
+                          "fontSize": 17,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "I3z05O",
+                      "name": "Phrase Row",
+                      "gap": 4,
+                      "padding": [
+                        10,
+                        0,
+                        2,
+                        0
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "gfqJ3",
+                          "name": "Phrase Hint",
+                          "fill": "$text-secondary",
+                          "content": "Lost access to Face ID?",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "u0gE89",
+                          "name": "Phrase Link",
+                          "fill": "$accent",
+                          "content": "Use encryption phrase",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "IzXlT",
+                      "name": "Trust Note",
+                      "gap": 6,
+                      "padding": [
+                        4,
+                        0,
+                        0,
+                        0
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "gzyXh",
+                          "name": "Trust Icon",
+                          "width": 12,
+                          "height": 12,
+                          "icon": "key-round",
+                          "library": "lucide",
+                          "fill": "#B0B0B6"
+                        },
+                        {
+                          "type": "text",
+                          "id": "Ot5pQ",
+                          "name": "Trust Text",
+                          "fill": "#B0B0B6",
+                          "content": "Keys never leave this device",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ZgNi4",
+                  "name": "Home Indicator Wrap",
+                  "width": "fill_container",
+                  "padding": [
+                    10,
+                    0,
+                    8,
+                    0
+                  ],
+                  "justifyContent": "center",
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 3,
+                      "id": "W0Cul",
+                      "name": "Home Indicator",
+                      "fill": "$text-primary",
+                      "width": 134,
+                      "height": 5
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "boUsO",
+          "name": "Keyframe 4 · Reveal",
+          "width": 390,
+          "layout": "vertical",
+          "gap": 12,
+          "children": [
+            {
+              "type": "frame",
+              "id": "GtIXB",
+              "name": "Keyframe Header",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 4,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "dmBZ7",
+                  "name": "Title Row",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "WIiJY",
+                      "name": "Keyframe Title",
+                      "fill": "$text-primary",
+                      "content": "4 · Reveal",
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "HK4rD",
+                      "name": "Time Chip",
+                      "fill": "$accent-soft",
+                      "cornerRadius": 8,
+                      "padding": [
+                        2,
+                        8
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "gaE6o",
+                          "name": "Time",
+                          "fill": "$accent",
+                          "content": "640–1000 ms",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "s2UDO",
+                  "name": "Notes",
+                  "fill": "$text-secondary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Chats fades in underneath, rising from scale 0.96. The mark shrinks up into the header and dissolves. Reduce Motion: plain cross-fade.",
+                  "lineHeight": 1.4,
+                  "fontFamily": "$font",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "yje1i",
+              "name": "Frame · Reveal",
+              "clip": true,
+              "width": 390,
+              "height": 844,
+              "fill": "$bg",
+              "layout": "none",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "adg5i",
+                  "x": 0,
+                  "y": 0,
+                  "name": "Chats Underneath",
+                  "clip": true,
+                  "width": 390,
+                  "height": 844,
+                  "fill": "$bg",
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "id": "Zrrx9",
+                      "type": "ref",
+                      "ref": "ohoDT",
+                      "name": "Status Bar"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "yf0Tv",
+                      "name": "Header",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 12,
+                      "padding": [
+                        4,
+                        16,
+                        10,
+                        16
+                      ],
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "jejhQ",
+                          "name": "Nav Row",
+                          "width": "fill_container",
+                          "justifyContent": "end",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "hLsyD",
+                              "name": "Nav Icons",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "hP5Ok",
+                                  "name": "New Chat",
+                                  "width": 22,
+                                  "height": 22,
+                                  "icon": "square-pen",
+                                  "library": "lucide",
+                                  "fill": "$accent"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "H3hHT",
+                          "name": "Title",
+                          "fill": "$text-primary",
+                          "content": "Chats",
+                          "fontFamily": "$font",
+                          "fontSize": 32,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "IldcJ",
+                          "name": "Search",
+                          "width": "fill_container",
+                          "height": 36,
+                          "fill": "$bg-grouped",
+                          "cornerRadius": 10,
+                          "gap": 6,
+                          "padding": [
+                            0,
+                            10
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "C6ANQB",
+                              "name": "Search Icon",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "search",
+                              "library": "lucide",
+                              "fill": "$text-secondary"
+                            },
+                            {
+                              "type": "text",
+                              "id": "I4PFf",
+                              "name": "Search Placeholder",
+                              "fill": "$text-secondary",
+                              "content": "Search",
+                              "fontFamily": "$font",
+                              "fontSize": 15,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "FP7x3",
+                      "name": "Chat List",
+                      "clip": true,
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "id": "sysq8",
+                          "type": "ref",
+                          "ref": "R22zHn",
+                          "name": "Chat Design Team",
+                          "width": "fill_container",
+                          "descendants": {
+                            "cQJJ5": {
+                              "fill": {
+                                "type": "gradient",
+                                "gradientType": "linear",
+                                "enabled": true,
+                                "rotation": 180,
+                                "size": {
+                                  "height": 1
+                                },
+                                "colors": [
+                                  {
+                                    "color": "#FF9F5A",
+                                    "position": 0
+                                  },
+                                  {
+                                    "color": "#F76B1C",
+                                    "position": 1
+                                  }
+                                ]
+                              }
+                            },
+                            "cQJJ5/ugwnH": {
+                              "content": "DT"
+                            },
+                            "Sypvz": {
+                              "content": "Design Team"
+                            },
+                            "dIxKr": {
+                              "content": "12:45"
+                            },
+                            "pCl3E": {
+                              "content": "Nina: Final icons are ready"
+                            },
+                            "zz4zR": {
+                              "content": "3"
+                            }
+                          }
+                        },
+                        {
+                          "type": "frame",
+                          "id": "zB0c9",
+                          "name": "Separator",
+                          "width": "fill_container",
+                          "height": 1,
+                          "padding": [
+                            0,
+                            0,
+                            0,
+                            80
+                          ],
+                          "children": [
+                            {
+                              "type": "rectangle",
+                              "id": "TjEVV",
+                              "name": "Line",
+                              "fill": "$separator",
+                              "width": "fill_container",
+                              "height": 1
+                            }
+                          ]
+                        },
+                        {
+                          "id": "YdfQh",
+                          "type": "ref",
+                          "ref": "R22zHn",
+                          "name": "Chat Jane Cooper",
+                          "width": "fill_container",
+                          "descendants": {
+                            "cQJJ5": {
+                              "fill": {
+                                "type": "gradient",
+                                "gradientType": "linear",
+                                "enabled": true,
+                                "rotation": 180,
+                                "size": {
+                                  "height": 1
+                                },
+                                "colors": [
+                                  {
+                                    "color": "#7C7AFF",
+                                    "position": 0
+                                  },
+                                  {
+                                    "color": "#5E5CE6",
+                                    "position": 1
+                                  }
+                                ]
+                              }
+                            },
+                            "cQJJ5/ugwnH": {
+                              "content": "JC"
+                            },
+                            "Sypvz": {
+                              "content": "Jane Cooper"
+                            },
+                            "dIxKr": {
+                              "content": "12:10"
+                            },
+                            "pCl3E": {
+                              "content": "Sounds good, see you tomorrow!"
+                            },
+                            "zz4zR": {
+                              "content": "1"
+                            }
+                          }
+                        },
+                        {
+                          "type": "frame",
+                          "id": "sBVkv",
+                          "name": "Separator",
+                          "width": "fill_container",
+                          "height": 1,
+                          "padding": [
+                            0,
+                            0,
+                            0,
+                            80
+                          ],
+                          "children": [
+                            {
+                              "type": "rectangle",
+                              "id": "R35tEq",
+                              "name": "Line",
+                              "fill": "$separator",
+                              "width": "fill_container",
+                              "height": 1
+                            }
+                          ]
+                        },
+                        {
+                          "id": "nr6VE",
+                          "type": "ref",
+                          "ref": "R22zHn",
+                          "name": "Chat Mom",
+                          "width": "fill_container",
+                          "descendants": {
+                            "cQJJ5": {
+                              "fill": {
+                                "type": "gradient",
+                                "gradientType": "linear",
+                                "enabled": true,
+                                "rotation": 180,
+                                "size": {
+                                  "height": 1
+                                },
+                                "colors": [
+                                  {
+                                    "color": "#FF7A9E",
+                                    "position": 0
+                                  },
+                                  {
+                                    "color": "#E64A72",
+                                    "position": 1
+                                  }
+                                ]
+                              }
+                            },
+                            "cQJJ5/ugwnH": {
+                              "content": "M"
+                            },
+                            "Sypvz": {
+                              "content": "Mom"
+                            },
+                            "dIxKr": {
+                              "content": "11:32"
+                            },
+                            "pCl3E": {
+                              "content": "Call me when you get home"
+                            },
+                            "yl3mE": {
+                              "enabled": false
+                            }
+                          }
+                        },
+                        {
+                          "type": "frame",
+                          "id": "S6jSmD",
+                          "name": "Separator",
+                          "width": "fill_container",
+                          "height": 1,
+                          "padding": [
+                            0,
+                            0,
+                            0,
+                            80
+                          ],
+                          "children": [
+                            {
+                              "type": "rectangle",
+                              "id": "y3HApw",
+                              "name": "Line",
+                              "fill": "$separator",
+                              "width": "fill_container",
+                              "height": 1
+                            }
+                          ]
+                        },
+                        {
+                          "id": "bKyy5",
+                          "type": "ref",
+                          "ref": "R22zHn",
+                          "name": "Chat Devon Lane",
+                          "width": "fill_container",
+                          "descendants": {
+                            "cQJJ5": {
+                              "fill": {
+                                "type": "gradient",
+                                "gradientType": "linear",
+                                "enabled": true,
+                                "rotation": 180,
+                                "size": {
+                                  "height": 1
+                                },
+                                "colors": [
+                                  {
+                                    "color": "#4AC7FA",
+                                    "position": 0
+                                  },
+                                  {
+                                    "color": "#2E8FE0",
+                                    "position": 1
+                                  }
+                                ]
+                              }
+                            },
+                            "cQJJ5/ugwnH": {
+                              "content": "DL"
+                            },
+                            "Sypvz": {
+                              "content": "Devon Lane"
+                            },
+                            "dIxKr": {
+                              "content": "09:58"
+                            },
+                            "pCl3E": {
+                              "content": "You: The keys are under the mat"
+                            },
+                            "yl3mE": {
+                              "enabled": false
+                            }
+                          }
+                        },
+                        {
+                          "type": "frame",
+                          "id": "HDSoo",
+                          "name": "Separator",
+                          "width": "fill_container",
+                          "height": 1,
+                          "padding": [
+                            0,
+                            0,
+                            0,
+                            80
+                          ],
+                          "children": [
+                            {
+                              "type": "rectangle",
+                              "id": "u2zkF",
+                              "name": "Line",
+                              "fill": "$separator",
+                              "width": "fill_container",
+                              "height": 1
+                            }
+                          ]
+                        },
+                        {
+                          "id": "z1aZf",
+                          "type": "ref",
+                          "ref": "R22zHn",
+                          "name": "Chat Hiking Crew",
+                          "width": "fill_container",
+                          "descendants": {
+                            "cQJJ5": {
+                              "fill": {
+                                "type": "gradient",
+                                "gradientType": "linear",
+                                "enabled": true,
+                                "rotation": 180,
+                                "size": {
+                                  "height": 1
+                                },
+                                "colors": [
+                                  {
+                                    "color": "#5AD97C",
+                                    "position": 0
+                                  },
+                                  {
+                                    "color": "#2FA85B",
+                                    "position": 1
+                                  }
+                                ]
+                              }
+                            },
+                            "cQJJ5/ugwnH": {
+                              "content": "HC"
+                            },
+                            "Sypvz": {
+                              "content": "Hiking Crew"
+                            },
+                            "dIxKr": {
+                              "content": "Yesterday"
+                            },
+                            "pCl3E": {
+                              "content": "Sam: Trail is open again this weekend"
+                            },
+                            "zz4zR": {
+                              "content": "12"
+                            }
+                          }
+                        },
+                        {
+                          "type": "frame",
+                          "id": "KWrxp",
+                          "name": "Separator",
+                          "width": "fill_container",
+                          "height": 1,
+                          "padding": [
+                            0,
+                            0,
+                            0,
+                            80
+                          ],
+                          "children": [
+                            {
+                              "type": "rectangle",
+                              "id": "stoz1",
+                              "name": "Line",
+                              "fill": "$separator",
+                              "width": "fill_container",
+                              "height": 1
+                            }
+                          ]
+                        },
+                        {
+                          "id": "saSz1",
+                          "type": "ref",
+                          "ref": "R22zHn",
+                          "name": "Chat Arlene McCoy",
+                          "width": "fill_container",
+                          "descendants": {
+                            "cQJJ5": {
+                              "fill": {
+                                "type": "gradient",
+                                "gradientType": "linear",
+                                "enabled": true,
+                                "rotation": 180,
+                                "size": {
+                                  "height": 1
+                                },
+                                "colors": [
+                                  {
+                                    "color": "#C77CFF",
+                                    "position": 0
+                                  },
+                                  {
+                                    "color": "#9B4AE6",
+                                    "position": 1
+                                  }
+                                ]
+                              }
+                            },
+                            "cQJJ5/ugwnH": {
+                              "content": "AM"
+                            },
+                            "Sypvz": {
+                              "content": "Arlene McCoy"
+                            },
+                            "dIxKr": {
+                              "content": "Yesterday"
+                            },
+                            "pCl3E": {
+                              "content": "Photo"
+                            },
+                            "yl3mE": {
+                              "enabled": false
+                            }
+                          }
+                        },
+                        {
+                          "type": "frame",
+                          "id": "xd2kX",
+                          "name": "Separator",
+                          "width": "fill_container",
+                          "height": 1,
+                          "padding": [
+                            0,
+                            0,
+                            0,
+                            80
+                          ],
+                          "children": [
+                            {
+                              "type": "rectangle",
+                              "id": "E69M1k",
+                              "name": "Line",
+                              "fill": "$separator",
+                              "width": "fill_container",
+                              "height": 1
+                            }
+                          ]
+                        },
+                        {
+                          "id": "SfAhr",
+                          "type": "ref",
+                          "ref": "R22zHn",
+                          "name": "Chat Bank Alerts",
+                          "width": "fill_container",
+                          "descendants": {
+                            "cQJJ5": {
+                              "fill": {
+                                "type": "gradient",
+                                "gradientType": "linear",
+                                "enabled": true,
+                                "rotation": 180,
+                                "size": {
+                                  "height": 1
+                                },
+                                "colors": [
+                                  {
+                                    "color": "#8E8E93",
+                                    "position": 0
+                                  },
+                                  {
+                                    "color": "#5F5F66",
+                                    "position": 1
+                                  }
+                                ]
+                              }
+                            },
+                            "cQJJ5/ugwnH": {
+                              "content": "BA"
+                            },
+                            "Sypvz": {
+                              "content": "Bank Alerts"
+                            },
+                            "dIxKr": {
+                              "content": "Mon"
+                            },
+                            "pCl3E": {
+                              "content": "Your statement for June is ready"
+                            },
+                            "yl3mE": {
+                              "enabled": false
+                            }
+                          }
+                        },
+                        {
+                          "type": "frame",
+                          "id": "uWalu",
+                          "name": "Separator",
+                          "width": "fill_container",
+                          "height": 1,
+                          "padding": [
+                            0,
+                            0,
+                            0,
+                            80
+                          ],
+                          "children": [
+                            {
+                              "type": "rectangle",
+                              "id": "Y19caU",
+                              "name": "Line",
+                              "fill": "$separator",
+                              "width": "fill_container",
+                              "height": 1
+                            }
+                          ]
+                        },
+                        {
+                          "id": "KHxU9",
+                          "type": "ref",
+                          "ref": "R22zHn",
+                          "name": "Chat Guy Hawkins",
+                          "width": "fill_container",
+                          "descendants": {
+                            "cQJJ5": {
+                              "fill": {
+                                "type": "gradient",
+                                "gradientType": "linear",
+                                "enabled": true,
+                                "rotation": 180,
+                                "size": {
+                                  "height": 1
+                                },
+                                "colors": [
+                                  {
+                                    "color": "#FFC65A",
+                                    "position": 0
+                                  },
+                                  {
+                                    "color": "#E69A1C",
+                                    "position": 1
+                                  }
+                                ]
+                              }
+                            },
+                            "cQJJ5/ugwnH": {
+                              "content": "GH"
+                            },
+                            "Sypvz": {
+                              "content": "Guy Hawkins"
+                            },
+                            "dIxKr": {
+                              "content": "Mon"
+                            },
+                            "pCl3E": {
+                              "content": "You: Let's sync on the proposal Friday"
+                            },
+                            "yl3mE": {
+                              "enabled": false
+                            }
+                          }
+                        },
+                        {
+                          "type": "frame",
+                          "id": "Ug9yG",
+                          "name": "Separator",
+                          "width": "fill_container",
+                          "height": 1,
+                          "padding": [
+                            0,
+                            0,
+                            0,
+                            80
+                          ],
+                          "children": [
+                            {
+                              "type": "rectangle",
+                              "id": "YBOtX",
+                              "name": "Line",
+                              "fill": "$separator",
+                              "width": "fill_container",
+                              "height": 1
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "kvfAL",
+                      "name": "Tab Bar Wrap",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "padding": [
+                        0,
+                        0,
+                        12,
+                        0
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "id": "sl4Hp",
+                          "type": "ref",
+                          "ref": "tliql",
+                          "name": "Tab Bar"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "rectangle",
+                  "id": "T6OaiM",
+                  "x": 0,
+                  "y": 0,
+                  "name": "Dissolve Scrim",
+                  "fill": "#FFFFFF73",
+                  "width": 390,
+                  "height": 844
+                },
+                {
+                  "type": "frame",
+                  "id": "r0rYFZ",
+                  "x": 167,
+                  "y": 96,
+                  "name": "Logo Mark Shrinking",
+                  "opacity": 0.55,
+                  "width": 56,
+                  "height": 56,
+                  "fill": {
+                    "type": "gradient",
+                    "gradientType": "linear",
+                    "enabled": true,
+                    "rotation": 180,
+                    "size": {
+                      "height": 1
+                    },
+                    "colors": [
+                      {
+                        "color": "#7C7AFF",
+                        "position": 0
+                      },
+                      {
+                        "color": "#5E5CE6",
+                        "position": 1
+                      }
+                    ]
+                  },
+                  "cornerRadius": 16,
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#5E5CE640",
+                    "offset": {
+                      "x": 0,
+                      "y": 10
+                    },
+                    "blur": 24
+                  },
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "aXyuR",
+                      "name": "Shield",
+                      "width": 27,
+                      "height": 27,
+                      "icon": "shield",
+                      "library": "lucide",
+                      "fill": "#FFFFFF"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
     }
   ],
   "variables": {
