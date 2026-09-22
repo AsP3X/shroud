@@ -1,6 +1,6 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ShieldCheck, TriangleAlert } from "lucide-react";
+import { TriangleAlert } from "lucide-react";
 import { api, ApiError } from "../api/client";
 import { deviceName } from "../config";
 import { generateMnemonic, PhraseError, WORD_COUNT } from "../crypto/bip39";
@@ -39,13 +39,18 @@ export function SignUp() {
   const strength = evaluatePassword(password);
   const usernameOk = USERNAME_RE.test(username.trim());
   const accountOk = usernameOk && strength.meetsRequirements;
+  const checksFilled = checkIndices.every((index) => (answers[index] ?? "").trim().length > 0);
   const checksOk = checkIndices.every(
     (index) => (answers[index] ?? "").trim().toLowerCase() === words[index],
   );
 
   async function createAccount(event: FormEvent) {
     event.preventDefault();
-    if (!checksOk || busy) return;
+    if (busy) return;
+    if (!checksOk) {
+      setError("Those words don’t match the phrase you were shown.");
+      return;
+    }
     setError(null);
     setBusy(true);
     try {
@@ -171,37 +176,23 @@ export function SignUp() {
     >
       <form className="auth-form" onSubmit={createAccount}>
         <div className="auth-checks">
-          {checkIndices.map((index) => {
-            const value = answers[index] ?? "";
-            const done = value.trim().toLowerCase() === words[index];
-            const wrong = value.length >= words[index].length && !done;
-            return (
-              <TextField
-                key={index}
-                label={`Word ${index + 1}`}
-                value={value}
-                onChange={(next) => setAnswers((prev) => ({ ...prev, [index]: next }))}
-                error={wrong ? "Doesn’t match" : null}
-                autoCapitalize="none"
-                autoCorrect="off"
-                spellCheck={false}
-                autoComplete="off"
-                autoFocus={index === checkIndices[0]}
-                ok={done}
-              />
-            );
-          })}
+          {checkIndices.map((index) => (
+            <TextField
+              key={index}
+              label={`Word ${index + 1}`}
+              value={answers[index] ?? ""}
+              onChange={(next) => setAnswers((prev) => ({ ...prev, [index]: next }))}
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              autoComplete="off"
+              autoFocus={index === checkIndices[0]}
+            />
+          ))}
         </div>
 
-        {checksOk ? (
-          <p className="auth-ok">
-            <ShieldCheck size={15} aria-hidden="true" />
-            Phrase confirmed
-          </p>
-        ) : null}
-
         {error ? <p className="auth-error" role="alert">{error}</p> : null}
-        <button className="btn btn-primary" type="submit" disabled={!checksOk || busy}>
+        <button className="btn btn-primary" type="submit" disabled={!checksFilled || busy}>
           {busy ? "Creating account…" : "Create account"}
         </button>
       </form>

@@ -1,10 +1,6 @@
 import { useEffect, useRef, type ClipboardEvent, type KeyboardEvent } from "react";
-import { Check } from "lucide-react";
-import { BIP39_ENGLISH } from "../../crypto/bip39-wordlist";
 import { WORD_COUNT } from "../../crypto/bip39";
 import { CopyButton } from "../CopyButton";
-
-const VALID = new Set(BIP39_ENGLISH);
 
 function splitWords(text: string): string[] {
   return text
@@ -94,20 +90,14 @@ export function PhraseEntry({
   }
 
   const filled = words.filter(Boolean).length;
-  const unknown = words.filter((w) => w && !VALID.has(w)).length;
 
   return (
     <div className="phrase">
       <ol className="phrase-grid">
         {Array.from({ length: WORD_COUNT }, (_, i) => {
           const word = words[i] ?? "";
-          const ok = Boolean(word) && VALID.has(word);
-          const bad = Boolean(word) && !ok;
           return (
-            <li
-              key={i}
-              className={`phrase-cell${ok ? " ok" : ""}${bad ? " bad" : ""}`}
-            >
+            <li key={i} className="phrase-cell">
               <span className="phrase-n">{i + 1}</span>
               <input
                 ref={(node) => {
@@ -122,24 +112,18 @@ export function PhraseEntry({
                 onPaste={(event) => onPaste(i, event)}
                 onKeyDown={(event) => onKeyDown(i, event)}
                 aria-label={`Word ${i + 1}`}
-                aria-invalid={bad || undefined}
                 autoCapitalize="none"
                 autoCorrect="off"
                 autoComplete="off"
                 spellCheck={false}
                 enterKeyHint={i === WORD_COUNT - 1 ? "done" : "next"}
               />
-              {ok ? <Check size={13} className="phrase-tick" aria-hidden="true" /> : null}
             </li>
           );
         })}
       </ol>
-      <p className="phrase-status" aria-live="polite">
-        {unknown > 0
-          ? `${unknown} word${unknown > 1 ? "s are" : " is"} not in the word list.`
-          : filled === WORD_COUNT
-            ? "All 12 words look right."
-            : `${filled} of ${WORD_COUNT} words — paste the whole phrase to fill them at once.`}
+      <p className="phrase-status">
+        {filled} of {WORD_COUNT} words. Nothing is checked until you continue.
       </p>
     </div>
   );

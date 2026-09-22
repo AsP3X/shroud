@@ -80,8 +80,11 @@ export function Auth() {
       }
       afterUnlock();
     } catch (err) {
-      if (err instanceof PhraseError) setError(err.message);
-      else if (err instanceof ApiError) setError(err.message);
+      // One outcome for a bad word, a bad checksum, or the wrong phrase. Naming
+      // the failing word, or saying the checksum passed, would confirm a guess.
+      if (err instanceof PhraseError) {
+        setError("That phrase doesn’t unlock this account. Check the words and their order.");
+      } else if (err instanceof ApiError) setError(err.message);
       else setError("Something went wrong.");
     } finally {
       setBusy(false);
