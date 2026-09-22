@@ -1584,10 +1584,11 @@ struct ConversationView: View {
 
     /// Context card width (matches `MessageContextMenuCard`).
     private static let messageMenuCardWidth: CGFloat = 250
-    /// Context card row height × action count (mine includes muted “read”).
+    /// Context card row height × action count, plus the hairline between each row.
+    /// Mine includes the muted “read” row.
     private static func messageMenuCardHeight(isMine: Bool) -> CGFloat {
         let rows: CGFloat = isMine ? 7 : 6
-        return rows * 44
+        return rows * 44 + (rows - 1)
     }
 
     private static let messageMenuStackSpacing: CGFloat = 10
@@ -1603,35 +1604,6 @@ struct ConversationView: View {
         let minX = pad
         let maxX = max(minX, containerWidth - pad - width)
         return min(max(preferredMinX, minX), maxX)
-    }
-
-    /// Where the hero sits when fully open: stack centered, X locked to the source bubble.
-    private func focusedHeroFrame(
-        sourceLocal: CGRect,
-        container: CGSize,
-        isMine: Bool
-    ) -> CGRect {
-        let reactionH = MessageReactionBar.barHeight
-        let menuH = Self.messageMenuCardHeight(isMine: isMine)
-        let spacing = Self.messageMenuStackSpacing
-        let stackH = reactionH + spacing + sourceLocal.height + spacing + menuH
-
-        let topPad: CGFloat = 56
-        let bottomPad: CGFloat = 48
-        let available = max(0, container.height - topPad - bottomPad)
-        var stackTop = topPad + max(0, (available - stackH) / 2)
-        if stackTop + stackH > container.height - bottomPad {
-            stackTop = max(topPad, container.height - bottomPad - stackH)
-        }
-
-        let heroY = stackTop + reactionH + spacing
-        // Keep the bubble’s horizontal home (mine trailing / peer leading).
-        return CGRect(
-            x: sourceLocal.minX,
-            y: heroY,
-            width: sourceLocal.width,
-            height: sourceLocal.height
-        )
     }
 
     private func lerp(_ a: CGFloat, _ b: CGFloat, _ t: CGFloat) -> CGFloat {
@@ -1667,13 +1639,16 @@ struct ConversationView: View {
                 width: max(1, session.sourceGlobalFrame.width),
                 height: max(1, session.sourceGlobalFrame.height)
             )
-            let focusLocal = focusedHeroFrame(
-                sourceLocal: sourceLocal,
+            let focus = MessageMenuLayout.decide(
+                source: sourceLocal,
                 container: proxy.size,
-                isMine: message.isMine
+                menuHeight: menuH,
+                reactionHeight: reactionH,
+                spacing: spacing
             )
-            // progress 0 = exact list bubble, 1 = focus stack. Close eases into sourceLocal.
-            let heroFrame = lerpRect(sourceLocal, focusLocal, progress)
+            // progress 0 = exact list bubble, 1 = focus stack. Usually the two are the same
+            // rect — the bubble stays put and only the chrome fades in.
+            let heroFrame = lerpRect(sourceLocal, focus.hero, progress)
 
             // Align chrome to the bubble, then clamp so the full bar/card stays on-screen
             // (outgoing bubbles near the trailing edge used to clip the “more” button).
@@ -1693,8 +1668,17 @@ struct ConversationView: View {
                 width: menuW,
                 containerWidth: proxy.size.width
             )
-            let reactionY = heroFrame.minY - spacing - reactionH
-            let menuY = heroFrame.maxY + spacing
+            // Chrome is glued to the (possibly nudged) hero, on the side the layout picked.
+            let chrome = MessageMenuLayout.chrome(
+                hero: heroFrame,
+                placement: focus.placement,
+                containerHeight: proxy.size.height,
+                menuHeight: menuH,
+                reactionHeight: reactionH,
+                spacing: spacing
+            )
+            let menuY = chrome.menuY
+            let reactionY = chrome.reactionY
 
             ZStack(alignment: .topLeading) {
                 MessageMenuBackdrop(

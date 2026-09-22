@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
 /**
  * Swipe a message row left to reply — the same gesture, thresholds and rubber banding as the
@@ -8,6 +8,11 @@ import { useCallback, useRef, useState, type PointerEvent as ReactPointerEvent }
  * The row is moved by writing `--swipe` straight onto the element rather than through React
  * state, so dragging never re-renders a bubble (a photo row would judder if it did). Only
  * starting and ending the gesture touch state, to mount and unmount the icon.
+ *
+ * A touch that holds still instead opens the message menu (`onLongPress`). It lives here
+ * because both gestures start the same way and rule each other out: moving first makes it a
+ * swipe (or a scroll), holding first makes it a press. iOS Safari never fires `contextmenu`
+ * for a long press, so without this a phone would have no way into the menu at all.
  */
 
 /** Incoming rows arm at 45px, outgoing at 60px (they start further from the edge). */
@@ -18,6 +23,8 @@ const BAND_COEFFICIENT = 0.4;
 const MAX_TRAVEL = 180;
 /** Movement before the gesture decides between "scroll" and "reply". */
 const SLOP = 3;
+/** Hold this long without moving to open the menu (a touch longer than a tap, as on iOS). */
+const LONG_PRESS_MS = 450;
 
 function banded(distance: number, threshold: number): number {
   if (distance <= threshold) return Math.max(0, distance);
@@ -30,15 +37,27 @@ export function useSwipeToReply({
   enabled,
   isMine,
   onReply,
+  onLongPress,
 }: {
+  /** False for bubbles that cannot be quoted yet; the long press still works for them. */
   enabled: boolean;
   isMine: boolean;
   onReply: () => void;
+  /** A touch held still: open the message menu at that point. */
+  onLongPress?: (x: number, y: number) => void;
 }) {
   const rowRef = useRef<HTMLDivElement | null>(null);
   const [swiping, setSwiping] = useState(false);
   const state = useRef({ id: -1, x: 0, y: 0, decided: "" as "" | "yes" | "no", armed: false });
+  const pressTimer = useRef(0);
   const threshold = isMine ? THRESHOLD_OUT : THRESHOLD_IN;
+
+  const cancelPress = useCallback(() => {
+    window.clearTimeout(pressTimer.current);
+    pressTimer.current = 0;
+  }, []);
+  // A row scrolled away mid-press must not open a menu for a message that is gone.
+  useEffect(() => cancelPress, [cancelPress]);
 
   const paint = useCallback(
     (distance: number, armed: boolean) => {
@@ -66,24 +85,31 @@ export function useSwipeToReply({
         }
       }
       state.current = { id: -1, x: 0, y: 0, decided: "", armed: false };
+      cancelPress();
       setSwiping(false);
     },
-    [],
+    [cancelPress],
   );
 
   const onPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (!enabled) return;
       if (event.pointerType === "mouse") return;
-      state.current = {
-        id: event.pointerId,
-        x: event.clientX,
-        y: event.clientY,
-        decided: "",
-        armed: false,
-      };
+      if (!enabled && !onLongPress) return;
+      const { clientX: x, clientY: y, pointerId } = event;
+      state.current = { id: pointerId, x, y, decided: enabled ? "" : "no", armed: false };
+      cancelPress();
+      if (!onLongPress) return;
+      pressTimer.current = window.setTimeout(() => {
+        const current = state.current;
+        // Still the same finger, and it never started a swipe or a scroll.
+        if (current.id !== pointerId || current.decided === "yes") return;
+        current.decided = "no";
+        pressTimer.current = 0;
+        navigator.vibrate?.(10);
+        onLongPress(x, y);
+      }, LONG_PRESS_MS);
     },
-    [enabled],
+    [cancelPress, enabled, onLongPress],
   );
 
   const onPointerMove = useCallback(
@@ -92,6 +118,9 @@ export function useSwipeToReply({
       if (current.id !== event.pointerId) return;
       const dx = event.clientX - current.x;
       const dy = event.clientY - current.y;
+
+      // Any real movement means this is not a long press.
+      if (Math.abs(dx) > SLOP || Math.abs(dy) > SLOP) cancelPress();
 
       if (current.decided === "") {
         // Anything that looks vertical — or rightward — belongs to the page, not to us.
@@ -123,7 +152,7 @@ export function useSwipeToReply({
       }
       paint(distance, armed);
     },
-    [paint, threshold],
+    [cancelPress, paint, threshold],
   );
 
   const onPointerUp = useCallback(
@@ -149,6 +178,8 @@ export function useSwipeToReply({
   return {
     rowRef,
     swiping,
+    /** A context-menu event means this hold is no longer a long-press. */
+    cancelLongPress: cancelPress,
     handlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel },
   };
 }

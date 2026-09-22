@@ -43,6 +43,8 @@ const EMPTY: VideoState = { poster: null, ready: false, stored: false };
 const loaded = new Map<string, LoadedVideo>();
 const loads = new Map<string, { task: Promise<LoadedVideo | null>; abort: AbortController }>();
 const states = new Map<string, VideoState>();
+/** Ids dropped by delete. An in-flight download must not write the clip back. */
+const released = new Set<string>();
 /** Ids already checked against the disk this session. */
 const looked = new Set<string>();
 const listeners = new Set<() => void>();
@@ -248,9 +250,11 @@ async function open(message: ChatMessage, token: string, signal: AbortSignal): P
     report(0, expected ?? null);
     const fetched = await api.getMediaContent(token, mediaObjectId, report, expected, signal);
     setTransfer(message.id, { direction: "down", phase: "finishing", loaded: 0, total: null });
-    void saveMediaBlob(sealedKey(message.id), fetched).then(() => {
-      if (started === epoch) update(message.id, { stored: true });
-    });
+    if (!released.has(key(message.id))) {
+      void saveMediaBlob(sealedKey(message.id), fetched).then(() => {
+        if (started === epoch && !released.has(key(message.id))) update(message.id, { stored: true });
+      });
+    }
     return fetched;
   };
   const cached = await loadMediaBlob(sealedKey(message.id));
@@ -266,11 +270,11 @@ async function open(message: ChatMessage, token: string, signal: AbortSignal): P
   } else {
     bytes = await aesGcmOpen(fileKey, await download());
   }
-  if (started !== epoch) throw new Error("Video discarded.");
+  if (started !== epoch || released.has(key(message.id))) throw new Error("Video discarded.");
   const video = remember(message.id, { blob: blobOf(bytes, message.mime || "video/mp4") });
   if (!getVideoState(message.id).poster) {
     void grabPoster(video.blob).then((poster) => {
-      if (!poster || started !== epoch) return;
+      if (!poster || started !== epoch || released.has(key(message.id))) return;
       if (!getVideoState(message.id).poster) adoptPoster(message.id, poster);
       void cacheSealedPoster(message.id, fileKey, poster);
     });
@@ -309,6 +313,21 @@ export function ensureVideo(message: ChatMessage, token: string): Promise<Loaded
 /** Stops a download in flight (the ring's ✕). */
 export function cancelVideoDownload(id: string): void {
   loads.get(key(id))?.abort.abort();
+}
+
+/** Drops one decrypted clip and its poster (a deleted message). */
+export function releaseVideo(messageId: string): void {
+  const id = key(messageId);
+  released.add(id);
+  loads.get(id)?.abort.abort();
+  loads.delete(id);
+  loaded.delete(id);
+  const state = states.get(id);
+  if (state?.poster) URL.revokeObjectURL(state.poster);
+  states.delete(id);
+  looked.delete(id);
+  setTransfer(messageId, null);
+  for (const listener of listeners) listener();
 }
 
 /** Drops every decrypted clip and poster (locking, logging out, clearing the cache). */

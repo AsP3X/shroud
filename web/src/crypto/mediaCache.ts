@@ -81,6 +81,27 @@ export async function saveMediaBlob(messageId: string, data: Uint8Array): Promis
   }
 }
 
+/**
+ * Drops everything cached for one message: voice bytes (`<id>`), the sealed photo or clip
+ * (`sealed:<id>`) and a video's poster (`poster:<id>`). Used when a message is deleted, so
+ * nothing of it stays on this device.
+ */
+export async function deleteMediaBlobs(messageId: string): Promise<void> {
+  const key = id(messageId);
+  try {
+    const db = await openDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE, "readwrite");
+      const store = tx.objectStore(STORE);
+      for (const entry of [key, `sealed:${key}`, `poster:${key}`]) store.delete(entry);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch {
+    /* nothing stored, or storage unavailable */
+  }
+}
+
 export async function clearMediaBlobs(): Promise<void> {
   try {
     const db = await openDb();

@@ -309,6 +309,12 @@ export const api = {
       token,
       body: "{}",
     }),
+  /** `everyone` is the sender's call only; the server rejects it from anyone else. */
+  deleteMessage: (token: string, messageId: string, scope: "me" | "everyone") =>
+    request<void>(`/messages/${encodeURIComponent(messageId)}?scope=${scope}`, {
+      method: "DELETE",
+      token,
+    }),
   devices: (token: string) => request<{ devices: Device[] }>("/devices", { token }),
   revokeDevice: (token: string, deviceId: string) =>
     request<void>(`/devices/${deviceId}`, { method: "DELETE", token }),

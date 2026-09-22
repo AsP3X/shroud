@@ -2,7 +2,7 @@ import { api, type Conversation, type TransferProgress, type WireMessage } from 
 import { aesGcmOpen, sealFile } from "./crypto/aes";
 import { b64ToBytes, bytesToB64, utf8, utf8decode } from "./crypto/bytes";
 import type { IdentityMaterial } from "./crypto/identity";
-import { loadMediaBlob, saveMediaBlob } from "./crypto/mediaCache";
+import { deleteMediaBlobs, loadMediaBlob, saveMediaBlob } from "./crypto/mediaCache";
 import {
   clampTranscript,
   decodeWaveform,
@@ -19,8 +19,10 @@ import {
 import { clampSnippet, parseTextPayload, textPayload, type ReplyRef } from "./reply";
 import { envelopeToWireB64, openMessage, sealMessage, wireB64ToEnvelope } from "./crypto/messageCrypto";
 import {
+  forgetPlaintext,
   loadPlaintext,
   loadPreview,
+  replacePreview,
   savePlaintext,
   savePreview,
 } from "./crypto/plaintextCache";
@@ -902,6 +904,11 @@ export async function shareTranscript(opts: {
   });
 }
 
+/** A bubble that never reached the server: an optimistic send, or one that failed before it did. */
+export function isUnsent(message: ChatMessage): boolean {
+  return message.pending === true || message.id.startsWith("pending:");
+}
+
 /**
  * The quote a reply to `message` should carry. Null while the message is still optimistic —
  * its id is local, so the other side could never resolve it.
@@ -923,4 +930,49 @@ export function replyRefFor(message: ChatMessage): ReplyRef | null {
     kind,
     snippet: clampSnippet(snippet),
   };
+}
+
+/**
+ * A message its author unsent: nothing of it survives but the fact that it existed — not its
+ * words, its media key, nor the quote it carried (iOS `tombstoneMessage` does the same).
+ */
+export function tombstone(message: ChatMessage): ChatMessage {
+  return {
+    ...message,
+    text: "Message deleted",
+    deleted: true,
+    caption: null,
+    transcript: null,
+    thumbnail: null,
+    mediaKey: null,
+    mediaObjectId: null,
+    replyTo: null,
+  };
+}
+
+/** Forgets every local copy of a deleted message: its decrypted body and any media bytes. */
+export function forgetMessageLocally(messageId: string): void {
+  forgetPlaintext(messageId);
+  void deleteMediaBlobs(messageId);
+}
+
+/**
+ * Points the chat-list line at whatever is newest in `thread` — after a delete, the line must
+ * stop quoting a message that is gone. `thread` is the chat with the delete already applied.
+ */
+export function rewritePreview(me: string, peerUserId: string, thread: ChatMessage[]): void {
+  const newest = [...thread].reverse().find((m) => m.kind !== "annotation");
+  replacePreview(
+    me,
+    peerUserId,
+    newest
+      ? {
+          id: newest.id,
+          text: previewCopy(newest),
+          at: newest.createdAt,
+          isMine: newest.isMine,
+          failed: newest.failed,
+        }
+      : null,
+  );
 }

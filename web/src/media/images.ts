@@ -24,6 +24,8 @@ const MAX_LOADED = 40;
 
 const loaded = new Map<string, LoadedImage>();
 const loads = new Map<string, Promise<LoadedImage | null>>();
+/** Ids dropped by delete. An in-flight download must not write the photo back. */
+const released = new Set<string>();
 /** Bumped on `forgetImages` so a download that finishes after lock is dropped. */
 let epoch = 0;
 
@@ -99,7 +101,7 @@ async function open(message: ChatMessage, token: string): Promise<LoadedImage> {
       (done, total) => setTransfer(message.id, { direction: "down", loaded: done, total }),
       expected,
     );
-    void saveMediaBlob(sealedKey(message.id), fetched);
+    if (!released.has(message.id.toLowerCase())) void saveMediaBlob(sealedKey(message.id), fetched);
     return fetched;
   };
   const cached = await loadMediaBlob(sealedKey(message.id));
@@ -120,10 +122,21 @@ async function open(message: ChatMessage, token: string): Promise<LoadedImage> {
   if (isHeif(bytes, message.mime) && !(await decodesNatively(original))) {
     display = (await heifToJpeg(bytes)).blob;
   }
-  if (started !== epoch) {
+  if (started !== epoch || released.has(message.id.toLowerCase())) {
     throw new Error("Photo discarded.");
   }
   return remember(message.id, { url: URL.createObjectURL(display), original });
+}
+
+/** Drops one decrypted photo (a deleted message) and ignores a download still finishing. */
+export function releaseImage(messageId: string): void {
+  const key = messageId.toLowerCase();
+  released.add(key);
+  const image = loaded.get(key);
+  if (image) URL.revokeObjectURL(image.url);
+  loaded.delete(key);
+  loads.delete(key);
+  setTransfer(messageId, null);
 }
 
 /**

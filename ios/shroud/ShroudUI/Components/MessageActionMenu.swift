@@ -193,6 +193,124 @@ struct MessageContextMenuCard: View {
     }
 }
 
+/// Which side of the focused bubble the action card opens on.
+enum MessageMenuPlacement: Equatable {
+    /// Card under the bubble, reaction bar above it.
+    case below
+    /// Card above the bubble. The reaction bar stays above the card when it fits.
+    case above
+}
+
+/// Where a long-press menu sits. Pure geometry — the bubble stays put unless a short
+/// nudge is the only way to keep both the card and the reaction bar on screen.
+enum MessageMenuLayout {
+    static func decide(
+        source: CGRect,
+        container: CGSize,
+        menuHeight: CGFloat,
+        reactionHeight: CGFloat,
+        spacing: CGFloat = 10,
+        topPad: CGFloat = 56,
+        bottomPad: CGFloat = 48
+    ) -> (hero: CGRect, placement: MessageMenuPlacement) {
+        let top = topPad
+        let bottom = container.height - bottomPad
+
+        func frame(at y: CGFloat) -> CGRect {
+            CGRect(x: source.minX, y: y, width: source.width, height: source.height)
+        }
+
+        let cardFitsBelow = source.maxY + spacing + menuHeight <= bottom
+        let barFitsAbove = source.minY - spacing - reactionHeight >= top
+        if cardFitsBelow, barFitsAbove {
+            return (source, .below)
+        }
+
+        // The card alone is enough to open upward. Waiting for the reaction bar as
+        // well used to drag the bubble up the thread so the card could open below.
+        if source.minY - spacing - menuHeight >= top {
+            return (source, .above)
+        }
+
+        if cardFitsBelow {
+            let highest = top + reactionHeight + spacing
+            let lowest = bottom - menuHeight - spacing - source.height
+            if lowest >= highest {
+                let y = min(max(source.minY, highest), lowest)
+                return (frame(at: y), .below)
+            }
+        }
+
+        // Too tall to clear either edge. Moving it would look like the thread scrolled.
+        let spaceAbove = source.minY - top
+        let spaceBelow = bottom - source.maxY
+        return (source, spaceAbove > spaceBelow ? .above : .below)
+    }
+
+    static func chrome(
+        hero: CGRect,
+        placement: MessageMenuPlacement,
+        containerHeight: CGFloat,
+        menuHeight: CGFloat,
+        reactionHeight: CGFloat,
+        spacing: CGFloat = 10,
+        topPad: CGFloat = 56,
+        bottomPad: CGFloat = 48
+    ) -> (menuY: CGFloat, reactionY: CGFloat) {
+        let top = topPad
+        let bottom = containerHeight - bottomPad
+        let rawMenuY: CGFloat
+        let rawReactionY: CGFloat
+        switch placement {
+        case .below:
+            rawMenuY = hero.maxY + spacing
+            rawReactionY = hero.minY - spacing - reactionHeight
+        case .above:
+            rawMenuY = hero.minY - spacing - menuHeight
+            rawReactionY = rawMenuY - spacing - reactionHeight
+        }
+
+        let menuY = clamp(rawMenuY, min: top, max: bottom - menuHeight)
+        var reactionY = rawReactionY
+        let reactionClearsMenu = rawReactionY + reactionHeight + spacing <= menuY + 0.5
+        if placement == .above, rawReactionY < top || !reactionClearsMenu {
+            let underBubble = hero.maxY + spacing
+            if underBubble + reactionHeight <= bottom, underBubble >= menuY + menuHeight {
+                reactionY = underBubble
+            } else {
+                reactionY = clamp(rawReactionY, min: top, max: bottom - reactionHeight)
+            }
+        } else if rawReactionY < top || rawReactionY + reactionHeight > bottom {
+            reactionY = clamp(rawReactionY, min: top, max: bottom - reactionHeight)
+        }
+
+        if rangesOverlap(reactionY, reactionHeight, menuY, menuHeight) {
+            let above = menuY - spacing - reactionHeight
+            let belowMenu = menuY + menuHeight + spacing
+            if above >= top {
+                reactionY = above
+            } else if belowMenu + reactionHeight <= bottom {
+                reactionY = belowMenu
+            }
+        }
+        return (menuY, reactionY)
+    }
+
+    private static func clamp(_ value: CGFloat, min lower: CGFloat, max upper: CGFloat) -> CGFloat {
+        if upper < lower { return lower }
+        return Swift.min(Swift.max(value, lower), upper)
+    }
+
+    private static func rangesOverlap(
+        _ y: CGFloat,
+        _ height: CGFloat,
+        _ otherY: CGFloat,
+        _ otherHeight: CGFloat
+    ) -> Bool {
+        y < otherY + otherHeight && y + height > otherY
+    }
+}
+
 enum MessageMenuAction: String, Identifiable {
     case reply, copy, edit, pin, forward, select, delete, moreReactions
 

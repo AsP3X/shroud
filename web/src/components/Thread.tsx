@@ -47,6 +47,13 @@ import { cancelVideoDownload, type LoadedVideo } from "../media/videos";
 import { Avatar } from "./Avatar";
 import { Highlight } from "./Highlight";
 import { ImageBubble } from "./ImageBubble";
+import {
+  DeleteMessageDialog,
+  MessageMenu,
+  suppressClickAfterLongPress,
+  type MessageMenuAction,
+  type MessageMenuAnchor,
+} from "./MessageMenu";
 import { quoteOf, ReplyQuote, resolveQuote } from "./ReplyQuote";
 import { useSwipeToReply } from "./useSwipeToReply";
 import { Receipt } from "./Receipt";
@@ -119,6 +126,7 @@ function MessageRow({
   quoted,
   flashing,
   onReply,
+  onMenu,
   onJump,
   onOpenPhoto,
   onOpenVideo,
@@ -134,6 +142,13 @@ function MessageRow({
   quoted: Map<string, ChatMessage>;
   flashing: boolean;
   onReply: (message: ChatMessage) => void;
+  /** Right-click, Shift+F10 / the Menu key, or a touch held still. `settle` is a held finger. */
+  onMenu: (
+    message: ChatMessage,
+    anchor: MessageMenuAnchor,
+    row: HTMLElement | null,
+    settle?: boolean,
+  ) => void;
   onJump: (id: string) => void;
   onOpenPhoto: (message: ChatMessage) => void;
   onOpenVideo: (message: ChatMessage) => void;
@@ -142,13 +157,15 @@ function MessageRow({
   onLoadVoice: (message: ChatMessage) => Promise<Uint8Array | null>;
 }) {
   const { message } = row;
-  // A bubble the peer could not resolve yet (still sending, failed, deleted) is not quotable.
-  const canReply =
-    !message.deleted && !message.pending && !message.failed && !message.id.startsWith("pending:");
+  const canReply = canQuote(message);
   const swipe = useSwipeToReply({
     enabled: canReply,
     isMine: message.isMine,
     onReply: () => onReply(message),
+    onLongPress: (x, y) => {
+      suppressClickAfterLongPress();
+      onMenu(message, { x, y }, null, true);
+    },
   });
 
   const voice = message.kind === "voice" && !message.deleted;
@@ -168,7 +185,7 @@ function MessageRow({
     .filter(Boolean)
     .join(" ");
 
-  const quote = message.replyTo ? (
+  const quote = message.replyTo && !message.deleted ? (
     <ReplyQuote
       quote={resolveQuote(
         message.replyTo,
@@ -234,6 +251,20 @@ function MessageRow({
       className={`msg-row${message.isMine ? " mine" : ""}${flashing ? " is-flashing" : ""}`}
       data-message-id={message.id.toLowerCase()}
       {...swipe.handlers}
+      tabIndex={canReply ? undefined : 0}
+      onContextMenu={(event) => {
+        swipe.cancelLongPress();
+        event.preventDefault();
+        onMenu(message, { x: event.clientX, y: event.clientY }, event.currentTarget);
+      }}
+      onKeyDown={(event) => {
+        // The keyboard's own way into a context menu, from any control inside the row.
+        if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+        event.preventDefault();
+        const bubbleNode = event.currentTarget.querySelector(".bubble") ?? event.currentTarget;
+        const rect = bubbleNode.getBoundingClientRect();
+        onMenu(message, { x: rect.left + 12, y: rect.bottom - 4 }, event.currentTarget);
+      }}
     >
       {bubble}
       {canReply ? (
@@ -254,6 +285,66 @@ function MessageRow({
       ) : null}
     </div>
   );
+}
+
+/**
+ * Copies text, falling back to the legacy selection copy where the async clipboard is missing
+ * or refused — a plain-http origin (the client served over a LAN address) has no
+ * `navigator.clipboard` at all. Both paths only work inside the click that asked for them.
+ */
+function copyWithCommand(text: string): boolean {
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.top = "0";
+  area.style.left = "0";
+  area.style.opacity = "0";
+  document.body.appendChild(area);
+  area.focus();
+  area.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch {
+    copied = false;
+  }
+  area.remove();
+  return copied;
+}
+
+async function writeClipboard(text: string): Promise<boolean> {
+  // A plain-http origin (the client on a LAN address) has no async clipboard.
+  // The fallback has to run inside the click, before any await.
+  const clipboard = navigator.clipboard;
+  if (!clipboard?.writeText || !window.isSecureContext) return copyWithCommand(text);
+  try {
+    await clipboard.writeText(text);
+    return true;
+  } catch {
+    return copyWithCommand(text);
+  }
+}
+
+/** Only a message that reached the server can be quoted — the peer could never resolve the rest. */
+function canQuote(message: ChatMessage): boolean {
+  return !message.deleted && !message.pending && !message.failed && !message.id.startsWith("pending:");
+}
+
+/** What "Copy text" copies: the words of a message, never a stand-in such as "Photo". */
+function copyableText(message: ChatMessage): string {
+  if (message.deleted || (message.failed && !message.isMine)) return "";
+  switch (message.kind) {
+    case "text":
+      return message.text;
+    case "image":
+    case "video":
+      return message.caption?.trim() ?? "";
+    case "voice":
+      return message.transcript?.trim() ?? "";
+    default:
+      return "";
+  }
 }
 
 /** A photo we can draw: sealed with a key, or one this tab is sending right now. */
@@ -295,6 +386,7 @@ export function Thread({
   replyTo,
   onReply,
   onCancelReply,
+  onDelete,
   myId,
 }: {
   peer: { id: string; username: string };
@@ -326,6 +418,8 @@ export function Thread({
   replyTo: ChatMessage | null;
   onReply: (message: ChatMessage) => void;
   onCancelReply: () => void;
+  /** `everyone` is only offered for our own messages that reached the server. */
+  onDelete: (message: ChatMessage, scope: "me" | "everyone") => void;
   /** Signed-in account, to tell "You" from the peer in a quote. */
   myId: string;
 }) {
@@ -351,9 +445,19 @@ export function Thread({
   const [viewing, setViewing] = useState<string | null>(null);
   /** Row flashing after a jump from a reply header. */
   const [flashing, setFlashing] = useState<string | null>(null);
+  /** Open message menu: which message, where, and any text selected inside its bubble. */
+  const [menu, setMenu] = useState<{
+    message: ChatMessage;
+    anchor: MessageMenuAnchor;
+    selection: string;
+    settle: boolean;
+  } | null>(null);
+  /** Message waiting on the delete confirmation (scope is picked there). */
+  const [confirmDelete, setConfirmDelete] = useState<ChatMessage | null>(null);
+  /** Short-lived, neutral status line ("Copied"). */
+  const [notice, setNotice] = useState<string | null>(null);
   const flashTimer = useRef(0);
-  const [jumpMiss, setJumpMiss] = useState<string | null>(null);
-  const jumpMissTimer = useRef(0);
+  const noticeTimer = useRef(0);
   const [watching, setWatching] = useState<string | null>(null);
   const [dropping, setDropping] = useState(false);
   const dragDepth = useRef(0);
@@ -645,44 +749,90 @@ export function Thread({
     return byId;
   }, [messages]);
 
-  /* Scrolls to the quoted message and flashes it; says so when it is no longer here. */
-  const jumpTo = useCallback((id: string) => {
-    const key = id.toLowerCase();
-    const node = scroller.current?.querySelector<HTMLElement>(
-      `[data-message-id="${CSS.escape(key)}"]`,
-    );
-    if (!node) {
-      setJumpMiss("The original message isn’t in this chat any more.");
-      window.clearTimeout(jumpMissTimer.current);
-      jumpMissTimer.current = window.setTimeout(() => setJumpMiss(null), 2400);
-      return;
-    }
-    setJumpMiss(null);
-    node.scrollIntoView({ behavior: "smooth", block: "center" });
-    setFlashing(key);
-    window.clearTimeout(flashTimer.current);
-    flashTimer.current = window.setTimeout(() => setFlashing(null), 1400);
+  /* A short, neutral status line under the thread; the newest notice replaces the last. */
+  const showNotice = useCallback((text: string, ms = 1800) => {
+    setNotice(text);
+    window.clearTimeout(noticeTimer.current);
+    noticeTimer.current = window.setTimeout(() => setNotice(null), ms);
   }, []);
+
+  /* Scrolls to the quoted message and flashes it; says so when it is no longer here. */
+  const jumpTo = useCallback(
+    (id: string) => {
+      const key = id.toLowerCase();
+      const node = scroller.current?.querySelector<HTMLElement>(
+        `[data-message-id="${CSS.escape(key)}"]`,
+      );
+      if (!node) {
+        showNotice("The original message isn’t in this chat any more.", 2400);
+        return;
+      }
+      node.scrollIntoView({ behavior: "smooth", block: "center" });
+      setFlashing(key);
+      window.clearTimeout(flashTimer.current);
+      flashTimer.current = window.setTimeout(() => setFlashing(null), 1400);
+    },
+    [showNotice],
+  );
 
   useEffect(
     () => () => {
       window.clearTimeout(flashTimer.current);
-      window.clearTimeout(jumpMissTimer.current);
+      window.clearTimeout(noticeTimer.current);
     },
     [],
   );
 
-  /* Escape drops the reply, the way it closes search — but search wins if both are open. */
+  /* Opens the message menu, remembering any text the reader had selected in that bubble. */
+  const openMenu = useCallback(
+    (message: ChatMessage, anchor: MessageMenuAnchor, row: HTMLElement | null, settle = false) => {
+      const selected = window.getSelection();
+      let selection = "";
+      if (selected && !selected.isCollapsed && row && selected.rangeCount > 0) {
+        const node = selected.getRangeAt(0).commonAncestorContainer;
+        if (row.contains(node)) selection = selected.toString().trim();
+      }
+      setMenu({ message, anchor, selection, settle });
+    },
+    [],
+  );
+  const closeMenu = useCallback(() => setMenu(null), []);
+
+  function menuActions(message: ChatMessage, selection: string): MessageMenuAction[] {
+    const actions: MessageMenuAction[] = [];
+    if (canQuote(message)) actions.push("reply");
+    if (selection || copyableText(message)) actions.push("copy");
+    actions.push("delete");
+    return actions;
+  }
+
+  async function copyToClipboard(text: string) {
+    if (await writeClipboard(text)) showNotice("Copied to clipboard");
+    else showNotice("The browser blocked the clipboard — select the text to copy it.", 2800);
+  }
+
+  function runMenuAction(action: MessageMenuAction) {
+    if (!menu) return;
+    const { message, selection } = menu;
+    setMenu(null);
+    if (action === "reply") onReply(message);
+    else if (action === "copy") void copyToClipboard(selection || copyableText(message));
+    else setConfirmDelete(message);
+  }
+
+  /* Escape drops the reply, the way it closes search — but search, an open message menu or the
+     delete dialog each take that Escape first. */
+  const escapeTaken = searchOpen || menu !== null || confirmDelete !== null;
   useEffect(() => {
     if (!replyTo) return;
     const onKey = (event: globalThis.KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (searchOpen) return;
+      if (escapeTaken) return;
       onCancelReply();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [replyTo, searchOpen, onCancelReply]);
+  }, [replyTo, escapeTaken, onCancelReply]);
 
   /* Answering something puts the caret back in the composer, as Telegram does. */
   useEffect(() => {
@@ -798,6 +948,7 @@ export function Thread({
                   quoted={quoted}
                   flashing={flashing === row.message.id.toLowerCase()}
                   onReply={onReply}
+                  onMenu={openMenu}
                   onJump={jumpTo}
                   onOpenPhoto={(opened) => setViewing(opened.id)}
                   onOpenVideo={(opened) => setWatching(opened.id)}
@@ -834,9 +985,9 @@ export function Thread({
           </p>
         ) : null}
 
-        {jumpMiss ? (
-          <p className="thread-banner" role="status">
-            {jumpMiss}
+        {notice ? (
+          <p className="thread-banner notice" role="status">
+            {notice}
           </p>
         ) : null}
 
@@ -954,6 +1105,31 @@ export function Thread({
             <span>Photos and videos are end-to-end encrypted</span>
           </div>
         </div>
+      ) : null}
+
+      {menu ? (
+        <MessageMenu
+          anchor={menu.anchor}
+          actions={menuActions(menu.message, menu.selection)}
+          copyLabel={menu.selection ? "Copy selection" : undefined}
+          settle={menu.settle}
+          onAction={runMenuAction}
+          onClose={closeMenu}
+        />
+      ) : null}
+
+      {confirmDelete ? (
+        <DeleteMessageDialog
+          message={confirmDelete}
+          peerName={peer.username}
+          preview={copyableText(confirmDelete)}
+          onCancel={() => setConfirmDelete(null)}
+          onDelete={(scope) => {
+            const message = confirmDelete;
+            setConfirmDelete(null);
+            onDelete(message, scope);
+          }}
+        />
       ) : null}
 
       <Suspense fallback={null}>

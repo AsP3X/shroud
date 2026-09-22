@@ -13,7 +13,9 @@ import {
 import { Avatar } from "../components/Avatar";
 import { ChatList, type ListEntry } from "../components/ChatList";
 import { TypingLabel } from "../components/Typing";
+import { LogoutDialog } from "../components/LogoutDialog";
 import { Modal } from "../components/Modal";
+import { ProfileSheet } from "../components/ProfileSheet";
 import { MyQrSheet } from "../components/qr/MyQrSheet";
 import { Rail, TabBar, type Tab } from "../components/Rail";
 import { SettingsPane } from "../components/SettingsPane";
@@ -29,8 +31,12 @@ import {
   ensureVoiceLoaded,
   loadHistory,
   peerIdForMessage,
+  forgetMessageLocally,
+  isUnsent,
   previewLine,
   replyRefFor,
+  rewritePreview,
+  tombstone,
   sendImage,
   sendText,
   sendVideo,
@@ -39,11 +45,12 @@ import {
   type ChatMessage,
 } from "../messaging";
 import { saveMediaBlob } from "../crypto/mediaCache";
-import { adoptImage, ensureImage, forgetImages, rekeyImage } from "../media/images";
+import { clearCache, redactPreviewsFor } from "../crypto/plaintextCache";
+import { adoptImage, ensureImage, forgetImages, rekeyImage, releaseImage } from "../media/images";
 import type { PreparedImage } from "../media/prepareImage";
 import { encodeVideo, resetVideoWorker, VideoCanceledError, type VideoSendDraft } from "../media/prepareVideo";
 import { setTransfer } from "../media/transfers";
-import { adoptPoster, adoptVideo, ensureVideo, forgetVideos, rekeyVideo } from "../media/videos";
+import { adoptPoster, adoptVideo, ensureVideo, forgetVideos, rekeyVideo, releaseVideo } from "../media/videos";
 import { VideoTooLongError } from "../media/videoPlan";
 import type { VoiceTake } from "../voice/recorder";
 import { stopVoice } from "../voice/playback";
@@ -97,6 +104,9 @@ export function AppShell({ session }: { session: Session }) {
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
   const [showQr, setShowQr] = useState(false);
+  /** Account menu on the rail: the profile sheet, and the logout confirmation. */
+  const [showProfile, setShowProfile] = useState(false);
+  const [confirmLogout, setConfirmLogout] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
   const [invite, setInvite] = useState("");
   const [addBusy, setAddBusy] = useState(false);
@@ -123,6 +133,53 @@ export function AppShell({ session }: { session: Session }) {
   conversationsRef.current = conversations;
   const threadRef = useRef(thread);
   threadRef.current = thread;
+  /** Optimistic ids the reader deleted while the send was still in flight. */
+  const droppedSends = useRef(new Set<string>());
+  /** Server id for an optimistic bubble, once the send has been accepted. */
+  const confirmedSends = useRef(new Map<string, string>());
+
+  function discardMessage(messageId: string) {
+    releaseImage(messageId);
+    releaseVideo(messageId);
+    forgetMessageLocally(messageId);
+  }
+
+  /**
+   * The send finished after the reader had already removed the bubble. Unsend it, so the
+   * server's copy can't pop back into the thread on the next load.
+   */
+  async function consumeDroppedSend(localId: string, msg: ChatMessage, peerId: string): Promise<boolean> {
+    if (!droppedSends.current.delete(localId)) return false;
+    discardMessage(localId);
+    discardMessage(msg.id);
+    const still = selectedRef.current?.id.toLowerCase() === peerId.toLowerCase();
+    try {
+      await api.deleteMessage(session.token, msg.id, "everyone");
+    } catch (err) {
+      if (still) {
+        setThread((prev) => mergeMessages(prev.filter((m) => m.id !== localId), [msg]));
+        setThreadError(err instanceof ApiError ? err.message : "Could not delete the message.");
+      }
+      setPreviewRev((n) => n + 1);
+      return true;
+    }
+    const gone = tombstone(msg);
+    if (still) {
+      const apply = (list: ChatMessage[]) =>
+        mergeMessages(
+          list.filter((m) => m.id !== localId && m.id.toLowerCase() !== msg.id.toLowerCase()),
+          [gone],
+        );
+      rewritePreview(session.user.id, peerId, apply(threadRef.current));
+      setThread(apply);
+      setReplyTo((current) => (current?.id === localId || current?.id === msg.id ? null : current));
+    } else {
+      redactPreviewsFor(session.user.id, msg.id);
+    }
+    setPreviewRev((n) => n + 1);
+    void refresh();
+    return true;
+  }
   const lastPresenceSweep = useRef(0);
   const draftRef = useRef(draft);
   draftRef.current = draft;
@@ -425,12 +482,19 @@ export function AppShell({ session }: { session: Session }) {
         ) {
           void refresh();
           const open = selectedRef.current;
-          if (event.type === "message.deleted" && open) {
+          if (event.type === "message.deleted") {
             const id = String(event.raw.message_id ?? "");
+            // Unsent by its author: nothing of it may linger here, open chat or not.
             if (id) {
-              setThread((prev) =>
-                prev.map((m) => (m.id === id ? { ...m, text: "Message deleted", deleted: true } : m)),
-              );
+              discardMessage(id);
+              const key = id.toLowerCase();
+              if (open && threadRef.current.some((m) => m.id.toLowerCase() === key)) {
+                const next = threadRef.current.map((m) => (m.id.toLowerCase() === key ? tombstone(m) : m));
+                rewritePreview(session.user.id, open.id, next);
+                setThread((prev) => prev.map((m) => (m.id.toLowerCase() === key ? tombstone(m) : m)));
+              }
+              redactPreviewsFor(session.user.id, id);
+              setPreviewRev((n) => n + 1);
             }
           }
         }
@@ -608,11 +672,21 @@ export function AppShell({ session }: { session: Session }) {
         material: identity,
         replyTo: reference,
       });
+      confirmedSends.current.set(localId, msg.id);
+      if (await consumeDroppedSend(localId, msg, peerId)) return;
       if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
-      setThread((prev) => mergeMessages(prev.filter((m) => m.id !== localId), [msg]));
+      setThread((prev) =>
+        droppedSends.current.has(localId)
+          ? prev.filter((m) => m.id !== localId)
+          : mergeMessages(prev.filter((m) => m.id !== localId), [msg]),
+      );
       setPreviewRev((n) => n + 1);
       await refresh();
     } catch (err) {
+      if (droppedSends.current.delete(localId)) {
+        discardMessage(localId);
+        return;
+      }
       if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
       setThread((prev) =>
         prev.map((m) => (m.id === localId ? { ...m, pending: false, failed: true } : m)),
@@ -680,9 +754,18 @@ export function AppShell({ session }: { session: Session }) {
         replyTo: reference,
       });
       rekeyTranscriptView(localId, msg.id);
+      confirmedSends.current.set(localId, msg.id);
+      if (await consumeDroppedSend(localId, msg, peerId)) {
+        setTranscribing(msg.id, false);
+        return;
+      }
       noteId = msg.id;
       if (selectedRef.current?.id.toLowerCase() === peerId.toLowerCase()) {
-        setThread((prev) => mergeMessages(prev.filter((m) => m.id !== localId), [msg]));
+        setThread((prev) =>
+          droppedSends.current.has(localId)
+            ? prev.filter((m) => m.id !== localId)
+            : mergeMessages(prev.filter((m) => m.id !== localId), [msg]),
+        );
         setPreviewRev((n) => n + 1);
       }
       if (!msg.transcript) {
@@ -713,6 +796,10 @@ export function AppShell({ session }: { session: Session }) {
       }
     } catch (err) {
       setTranscribing(noteId, false);
+      if (droppedSends.current.delete(localId)) {
+        discardMessage(localId);
+        return;
+      }
       if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
       setThread((prev) =>
         prev.map((m) => (m.id === localId ? { ...m, pending: false, failed: true } : m)),
@@ -782,11 +869,21 @@ export function AppShell({ session }: { session: Session }) {
           onProgress: (loaded, total) => setTransfer(draft.localId, { direction: "up", loaded, total }),
         });
         rekeyImage(draft.localId, msg.id);
+        confirmedSends.current.set(draft.localId, msg.id);
+        if (await consumeDroppedSend(draft.localId, msg, peerId)) continue;
         if (selectedRef.current?.id.toLowerCase() === peerId.toLowerCase()) {
-          setThread((prev) => mergeMessages(prev.filter((m) => m.id !== draft.localId), [msg]));
+          setThread((prev) =>
+            droppedSends.current.has(draft.localId)
+              ? prev.filter((m) => m.id !== draft.localId)
+              : mergeMessages(prev.filter((m) => m.id !== draft.localId), [msg]),
+          );
           setPreviewRev((n) => n + 1);
         }
       } catch (err) {
+        if (droppedSends.current.delete(draft.localId)) {
+          discardMessage(draft.localId);
+          continue;
+        }
         if (selectedRef.current?.id.toLowerCase() === peerId.toLowerCase()) {
           setThread((prev) =>
             prev.map((m) => (m.id === draft.localId ? { ...m, pending: false, failed: true } : m)),
@@ -892,11 +989,21 @@ export function AppShell({ session }: { session: Session }) {
             setTransfer(job.localId, { direction: "up", phase: "finishing", loaded: 0, total: null }),
         });
         rekeyVideo(job.localId, msg.id);
+        confirmedSends.current.set(job.localId, msg.id);
+        if (await consumeDroppedSend(job.localId, msg, peerId)) continue;
         if (selectedRef.current?.id.toLowerCase() === peerId.toLowerCase()) {
-          setThread((prev) => mergeMessages(prev.filter((m) => m.id !== job.localId), [msg]));
+          setThread((prev) =>
+            droppedSends.current.has(job.localId)
+              ? prev.filter((m) => m.id !== job.localId)
+              : mergeMessages(prev.filter((m) => m.id !== job.localId), [msg]),
+          );
           setPreviewRev((n) => n + 1);
         }
       } catch (err) {
+        if (droppedSends.current.delete(job.localId)) {
+          discardMessage(job.localId);
+          continue;
+        }
         if (err instanceof VideoCanceledError) {
           setThread((prev) => prev.filter((m) => m.id !== job.localId));
         } else if (selectedRef.current?.id.toLowerCase() === peerId.toLowerCase()) {
@@ -920,6 +1027,77 @@ export function AppShell({ session }: { session: Session }) {
       if (!alive.current) return;
       setThreadError(err instanceof ApiError ? err.message : "Could not refresh chats.");
     }
+  }
+
+  /**
+   * Deletes one message here and — unless it never reached the server — there too.
+   *
+   * The server goes first, as on iOS: "for me" is stored as a hide row, and applying it locally
+   * before the round-trip would let the next poll bring the bubble straight back. A message that
+   * is still unsent only exists in this tab, so it just goes. A message that failed to
+   * decrypt still has a server id — `failed` is not the same as unsent.
+   */
+  async function deleteMessage(message: ChatMessage, scope: "me" | "everyone") {
+    if (!selected) return;
+    const peerId = selected.id;
+    const localOnly = isUnsent(message);
+    const serverId = confirmedSends.current.get(message.id);
+    if (message.pending || localOnly) droppedSends.current.add(message.id);
+    // The send was accepted after the dialog opened on the optimistic bubble.
+    // Unsend that server row, or the next load puts the message back.
+    if (serverId) {
+      try {
+        await api.deleteMessage(session.token, serverId, "everyone");
+      } catch (err) {
+        droppedSends.current.delete(message.id);
+        if (selectedRef.current?.id.toLowerCase() === peerId.toLowerCase()) {
+          setThreadError(err instanceof ApiError ? err.message : "Could not delete the message.");
+        }
+        return;
+      }
+      discardMessage(message.id);
+      discardMessage(serverId);
+      const serverKey = serverId.toLowerCase();
+      const apply = (list: ChatMessage[]) => {
+        const server = list.find((m) => m.id.toLowerCase() === serverKey);
+        const rest = list.filter((m) => m.id !== message.id && m.id.toLowerCase() !== serverKey);
+        return server ? mergeMessages(rest, [tombstone(server)]) : rest;
+      };
+      rewritePreview(session.user.id, peerId, apply(threadRef.current));
+      if (selectedRef.current?.id.toLowerCase() === peerId.toLowerCase()) {
+        setThread(apply);
+        setThreadError(null);
+        setReplyTo((current) =>
+          current?.id === message.id || current?.id === serverId ? null : current,
+        );
+      }
+      setPreviewRev((n) => n + 1);
+      return;
+    }
+    if (!localOnly) {
+      try {
+        await api.deleteMessage(session.token, message.id, scope);
+      } catch (err) {
+        if (selectedRef.current?.id.toLowerCase() === peerId.toLowerCase()) {
+          setThreadError(err instanceof ApiError ? err.message : "Could not delete the message.");
+        }
+        return;
+      }
+    }
+    const key = message.id.toLowerCase();
+    const apply = (list: ChatMessage[]) =>
+      scope === "everyone" && !localOnly
+        ? list.map((m) => (m.id.toLowerCase() === key ? tombstone(m) : m))
+        : list.filter((m) => m.id.toLowerCase() !== key);
+    discardMessage(message.id);
+    rewritePreview(session.user.id, peerId, apply(threadRef.current));
+    if (selectedRef.current?.id.toLowerCase() === peerId.toLowerCase()) {
+      setThread(apply);
+      setThreadError(null);
+      // Deleting the message being answered ends that reply.
+      setReplyTo((current) => (current?.id === message.id ? null : current));
+    }
+    setPreviewRev((n) => n + 1);
   }
 
   async function respond(id: string, accept: boolean) {
@@ -958,6 +1136,8 @@ export function AppShell({ session }: { session: Session }) {
         onSelect={openTab}
         requestCount={requests.length}
         user={{ id: session.user.id, username: session.user.username }}
+        onProfile={() => setShowProfile(true)}
+        onLogout={() => setConfirmLogout(true)}
       />
 
       <div className="shell-body">
@@ -1040,6 +1220,7 @@ export function AppShell({ session }: { session: Session }) {
                 replyTo={replyTo}
                 onReply={(message) => setReplyTo(message)}
                 onCancelReply={() => setReplyTo(null)}
+                onDelete={(message, scope) => void deleteMessage(message, scope)}
                 myId={session.user.id}
               />
             ) : (
@@ -1101,6 +1282,30 @@ export function AppShell({ session }: { session: Session }) {
       ) : null}
 
       {showQr ? <MyQrSheet session={session} onClose={() => setShowQr(false)} /> : null}
+
+      {showProfile ? (
+        <ProfileSheet
+          session={session}
+          shareLink={shareLink}
+          onShowQr={() => {
+            setShowProfile(false);
+            setShowQr(true);
+          }}
+          onClose={() => setShowProfile(false)}
+        />
+      ) : null}
+
+      {confirmLogout ? (
+        <LogoutDialog
+          onCancel={() => setConfirmLogout(false)}
+          onConfirm={() => {
+            // Same as logging out from Settings: decrypted caches go before the session does.
+            setConfirmLogout(false);
+            clearCache();
+            void logout();
+          }}
+        />
+      ) : null}
 
       {showInfo && selected ? (
         <Modal title="Contact info" onClose={() => setShowInfo(false)}>

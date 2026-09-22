@@ -3,6 +3,7 @@ import { ChevronLeft } from "lucide-react";
 import { api, ApiError, type Session } from "../api/client";
 import type { IdentityMaterial } from "../crypto/identity";
 import { clearCache } from "../crypto/plaintextCache";
+import { LogoutDialog } from "./LogoutDialog";
 import { DevicesView } from "./settings/DevicesView";
 import { AppearanceView, DataStorageView, ServerView } from "./settings/PreferencesViews";
 import { PrivacyView } from "./settings/PrivacyView";
@@ -59,10 +60,8 @@ export function SettingsPane({
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
-      if (confirmLogout) {
-        setConfirmLogout(false);
-        return;
-      }
+      // The logout dialog handles its own Escape; never leave the page behind it.
+      if (confirmLogout) return;
       if (route) back();
     }
     document.addEventListener("keydown", onKeyDown);
@@ -110,31 +109,7 @@ export function SettingsPane({
       )}
 
       {confirmLogout ? (
-        <div className="modal-scrim" onMouseDown={() => setConfirmLogout(false)}>
-          <div
-            className="modal"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="logout-title"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <header>
-              <h2 id="logout-title">Log out of Shroud?</h2>
-            </header>
-            <p>
-              This ends your session on this browser and clears cached messages from local storage.
-              You’ll need your password and encryption phrase to sign in again.
-            </p>
-            <div className="modal-actions">
-              <button type="button" className="btn btn-secondary" onClick={() => setConfirmLogout(false)}>
-                Cancel
-              </button>
-              <button type="button" className="btn btn-destructive" onClick={forceLogout}>
-                Log Out
-              </button>
-            </div>
-          </div>
-        </div>
+        <LogoutDialog onCancel={() => setConfirmLogout(false)} onConfirm={forceLogout} />
       ) : null}
     </main>
   );
