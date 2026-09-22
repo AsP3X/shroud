@@ -188,7 +188,7 @@ struct ConversationView: View {
         messageList
             // Links in bubbles (and previews) open in the in-app browser, like Telegram's.
             .environment(\.openURL, OpenURLAction { url in
-                InAppBrowser.open(url) ? .handled : .discarded
+                openLink(url) ? .handled : .discarded
             })
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Theme.backgroundChat)
@@ -717,6 +717,13 @@ struct ConversationView: View {
                                             .transition(.opacity)
                                     }
                                 }
+                                // The hold that opens the menu ends with the finger lifting off
+                                // this bubble. Buttons and tap gestures inside it (a link
+                                // preview, a photo, a play button) fire on that release, so the
+                                // photo or page used to open over the fresh menu. Disabling the
+                                // bubble while its menu is up cancels them; the gestures below sit
+                                // outside and have already done their job.
+                                .disabled(focusedMenu?.message.id == message.id)
                                 // Swipe left to answer it (Telegram). Disabled while the
                                 // context menu owns the screen, and for bubbles the peer
                                 // could not resolve yet.
@@ -1007,6 +1014,24 @@ struct ConversationView: View {
 
     // MARK: - Links
 
+    /// True while a message menu owns the screen. A tap that reaches the thread then is the
+    /// release of the hold that opened the menu, never a new request.
+    private var isShowingMessageMenu: Bool {
+        focusedMenu != nil
+    }
+
+    /// Opens a link from a bubble in the in-app browser.
+    ///
+    /// Human: `.disabled` on the pressed bubble cancels its buttons, but a link inside `Text` is
+    /// activated by SwiftUI itself and still arrives here on release — so the menu check lives
+    /// in the opener too.
+    /// Agent: RETURNS false (link discarded) while a message menu is open.
+    @discardableResult
+    private func openLink(_ url: URL) -> Bool {
+        guard !isShowingMessageMenu else { return false }
+        return InAppBrowser.open(url)
+    }
+
     /// The composer's link strip, while the draft has a link worth previewing.
     private var composerLinkBar: ChatLinkBarState? {
         switch linkComposer.phase {
@@ -1286,7 +1311,7 @@ struct ConversationView: View {
                 linkPreview: message.linkPreview,
                 linkPreviewImage: linkPreviewImage(for: message),
                 onOpenLinkPreview: message.linkPreview?.openURL.map { url in
-                    { _ = InAppBrowser.open(url) }
+                    { _ = openLink(url) }
                 }
             )
             .onAppear {
@@ -1984,6 +2009,8 @@ struct ConversationView: View {
 
     /// Presents the Telegram-style media **overlay** over the conversation (not a push).
     private func openMediaViewer(for message: MessagingController.ChatMessage) {
+        // Backstop for the release of a hold that opened the message menu.
+        guard !isShowingMessageMenu else { return }
         guard message.imageData != nil else {
             downloadMedia(message)
             return
@@ -1994,6 +2021,7 @@ struct ConversationView: View {
     }
 
     private func openVideoPlayer(for message: MessagingController.ChatMessage) {
+        guard !isShowingMessageMenu else { return }
         Task {
             let live = messaging.threads[peerUserID]?.first(where: { $0.id == message.id }) ?? message
             guard let data = live.videoData, !data.isEmpty else {
