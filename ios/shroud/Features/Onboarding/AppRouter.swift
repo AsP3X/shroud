@@ -73,7 +73,7 @@ final class AppRouter {
     }
 
     /// Cold start: if crypto is already unlocked in memory, enter the main shell.
-    /// Otherwise stay on Welcome so the user can tap Face ID / phrase (no auto biometry prompt).
+    /// Otherwise stay on the lock screen so the user can tap Face ID / phrase (no auto biometry prompt).
     func restoreUnlockedSessionIfNeeded() async {
         guard sessionController?.session != nil else { return }
         guard let crypto = cryptoController else {
@@ -81,7 +81,7 @@ final class AppRouter {
             return
         }
         // Do not call vault unlock here — automatic Face ID on launch was getting stuck.
-        // Welcome shows a Face ID icon button for an explicit unlock.
+        // The lock screen offers Face ID / passcode / phrase for an explicit unlock.
         hasUnlockedMessaging = crypto.isUnlocked
         if crypto.isUnlocked {
             path = []

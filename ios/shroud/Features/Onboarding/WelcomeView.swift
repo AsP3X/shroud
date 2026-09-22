@@ -1,4 +1,3 @@
-import LocalAuthentication
 import SwiftUI
 
 /// Welcome screen — maps to `Welcome` in `iOS-App.pen`.
@@ -6,74 +5,12 @@ struct WelcomeView: View {
     @Bindable var router: AppRouter
 
     @Environment(ServerConfigurationController.self) private var serverConfig
-    @Environment(SessionController.self) private var sessionController
-    @Environment(CryptoController.self) private var cryptoController
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showServerSettings = false
     /// Drives the one-shot arrival choreography (logo → copy → tiles → actions).
     @State private var hasArrived = false
     @State private var toastMessage: String?
     @State private var toastDismissTask: Task<Void, Never>?
-    /// Which unlock control is currently running (nil = idle).
-    @State private var unlockingMethod: HistoryKeyVault.UnlockMethod?
-
-    /// Lock UI only when a real local vault/identity still exists.
-    /// Signed-in-without-identity (data wipe) is reconciled to Sign Up / Log In instead.
-    private var needsChatUnlock: Bool {
-        guard sessionController.isSignedIn,
-              !cryptoController.isUnlocked,
-              let userID = sessionController.userID
-        else { return false }
-        return cryptoController.hasLocalIdentity(for: userID)
-    }
-
-    private var isUnlocking: Bool { unlockingMethod != nil }
-
-    /// True when the device can evaluate biometry (Face ID / Touch ID / Optic ID).
-    private var hasBiometry: Bool {
-        let context = LAContext()
-        var error: NSError?
-        return context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error)
-    }
-
-    /// True when the device can prove owner presence at all (passcode and/or biometry).
-    private var canUseDeviceAuth: Bool {
-        HistoryKeyVault.canProtectWrapKey
-    }
-
-    /// SF Symbol for the device biometry (Face ID / Touch ID).
-    private var biometryUnlockSymbol: String {
-        let context = LAContext()
-        var error: NSError?
-        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else {
-            return "faceid"
-        }
-        switch context.biometryType {
-        case .faceID:
-            return "faceid"
-        case .touchID:
-            return "touchid"
-        case .opticID:
-            return "opticid"
-        case .none:
-            return "faceid"
-        @unknown default:
-            return "faceid"
-        }
-    }
-
-    private var biometryUnlockAccessibilityLabel: String {
-        switch biometryUnlockSymbol {
-        case "faceid":
-            return "Unlock with Face ID"
-        case "touchid":
-            return "Unlock with Touch ID"
-        case "opticid":
-            return "Unlock with Optic ID"
-        default:
-            return "Unlock with biometrics"
-        }
-    }
 
     var body: some View {
         GroupedScreen {
@@ -83,54 +20,22 @@ struct WelcomeView: View {
                 ScrollView {
                     VStack(spacing: 28) {
                         hero
-                        if needsChatUnlock {
-                            lockedBanner
-                        } else {
-                            featureTiles
-                            connectionHint
-                        }
+                        featureTiles
+                        connectionHint
                     }
                     .screenContent()
                     .padding(.top, 8)
                 }
 
                 VStack(spacing: 16) {
-                    if needsChatUnlock {
-                        // Face ID stays an icon-only control; passcode matches the phrase button.
-                        if hasBiometry {
-                            unlockIconButton(
-                                systemName: biometryUnlockSymbol,
-                                accessibilityLabel: biometryUnlockAccessibilityLabel,
-                                method: .biometryPreferred
-                            )
-                            .frame(maxWidth: .infinity)
-                        }
-
-                        if canUseDeviceAuth {
-                            SecondaryButton(
-                                title: unlockingMethod == .passcodeOnly
-                                    ? "Unlocking…"
-                                    : "Use device passcode"
-                            ) {
-                                Task { await unlockWithVault(method: .passcodeOnly) }
-                            }
-                            .disabled(isUnlocking)
-                        }
-
-                        SecondaryButton(title: "Use encryption phrase") {
-                            router.showLogIn()
-                        }
-                        .disabled(isUnlocking)
-                    } else {
-                        PrimaryButton(title: "Start Messaging") {
-                            router.showSignUp()
-                        }
-                        .accessibilityIdentifier("welcome.startMessaging")
-                        SecondaryButton(title: "Log In") {
-                            router.showLogIn()
-                        }
-                        .accessibilityIdentifier("welcome.logIn")
+                    PrimaryButton(title: "Start Messaging") {
+                        router.showSignUp()
                     }
+                    .accessibilityIdentifier("welcome.startMessaging")
+                    SecondaryButton(title: "Log In") {
+                        router.showLogIn()
+                    }
+                    .accessibilityIdentifier("welcome.logIn")
                 }
                 .screenContent()
                 .padding(.vertical, 12)
@@ -177,85 +82,6 @@ struct WelcomeView: View {
             try? await Task.sleep(nanoseconds: 2_400_000_000)
             guard !Task.isCancelled else { return }
             toastMessage = nil
-        }
-    }
-
-    private var lockedBanner: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("Chats locked", systemImage: "lock.fill")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary)
-            Text(
-                "Your session is still signed in. Unlock with Face ID, your device passcode, or your 12-word encryption phrase."
-            )
-            .font(.system(size: 14))
-            .foregroundStyle(Theme.textSecondary)
-            .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.background)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-    }
-
-    /// Plain Face ID / Touch ID icon — no fill background.
-    private func unlockIconButton(
-        systemName: String,
-        accessibilityLabel: String,
-        method: HistoryKeyVault.UnlockMethod
-    ) -> some View {
-        let busy = unlockingMethod == method
-        return Button {
-            Task { await unlockWithVault(method: method) }
-        } label: {
-            Group {
-                if busy {
-                    ProgressView()
-                        .tint(Theme.accent)
-                } else {
-                    Image(systemName: systemName)
-                        .font(.system(size: 48, weight: .regular))
-                        .foregroundStyle(Theme.accent)
-                        .symbolRenderingMode(.monochrome)
-                }
-            }
-            .frame(width: 64, height: 64)
-            .contentShape(Rectangle())
-            .opacity(isUnlocking && !busy ? 0.35 : 1)
-        }
-        .buttonStyle(.plain)
-        .pressable(scale: 0.88)
-        .disabled(isUnlocking)
-        .accessibilityLabel(accessibilityLabel)
-    }
-
-    private func unlockWithVault(method: HistoryKeyVault.UnlockMethod) async {
-        guard let userID = sessionController.userID else {
-            router.showLogIn()
-            return
-        }
-        // Identity gone (e.g. data wiped mid-session) — leave the lock screen entirely.
-        if !cryptoController.hasLocalIdentity(for: userID) {
-            _ = await router.reconcileOrphanedSessionIfNeeded()
-            presentPostAuthToastIfNeeded()
-            return
-        }
-        unlockingMethod = method
-        defer { unlockingMethod = nil }
-        let ok = await cryptoController.unlockHistoryIfPossible(
-            for: userID,
-            automatic: false,
-            method: method
-        )
-        if ok {
-            router.unlockMessages()
-        } else if !cryptoController.hasLocalIdentity(for: userID) {
-            _ = await router.reconcileOrphanedSessionIfNeeded()
-            presentPostAuthToastIfNeeded()
-        } else {
-            // Prefer the concrete vault error (cancel / not found) over a generic locked message.
-            toastMessage = cryptoController.lastUnlockErrorMessage
-                ?? CryptoController.userMessage(for: CryptoControllerError.historyLocked)
         }
     }
 

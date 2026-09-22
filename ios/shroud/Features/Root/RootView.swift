@@ -7,6 +7,7 @@ import SwiftUI
 /// `AnyNavigationPath.Error.comparisonTypeMismatch`.
 struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var sessionController = SessionController()
     @State private var cryptoController = CryptoController()
@@ -19,13 +20,21 @@ struct RootView: View {
 
     var body: some View {
         ZStack {
+            // Unlock reveal: Chats rises in from 0.96 while the lock screen dissolves over it.
             Group {
                 if router.isUnlocked {
                     MainTabView(router: router)
+                        .transition(.asymmetric(
+                            insertion: .scale(scale: 0.96).combined(with: .opacity),
+                            removal: .opacity
+                        ))
                 } else {
                     onboardingStack
+                        .transition(.opacity)
+                        .zIndex(1)
                 }
             }
+            .animation(Motion.respecting(reduceMotion, Motion.gentle), value: router.isUnlocked)
 
             InCallOverlay()
                 .zIndex(100)
@@ -145,7 +154,7 @@ struct RootView: View {
                 }
             case .active:
                 guard sessionController.isSignedIn else { return }
-                // Face ID is opt-in via the Welcome unlock button — never auto-prompt here
+                // Face ID is opt-in via the lock screen's unlock button — never auto-prompt here
                 // (auto-prompt raced with Welcome and left the system sheet stuck).
                 if !cryptoController.isUnlocked {
                     router.hasUnlockedMessaging = false
@@ -172,10 +181,27 @@ struct RootView: View {
     /// Short enough that three consecutive 401s force-logout within ~12s; long enough offline.
     private static let lockScreenSessionProbeInterval: Duration = .seconds(4)
 
+    /// Signed in with a local identity while the main shell is not shown → the lock screen.
+    ///
+    /// Human: Deliberately not keyed on the vault: it opens a beat before the unlock
+    /// choreography hands over to the main shell, and keying on it flashed Welcome in between.
+    /// Signed-in-without-identity (data wipe) is reconciled to Welcome instead.
+    private var needsChatUnlock: Bool {
+        guard sessionController.isSignedIn, let userID = sessionController.userID else { return false }
+        return cryptoController.hasLocalIdentity(for: userID)
+    }
+
     /// Pre-auth flow only — path elements are always `AppRoute`.
     private var onboardingStack: some View {
         NavigationStack(path: $router.path) {
-            WelcomeView(router: router)
+            Group {
+                if needsChatUnlock {
+                    LockScreenView(router: router)
+                } else {
+                    WelcomeView(router: router)
+                }
+            }
+            .animation(Motion.respecting(reduceMotion, Motion.fade), value: needsChatUnlock)
                 .navigationDestination(for: AppRoute.self) { route in
                     switch route {
                     case .welcome:
