@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 
 @testable import shroud
@@ -83,6 +84,47 @@ final class LinkPageMetadataParserTests: XCTestCase {
         XCTAssertTrue(parse("<html><head></head><body>Hello</body></html>").isEmpty)
     }
 
+    func testGreaterThanInsideAQuotedValueKeepsTheWholeText() {
+        let metadata = parse(#"<head><meta property="og:title" content="Rust > Go? A comparison"><meta name='description' content='Home > Shop -> Sale'></head>"#)
+        XCTAssertEqual(metadata.title, "Rust > Go? A comparison")
+        XCTAssertEqual(metadata.summary, "Home > Shop -> Sale")
+    }
+
+    func testBrokenQuotesDoNotSwallowTheNextTag() {
+        let metadata = parse(#"<head><meta name="description" content="He said "hi"" ><meta property="og:title" content="After"></head>"#)
+        XCTAssertEqual(metadata.title, "After")
+    }
+
+    func testRegisteredLegacyCharsetsDecode() throws {
+        func encoding(_ cf: CFStringEncodings) -> String.Encoding {
+            String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(cf.rawValue)))
+        }
+        let cyrillic = try XCTUnwrap(
+            "<head><meta charset=\"windows-1251\"><meta property=\"og:title\" content=\"Привет, мир\"></head>"
+                .data(using: encoding(.windowsCyrillic))
+        )
+        XCTAssertEqual(LinkPageMetadataParser.parse(cyrillic, pageURL: page, contentType: "text/html").title, "Привет, мир")
+
+        let chinese = try XCTUnwrap(
+            "<head><meta property=\"og:title\" content=\"你好世界\"></head>".data(using: encoding(.GB_18030_2000))
+        )
+        XCTAssertEqual(
+            LinkPageMetadataParser.parse(chinese, pageURL: page, contentType: "text/html; charset=GBK").title,
+            "你好世界"
+        )
+    }
+
+    func testMultiByteCharacterCutAtTheEndKeepsTheEncoding() throws {
+        // Only the head is read, so the last character is often cut in half; that must not
+        // push the whole page onto the lossy UTF-8 fallback.
+        var data = try XCTUnwrap(
+            "<head><meta charset=\"shift_jis\"><meta property=\"og:title\" content=\"日本語のタイトル\"></head><body>日本"
+                .data(using: .shiftJIS)
+        )
+        data.removeLast()
+        XCTAssertEqual(LinkPageMetadataParser.parse(data, pageURL: page, contentType: "text/html").title, "日本語のタイトル")
+    }
+
     // MARK: - Fetch rules
 
     func testOnlyPublicHTTPSTargetsAreFetched() {
@@ -116,5 +158,31 @@ final class LinkPageMetadataParserTests: XCTestCase {
         }
         XCTAssertTrue(LinkPreviewFetcher.resolvesOnlyToPublicAddresses("1.1.1.1"))
         XCTAssertTrue(LinkPreviewFetcher.resolvesOnlyToPublicAddresses("8.8.8.8"))
+    }
+
+    // MARK: - Images
+
+    func testDecompressionBombsAreRefusedByTheirDeclaredSize() {
+        XCTAssertTrue(LinkPreviewFetcher.isDecodableImageSize(width: 1200, height: 630))
+        XCTAssertTrue(LinkPreviewFetcher.isDecodableImageSize(width: 8000, height: 5000))
+        XCTAssertFalse(LinkPreviewFetcher.isDecodableImageSize(width: 20000, height: 20000))
+        XCTAssertFalse(LinkPreviewFetcher.isDecodableImageSize(width: 0, height: 630))
+        XCTAssertFalse(LinkPreviewFetcher.isDecodableImageSize(width: Int.max, height: 2))
+    }
+
+    func testCardImageGivesALargeJPEGAndASmallThumbnail() throws {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let card = UIGraphicsImageRenderer(size: CGSize(width: 1200, height: 630), format: format).image { context in
+            for band in 0 ..< 12 {
+                UIColor(hue: CGFloat(band) / 12, saturation: 0.7, brightness: 0.8, alpha: 1).setFill()
+                context.fill(CGRect(x: band * 100, y: 0, width: 100, height: 630))
+            }
+        }
+        let prepared = try XCTUnwrap(LinkPreviewFetcher.prepareImages(from: try XCTUnwrap(card.pngData())))
+        XCTAssertEqual(prepared.width, 1024, "downsampled to the large layout's edge")
+        XCTAssertEqual(Double(prepared.height), 1024 * 630 / 1200, accuracy: 1)
+        XCTAssertNotNil(prepared.large)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(prepared.thumbnail).count, LinkPreview.maxThumbnailBytes)
     }
 }

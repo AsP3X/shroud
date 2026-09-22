@@ -392,11 +392,11 @@ export async function decodeIncoming(
     savePlaintext(dto.id, decoded);
     const parsed = parseTextPayload(decoded);
     const msg: ChatMessage = {
-        ...base,
-        text: parsed.text,
-        replyTo: parsed.replyTo,
-        linkPreview: parsed.linkPreview,
-      };
+      ...base,
+      text: parsed.text,
+      replyTo: parsed.replyTo,
+      linkPreview: parsed.linkPreview,
+    };
     rememberPreview(me, peerUserId, msg);
     return msg;
   } catch {

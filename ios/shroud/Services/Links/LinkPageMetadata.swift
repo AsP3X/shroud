@@ -74,10 +74,11 @@ nonisolated enum LinkPageMetadataParser {
 
     // MARK: - Text decoding
 
-    /// Decodes with the declared charset, then a `<meta charset>` sniff, then UTF-8 / Latin-1.
+    /// Decodes with the declared charset, then a `<meta charset>` sniff, then UTF-8 (lossy as a
+    /// last resort).
     static func decode(_ data: Data, contentType: String?) -> String {
         if let charset = charset(inContentType: contentType), let encoding = encoding(named: charset),
-           let text = String(data: data, encoding: encoding)
+           let text = string(from: data, encoding: encoding)
         {
             return text
         }
@@ -87,15 +88,27 @@ nonisolated enum LinkPageMetadataParser {
         if let range = prefix.range(of: "charset=") {
             let value = prefix[range.upperBound...].drop { $0 == "\"" || $0 == "'" }
             if let encoding = encoding(named: String(value.prefix { !"\"'>; /".contains($0) })),
-               let text = String(data: data, encoding: encoding)
+               let text = string(from: data, encoding: encoding)
             {
                 return text
             }
         }
-        if let text = String(data: data, encoding: .utf8) { return text }
-        // A cut in the middle of a multi-byte character (we only read the head) or a legacy
-        // page: decode leniently rather than losing the preview.
+        if let text = string(from: data, encoding: .utf8) { return text }
+        // A legacy page with no usable declaration: decode leniently rather than losing the
+        // preview.
         return String(decoding: data, as: UTF8.self)
+    }
+
+    /// `data` decoded as `encoding`, forgiving a multi-byte character cut off at the end.
+    ///
+    /// Human: Only the head of a page is read, so the last character is often incomplete — and
+    /// one broken character must not throw the whole page onto the lossy fallback, which turns
+    /// every non-ASCII letter of a Shift_JIS or GBK title into garbage.
+    private static func string(from data: Data, encoding: String.Encoding) -> String? {
+        for cut in 0 ... min(3, max(data.count - 1, 0)) {
+            if let text = String(data: data.dropLast(cut), encoding: encoding) { return text }
+        }
+        return nil
     }
 
     private static func charset(inContentType contentType: String?) -> String? {
@@ -105,16 +118,23 @@ nonisolated enum LinkPageMetadataParser {
         return String(contentType[range.upperBound...].prefix { !"; \"".contains($0) })
     }
 
+    /// The encoding behind a charset label: the common ones by name, anything else through the
+    /// IANA registry (`windows-1251`, `gbk`, `big5`, `euc-kr`, `koi8-r`, …).
     private static func encoding(named name: String) -> String.Encoding? {
-        switch name.trimmingCharacters(in: CharacterSet(charactersIn: "\"' ")) {
-        case "utf-8", "utf8": .utf8
-        case "iso-8859-1", "latin1", "iso8859-1": .isoLatin1
-        case "windows-1252", "cp1252": .windowsCP1252
-        case "iso-8859-2": .isoLatin2
-        case "shift_jis", "shift-jis": .shiftJIS
-        case "euc-jp": .japaneseEUC
-        default: nil
+        let label = name.trimmingCharacters(in: CharacterSet(charactersIn: "\"' ")).lowercased()
+        switch label {
+        case "": return nil
+        case "utf-8", "utf8": return .utf8
+        case "iso-8859-1", "latin1", "iso8859-1": return .isoLatin1
+        case "windows-1252", "cp1252": return .windowsCP1252
+        case "iso-8859-2": return .isoLatin2
+        case "shift_jis", "shift-jis", "sjis", "x-sjis": return .shiftJIS
+        case "euc-jp": return .japaneseEUC
+        default: break
         }
+        let registered = CFStringConvertIANACharSetNameToEncoding(label as CFString)
+        guard registered != kCFStringEncodingInvalidId else { return nil }
+        return String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(registered))
     }
 
     // MARK: - Tag scanning
@@ -144,11 +164,42 @@ nonisolated enum LinkPageMetadataParser {
                 cursor = after
                 continue
             }
-            guard let end = html.range(of: ">", range: after ..< html.endIndex) else { break }
-            result.append(html[after ..< end.lowerBound])
-            cursor = end.upperBound
+            guard let end = tagEnd(in: html, from: after) else { break }
+            result.append(html[after ..< end])
+            cursor = html.index(after: end)
         }
         return result
+    }
+
+    /// The `>` that closes a tag whose attributes start at `start`.
+    ///
+    /// Human: HTML allows a bare `>` inside a quoted attribute value, and titles such as
+    /// "Rust > Go?" or "Home > Shop" do show up in `og:title` — stopping at the first `>` would
+    /// cut the preview's title and description there.
+    /// Agent: RETURNS nil for a tag left open (an unterminated quote runs to the end, as in a
+    /// browser).
+    private static func tagEnd(in html: Substring, from start: Substring.Index) -> Substring.Index? {
+        var index = start
+        var afterEquals = false
+        while index < html.endIndex {
+            let character = html[index]
+            if character == ">" { return index }
+            if character == "=" {
+                afterEquals = true
+            } else if afterEquals, character == "\"" || character == "'" {
+                // A quoted value runs to its closing quote, whatever it contains.
+                guard let close = html[html.index(after: index)...].firstIndex(of: character) else {
+                    return nil
+                }
+                index = close
+                afterEquals = false
+            } else if !character.isWhitespace {
+                // An unquoted value: it ends at whitespace or `>`, so quotes inside it are text.
+                afterEquals = false
+            }
+            index = html.index(after: index)
+        }
+        return nil
     }
 
     /// Attribute map of one tag's source, keys lowercased. Handles `"…"`, `'…'` and bare values.

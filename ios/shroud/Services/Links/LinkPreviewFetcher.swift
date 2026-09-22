@@ -44,7 +44,7 @@ nonisolated protocol LinkPreviewFetching: Sendable {
 ///   `localhost`), or a name that resolves to a private, loopback, or link-local address, so a
 ///   pasted link cannot probe the home network. Redirects are held to the same rules.
 /// - An ephemeral session: no cookies, no cache, no credentials, nothing kept afterwards.
-/// - Only the page head is read (≤ 512 KB) and images are capped at 5 MB and decoded
+/// - Only the page head is read (≤ 512 KB) and images are capped at 5 MB and 40 MP and decoded
 ///   downsampled, so a hostile page cannot run the phone out of memory.
 /// Agent: HTTP GET to the link's host only; never to the Shroud server. No logging of URLs.
 /// Runs off the main actor (`Task.detached`); cancellation of the caller cancels the fetch.
@@ -61,6 +61,8 @@ nonisolated struct LinkPreviewFetcher: LinkPreviewFetching {
     static let thumbnailEdge = 160
     /// Images smaller than this are icons or tracking pixels, not previews.
     static let minimumImageEdge = 80
+    /// Largest canvas decoded, in pixels (40 MP ≈ 8000 × 5000 — far above any real card image).
+    static let maxImagePixels = 40_000_000
 
     enum FetchError: Error, Equatable {
         case notAllowed
@@ -338,18 +340,38 @@ nonisolated struct LinkPreviewFetcher: LinkPreviewFetching {
 
     // MARK: - Images
 
-    private struct PreparedImages {
+    /// The two JPEGs built from a page's image, and the size it was decoded at.
+    struct PreparedImages {
         let large: Data?
         let thumbnail: Data?
         let width: Int
         let height: Int
     }
 
+    /// True when an image of this declared size is safe to decode.
+    ///
+    /// Human: A few kilobytes of PNG or WebP can declare a 20 000 × 20 000 canvas (a
+    /// "decompression bomb"). Decoding that would take the app down while the user is still
+    /// typing, so the size in the file's header is checked before any pixel is touched.
+    static func isDecodableImageSize(width: Int, height: Int) -> Bool {
+        width > 0 && height > 0 && Double(width) * Double(height) <= Double(maxImagePixels)
+    }
+
     /// Downsampled large JPEG + square thumbnail, both flattened onto white (JPEG has no alpha,
     /// and a transparent logo would otherwise come out black).
-    private static func prepareImages(from data: Data) -> PreparedImages? {
+    ///
+    /// Agent: RETURNS nil for undecodable data, icons under `minimumImageEdge`, and canvases over
+    /// `maxImagePixels` (refused from the header alone).
+    static func prepareImages(from data: Data) -> PreparedImages? {
         let options = [kCGImageSourceShouldCache: false] as CFDictionary
         guard let source = CGImageSourceCreateWithData(data as CFData, options) else { return nil }
+        if let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, options) as? [CFString: Any],
+           let width = properties[kCGImagePropertyPixelWidth] as? Int,
+           let height = properties[kCGImagePropertyPixelHeight] as? Int,
+           !isDecodableImageSize(width: width, height: height)
+        {
+            return nil
+        }
         let thumbnailOptions = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceThumbnailMaxPixelSize: largeImageMaxEdge,

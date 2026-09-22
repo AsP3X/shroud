@@ -80,7 +80,7 @@ final class LinkPreviewComposer {
         // Already showing (or fetching) this link: nothing to do.
         switch phase {
         case let .loading(current) where Self.key(for: current) == key: return
-        case let .ready(current) where current.preview.url == url.absoluteString: return
+        case let .ready(current) where Self.key(forURLString: current.preview.url) == key: return
         default: break
         }
         if let cached = cache[key] {
@@ -122,7 +122,7 @@ final class LinkPreviewComposer {
         switch phase {
         case let .loading(url): dismissed.insert(Self.key(for: url))
         case let .ready(draft):
-            if let url = URL(string: draft.preview.url) { dismissed.insert(Self.key(for: url)) }
+            if let key = Self.key(forURLString: draft.preview.url) { dismissed.insert(key) }
         case .idle: break
         }
         cancelFetch()
@@ -147,7 +147,7 @@ final class LinkPreviewComposer {
         defer { reset() }
         guard let draft,
               let url = LinkDetector.firstPreviewableURL(in: text),
-              url.absoluteString == draft.preview.url
+              Self.key(for: url) == Self.key(forURLString: draft.preview.url)
         else { return nil }
         var preview = draft.preview
         preview.showsAboveText = showsAboveText
@@ -199,8 +199,24 @@ final class LinkPreviewComposer {
         }
     }
 
-    /// Lowercased URL string — enough to recognise the same link typed again.
-    private static func key(for url: URL) -> String {
-        url.absoluteString.lowercased()
+    /// Identity of a link: scheme and host lowercased, everything else as typed.
+    ///
+    /// Human: `Example.com/Tour` and `example.com/Tour` are the same page, but paths are
+    /// case-sensitive — `youtu.be/dQw4w9WgXcQ` and `youtu.be/dqw4w9wgxcq` are different videos,
+    /// so lowercasing the whole URL would hand one link the other's preview.
+    /// Agent: Used for the cache, the dismissed set, and matching the draft's link at send time.
+    private nonisolated static func key(for url: URL) -> String {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let host = components.percentEncodedHost
+        else { return url.absoluteString }
+        let scheme = components.scheme?.lowercased() ?? ""
+        let port = components.port.map { ":\($0)" } ?? ""
+        let query = components.percentEncodedQuery.map { "?\($0)" } ?? ""
+        let fragment = components.percentEncodedFragment.map { "#\($0)" } ?? ""
+        return "\(scheme)://\(host.lowercased())\(port)\(components.percentEncodedPath)\(query)\(fragment)"
+    }
+
+    private nonisolated static func key(forURLString string: String) -> String? {
+        URL(string: string).map(key(for:))
     }
 }

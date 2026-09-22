@@ -208,16 +208,12 @@ struct PrivacySecurityView: View {
         }
     }
 
-    /// Opt-in consent for a contact's "delete chat for both" to also clear this account.
-    ///
-    /// Human: Off by default. With it off you still lose *their* messages when they delete
-    /// for both — those become "Message deleted" — but your own side of the chat survives.
-    /// Agent: READS messaging.allowsPeerChatDelete; CALLS setAllowsPeerChatDelete (HTTP PUT).
     /// Whether typing a link fetches its preview from this device.
     ///
     /// Human: Says plainly who sees what: the website sees this iPhone's IP address while the
     /// preview is built — the same as opening the link — and nobody else is involved. The
     /// recipient gets the preview sealed in the message and never contacts the site.
+    /// Agent: WRITES SecurityPreferences.generatesLinkPreviews (UserDefaults); no network.
     private var linkPreviewsToggle: some View {
         Toggle(isOn: $generatesLinkPreviews) {
             VStack(alignment: .leading, spacing: 4) {
@@ -241,6 +237,11 @@ struct PrivacySecurityView: View {
         }
     }
 
+    /// Opt-in consent for a contact's "delete chat for both" to also clear this account.
+    ///
+    /// Human: Off by default. With it off you still lose *their* messages when they delete
+    /// for both — those become "Message deleted" — but your own side of the chat survives.
+    /// Agent: READS messaging.allowsPeerChatDelete; CALLS setAllowsPeerChatDelete (HTTP PUT).
     private var chatDeleteConsentToggle: some View {
         Toggle(isOn: Binding(
             get: { messaging.allowsPeerChatDelete },

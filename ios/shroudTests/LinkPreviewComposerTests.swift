@@ -112,6 +112,27 @@ final class LinkPreviewComposerTests: XCTestCase {
         XCTAssertNil(attachment?.largeImage)
     }
 
+    func testHostCaseIsTheSameLinkButPathCaseIsNot() async {
+        let fetcher = FakeFetcher(draft: draft(large: false))
+        let composer = LinkPreviewComposer(fetcher: fetcher, debounce: .zero)
+        composer.draftChanged("https://Example.com/Tour", enabled: true)
+        await settle(composer) { composer.draft != nil }
+
+        // The same page with its host retyped: no second fetch, and the preview still goes out.
+        composer.draftChanged("https://example.com/Tour", enabled: true)
+        await settle(composer) { false }
+        XCTAssertEqual(fetcher.requested.count, 1)
+        XCTAssertNotNil(composer.takeAttachment(for: "https://example.com/Tour"))
+
+        // Paths are case-sensitive (YouTube ids, …): another page gets its own preview.
+        composer.draftChanged("https://example.com/Tour", enabled: true)
+        await settle(composer) { composer.draft != nil }
+        composer.draftChanged("https://example.com/tour", enabled: true)
+        await settle(composer) { fetcher.requested.count == 2 && composer.draft != nil }
+        XCTAssertEqual(fetcher.requested.last?.absoluteString, "https://example.com/tour")
+        XCTAssertEqual(composer.draft?.preview.url, "https://example.com/tour")
+    }
+
     func testOptionsShapeTheAttachment() async {
         let composer = LinkPreviewComposer(fetcher: FakeFetcher(draft: draft(large: true)), debounce: .zero)
         composer.draftChanged("https://example.com", enabled: true)
