@@ -117,6 +117,27 @@ struct MessageMenuLayoutTests {
         #expect(chrome.menuY + peerMenu <= 844 - 48)
     }
 
+    @Test func shortScreenKeepsTheBottomOfTheCardInsideThePad() {
+        // Landscape-height phone: the card is taller than the padded area.
+        let screen = CGSize(width: 844, height: 390)
+        let source = CGRect(x: 40, y: 150, width: 200, height: 40)
+        let decision = MessageMenuLayout.decide(
+            source: source,
+            container: screen,
+            menuHeight: menu,
+            reactionHeight: reaction
+        )
+        #expect(decision.hero == source)
+        let chrome = MessageMenuLayout.chrome(
+            hero: decision.hero,
+            placement: decision.placement,
+            containerHeight: screen.height,
+            menuHeight: menu,
+            reactionHeight: reaction
+        )
+        #expect(chrome.menuY + menu <= 390 - 48)
+    }
+
     @Test func tallMessageStaysPutAndKeepsTheCardOnScreen() {
         let source = CGRect(x: 16, y: 80, width: 250, height: 640)
         let decision = MessageMenuLayout.decide(

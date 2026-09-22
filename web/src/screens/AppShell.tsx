@@ -151,11 +151,12 @@ export function AppShell({ session }: { session: Session }) {
   async function consumeDroppedSend(localId: string, msg: ChatMessage, peerId: string): Promise<boolean> {
     if (!droppedSends.current.delete(localId)) return false;
     discardMessage(localId);
-    discardMessage(msg.id);
     const still = selectedRef.current?.id.toLowerCase() === peerId.toLowerCase();
     try {
       await api.deleteMessage(session.token, msg.id, "everyone");
     } catch (err) {
+      // The server still has the message. Keep its decrypted copy so the bubble we
+      // put back can still draw, and so a later reload is not stuck unable to cache it.
       if (still) {
         setThread((prev) => mergeMessages(prev.filter((m) => m.id !== localId), [msg]));
         setThreadError(err instanceof ApiError ? err.message : "Could not delete the message.");
@@ -163,6 +164,7 @@ export function AppShell({ session }: { session: Session }) {
       setPreviewRev((n) => n + 1);
       return true;
     }
+    discardMessage(msg.id);
     const gone = tombstone(msg);
     if (still) {
       const apply = (list: ChatMessage[]) =>

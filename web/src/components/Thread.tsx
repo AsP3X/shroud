@@ -254,8 +254,12 @@ function MessageRow({
       tabIndex={canReply ? undefined : 0}
       onContextMenu={(event) => {
         swipe.cancelLongPress();
+        // Android fires contextmenu while the finger is still down. Keep the menu
+        // inert until that finger lifts, or the release taps the item it opened on.
+        const holding = swipe.isHolding();
+        if (holding) suppressClickAfterLongPress();
         event.preventDefault();
-        onMenu(message, { x: event.clientX, y: event.clientY }, event.currentTarget);
+        onMenu(message, { x: event.clientX, y: event.clientY }, event.currentTarget, holding);
       }}
       onKeyDown={(event) => {
         // The keyboard's own way into a context menu, from any control inside the row.

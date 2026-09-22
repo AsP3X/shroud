@@ -297,7 +297,9 @@ enum MessageMenuLayout {
     }
 
     private static func clamp(_ value: CGFloat, min lower: CGFloat, max upper: CGFloat) -> CGFloat {
-        if upper < lower { return lower }
+        // Taller than the padded area (landscape, a large menu): keep the bottom
+        // edge inside it. Pinning the top instead hid Delete below the screen.
+        if upper < lower { return upper }
         return Swift.min(Swift.max(value, lower), upper)
     }
 

@@ -49,6 +49,8 @@ export function useSwipeToReply({
   const rowRef = useRef<HTMLDivElement | null>(null);
   const [swiping, setSwiping] = useState(false);
   const state = useRef({ id: -1, x: 0, y: 0, decided: "" as "" | "yes" | "no", armed: false });
+  /** True from touch-down until the finger lifts. A contextmenu event can land in between. */
+  const holding = useRef(false);
   const pressTimer = useRef(0);
   const threshold = isMine ? THRESHOLD_OUT : THRESHOLD_IN;
 
@@ -85,6 +87,7 @@ export function useSwipeToReply({
         }
       }
       state.current = { id: -1, x: 0, y: 0, decided: "", armed: false };
+      holding.current = false;
       cancelPress();
       setSwiping(false);
     },
@@ -95,6 +98,7 @@ export function useSwipeToReply({
     (event: ReactPointerEvent<HTMLDivElement>) => {
       if (event.pointerType === "mouse") return;
       if (!enabled && !onLongPress) return;
+      holding.current = true;
       const { clientX: x, clientY: y, pointerId } = event;
       state.current = { id: pointerId, x, y, decided: enabled ? "" : "no", armed: false };
       cancelPress();
@@ -180,6 +184,8 @@ export function useSwipeToReply({
     swiping,
     /** A context-menu event means this hold is no longer a long-press. */
     cancelLongPress: cancelPress,
+    /** The finger that started this gesture has not lifted yet. */
+    isHolding: () => holding.current,
     handlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel },
   };
 }

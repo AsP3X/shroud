@@ -2022,7 +2022,7 @@ button.reply-quote { cursor: pointer; }
 /* ---------------------------------------------------------------- modal -- */
 .modal-scrim {
   position: fixed; inset: 0; background: var(--scrim);
-  display: grid; place-items: center; padding: 20px; z-index: 20;
+  display: grid; place-items: center; padding: 20px; z-index: 80;
   animation: fade-in 0.15s ease;
 }
 .modal {

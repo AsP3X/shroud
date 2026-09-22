@@ -41,7 +41,6 @@ export function suppressClickAfterLongPress(): void {
   };
   window.addEventListener("pointerup", drop, { capture: true, once: true });
   window.addEventListener("pointercancel", drop, { capture: true, once: true });
-  window.setTimeout(drop, 4000);
 }
 
 /**
@@ -120,11 +119,9 @@ export function ContextMenu<Id extends string>({
     const enable = () => setLive(true);
     window.addEventListener("pointerup", enable, { capture: true, once: true });
     window.addEventListener("pointercancel", enable, { capture: true, once: true });
-    const safety = window.setTimeout(enable, 4000);
     return () => {
       window.removeEventListener("pointerup", enable, true);
       window.removeEventListener("pointercancel", enable, true);
-      window.clearTimeout(safety);
     };
   }, [settle]);
 
