@@ -171,6 +171,13 @@ final class CryptoController {
             mnemonicWords: mnemonicWords,
             userID: userID
         )
+        // No local keys on this device. Still refuse a phrase that is not the key
+        // already published for the account, and do not upload it.
+        try await rejectPhraseThatIsNotTheAccountKey(
+            established,
+            userID: userID,
+            bearerToken: bearerToken
+        )
         try persistUnlocked(established)
         let request = try KeyBundleService.makePutRequest(from: established)
         try await keyBundleService.putBundle(request, bearerToken: bearerToken)
@@ -228,6 +235,31 @@ final class CryptoController {
             SecurityPreferences.vaultNeedsRewrap = false
         } catch {
             // Keep old vault; user can re-lock with phrase later.
+        }
+    }
+
+    /// First device: the account has no published identity yet. Any later device must
+    /// derive that same key or the phrase is wrong.
+    private func rejectPhraseThatIsNotTheAccountKey(
+        _ established: IdentityKeyMaterial,
+        userID: UUID,
+        bearerToken: String
+    ) async throws {
+        do {
+            let published = try await keyBundleService.fetchIdentity(
+                userID: userID,
+                bearerToken: bearerToken
+            )
+            guard let data = Data(base64Encoded: published.identityKey),
+                  data == established.identityPublicKeyData
+            else {
+                throw CryptoControllerError.phraseDoesNotMatchAccount
+            }
+        } catch let error as APIError {
+            if case let .server(code, _, _) = error, code == "KEYS_REQUIRED" {
+                return
+            }
+            throw error
         }
     }
 

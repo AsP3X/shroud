@@ -106,7 +106,6 @@ export function PhraseEntry({
                 className="phrase-input"
                 type="text"
                 inputMode="text"
-                maxLength={8}
                 value={word}
                 onChange={(event) => setWord(i, event.target.value)}
                 onPaste={(event) => onPaste(i, event)}

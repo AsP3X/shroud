@@ -4,12 +4,35 @@ import { TriangleAlert } from "lucide-react";
 import { api, ApiError } from "../api/client";
 import { deviceName } from "../config";
 import { generateMnemonic, PhraseError, validateMnemonic, WORD_COUNT } from "../crypto/bip39";
-import { establish, matchesMnemonic, putBundleRequest } from "../crypto/identity";
+import { b64ToBytes, bytesEqual } from "../crypto/bytes";
+import { establish, matchesMnemonic, putBundleRequest, type IdentityMaterial } from "../crypto/identity";
 import { AuthLayout } from "../components/auth/AuthLayout";
 import { PasswordField, TextField } from "../components/auth/Fields";
 import { PhraseDisplay, PhraseEntry } from "../components/auth/Phrase";
 import { hasIdentity, loadIdentity, saveIdentity } from "../crypto/store";
 import { hasPin, clearSession, loadDeviceAnchor, loadSession, saveSession } from "../session";
+
+/**
+ * The account's published identity key is determined by the phrase. Refuse a phrase
+ * that derives a different key, and allow the first device, which has no key yet.
+ */
+async function assertMatchesPublishedIdentity(
+  token: string,
+  userId: string,
+  material: IdentityMaterial,
+): Promise<void> {
+  try {
+    const published = await api.peerIdentity(token, userId);
+    const theirs = b64ToBytes(published.identity_key);
+    if (!bytesEqual(theirs, material.agreementPublic)) {
+      throw new PhraseError("invalid_checksum", "mismatch");
+    }
+  } catch (err) {
+    if (err instanceof PhraseError) throw err;
+    if (err instanceof ApiError && err.code === "KEYS_REQUIRED") return;
+    throw err;
+  }
+}
 
 export function Auth() {
   const navigate = useNavigate();
@@ -66,15 +89,16 @@ export function Auth() {
     try {
       const normalized = validateMnemonic(words);
       const stored = loadIdentity(session.user.id);
-      if (stored && !creatingPhrase && !matchesMnemonic(stored, normalized)) {
-        throw new PhraseError("invalid_checksum", "That phrase does not match this account.");
+      const sameLocal = stored !== null && !creatingPhrase && matchesMnemonic(stored, normalized);
+      if (stored && !creatingPhrase && !sameLocal) {
+        throw new PhraseError("invalid_checksum", "mismatch");
       }
-      const material =
-        stored && !creatingPhrase && matchesMnemonic(stored, normalized)
-          ? stored
-          : establish(normalized, session.user.id);
+      const material = sameLocal && stored ? stored : establish(normalized, session.user.id);
+      // A new device must not publish a different key. Peers use the newest device's
+      // identity, so a wrong phrase here would replace the account's key.
+      await assertMatchesPublishedIdentity(session.token, session.user.id, material);
       const status = await api.keysStatus(session.token);
-      if (!status.has_identity || creatingPhrase || material !== stored) {
+      if (!status.has_identity || !sameLocal) {
         await api.putBundle(session.token, putBundleRequest(material));
         saveIdentity(material);
       }
@@ -189,9 +213,8 @@ export function Auth() {
             <div className="auth-warn">
               <TriangleAlert size={16} aria-hidden="true" />
               <p>
-                This creates a <strong>brand-new</strong> phrase. It will not decrypt chats you
-                already have on iPhone — go back and enter that phrase instead if you have one.
-                Shroud cannot recover a lost phrase.
+                This is only for an account that has never had a phrase. If you already set one
+                on your phone, go back and enter that phrase. A different one is not saved.
               </p>
             </div>
             <button

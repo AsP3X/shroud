@@ -181,7 +181,10 @@ export function SignUp() {
               key={index}
               label={`Word ${index + 1}`}
               value={answers[index] ?? ""}
-              onChange={(next) => setAnswers((prev) => ({ ...prev, [index]: next }))}
+              onChange={(next) => {
+                setAnswers((prev) => ({ ...prev, [index]: next }));
+                setError(null);
+              }}
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
