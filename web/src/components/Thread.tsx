@@ -47,6 +47,9 @@ import { cancelVideoDownload, type LoadedVideo } from "../media/videos";
 import { Avatar } from "./Avatar";
 import { Highlight } from "./Highlight";
 import { ImageBubble } from "./ImageBubble";
+import { LinkedText } from "./LinkedText";
+import { LinkPreviewCard } from "./LinkPreviewCard";
+import { detectLinks, isOpenableUrl } from "../links";
 import {
   DeleteMessageDialog,
   MessageMenu,
@@ -142,12 +145,16 @@ function MessageRow({
   quoted: Map<string, ChatMessage>;
   flashing: boolean;
   onReply: (message: ChatMessage) => void;
-  /** Right-click, Shift+F10 / the Menu key, or a touch held still. `settle` is a held finger. */
+  /**
+   * Right-click, Shift+F10 / the Menu key, or a touch held still. `settle` is a held finger;
+   * `link` is the link the pointer was on, if any.
+   */
   onMenu: (
     message: ChatMessage,
     anchor: MessageMenuAnchor,
     row: HTMLElement | null,
     settle?: boolean,
+    link?: string | null,
   ) => void;
   onJump: (id: string) => void;
   onOpenPhoto: (message: ChatMessage) => void;
@@ -164,7 +171,7 @@ function MessageRow({
     onReply: () => onReply(message),
     onLongPress: (x, y) => {
       suppressClickAfterLongPress();
-      onMenu(message, { x, y }, null, true);
+      onMenu(message, { x, y }, null, true, linkAt(document.elementFromPoint(x, y)));
     },
   });
 
@@ -229,18 +236,38 @@ function MessageRow({
       </div>
     );
   } else {
+    /* A link preview sits under the text with the time on its own line beneath it (Telegram),
+       or over the text when the sender picked "Show above text". */
+    const preview = message.linkPreview && !message.deleted ? message.linkPreview : null;
+    const above = preview?.showsAboveText ?? false;
+    const meta = (
+      <span className="bubble-meta" title={fullTimestamp(message.createdAt)}>
+        <time dateTime={message.createdAt}>{clockTime(message.createdAt)}</time>
+        {message.isMine && !message.deleted ? <Receipt message={message} /> : null}
+      </span>
+    );
+    const card = preview ? (
+      <LinkPreviewCard message={message} preview={preview} loadImage={onLoadImage} />
+    ) : null;
+    const previewClass = preview
+      ? ` has-link-preview${message.mediaObjectId && message.mediaKey ? " has-link-media" : ""}`
+      : "";
     bubble = (
-      <div className={bubbleClass}>
+      <div className={`${bubbleClass}${previewClass}`}>
         {quote}
+        {above ? card : null}
         <div className="bubble-body">
           <p className="bubble-text">
-            <Highlight text={message.text} query={query} />
+            {message.deleted ? (
+              <Highlight text={message.text} query={query} />
+            ) : (
+              <LinkedText text={message.text} query={query} />
+            )}
           </p>
-          <span className="bubble-meta" title={fullTimestamp(message.createdAt)}>
-            <time dateTime={message.createdAt}>{clockTime(message.createdAt)}</time>
-            {message.isMine && !message.deleted ? <Receipt message={message} /> : null}
-          </span>
+          {preview && !above ? null : meta}
         </div>
+        {preview && !above ? card : null}
+        {preview && !above ? <div className="bubble-meta-row">{meta}</div> : null}
       </div>
     );
   }
@@ -259,7 +286,13 @@ function MessageRow({
         const holding = swipe.isHolding();
         if (holding) suppressClickAfterLongPress();
         event.preventDefault();
-        onMenu(message, { x: event.clientX, y: event.clientY }, event.currentTarget, holding);
+        onMenu(
+          message,
+          { x: event.clientX, y: event.clientY },
+          event.currentTarget,
+          holding,
+          linkAt(event.target as Element | null),
+        );
       }}
       onKeyDown={(event) => {
         // The keyboard's own way into a context menu, from any control inside the row.
@@ -349,6 +382,21 @@ function copyableText(message: ChatMessage): string {
     default:
       return "";
   }
+}
+
+/** The link a pointer or finger is on, from the element it hit. */
+function linkAt(element: Element | null): string | null {
+  return element?.closest?.("[data-link]")?.getAttribute("data-link") ?? null;
+}
+
+/**
+ * The link "Open link" / "Copy link" act on when the menu was not opened on one: the page the
+ * preview shows, else the first link in the text (iOS picks the same one).
+ */
+function primaryLink(message: ChatMessage): string | null {
+  if (message.kind !== "text" || message.deleted) return null;
+  if (message.linkPreview) return message.linkPreview.url;
+  return detectLinks(message.text)[0]?.url ?? null;
 }
 
 /** A photo we can draw: sealed with a key, or one this tab is sending right now. */
@@ -455,6 +503,8 @@ export function Thread({
     anchor: MessageMenuAnchor;
     selection: string;
     settle: boolean;
+    /** The link the menu acts on: the one under the pointer, else the message's first. */
+    link: string | null;
   } | null>(null);
   /** Message waiting on the delete confirmation (scope is picked there). */
   const [confirmDelete, setConfirmDelete] = useState<ChatMessage | null>(null);
@@ -789,25 +839,48 @@ export function Thread({
 
   /* Opens the message menu, remembering any text the reader had selected in that bubble. */
   const openMenu = useCallback(
-    (message: ChatMessage, anchor: MessageMenuAnchor, row: HTMLElement | null, settle = false) => {
+    (
+      message: ChatMessage,
+      anchor: MessageMenuAnchor,
+      row: HTMLElement | null,
+      settle = false,
+      link: string | null = null,
+    ) => {
       const selected = window.getSelection();
       let selection = "";
       if (selected && !selected.isCollapsed && row && selected.rangeCount > 0) {
         const node = selected.getRangeAt(0).commonAncestorContainer;
         if (row.contains(node)) selection = selected.toString().trim();
       }
-      setMenu({ message, anchor, selection, settle });
+      setMenu({ message, anchor, selection, settle, link: link ?? primaryLink(message) });
     },
     [],
   );
   const closeMenu = useCallback(() => setMenu(null), []);
 
-  function menuActions(message: ChatMessage, selection: string): MessageMenuAction[] {
+  function menuActions(message: ChatMessage, selection: string, link: string | null): MessageMenuAction[] {
     const actions: MessageMenuAction[] = [];
+    if (link) actions.push("openLink", "copyLink");
     if (canQuote(message)) actions.push("reply");
     if (selection || copyableText(message)) actions.push("copy");
     actions.push("delete");
     return actions;
+  }
+
+  /** New tab without a referrer; `mailto:` hands over to the mail app. */
+  function openLink(link: string) {
+    if (!isOpenableUrl(link)) return;
+    if (link.toLowerCase().startsWith("mailto:")) {
+      window.location.href = link;
+      return;
+    }
+    window.open(link, "_blank", "noopener,noreferrer");
+  }
+
+  async function copyLink(link: string) {
+    const text = link.toLowerCase().startsWith("mailto:") ? link.slice("mailto:".length) : link;
+    if (await writeClipboard(text)) showNotice("Link copied");
+    else showNotice("The browser blocked the clipboard — select the link to copy it.", 2800);
   }
 
   async function copyToClipboard(text: string) {
@@ -817,9 +890,11 @@ export function Thread({
 
   function runMenuAction(action: MessageMenuAction) {
     if (!menu) return;
-    const { message, selection } = menu;
+    const { message, selection, link } = menu;
     setMenu(null);
-    if (action === "reply") onReply(message);
+    if (action === "openLink" && link) openLink(link);
+    else if (action === "copyLink" && link) void copyLink(link);
+    else if (action === "reply") onReply(message);
     else if (action === "copy") void copyToClipboard(selection || copyableText(message));
     else setConfirmDelete(message);
   }
@@ -1114,7 +1189,7 @@ export function Thread({
       {menu ? (
         <MessageMenu
           anchor={menu.anchor}
-          actions={menuActions(menu.message, menu.selection)}
+          actions={menuActions(menu.message, menu.selection, menu.link)}
           copyLabel={menu.selection ? "Copy selection" : undefined}
           settle={menu.settle}
           onAction={runMenuAction}

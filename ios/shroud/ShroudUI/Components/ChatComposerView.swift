@@ -33,6 +33,16 @@ struct ChatComposerView: View {
     /// Bumped by the host to put the keyboard up — starting a reply focuses the field,
     /// exactly as tapping it would.
     var focusToken: Int = 0
+    /// Link preview strip for the link in the draft. Takes the reply bar's place while it is
+    /// up (Telegram does the same; the reply is still sent).
+    var linkBar: ChatLinkBarState? = nil
+    var linkShowsAboveText: Bool = false
+    var linkCanToggleImageSize: Bool = false
+    var linkUsesLargeImage: Bool = false
+    var onToggleLinkAboveText: () -> Void = {}
+    var onToggleLinkImageSize: () -> Void = {}
+    /// ✕ / "Remove Preview": drop the preview, keep the draft.
+    var onRemoveLinkPreview: () -> Void = {}
 
     @FocusState private var focused: Bool
     @State private var phase: VoiceRecordingPhase = .idle
@@ -57,8 +67,19 @@ struct ChatComposerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Stays up while recording: a voice note can answer a message too.
-            if let reply {
+            if let linkBar, !phase.isActive {
+                ChatLinkBar(
+                    state: linkBar,
+                    showsAboveText: linkShowsAboveText,
+                    canToggleImageSize: linkCanToggleImageSize,
+                    usesLargeImage: linkUsesLargeImage,
+                    onToggleAboveText: onToggleLinkAboveText,
+                    onToggleImageSize: onToggleLinkImageSize,
+                    onRemove: onRemoveLinkPreview
+                )
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if let reply {
+                // Stays up while recording: a voice note can answer a message too.
                 ChatReplyBar(content: reply, onTapPreview: onTapReply, onCancel: onCancelReply)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
@@ -85,6 +106,7 @@ struct ChatComposerView: View {
         .animation(Motion.standard, value: phase.isLocked)
         // The bar pushes the thread up as it appears; spring it so nothing snaps.
         .animation(Motion.snappy, value: reply)
+        .animation(Motion.snappy, value: linkBar)
         .onChange(of: focusToken) { _, _ in
             focused = true
         }

@@ -96,6 +96,8 @@ struct MessageContextMenuCard: View {
     var onAction: (MessageMenuAction) -> Void
     /// 0…1 continuous progress (drives opacity + offset; avoid Bool for smooth close).
     var progress: CGFloat = 1
+    /// The message contains a link: adds "Copy Link" under "Copy" (`Conversation — Link Message Menu`).
+    var hasLink: Bool = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -148,7 +150,9 @@ struct MessageContextMenuCard: View {
     }
 
     private var primaryActions: [MessageMenuAction] {
-        [.reply, .copy, .pin, .forward, .delete]
+        hasLink
+            ? [.reply, .copy, .copyLink, .pin, .forward, .delete]
+            : [.reply, .copy, .pin, .forward, .delete]
     }
 
     private var separator: some View {
@@ -314,7 +318,7 @@ enum MessageMenuLayout {
 }
 
 enum MessageMenuAction: String, Identifiable {
-    case reply, copy, edit, pin, forward, select, delete, moreReactions
+    case reply, copy, copyLink, edit, pin, forward, select, delete, moreReactions
 
     var id: String { rawValue }
 
@@ -322,6 +326,7 @@ enum MessageMenuAction: String, Identifiable {
         switch self {
         case .reply: "Reply"
         case .copy: "Copy"
+        case .copyLink: "Copy Link"
         case .edit: "Edit"
         case .pin: "Pin"
         case .forward: "Forward"
@@ -335,6 +340,7 @@ enum MessageMenuAction: String, Identifiable {
         switch self {
         case .reply: "arrowshape.turn.up.left"
         case .copy: "doc.on.doc"
+        case .copyLink: "link"
         case .edit: "pencil"
         case .pin: "pin"
         case .forward: "arrowshape.turn.up.right"
@@ -418,6 +424,8 @@ struct MessageMenuHeroContent: View {
     /// The same quote header the list bubble draws — without it the hero would be shorter
     /// than the bubble it flies out of, and the open would visibly jump.
     var reply: ReplyQuoteContent? = nil
+    /// The link preview's picture, resolved by the host exactly as for the list bubble.
+    var linkPreviewImage: LinkPreviewImage = .none
 
     var body: some View {
         switch message.kind {
@@ -451,7 +459,9 @@ struct MessageMenuHeroContent: View {
                 isDeleted: message.deleted,
                 receipt: message.receipt,
                 isRowEmbedded: false,
-                reply: reply
+                reply: reply,
+                linkPreview: message.linkPreview,
+                linkPreviewImage: linkPreviewImage
             )
         case .todo:
             TodoMessageBubble(

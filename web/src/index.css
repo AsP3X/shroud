@@ -1032,6 +1032,97 @@ button.reply-quote { cursor: pointer; }
 .reply-quote-bar .reply-quote-text { color: var(--text-secondary); }
 .reply-bar-close { flex: 0 0 auto; }
 
+/* ------------------------------------------------------------------ links --
+   Telegram's rule: a link takes the link colour and is underlined only where
+   that colour is the text's own (outgoing bubbles). The preview block is the
+   reply quote's sibling — same stripe, radius and tint — with a thumbnail the
+   text flows around, or a picture underneath (Components — links in
+   design/webclient.pen). Everything in it was sealed by the sender's phone.
+   ---------------------------------------------------------------------------- */
+.msg-link {
+  color: var(--accent-text);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.msg-link:hover { text-decoration: underline; }
+.bubble.out .msg-link {
+  color: var(--on-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.msg-link:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; border-radius: 3px; }
+
+/* Text, block, then the time on a line of its own (or block first, time on the text). */
+.bubble.has-link-preview { flex-direction: column; align-items: stretch; gap: 6px; }
+.bubble.has-link-media { width: 460px; }
+.bubble-meta-row { display: flex; justify-content: flex-end; margin-top: -1px; }
+
+.link-preview {
+  display: block;
+  overflow: hidden; /* contains the floated thumbnail */
+  padding: 5px 8px 7px 9px;
+  border-left: 3px solid currentColor;
+  border-radius: 6px;
+  font-size: var(--fs-md);
+  line-height: 1.3;
+  text-align: left;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  transition: transform 0.2s var(--ease);
+}
+.link-preview:active { transform: scale(0.985); }
+.link-preview:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.bubble.in .link-preview {
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.bubble.out .link-preview {
+  color: var(--on-accent);
+  background: rgba(255, 255, 255, 0.16);
+}
+.link-preview-site,
+.link-preview-title,
+.link-preview-desc { display: block; }
+.link-preview-site,
+.link-preview-title { font-weight: 600; }
+.bubble.in .link-preview-title,
+.bubble.in .link-preview-desc { color: var(--text-primary); }
+.bubble.out .link-preview-desc { color: rgba(255, 255, 255, 0.9); }
+.link-preview:hover .link-preview-title { text-decoration: underline; }
+.link-preview.has-thumb { min-height: 76px; padding-right: 6px; }
+.link-preview-thumb {
+  float: right;
+  width: 64px;
+  height: 64px;
+  margin: 1px 0 4px 8px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+.link-preview-media {
+  position: relative;
+  display: block;
+  margin-top: 6px;
+  aspect-ratio: var(--lp-aspect, 1.91);
+  max-height: 340px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+.link-preview-media img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.link-preview-media img.is-placeholder { filter: blur(10px); transform: scale(1.08); }
+.link-preview-play {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(11, 11, 18, 0.45);
+  color: #fff;
+}
+
 /* ---------------------------------------------------------------- menus --
    ContextMenu: right-click / long-press / Shift+F10 on a message, and the
    account menu on the rail avatar. Fixed to the viewport at its anchor;

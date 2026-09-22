@@ -9,6 +9,7 @@ struct PrivacySecurityView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var lockOnBackground = SecurityPreferences.lockChatsOnBackground
+    @State private var generatesLinkPreviews = SecurityPreferences.generatesLinkPreviews
     @State private var toast: String?
     /// True while the server round-trip for the chat-delete consent flag is in flight.
     @State private var isSavingChatDeleteConsent = false
@@ -47,6 +48,10 @@ struct PrivacySecurityView: View {
 
                         settingsCard {
                             chatDeleteConsentToggle
+                        }
+
+                        settingsCard {
+                            linkPreviewsToggle
                         }
 
                         settingsCard {
@@ -208,6 +213,34 @@ struct PrivacySecurityView: View {
     /// Human: Off by default. With it off you still lose *their* messages when they delete
     /// for both — those become "Message deleted" — but your own side of the chat survives.
     /// Agent: READS messaging.allowsPeerChatDelete; CALLS setAllowsPeerChatDelete (HTTP PUT).
+    /// Whether typing a link fetches its preview from this device.
+    ///
+    /// Human: Says plainly who sees what: the website sees this iPhone's IP address while the
+    /// preview is built — the same as opening the link — and nobody else is involved. The
+    /// recipient gets the preview sealed in the message and never contacts the site.
+    private var linkPreviewsToggle: some View {
+        Toggle(isOn: $generatesLinkPreviews) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Link previews")
+                    .font(.system(size: 16))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(
+                    "When you send a link, this iPhone loads the page to build a preview and seals it into the message. The website sees your IP address, as if you had opened the link. People you send it to never contact the website."
+                )
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .tint(Theme.accent)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .onChange(of: generatesLinkPreviews) { _, value in
+            SecurityPreferences.generatesLinkPreviews = value
+            Haptics.impact(.light)
+        }
+    }
+
     private var chatDeleteConsentToggle: some View {
         Toggle(isOn: Binding(
             get: { messaging.allowsPeerChatDelete },

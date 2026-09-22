@@ -58,6 +58,8 @@ envelope. What the two clients agree on *inside* that envelope:
 | --- | --- | --- |
 | Plain text | raw UTF-8, exactly as typed | every build since v1 |
 | Reply | `{"t":"text","c":<body>,"re":{"id","u","k","x"}}` | `MessageReplyReference` / `web/src/reply.ts` |
+| Text with link preview | `{"t":"text","c":<body>,"lp":{…}}` (plus `re` when it is also a reply) | iOS `MessageTextPayload` (read by `web/src/reply.ts`) |
+| Link with a large preview image | `content_type = media`: `MediaMessagePayload` with `t:"link"`, `c` = the whole message text, `lp`, and the image as the encrypted blob | iOS `deliverLinkWithImage` (read by `web/src/crypto/mediaPayload.ts`) |
 | Media | `MediaMessagePayload` JSON (`t`, `mime`, `k`, …), with the same `re` object when it is a reply | `MediaModels.swift` / `web/src/crypto/mediaPayload.ts` |
 | Annotation | `{"t":"transcript","r":<message id>,"c":<text>}` | `MessageAnnotation` |
 
@@ -65,6 +67,18 @@ envelope. What the two clients agree on *inside* that envelope:
 snippet (`x`) so a quote still reads when the original has aged out of the local window. Anything
 that does not parse as one of these shapes is treated as plain text, which is what keeps old and
 new builds interoperable in both directions.
+
+`lp` is a link preview (`LinkPreview.swift` / `web/src/links.ts`): `u` the page URL (http/https
+only), `n` site name, `ti` title, `d` description, `th` a ≤6 KB square JPEG for the small layout,
+`w`/`h` the image size, `vd` a video page (play badge), `ab` drawn above the text instead of under
+it. Only the **sender's** phone contacts the website (HTTPS only; no local names, IP literals,
+or names that resolve to a private address; ephemeral session, head only) and seals the result;
+recipients never load anything from the link.
+A picture too big for the envelope goes out as the blob of a `t:"link"` media message — the server
+cannot tell it from a photo, and a build without link support shows it as a photo with the text as
+its caption. The web client renders previews but does not build them (see
+[web-client.md](./web-client.md)). Links themselves are found on each device by the same rules
+(`LinkDetector.swift` / `links.ts`, shared test vectors).
 
 ## Security invariants
 
@@ -136,6 +150,7 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 | Photo media messages | **done** — E2E AES-GCM blobs + caption compose |
 | Voice messages | **done** — record/upload/play; on-device Whisper on iOS and web (pluggable engines) |
 | Replies | **done** — swipe left (or the context menu) to quote; the quote is sealed **inside** the plaintext, never server metadata |
+| Links & link previews | **done** — links are tappable (in-app browser), Telegram-style preview block; the sender's phone fetches the page and seals the preview, recipients never contact the site; toggle in Privacy & Security |
 | Calls UI / WebRTC | **done** — signaling + WKWebView WebRTC + CallKit; voice & video |
 | APNs / VoIP push register | **done** — data token + PushKit VoIP token → `PUT /push/token` |
 | Sealed messaging v2 | **done** — dual-seal (peer + self) so sender devices can decrypt history |

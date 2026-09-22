@@ -69,6 +69,8 @@ struct ConversationView: View {
     /// Row flashing after a jump, so the eye finds the message it landed on.
     @State private var highlightedMessageID: UUID?
     @State private var highlightTask: Task<Void, Never>?
+    /// Link preview for the first link in the draft (Telegram's strip above the composer).
+    @State private var linkComposer = LinkPreviewComposer()
 
     private var messages: [MessagingController.ChatMessage] {
         messaging.threads[peerUserID] ?? []
@@ -184,6 +186,10 @@ struct ConversationView: View {
     /// budget.
     private var chatSurface: some View {
         messageList
+            // Links in bubbles (and previews) open in the in-app browser, like Telegram's.
+            .environment(\.openURL, OpenURLAction { url in
+                InAppBrowser.open(url) ? .handled : .discarded
+            })
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Theme.backgroundChat)
             .safeAreaInset(edge: .top, spacing: 0) {
@@ -203,6 +209,7 @@ struct ConversationView: View {
                         onRecordCancel: cancelRecording,
                         onRecordSend: sendRecording,
                         onDraftChange: { text in
+                            linkComposer.draftChanged(text)
                             if !isNotes {
                                 // Keepalive and idle timing live in `MessagingController`.
                                 messaging.setTyping(
@@ -216,7 +223,17 @@ struct ConversationView: View {
                             if let replyTarget { jumpToQuoted(replyTarget.id) }
                         },
                         onCancelReply: { clearReply() },
-                        focusToken: composerFocusToken
+                        focusToken: composerFocusToken,
+                        linkBar: composerLinkBar,
+                        linkShowsAboveText: linkComposer.showsAboveText,
+                        linkCanToggleImageSize: linkComposer.canToggleImageSize,
+                        linkUsesLargeImage: linkComposer.usesLargeImage,
+                        onToggleLinkAboveText: { linkComposer.toggleShowsAboveText() },
+                        onToggleLinkImageSize: { linkComposer.toggleImageSize() },
+                        onRemoveLinkPreview: {
+                            Haptics.impact(.light)
+                            linkComposer.dismiss()
+                        }
                     )
                 }
             }
@@ -238,6 +255,7 @@ struct ConversationView: View {
                 // Leaving the thread throws away an in-flight take and silences playback —
                 // there is no mini-player to hand either off to.
                 highlightTask?.cancel()
+                linkComposer.reset()
                 voiceRecorder.cancel()
                 VoicePlaybackCoordinator.shared.stop()
                 menuAnimationTask?.cancel()
@@ -978,11 +996,60 @@ struct ConversationView: View {
     private func sendDraft() {
         let text = draft
         let reference = outgoingReplyReference
+        // Only a preview that finished loading, for a link still in the text, goes along.
+        let preview = linkComposer.takeAttachment(for: text)
         draft = ""
         clearReply()
         messaging.setTyping(peerUserID: peerUserID, isTyping: false)
         Haptics.impact(.light)
-        Task { await messaging.sendText(text, to: peerUserID, replyTo: reference) }
+        Task { await messaging.sendText(text, to: peerUserID, replyTo: reference, linkPreview: preview) }
+    }
+
+    // MARK: - Links
+
+    /// The composer's link strip, while the draft has a link worth previewing.
+    private var composerLinkBar: ChatLinkBarState? {
+        switch linkComposer.phase {
+        case .idle: nil
+        case let .loading(url): .loading(url: url.absoluteString)
+        case let .ready(draft): ChatLinkBarState(preview: draft.preview)
+        }
+    }
+
+    /// The picture a bubble's preview shows, decoded once and cached.
+    ///
+    /// Human: A large picture lives in the message's media blob (downloaded on appear, blurred
+    /// envelope placeholder until then); a small one rides inline in the preview itself.
+    private func linkPreviewImage(for message: MessagingController.ChatMessage) -> LinkPreviewImage {
+        guard let preview = message.linkPreview, !message.deleted else { return .none }
+        if message.hasLargeLinkImage {
+            let aspect: CGFloat = {
+                if let width = message.imageWidth, let height = message.imageHeight, width > 0, height > 0 {
+                    return CGFloat(width) / CGFloat(height)
+                }
+                return preview.imageAspect ?? 1.91
+            }()
+            return .large(
+                full: LinkPreviewImageCache.image(for: message.id, variant: .full, data: message.imageData),
+                placeholder: LinkPreviewImageCache.image(for: message.id, variant: .placeholder, data: message.previewData),
+                aspect: aspect
+            )
+        }
+        if let thumbnail = LinkPreviewImageCache.image(for: message.id, variant: .thumbnail, data: preview.thumbnail) {
+            return .thumbnail(thumbnail)
+        }
+        return .none
+    }
+
+    /// What "Copy Link" copies: the previewed page, else the first link (an address as typed).
+    private func copyableLink(in message: MessagingController.ChatMessage) -> String? {
+        guard message.kind == .text, !message.deleted else { return nil }
+        if let url = message.linkPreview?.url { return url }
+        guard let link = MessageLinkText.links(in: message.text).first else { return nil }
+        if link.isEmail {
+            return (message.text as NSString).substring(with: link.range)
+        }
+        return link.url.absoluteString
     }
 
     // MARK: - Voice recording
@@ -1215,8 +1282,19 @@ struct ConversationView: View {
                 reply: reply,
                 onReplyTap: message.replyTo.map { reference in
                     { jumpToQuoted(reference.messageID) }
+                },
+                linkPreview: message.linkPreview,
+                linkPreviewImage: linkPreviewImage(for: message),
+                onOpenLinkPreview: message.linkPreview?.openURL.map { url in
+                    { _ = InAppBrowser.open(url) }
                 }
             )
+            .onAppear {
+                // Preview pictures are small and load on their own (photos wait for a tap).
+                if message.needsLinkImageDownload {
+                    Task { await messaging.ensureLinkImageLoaded(for: message) }
+                }
+            }
         case .todo:
             TodoMessageBubble(
                 text: message.text,
@@ -1586,8 +1664,8 @@ struct ConversationView: View {
     private static let messageMenuCardWidth: CGFloat = 250
     /// Context card row height × action count, plus the hairline between each row.
     /// Mine includes the muted “read” row.
-    private static func messageMenuCardHeight(isMine: Bool) -> CGFloat {
-        let rows: CGFloat = isMine ? 7 : 6
+    private static func messageMenuCardHeight(isMine: Bool, hasLink: Bool = false) -> CGFloat {
+        let rows: CGFloat = (isMine ? 7 : 6) + (hasLink ? 1 : 0)
         return rows * 44 + (rows - 1)
     }
 
@@ -1628,7 +1706,8 @@ struct ConversationView: View {
         let reactionW = MessageReactionBar.barWidth
         let reactionH = MessageReactionBar.barHeight
         let menuW = Self.messageMenuCardWidth
-        let menuH = Self.messageMenuCardHeight(isMine: message.isMine)
+        let hasLink = copyableLink(in: message) != nil
+        let menuH = Self.messageMenuCardHeight(isMine: message.isMine, hasLink: hasLink)
 
         GeometryReader { proxy in
             let containerGlobal = proxy.frame(in: .global)
@@ -1714,7 +1793,8 @@ struct ConversationView: View {
                     timeLabel: messaging.clockTimeLabel(for: message.createdAt),
                     heroImage: session.heroImage,
                     inTranscriptTail: transcriptTail.contains(message.id),
-                    reply: replyContent(for: message, quoted: quotedMessagesByID)
+                    reply: replyContent(for: message, quoted: quotedMessagesByID),
+                    linkPreviewImage: linkPreviewImage(for: message)
                 )
                 // Same size as the list bubble so progress 0 is a perfect handoff.
                 .frame(width: heroFrame.width, height: heroFrame.height)
@@ -1727,7 +1807,8 @@ struct ConversationView: View {
                         dismissMessageMenu()
                         handleMenu(action, message: message)
                     },
-                    progress: progress
+                    progress: progress,
+                    hasLink: hasLink
                 )
                 .frame(width: menuW, height: menuH, alignment: .top)
                 .position(x: menuX + menuW / 2, y: menuY + menuH / 2)
@@ -1742,6 +1823,12 @@ struct ConversationView: View {
         case .copy:
             UIPasteboard.general.string = message.text
             toast = "Copied"
+            Haptics.notification(.success)
+            scheduleToastClear()
+        case .copyLink:
+            guard let link = copyableLink(in: message) else { return }
+            UIPasteboard.general.string = link
+            toast = "Link copied"
             Haptics.notification(.success)
             scheduleToastClear()
         case .reply:

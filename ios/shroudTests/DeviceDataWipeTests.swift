@@ -74,6 +74,8 @@ struct DeviceDataWipeTests {
             try write("Library/Application Support/shroud/media/46177c15.sealed", bytes: 4096)
             try write("tmp/decrypted-clip.mov", bytes: 2048)
             try write("Library/Caches/de.corespace.shroud/Cache.db", bytes: 1024)
+            try write("Library/Caches/de.corespace.shroud/Cache.db-wal", bytes: 64)
+            try write("Library/Caches/de.corespace.shroud/Cache.db-shm", bytes: 32)
             try write("Library/Caches/de.corespace.shroud/fsCachedData/0F1E", bytes: 512)
             try write("Library/Caches/com.apple.speech.localspeechrecognition/cache.bin")
             try write("Library/SplashBoard/Snapshots/sceneID:de.corespace.shroud-default/chat@3x.ktx")
@@ -107,8 +109,8 @@ struct DeviceDataWipeTests {
 
         let inventory = fixture.wipe.inventory()
         #expect(inventory.messages == 4)
-        // The sealed media, the temp clip and two cached files. Not the shader cache (kept), and
-        // not URLCache's own Cache.db: the sweep deletes it, but CFNetwork re-creates it empty.
+        // The sealed media, the temp clip and two cached files. Not the shader cache, and not
+        // URLCache's Cache.db: CFNetwork keeps that file open, so the wipe must not unlink it.
         #expect(inventory.mediaFiles == 4)
         #expect(inventory.mediaBytes == 4096 + 2048 + 512 + 16)
         #expect(inventory.keys == 3)
@@ -132,7 +134,6 @@ struct DeviceDataWipeTests {
         for gone in [
             "Library/Application Support/shroud",
             "tmp/decrypted-clip.mov",
-            "Library/Caches/de.corespace.shroud/Cache.db",
             "Library/Caches/de.corespace.shroud/fsCachedData",
             "Library/Caches/com.apple.speech.localspeechrecognition",
             "Library/SplashBoard/Snapshots/sceneID:de.corespace.shroud-default",
@@ -145,6 +146,9 @@ struct DeviceDataWipeTests {
         for kept in [
             "Library/Application Support/huggingface/models/whisper/weights.bin",
             "Documents/huggingface/legacy/weights.bin",
+            "Library/Caches/de.corespace.shroud/Cache.db",
+            "Library/Caches/de.corespace.shroud/Cache.db-wal",
+            "Library/Caches/de.corespace.shroud/Cache.db-shm",
             "Library/Caches/de.corespace.shroud/com.apple.metal/shaders.data",
             "Library/Preferences/de.corespace.shroud.plist",
             "Library/HTTPStorages/de.corespace.shroud/httpstorages.sqlite",

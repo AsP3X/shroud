@@ -122,33 +122,41 @@ nonisolated struct MessageReplyReference: Codable, Equatable, Hashable, Sendable
 ///
 /// Human: An ordinary message is still sealed as raw UTF-8 — byte for byte what every build has
 /// sent since v1 — so nothing changes for the common case, and a build without reply support
-/// still shows it correctly. A *reply* has to carry its quote, so it is sealed as a small JSON
-/// envelope instead. Anything that does not parse as that envelope is read back as raw text,
-/// which is what keeps the two shapes interoperable in both directions.
+/// still shows it correctly. A *reply* has to carry its quote, and a message with a link preview
+/// its preview, so those are sealed as a small JSON envelope instead. Anything that does not
+/// parse as that envelope is read back as raw text, which is what keeps the shapes
+/// interoperable in both directions — a build that predates previews simply ignores `lp`.
 /// Agent: READS/WRITES sealed plaintext only. Shared with `web/src/reply.ts`
 /// (`parseTextPayload` / `textPayload`); change both sides together.
 nonisolated enum MessageTextPayload {
     /// Discriminator of the JSON envelope (`{"t":"text", …}`).
     static let kind = "text"
 
-    /// Plaintext to seal: the body itself when there is nothing to quote, else the envelope.
-    static func wire(body: String, replyTo: MessageReplyReference?) -> String {
-        guard let replyTo else { return body }
-        let object: [String: Any] = [
+    /// Plaintext to seal: the body itself when there is nothing to attach, else the envelope.
+    static func wire(
+        body: String,
+        replyTo: MessageReplyReference?,
+        linkPreview: LinkPreview? = nil
+    ) -> String {
+        guard replyTo != nil || linkPreview != nil else { return body }
+        var object: [String: Any] = [
             "t": kind,
             "c": body,
-            "re": replyTo.wireObject,
         ]
+        if let replyTo { object["re"] = replyTo.wireObject }
+        if let linkPreview { object["lp"] = linkPreview.wireObject }
         guard let data = try? JSONSerialization.data(withJSONObject: object),
               let json = String(data: data, encoding: .utf8)
         else { return body }
         return json
     }
 
-    /// Splits sealed plaintext into the body and the quote it replies to (if any).
+    /// Splits sealed plaintext into the body, the quote it replies to and its link preview.
     ///
     /// Agent: Never throws — anything unparsable is returned verbatim as the body.
-    static func parse(_ plaintext: String) -> (body: String, replyTo: MessageReplyReference?) {
+    static func parse(
+        _ plaintext: String
+    ) -> (body: String, replyTo: MessageReplyReference?, linkPreview: LinkPreview?) {
         // Cheap reject first: the overwhelming majority of messages are plain text.
         let trimmed = plaintext.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix("{"), trimmed.hasSuffix("}"),
@@ -156,20 +164,24 @@ nonisolated enum MessageTextPayload {
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               object["t"] as? String == kind,
               let body = object["c"] as? String
-        else { return (plaintext, nil) }
+        else { return (plaintext, nil, nil) }
         let replyTo = (object["re"] as? [String: Any]).flatMap(MessageReplyReference.parse(wireObject:))
-        return (body, replyTo)
+        let linkPreview = (object["lp"] as? [String: Any]).flatMap(LinkPreview.parse(wireObject:))
+        return (body, replyTo, linkPreview)
     }
 
-    static func parse(_ data: Data) -> (body: String, replyTo: MessageReplyReference?) {
-        guard let text = String(data: data, encoding: .utf8) else { return ("", nil) }
+    static func parse(
+        _ data: Data
+    ) -> (body: String, replyTo: MessageReplyReference?, linkPreview: LinkPreview?) {
+        guard let text = String(data: data, encoding: .utf8) else { return ("", nil, nil) }
         return parse(text)
     }
 
-    /// True when `plaintext` is a reply envelope rather than raw text.
+    /// True when `plaintext` is a reply / link-preview envelope rather than raw text.
     ///
     /// Human: Used to re-read bubbles that a build without reply support stored as raw JSON.
     static func isEnvelope(_ plaintext: String) -> Bool {
-        parse(plaintext).replyTo != nil
+        let parsed = parse(plaintext)
+        return parsed.replyTo != nil || parsed.linkPreview != nil
     }
 }

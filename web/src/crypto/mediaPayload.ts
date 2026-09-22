@@ -1,4 +1,5 @@
 /** Sealed JSON inside a `content_type = media` message (matches iOS `MediaMessagePayload`). */
+import { parseLinkPreview, type LinkPreview } from "../links";
 import { parseReplyRef, replyRefWire, type ReplyRef } from "../reply";
 
 export type MediaPayload = {
@@ -14,6 +15,11 @@ export type MediaPayload = {
   s?: number | null;
   /** The message this one replies to; absent on payloads sealed before replies existed. */
   re?: Record<string, string> | null;
+  /**
+   * Link preview of a `t: "link"` message: a text message whose preview has a large image,
+   * sent as media so the image can be the (encrypted) blob. `c` is the full message text.
+   */
+  lp?: Record<string, unknown> | null;
 };
 
 export function parseMediaPayload(raw: string): MediaPayload | null {
@@ -34,6 +40,7 @@ export function parseMediaPayload(raw: string): MediaPayload | null {
       th: parsed.th ?? null,
       s: typeof parsed.s === "number" ? parsed.s : null,
       re: (parsed as { re?: unknown }).re as Record<string, string> | undefined ?? null,
+      lp: (parsed as { lp?: unknown }).lp as Record<string, unknown> | undefined ?? null,
     };
   } catch {
     return null;
@@ -42,14 +49,19 @@ export function parseMediaPayload(raw: string): MediaPayload | null {
 
 export function isVoicePayload(payload: MediaPayload): boolean {
   if (payload.t === "voice") return true;
-  if (payload.t === "image" || payload.t === "video") return false;
+  if (payload.t === "image" || payload.t === "video" || payload.t === "link") return false;
   return payload.mime.startsWith("audio/");
 }
 
 export function isVideoPayload(payload: MediaPayload): boolean {
   if (payload.t === "video") return true;
-  if (payload.t === "image" || payload.t === "voice") return false;
+  if (payload.t === "image" || payload.t === "voice" || payload.t === "link") return false;
   return payload.mime.startsWith("video/");
+}
+
+/** The preview of a `t: "link"` payload; null for photos, videos and voice notes. */
+export function payloadLinkPreview(payload: MediaPayload): LinkPreview | null {
+  return payload.t === "link" ? parseLinkPreview(payload.lp) : null;
 }
 
 /**

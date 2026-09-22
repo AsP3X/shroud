@@ -97,6 +97,9 @@ struct LocalMessageStore: Sendable {
         /// Quote carried by a reply. Optional so thread files written before replies existed
         /// still decode (synthesized `Decodable` skips a missing optional).
         var replyTo: MessageReplyReference?
+        /// Link preview (thumbnail included). Optional for the same reason as `replyTo`; its
+        /// large image, if any, lives in `LocalMediaCache` like a photo.
+        var linkPreview: LinkPreview?
 
         static func from(_ message: MessagingController.ChatMessage) -> StoredMessage {
             StoredMessage(
@@ -118,7 +121,8 @@ struct LocalMessageStore: Sendable {
                 sendError: message.sendError,
                 todoDone: message.todoDone,
                 pendingSync: message.pendingSync ? true : nil,
-                replyTo: message.replyTo
+                replyTo: message.replyTo,
+                linkPreview: message.linkPreview
             )
         }
 
@@ -135,7 +139,12 @@ struct LocalMessageStore: Sendable {
             case .video:
                 // Full video lives in the media cache; optional poster frame is not stored separately.
                 videoData = media.data(for: id, historyKey: historyKey)
-            case .text, .todo:
+            case .text:
+                // A link preview's large image is stored like a photo.
+                if linkPreview != nil, mediaObjectId != nil {
+                    imageData = media.data(for: id, historyKey: historyKey)
+                }
+            case .todo:
                 break
             }
             return MessagingController.ChatMessage(
@@ -160,7 +169,8 @@ struct LocalMessageStore: Sendable {
                 sendError: sendError,
                 todoDone: todoDone,
                 pendingSync: pendingSync == true,
-                replyTo: replyTo
+                replyTo: replyTo,
+                linkPreview: linkPreview
             )
         }
     }

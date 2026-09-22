@@ -68,7 +68,7 @@ final class MessagingLocalRepository {
 
     /// Fills `previewData` / `mediaByteCount` from the sealed media payload when present.
     func attachEnvelopePreview(to message: inout MessagingController.ChatMessage) {
-        guard message.kind == .image || message.kind == .video else { return }
+        guard message.kind == .image || message.kind == .video || message.hasLargeLinkImage else { return }
         guard let plain = sealedPlaintext(for: message.id),
               let payload = MediaMessagePayload.parse(plain)
         else { return }
@@ -124,9 +124,21 @@ final class MessagingLocalRepository {
                 return message
             }
             state.threads[peerID] = messages
-            for message in messages where !message.deleted && message.kind == .text {
+            // A link message whose picture is a media blob keeps its sealed media payload (it
+            // holds the blob key); every other text message is re-cached with its quote and
+            // preview, so a decode from this cache rebuilds the same bubble.
+            for message in messages
+                where !message.deleted && message.kind == .text && message.mediaObjectId == nil
+            {
                 if !ThreadMessageMerge.isFailedDecryptText(message.text) {
-                    saveSealedPlaintext(messageID: message.id, text: message.text)
+                    saveSealedPlaintext(
+                        messageID: message.id,
+                        text: MessageTextPayload.wire(
+                            body: message.text,
+                            replyTo: message.replyTo,
+                            linkPreview: message.linkPreview
+                        )
+                    )
                 }
             }
         }
@@ -161,9 +173,21 @@ final class MessagingLocalRepository {
         var threadMap: [String: [LocalMessageStore.StoredMessage]] = [:]
         for (peerID, messages) in threads {
             threadMap[peerID.uuidString.lowercased()] = messages.map(LocalMessageStore.StoredMessage.from)
-            for message in messages where !message.deleted && message.kind == .text {
+            // A link message whose picture is a media blob keeps its sealed media payload (it
+            // holds the blob key); every other text message is re-cached with its quote and
+            // preview, so a decode from this cache rebuilds the same bubble.
+            for message in messages
+                where !message.deleted && message.kind == .text && message.mediaObjectId == nil
+            {
                 if !ThreadMessageMerge.isFailedDecryptText(message.text) {
-                    saveSealedPlaintext(messageID: message.id, text: message.text)
+                    saveSealedPlaintext(
+                        messageID: message.id,
+                        text: MessageTextPayload.wire(
+                            body: message.text,
+                            replyTo: message.replyTo,
+                            linkPreview: message.linkPreview
+                        )
+                    )
                 }
             }
         }

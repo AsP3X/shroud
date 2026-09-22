@@ -30,6 +30,7 @@ enum ThreadMessageMerge {
             if kept.mediaObjectId == nil { kept.mediaObjectId = decoded.mediaObjectId }
             if kept.transcript == nil { kept.transcript = decoded.transcript }
             if kept.replyTo == nil { kept.replyTo = decoded.replyTo }
+            if kept.linkPreview == nil { kept.linkPreview = decoded.linkPreview }
             // Prefer a more specific media kind once we know it (e.g. "Media" → video).
             if kept.kind != decoded.kind, !decodedFailed {
                 if decoded.kind == .video || decoded.kind == .image || decoded.kind == .voice {
@@ -49,6 +50,8 @@ enum ThreadMessageMerge {
         // A re-decode from a cache written before replies existed has no quote; keep the one
         // the bubble already showed rather than dropping the reply header on a reload.
         if merged.replyTo == nil { merged.replyTo = prior.replyTo }
+        // Same for a link preview: a cache written before previews existed has none.
+        if merged.linkPreview == nil, merged.kind == .text { merged.linkPreview = prior.linkPreview }
         // Don't clobber a hydrated video with a decode that still lacks bytes.
         if prior.kind == .video, merged.kind != .video, prior.videoData != nil || prior.mediaObjectId != nil {
             merged.kind = .video

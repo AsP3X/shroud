@@ -1,10 +1,10 @@
 import { useEffect, useRef } from "react";
-import { Copy, Reply, Trash2 } from "lucide-react";
+import { Copy, ExternalLink, Link, Reply, Trash2 } from "lucide-react";
 import { isUnsent, type ChatMessage } from "../messaging";
 import { ContextMenu, type MenuAnchor, type MenuItem } from "./ContextMenu";
 export { suppressClickAfterLongPress } from "./ContextMenu";
 
-export type MessageMenuAction = "reply" | "copy" | "delete";
+export type MessageMenuAction = "openLink" | "copyLink" | "reply" | "copy" | "delete";
 
 /** Where the menu should appear: the pointer, or the bubble when opened from the keyboard. */
 export type MessageMenuAnchor = MenuAnchor;
@@ -30,9 +30,20 @@ export function MessageMenu({
   onAction: (action: MessageMenuAction) => void;
   onClose: () => void;
 }) {
+  // Link actions come first when the message has a link (`MessageMenu · link` in the design),
+  // set apart from the message's own actions.
+  const firstMessageAction = actions.find((action) => action !== "openLink" && action !== "copyLink");
+  const afterLinks = actions.includes("copyLink");
   const all: Record<MessageMenuAction, MenuItem<MessageMenuAction>> = {
-    reply: { id: "reply", label: "Reply", Icon: Reply },
-    copy: { id: "copy", label: copyLabel ?? "Copy text", Icon: Copy },
+    openLink: { id: "openLink", label: "Open link", Icon: ExternalLink },
+    copyLink: { id: "copyLink", label: "Copy link", Icon: Link },
+    reply: { id: "reply", label: "Reply", Icon: Reply, separatorBefore: afterLinks && firstMessageAction === "reply" },
+    copy: {
+      id: "copy",
+      label: copyLabel ?? "Copy text",
+      Icon: Copy,
+      separatorBefore: afterLinks && firstMessageAction === "copy",
+    },
     // Set apart, and red, like every destructive menu action.
     delete: { id: "delete", label: "Delete", Icon: Trash2, danger: true, separatorBefore: actions.length > 1 },
   };

@@ -20,7 +20,9 @@ import UserNotifications
 /// Agent: DELETES container files, Keychain items, UserDefaults keys, URLCache, cookies,
 /// notifications and a phrase on the pasteboard; READS them back in `leftovers()`. Never deletes
 /// files in `Library/Preferences` (owned by cfprefsd) or `Library/HTTPStorages` (held open by
-/// CFNetwork) — their contents go through `UserDefaults` / `HTTPCookieStorage`.
+/// CFNetwork) — their contents go through `UserDefaults` / `HTTPCookieStorage`. Never unlinks
+/// `Library/Caches/<bundle>/Cache.db` either: CFNetwork keeps that sqlite file open, and
+/// deleting it logs "vnode unlinked while in use". `URLCache.removeAllCachedResponses` empties it.
 struct DeviceDataWipe {
     enum Step: String, CaseIterable, Sendable {
         case session, messages, media, keys, settings, verify
@@ -300,9 +302,10 @@ struct DeviceDataWipe {
         (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
     }
 
-    /// URLCache's own database (`Library/Caches/<bundle id>/Cache.db`, `-wal`, `-shm`). The
-    /// sweep deletes it like everything else, which unlinks what it held — but CFNetwork keeps it
-    /// open and re-creates an empty one on the next touch, so it is checked through the API.
+    /// URLCache's own database (`Library/Caches/<bundle id>/Cache.db`, `-wal`, `-shm`).
+    /// CFNetwork holds these open for the life of the process. Unlinking them is the sqlite
+    /// error "vnode unlinked while in use". The wipe empties the cache through `URLCache` and
+    /// leaves the files in place, the same way it leaves `Library/HTTPStorages` alone.
     private func isURLCacheStore(_ url: URL) -> Bool {
         ["Cache.db", "Cache.db-wal", "Cache.db-shm"].contains(url.lastPathComponent)
             && url.deletingLastPathComponent().deletingLastPathComponent().standardizedFileURL.path
@@ -322,15 +325,21 @@ struct DeviceDataWipe {
     }
 
     private func remove(_ url: URL) {
-        guard !isKept(url) else { return }
+        guard !isKept(url), !isURLCacheStore(url) else { return }
+        if isDirectory(url), holdsProtected(url) {
+            sweep(url)
+            return
+        }
         try? FileManager.default.removeItem(at: url)
     }
 
-    /// Deletes everything inside `directory` except kept paths. The directory itself stays: the
-    /// system owns `tmp`, `Caches` and friends. A child that holds something kept is swept into.
+    /// Deletes everything inside `directory` except kept paths and URLCache's open database.
+    /// The directory itself stays: the system owns `tmp`, `Caches` and friends. A child that
+    /// holds something we must not unlink is swept into, so the parent `removeItem` cannot
+    /// unlink `Cache.db` out from under CFNetwork.
     private func sweep(_ directory: URL) {
-        for child in children(of: directory) where !isKept(child) {
-            if isDirectory(child), holdsKept(child) {
+        for child in children(of: directory) where !isKept(child) && !isURLCacheStore(child) {
+            if isDirectory(child), holdsProtected(child) {
                 sweep(child)
             } else {
                 try? FileManager.default.removeItem(at: child)
@@ -338,8 +347,10 @@ struct DeviceDataWipe {
         }
     }
 
-    private func holdsKept(_ directory: URL) -> Bool {
-        children(of: directory).contains { isKept($0) || (isDirectory($0) && holdsKept($0)) }
+    private func holdsProtected(_ directory: URL) -> Bool {
+        children(of: directory).contains {
+            isKept($0) || isURLCacheStore($0) || (isDirectory($0) && holdsProtected($0))
+        }
     }
 
     // MARK: - Keychain

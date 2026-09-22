@@ -12,11 +12,13 @@ import {
   MAX_MEDIA_PAYLOAD_PLAINTEXT_BYTES,
   MAX_SEALED_ENVELOPE_BYTES,
   parseMediaPayload,
+  payloadLinkPreview,
   payloadReply,
   withReply,
   type MediaPayload,
 } from "./crypto/mediaPayload";
 import { clampSnippet, parseTextPayload, textPayload, type ReplyRef } from "./reply";
+import type { LinkPreview } from "./links";
 import { envelopeToWireB64, openMessage, sealMessage, wireB64ToEnvelope } from "./crypto/messageCrypto";
 import {
   forgetPlaintext,
@@ -91,6 +93,12 @@ export type ChatMessage = {
   annotation?: Annotation | null;
   /** The message this one quotes, sealed inside its own plaintext (see `reply.ts`). */
   replyTo?: ReplyRef | null;
+  /**
+   * Link preview the sender's phone sealed into the message (see `links.ts`). When it has a
+   * large picture, that picture is this message's media blob (`mediaObjectId` / `mediaKey`),
+   * with `thumbnail` as its blurred placeholder.
+   */
+  linkPreview?: LinkPreview | null;
   delivered?: boolean;
   read?: boolean;
 };
@@ -192,6 +200,7 @@ export async function fetchLatest(
 
 function kindFromPayload(payload: MediaPayload | null, isMedia: boolean): ChatKind {
   if (!isMedia) return "text";
+  if (payload && payloadLinkPreview(payload)) return "text";
   if (payload && isVoicePayload(payload)) return "voice";
   if (payload && isVideoPayload(payload)) return "video";
   return "image";
@@ -203,6 +212,23 @@ function messageFromMediaPayload(
   mediaObjectId: string | null | undefined,
 ): ChatMessage {
   base = { ...base, replyTo: payloadReply(payload) };
+  const linkPreview = payloadLinkPreview(payload);
+  if (linkPreview) {
+    // A text message whose preview picture is the blob; it reads and quotes as text.
+    return {
+      ...base,
+      kind: "text",
+      text: payload.c?.trim() ?? "",
+      linkPreview,
+      mediaObjectId: mediaObjectId ?? null,
+      mediaKey: payload.k,
+      mime: payload.mime || "image/jpeg",
+      imageWidth: payload.w > 0 ? payload.w : null,
+      imageHeight: payload.h > 0 ? payload.h : null,
+      thumbnail: payload.th?.trim() || null,
+      mediaBytes: payload.s ?? null,
+    };
+  }
   if (isVoicePayload(payload)) {
     const sealed = payload.c?.trim() || null;
     const shared = sharedTranscripts.get(base.id.toLowerCase());
@@ -315,7 +341,12 @@ export async function decodeIncoming(
       }
     } else {
       const parsed = parseTextPayload(cached);
-      const msg: ChatMessage = { ...base, text: parsed.text, replyTo: parsed.replyTo };
+      const msg: ChatMessage = {
+        ...base,
+        text: parsed.text,
+        replyTo: parsed.replyTo,
+        linkPreview: parsed.linkPreview,
+      };
       rememberPreview(me, peerUserId, msg);
       return msg;
     }
@@ -360,7 +391,12 @@ export async function decodeIncoming(
     }
     savePlaintext(dto.id, decoded);
     const parsed = parseTextPayload(decoded);
-    const msg: ChatMessage = { ...base, text: parsed.text, replyTo: parsed.replyTo };
+    const msg: ChatMessage = {
+        ...base,
+        text: parsed.text,
+        replyTo: parsed.replyTo,
+        linkPreview: parsed.linkPreview,
+      };
     rememberPreview(me, peerUserId, msg);
     return msg;
   } catch {
@@ -482,7 +518,9 @@ export async function hydratePreviews(
           id: dto.id,
           senderUserId: dto.sender_user_id,
           text: payload
-            ? isVoicePayload(payload)
+            ? payloadLinkPreview(payload)
+              ? payload.c?.trim() || ""
+              : isVoicePayload(payload)
               ? transcript || VOICE_LABEL
               : isVideoPayload(payload)
                 ? payload.c?.trim() || VIDEO_LABEL
@@ -947,6 +985,7 @@ export function tombstone(message: ChatMessage): ChatMessage {
     mediaKey: null,
     mediaObjectId: null,
     replyTo: null,
+    linkPreview: null,
   };
 }
 

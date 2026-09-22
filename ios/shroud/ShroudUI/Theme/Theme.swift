@@ -4,6 +4,10 @@ import SwiftUI
 enum Theme {
     static let accent = Color("Accent")
     static let accentSoft = Color("AccentSoft")
+    /// Accent for *text* on bubbles and cards (links, a preview's site name). Same as `accent`
+    /// in light mode; lighter in dark mode so it keeps 4.5:1 on the dark incoming bubble
+    /// (the web client's `--accent-text`).
+    static let accentText = Color("AccentText")
     static let background = Color("Background")
     static let backgroundGrouped = Color("BackgroundGrouped")
     static let backgroundChat = Color("BackgroundChat")

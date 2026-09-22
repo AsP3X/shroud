@@ -15,6 +15,7 @@ Deploy: `./deploy.sh` / `.\deploy.ps1`.
 | Hosting | `./deploy.sh` configures the public URL | Same-origin: web nginx reverse-proxies `/api/v1` (and WebSocket) to the API. iOS still talks to the API host. `WEB_PUBLIC_URL` also seeds CORS if someone splits origins. |
 | v1 product | Chats, contacts, requests, Notes, media, privacy/devices/safety numbers | No calls, no on-device transcripts in v1. |
 | Replies | Quote sealed inside the plaintext (same `re` object as iOS); swipe left on touch, hover button with a mouse | The server never learns which message answers which. See [architecture.md](./architecture.md#sealed-plaintext-shapes). |
+| Links | Found with the same rules as iOS (`links.ts`, shared test vectors); open in a new tab without a referrer. Link previews sealed by an iPhone render Telegram-style; the browser does not build its own | A browser cannot fetch other sites (CORS, and this app's CSP limits `connect-src` to itself), and fetching drafts through the server would hand it plaintext. Pictures come from the sealed thumbnail or the message's encrypted blob — never from the linked site. |
 | Add contact | Paste invite / share code; optional webcam QR | Server has no username directory. |
 | Stack | Vite + React + TypeScript | Static SPA. No SSR (nothing to render server-side without plaintext). |
 

@@ -76,19 +76,29 @@ enum MessageDecoder {
                     // decode from this cache rebuilds the same reply header.
                     local.saveSealedPlaintext(
                         messageID: dto.id,
-                        text: MessageTextPayload.wire(body: existing.text, replyTo: existing.replyTo)
+                        text: MessageTextPayload.wire(
+                            body: existing.text,
+                            replyTo: existing.replyTo,
+                            linkPreview: existing.linkPreview
+                        )
                     )
                 }
                 // A build without reply support stored the raw envelope as the bubble's text.
                 // Read it back rather than leaving JSON on screen forever.
-                if !isMedia, merged.replyTo == nil {
+                if !isMedia, merged.replyTo == nil, merged.linkPreview == nil {
                     let parsed = MessageTextPayload.parse(existing.text)
-                    if let replyTo = parsed.replyTo {
+                    if parsed.replyTo != nil || parsed.linkPreview != nil {
                         merged.text = parsed.body
-                        merged.replyTo = replyTo
+                        merged.replyTo = parsed.replyTo
+                        merged.linkPreview = parsed.linkPreview
                     }
                 }
                 if merged.imageData == nil, existing.kind == .image,
+                   let cached = local.sealedMedia(for: dto.id)
+                {
+                    merged.imageData = cached
+                }
+                if merged.imageData == nil, existing.hasLargeLinkImage,
                    let cached = local.sealedMedia(for: dto.id)
                 {
                     merged.imageData = cached
@@ -109,7 +119,7 @@ enum MessageDecoder {
                 if isMedia, existing.kind == .image,
                    let plain = local.sealedPlaintext(for: dto.id),
                    let payload = MediaMessagePayload.parse(plain),
-                   payload.isVoice || payload.isVideo
+                   payload.isVoice || payload.isVideo || payload.isLink
                 {
                     return await decodeMedia(
                         dto: dto,
@@ -148,7 +158,8 @@ enum MessageDecoder {
                 isMine: isMine,
                 deleted: false,
                 receipt: receipt,
-                replyTo: parsed.replyTo
+                replyTo: parsed.replyTo,
+                linkPreview: parsed.linkPreview
             )
         }
 
@@ -223,7 +234,8 @@ enum MessageDecoder {
                 isMine: isMine,
                 deleted: false,
                 receipt: receipt,
-                replyTo: parsed.replyTo
+                replyTo: parsed.replyTo,
+                linkPreview: parsed.linkPreview
             )
         } catch {
             if let cached = local.sealedPlaintextText(for: dto.id), !isMedia {
@@ -237,7 +249,8 @@ enum MessageDecoder {
                     isMine: isMine,
                     deleted: false,
                     receipt: receipt,
-                    replyTo: parsed.replyTo
+                    replyTo: parsed.replyTo,
+                    linkPreview: parsed.linkPreview
                 )
             }
             if isMedia, let cachedData = local.sealedPlaintext(for: dto.id) {
@@ -289,6 +302,30 @@ enum MessageDecoder {
         // Disk cache only — never await media download during thread history decode.
         let cached = local.sealedMedia(for: dto.id)
         let payload = MediaMessagePayload.parse(plain)
+
+        // A text message whose link preview has a large image: the blob is that image.
+        if let payload, payload.isLink, let preview = payload.lp {
+            return MessagingController.ChatMessage(
+                id: dto.id,
+                peerUserID: peerUserID,
+                senderUserID: dto.senderUserId,
+                text: payload.c ?? "",
+                createdAt: dto.createdAt,
+                isMine: isMine,
+                deleted: false,
+                receipt: receipt,
+                kind: .text,
+                mediaObjectId: dto.mediaObjectId,
+                imageWidth: payload.w > 0 ? payload.w : nil,
+                imageHeight: payload.h > 0 ? payload.h : nil,
+                // Picture only from the local cache; the bubble downloads it when it appears.
+                imageData: cached,
+                previewData: payload.previewJPEG,
+                mediaByteCount: payload.s,
+                replyTo: payload.re,
+                linkPreview: preview
+            )
+        }
 
         if payload?.isVoice == true {
             let transcript = payload?.c?.trimmingCharacters(in: .whitespacesAndNewlines)

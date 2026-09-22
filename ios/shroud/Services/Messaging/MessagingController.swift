@@ -159,6 +159,10 @@ final class MessagingController {
         var pendingSync: Bool
         /// The message this one quotes (sealed inside the plaintext, never server metadata).
         var replyTo: MessageReplyReference?
+        /// Link preview sealed with a text message (`lp`). When the preview has a large image,
+        /// that image is this message's media blob: `mediaObjectId` / `imageData` /
+        /// `previewData` (blurred placeholder) / `imageWidth` + `imageHeight` describe it.
+        var linkPreview: LinkPreview?
 
         init(
             id: UUID,
@@ -184,7 +188,8 @@ final class MessagingController {
             sendError: String? = nil,
             todoDone: Bool? = nil,
             pendingSync: Bool = false,
-            replyTo: MessageReplyReference? = nil
+            replyTo: MessageReplyReference? = nil,
+            linkPreview: LinkPreview? = nil
         ) {
             self.id = id
             self.peerUserID = peerUserID
@@ -210,6 +215,20 @@ final class MessagingController {
             self.todoDone = todoDone
             self.pendingSync = pendingSync
             self.replyTo = replyTo
+            self.linkPreview = linkPreview
+        }
+
+        /// A text message whose link preview carries a large image (Telegram's big layout).
+        ///
+        /// Human: The sender's copy holds the JPEG in `imageData` before the upload lands;
+        /// everyone else knows it by the media id until the blob is downloaded.
+        var hasLargeLinkImage: Bool {
+            kind == .text && linkPreview != nil && (mediaObjectId != nil || imageData != nil)
+        }
+
+        /// The large link-preview image is on the server but not decrypted on this device yet.
+        var needsLinkImageDownload: Bool {
+            hasLargeLinkImage && imageData == nil && !deleted
         }
 
         /// Full media is not on device yet — show preview + download (Telegram-style).
@@ -1001,26 +1020,40 @@ final class MessagingController {
                 voiceDurationMs: message.voiceDurationMs,
                 voiceWaveform: message.voiceWaveform,
                 transcript: message.transcript,
-                replyTo: message.replyTo
+                replyTo: message.replyTo,
+                linkPreview: message.linkPreview
             )
         }
         return copy
     }
 
-    /// Sends a text message, optionally quoting an earlier one.
+    /// Sends a text message, optionally quoting an earlier one and carrying a link preview.
     ///
-    /// Agent: `replyTo` is sealed into the plaintext by `MessageTextPayload.wire`; the request
-    /// body is unchanged, so the server learns nothing about the quote.
+    /// Human: A preview with a large image goes out as a media message whose blob is that image
+    /// (the envelope is far too small for it). If that upload fails, or we are offline, the
+    /// message still goes — as text with the small inline thumbnail — rather than being held
+    /// back by a website's picture.
+    /// Agent: `replyTo` and `linkPreview` are sealed into the plaintext
+    /// (`MessageTextPayload.wire` / `MediaMessagePayload.lp`); the request body gains nothing
+    /// the server can read. The preview was fetched by `LinkPreviewFetcher` on this device.
     func sendText(
         _ text: String,
         to peerUserID: UUID,
-        replyTo: MessageReplyReference? = nil
+        replyTo: MessageReplyReference? = nil,
+        linkPreview: LinkPreviewAttachment? = nil
     ) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
         if isNotesChat(peerUserID) {
-            await appendAndSyncNote(text: trimmed, kind: .text, todoDone: nil, replyTo: replyTo)
+            // Notes sync as text, so their preview is always the inline (small) one.
+            await appendAndSyncNote(
+                text: trimmed,
+                kind: .text,
+                todoDone: nil,
+                replyTo: replyTo,
+                linkPreview: linkPreview?.preview
+            )
             return
         }
 
@@ -1029,6 +1062,8 @@ final class MessagingController {
               let material = cryptoController?.material
         else { return }
 
+        // The large layout needs an upload; offline, fall straight back to the inline thumbnail.
+        let largeImage = connectivity.isOnline ? linkPreview?.largeImage : nil
         let optimisticID = UUID()
         let optimistic = ChatMessage(
             id: optimisticID,
@@ -1039,8 +1074,12 @@ final class MessagingController {
             isMine: true,
             deleted: false,
             receipt: .sending,
+            imageWidth: largeImage == nil ? nil : linkPreview?.largeImageWidth,
+            imageHeight: largeImage == nil ? nil : linkPreview?.largeImageHeight,
+            imageData: largeImage,
             pendingSync: true,
-            replyTo: replyTo
+            replyTo: replyTo,
+            linkPreview: linkPreview?.preview
         )
         var optimisticThread = threads[peerUserID] ?? []
         optimisticThread.append(optimistic)
@@ -1053,6 +1092,28 @@ final class MessagingController {
             return
         }
 
+        if let linkPreview, largeImage != nil {
+            do {
+                try await deliverLinkWithImage(
+                    messageID: optimisticID,
+                    text: trimmed,
+                    attachment: linkPreview,
+                    peerUserID: peerUserID,
+                    me: me,
+                    material: material,
+                    token: token,
+                    replyTo: replyTo
+                )
+                await refreshConversations(force: true)
+                lastError = nil
+                return
+            } catch {
+                // Keep the message, lose the big picture: the text send below carries the
+                // small thumbnail instead.
+                dropLargeLinkImage(messageID: optimisticID, peerUserID: peerUserID)
+            }
+        }
+
         do {
             try await deliverPendingText(
                 messageID: optimisticID,
@@ -1061,7 +1122,8 @@ final class MessagingController {
                 me: me,
                 material: material,
                 token: token,
-                replyTo: replyTo
+                replyTo: replyTo,
+                linkPreview: linkPreview?.preview
             )
             await refreshConversations(force: true)
             lastError = nil
@@ -1079,6 +1141,121 @@ final class MessagingController {
             persistSnapshot()
             lastError = SessionController.userMessage(for: error)
         }
+    }
+
+    /// Sends a text message whose link preview has a large image: the image is encrypted and
+    /// uploaded like a photo, and the message goes out as a `t: "link"` media message.
+    ///
+    /// Human: To the server this is indistinguishable from a photo with a caption. The recipient
+    /// downloads the blob from Shroud's server — never from the website.
+    /// Agent: CALLS MediaCrypto.sealFile (fresh AES key, sealed into the payload), uploads the
+    /// ciphertext, seals `MediaMessagePayload(t: link, c: text, lp: preview)`. Re-keys the
+    /// optimistic bubble to `dto.id` (see `server-rekeys-sent-messages`).
+    @discardableResult
+    private func deliverLinkWithImage(
+        messageID: UUID,
+        text: String,
+        attachment: LinkPreviewAttachment,
+        peerUserID: UUID,
+        me: UUID,
+        material: IdentityKeyMaterial,
+        token: String,
+        replyTo: MessageReplyReference?
+    ) async throws -> ChatMessage {
+        guard let image = attachment.largeImage else { throw MediaCrypto.MediaError.imageEncodeFailed }
+        let width = attachment.largeImageWidth ?? MediaCrypto.pixelSize(for: image)?.width ?? 0
+        let height = attachment.largeImageHeight ?? MediaCrypto.pixelSize(for: image)?.height ?? 0
+        let (fileKey, sealedFile) = try MediaCrypto.sealFile(image)
+        let upload = try await mediaService.createUpload(
+            sizeBytes: sealedFile.count,
+            contentType: "application/octet-stream",
+            token: token
+        )
+        try await mediaService.uploadContent(mediaID: upload.mediaObjectId, data: sealedFile, token: token)
+
+        // The blob is the big picture; the payload keeps only a tiny blurred placeholder.
+        let preview = attachment.preview.withoutThumbnail()
+        let placeholder = MediaCrypto.chatPreviewJPEG(from: image)
+        let peerPub = try await peerIdentityForSending(peerUserID: peerUserID, token: token)
+        let (payloadData, sealed, usedPlaceholder) = try Self.sealMediaPayload(
+            kind: MediaMessagePayload.kindLink,
+            mime: "image/jpeg",
+            width: width,
+            height: height,
+            fileKey: fileKey,
+            caption: text,
+            durationMs: nil,
+            previewJPEG: placeholder,
+            mediaByteCount: image.count,
+            peerUserID: peerUserID,
+            peerPub: peerPub,
+            material: material,
+            me: me,
+            replyTo: replyTo,
+            linkPreview: preview
+        )
+        let dto = try await messagesService.send(
+            SendMessageRequest(
+                peerUserId: peerUserID,
+                clientMessageId: messageID,
+                contentType: "media",
+                ciphertext: sealed.base64EncodedString(),
+                mediaObjectId: upload.mediaObjectId
+            ),
+            token: token
+        )
+        local.saveSealedMedia(messageID: dto.id, data: image)
+        if dto.id != messageID {
+            local.removeCaches(messageIDs: [messageID])
+        }
+        // The payload holds the blob key — keep it, not just the text, so reloads can decode.
+        local.saveSealedPlaintext(messageID: dto.id, data: payloadData)
+
+        let sent = ChatMessage(
+            id: dto.id,
+            peerUserID: peerUserID,
+            senderUserID: me,
+            text: text,
+            createdAt: dto.createdAt,
+            isMine: true,
+            deleted: false,
+            receipt: receiptStatus(from: dto),
+            mediaObjectId: upload.mediaObjectId,
+            imageWidth: width,
+            imageHeight: height,
+            imageData: image,
+            previewData: usedPlaceholder,
+            mediaByteCount: image.count,
+            replyTo: replyTo,
+            linkPreview: preview
+        )
+        if var list = threads[peerUserID],
+           let idx = list.firstIndex(where: { $0.id == messageID })
+        {
+            list[idx] = sent
+            threads[peerUserID] = list
+        } else {
+            var list = threads[peerUserID] ?? []
+            if !list.contains(where: { $0.id == sent.id }) {
+                list.append(sent)
+                threads[peerUserID] = list
+            }
+        }
+        persistSnapshot()
+        return sent
+    }
+
+    /// Switches an unsent link bubble to the small layout (its inline thumbnail).
+    private func dropLargeLinkImage(messageID: UUID, peerUserID: UUID) {
+        guard var list = threads[peerUserID],
+              let idx = list.firstIndex(where: { $0.id == messageID })
+        else { return }
+        list[idx].imageData = nil
+        list[idx].imageWidth = nil
+        list[idx].imageHeight = nil
+        list[idx].mediaObjectId = nil
+        threads[peerUserID] = list
+        persistSnapshot()
     }
 
     /// Adds a checklist item to Notes (synced as text marker when online).
@@ -1234,6 +1411,7 @@ final class MessagingController {
         guard !messageIDs.isEmpty else { return }
         local.removeCaches(messageIDs: messageIDs)
         DecodedImageCache.remove(ids: messageIDs)
+        LinkPreviewImageCache.remove(ids: messageIDs)
         for id in messageIDs {
             mediaHydrateTasks[id]?.cancel()
             mediaHydrateTasks[id] = nil
@@ -2528,7 +2706,8 @@ final class MessagingController {
         peerPub: Data,
         material: IdentityKeyMaterial,
         me: UUID,
-        replyTo: MessageReplyReference? = nil
+        replyTo: MessageReplyReference? = nil,
+        linkPreview: LinkPreview? = nil
     ) throws -> (payloadData: Data, sealed: Data, usedPreview: Data?) {
         let safePreview: Data? = {
             guard let previewJPEG,
@@ -2548,7 +2727,8 @@ final class MessagingController {
                 d: durationMs,
                 th: includePreview ? safePreview?.base64EncodedString() : nil,
                 s: mediaByteCount,
-                re: replyTo
+                re: replyTo,
+                lp: linkPreview
             )
             return try payload.encoded()
         }
@@ -3127,6 +3307,55 @@ final class MessagingController {
         }
     }
 
+    /// Loads the large image of a link preview when its bubble appears.
+    ///
+    /// Human: Unlike photos (downloaded on tap), preview images load on their own — they are
+    /// small, and Telegram auto-downloads them too. The bytes come from Shroud's server and
+    /// are decrypted here; the website itself is never contacted by the recipient.
+    /// Agent: READS the sealed `t: "link"` payload for the blob key (never re-opens as
+    /// recipient); WRITES the JPEG to the sealed media cache and `imageData`.
+    func ensureLinkImageLoaded(for message: ChatMessage) async {
+        guard message.needsLinkImageDownload else { return }
+        if let existing = mediaHydrateTasks[message.id] {
+            await existing.value
+            return
+        }
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.hydrateLinkImage(for: message)
+        }
+        mediaHydrateTasks[message.id] = task
+        await task.value
+        if mediaHydrateTasks[message.id] == task {
+            mediaHydrateTasks[message.id] = nil
+        }
+    }
+
+    private func hydrateLinkImage(for message: ChatMessage) async {
+        guard message.needsLinkImageDownload else { return }
+        if let cached = local.sealedMedia(for: message.id) {
+            updateMessageImage(messageID: message.id, peerID: message.peerUserID, data: cached)
+            return
+        }
+        guard let mediaID = message.mediaObjectId,
+              let token = sessionController?.bearerToken,
+              let material = cryptoController?.material
+        else { return }
+        do {
+            guard let payloadData = try await mediaPayloadData(for: message, token: token, material: material),
+                  let payload = MediaMessagePayload.parse(payloadData),
+                  let keyData = Data(base64Encoded: payload.k)
+            else { return }
+            let sealedFile = try await mediaService.downloadContent(mediaID: mediaID, token: token)
+            try Task.checkCancellation()
+            let jpeg = try MediaCrypto.openFile(sealed: sealedFile, keyData: keyData)
+            local.saveSealedMedia(messageID: message.id, data: jpeg)
+            updateMessageImage(messageID: message.id, peerID: message.peerUserID, data: jpeg)
+        } catch {
+            // The block keeps its placeholder; the next appearance tries again.
+        }
+    }
+
     /// Resolves the sealed media payload JSON (contains AES file key). Never re-opens as recipient
     /// (that would desync Double Ratchet). Inbound must have been cached on first decrypt.
     private func mediaPayloadData(
@@ -3558,7 +3787,8 @@ final class MessagingController {
                 sendError: message.sendError,
                 todoDone: message.todoDone,
                 pendingSync: message.pendingSync,
-                replyTo: message.replyTo
+                replyTo: message.replyTo,
+                linkPreview: message.linkPreview
             )
         }
         return message
@@ -3712,24 +3942,31 @@ final class MessagingController {
         text: String,
         kind: ChatMessageKind,
         todoDone: Bool?,
-        replyTo: MessageReplyReference? = nil
+        replyTo: MessageReplyReference? = nil,
+        linkPreview: LinkPreview? = nil
     ) async {
         let peerUserID = Self.notesPeerID
         let me = sessionController?.userID ?? peerUserID
-        let message = NotesLocal.makeNote(
+        // A todo keeps its own marker format; only plain notes can carry a quote or a preview.
+        let (noteWire, sealedPreview) = Self.textWire(
+            body: text,
+            replyTo: replyTo,
+            linkPreview: kind == .todo ? nil : linkPreview
+        )
+        var message = NotesLocal.makeNote(
             text: text,
             kind: kind,
             senderUserID: me,
             todoDone: todoDone,
             replyTo: replyTo
         )
+        message.linkPreview = sealedPreview
         var list = threads[peerUserID] ?? []
         list.append(message)
         threads[peerUserID] = list
-        // A todo keeps its own marker format; only plain notes can carry a quote.
         let wireText = kind == .todo
             ? NotesLocal.syncedTodoPlaintext(text: text, done: todoDone ?? false)
-            : MessageTextPayload.wire(body: text, replyTo: replyTo)
+            : noteWire
         local.saveSealedPlaintext(messageID: message.id, text: wireText)
         persistThread(peerUserID)
 
@@ -3768,7 +4005,8 @@ final class MessagingController {
                     receipt: .sent,
                     kind: message.kind,
                     todoDone: message.todoDone,
-                    replyTo: message.replyTo
+                    replyTo: message.replyTo,
+                    linkPreview: message.linkPreview
                 )
                 threads[peerUserID] = notes
                 local.removeCaches(messageIDs: [message.id])
@@ -3803,11 +4041,12 @@ final class MessagingController {
         me: UUID,
         material: IdentityKeyMaterial,
         token: String,
-        replyTo: MessageReplyReference? = nil
+        replyTo: MessageReplyReference? = nil,
+        linkPreview: LinkPreview? = nil
     ) async throws -> ChatMessage {
         let peerPub = try await peerIdentityForSending(peerUserID: peerUserID, token: token)
-        // A reply seals body + quote together; a plain message stays raw UTF-8 on the wire.
-        let wireText = MessageTextPayload.wire(body: text, replyTo: replyTo)
+        // A reply / preview seals body + extras together; a plain message stays raw UTF-8.
+        let (wireText, sealedPreview) = Self.textWire(body: text, replyTo: replyTo, linkPreview: linkPreview)
         let sealed = try MessageCrypto.seal(
             plaintext: Data(wireText.utf8),
             peerUserID: peerUserID,
@@ -3836,7 +4075,8 @@ final class MessagingController {
             isMine: true,
             deleted: false,
             receipt: receiptStatus(from: dto),
-            replyTo: replyTo
+            replyTo: replyTo,
+            linkPreview: sealedPreview
         )
         if var list = threads[peerUserID],
            let idx = list.firstIndex(where: { $0.id == messageID })
@@ -3852,6 +4092,35 @@ final class MessagingController {
         }
         persistSnapshot()
         return sent
+    }
+
+    /// Plaintext for a text message, with the link preview trimmed to what fits.
+    ///
+    /// Human: The preview must never be the reason a message can't be sent. Sealed three times
+    /// and base64-expanded, plaintext much past 12 KB overflows the server's 64 KiB envelope
+    /// cap, so a long message first loses the preview's thumbnail, then its description, then
+    /// the preview itself.
+    /// Agent: RETURNS the wire string and the preview actually sealed (nil when dropped).
+    static func textWire(
+        body: String,
+        replyTo: MessageReplyReference?,
+        linkPreview: LinkPreview?
+    ) -> (wire: String, sealedPreview: LinkPreview?) {
+        guard var preview = linkPreview else {
+            return (MessageTextPayload.wire(body: body, replyTo: replyTo), nil)
+        }
+        var candidates: [LinkPreview] = [preview]
+        preview.thumbnail = nil
+        candidates.append(preview)
+        preview.summary = nil
+        candidates.append(preview)
+        for candidate in candidates {
+            let wire = MessageTextPayload.wire(body: body, replyTo: replyTo, linkPreview: candidate)
+            if wire.utf8.count <= maxMediaPayloadPlaintextBytes {
+                return (wire, candidate)
+            }
+        }
+        return (MessageTextPayload.wire(body: body, replyTo: replyTo), nil)
     }
 
     /// Flushes queued outbound messages after reconnect.
@@ -3872,7 +4141,10 @@ final class MessagingController {
         for item in pending {
             switch item {
             case let .text(messageID, peerID, text):
+                let queued = threads[peerID]?.first(where: { $0.id == messageID })
                 do {
+                    // A queued link message always goes as text: the inline thumbnail survives
+                    // a restart, the large image may not.
                     try await deliverPendingText(
                         messageID: messageID,
                         text: text,
@@ -3880,7 +4152,8 @@ final class MessagingController {
                         me: me,
                         material: material,
                         token: token,
-                        replyTo: threads[peerID]?.first(where: { $0.id == messageID })?.replyTo
+                        replyTo: queued?.replyTo,
+                        linkPreview: queued?.linkPreview
                     )
                 } catch {
                     // Leave pending; try again next reconnect.

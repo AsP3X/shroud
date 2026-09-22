@@ -66,27 +66,42 @@ nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
     /// The message this one replies to, when it was sent from the reply composer.
     /// Optional so payloads sealed before replies existed still decode (see `MessageReplyReference`).
     var re: MessageReplyReference?
+    /// Link preview metadata of a `t: "link"` message (the blob is its large image).
+    var lp: LinkPreview? = nil
 
     static let kindImage = "image"
     static let kindVoice = "voice"
     static let kindVideo = "video"
+    /// A text message whose link preview has a large image.
+    ///
+    /// Human: The image is far too big for the 64 KiB envelope, so the message goes out as a
+    /// media message and the preview image is its encrypted blob — the server can't tell it from
+    /// a photo. `c` carries the full message text, `lp` the preview. A build that predates link
+    /// previews reads `mime` and shows the picture as a photo with the text as its caption,
+    /// which is the graceful fallback.
+    static let kindLink = "link"
 
     var isVoice: Bool {
         if t == Self.kindVoice { return true }
-        if t == Self.kindImage || t == Self.kindVideo { return false }
+        if t == Self.kindImage || t == Self.kindVideo || t == Self.kindLink { return false }
         return mime.hasPrefix("audio/")
     }
 
     var isImage: Bool {
         if t == Self.kindImage { return true }
-        if t == Self.kindVoice || t == Self.kindVideo { return false }
+        if t == Self.kindVoice || t == Self.kindVideo || t == Self.kindLink { return false }
         return mime.hasPrefix("image/")
     }
 
     var isVideo: Bool {
         if t == Self.kindVideo { return true }
-        if t == Self.kindImage || t == Self.kindVoice { return false }
+        if t == Self.kindImage || t == Self.kindVoice || t == Self.kindLink { return false }
         return mime.hasPrefix("video/")
+    }
+
+    /// A text message with a large link-preview image (see `kindLink`).
+    var isLink: Bool {
+        t == Self.kindLink && lp != nil
     }
 
     /// Decoded preview JPEG, if present.
@@ -134,7 +149,8 @@ nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
             wf: string(object["wf"]),
             th: string(object["th"]),
             s: int(object["s"]),
-            re: (object["re"] as? [String: Any]).flatMap(MessageReplyReference.parse(wireObject:))
+            re: (object["re"] as? [String: Any]).flatMap(MessageReplyReference.parse(wireObject:)),
+            lp: (object["lp"] as? [String: Any]).flatMap(LinkPreview.parse(wireObject:))
         )
     }
 
@@ -153,6 +169,7 @@ nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
         if let th { object["th"] = th }
         if let s { object["s"] = s }
         if let re { object["re"] = re.wireObject }
+        if let lp { object["lp"] = lp.wireObject }
         return try JSONSerialization.data(withJSONObject: object)
     }
 

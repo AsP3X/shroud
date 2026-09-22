@@ -5,10 +5,13 @@
  * server never sees it — a reply is an ordinary `text` or `media` message whose plaintext
  * happens to carry `re`, so the relay still cannot tell which message answers which.
  *
- * Plain text messages stay raw UTF-8, exactly as before; only a reply is sealed as the JSON
- * envelope `{"t":"text","c":<body>,"re":{…}}`. Anything that does not parse as that envelope
+ * Plain text messages stay raw UTF-8, exactly as before; only a reply (or a message whose
+ * sender attached a link preview, `lp`) is sealed as the JSON envelope
+ * `{"t":"text","c":<body>,"re":{…},"lp":{…}}`. Anything that does not parse as that envelope
  * is read back verbatim, which is what lets old and new builds talk to each other.
  */
+
+import { parseLinkPreview, type LinkPreview } from "./links";
 
 export type ReplyKind = "text" | "image" | "video" | "voice";
 
@@ -65,16 +68,28 @@ export function textPayload(text: string, replyTo: ReplyRef | null | undefined):
   return JSON.stringify({ t: "text", c: text, re: replyRefWire(replyTo) });
 }
 
-/** Splits sealed plaintext into body + quote. Anything unparsable comes back verbatim. */
-export function parseTextPayload(raw: string): { text: string; replyTo: ReplyRef | null } {
+/**
+ * Splits sealed plaintext into body, quote and link preview (`lp`, written by the sender's
+ * phone — see links.ts). Anything unparsable comes back verbatim.
+ */
+export function parseTextPayload(raw: string): {
+  text: string;
+  replyTo: ReplyRef | null;
+  linkPreview: LinkPreview | null;
+} {
+  const plain = { text: raw, replyTo: null, linkPreview: null };
   const trimmed = raw.trim();
-  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return { text: raw, replyTo: null };
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return plain;
   try {
     const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-    if (parsed.t !== "text" || typeof parsed.c !== "string") return { text: raw, replyTo: null };
-    return { text: parsed.c, replyTo: parseReplyRef(parsed.re) };
+    if (parsed.t !== "text" || typeof parsed.c !== "string") return plain;
+    return {
+      text: parsed.c,
+      replyTo: parseReplyRef(parsed.re),
+      linkPreview: parseLinkPreview(parsed.lp),
+    };
   } catch {
-    return { text: raw, replyTo: null };
+    return plain;
   }
 }
 
