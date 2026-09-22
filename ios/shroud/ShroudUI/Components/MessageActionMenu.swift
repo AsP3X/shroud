@@ -99,6 +99,16 @@ struct MessageContextMenuCard: View {
     /// The message contains a link: adds "Copy Link" under "Copy" (`Conversation — Link Message Menu`).
     var hasLink: Bool = false
 
+    static let width: CGFloat = 250
+    private static let rowHeight: CGFloat = 44
+
+    /// The card's height: the muted "read" row on your own messages, the primary actions
+    /// ("Copy Link" only with a link), "Select", and a 1 pt hairline between rows.
+    static func height(isMine: Bool, hasLink: Bool) -> CGFloat {
+        let rows: CGFloat = (isMine ? 1 : 0) + (hasLink ? 6 : 5) + 1
+        return rows * rowHeight + (rows - 1)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             if isMine {
@@ -134,7 +144,7 @@ struct MessageContextMenuCard: View {
                 onAction(.select)
             }
         }
-        .frame(width: 250)
+        .frame(width: Self.width)
         .background {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(Color(red: 0.12, green: 0.12, blue: 0.14).opacity(0.94))
@@ -188,7 +198,7 @@ struct MessageContextMenuCard: View {
                 Spacer()
             }
             .padding(.horizontal, 14)
-            .frame(height: 44)
+            .frame(height: Self.rowHeight)
             .contentShape(Rectangle())
         }
         // Dark menu — highlight with a light wash rather than the grouped-background token.
@@ -197,123 +207,230 @@ struct MessageContextMenuCard: View {
     }
 }
 
-/// Which side of the focused bubble the action card opens on.
-enum MessageMenuPlacement: Equatable {
-    /// Card under the bubble, reaction bar above it.
-    case below
-    /// Card above the bubble. The reaction bar stays above the card when it fits.
-    case above
-}
+// MARK: - Layout (Telegram)
 
-/// Where a long-press menu sits. Pure geometry — the bubble stays put unless a short
-/// nudge is the only way to keep both the card and the reaction bar on screen.
+/// Where the long-press menu's parts go, by Telegram's rules.
+///
+/// Human: The reaction bar always sits right on top of the bubble and the action card right
+/// under it. When that stack does not fit where the bubble is, the *bubble* moves — down from
+/// under the header, up from the composer — just far enough, and the dimmed thread behind it
+/// stays where it was (Telegram lifts the message out of the list the same way). A message too
+/// tall to show together with its card starts under the reaction bar and the stack scrolls,
+/// opening at its bottom so the card is in reach.
+/// Agent: Pure geometry in the overlay's (full-screen) points. `safeArea` is the overlay's
+/// safe area — status bar, home indicator, and the keyboard when it is up. Margins are
+/// Telegram's: 8 pt under the status bar, 10 pt above the bottom inset, 12 pt from the sides.
 enum MessageMenuLayout {
-    static func decide(
+    /// The fixed parts of the stack.
+    struct Metrics: Equatable {
+        var reactionSize: CGSize
+        var cardSize: CGSize
+        /// Between the reaction bar and the bubble, and between the bubble and the card.
+        var spacing: CGFloat = 10
+        /// Closest the bar or the card may come to the screen's sides.
+        var sideInset: CGFloat = 12
+        /// Below the status bar.
+        var topMargin: CGFloat = 8
+        /// Above the home indicator or the keyboard.
+        var bottomMargin: CGFloat = 10
+    }
+
+    /// The resting stack for one bubble.
+    struct Plan: Equatable {
+        /// The lifted bubble at rest, in scroll-content coordinates — the same as screen
+        /// coordinates unless the stack `scrolls`.
+        var hero: CGRect
+        /// Height of the scrollable stack: the container's own height unless the message is
+        /// too tall to show together with its card.
+        var contentHeight: CGFloat
+        var containerSize: CGSize
+        /// Highest the reaction bar may sit, in screen coordinates.
+        var reactionMinY: CGFloat
+
+        /// True when the message and its card are taller than the screen allows.
+        var scrolls: Bool { contentHeight > containerSize.height + 0.5 }
+        /// Scroll offset that shows the stack's bottom — where a scrolling stack opens.
+        var initialOffset: CGFloat { max(0, contentHeight - containerSize.height) }
+    }
+
+    /// The resting stack for a bubble whose list slot is `source`.
+    static func plan(
         source: CGRect,
         container: CGSize,
-        menuHeight: CGFloat,
-        reactionHeight: CGFloat,
-        spacing: CGFloat = 10,
-        topPad: CGFloat = 56,
-        bottomPad: CGFloat = 48
-    ) -> (hero: CGRect, placement: MessageMenuPlacement) {
-        let top = topPad
-        let bottom = container.height - bottomPad
+        safeArea: EdgeInsets,
+        metrics: Metrics
+    ) -> Plan {
+        let reactionMinY = safeArea.top + metrics.topMargin
+        let bottomLimit = container.height - safeArea.bottom - metrics.bottomMargin
+        // Highest the bubble may go: the reaction bar has to fit above it.
+        let highest = reactionMinY + metrics.reactionSize.height + metrics.spacing
+        let belowBubble = metrics.spacing + metrics.cardSize.height
 
-        func frame(at y: CGFloat) -> CGRect {
-            CGRect(x: source.minX, y: y, width: source.width, height: source.height)
-        }
+        var y = max(source.minY, highest)
+        let overshoot = y + source.height + belowBubble - bottomLimit
+        if overshoot > 0 { y -= overshoot }
+        y = max(y, highest)
 
-        let cardFitsBelow = source.maxY + spacing + menuHeight <= bottom
-        let barFitsAbove = source.minY - spacing - reactionHeight >= top
-        if cardFitsBelow, barFitsAbove {
-            return (source, .below)
-        }
-
-        // The card alone is enough to open upward. Waiting for the reaction bar as
-        // well used to drag the bubble up the thread so the card could open below.
-        if source.minY - spacing - menuHeight >= top {
-            return (source, .above)
-        }
-
-        if cardFitsBelow {
-            let highest = top + reactionHeight + spacing
-            let lowest = bottom - menuHeight - spacing - source.height
-            if lowest >= highest {
-                let y = min(max(source.minY, highest), lowest)
-                return (frame(at: y), .below)
-            }
-        }
-
-        // Too tall to clear either edge. Moving it would look like the thread scrolled.
-        let spaceAbove = source.minY - top
-        let spaceBelow = bottom - source.maxY
-        return (source, spaceAbove > spaceBelow ? .above : .below)
+        let hero = CGRect(x: source.minX, y: y, width: source.width, height: source.height)
+        let stackBottom = hero.maxY + belowBubble
+        return Plan(
+            hero: hero,
+            contentHeight: max(container.height, stackBottom + container.height - bottomLimit),
+            containerSize: container,
+            reactionMinY: reactionMinY
+        )
     }
 
+    /// Reaction bar and card around the bubble as it is drawn right now (screen coordinates —
+    /// mid-flight, or scrolled), on the bubble's side and inside the screen's sides.
+    ///
+    /// Agent: The bar never rises above `plan.reactionMinY`; over a scrolled tall message it
+    /// stays pinned there, on top of the bubble, as Telegram's does.
     static func chrome(
         hero: CGRect,
-        placement: MessageMenuPlacement,
-        containerHeight: CGFloat,
-        menuHeight: CGFloat,
-        reactionHeight: CGFloat,
-        spacing: CGFloat = 10,
-        topPad: CGFloat = 56,
-        bottomPad: CGFloat = 48
-    ) -> (menuY: CGFloat, reactionY: CGFloat) {
-        let top = topPad
-        let bottom = containerHeight - bottomPad
-        let rawMenuY: CGFloat
-        let rawReactionY: CGFloat
-        switch placement {
-        case .below:
-            rawMenuY = hero.maxY + spacing
-            rawReactionY = hero.minY - spacing - reactionHeight
-        case .above:
-            rawMenuY = hero.minY - spacing - menuHeight
-            rawReactionY = rawMenuY - spacing - reactionHeight
+        isMine: Bool,
+        plan: Plan,
+        metrics: Metrics
+    ) -> (reactions: CGRect, card: CGRect) {
+        let width = plan.containerSize.width
+        func minX(for itemWidth: CGFloat) -> CGFloat {
+            let preferred = isMine ? hero.maxX - itemWidth : hero.minX
+            let upper = max(metrics.sideInset, width - metrics.sideInset - itemWidth)
+            return min(max(preferred, metrics.sideInset), upper)
         }
+        let reactionY = max(plan.reactionMinY, hero.minY - metrics.spacing - metrics.reactionSize.height)
+        return (
+            CGRect(origin: CGPoint(x: minX(for: metrics.reactionSize.width), y: reactionY), size: metrics.reactionSize),
+            CGRect(origin: CGPoint(x: minX(for: metrics.cardSize.width), y: hero.maxY + metrics.spacing), size: metrics.cardSize)
+        )
+    }
+}
 
-        let menuY = clamp(rawMenuY, min: top, max: bottom - menuHeight)
-        var reactionY = rawReactionY
-        let reactionClearsMenu = rawReactionY + reactionHeight + spacing <= menuY + 0.5
-        if placement == .above, rawReactionY < top || !reactionClearsMenu {
-            let underBubble = hero.maxY + spacing
-            if underBubble + reactionHeight <= bottom, underBubble >= menuY + menuHeight {
-                reactionY = underBubble
+// MARK: - Overlay
+
+/// The long-press menu over the dimmed thread: reaction bar, the lifted bubble, and the action
+/// card, placed by `MessageMenuLayout` and flown out of the bubble's slot in the list.
+///
+/// Human: `progress` 0 draws the bubble exactly where it sits in the thread (the host hides the
+/// list's own copy meanwhile), 1 is the resting stack; the bar and card ride along with the
+/// bubble and fade with it. Only a message too tall for the screen gets a scroll view, opened
+/// at its bottom so the card is visible first — the rest of the time the stack is static.
+/// Agent: The host animates `progress` and owns what the buttons do. READS the overlay's safe
+/// area (keyboard included) on every layout; WRITES only the scroll offset of a tall stack.
+struct MessageMenuOverlay<Hero: View, Card: View>: View {
+    /// The bubble's frame in global coordinates when the hold began.
+    let sourceGlobalFrame: CGRect
+    let isMine: Bool
+    /// Height of `card` (see `MessageContextMenuCard.height(isMine:hasLink:)`).
+    let cardHeight: CGFloat
+    /// 0 = bubble in its list slot, 1 = menu open.
+    let progress: CGFloat
+    var onReaction: (String) -> Void
+    var onMoreReactions: () -> Void
+    /// A tap outside the stack.
+    var onBackdropTap: () -> Void
+    @ViewBuilder var hero: () -> Hero
+    @ViewBuilder var card: () -> Card
+
+    /// Content offset of a scrolling stack; nil until the scroll view reports it.
+    @State private var scrollOffset: CGFloat?
+
+    var body: some View {
+        GeometryReader { outer in
+            let safeArea = outer.safeAreaInsets
+            GeometryReader { proxy in
+                stack(in: proxy, safeArea: safeArea)
+            }
+            .ignoresSafeArea()
+        }
+    }
+
+    @ViewBuilder
+    private func stack(in proxy: GeometryProxy, safeArea: EdgeInsets) -> some View {
+        let container = proxy.frame(in: .global)
+        let source = CGRect(
+            x: sourceGlobalFrame.minX - container.minX,
+            y: sourceGlobalFrame.minY - container.minY,
+            width: max(1, sourceGlobalFrame.width),
+            height: max(1, sourceGlobalFrame.height)
+        )
+        let metrics = MessageMenuLayout.Metrics(
+            reactionSize: CGSize(width: MessageReactionBar.barWidth, height: MessageReactionBar.barHeight),
+            cardSize: CGSize(width: MessageContextMenuCard.width, height: cardHeight)
+        )
+        let plan = MessageMenuLayout.plan(source: source, container: proxy.size, safeArea: safeArea, metrics: metrics)
+        // Scroll-content coordinates: while scrolled, the list slot sits `offset` further down.
+        let offset = plan.scrolls ? (scrollOffset ?? plan.initialOffset) : 0
+        let heroInContent = Self.lerp(source.offsetBy(dx: 0, dy: offset), plan.hero, progress)
+        let heroOnScreen = heroInContent.offsetBy(dx: 0, dy: -offset)
+        let chrome = MessageMenuLayout.chrome(hero: heroOnScreen, isMine: isMine, plan: plan, metrics: metrics)
+
+        ZStack(alignment: .topLeading) {
+            MessageMenuBackdrop(onTap: onBackdropTap, progress: progress)
+
+            if plan.scrolls {
+                ScrollView {
+                    bubbleAndCard(hero: heroInContent, card: chrome.card.offsetBy(dx: 0, dy: offset))
+                        .frame(width: proxy.size.width, height: plan.contentHeight, alignment: .topLeading)
+                        .background {
+                            // The backdrop is under the scroll view; empty space dismisses here.
+                            Color.clear
+                                .contentShape(Rectangle())
+                                .onTapGesture(perform: onBackdropTap)
+                        }
+                }
+                .scrollIndicators(.hidden)
+                .defaultScrollAnchor(.bottom)
+                .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentOffset.y }) { _, newOffset in
+                    scrollOffset = newOffset
+                }
+                .ignoresSafeArea()
+                .allowsHitTesting(progress > 0.5)
             } else {
-                reactionY = clamp(rawReactionY, min: top, max: bottom - reactionHeight)
+                bubbleAndCard(hero: heroOnScreen, card: chrome.card)
             }
-        } else if rawReactionY < top || rawReactionY + reactionHeight > bottom {
-            reactionY = clamp(rawReactionY, min: top, max: bottom - reactionHeight)
-        }
 
-        if rangesOverlap(reactionY, reactionHeight, menuY, menuHeight) {
-            let above = menuY - spacing - reactionHeight
-            let belowMenu = menuY + menuHeight + spacing
-            if above >= top {
-                reactionY = above
-            } else if belowMenu + reactionHeight <= bottom {
-                reactionY = belowMenu
-            }
+            // Over the bubble: on a scrolled tall message the bar stays pinned at the top.
+            MessageReactionBar(onReaction: onReaction, onMore: onMoreReactions, progress: progress)
+                .frame(width: chrome.reactions.width, height: chrome.reactions.height)
+                .position(x: chrome.reactions.midX, y: chrome.reactions.midY)
         }
-        return (menuY, reactionY)
+        .frame(width: proxy.size.width, height: proxy.size.height)
     }
 
-    private static func clamp(_ value: CGFloat, min lower: CGFloat, max upper: CGFloat) -> CGFloat {
-        // Taller than the padded area (landscape, a large menu): keep the bottom
-        // edge inside it. Pinning the top instead hid Delete below the screen.
-        if upper < lower { return upper }
-        return Swift.min(Swift.max(value, lower), upper)
+    /// Extra width offered to the lifted bubble beyond its measured frame.
+    ///
+    /// Human: The list reports a bubble's frame rounded to the pixel grid, which can be a hair
+    /// narrower than the bubble's own ideal width. Offered exactly that, a one-line bubble no
+    /// longer "fits" and re-wraps onto two lines the moment the menu opens. One spare point,
+    /// pinned to the bubble's side, keeps the list's layout.
+    private static var heroSlack: CGFloat { 1 }
+
+    /// The lifted bubble and the card, placed in one coordinate space.
+    private func bubbleAndCard(hero heroFrame: CGRect, card cardFrame: CGRect) -> some View {
+        let slotWidth = heroFrame.width + Self.heroSlack
+        return ZStack(alignment: .topLeading) {
+            hero()
+                // Same size as the list bubble, so progress 0 is a seamless handoff.
+                .frame(width: slotWidth, height: heroFrame.height, alignment: isMine ? .topTrailing : .topLeading)
+                .position(
+                    x: isMine ? heroFrame.maxX - slotWidth / 2 : heroFrame.minX + slotWidth / 2,
+                    y: heroFrame.midY
+                )
+                .allowsHitTesting(false)
+            card()
+                .frame(width: cardFrame.width, height: cardFrame.height, alignment: .top)
+                .position(x: cardFrame.midX, y: cardFrame.midY)
+        }
     }
 
-    private static func rangesOverlap(
-        _ y: CGFloat,
-        _ height: CGFloat,
-        _ otherY: CGFloat,
-        _ otherHeight: CGFloat
-    ) -> Bool {
-        y < otherY + otherHeight && y + height > otherY
+    private static func lerp(_ a: CGRect, _ b: CGRect, _ t: CGFloat) -> CGRect {
+        CGRect(
+            x: a.minX + (b.minX - a.minX) * t,
+            y: a.minY + (b.minY - a.minY) * t,
+            width: a.width + (b.width - a.width) * t,
+            height: a.height + (b.height - a.height) * t
+        )
     }
 }
 

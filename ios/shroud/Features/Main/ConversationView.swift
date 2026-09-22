@@ -18,6 +18,7 @@ struct ConversationView: View {
     @Environment(CallController.self) private var calls
     @Environment(\.dismiss) private var dismiss
     @Environment(\.displayScale) private var displayScale
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var draft = ""
     @State private var showAttach = false
@@ -1612,11 +1613,6 @@ struct ConversationView: View {
     /// How long after opening the backdrop ignores taps (see `MessageMenuBackdrop` above).
     private static let menuTapGrace: TimeInterval = 0.4
 
-    /// Shared open/close timing — ease-out (fast start → settle at the end).
-    private static let messageMenuAnimationDuration: Double = 0.21
-
-    private static let messageMenuAnimation = Animation.easeOut(duration: messageMenuAnimationDuration)
-
     private struct FocusedMessageMenu: Identifiable {
         var id: UUID { message.id }
         let message: MessagingController.ChatMessage
@@ -1651,7 +1647,7 @@ struct ConversationView: View {
             )
         }
 
-        withAnimation(Self.messageMenuAnimation) {
+        withAnimation(Motion.respecting(reduceMotion, Motion.menuLift)) {
             menuProgress = 1
         }
         menuOpenedAt = Date()
@@ -1665,15 +1661,15 @@ struct ConversationView: View {
         menuAnimationGeneration &+= 1
         let generation = menuAnimationGeneration
 
-        // Ease-out back to the list slot: fast start, decelerate into place — no teleport.
-        withAnimation(Self.messageMenuAnimation) {
+        // Back into the list slot with Telegram's ease-in-out — no teleport.
+        let drop = Motion.respecting(reduceMotion, Motion.menuDrop)
+        let duration = reduceMotion ? Motion.reducedDuration : Motion.menuDropDuration
+        withAnimation(drop) {
             menuProgress = 0
         }
 
         menuAnimationTask = Task { @MainActor in
-            try? await Task.sleep(
-                nanoseconds: UInt64(Self.messageMenuAnimationDuration * 1_000_000_000) + 20_000_000
-            )
+            try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000) + 20_000_000)
             guard !Task.isCancelled, generation == menuAnimationGeneration else { return }
             // Hero is already exactly on the source frame; swap back to the list bubble.
             var clear = Transaction()
@@ -1685,162 +1681,58 @@ struct ConversationView: View {
         }
     }
 
-    /// Context card width (matches `MessageContextMenuCard`).
-    private static let messageMenuCardWidth: CGFloat = 250
-    /// Context card row height × action count, plus the hairline between each row.
-    /// Mine includes the muted “read” row.
-    private static func messageMenuCardHeight(isMine: Bool, hasLink: Bool = false) -> CGFloat {
-        let rows: CGFloat = (isMine ? 7 : 6) + (hasLink ? 1 : 0)
-        return rows * 44 + (rows - 1)
-    }
-
-    private static let messageMenuStackSpacing: CGFloat = 10
-    private static let messageMenuChromeHorizontalPad: CGFloat = 12
-
-    /// Clamp a chrome strip so its full width stays inside the overlay.
-    private func clampedChromeMinX(
-        preferredMinX: CGFloat,
-        width: CGFloat,
-        containerWidth: CGFloat
-    ) -> CGFloat {
-        let pad = Self.messageMenuChromeHorizontalPad
-        let minX = pad
-        let maxX = max(minX, containerWidth - pad - width)
-        return min(max(preferredMinX, minX), maxX)
-    }
-
-    private func lerp(_ a: CGFloat, _ b: CGFloat, _ t: CGFloat) -> CGFloat {
-        a + (b - a) * t
-    }
-
-    private func lerpRect(_ a: CGRect, _ b: CGRect, _ t: CGFloat) -> CGRect {
-        CGRect(
-            x: lerp(a.minX, b.minX, t),
-            y: lerp(a.minY, b.minY, t),
-            width: lerp(a.width, b.width, t),
-            height: lerp(a.height, b.height, t)
-        )
-    }
-
-    @ViewBuilder
-    /// Hero flies between the real list bubble and the focus stack (ease-out both ways).
+    /// The long-press menu: the bubble lifts out of the thread, the reaction bar lands on top
+    /// of it and the action card under it (Telegram). `MessageMenuOverlay` does the placing.
+    ///
+    /// Agent: READS `menuProgress` (animated by open/dismiss); every button closes the menu
+    /// first, then acts.
     private func messageMenuOverlay(session: FocusedMessageMenu) -> some View {
         let message = session.message
-        let progress = menuProgress
-        let spacing = Self.messageMenuStackSpacing
-        let reactionW = MessageReactionBar.barWidth
-        let reactionH = MessageReactionBar.barHeight
-        let menuW = Self.messageMenuCardWidth
         let hasLink = copyableLink(in: message) != nil
-        let menuH = Self.messageMenuCardHeight(isMine: message.isMine, hasLink: hasLink)
-
-        GeometryReader { proxy in
-            let containerGlobal = proxy.frame(in: .global)
-            // Convert captured global bubble frame into this full-screen overlay’s local space.
-            let sourceLocal = CGRect(
-                x: session.sourceGlobalFrame.minX - containerGlobal.minX,
-                y: session.sourceGlobalFrame.minY - containerGlobal.minY,
-                width: max(1, session.sourceGlobalFrame.width),
-                height: max(1, session.sourceGlobalFrame.height)
-            )
-            let focus = MessageMenuLayout.decide(
-                source: sourceLocal,
-                container: proxy.size,
-                menuHeight: menuH,
-                reactionHeight: reactionH,
-                spacing: spacing
-            )
-            // progress 0 = exact list bubble, 1 = focus stack. Usually the two are the same
-            // rect — the bubble stays put and only the chrome fades in.
-            let heroFrame = lerpRect(sourceLocal, focus.hero, progress)
-
-            // Align chrome to the bubble, then clamp so the full bar/card stays on-screen
-            // (outgoing bubbles near the trailing edge used to clip the “more” button).
-            let preferredReactionX = message.isMine
-                ? heroFrame.maxX - reactionW
-                : heroFrame.minX
-            let preferredMenuX = message.isMine
-                ? heroFrame.maxX - menuW
-                : heroFrame.minX
-            let reactionX = clampedChromeMinX(
-                preferredMinX: preferredReactionX,
-                width: reactionW,
-                containerWidth: proxy.size.width
-            )
-            let menuX = clampedChromeMinX(
-                preferredMinX: preferredMenuX,
-                width: menuW,
-                containerWidth: proxy.size.width
-            )
-            // Chrome is glued to the (possibly nudged) hero, on the side the layout picked.
-            let chrome = MessageMenuLayout.chrome(
-                hero: heroFrame,
-                placement: focus.placement,
-                containerHeight: proxy.size.height,
-                menuHeight: menuH,
-                reactionHeight: reactionH,
-                spacing: spacing
-            )
-            let menuY = chrome.menuY
-            let reactionY = chrome.reactionY
-
-            ZStack(alignment: .topLeading) {
-                MessageMenuBackdrop(
-                    onTap: {
-                        // The finger that opened the menu is usually still down; its release
-                        // lands on this backdrop and would close what the hold just opened.
-                        guard let opened = menuOpenedAt,
-                              Date().timeIntervalSince(opened) > Self.menuTapGrace
-                        else { return }
-                        dismissMessageMenu()
-                    },
-                    progress: progress
-                )
-
-                // Reaction + menu track the moving hero and fade with progress.
-                MessageReactionBar(
-                    onReaction: { emoji in
-                        dismissMessageMenu()
-                        toast = "Reacted \(emoji)"
-                        scheduleToastClear()
-                    },
-                    onMore: {
-                        dismissMessageMenu()
-                        showComingSoon("More reactions")
-                    },
-                    progress: progress
-                )
-                .frame(width: reactionW, height: reactionH)
-                .position(x: reactionX + reactionW / 2, y: reactionY + reactionH / 2)
-
-                MessageMenuHeroContent(
-                    message: message,
-                    timeLabel: messaging.clockTimeLabel(for: message.createdAt),
-                    heroImage: session.heroImage,
-                    inTranscriptTail: transcriptTail.contains(message.id),
-                    reply: replyContent(for: message, quoted: quotedMessagesByID),
-                    linkPreviewImage: linkPreviewImage(for: message)
-                )
-                // Same size as the list bubble so progress 0 is a perfect handoff.
-                .frame(width: heroFrame.width, height: heroFrame.height)
-                .position(x: heroFrame.midX, y: heroFrame.midY)
-                .allowsHitTesting(false)
-
-                MessageContextMenuCard(
-                    isMine: message.isMine,
-                    onAction: { action in
-                        dismissMessageMenu()
-                        handleMenu(action, message: message)
-                    },
-                    progress: progress,
-                    hasLink: hasLink
-                )
-                .frame(width: menuW, height: menuH, alignment: .top)
-                .position(x: menuX + menuW / 2, y: menuY + menuH / 2)
+        return MessageMenuOverlay(
+            sourceGlobalFrame: session.sourceGlobalFrame,
+            isMine: message.isMine,
+            cardHeight: MessageContextMenuCard.height(isMine: message.isMine, hasLink: hasLink),
+            progress: menuProgress,
+            onReaction: { emoji in
+                dismissMessageMenu()
+                toast = "Reacted \(emoji)"
+                scheduleToastClear()
+            },
+            onMoreReactions: {
+                dismissMessageMenu()
+                showComingSoon("More reactions")
+            },
+            onBackdropTap: {
+                // The finger that opened the menu is usually still down; its release lands on
+                // the backdrop and would close what the hold just opened.
+                guard let opened = menuOpenedAt,
+                      Date().timeIntervalSince(opened) > Self.menuTapGrace
+                else { return }
+                dismissMessageMenu()
             }
-            .frame(width: proxy.size.width, height: proxy.size.height)
+        ) {
+            MessageMenuHeroContent(
+                message: message,
+                timeLabel: messaging.clockTimeLabel(for: message.createdAt),
+                heroImage: session.heroImage,
+                inTranscriptTail: transcriptTail.contains(message.id),
+                reply: replyContent(for: message, quoted: quotedMessagesByID),
+                linkPreviewImage: linkPreviewImage(for: message)
+            )
+        } card: {
+            MessageContextMenuCard(
+                isMine: message.isMine,
+                onAction: { action in
+                    dismissMessageMenu()
+                    handleMenu(action, message: message)
+                },
+                progress: menuProgress,
+                hasLink: hasLink
+            )
         }
-        .ignoresSafeArea()
+        // A new message is a new menu: no scroll position carries over from the last one.
+        .id(message.id)
     }
 
     private func handleMenu(_ action: MessageMenuAction, message: MessagingController.ChatMessage) {

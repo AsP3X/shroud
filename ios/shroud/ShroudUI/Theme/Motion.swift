@@ -14,6 +14,7 @@ import UIKit
 /// | `gentle` | slow settle | large surfaces, sheets, hero chrome |
 /// | `bouncy` | visible overshoot | "it happened" moments (send, new message) |
 /// | `fade` | linear-ish opacity | scrims, cross-dissolves |
+/// | `menuLift` / `menuDrop` | Telegram's context menu | a message lifting into its long-press menu and back |
 enum Motion {
     /// Press-down: near-instant so the UI answers the finger before it lifts.
     static let press = Animation.easeOut(duration: 0.09)
@@ -28,8 +29,16 @@ enum Motion {
     static let fade = Animation.easeOut(duration: 0.18)
     static let scrim = Animation.easeOut(duration: 0.22)
 
+    /// A message lifting out of the thread into its long-press menu: Telegram's context-menu
+    /// spring (mass 5, stiffness 900, damping 104 — a hair of overshoot, settled in ~0.4 s).
+    static let menuLift = Animation.interpolatingSpring(mass: 5, stiffness: 900, damping: 104)
+    /// Putting it back: Telegram's 0.2 s ease-in-out.
+    static let menuDropDuration: Double = 0.2
+    static let menuDrop = Animation.easeInOut(duration: menuDropDuration)
+
     /// Reduce Motion substitute — position/scale changes collapse into a plain cross-fade.
-    static let reduced = Animation.easeOut(duration: 0.15)
+    static let reducedDuration: Double = 0.15
+    static let reduced = Animation.easeOut(duration: reducedDuration)
 
     /// Picks `animation` normally, or a flat fade when the user asked for less motion.
     static func respecting(_ reduceMotion: Bool, _ animation: Animation) -> Animation {
