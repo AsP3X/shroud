@@ -178,6 +178,11 @@ export function hasPin(userId: string): boolean {
   return readPinRecord(userId) !== null;
 }
 
+/** Forgets the browser PIN so the next unlock chooses a new one (the "forgot PIN" path). */
+export function clearPin(userId: string): void {
+  localStorage.removeItem(pinKey(userId));
+}
+
 function readPinRecord(userId: string): PinRecord | null {
   try {
     const raw = localStorage.getItem(pinKey(userId));

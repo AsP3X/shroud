@@ -474,12 +474,15 @@ a { color: var(--accent-text); text-decoration: none; }
 .phrase-status { margin: 0; font-size: var(--fs-xs); color: var(--text-tertiary); }
 
 /* --------------------------------------------------------- unlock screen -- */
+/* `Desktop — Unlock v2` / `Mobile — Unlock v2` in webclient.pen. The hero mirrors the iOS
+   lock screen; PIN entry stays because the browser unlocks with a PIN, not biometrics. */
 .lock-screen {
   min-height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 32px 20px 40px;
+  gap: clamp(48px, 8vw, 112px);
+  padding: 32px 24px 40px;
   background: var(--bg);
   position: relative;
   overflow: hidden;
@@ -488,31 +491,109 @@ a { color: var(--accent-text); text-decoration: none; }
   transition: opacity 0.45s ease, transform 0.5s var(--ease);
 }
 .lock-screen.in { opacity: 1; transform: none; }
-.lock-glow {
-  position: absolute;
-  width: 480px; height: 480px;
-  top: -80px; left: 50%;
-  transform: translateX(-50%);
-  background: radial-gradient(circle, rgba(107, 107, 242, 0.28) 0%, rgba(107, 107, 242, 0.06) 42%, transparent 70%);
-  pointer-events: none;
-  animation: lock-breathe 6s ease-in-out infinite;
+
+.lock-hero-col {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 20px;
+  width: min(420px, 100%);
+  text-align: center;
 }
-.lock-body {
-  position: relative;
-  width: min(360px, 100%);
+.lock-hero-col h1 {
+  margin: 0;
+  font-size: 32px; font-weight: 700; letter-spacing: -0.025em; line-height: 1.1;
+  transition: opacity 0.4s ease, transform 0.5s var(--ease);
+}
+.lock-hero-col .lede {
+  margin: 0; max-width: 360px;
+  font-size: var(--fs-base); line-height: 1.5; color: var(--text-secondary);
+  transition: opacity 0.4s ease, transform 0.5s var(--ease);
+}
+.lock-account {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 5px 12px 5px 5px; border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 6%, var(--bg));
+  font-size: var(--fs-sm); font-weight: 600;
+  transition: opacity 0.4s ease, transform 0.5s var(--ease);
+}
+.lock-account .avatar-sm { width: 26px; height: 26px; font-size: var(--fs-2xs); }
+.lock-trust {
+  margin: 4px 0 0;
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: var(--fs-xs); color: var(--text-tertiary);
+  transition: opacity 0.4s ease, transform 0.5s var(--ease);
+}
+
+/* Hero stage: everything is centred on the mark and offset from there. */
+.lock-stage {
+  position: relative; width: 360px; height: 300px;
+  transform: scale(0.9);
+  transition: transform 0.7s var(--ease);
+}
+.lock-screen.in .lock-stage { transform: none; }
+.lock-stage > * { position: absolute; left: 50%; top: 50%; }
+.lock-ring {
+  border-radius: 50%;
+  translate: -50% -50%;
+  transition: transform 0.5s var(--ease), opacity 0.45s ease;
+}
+.lock-ring-outer { width: 300px; height: 300px; border: 1.5px solid color-mix(in srgb, var(--accent) 16%, transparent); }
+.lock-ring-mid { width: 240px; height: 240px; border: 1.5px solid color-mix(in srgb, var(--accent) 28%, transparent); }
+.lock-ring-inner { width: 160px; height: 160px; background: var(--accent-soft); }
+.lock-mark {
+  width: 100px; height: 100px; border-radius: 29px;
+  translate: -50% -50%;
+  background: linear-gradient(180deg, #7c7aff, #5e5ce6);
+  color: #fff;
+  display: grid; place-items: center;
+  box-shadow: 0 16px 40px color-mix(in srgb, var(--accent) 40%, transparent);
+  transition: transform 0.5s var(--ease), opacity 0.3s ease, box-shadow 0.5s ease;
+}
+.lock-badge {
+  width: 40px; height: 40px; border-radius: 50%;
+  translate: calc(-50% + 47px) calc(-50% + 48px);
+  background: var(--bubble-in); color: var(--accent-text);
+  display: grid; place-items: center;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.22);
+  transition: background 0.25s ease, color 0.25s ease, transform 0.35s var(--ease), opacity 0.3s ease;
+}
+.lock-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  white-space: nowrap;
+  font-size: var(--fs-md); font-weight: 600;
+  transition: opacity 0.35s ease, transform 0.5s var(--ease), letter-spacing 0.3s ease;
+}
+.lock-chip-locked {
+  translate: calc(-50% + 97px) calc(-50% - 83px);
+  rotate: -5deg;
+  padding: 9px 13px; border-radius: 16px 16px 4px 16px;
+  background: var(--accent); color: #fff;
+  letter-spacing: 2px;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.lock-chip-locked svg { opacity: 0.8; }
+.lock-chip-sealed {
+  translate: calc(-50% - 98px) calc(-50% + 68px);
+  rotate: 3deg;
+  padding: 7px 11px; border-radius: 14px;
+  background: var(--bubble-in); color: var(--text-secondary);
+  font-size: var(--fs-xs); font-weight: 500;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+.lock-chip-sealed svg { color: var(--online); }
+
+/* PIN card */
+.lock-card {
   display: flex; flex-direction: column; align-items: center;
   gap: 18px;
-  z-index: 1;
+  padding: 32px 36px 26px;
+  border-radius: 28px;
+  background: var(--surface-2);
+  border: 1px solid var(--separator);
+  box-shadow: var(--shadow-md);
+  transition: opacity 0.4s ease, transform 0.5s var(--ease);
 }
-.lock-body h1 { margin: 0; font-size: 28px; font-weight: 700; letter-spacing: -0.03em; text-align: center; }
-.lock-mark {
-  width: 72px; height: 72px; border-radius: 22px;
-  background: var(--accent-soft); color: var(--accent-text);
-  display: grid; place-items: center;
-  box-shadow: 0 12px 40px rgba(107, 107, 242, 0.28);
-  animation: lock-mark-in 0.7s var(--ease) both;
-}
-.lock-dots { display: flex; gap: 14px; min-height: 18px; margin-top: 4px; }
+.lock-card-label { margin: 0; font-size: var(--fs-base); font-weight: 600; }
+.lock-dots { display: flex; gap: 14px; min-height: 18px; }
 .lock-dots.shake { animation: lock-shake 0.42s ease; }
 .lock-dot {
   width: 14px; height: 14px; border-radius: 50%;
@@ -525,23 +606,22 @@ a { color: var(--accent-text); text-decoration: none; }
   transform: scale(1.15);
   box-shadow: 0 0 0 4px var(--accent-soft);
 }
-.lock-err {
+.lock-hint, .lock-err {
   min-height: 18px; margin: 0;
-  font-size: var(--fs-sm); font-weight: 600;
-  color: var(--danger); text-align: center;
+  font-size: var(--fs-xs); text-align: center;
 }
-.lock-err.spacer { visibility: hidden; }
-.lock-hidden { position: absolute; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
+.lock-hint { color: var(--text-tertiary); }
+.lock-err { font-size: var(--fs-sm); font-weight: 600; color: var(--danger); }
 .lock-pad {
-  display: grid; grid-template-columns: repeat(3, 72px);
-  gap: 14px 18px; margin-top: 8px; justify-content: center;
+  display: grid; grid-template-columns: repeat(3, 64px);
+  gap: 12px 14px; justify-content: center;
 }
 .lock-key {
-  width: 72px; height: 72px; border-radius: 36px;
+  width: 64px; height: 64px; border-radius: 32px;
   border: 1px solid var(--separator);
   background: color-mix(in srgb, var(--text-primary) 6%, var(--surface-2));
   color: var(--text-primary);
-  font-size: 28px; font-weight: 500;
+  font-size: 26px; font-weight: 500;
   display: grid; place-items: center;
   touch-action: manipulation;
   transition: transform 0.12s ease, background 0.12s ease;
@@ -549,18 +629,41 @@ a { color: var(--accent-text); text-decoration: none; }
 .lock-key:hover { background: color-mix(in srgb, var(--text-primary) 10%, var(--surface-2)); }
 .lock-key:active { transform: scale(0.9); background: var(--accent-soft); color: var(--accent-text); }
 .lock-key:disabled { opacity: 0.4; }
-.lock-key.ghost { background: transparent; pointer-events: none; }
-.lock-key.del { font-size: 16px; color: var(--text-secondary); background: transparent; }
+.lock-key.ghost { background: transparent; border: 0; pointer-events: none; }
+.lock-key.del { font-size: 16px; color: var(--text-secondary); background: transparent; border-color: transparent; }
 .lock-key.del:active { color: var(--accent-text); background: var(--accent-soft); }
+.lock-phrase { font-size: var(--fs-sm); padding: 4px 0 0; }
+.lock-reset {
+  margin: 0; max-width: 232px;
+  font-size: var(--fs-xs); line-height: 1.5; color: var(--text-secondary); text-align: center;
+}
+.lock-reset span { display: flex; justify-content: center; gap: 16px; margin-top: 8px; }
+.auth-link.muted { color: var(--text-secondary); }
 
-@keyframes lock-breathe {
-  0%, 100% { opacity: 0.7; transform: translateX(-50%) scale(1); }
-  50% { opacity: 1; transform: translateX(-50%) scale(1.06); }
+/* Verified: the badge springs open and goes green, the chips decrypt, the dots agree. */
+.lock-screen.is-verified .lock-badge { background: var(--online); color: #fff; transform: scale(1.1); }
+.lock-screen.is-verified .lock-ring-inner { transform: scale(1.04); }
+.lock-screen.is-verified .lock-chip-locked { letter-spacing: 0; }
+.lock-screen.is-verified .lock-chip-sealed { color: var(--text-primary); }
+.lock-screen.is-verified .lock-dot.filled {
+  background: var(--online); border-color: var(--online);
+  box-shadow: 0 0 0 4px var(--ok-bg);
 }
-@keyframes lock-mark-in {
-  from { transform: scale(0.72); opacity: 0; }
-  to { transform: none; opacity: 1; }
+/* Release: rings ripple out, the mark lifts, everything else settles away for the shell. */
+.lock-screen.is-releasing .lock-ring { transform: scale(1.3); opacity: 0; }
+.lock-screen.is-releasing .lock-ring-inner { transform: scale(1.25); }
+.lock-screen.is-releasing .lock-mark {
+  transform: translateY(-24px) scale(1.16);
+  box-shadow: 0 22px 44px color-mix(in srgb, var(--accent) 50%, transparent);
 }
+.lock-screen.is-releasing .lock-badge,
+.lock-screen.is-releasing .lock-chip { opacity: 0; transform: scale(0.9); }
+.lock-screen.is-releasing .lock-account,
+.lock-screen.is-releasing h1,
+.lock-screen.is-releasing .lede,
+.lock-screen.is-releasing .lock-trust { opacity: 0; transform: translateY(24px); }
+.lock-screen.is-releasing .lock-card { opacity: 0; transform: translateY(24px) scale(0.98); }
+
 @keyframes lock-shake {
   0%, 100% { transform: translateX(0); }
   20% { transform: translateX(-10px); }
@@ -2849,11 +2952,21 @@ button.reply-quote { cursor: pointer; }
 }
 
 @media (prefers-reduced-motion: reduce) {
+
+  .lock-screen { flex-direction: column; justify-content: flex-start; gap: 12px; padding: 20px 16px 32px; }
+  .lock-hero-col { gap: 14px; }
+  .lock-hero-col h1 { font-size: 28px; }
+  .lock-hero-col .lede { font-size: var(--fs-md); max-width: 300px; }
+  .lock-stage { scale: 0.72; margin: -46px 0 -52px; }
+  .lock-trust { display: none; }
+  .lock-card { background: transparent; border: 0; box-shadow: none; padding: 4px 0 0; gap: 14px; }
+  .lock-pad { gap: 10px 14px; }
+  .lock-card-label { display: none; }
   *, *::before, *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
   .lock-screen { opacity: 1; transform: none; }
-  .lock-glow { transform: translateX(-50%); }
+  .lock-stage { transform: none; }
 }
