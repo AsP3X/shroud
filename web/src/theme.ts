@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { storageSealed } from "./storageSeal";
 
 export type ThemePref = "system" | "light" | "dark";
 export type ResolvedTheme = "light" | "dark";
@@ -42,7 +43,7 @@ export function applyTheme(pref: ThemePref): void {
 
 export function setTheme(pref: ThemePref): void {
   try {
-    localStorage.setItem(KEY, pref);
+    if (!storageSealed()) localStorage.setItem(KEY, pref);
   } catch {
     /* private mode: honor it for this tab only */
   }

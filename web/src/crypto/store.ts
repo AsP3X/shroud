@@ -1,3 +1,4 @@
+import { storageSealed } from "../storageSeal";
 import { deserializeIdentity, serializeIdentity, type IdentityMaterial } from "./identity";
 
 function key(userId: string): string {
@@ -21,6 +22,7 @@ export function loadIdentity(userId: string): IdentityMaterial | null {
 }
 
 export function saveIdentity(material: IdentityMaterial): void {
+  if (storageSealed()) return;
   localStorage.setItem(key(material.userId), serializeIdentity(material));
 }
 

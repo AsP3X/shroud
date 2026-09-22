@@ -361,6 +361,25 @@ final class MessagingController {
         if !wipeDisk {
             persistSnapshot()
         }
+        stopActivity()
+        if wipeDisk {
+            clearLocalData()
+        } else {
+            clearInMemoryState()
+        }
+    }
+
+    /// Stops polling, the socket, queued sends and every disk write, and drops what is in
+    /// memory — without saving a last snapshot first.
+    ///
+    /// Human: The logout wipe calls this before it deletes anything: a snapshot written now would
+    /// only be written to be deleted, and a poll landing mid-wipe would refill the stores.
+    func haltForDeviceWipe() {
+        stopActivity()
+        clearInMemoryState()
+    }
+
+    private func stopActivity() {
         pollTask?.cancel()
         pollTask = nil
         contactsPollTask?.cancel()
@@ -389,11 +408,6 @@ final class MessagingController {
         isOffline = false
         lastPresenceSweep = nil
         local.setHistoryKey(nil)
-        if wipeDisk {
-            clearLocalData()
-        } else {
-            clearInMemoryState()
-        }
     }
 
     /// Wipes in-memory lists and on-device message caches (plaintext, media, ratchets, peer keys).

@@ -294,20 +294,41 @@ pub async fn login(
     }))
 }
 
-/// `POST /auth/logout` — revoke current session only.
+/// `POST /auth/logout` — revoke the current session and forget this device's push token.
+///
+/// Human: Pushes are selected per account, not per live session, so a token left behind kept
+/// ringing a logged-out phone with the account's messages and calls. The device row stays:
+/// messages and uploads reference it (`ON DELETE CASCADE`), and the next login re-registers
+/// its token.
 pub async fn logout(
     State(state): State<AppState>,
     auth: AuthContext,
 ) -> Result<StatusCode, AppError> {
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
+
     sqlx::query(
         r#"
         UPDATE sessions SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL
         "#,
     )
     .bind(auth.session_id)
-    .execute(&state.pool)
+    .execute(&mut *tx)
     .await
     .map_err(|err| AppError::Internal(format!("logout failed: {err}")))?;
+
+    sqlx::query(r#"DELETE FROM push_tokens WHERE device_id = $1"#)
+        .bind(auth.device_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| AppError::Internal(format!("logout push token delete failed: {err}")))?;
+
+    tx.commit()
+        .await
+        .map_err(|err| AppError::Internal(format!("commit logout failed: {err}")))?;
 
     tracing::info!(
         user_id = %auth.user_id,

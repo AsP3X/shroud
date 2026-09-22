@@ -10,6 +10,7 @@ Deploy: `./deploy.sh` / `.\deploy.ps1`.
 | Device model | First-class device (Telegram-style) | Server already has per-device identity keys, OTPKs, and a 5-device cap. The browser is a real device: username/password login, 12-word phrase unlock. |
 | Crypto | TypeScript + WebCrypto, golden-tested against iOS vectors | Two implementations, one wire format. Shared WASM is a later unification, not v1. |
 | At rest | Sealed IndexedDB + PIN, auto-lock | Ciphertext persists. Plaintext is RAM-only. Lock after 5 minutes idle **and** when the tab is hidden. |
+| Logout | Clear the browser, then prove it (`deviceWipe.ts`) | Local and session storage emptied, every IndexedDB database deleted, other tabs reload; a final check re-reads every store before the dialog says "clear". A tab closed mid-wipe is finished on the next load. The Whisper weights (public files) and the device-id anchor stay — the anchor so the next login reuses this device. A forced sign-out (401) clears the same way. |
 | Layout | iOS dark tokens in a WhatsApp-Web three-pane | Rail + chat list + thread on desktop; stacked list/thread + tab bar on mobile. PWA-installable. |
 | Hosting | `./deploy.sh` configures the public URL | Same-origin: web nginx reverse-proxies `/api/v1` (and WebSocket) to the API. iOS still talks to the API host. `WEB_PUBLIC_URL` also seeds CORS if someone splits origins. |
 | v1 product | Chats, contacts, requests, Notes, media, privacy/devices/safety numbers | No calls, no on-device transcripts in v1. |

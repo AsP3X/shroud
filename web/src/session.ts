@@ -1,4 +1,5 @@
 import type { Session } from "./api/client";
+import { storageSealed } from "./storageSeal";
 
 const TOKEN_KEY = "shroud.session";
 const DEVICE_KEY = "shroud.device-anchor";
@@ -57,6 +58,7 @@ function readLastActive(): number {
   const parsed = raw ? Number(raw) : NaN;
   const now = Date.now();
   if (Number.isFinite(parsed) && parsed <= now + 60_000) return parsed;
+  if (storageSealed()) return now;
   try {
     localStorage.setItem(LAST_ACTIVE_KEY, String(now));
   } catch {
@@ -68,6 +70,7 @@ function readLastActive(): number {
 let lastTouchWrite = 0;
 
 export function touchLastActive(force = false): void {
+  if (storageSealed()) return;
   const now = Date.now();
   if (!force && now - lastTouchWrite < 30_000 && lastTouchWrite !== 0) return;
   lastTouchWrite = now;
@@ -96,6 +99,7 @@ export function loadSession(): Session | null {
 }
 
 export function saveSession(session: Session): void {
+  if (storageSealed()) return;
   localStorage.setItem(TOKEN_KEY, JSON.stringify(session));
   sessionStorage.setItem(TAB_LIVE_KEY, "1");
   touchLastActive(true);
@@ -124,6 +128,7 @@ export function loadDeviceAnchor(username: string): string | null {
 }
 
 export function saveDeviceAnchor(anchor: DeviceAnchor): void {
+  if (storageSealed()) return;
   localStorage.setItem(
     DEVICE_KEY,
     JSON.stringify({
@@ -147,6 +152,7 @@ export function lockOnHidden(): boolean {
 
 export function setLockOnHidden(enabled: boolean): void {
   lockOnHiddenOverride = enabled;
+  if (storageSealed()) return;
   try {
     localStorage.setItem(LOCK_HIDDEN_KEY, enabled ? "1" : "0");
   } catch {
@@ -159,6 +165,7 @@ export function isLocked(): boolean {
 }
 
 export function setLocked(locked: boolean): void {
+  if (storageSealed()) return;
   if (locked) sessionStorage.setItem(LOCKED_KEY, "1");
   else sessionStorage.removeItem(LOCKED_KEY);
 }
@@ -203,6 +210,7 @@ function pinsEqual(a: string, b: string): boolean {
 }
 
 export async function setPin(userId: string, pin: string): Promise<void> {
+  if (storageSealed()) return;
   const salt = newSalt();
   const hash = await sha256Hex(`${salt}:${pin}`);
   localStorage.setItem(pinKey(userId), JSON.stringify({ salt, hash }));
@@ -222,6 +230,9 @@ export function installAutoLock(onLock: () => void): () => void {
   let unloading = false;
 
   function lock() {
+    // A wipe already dropped the token and is clearing the tab. Navigating to unlock here
+    // would unmount it before it finishes.
+    if (storageSealed()) return;
     if (!loadSession()) {
       onLock();
       return;

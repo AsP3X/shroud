@@ -1,10 +1,15 @@
-const DB_NAME = "shroud-media";
+import { storageSealed } from "../storageSeal";
+
+export const MEDIA_DB_NAME = "shroud-media";
+const DB_NAME = MEDIA_DB_NAME;
 const STORE = "blobs";
 const VERSION = 1;
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
 function openDb(): Promise<IDBDatabase> {
+  // Opening creates the database, so a read during a wipe would bring back the one it deleted.
+  if (storageSealed()) return Promise.reject(new Error("storage sealed for a device wipe"));
   if (dbPromise) return dbPromise;
   dbPromise = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, VERSION);
@@ -15,6 +20,11 @@ function openDb(): Promise<IDBDatabase> {
     req.onsuccess = () => {
       const db = req.result;
       db.onclose = () => {
+        dbPromise = null;
+      };
+      // Another tab is deleting the database (logout): let go, or its delete waits on us.
+      db.onversionchange = () => {
+        db.close();
         dbPromise = null;
       };
       resolve(db);
@@ -99,6 +109,18 @@ export async function deleteMediaBlobs(messageId: string): Promise<void> {
     });
   } catch {
     /* nothing stored, or storage unavailable */
+  }
+}
+
+/** Closes this tab's connection, so deleting the database is not blocked by it. */
+export async function closeMediaDb(): Promise<void> {
+  const pending = dbPromise;
+  dbPromise = null;
+  if (!pending) return;
+  try {
+    (await pending).close();
+  } catch {
+    /* never opened */
   }
 }
 

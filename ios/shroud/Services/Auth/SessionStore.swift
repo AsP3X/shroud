@@ -5,9 +5,14 @@ import Security
 /// Human: Survives app restarts so the user stays logged in like Signal.
 /// Agent: READS/WRITES Keychain; never stores encryption phrase here.
 nonisolated struct SessionStore: Sendable {
+    static let defaultService = "com.shroud.session"
+    /// Device id kept across logout. The next login of this username sends it back, so the
+    /// server reuses the device instead of minting one toward the 5-device cap.
+    static var appDeviceAnchorService: String { defaultService + ".device-anchor" }
+
     private let service: String
 
-    init(service: String = "com.shroud.session") {
+    init(service: String = SessionStore.defaultService) {
         self.service = service
     }
 
@@ -75,24 +80,48 @@ nonisolated struct SessionStore: Sendable {
         }
     }
 
+    struct DeviceAnchorRecord: Equatable, Sendable {
+        var username: String
+        var deviceID: UUID
+    }
+
     /// Device id last persisted for `username` (case-insensitive), if any.
     func loadDeviceID(matchingUsername username: String) -> UUID? {
+        guard let record = loadDeviceAnchorRecord() else { return nil }
         let needle = username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !needle.isEmpty,
-              let storedUser = readDevice(key: DeviceKey.username)?.lowercased(),
-              storedUser == needle,
+        guard !needle.isEmpty, record.username.lowercased() == needle else { return nil }
+        return record.deviceID
+    }
+
+    /// Username and device id, if both are stored. Logout reads this so it can put the anchor
+    /// back when a keychain wipe cannot list items and has to delete the whole class.
+    func loadDeviceAnchorRecord() -> DeviceAnchorRecord? {
+        guard let username = readDevice(key: DeviceKey.username),
+              !username.isEmpty,
               let idString = readDevice(key: DeviceKey.deviceID),
-              let id = UUID(uuidString: idString)
-        else {
-            return nil
-        }
-        return id
+              let deviceID = UUID(uuidString: idString)
+        else { return nil }
+        return DeviceAnchorRecord(username: username, deviceID: deviceID)
     }
 
     func saveDeviceAnchor(username: String, deviceID: UUID) {
         let normalized = username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         try? writeDevice(key: DeviceKey.username, value: normalized)
         try? writeDevice(key: DeviceKey.deviceID, value: deviceID.uuidString)
+    }
+
+    /// True only when the Keychain answers "no session item". Human: a locked Keychain (before the
+    /// first unlock after a restart, e.g. a VoIP push launch) is not an answer — `load()` returns
+    /// nil then too, and must never be read as "logged out" by anything that deletes data.
+    func hasNoSession() -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: Key.token,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        return SecItemCopyMatching(query as CFDictionary, nil) == errSecItemNotFound
     }
 
     func clearDeviceAnchor() {
@@ -107,7 +136,9 @@ nonisolated struct SessionStore: Sendable {
 
     // MARK: - Keychain
 
-    private var deviceService: String { service + ".device-anchor" }
+    var deviceAnchorService: String { service + ".device-anchor" }
+
+    private var deviceService: String { deviceAnchorService }
 
     private enum Key {
         static let token = "session_token"

@@ -21,13 +21,15 @@ final class AppRouter {
     var messagingController: MessagingController?
     /// Injected calls; recent list is wiped on logout.
     var callController: CallController?
+    /// Injected; runs the logout wipe and its overlay.
+    var deviceWipe: DeviceWipeController?
 
     /// Human: Server session ≠ messaging unlock. Need phrase-derived keys (or Keychain restore).
     /// Agent: True only after unlockMessages() / cold-start crypto restore.
     var hasUnlockedMessaging = false
 
     /// True while logout is in flight (disables the Log Out control).
-    private(set) var isLoggingOut = false
+    var isLoggingOut: Bool { deviceWipe?.isPresented == true }
 
     /// One-shot toast after returning to Welcome (e.g. "Signed out · local data cleared").
     var postAuthToast: String?
@@ -116,33 +118,15 @@ final class AppRouter {
         path = []
     }
 
-    /// Ends the server session, wipes local message caches, locks crypto (identity kept for re-login).
+    /// Logs out by clearing this iPhone of the account: server session, messages, media, every
+    /// key (identity included — signing in again takes the password and the phrase), settings and
+    /// caches, verified, behind `DeviceWipeOverlay`. Returns to Welcome when it is done.
     ///
-    /// Local session + caches clear first so a force-quit mid-network never leaves you signed in.
-    ///
-    /// Note: repeated server authentication failures (HTTP 401) use a separate path in
-    /// `SessionController` + `RootView` that also wipes identity keys (`wipeStore: true`).
+    /// Human: A pending-wipe marker is written before the first deletion, so a force-quit
+    /// mid-way is finished on the next launch rather than leaving a half-cleared device.
     func logOut() {
         guard !isLoggingOut else { return }
-        isLoggingOut = true
         postAuthToast = nil
-
-        Task {
-            // Clears Keychain session immediately; server revoke is best-effort in the background.
-            await sessionController?.logout()
-
-            // Publish feedback as soon as the session is gone so Welcome can show it on appear.
-            postAuthToast = "Signed out · local data cleared"
-
-            // RootView also stops messaging on `isSignedIn` change; call again so endpoint-change
-            // logout paths that only use the router still wipe caches.
-            messagingController?.stop(wipeDisk: true)
-            callController?.clearLocalState()
-            // Keep identity material so the same user can unlock with their phrase again.
-            cryptoController?.lock(wipeStore: false)
-            hasUnlockedMessaging = false
-            path = []
-            isLoggingOut = false
-        }
+        deviceWipe?.start(reason: .logout)
     }
 }

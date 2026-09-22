@@ -76,7 +76,7 @@ new builds interoperable in both directions.
 6. Voice transcription is **on-device** for v1 (no server transcript APIs yet).
 7. Contact requests and blocks are enforced on the server before full messaging.
 8. Push payloads are **opaque references only** (no content or keys).
-9. Sessions are **device-bound opaque tokens** with no time-based logout (revoke on logout / device remove / password change of other devices).
+9. Sessions are **device-bound opaque tokens** with no time-based logout (revoke on logout / device remove / password change of other devices). Logout also forgets the device's push token, so a logged-out phone stops receiving the account's pushes.
 10. Presence is visible only to **accepted contacts**.
 11. Identity Keychain items use `WhenUnlockedThisDeviceOnly` (no backup restore; unavailable while device locked).
 
@@ -129,6 +129,7 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 | OutboundPending + ChatListFormatting | **done** — pure helpers for offline queue + list previews |
 | MessageDecoder + NotesLocal | **done** — decrypt pipeline and Notes CRUD pulled out of controller |
 | History key vault | **done** — biometry/passcode wrap; no plain historyKey in identity Keychain; RAM wipe on background |
+| Logout wipe | **done** — iOS and web clear every store the app uses (files, Keychain, defaults, HTTP cache, snapshots, notifications) behind a step-by-step overlay, then verify; identity keys go too, so signing in again takes the phrase. The device-id anchor stays so the next login reuses the device (5-device cap). Interrupted wipes finish on next launch. Server logout also drops the device's push token. |
 | History pagination | **done** — client walks `before_created_at`/`before_id` pages to fill 90-day window |
 | Notes multi-device | **done** — Saved Messages via `peer_user_id = self`; excluded from chats list |
 | Notes to me | **done** — local-only self chat (text / photo / voice / todos); no server replies |

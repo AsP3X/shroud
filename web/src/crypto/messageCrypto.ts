@@ -11,6 +11,7 @@ import {
   type RatchetSession,
 } from "./ratchet";
 import { openBox, sealBox, type SealedBox } from "./sealedBox";
+import { storageSealed } from "../storageSeal";
 
 export type RatchetEnvelope = {
   v: number;
@@ -46,6 +47,7 @@ export function loadRatchet(ourUserId: string, peerUserId: string): RatchetSessi
 }
 
 export function saveRatchet(ourUserId: string, peerUserId: string, session: RatchetSession): void {
+  if (storageSealed()) return;
   localStorage.setItem(sessionKey(ourUserId, peerUserId), serializeSession(session));
 }
 

@@ -233,7 +233,7 @@ struct SettingsView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(
-                "This ends your session on this device and clears cached messages, media, and chat keys from local storage. You’ll need your password and encryption phrase to sign in again."
+                "Everything Shroud keeps on this \(UIDevice.current.model) is deleted: messages, photos and voice notes, your encryption keys and settings. Your other devices keep your chats. To sign in again you’ll need your password and encryption phrase."
             )
         }
     }

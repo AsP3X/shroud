@@ -1,3 +1,4 @@
+import { storageSealed } from "../storageSeal";
 import { clearMediaBlobs } from "./mediaCache";
 
 const prefix = "shroud.pt.";
@@ -35,6 +36,7 @@ export function loadPreview(me: string, peer: string): ChatPreview | null {
 }
 
 export function savePreview(me: string, peer: string, preview: ChatPreview): void {
+  if (storageSealed()) return;
   if (preview.id && withdrawn.has(preview.id.toLowerCase()) && preview.text !== "Message deleted") {
     return;
   }
@@ -64,7 +66,7 @@ export function loadPlaintext(messageId: string): string | null {
 
 export function savePlaintext(messageId: string, text: string): void {
   const key = messageId.toLowerCase();
-  if (withdrawn.has(key)) return;
+  if (withdrawn.has(key) || storageSealed()) return;
   try {
     localStorage.setItem(prefix + key, text);
   } catch {
@@ -118,6 +120,7 @@ export function redactPreviewsFor(me: string, messageId: string): void {
  * delete, when the line has to fall back to an older message.
  */
 export function replacePreview(me: string, peer: string, preview: ChatPreview | null): void {
+  if (storageSealed()) return;
   try {
     if (preview) localStorage.setItem(previewKey(me, peer), JSON.stringify(preview));
     else localStorage.removeItem(previewKey(me, peer));

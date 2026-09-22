@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeft } from "lucide-react";
 import { api, ApiError, type Session } from "../api/client";
 import type { IdentityMaterial } from "../crypto/identity";
-import { clearCache } from "../crypto/plaintextCache";
 import { LogoutDialog } from "./LogoutDialog";
 import { DevicesView } from "./settings/DevicesView";
 import { AppearanceView, DataStorageView, ServerView } from "./settings/PreferencesViews";
@@ -15,6 +14,7 @@ export function SettingsPane({
   identity,
   shareLink,
   onLogout,
+  onSessionEnded,
   onLockNow,
   onShowQr,
   onCacheCleared,
@@ -22,7 +22,10 @@ export function SettingsPane({
   session: Session;
   identity: IdentityMaterial | null;
   shareLink: string;
+  /** Confirmed "Log Out": the shell clears this browser. */
   onLogout: () => void;
+  /** The server no longer accepts the session: the same clearing, without asking. */
+  onSessionEnded: () => void;
   onLockNow: () => void;
   onShowQr: () => void;
   onCacheCleared: () => void;
@@ -31,10 +34,7 @@ export function SettingsPane({
   const [deviceCount, setDeviceCount] = useState<number | null>(null);
   const [confirmLogout, setConfirmLogout] = useState(false);
 
-  const forceLogout = useCallback(() => {
-    clearCache();
-    onLogout();
-  }, [onLogout]);
+  const forceLogout = useCallback(() => onSessionEnded(), [onSessionEnded]);
   const forceLogoutRef = useRef(forceLogout);
   forceLogoutRef.current = forceLogout;
 
@@ -109,7 +109,13 @@ export function SettingsPane({
       )}
 
       {confirmLogout ? (
-        <LogoutDialog onCancel={() => setConfirmLogout(false)} onConfirm={forceLogout} />
+        <LogoutDialog
+          onCancel={() => setConfirmLogout(false)}
+          onConfirm={() => {
+            setConfirmLogout(false);
+            onLogout();
+          }}
+        />
       ) : null}
     </main>
   );

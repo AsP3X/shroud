@@ -56,6 +56,8 @@ struct LocalMediaCache: Sendable {
             context: .mediaFile
         ) else { return }
         let url = fileURL(messageID)
+        // Ensure parent exists: a logout wipe removes the folder, and this cache outlives it.
+        LocalDataProtection.prepareDirectory(directory)
         try? sealed.write(to: url, options: .atomic)
         LocalDataProtection.lockDown(url: url)
         try? FileManager.default.removeItem(at: legacyFileURL(messageID))

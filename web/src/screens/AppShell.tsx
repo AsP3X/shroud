@@ -13,6 +13,7 @@ import {
 import { Avatar } from "../components/Avatar";
 import { ChatList, type ListEntry } from "../components/ChatList";
 import { TypingLabel } from "../components/Typing";
+import { DeviceWipeDialog, type WipeReason } from "../components/DeviceWipeDialog";
 import { LogoutDialog } from "../components/LogoutDialog";
 import { Modal } from "../components/Modal";
 import { ProfileSheet } from "../components/ProfileSheet";
@@ -45,7 +46,7 @@ import {
   type ChatMessage,
 } from "../messaging";
 import { saveMediaBlob } from "../crypto/mediaCache";
-import { clearCache, redactPreviewsFor } from "../crypto/plaintextCache";
+import { redactPreviewsFor } from "../crypto/plaintextCache";
 import { adoptImage, ensureImage, forgetImages, rekeyImage, releaseImage } from "../media/images";
 import type { PreparedImage } from "../media/prepareImage";
 import { encodeVideo, resetVideoWorker, VideoCanceledError, type VideoSendDraft } from "../media/prepareVideo";
@@ -67,7 +68,7 @@ import {
   TYPING_EXPIRE_MS,
   type PeerActivity,
 } from "../typing";
-import { clearSession, setLocked } from "../session";
+import { setLocked } from "../session";
 
 type PeerRef = { id: string; username: string };
 
@@ -107,6 +108,9 @@ export function AppShell({ session }: { session: Session }) {
   /** Account menu on the rail: the profile sheet, and the logout confirmation. */
   const [showProfile, setShowProfile] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
+  /** Clearing this browser: after "Log Out", or because the server ended the session. */
+  const [wipe, setWipe] = useState<WipeReason | null>(null);
+  const endSession = useCallback(() => setWipe((current) => current ?? "ended"), []);
   const [showInfo, setShowInfo] = useState(false);
   const [invite, setInvite] = useState("");
   const [addBusy, setAddBusy] = useState(false);
@@ -360,8 +364,7 @@ export function AppShell({ session }: { session: Session }) {
       refresh().catch((err: unknown) => {
         if (cancelled) return;
         if (err instanceof ApiError && err.isAuthFailure) {
-          clearSession();
-          navigate("/", { replace: true });
+          endSession();
           return;
         }
         setLoading(false);
@@ -373,7 +376,7 @@ export function AppShell({ session }: { session: Session }) {
       cancelled = true;
       window.clearInterval(tick);
     };
-  }, [refresh, navigate]);
+  }, [refresh, endSession]);
 
   useEffect(() => {
     const material = loadIdentity(session.user.id);
@@ -411,10 +414,7 @@ export function AppShell({ session }: { session: Session }) {
   useEffect(() => {
     const connection = connectRealtime({
       token: session.token,
-      onFatalAuth: () => {
-        clearSession();
-        navigate("/", { replace: true });
-      },
+      onFatalAuth: endSession,
       onEvent: (event) => {
         if (event.type === "auth.ok") return;
         if (event.type === "typing") {
@@ -603,16 +603,6 @@ export function AppShell({ session }: { session: Session }) {
     },
     [],
   );
-
-  const logout = useCallback(async () => {
-    try {
-      await api.logout(session.token);
-    } catch {
-      /* still wipe locally */
-    }
-    clearSession();
-    navigate("/", { replace: true });
-  }, [session.token, navigate]);
 
   async function sendInvite() {
     setAddError(null);
@@ -1148,7 +1138,8 @@ export function AppShell({ session }: { session: Session }) {
             session={session}
             identity={identity}
             shareLink={shareLink}
-            onLogout={logout}
+            onLogout={() => setWipe("logout")}
+            onSessionEnded={endSession}
             onLockNow={lockNow}
             onShowQr={() => setShowQr(true)}
             onCacheCleared={() => setPreviewRev((n) => n + 1)}
@@ -1301,13 +1292,13 @@ export function AppShell({ session }: { session: Session }) {
         <LogoutDialog
           onCancel={() => setConfirmLogout(false)}
           onConfirm={() => {
-            // Same as logging out from Settings: decrypted caches go before the session does.
             setConfirmLogout(false);
-            clearCache();
-            void logout();
+            setWipe("logout");
           }}
         />
       ) : null}
+
+      {wipe ? <DeviceWipeDialog session={session} reason={wipe} continued={wipe === "logout"} /> : null}
 
       {showInfo && selected ? (
         <Modal title="Contact info" onClose={() => setShowInfo(false)}>

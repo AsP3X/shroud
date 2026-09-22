@@ -14,6 +14,7 @@ struct RootView: View {
     @State private var callController = CallController()
     @State private var serverConfig = ServerConfigurationController()
     @State private var router = AppRouter()
+    @State private var deviceWipe = DeviceWipeController()
     @Namespace private var onboardingNamespace
 
     var body: some View {
@@ -29,6 +30,13 @@ struct RootView: View {
             InCallOverlay()
                 .zIndex(100)
                 .allowsHitTesting(callController.active != nil)
+
+            // Human: Above everything, calls included — the switch to Welcome happens under it.
+            if deviceWipe.isPresented {
+                DeviceWipeOverlay()
+                    .transition(.opacity)
+                    .zIndex(200)
+            }
         }
         .environment(\.onboardingNamespace, onboardingNamespace)
         .environment(sessionController)
@@ -36,6 +44,7 @@ struct RootView: View {
         .environment(messagingController)
         .environment(callController)
         .environment(serverConfig)
+        .environment(deviceWipe)
         .task {
             SecurityPreferences.applyToVault()
             // Wire before any network call so 401s during validateSession count toward force-logout.
@@ -44,6 +53,12 @@ struct RootView: View {
             router.cryptoController = cryptoController
             router.messagingController = messagingController
             router.callController = callController
+            router.deviceWipe = deviceWipe
+            deviceWipe.session = sessionController
+            deviceWipe.messaging = messagingController
+            deviceWipe.crypto = cryptoController
+            deviceWipe.calls = callController
+            deviceWipe.router = router
             messagingController.bind(
                 session: sessionController,
                 crypto: cryptoController,
@@ -51,6 +66,11 @@ struct RootView: View {
             )
             callController.bind(session: sessionController, messaging: messagingController)
             PushNotificationService.shared.bind(session: sessionController, calls: callController)
+            // A logout the app was killed in the middle of is finished before anything reads the
+            // session; so is whatever an older version's logout left behind.
+            if await deviceWipe.finishInterruptedWipeIfNeeded() {
+                router.postAuthToast = "Signed out · this \(UIDevice.current.model) was cleared"
+            }
             await sessionController.validateSessionIfNeeded()
             // Session without local identity (app data wipe / incomplete login) → Sign Up / Log In.
             if sessionController.isSignedIn {
@@ -72,21 +92,29 @@ struct RootView: View {
             guard lockScreenSessionProbeActive else { return }
             await runLockScreenSessionValidationLoop()
         }
+        .onChange(of: sessionController.pendingFullLocalWipe) { _, pending in
+            // Repeated 401s set the flag and leave the token in place. The wipe revokes it.
+            // Consume the flag now: the wipe's own logout would otherwise see it and start
+            // a second wipe after this one has already finished.
+            guard pending, !deviceWipe.isPresented else { return }
+            _ = sessionController.consumePendingFullLocalWipe()
+            deviceWipe.start(reason: .sessionEnded)
+        }
         .onChange(of: sessionController.isSignedIn) { _, signedIn in
             if !signedIn {
-                // Repeated HTTP 401s → full wipe (keys included). User Log Out keeps identity
-                // for phrase re-unlock on the same device.
+                // Repeated HTTP 401s: the server no longer accepts this session, so the iPhone is
+                // cleared exactly like Log Out does it — overlay, every store, verified.
                 let fullWipe = sessionController.consumePendingFullLocalWipe()
                 router.hasUnlockedMessaging = false
-                cryptoController.lock(wipeStore: fullWipe)
-                // AppRouter.logOut already stops messaging; this covers server-driven logout.
+                if fullWipe {
+                    if !deviceWipe.isPresented { deviceWipe.start(reason: .sessionEnded) }
+                    return
+                }
+                cryptoController.lock(wipeStore: false)
+                // The logout wipe already stopped messaging; this covers every other sign-out.
                 messagingController.stop(wipeDisk: true)
                 callController.clearLocalState()
                 PushNotificationService.shared.stop()
-                if fullWipe {
-                    router.postAuthToast = "Signed out · authentication failed · local data cleared"
-                    router.path = []
-                }
             }
         }
         .onChange(of: router.isUnlocked) { _, unlocked in

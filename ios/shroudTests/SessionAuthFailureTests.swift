@@ -39,7 +39,7 @@ struct SessionAuthFailureTests {
     }
 
     @Test
-    func threeFailuresForceLogoutAndWipe() async {
+    func threeFailuresMarkFullWipeAndKeepTheToken() async {
         let controller = SessionController()
         controller.applySessionForTests(Self.sampleSession)
         #expect(controller.isSignedIn)
@@ -53,10 +53,14 @@ struct SessionAuthFailureTests {
         #expect(controller.isSignedIn)
         #expect(controller.consecutiveAuthenticationFailures == 2)
 
+        // The token stays until the wipe revokes it. A fourth 401 must not start a second wipe.
         await controller.recordAuthenticationFailure()
-        #expect(!controller.isSignedIn)
+        #expect(controller.isSignedIn)
+        #expect(controller.bearerToken == "test-token")
         #expect(controller.pendingFullLocalWipe)
         #expect(controller.consecutiveAuthenticationFailures == 0)
+        await controller.recordAuthenticationFailure()
+        #expect(controller.isSignedIn)
         #expect(controller.consumePendingFullLocalWipe())
         #expect(!controller.consumePendingFullLocalWipe())
     }

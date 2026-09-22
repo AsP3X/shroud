@@ -5,6 +5,8 @@
  * and keep the better transcript.
  */
 
+import { storageSealed } from "../storageSeal";
+
 const STATS_KEY = "transcription.languageStats";
 const OVERRIDE_KEY = "transcription.locale";
 const GLOBAL_SCOPE = "*";
@@ -186,6 +188,8 @@ function loadStats(): Stats {
 }
 
 function saveStats(stats: Stats): void {
+  // Which languages someone speaks, per chat — account data like the messages themselves.
+  if (storageSealed()) return;
   storage().setItem(STATS_KEY, JSON.stringify(stats));
 }
 

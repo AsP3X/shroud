@@ -35,6 +35,11 @@ nonisolated final class APIClient: Sendable {
         config.timeoutIntervalForRequest = 20
         config.timeoutIntervalForResource = 300
         config.waitsForConnectivity = false
+        // Human: No HTTP disk cache. The default wrote every response — contact lists, message
+        // envelopes, share-code lookups — into a plain SQLite file in Library/Caches, outside
+        // the sealed stores; media and history have their own encrypted caches.
+        config.urlCache = nil
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
         return URLSession(configuration: config)
     }
 

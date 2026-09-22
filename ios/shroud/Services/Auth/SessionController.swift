@@ -78,6 +78,7 @@ final class SessionController {
         session = nil
         sessionValidated = false
         consecutiveAuthenticationFailures = 0
+        isForceLoggingOut = false
     }
 
     /// Testing seam: inject a session without going through Keychain.
@@ -119,9 +120,14 @@ final class SessionController {
 
     /// Records one real authentication rejection (HTTP 401 with a Bearer token).
     ///
-    /// After `authenticationFailureLogoutThreshold` consecutive failures, logs out and marks
-    /// `pendingFullLocalWipe` so RootView clears chats, media, credentials, and crypto keys
-    /// the same way as user Log Out, plus identity wipe.
+    /// After `authenticationFailureLogoutThreshold` consecutive failures, marks
+    /// `pendingFullLocalWipe` so RootView runs the same device wipe as Log Out.
+    ///
+    /// The session stays in memory and in the Keychain until that wipe's session step revokes
+    /// it. Logging out here used to drop the token first, so the wipe could not tell an offline
+    /// server from one that accepted the logout, and a kill before the overlay left the push
+    /// token in place. The pending marker is written now, so that kill still finishes on the
+    /// next launch. Unit tests use an ephemeral session and must not set the real marker.
     func recordAuthenticationFailure() async {
         guard session != nil, !isForceLoggingOut else { return }
         consecutiveAuthenticationFailures += 1
@@ -131,8 +137,9 @@ final class SessionController {
         isForceLoggingOut = true
         pendingFullLocalWipe = true
         consecutiveAuthenticationFailures = 0
-        await logout()
-        isForceLoggingOut = false
+        if !usesEphemeralSession {
+            UserDefaults.standard.set(true, forKey: DeviceDataWipe.pendingKey)
+        }
     }
 
     /// Consumes the full-wipe flag for RootView sign-out side effects (one-shot).
