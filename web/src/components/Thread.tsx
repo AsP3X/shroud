@@ -47,9 +47,11 @@ import { cancelVideoDownload, type LoadedVideo } from "../media/videos";
 import { Avatar } from "./Avatar";
 import { Highlight } from "./Highlight";
 import { ImageBubble } from "./ImageBubble";
+import { LinkBar } from "./LinkBar";
 import { LinkedText } from "./LinkedText";
 import { LinkPreviewCard } from "./LinkPreviewCard";
 import { detectLinks, isOpenableUrl } from "../links";
+import type { LinkPreviewComposerApi } from "../linkPreview/useLinkPreviewComposer";
 import {
   DeleteMessageDialog,
   MessageMenu,
@@ -440,6 +442,7 @@ export function Thread({
   onCancelReply,
   onDelete,
   myId,
+  linkPreview = null,
 }: {
   peer: { id: string; username: string };
   presence: string;
@@ -474,6 +477,8 @@ export function Thread({
   onDelete: (message: ChatMessage, scope: "me" | "everyone") => void;
   /** Signed-in account, to tell "You" from the peer in a quote. */
   myId: string;
+  /** The draft's link preview; its strip takes the reply bar's place while it is up. */
+  linkPreview?: LinkPreviewComposerApi | null;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const foot = useRef<HTMLDivElement>(null);
@@ -1070,7 +1075,17 @@ export function Thread({
           </p>
         ) : null}
 
-        {replyTo ? (
+        {linkPreview?.bar ? (
+          <LinkBar
+            state={linkPreview.bar}
+            showsAboveText={linkPreview.showsAboveText}
+            canToggleImageSize={linkPreview.canToggleImageSize}
+            usesLargeImage={linkPreview.usesLargeImage}
+            onToggleAboveText={linkPreview.toggleShowsAboveText}
+            onToggleImageSize={linkPreview.toggleImageSize}
+            onRemove={linkPreview.dismiss}
+          />
+        ) : replyTo ? (
           <div className="reply-bar">
             <Reply className="reply-bar-glyph" size={18} aria-hidden="true" />
             <ReplyQuote

@@ -11,6 +11,13 @@ export function wsUrl(): string {
   return `${proto}//${window.location.host}${path}`;
 }
 
+/** Same-origin `/api/v1/link-relay` as wss/ws — the link-preview byte pipe (see linkPreview/). */
+export function linkRelayUrl(): string {
+  const path = `${apiBase()}/link-relay`;
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${window.location.host}${path}`;
+}
+
 export function deviceName(): string {
   const ua = navigator.userAgent;
   const browser = /Edg\//.test(ua)

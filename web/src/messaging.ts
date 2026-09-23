@@ -17,8 +17,8 @@ import {
   withReply,
   type MediaPayload,
 } from "./crypto/mediaPayload";
-import { clampSnippet, parseTextPayload, textPayload, type ReplyRef } from "./reply";
-import type { LinkPreview } from "./links";
+import { clampSnippet, parseTextPayload, textWire, type ReplyRef } from "./reply";
+import { linkPreviewWire, type LinkPreview } from "./links";
 import { envelopeToWireB64, openMessage, sealMessage, wireB64ToEnvelope } from "./crypto/messageCrypto";
 import {
   forgetPlaintext,
@@ -99,6 +99,8 @@ export type ChatMessage = {
    * with `thumbnail` as its blurred placeholder.
    */
   linkPreview?: LinkPreview | null;
+  /** Optimistic link bubble whose large picture is still uploading (drawn from `adoptImage`). */
+  localLinkImage?: boolean;
   delivered?: boolean;
   read?: boolean;
 };
@@ -609,10 +611,12 @@ export async function sendText(opts: {
   material: IdentityMaterial;
   /** Quote sealed with the body; the request itself is unchanged. */
   replyTo?: ReplyRef | null;
+  /** Link preview built in this browser (see linkPreview/); sealed as `lp`, trimmed to fit. */
+  linkPreview?: LinkPreview | null;
 }): Promise<ChatMessage> {
   const peer = opts.peerUserId.toLowerCase();
   const me = opts.me.toLowerCase();
-  const wire = textPayload(opts.text, opts.replyTo);
+  const { wire, sealedPreview } = textWire(opts.text, opts.replyTo, opts.linkPreview);
   return withPeerLock(peer, async () => {
     const peerPub = await peerIdentityPublic(opts.token, peer);
     const envelope = await sealMessage({
@@ -642,11 +646,59 @@ export async function sendText(opts: {
       failed: false,
       kind: "text",
       replyTo: opts.replyTo ?? null,
+      linkPreview: sealedPreview,
       delivered: dto.delivered ?? false,
       read: dto.read ?? false,
     };
     rememberPreview(me, peer, msg);
     return msg;
+  });
+}
+
+/**
+ * Sends a text message whose link preview has a large picture: the picture is encrypted and
+ * uploaded like a photo, and the message goes out as a `t: "link"` media message — the same
+ * shape iOS `deliverLinkWithImage` sends, and a build without link support shows it as a photo
+ * with the text as its caption. The recipient downloads the picture from Shroud, never from
+ * the website.
+ */
+export async function sendLinkWithImage(opts: {
+  token: string;
+  me: string;
+  peerUserId: string;
+  material: IdentityMaterial;
+  text: string;
+  replyTo?: ReplyRef | null;
+  /** Preview with its thumbnail (dropped here: the blob is the picture). */
+  preview: LinkPreview;
+  image: Uint8Array;
+  width: number;
+  height: number;
+  /** Base64 JPEG drawn blurred until the picture is in. */
+  placeholder: string | null;
+  clientMessageId?: string;
+}): Promise<ChatMessage> {
+  const { key, sealed } = await sealFile(opts.image);
+  const upload = await api.createMediaUpload(opts.token, sealed.byteLength);
+  await api.putMediaContent(opts.token, upload.media_object_id, sealed);
+  const placeholder =
+    opts.placeholder && Math.floor((opts.placeholder.length * 3) / 4) <= MAX_THUMB_BYTES ? opts.placeholder : null;
+  const payload: MediaPayload = withReply(
+    {
+      t: "link",
+      mime: "image/jpeg",
+      w: opts.width,
+      h: opts.height,
+      k: bytesToB64(key),
+      s: opts.image.byteLength,
+      c: opts.text,
+      lp: linkPreviewWire({ ...opts.preview, thumbnail: null }),
+      ...(placeholder ? { th: placeholder } : {}),
+    },
+    opts.replyTo,
+  );
+  return sendMediaEnvelope(opts, payload, upload.media_object_id, "link preview", (id) => {
+    void cacheSealedImage(id, sealed);
   });
 }
 
@@ -853,7 +905,7 @@ async function sendMediaEnvelope(
   },
   payload: MediaPayload,
   mediaObjectId: string,
-  noun: "photo" | "video",
+  noun: "photo" | "video" | "link preview",
   keep: (messageId: string) => void,
 ): Promise<ChatMessage> {
   const peer = opts.peerUserId.toLowerCase();

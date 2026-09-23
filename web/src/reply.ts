@@ -11,7 +11,7 @@
  * is read back verbatim, which is what lets old and new builds talk to each other.
  */
 
-import { parseLinkPreview, type LinkPreview } from "./links";
+import { linkPreviewWire, parseLinkPreview, type LinkPreview } from "./links";
 
 export type ReplyKind = "text" | "image" | "video" | "voice";
 
@@ -62,10 +62,51 @@ export function replyRefWire(ref: ReplyRef): Record<string, string> {
   return wire;
 }
 
-/** Plaintext to seal for a text message: the body itself, or the reply envelope. */
-export function textPayload(text: string, replyTo: ReplyRef | null | undefined): string {
-  if (!replyTo) return text;
-  return JSON.stringify({ t: "text", c: text, re: replyRefWire(replyTo) });
+/**
+ * Plaintext to seal for a text message: the body itself, or the envelope carrying its quote
+ * (`re`) and/or its link preview (`lp`) — the same shape iOS `MessageTextPayload.wire` seals.
+ */
+export function textPayload(
+  text: string,
+  replyTo: ReplyRef | null | undefined,
+  linkPreview?: LinkPreview | null,
+): string {
+  if (!replyTo && !linkPreview) return text;
+  const envelope: Record<string, unknown> = { t: "text", c: text };
+  if (replyTo) envelope.re = replyRefWire(replyTo);
+  if (linkPreview) envelope.lp = linkPreviewWire(linkPreview);
+  return JSON.stringify(envelope);
+}
+
+/**
+ * Largest text-message plaintext sealed with a preview. Sealed twice and base64-expanded,
+ * much more overflows the server's envelope cap (iOS `maxMediaPayloadPlaintextBytes`, 12 KB).
+ */
+const MAX_TEXT_PLAINTEXT_BYTES = 12 * 1024;
+
+/**
+ * Plaintext for a text message with its link preview trimmed to what fits (iOS
+ * `MessagingController.textWire`): a long message first loses the preview's thumbnail, then its
+ * description, then the preview itself — a preview is never the reason a message can't be sent.
+ */
+export function textWire(
+  text: string,
+  replyTo: ReplyRef | null | undefined,
+  linkPreview: LinkPreview | null | undefined,
+): { wire: string; sealedPreview: LinkPreview | null } {
+  if (!linkPreview) return { wire: textPayload(text, replyTo), sealedPreview: null };
+  const candidates: LinkPreview[] = [
+    linkPreview,
+    { ...linkPreview, thumbnail: null },
+    { ...linkPreview, thumbnail: null, summary: null },
+  ];
+  for (const candidate of candidates) {
+    const wire = textPayload(text, replyTo, candidate);
+    if (new TextEncoder().encode(wire).byteLength <= MAX_TEXT_PLAINTEXT_BYTES) {
+      return { wire, sealedPreview: candidate };
+    }
+  }
+  return { wire: textPayload(text, replyTo), sealedPreview: null };
 }
 
 /**

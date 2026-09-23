@@ -40,6 +40,7 @@ import {
   rewritePreview,
   tombstone,
   sendImage,
+  sendLinkWithImage,
   sendText,
   sendVideo,
   sendVoice,
@@ -70,6 +71,7 @@ import {
   type PeerActivity,
 } from "../typing";
 import { lockNow as lockSession } from "../session";
+import { useLinkPreviewComposer } from "../linkPreview/useLinkPreviewComposer";
 
 type PeerRef = { id: string; username: string };
 
@@ -190,6 +192,13 @@ export function AppShell({ session }: { session: Session }) {
   const lastPresenceSweep = useRef(0);
   const draftRef = useRef(draft);
   draftRef.current = draft;
+  /** The draft's link preview, built in this browser through the link relay. */
+  const linkPreview = useLinkPreviewComposer({
+    draft,
+    token: session.token,
+    conversationId: selected?.id ?? null,
+    canSend: Boolean(identity),
+  });
   const realtime = useRef<Realtime | null>(null);
   const typingTimers = useRef(new Map<string, number>());
   const recordingTimers = useRef(new Map<string, number>());
@@ -640,6 +649,14 @@ export function AppShell({ session }: { session: Session }) {
     const peerId = selected.id;
     const reference = replyTo ? replyRefFor(replyTo) : null;
     const localId = `pending:${crypto.randomUUID()}`;
+    // Only a preview that finished loading, for a link still in the text, goes along.
+    const attachment = linkPreview.takeAttachment(text);
+    const largeImage =
+      attachment?.largeImage && attachment.largeImageWidth && attachment.largeImageHeight
+        ? { bytes: attachment.largeImage, width: attachment.largeImageWidth, height: attachment.largeImageHeight }
+        : null;
+    // The big picture shows from the local bytes while it uploads (like a photo).
+    if (largeImage) adoptImage(localId, largeImage.bytes, "image/jpeg");
     const optimistic: ChatMessage = {
       id: localId,
       senderUserId: session.user.id,
@@ -651,6 +668,10 @@ export function AppShell({ session }: { session: Session }) {
       kind: "text",
       pending: true,
       replyTo: reference,
+      linkPreview: attachment?.preview ?? null,
+      localLinkImage: Boolean(largeImage),
+      imageWidth: largeImage?.width ?? null,
+      imageHeight: largeImage?.height ?? null,
     };
     setThread((prev) => [...prev, optimistic]);
     setDraft("");
@@ -658,13 +679,37 @@ export function AppShell({ session }: { session: Session }) {
     setSendingPeer(peerId);
     setThreadError(null);
     try {
-      const msg = await sendText({
+      let msg: ChatMessage | null = null;
+      if (attachment && largeImage) {
+        try {
+          msg = await sendLinkWithImage({
+            token: session.token,
+            me: session.user.id,
+            peerUserId: peerId,
+            material: identity,
+            text,
+            replyTo: reference,
+            preview: attachment.preview,
+            image: largeImage.bytes,
+            width: largeImage.width,
+            height: largeImage.height,
+            placeholder: attachment.placeholder,
+          });
+          rekeyImage(localId, msg.id);
+        } catch {
+          // Keep the message, lose the big picture: the text send carries the small thumbnail.
+          releaseImage(localId);
+          setThread((prev) => prev.map((m) => (m.id === localId ? { ...m, localLinkImage: false } : m)));
+        }
+      }
+      msg ??= await sendText({
         token: session.token,
         me: session.user.id,
         peerUserId: peerId,
         text,
         material: identity,
         replyTo: reference,
+        linkPreview: attachment?.preview ?? null,
       });
       confirmedSends.current.set(localId, msg.id);
       if (await consumeDroppedSend(localId, msg, peerId)) return;
@@ -1217,6 +1262,7 @@ export function AppShell({ session }: { session: Session }) {
                 onCancelReply={() => setReplyTo(null)}
                 onDelete={(message, scope) => void deleteMessage(message, scope)}
                 myId={session.user.id}
+                linkPreview={linkPreview}
               />
             ) : (
               <section className="thread thread-placeholder hidden-mobile">

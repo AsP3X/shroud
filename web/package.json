@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:tls": "sh scripts/build-link-tls.sh",
     "preview": "vite preview"
   },
   "dependencies": {

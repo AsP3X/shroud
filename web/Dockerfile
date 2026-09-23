@@ -1,10 +1,25 @@
 # syntax=docker/dockerfile:1
 
+# Link-preview TLS client: rustls compiled to WebAssembly (web/tls). clang builds ring's C code
+# for wasm32, llvm-ar archives it, and wasm-bindgen (pinned to the crate's version) writes the
+# JavaScript glue the web client loads on first use.
+FROM rust:1-slim AS link-tls
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends clang llvm \
+    && rm -rf /var/lib/apt/lists/*
+RUN rustup target add wasm32-unknown-unknown \
+    && cargo install wasm-bindgen-cli --version 0.2.128 --locked
+WORKDIR /build
+COPY tls ./tls
+COPY scripts/build-link-tls.sh ./scripts/build-link-tls.sh
+RUN AR_wasm32_unknown_unknown=llvm-ar sh scripts/build-link-tls.sh
+
 FROM node:22-alpine AS builder
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
+COPY --from=link-tls /build/src/linkPreview/tls ./src/linkPreview/tls
 RUN npm run build
 
 FROM nginx:alpine

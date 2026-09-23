@@ -202,7 +202,7 @@ export const MAX_URL = 2048;
 export const MAX_THUMBNAIL_BYTES = 6 * 1024;
 
 /** Collapses whitespace and cuts at a code-point boundary, marking the cut with "…". */
-function clean(value: unknown, max: number): string | null {
+export function cleanPreviewText(value: unknown, max: number): string | null {
   if (typeof value !== "string") return null;
   const collapsed = value.replace(/\s+/gu, " ").trim();
   if (!collapsed) return null;
@@ -236,9 +236,9 @@ export function parseLinkPreview(value: unknown): LinkPreview | null {
   }
   return {
     url,
-    siteName: clean(raw.n, MAX_SITE_NAME),
-    title: clean(raw.ti, MAX_TITLE),
-    summary: clean(raw.d, MAX_SUMMARY),
+    siteName: cleanPreviewText(raw.n, MAX_SITE_NAME),
+    title: cleanPreviewText(raw.ti, MAX_TITLE),
+    summary: cleanPreviewText(raw.d, MAX_SUMMARY),
     thumbnail,
     imageWidth: positiveInt(raw.w),
     imageHeight: positiveInt(raw.h),

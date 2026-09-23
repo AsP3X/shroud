@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Lock, ShieldCheck } from "lucide-react";
 import { api, ApiError, type BlockItem, type Session } from "../../api/client";
 import { lockOnHidden, setLockOnHidden } from "../../session";
+import { generatesLinkPreviews, setGeneratesLinkPreviews } from "../../linkPreview/settings";
 import { Avatar } from "../Avatar";
 import { SettingsCard, SettingsGroup, SettingsNote, SettingsRow, Switch } from "./SettingsRow";
 
@@ -15,6 +16,7 @@ export function PrivacyView({
   onUnauthorized: () => void;
 }) {
   const [background, setBackground] = useState(() => lockOnHidden());
+  const [linkPreviews, setLinkPreviews] = useState(() => generatesLinkPreviews());
   const [peerDelete, setPeerDelete] = useState<boolean | null>(null);
   const [savingPeerDelete, setSavingPeerDelete] = useState(false);
   const [blocked, setBlocked] = useState<BlockItem[]>([]);
@@ -110,6 +112,18 @@ export function PrivacyView({
           onClick={onLockNow}
         />
       </SettingsCard>
+
+      <SettingsGroup title="Link previews">
+        <Switch
+          checked={linkPreviews}
+          onChange={(next) => {
+            setLinkPreviews(next);
+            setGeneratesLinkPreviews(next);
+          }}
+          label="Link previews"
+          description="When you send a link, this browser loads the page to build a preview and seals it into the message. The page is fetched end to end encrypted through the Shroud server, which sees only the website's name — not the link or the page; the website sees the server, not you. People you send it to never contact the website."
+        />
+      </SettingsGroup>
 
       <SettingsGroup title="Chat deletion">
         <Switch

@@ -76,9 +76,21 @@ or names that resolve to a private address; ephemeral session, head only) and se
 recipients never load anything from the link.
 A picture too big for the envelope goes out as the blob of a `t:"link"` media message — the server
 cannot tell it from a photo, and a build without link support shows it as a photo with the text as
-its caption. The web client renders previews but does not build them (see
-[web-client.md](./web-client.md)). Links themselves are found on each device by the same rules
-(`LinkDetector.swift` / `links.ts`, shared test vectors).
+its caption. Links themselves are found on each device by the same rules (`LinkDetector.swift` /
+`links.ts`, shared test vectors).
+
+**The web client builds its previews through the link relay.** A browser cannot read other
+websites (CORS, and the client's own CSP), and fetching a link *for* it would hand the server the
+message's plaintext. So the browser speaks TLS itself — rustls compiled to WebAssembly
+(`web/tls/`, loaded on first use) — and `GET /api/v1/link-relay` (a WebSocket, `link_relay.rs`)
+only moves the encrypted bytes to port 443 of one public host. Like Signal's link-preview proxy,
+the relay learns which host was contacted and nothing else: not the path, the headers, or the
+page, none of which it can decrypt; it logs no host. The website in turn sees the server's
+address, not the user's. The relay refuses IP literals, local names, and names that resolve to a
+private address (the same rules the iOS fetcher applies), connects only to the addresses it
+checked, caps bytes in both directions, and holds at most six pipes per account. The preview the
+browser builds is sealed into the message exactly as the iPhone's is — recipients still never
+contact the website.
 
 ## Security invariants
 
@@ -150,7 +162,7 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 | Photo media messages | **done** — E2E AES-GCM blobs + caption compose |
 | Voice messages | **done** — record/upload/play; on-device Whisper on iOS and web (pluggable engines) |
 | Replies | **done** — swipe left (or the context menu) to quote; the quote is sealed **inside** the plaintext, never server metadata |
-| Links & link previews | **done** — links are tappable (in-app browser), Telegram-style preview block; the sender's phone fetches the page and seals the preview, recipients never contact the site; toggle in Privacy & Security |
+| Links & link previews | **done** — links are tappable (in-app browser), Telegram-style preview block; the sender builds the preview (the iPhone directly, the browser through the link relay) and seals it, recipients never contact the site; toggle in Privacy & Security |
 | Calls UI / WebRTC | **done** — signaling + WKWebView WebRTC + CallKit; voice & video |
 | APNs / VoIP push register | **done** — data token + PushKit VoIP token → `PUT /push/token` |
 | Sealed messaging v2 | **done** — dual-seal (peer + self) so sender devices can decrypt history |

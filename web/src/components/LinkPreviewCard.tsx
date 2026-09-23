@@ -23,13 +23,14 @@ export function LinkPreviewCard({
   /** Downloads + decrypts the blob (the same path photos use). */
   loadImage: (message: ChatMessage) => Promise<LoadedImage | null>;
 }) {
-  const large = Boolean(message.mediaObjectId && message.mediaKey);
+  // A sent picture is the message's blob; one still uploading is drawn from the local bytes.
+  const large = Boolean((message.mediaObjectId && message.mediaKey) || message.localLinkImage);
   const [picture, setPicture] = useState<string | null>(() =>
     large ? (peekImage(message.id)?.url ?? null) : null,
   );
 
   useEffect(() => {
-    if (!large || picture) return;
+    if (!large || picture || !message.mediaObjectId) return;
     let live = true;
     void loadImage(message).then((loaded) => {
       if (live && loaded) setPicture(loaded.url);

@@ -112,6 +112,41 @@ final class LinkPreviewPayloadTests: XCTestCase {
         XCTAssertEqual(parsed.linkPreview?.showsAboveText, true)
     }
 
+    /// Captured from the web client itself (`textWire` in `web/src/reply.ts`) now that the
+    /// browser builds previews of its own: a quote and a preview sealed together, byte for byte
+    /// what it sends. If either side's wire format drifts, this stops compiling into sense.
+    func testParsesWhatTheWebClientSeals() throws {
+        let fromWeb = #"{"t":"text","c":"Route for Saturday","re":{"id":"11111111-1111-1111-1111-111111111111","u":"22222222-2222-2222-2222-222222222222","k":"text","x":"Which route?"},"lp":{"u":"https://www.komoot.com/tour/1398273","n":"komoot","ti":"Herzogstand – Heimgarten ridge walk","d":"Intermediate hike · 13.6 km · 5:10 h.","th":"/9j/4AAQSkZJRg==","w":1200,"h":630,"ab":true}}"#
+        let parsed = MessageTextPayload.parse(fromWeb)
+        XCTAssertEqual(parsed.body, "Route for Saturday")
+        XCTAssertEqual(
+            parsed.replyTo?.messageID,
+            UUID(uuidString: "11111111-1111-1111-1111-111111111111")
+        )
+        XCTAssertEqual(parsed.replyTo?.snippet, "Which route?")
+        let preview = try XCTUnwrap(parsed.linkPreview)
+        XCTAssertEqual(preview.url, "https://www.komoot.com/tour/1398273")
+        XCTAssertEqual(preview.siteName, "komoot")
+        XCTAssertEqual(preview.title, "Herzogstand – Heimgarten ridge walk")
+        XCTAssertEqual(preview.summary, "Intermediate hike · 13.6 km · 5:10 h.")
+        XCTAssertEqual(preview.thumbnail, Data(base64Encoded: "/9j/4AAQSkZJRg=="))
+        XCTAssertEqual(preview.imageWidth, 1200)
+        XCTAssertTrue(preview.showsAboveText)
+    }
+
+    /// The same for a web-sent preview whose picture rides as the media blob.
+    func testParsesTheLinkMediaTheWebClientSeals() throws {
+        let fromWeb = #"{"t":"link","mime":"image/jpeg","w":1200,"h":630,"k":"a2V5","s":48000,"c":"Route for Saturday","th":"/9j/4AAQ","lp":{"u":"https://www.komoot.com/tour/1398273","n":"komoot","ti":"Herzogstand – Heimgarten ridge walk","d":"Intermediate hike · 13.6 km · 5:10 h.","w":1200,"h":630,"ab":true}}"#
+        let payload = try XCTUnwrap(MediaMessagePayload.parse(Data(fromWeb.utf8)))
+        XCTAssertTrue(payload.isLink)
+        XCTAssertFalse(payload.isImage)
+        XCTAssertEqual(payload.c, "Route for Saturday")
+        XCTAssertEqual(payload.w, 1200)
+        XCTAssertEqual(payload.lp?.title, "Herzogstand – Heimgarten ridge walk")
+        XCTAssertNil(payload.lp?.thumbnail, "the blob is the picture")
+        XCTAssertEqual(payload.previewJPEG, Data(base64Encoded: "/9j/4AAQ"))
+    }
+
     func testBrokenPreviewKeepsTheMessage() {
         let wire = #"{"t":"text","c":"still readable","lp":{"u":"javascript:alert(1)"}}"#
         let parsed = MessageTextPayload.parse(wire)

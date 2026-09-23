@@ -1,0 +1,28 @@
+[package]
+name = "link-tls"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "Proprietary"
+description = "TLS for the web client's link previews: rustls in WebAssembly, driven over the Shroud link relay."
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+# `ring` only has a CSPRNG on wasm32-unknown-unknown through crypto.getRandomValues.
+ring = { version = "0.17", features = ["wasm32_unknown_unknown_js"] }
+webpki-roots = "1"
+# `web`: UnixTime::now() from the browser clock (the target has no system time).
+rustls-pki-types = { version = "1", features = ["web"] }
+# Pinned: the wasm-bindgen CLI that post-processes the module must be this exact version.
+wasm-bindgen = "=0.2.128"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

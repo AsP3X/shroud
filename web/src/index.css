@@ -1135,6 +1135,12 @@ button.reply-quote { cursor: pointer; }
 .reply-quote-bar .reply-quote-text { color: var(--text-secondary); }
 .reply-bar-close { flex: 0 0 auto; }
 
+/* The link strip above the composer: the reply bar's sibling (LinkBar in design/webclient.pen).
+   A description reads as text; the bare link (loading, or a page without one) as a stand-in. */
+.link-bar .reply-quote-bar .reply-quote-text { color: var(--text-primary); }
+.link-bar .reply-quote-bar .reply-quote-text.muted { color: var(--text-secondary); }
+.link-bar .reply-quote-bar:disabled { cursor: default; }
+
 /* ------------------------------------------------------------------ links --
    Telegram's rule: a link takes the link colour and is underlined only where
    that colour is the text's own (outgoing bubbles). The preview block is the
