@@ -180,6 +180,20 @@ impl AppError {
         Self::validation(message)
     }
 
+    /// The client-safe `{ error: { code, message } }` envelope, for channels without an HTTP
+    /// status of their own (WebSocket frames).
+    ///
+    /// Agent: RETURNS the same code/message an HTTP response would carry; internal details
+    /// stay out (`Internal` becomes the generic message).
+    pub fn body(&self) -> ErrorBody {
+        ErrorBody {
+            error: ErrorDetail {
+                code: self.code().into(),
+                message: self.client_message(),
+            },
+        }
+    }
+
     fn status(&self) -> StatusCode {
         match self {
             Self::Api { status, .. } => *status,

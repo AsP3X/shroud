@@ -7,6 +7,7 @@ pub mod auth;
 pub mod config;
 pub mod error;
 pub mod keys;
+pub mod link_relay;
 pub mod logging;
 pub mod metrics;
 pub mod push;
@@ -199,6 +200,9 @@ pub async fn run() -> Result<(), AppError> {
         http_client,
         trust_forwarded_headers: config.trust_forwarded_headers,
         metrics: Arc::new(crate::metrics::Metrics::new()),
+        link_relay: Arc::new(crate::routes::link_relay::LinkRelay::new(
+            crate::link_relay::RelayPolicy::production(),
+        )),
     };
 
     // Human: Last `.layer` is outermost — request-id runs first, then metrics, then TraceLayer.

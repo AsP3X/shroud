@@ -16,6 +16,7 @@ pub mod conversations;
 pub mod devices;
 pub mod health;
 pub mod keys;
+pub mod link_relay;
 pub mod media;
 pub mod messages;
 pub mod presence;
@@ -103,6 +104,7 @@ pub fn router() -> Router<AppState> {
             .route("/calls/{id}/hangup", post(calls::hangup_call))
             .route("/calls/{id}/signal", post(calls::signal_call))
             .route("/ws", get(ws::ws_upgrade))
+            .route("/link-relay", get(link_relay::link_relay_upgrade))
             .route("/push/token", put(push::put_token)),
     )
 }

@@ -12,7 +12,7 @@ use serde_json::json;
 use tokio::time::timeout;
 use uuid::Uuid;
 
-use crate::auth::hash_token;
+use crate::auth::session::ids_for_token;
 use crate::error::AppError;
 use crate::rate_limit::budgets;
 use crate::routes::contacts::are_contacts;
@@ -298,29 +298,5 @@ async fn authenticate_text(
         .token
         .filter(|value| !value.is_empty())
         .ok_or_else(AppError::unauthorized)?;
-
-    let token_hash = hash_token(&token);
-
-    #[derive(sqlx::FromRow)]
-    struct AuthIds {
-        user_id: uuid::Uuid,
-        device_id: uuid::Uuid,
-    }
-
-    let row = sqlx::query_as::<_, AuthIds>(
-        r#"
-        SELECT u.id AS user_id, d.id AS device_id
-        FROM sessions s
-        INNER JOIN devices d ON d.id = s.device_id
-        INNER JOIN users u ON u.id = d.user_id
-        WHERE s.token_hash = $1 AND s.revoked_at IS NULL
-        "#,
-    )
-    .bind(token_hash.as_slice())
-    .fetch_optional(&state.pool)
-    .await
-    .map_err(|err| AppError::Internal(format!("ws auth lookup failed: {err}")))?;
-
-    row.map(|ids| (ids.user_id, ids.device_id))
-        .ok_or_else(AppError::unauthorized)
+    ids_for_token(&state.pool, &token).await
 }

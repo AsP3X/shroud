@@ -126,6 +126,42 @@ impl FromRequestParts<AppState> for AuthContext {
     }
 }
 
+/// Resolves a raw session token to its user and device, for WebSocket endpoints.
+///
+/// Human: WebSockets authenticate with their first frame instead of a header, so the token
+/// never lands in a URL, a proxy log, or browser history. `/ws` and the link-preview relay
+/// share this lookup.
+/// Agent: DB SELECT by token_hash WHERE revoked_at IS NULL; RETURNS (user_id, device_id) or
+/// `AppError::unauthorized` for an empty, unknown, or revoked token.
+pub async fn ids_for_token(pool: &sqlx::PgPool, token: &str) -> Result<(Uuid, Uuid), AppError> {
+    #[derive(FromRow)]
+    struct AuthIds {
+        user_id: Uuid,
+        device_id: Uuid,
+    }
+
+    if token.is_empty() {
+        return Err(AppError::unauthorized());
+    }
+    let token_hash = hash_token(token);
+    let row = sqlx::query_as::<_, AuthIds>(
+        r#"
+        SELECT u.id AS user_id, d.id AS device_id
+        FROM sessions s
+        INNER JOIN devices d ON d.id = s.device_id
+        INNER JOIN users u ON u.id = d.user_id
+        WHERE s.token_hash = $1 AND s.revoked_at IS NULL
+        "#,
+    )
+    .bind(token_hash.as_slice())
+    .fetch_optional(pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("ws auth lookup failed: {err}")))?;
+
+    row.map(|ids| (ids.user_id, ids.device_id))
+        .ok_or_else(AppError::unauthorized)
+}
+
 /// Hard-delete revoked sessions older than [`REVOKED_SESSION_RETENTION_DAYS`].
 ///
 /// Human: Live sessions (`revoked_at IS NULL`) are never removed by this job.

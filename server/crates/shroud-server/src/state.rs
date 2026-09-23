@@ -6,10 +6,12 @@ use axum::http::HeaderMap;
 use sqlx::PgPool;
 
 use crate::config::IceServer;
+use crate::link_relay::RelayPolicy;
 use crate::metrics::Metrics;
 use crate::push::PushService;
 use crate::rate_limit::{self, RateLimiter};
 use crate::realtime::RealtimeHub;
+use crate::routes::link_relay::LinkRelay;
 
 /// State injected into every API handler.
 #[derive(Clone)]
@@ -38,6 +40,8 @@ pub struct AppState {
     pub trust_forwarded_headers: bool,
     /// Process metrics for `/metrics`.
     pub metrics: Arc<Metrics>,
+    /// Link-preview relay: target policy and each account's open pipes.
+    pub link_relay: Arc<LinkRelay>,
 }
 
 impl AppState {
@@ -71,6 +75,13 @@ impl AppState {
             http_client: reqwest::Client::new(),
             trust_forwarded_headers: true,
             metrics: Arc::new(Metrics::new()),
+            link_relay: Arc::new(LinkRelay::new(RelayPolicy::production())),
         }
+    }
+
+    /// Test state whose link relay may reach a local listener (see `RelayPolicy::for_tests`).
+    pub fn with_link_relay_policy(mut self, policy: RelayPolicy) -> Self {
+        self.link_relay = Arc::new(LinkRelay::new(policy));
+        self
     }
 }

@@ -34,6 +34,11 @@ pub mod budgets {
     pub const CALL_USER: (u64, Duration) = (30, Duration::from_secs(60));
     /// Password change and account delete (expensive / sensitive).
     pub const AUTH_SENSITIVE_USER: (u64, Duration) = (5, Duration::from_secs(3600));
+    /// Link-preview relay upgrades per client IP (a preview is a page plus its image,
+    /// and redirects add one each).
+    pub const LINK_RELAY_IP: (u64, Duration) = (120, Duration::from_secs(60));
+    /// Link-preview relay connections per account.
+    pub const LINK_RELAY_USER: (u64, Duration) = (60, Duration::from_secs(60));
 }
 
 struct MemoryWindow {

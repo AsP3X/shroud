@@ -507,8 +507,37 @@ Redis: pub/sub fan-out, online sets, future rate limits.
 | Call create / signal | 30/min per user |
 | Media upload registration | 60/min per user |
 | WebSocket connect | 30/min per IP |
+| Link relay connect | 120/min per IP; 60/min per user (plus 6 open pipes per account) |
 
 `Retry-After` mirrors the budget window (seconds). `TRUST_FORWARDED_HEADERS` must be true only behind a trusted reverse proxy. Key pattern: `rl:{scope}:{id}`.
+
+### Link-preview relay
+
+#### `GET /api/v1/link-relay` → WebSocket upgrade
+
+A byte pipe so the **web client** can build link previews without the server learning what was
+sent (see [architecture.md](./architecture.md)). The browser runs TLS itself; the relay carries
+its bytes to one public host on port 443.
+
+1. Client connects, then within **10 seconds** sends one text frame:
+   ```json
+   { "type": "connect", "token": "<session token>", "host": "example.com" }
+   ```
+2. Server authenticates the token, applies the budgets above, resolves `host`, and refuses it
+   unless every address is public — no IP literals, no `localhost`, `.local`, `.internal`, `.lan`,
+   `.home`, `.arpa`, `.intranet`, `.corp`, and no private, loopback, link-local, or NAT64/6to4
+   address. It connects to exactly the addresses it checked (a rebinding DNS cannot swap one in).
+3. On success:
+   ```json
+   { "type": "connected" }
+   ```
+   after which **binary frames** carry TLS bytes both ways, until either side closes.
+4. On failure: `{ "type": "error", "error": { "code", "message" } }` and close. Codes:
+   `UNAUTHORIZED`, `VALIDATION_ERROR` (not a DNS name), `FORBIDDEN` (not public),
+   `LINK_UNREACHABLE` (DNS or connect failed), `RATE_LIMITED` (budget or open-pipe limit).
+
+Limits per pipe: 64 KiB up, 8 MiB down, 15 s idle, 45 s lifetime. The server never logs the host
+and cannot read the traffic.
 
 ### Presence and push
 
