@@ -98,7 +98,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Real-time m4 | HTTP send + history (done) |
 | Real-time 4b | **WebSocket** in-process fan-out (**done**) |
 | Redis fan-out | **Optional** when `REDIS_URL` set: local hub + pub/sub on `shroud:user:{user_id}` |
-| WS events | `message.new`, `message.delivered`, `message.read`, `message.deleted`, `message.reaction`, `typing`, `recording`, `presence.update` |
+| WS events | `message.new`, `message.delivered`, `message.read`, `message.deleted`, `message.reaction`, `reactions.seen`, `typing`, `recording`, `presence.update` |
 | WS recipients | Peer devices + sender’s **other** devices (not the sending device for new) |
 | Delivery receipts | `POST /messages/:id/delivered` for current device (m4); read later |
 | Retention | Indefinite until user delete |
@@ -1287,11 +1287,15 @@ Add optional:
 
 ### Milestone 10 — Reactions
 
-Migration 020: `message_reactions(message_id, user_id, conversation_id, ciphertext NULL, seq, updated_at)`,
-primary key `(message_id, user_id)`, index `(conversation_id, seq)`; `conversation_reaction_seqs`
-(one change counter per conversation); `reaction_reads(user_id, conversation_id, seen_seq)`.
-Every set, replace and remove takes the conversation's next `seq`; a removal keeps the row with
-`ciphertext NULL`. No push, no `last_message_at` bump. Own budget `REACTION_USER` (120/min).
+Migration 020: `message_reactions(message_id, user_id, conversation_id, message_sender_id,
+ciphertext NULL, seq, added_seq, updated_at)`, primary key `(message_id, user_id)`, indexes
+`(conversation_id, seq)` (catch-up), `(user_id)` (account deletion) and the partial unseen index
+`(conversation_id, message_sender_id, added_seq) WHERE ciphertext IS NOT NULL AND user_id <>
+message_sender_id`; `conversation_reaction_seqs` (one change counter per conversation);
+`reaction_reads(user_id, conversation_id, seen_seq)`. `message_sender_id` copies the message's
+sender (it never changes). Every set, replace and remove takes the conversation's next `seq`; a
+removal keeps the row with `ciphertext NULL`. No push, no `last_message_at` bump. Own budget
+`REACTION_USER` (120/min).
 
 **Why a counter row and not a sequence.** A write bumps the counter under its row lock in the same
 transaction, so within a conversation `seq` order is commit order: a reader that sees N sees every
@@ -1299,23 +1303,38 @@ change up to N, and every later change gets a higher number. Global sequence val
 order — a snapshot taken between two such commits would skip a change for good (a client's cursor
 passes it; a page reconciled against it drops it).
 
-**Lock order** for every reaction write: the conversation row (`FOR KEY SHARE`, which sends'
-`last_message_at` updates don't block), the message row (`FOR KEY SHARE`), the counter, reaction
-rows. Deleting a message takes the message row `FOR UPDATE` first and deleting a chat takes the
-conversation row `FOR UPDATE` first — the same order — so none of them deadlock, and a reaction
-can't land on a message deleted a moment earlier: the lock waits for the delete and re-reads the
-row. Both deletes clear the deleted messages' reactions (a new `seq` each), so no sealed reaction
-outlives its message.
+**Lock order.** Everything that writes a chat's messages, reaction counter, reaction rows or
+seen marks takes the conversation row first. Reaction writes: the conversation row
+(`FOR KEY SHARE`, which sends' `last_message_at` updates don't block), the message row
+(`FOR KEY SHARE`), the counter, reaction rows. Deleting a message for everyone: the conversation
+row (`FOR KEY SHARE`), the message row (`FOR UPDATE`), the counter, reaction rows. Marking
+reactions seen: the conversation row (`FOR KEY SHARE`), then its `reaction_reads` row. Deleting a
+chat: the conversation row `FOR UPDATE`, which waits for all of the above and keeps them out while
+it runs its own order (seen marks, counter, then the messages it purges). Deleting an account:
+every chat of it `FOR UPDATE`, in id order, before its messages and the cascade. So a reaction
+can't land on a message deleted a moment earlier (the lock waits for the delete and re-reads the
+row), and none of these deadlock with each other. Both deletes clear the deleted messages'
+reactions (a new `seq` each), so no sealed reaction outlives its message.
 
-#### `PUT /messages/:id/reaction` `{ "ciphertext": "<base64>" }` → `200` reaction
+#### `PUT /messages/:id/reaction` `{ "ciphertext": "<base64>", "base_seq": 41, "added": true }` → `200` reaction
 
-- Caller must be a participant; the message must not be deleted for everyone or be an annotation
-  (`400`); outside Notes the peer must be an accepted, unblocked contact (`403`). Unknown or foreign
-  message → `404`. Ciphertext 1–4096 bytes.
+- Caller must be a participant; the message must be one they can see — not deleted for everyone,
+  deleted for them or before their chat clear (`404`, like an unknown or foreign message) — and not
+  an annotation (`400`); outside Notes the peer must be an accepted, unblocked contact (`403`).
+  Ciphertext 1–4096 bytes.
+- `base_seq`: the `seq` of the caller's record the new set was built on, `0` when they had none or
+  had taken it back (a removal matches `0` too). When the record has moved on — another of their
+  devices wrote it — nothing is written and the answer is `409`
+  `{ "error": { "code": "REACTION_CHANGED", … }, "current": <reaction> }`: the client merges its
+  change onto `current` and retries from `current.seq`. Omitted: the write always wins.
+- `added` (default true): the set has an emoji the base lacked. Only such a change is new for the
+  message's author (see Unseen reactions); replacing a removal always counts.
 
-#### `DELETE /messages/:id/reaction` → `200` reaction (ciphertext null) or `204` when there was none
+#### `DELETE /messages/:id/reaction?base_seq=` → `200` reaction (ciphertext null) or `204` when there is none
 
-- Participants only; allowed after the contact is gone so a reaction can always be taken back.
+- Participants only; allowed after the contact is gone and on messages the caller hid, so a
+  reaction can always be taken back. With `base_seq`, a live record the caller did not build on is
+  `409 REACTION_CHANGED` as for `PUT`.
 
 Reaction body (also the WS payload's `reaction`):
 
@@ -1323,11 +1342,13 @@ Reaction body (also the WS payload's `reaction`):
 { "message_id": "<uuid>", "user_id": "<uuid>", "ciphertext": "<base64>|null", "seq": 42, "updated_at": "…" }
 ```
 
-WS, to both users' online devices except the acting one (`message_sender_id` is who wrote the
-message, so a client can tell a reaction to its own message without holding it):
+WS, to the reactor's other devices and to the other participant's devices while they can see the
+message (not after they hid it or cleared past it — catch-up masks those too). `message_sender_id`
+is who wrote the message, so a client can tell a reaction to its own message without holding it;
+`added` says whether the change is news for that person (false for removals):
 
 ```json
-{ "type": "message.reaction", "conversation_id": "<uuid>", "message_sender_id": "<uuid>", "device_id": "<uuid>", "reaction": { … } }
+{ "type": "message.reaction", "conversation_id": "<uuid>", "message_sender_id": "<uuid>", "device_id": "<uuid>", "added": true, "reaction": { … } }
 ```
 
 #### `GET /conversations/:peer_user_id/reactions?after_seq=&limit=` → `200`
@@ -1340,9 +1361,10 @@ first, removals included; `limit` default 200, max 500. Rows for messages the ca
 
 `GET /messages` adds `reactions` (live ones, oldest change first; omitted when empty) to each message,
 and `reaction_seq`: the conversation's latest `seq`, read before the page. The page's reactions are
-the full live set as of that value, so a client keeps its own newer changes and drops older ones the
-page no longer lists; a client without a catch-up cursor starts from it. Deleting for everyone clears
-the message's reactions (a new `seq` each, so catch-up reports them).
+the full live set as of that value or later (an entry may carry a higher `seq`), so a client keeps
+its own newer changes and drops older ones the page no longer lists; a client without a catch-up
+cursor starts from it. Deleting for everyone clears the message's reactions (a new `seq` each, so
+catch-up reports them).
 
 #### Several reactions per person
 
@@ -1351,14 +1373,18 @@ removes it. How many one person may leave is a server setting, `REACTIONS_MAX_PE
 5), handed to clients by `GET /config` → `{ "reactions": { "max_per_user": 5 } }`. The server can't
 count sealed emoji, so clients enforce it when adding (a pick past the limit drops that person's
 oldest); readers show what a record holds, deduplicated, up to their own cap of 20. The 4 KiB
-ciphertext cap bounds what a modified client could store.
+ciphertext cap bounds what a modified client could store. Because one record is the whole set,
+writes carry `base_seq`: two devices of one person changing it at once merge instead of the later
+write dropping the earlier one's emoji.
 
 #### Unseen reactions (the chat list's heart badge)
 
 `GET /conversations` adds, per chat, `reaction_seq` (latest change, 0 when none) and
-`unseen_reactions`: live reactions by the other participant to the caller's messages with a `seq`
-above the caller's `seen_seq` (deleted, hidden and cleared messages excluded). A changed reaction
-counts again; a removed one stops counting.
+`unseen_reactions`: live reactions by the other participant to the caller's messages whose latest
+added emoji (`added_seq`) is above the caller's `seen_seq` (deleted, hidden and cleared messages
+excluded). A reaction that gains an emoji counts again; one that only loses one does not, and a
+removed one stops counting. Clearing a chat marks everything in it seen. The count walks one range
+of the partial unseen index per chat, so it costs what is unseen, not the chat's history.
 
 `POST /conversations/:peer_user_id/reactions/seen` `{ "up_to_seq": 57 }` → `{ "seen_seq": 57 }` —
 clamped to the latest `seq`, never moves backwards. When it moves, the caller's other devices get
@@ -1380,7 +1406,7 @@ clamped to the latest `seq`, never moves backwards. When it moves, the caller's 
 | `DATABASE_POOL_MAX` | Pool size per instance |
 | `REDIS_URL` | Optional; enables multi-replica WS fan-out, shared rate limits, presence |
 | `TRUST_FORWARDED_HEADERS` | Honor XFF / X-Real-IP for rate-limit keys (trusted proxy only; default false) |
-| `REACTIONS_MAX_PER_USER` | Most emoji one person may leave on one message (default 5, 1–20); clients read it from `GET /config` |
+| `REACTIONS_MAX_PER_USER` | Most emoji one person may leave on one message (default 5; outside 1–20 the server refuses to start); clients read it from `GET /config` |
 | `HOST` / `PORT` | Bind (default localhost:8080) |
 | `RUN_MIGRATIONS` | Prefer single migrator when scaled |
 | `MEDIA_DATA_DIR` | Local ciphertext blob directory |

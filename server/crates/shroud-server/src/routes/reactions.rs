@@ -5,14 +5,22 @@
 //! its row (ciphertext NULL) so an offline device can catch up with
 //! `GET /conversations/{peer}/reactions?after_seq=`.
 //!
-//! Every write locks in one order — the conversation row (`FOR KEY SHARE`), the message row,
-//! the conversation's counter, reaction rows. Deleting a message (message row first) and
-//! deleting a chat (conversation row first) take their locks in that same order, so none of
-//! them deadlock, and a reaction never lands on a message deleted a moment earlier.
+//! A record holds the person's whole set, so a write names the `seq` it was built on
+//! (`base_seq`): a device that missed its other device's change gets `409 REACTION_CHANGED`
+//! with the record as it is now, merges onto it and retries, instead of overwriting it.
+//!
+//! Everything that writes a chat's messages, reaction counter, reaction rows or seen marks takes
+//! its conversation row first: reaction writes and deleting a message for everyone
+//! `FOR KEY SHARE` (then the message row, the counter, reaction rows), marking reactions seen
+//! `FOR KEY SHARE` (then its seen row); deleting a chat `FOR UPDATE`; deleting an account every
+//! chat of it `FOR UPDATE`, in id order, before its messages. So chat and account deletes run
+//! alone, the rest meet at the message row or the counter in that order, and a reaction never
+//! lands on a message deleted a moment earlier.
 //! Agent: WRITES message_reactions, conversation_reaction_seqs, reaction_reads (migration 020);
-//! READS messages, conversations, conversation_clears; PUBLISHES WS `message.reaction` (both
-//! participants except the acting device) and `reactions.seen` (the caller's other devices).
-//! No push and no `last_message_at` bump, like annotations.
+//! READS messages, conversations, conversation_clears, message_hides; PUBLISHES WS
+//! `message.reaction` (the reactor's other devices, and the other participant while they can
+//! see the message) and `reactions.seen` (the caller's other devices). No push and no
+//! `last_message_at` bump, like annotations.
 
 use std::collections::HashMap;
 
@@ -29,7 +37,7 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::auth::session::AuthContext;
-use crate::error::AppError;
+use crate::error::{AppError, ErrorDetail};
 use crate::rate_limit::budgets;
 use crate::routes::contacts::{are_contacts, is_blocked_either_way};
 use crate::routes::conversations::clear_watermark;
@@ -45,6 +53,27 @@ const MAX_CHANGES_LIMIT: i64 = 500;
 #[derive(Debug, Deserialize)]
 pub struct PutReactionRequest {
     pub ciphertext: String,
+    /// `seq` of the caller's record this set was built on; 0 when they had none or had taken
+    /// it back. Omitted: overwrite whatever is there.
+    pub base_seq: Option<i64>,
+    /// Whether the set has an emoji the base lacked. Only such a change is new for the
+    /// message's author (the chat list's heart badge); taking one back is not. Default true.
+    pub added: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeleteReactionQuery {
+    /// As for `PUT`: the `seq` of the record being taken back.
+    pub base_seq: Option<i64>,
+}
+
+/// `409 REACTION_CHANGED`: the caller's record moved past `base_seq` (another of their
+/// devices wrote it). `current` is the record now, a removal included; merge onto it and retry
+/// with its `seq`.
+#[derive(Debug, Serialize)]
+pub struct ReactionConflict {
+    pub error: ErrorDetail,
+    pub current: ReactionEntry,
 }
 
 /// One user's reaction on one message, as embedded in history pages and returned by the
@@ -104,6 +133,31 @@ impl From<ReactionRow> for ReactionEntry {
     }
 }
 
+/// A written record plus whether the write counts as new for the message's author.
+#[derive(Debug, FromRow)]
+struct WrittenRow {
+    message_id: Uuid,
+    user_id: Uuid,
+    ciphertext: Option<Vec<u8>>,
+    seq: i64,
+    updated_at: DateTime<Utc>,
+    added: bool,
+}
+
+impl WrittenRow {
+    fn into_parts(self) -> (ReactionEntry, bool) {
+        let added = self.added;
+        let entry = ReactionEntry::from(ReactionRow {
+            message_id: self.message_id,
+            user_id: self.user_id,
+            ciphertext: self.ciphertext,
+            seq: self.seq,
+            updated_at: self.updated_at,
+        });
+        (entry, added)
+    }
+}
+
 #[derive(Debug, FromRow)]
 struct ReactionTarget {
     conversation_id: Uuid,
@@ -112,6 +166,15 @@ struct ReactionTarget {
     deleted_for_everyone_at: Option<DateTime<Utc>>,
     user_a_id: Uuid,
     user_b_id: Uuid,
+}
+
+/// Whether each participant can still see the message: not deleted for them, not before their
+/// chat clear.
+#[derive(Debug, FromRow)]
+struct Visibility {
+    caller: bool,
+    /// While false the other participant gets no events for it (catch-up masks it too).
+    peer: bool,
 }
 
 impl ReactionTarget {
@@ -130,7 +193,7 @@ pub async fn put_reaction(
     auth: AuthContext,
     Path(message_id): Path<Uuid>,
     Json(body): Json<PutReactionRequest>,
-) -> Result<Json<ReactionEntry>, AppError> {
+) -> Result<Response, AppError> {
     check_budget(&state, &auth).await?;
 
     let ciphertext = BASE64
@@ -150,46 +213,80 @@ pub async fn put_reaction(
     if !lock_message(&mut tx, message_id, true).await? {
         return Err(AppError::not_found("Message not found."));
     }
+    // A stale tab must not leave a reaction its owner can neither see nor take back.
+    let visible = visibility(
+        &mut tx,
+        message_id,
+        auth.user_id,
+        target.peer_of(auth.user_id),
+    )
+    .await?;
+    if !visible.caller {
+        return Err(AppError::not_found("Message not found."));
+    }
     let seq = next_seq(&mut tx, target.conversation_id).await?;
-    let row = sqlx::query_as::<_, ReactionRow>(
+    // Human: `base_seq` 0 also matches a removal: the caller had nothing, and nothing is there.
+    // Replacing a removal always adds; otherwise the client says whether the set grew.
+    // Agent: a failed `ON CONFLICT … WHERE` returns no row but still locks the existing one.
+    let written = sqlx::query_as::<_, WrittenRow>(
         r#"
-        INSERT INTO message_reactions (message_id, user_id, conversation_id, ciphertext, seq)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO message_reactions
+            (message_id, user_id, conversation_id, message_sender_id, ciphertext, seq, added_seq)
+        VALUES ($1, $2, $3, $4, $5, $6, $6)
         ON CONFLICT (message_id, user_id) DO UPDATE
         SET ciphertext = EXCLUDED.ciphertext,
             seq = EXCLUDED.seq,
+            added_seq = CASE
+                WHEN $8 OR message_reactions.ciphertext IS NULL THEN EXCLUDED.seq
+                ELSE message_reactions.added_seq
+            END,
             updated_at = now()
-        RETURNING message_id, user_id, ciphertext, seq, updated_at
+        WHERE $7::bigint IS NULL
+           OR message_reactions.seq = $7
+           OR ($7 = 0 AND message_reactions.ciphertext IS NULL)
+        RETURNING message_id, user_id, ciphertext, seq, updated_at, added_seq = seq AS added
         "#,
     )
     .bind(message_id)
     .bind(auth.user_id)
     .bind(target.conversation_id)
+    .bind(target.sender_user_id)
     .bind(&ciphertext)
     .bind(seq)
-    .fetch_one(&mut *tx)
+    .bind(body.base_seq)
+    .bind(body.added.unwrap_or(true))
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|err| AppError::Internal(format!("upsert reaction failed: {err}")))?;
+
+    let Some(written) = written else {
+        let current = current_record(&mut tx, message_id, auth.user_id).await?;
+        rollback(tx).await?;
+        return Ok(changed_elsewhere(current));
+    };
     commit(tx).await?;
 
-    let entry = ReactionEntry::from(row);
-    publish(&state, &auth, &target, &entry).await;
+    let (entry, added) = written.into_parts();
+    publish(&state, &auth, &target, &entry, added, visible.peer).await;
 
     tracing::info!(
         message_id = %message_id,
         user_id = %auth.user_id,
         seq = entry.seq,
+        added,
         ciphertext_bytes = ciphertext.len(),
         "reactions.put ok"
     );
-    Ok(Json(entry))
+    Ok(Json(entry).into_response())
 }
 
-/// `DELETE /messages/:id/reaction` — remove the caller's reaction. `204` when there was none.
+/// `DELETE /messages/:id/reaction?base_seq=` — remove the caller's reaction. `204` when there
+/// is none (any more).
 pub async fn delete_reaction(
     State(state): State<AppState>,
     auth: AuthContext,
     Path(message_id): Path<Uuid>,
+    Query(query): Query<DeleteReactionQuery>,
 ) -> Result<Response, AppError> {
     check_budget(&state, &auth).await?;
     let target = load_target_for_removal(&state, &auth, message_id).await?;
@@ -199,6 +296,13 @@ pub async fn delete_reaction(
     if !lock_message(&mut tx, message_id, false).await? {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
+    let visible = visibility(
+        &mut tx,
+        message_id,
+        auth.user_id,
+        target.peer_of(auth.user_id),
+    )
+    .await?;
     let seq = next_seq(&mut tx, target.conversation_id).await?;
     let row = sqlx::query_as::<_, ReactionRow>(
         r#"
@@ -207,26 +311,31 @@ pub async fn delete_reaction(
             seq = $3,
             updated_at = now()
         WHERE message_id = $1 AND user_id = $2 AND ciphertext IS NOT NULL
+          AND ($4::bigint IS NULL OR seq = $4)
         RETURNING message_id, user_id, ciphertext, seq, updated_at
         "#,
     )
     .bind(message_id)
     .bind(auth.user_id)
     .bind(seq)
+    .bind(query.base_seq)
     .fetch_optional(&mut *tx)
     .await
     .map_err(|err| AppError::Internal(format!("remove reaction failed: {err}")))?;
 
-    // Nothing to take back: rolling back also returns the counter's number.
+    // Rolling back also returns the counter's number. Nothing there (or only a removal) is
+    // what the caller asked for; a live record they did not build on is not theirs to drop.
     let Some(row) = row else {
-        tx.rollback().await.map_err(|err| {
-            AppError::Internal(format!("rollback reaction removal failed: {err}"))
-        })?;
-        return Ok(StatusCode::NO_CONTENT.into_response());
+        let current = current_record(&mut tx, message_id, auth.user_id).await?;
+        rollback(tx).await?;
+        return Ok(match current {
+            Some(current) if current.ciphertext.is_some() => changed_elsewhere(Some(current)),
+            _ => StatusCode::NO_CONTENT.into_response(),
+        });
     };
     commit(tx).await?;
     let entry = ReactionEntry::from(row);
-    publish(&state, &auth, &target, &entry).await;
+    publish(&state, &auth, &target, &entry, false, visible.peer).await;
 
     tracing::info!(
         message_id = %message_id,
@@ -336,15 +445,15 @@ pub(crate) async fn live_reactions_batch(
 /// The conversation's latest reaction `seq`, 0 when there is none. Every change up to it is
 /// committed, so a client without a catch-up cursor can start from the value read *before*
 /// its first history page.
-pub(crate) async fn latest_reaction_seq(
-    pool: &sqlx::PgPool,
+pub(crate) async fn latest_reaction_seq<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
     conversation_id: Uuid,
 ) -> Result<i64, AppError> {
     let seq: Option<i64> = sqlx::query_scalar(
         r#"SELECT seq FROM conversation_reaction_seqs WHERE conversation_id = $1"#,
     )
     .bind(conversation_id)
-    .fetch_optional(pool)
+    .fetch_optional(executor)
     .await
     .map_err(|err| AppError::Internal(format!("latest reaction seq failed: {err}")))?;
     Ok(seq.unwrap_or(0))
@@ -426,7 +535,20 @@ pub async fn mark_reactions_seen(
     else {
         return Ok(Json(MarkReactionsSeenResponse { seen_seq: 0 }));
     };
-    let latest = latest_reaction_seq(&state.pool, conversation_id).await?;
+    // Human: The conversation row first, like every reaction writer: a first "seen" inserts its
+    // row, whose key check would otherwise wait on a chat delete that is itself waiting on that
+    // row (`mark_all_seen`) — a deadlock.
+    let mut tx = begin(&state).await?;
+    let exists: Option<i32> =
+        sqlx::query_scalar(r#"SELECT 1 FROM conversations WHERE id = $1 FOR KEY SHARE"#)
+            .bind(conversation_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|err| AppError::Internal(format!("lock seen conversation failed: {err}")))?;
+    if exists.is_none() {
+        return Ok(Json(MarkReactionsSeenResponse { seen_seq: 0 }));
+    }
+    let latest = latest_reaction_seq(&mut *tx, conversation_id).await?;
     let up_to = body.up_to_seq.clamp(0, latest);
 
     #[derive(FromRow)]
@@ -454,9 +576,10 @@ pub async fn mark_reactions_seen(
     .bind(auth.user_id)
     .bind(conversation_id)
     .bind(up_to)
-    .fetch_one(&state.pool)
+    .fetch_one(&mut *tx)
     .await
     .map_err(|err| AppError::Internal(format!("mark reactions seen failed: {err}")))?;
+    commit(tx).await?;
 
     if seen.moved {
         let event = serde_json::json!({
@@ -477,9 +600,10 @@ pub async fn mark_reactions_seen(
     }))
 }
 
-/// First lock of every reaction write: waits out a whole-chat delete in flight (it holds the
-/// row `FOR UPDATE`) without blocking sends, which only take `FOR NO KEY UPDATE`.
-async fn lock_conversation(
+/// First lock of every reaction write and of deleting a message for everyone: waits out a
+/// whole-chat delete in flight (it holds the row `FOR UPDATE`) without blocking sends, which
+/// only take `FOR NO KEY UPDATE`.
+pub(crate) async fn lock_conversation(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     conversation_id: Uuid,
 ) -> Result<(), AppError> {
@@ -503,6 +627,75 @@ async fn commit(tx: sqlx::Transaction<'_, sqlx::Postgres>) -> Result<(), AppErro
     tx.commit()
         .await
         .map_err(|err| AppError::Internal(format!("commit reaction failed: {err}")))
+}
+
+async fn rollback(tx: sqlx::Transaction<'_, sqlx::Postgres>) -> Result<(), AppError> {
+    tx.rollback()
+        .await
+        .map_err(|err| AppError::Internal(format!("rollback reaction failed: {err}")))
+}
+
+/// The caller's record as it is now, removal included; `None` when they never had one.
+async fn current_record(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    message_id: Uuid,
+    user_id: Uuid,
+) -> Result<Option<ReactionEntry>, AppError> {
+    let row = sqlx::query_as::<_, ReactionRow>(
+        r#"
+        SELECT message_id, user_id, ciphertext, seq, updated_at
+        FROM message_reactions
+        WHERE message_id = $1 AND user_id = $2
+        "#,
+    )
+    .bind(message_id)
+    .bind(user_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("load current reaction failed: {err}")))?;
+    Ok(row.map(ReactionEntry::from))
+}
+
+fn changed_elsewhere(current: Option<ReactionEntry>) -> Response {
+    // A failed compare always has a row to compare with; `None` would mean it vanished
+    // under our locks, which a retry sorts out.
+    let Some(current) = current else {
+        return AppError::conflict("REACTION_CHANGED", "Try again.").into_response();
+    };
+    let body = ReactionConflict {
+        error: ErrorDetail {
+            code: "REACTION_CHANGED".into(),
+            message: "Your reaction changed on another device.".into(),
+        },
+        current,
+    };
+    (StatusCode::CONFLICT, Json(body)).into_response()
+}
+
+/// Everything in the chat so far counts as seen by `user_id`: what they cleared is gone, so
+/// nothing there is left to see, and their unseen count starts from an empty range again.
+/// Agent: CALLED by conversations::upsert_clear with the conversation row held `FOR UPDATE`,
+/// so no reaction write lands between the clear and this read of the counter.
+pub(crate) async fn mark_all_seen(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: Uuid,
+    conversation_id: Uuid,
+) -> Result<(), AppError> {
+    sqlx::query(
+        r#"
+        INSERT INTO reaction_reads (user_id, conversation_id, seen_seq)
+        SELECT $1, conversation_id, seq FROM conversation_reaction_seqs
+        WHERE conversation_id = $2
+        ON CONFLICT (user_id, conversation_id)
+        DO UPDATE SET seen_seq = GREATEST(reaction_reads.seen_seq, EXCLUDED.seen_seq)
+        "#,
+    )
+    .bind(user_id)
+    .bind(conversation_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("mark cleared reactions seen failed: {err}")))?;
+    Ok(())
 }
 
 /// Second lock of every reaction write. `FOR KEY SHARE` waits for a `delete_for_everyone` in
@@ -587,8 +780,8 @@ async fn load_target_row(
     Ok(target)
 }
 
-/// Target for a new reaction: a visible, non-annotation message in a conversation the caller
-/// may still message.
+/// Target for a new reaction: a live, non-annotation message in a conversation the caller may
+/// still message. Whether the caller can still see it is checked under the locks (`visibility`).
 async fn load_target(
     state: &AppState,
     auth: &AuthContext,
@@ -625,29 +818,72 @@ async fn load_target_for_removal(
     load_target_row(state, auth, message_id).await
 }
 
+/// Who can still see the message, read under the conversation and message locks: a chat clear
+/// (which holds the conversation `FOR UPDATE`) can't land between this and the write. A hide
+/// still can, which is no worse than reacting and then deleting the message for yourself.
+async fn visibility(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    message_id: Uuid,
+    caller: Uuid,
+    peer: Uuid,
+) -> Result<Visibility, AppError> {
+    sqlx::query_as::<_, Visibility>(
+        r#"
+        SELECT
+            NOT EXISTS (
+                SELECT 1 FROM message_hides h WHERE h.message_id = m.id AND h.user_id = $2
+            ) AND NOT EXISTS (
+                SELECT 1 FROM conversation_clears cc
+                WHERE cc.conversation_id = m.conversation_id AND cc.user_id = $2
+                  AND m.created_at <= cc.cleared_at
+            ) AS caller,
+            NOT EXISTS (
+                SELECT 1 FROM message_hides h WHERE h.message_id = m.id AND h.user_id = $3
+            ) AND NOT EXISTS (
+                SELECT 1 FROM conversation_clears cc
+                WHERE cc.conversation_id = m.conversation_id AND cc.user_id = $3
+                  AND m.created_at <= cc.cleared_at
+            ) AS peer
+        FROM messages m
+        WHERE m.id = $1
+        "#,
+    )
+    .bind(message_id)
+    .bind(caller)
+    .bind(peer)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("load reaction visibility failed: {err}")))
+}
+
 async fn publish(
     state: &AppState,
     auth: &AuthContext,
     target: &ReactionTarget,
     entry: &ReactionEntry,
+    added: bool,
+    peer_sees_message: bool,
 ) {
     // `message_sender_id` lets a client tell a reaction to its own message (a chat-list badge)
-    // from one to the other side's, without holding the message.
+    // from one to the other side's, without holding the message; `added` whether it is news.
     let event = serde_json::json!({
         "type": "message.reaction",
         "conversation_id": target.conversation_id,
         "message_sender_id": target.sender_user_id,
         "device_id": auth.device_id,
+        "added": added,
         "reaction": entry,
     });
+    // Catch-up hides a message's reactions from someone who hid or cleared it; so does this.
+    let peer = target.peer_of(auth.user_id);
+    let mut audience = vec![auth.user_id];
+    if peer != auth.user_id && peer_sees_message {
+        audience.push(peer);
+    }
     if let Ok(payload) = serde_json::to_string(&event) {
         state
             .realtime
-            .publish_to_users(
-                [target.user_a_id, target.user_b_id],
-                Some(auth.device_id),
-                &payload,
-            )
+            .publish_to_users(audience, Some(auth.device_id), &payload)
             .await;
     }
 }

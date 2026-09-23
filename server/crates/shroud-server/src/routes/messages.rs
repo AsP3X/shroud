@@ -1162,6 +1162,19 @@ async fn delete_for_everyone(
         deleted_for_everyone_at: Option<DateTime<Utc>>,
     }
 
+    // Human: The conversation row first, like reaction writes and chat and account deletes
+    // (reactions.rs): taking the message first could deadlock against a chat delete clearing
+    // reactions.
+    // Agent: a message's conversation never changes, so reading it before the lock is safe.
+    let conversation_id: Uuid =
+        sqlx::query_scalar(r#"SELECT conversation_id FROM messages WHERE id = $1"#)
+            .bind(message_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|err| AppError::Internal(format!("load message for delete failed: {err}")))?
+            .ok_or_else(|| AppError::not_found("Message not found."))?;
+    reactions::lock_conversation(&mut tx, conversation_id).await?;
+
     let meta = sqlx::query_as::<_, MsgMeta>(
         r#"
         SELECT sender_user_id, conversation_id, deleted_for_everyone_at

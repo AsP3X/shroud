@@ -12,17 +12,18 @@ use sqlx::postgres::PgPoolOptions;
 use tokio_tungstenite::tungstenite::Message;
 use uuid::Uuid;
 
+/// None without `DATABASE_URL` (the tests skip). Set but unusable fails loudly instead.
 async fn test_pool() -> Option<sqlx::PgPool> {
     let database_url = std::env::var("DATABASE_URL").ok()?;
     let pool = PgPoolOptions::new()
         .max_connections(5)
         .connect(&database_url)
         .await
-        .ok()?;
+        .expect("connect to DATABASE_URL");
     sqlx::migrate!("../../migrations/postgres")
         .run(&pool)
         .await
-        .ok()?;
+        .expect("apply migrations (recreate a throwaway database whose migrations changed)");
     Some(pool)
 }
 
@@ -339,5 +340,187 @@ async fn websocket_recording_relays_to_contact_only() {
         let _ = socket.close(None).await;
     }
     let _ = shutdown_tx.send(());
+    let _ = server.await;
+}
+
+// MARK: reactions
+
+/// Signs `username` in again: a second device with its own token.
+async fn login(client: &reqwest::Client, addr: std::net::SocketAddr, username: &str) -> String {
+    let response = client
+        .post(format!("http://{addr}/api/v1/auth/login"))
+        .json(&json!({ "username": username, "password": "correct-horse-battery" }))
+        .send()
+        .await
+        .expect("login");
+    assert!(
+        response.status().is_success(),
+        "login: {}",
+        response.status()
+    );
+    let body: Value = response.json().await.expect("json");
+    body["token"].as_str().unwrap().to_string()
+}
+
+async fn username_of(client: &reqwest::Client, addr: std::net::SocketAddr, token: &str) -> String {
+    let body: Value = client
+        .get(format!("http://{addr}/api/v1/auth/me"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .expect("me")
+        .json()
+        .await
+        .expect("json");
+    body["username"]
+        .as_str()
+        .or_else(|| body["user"]["username"].as_str())
+        .expect("username")
+        .to_string()
+}
+
+/// Human: `message.reaction` goes to the reactor's other devices and to the other participant
+/// while they can still see the message (catch-up hides it from them otherwise), carrying the
+/// message's sender and whether an emoji was added; `reactions.seen` only to the marker's other
+/// devices. Contract shared with web/src/screens/AppShell.tsx and iOS `MessagingController`.
+#[tokio::test]
+async fn websocket_reaction_events_reach_who_can_see_the_message() {
+    let Some(pool) = test_pool().await else {
+        eprintln!(
+            "skipping websocket_reaction_events_reach_who_can_see_the_message: no DATABASE_URL"
+        );
+        return;
+    };
+    let (addr, shutdown, server) = spawn_app(pool).await;
+    let client = reqwest::Client::new();
+    let (token_a, user_a) = register(&client, addr).await;
+    let (token_b, user_b) = register(&client, addr).await;
+    become_contacts(&client, addr, (&token_a, &user_a), (&token_b, &user_b)).await;
+    let token_a2 = login(&client, addr, &username_of(&client, addr, &token_a).await).await;
+    let token_b2 = login(&client, addr, &username_of(&client, addr, &token_b).await).await;
+
+    let mut a1 = connect_authed(addr, &token_a).await;
+    let mut a2 = connect_authed(addr, &token_a2).await;
+    let mut b1 = connect_authed(addr, &token_b).await;
+    let mut b2 = connect_authed(addr, &token_b2).await;
+
+    let sent: Value = client
+        .post(format!("http://{addr}/api/v1/messages"))
+        .bearer_auth(&token_a)
+        .json(&json!({
+            "peer_user_id": user_b,
+            "client_message_id": Uuid::new_v4(),
+            "content_type": "text",
+            "ciphertext": "c2VhbGVk",
+        }))
+        .send()
+        .await
+        .expect("send")
+        .json()
+        .await
+        .expect("json");
+    let message = sent["id"].as_str().unwrap().to_string();
+    let react = |token: &str, blob: &str, base: i64, added: bool| {
+        client
+            .put(format!("http://{addr}/api/v1/messages/{message}/reaction"))
+            .bearer_auth(token.to_string())
+            .json(&json!({ "ciphertext": blob, "base_seq": base, "added": added }))
+            .send()
+    };
+
+    // B (device 1) reacts: A's devices and B's device 2 hear it, device 1 does not.
+    let first: Value = react(&token_b, "aGVhcnQ=", 0, true)
+        .await
+        .expect("react")
+        .json()
+        .await
+        .expect("json");
+    let short = Duration::from_millis(400);
+    for socket in [&mut a1, &mut a2, &mut b2] {
+        let event = next_of_type(socket, "message.reaction", Duration::from_secs(5))
+            .await
+            .expect("message.reaction");
+        assert_eq!(event["message_sender_id"], user_a.as_str());
+        assert_eq!(event["added"], true);
+        assert_eq!(event["reaction"]["seq"], first["seq"]);
+        assert_eq!(event["reaction"]["user_id"], user_b.as_str());
+    }
+    assert!(
+        next_of_type(&mut b1, "message.reaction", short)
+            .await
+            .is_none()
+    );
+
+    // A marks it seen on device 1: device 2 hears it, device 1 and B do not.
+    let seen = client
+        .post(format!(
+            "http://{addr}/api/v1/conversations/{user_b}/reactions/seen"
+        ))
+        .bearer_auth(&token_a)
+        .json(&json!({ "up_to_seq": first["seq"] }))
+        .send()
+        .await
+        .expect("seen");
+    assert!(seen.status().is_success());
+    let event = next_of_type(&mut a2, "reactions.seen", Duration::from_secs(5))
+        .await
+        .expect("reactions.seen");
+    assert_eq!(event["peer_user_id"], user_b.as_str());
+    assert_eq!(event["seen_seq"], first["seq"]);
+    assert!(
+        next_of_type(&mut a1, "reactions.seen", short)
+            .await
+            .is_none()
+    );
+    assert!(
+        next_of_type(&mut b2, "reactions.seen", short)
+            .await
+            .is_none()
+    );
+
+    // Taking one back reaches everyone, as not added.
+    let second: Value = react(&token_b, "ZmlyZQ==", first["seq"].as_i64().unwrap(), false)
+        .await
+        .expect("react")
+        .json()
+        .await
+        .expect("json");
+    for socket in [&mut a1, &mut a2, &mut b2] {
+        let event = next_of_type(socket, "message.reaction", Duration::from_secs(5))
+            .await
+            .expect("message.reaction");
+        assert_eq!(event["added"], false);
+        assert_eq!(event["reaction"]["seq"], second["seq"]);
+    }
+
+    // A deletes the message for themselves: B's next change reaches only B's other device.
+    let hidden = client
+        .delete(format!("http://{addr}/api/v1/messages/{message}?scope=me"))
+        .bearer_auth(&token_a)
+        .send()
+        .await
+        .expect("hide");
+    assert!(hidden.status().is_success());
+    let third = react(&token_b, "dGh1bWJz", second["seq"].as_i64().unwrap(), true)
+        .await
+        .expect("react");
+    assert!(third.status().is_success());
+    let third: Value = third.json().await.expect("json");
+    let event = next_of_type(&mut b2, "message.reaction", Duration::from_secs(5))
+        .await
+        .expect("message.reaction");
+    assert_eq!(event["reaction"]["seq"], third["seq"]);
+    assert!(
+        next_of_type(&mut a1, "message.reaction", short)
+            .await
+            .is_none()
+    );
+    assert!(
+        next_of_type(&mut a2, "message.reaction", short)
+            .await
+            .is_none()
+    );
+
+    let _ = shutdown.send(());
     let _ = server.await;
 }

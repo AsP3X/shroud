@@ -35,8 +35,9 @@ pub struct ConversationItem {
     /// The chat's latest reaction change (0 when none): a client whose catch-up cursor is
     /// behind knows without opening the chat.
     pub reaction_seq: i64,
-    /// Live reactions by the other participant to the caller's messages that the caller has
-    /// not marked seen (`POST /conversations/{peer}/reactions/seen`): the heart badge.
+    /// Live reactions by the other participant to the caller's messages with an emoji added
+    /// since the caller last marked them seen (`POST /conversations/{peer}/reactions/seen`):
+    /// the heart badge.
     pub unseen_reactions: i64,
 }
 
@@ -81,8 +82,9 @@ pub async fn list_conversations(
     }
 
     // Human: Join peer username; use denormalized last_message_at (no correlated subquery).
-    // The unseen-reaction count is one index range per chat — `seq > seen_seq` on
-    // (conversation_id, seq) — and empty for every chat whose reactions are all seen.
+    // The unseen-reaction count is one range of the partial unseen index per chat: the other
+    // person's live reactions to the caller's messages with `added_seq > seen_seq`, so it only
+    // walks what the caller has not seen (a clear marks everything seen).
     // A chat the caller cleared stays hidden until something newer than their watermark
     // arrives, which is what makes the next message read as a brand-new chat.
     // Agent: SELECT conversations JOIN users LEFT JOIN conversation_clears; RETURNS ConversationItem list.
@@ -100,10 +102,10 @@ pub async fn list_conversations(
                 FROM message_reactions r
                 INNER JOIN messages m ON m.id = r.message_id
                 WHERE r.conversation_id = c.id
-                  AND r.seq > COALESCE(rr.seen_seq, 0)
+                  AND r.message_sender_id = $1
+                  AND r.user_id <> r.message_sender_id
                   AND r.ciphertext IS NOT NULL
-                  AND r.user_id <> $1
-                  AND m.sender_user_id = $1
+                  AND r.added_seq > COALESCE(rr.seen_seq, 0)
                   AND m.deleted_for_everyone_at IS NULL
                   AND (cc.cleared_at IS NULL OR m.created_at > cc.cleared_at)
                   AND NOT EXISTS (
@@ -319,7 +321,8 @@ async fn find_conversation_tx(
 }
 
 /// Moves a participant's watermark forward. Never backwards: a replayed or out-of-order
-/// request must not un-hide messages the user already deleted.
+/// request must not un-hide messages the user already deleted. Reactions up to now count as
+/// seen too — they sit on messages the participant can no longer see.
 async fn upsert_clear(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     user_id: Uuid,
@@ -340,7 +343,7 @@ async fn upsert_clear(
     .execute(&mut **tx)
     .await
     .map_err(|err| AppError::Internal(format!("upsert conversation clear failed: {err}")))?;
-    Ok(())
+    crate::routes::reactions::mark_all_seen(tx, user_id, conversation_id).await
 }
 
 async fn peer_allows_chat_delete(

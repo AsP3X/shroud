@@ -109,18 +109,9 @@ impl Config {
         let cors_allowed_origins = cors_origins_from_env();
 
         // Human: Handed to clients by `GET /config`; the server can't count sealed emoji, so the
-        // clients enforce it. Above 20 a chip stops fitting a bubble, so the value is capped.
-        let reactions_max_per_user = parse_u32_env(
-            "REACTIONS_MAX_PER_USER",
-            std::env::var("REACTIONS_MAX_PER_USER").ok().as_deref(),
-            DEFAULT_REACTIONS_MAX_PER_USER,
-        )?;
-        if reactions_max_per_user == 0 {
-            return Err(AppError::Internal(
-                "REACTIONS_MAX_PER_USER must be at least 1".into(),
-            ));
-        }
-        let reactions_max_per_user = reactions_max_per_user.min(MAX_REACTIONS_PER_USER);
+        // clients enforce it (and show at most 20 from anyone, whatever this says).
+        let reactions_max_per_user =
+            parse_reactions_max_per_user(std::env::var("REACTIONS_MAX_PER_USER").ok().as_deref())?;
 
         Ok(Self {
             database_url,
@@ -247,6 +238,22 @@ fn parse_u32_env(name: &str, raw: Option<&str>, default: u32) -> Result<u32, App
         .map_err(|_| AppError::Internal(format!("{name} must be a positive integer, got {raw:?}")))
 }
 
+/// `REACTIONS_MAX_PER_USER`: 1–20, default 5. Out of range stops startup rather than being
+/// clamped quietly, so clients get the value the operator set.
+fn parse_reactions_max_per_user(raw: Option<&str>) -> Result<u32, AppError> {
+    let value = parse_u32_env(
+        "REACTIONS_MAX_PER_USER",
+        raw,
+        DEFAULT_REACTIONS_MAX_PER_USER,
+    )?;
+    if !(1..=MAX_REACTIONS_PER_USER).contains(&value) {
+        return Err(AppError::Internal(format!(
+            "REACTIONS_MAX_PER_USER must be between 1 and {MAX_REACTIONS_PER_USER}, got {value}"
+        )));
+    }
+    Ok(value)
+}
+
 fn parse_bool_env(name: &str, raw: Option<&str>, default: bool) -> Result<bool, AppError> {
     let Some(raw) = raw else {
         return Ok(default);
@@ -284,6 +291,17 @@ mod tests {
         );
         assert_eq!(parse_u32_env("DATABASE_POOL_MAX", None, 10).unwrap(), 10);
         assert!(parse_u32_env("DATABASE_POOL_MAX", Some("nope"), 10).is_err());
+    }
+
+    #[test]
+    fn reactions_max_per_user_is_one_to_twenty() {
+        assert_eq!(parse_reactions_max_per_user(None).unwrap(), 5);
+        assert_eq!(parse_reactions_max_per_user(Some(" ")).unwrap(), 5);
+        assert_eq!(parse_reactions_max_per_user(Some("1")).unwrap(), 1);
+        assert_eq!(parse_reactions_max_per_user(Some("20")).unwrap(), 20);
+        assert!(parse_reactions_max_per_user(Some("0")).is_err());
+        assert!(parse_reactions_max_per_user(Some("21")).is_err());
+        assert!(parse_reactions_max_per_user(Some("-3")).is_err());
     }
 
     #[test]

@@ -71,7 +71,7 @@ new builds interoperable in both directions.
 
 **Reactions** are not messages. Each user has at most one sealed record per message on the server
 (`message_reactions`, migration 020) — their whole set of emoji — so the server learns who reacted
-to which message and when, never the emoji or how many. They are sealed as a v2 envelope (identity
+to which message and when, never the emoji. They are sealed as a v2 envelope (identity
 boxes only, with the sender tag), not through the Double Ratchet: a reaction is overwritten in
 place, so ratchet steps would be lost, and every device must be able to open it at any time. That
 costs forward secrecy for the emoji only. A reader accepts only a *tagged* v2 box, from one of the
@@ -85,13 +85,18 @@ not the message it is attached to, which stops the server moving a genuine box o
 single emoji of at most 32 bytes once, up to 20, and ignores anything else. Each person's emoji
 share one chip under the bubble. Clients keep the highest `seq` per (message, user) and catch up per
 conversation with `GET /conversations/{peer}/reactions?after_seq=` (removals come back with a null
-ciphertext).
+ciphertext). Because a record is the whole set, a write names the `seq` it was built on: when
+another device of the same person wrote in between, the server answers `409` with the record as it
+is now, and the client re-applies what it changed (the emoji it added and the ones it took back)
+onto that set and tries again — neither device's pick is lost.
 
 What reactions do not protect against: a removal is not sealed (it is the absence of a
 ciphertext), so the server can hide a reaction, or put back an older genuine one for the same
 message and user. It cannot invent one, change the emoji, or move one to another message. A
 modified client can leave more emoji than the limit, up to the 4 KiB record cap; readers show at
-most 20. The unseen-reaction badge is server metadata of the same kind as read receipts.
+most 20. Records are not padded (messages aren't either), so a record's size hints at how many
+emoji it holds. The unseen-reaction badge is server metadata of the same kind as read receipts; to
+keep a taken-back emoji from lighting it, a write also tells the server whether it added one.
 
 `lp` is a link preview (`LinkPreview.swift` / `web/src/links.ts`): `u` the page URL (http/https
 only), `n` site name, `ti` title, `d` description, `th` a ≤6 KB square JPEG for the small layout,

@@ -399,6 +399,22 @@ pub async fn delete_account(
         .await
         .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
 
+    // Human: Every chat of this account first, in one order: the cascade below deletes them, and
+    // taking their messages first could deadlock against a reaction or a delete-for-everyone in
+    // one of them, which lock the conversation and then the message (reactions.rs).
+    sqlx::query(
+        r#"
+        SELECT id FROM conversations
+        WHERE user_a_id = $1 OR user_b_id = $1
+        ORDER BY id
+        FOR UPDATE
+        "#,
+    )
+    .bind(auth.user_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("lock chats for account delete failed: {err}")))?;
+
     // Human: Tombstone sent messages so peers keep conversation history without ciphertext.
     sqlx::query(
         r#"
