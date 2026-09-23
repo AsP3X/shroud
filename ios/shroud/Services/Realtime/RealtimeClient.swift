@@ -214,7 +214,7 @@ final class RealtimeClient {
                 // Log-friendly: decoding failed (schema/date) — fall back to poll via handler?
                 onEvent?(.raw(type: type, json: json))
             }
-        case "message.delivered", "message.read", "message.deleted",
+        case "message.delivered", "message.read", "message.deleted", "message.reaction",
              "conversation.deleted",
              "typing", "recording", "presence.update", "call.ring", "call.accepted",
              "call.ended", "call.signal",

@@ -172,6 +172,19 @@ nonisolated final class APIClient: Sendable {
         try Self.throwIfNeeded(data: data, status: http.statusCode)
     }
 
+    /// Performs a DELETE and returns the body as is — empty for `204` (e.g. removing a reaction
+    /// that was already gone).
+    func deleteRaw(path: String, bearerToken: String? = nil) async throws -> Data {
+        let (data, http) = try await perform(
+            path,
+            method: "DELETE",
+            bodyData: nil,
+            bearerToken: bearerToken
+        )
+        try Self.throwIfNeeded(data: data, status: http.statusCode)
+        return http.statusCode == 204 ? Data() : data
+    }
+
     /// Performs a DELETE and decodes a JSON result body (e.g. chat delete outcome).
     func delete<T: Decodable>(
         path: String,

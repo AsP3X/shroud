@@ -386,6 +386,10 @@ struct MessageBubbleView: View {
     var linkPreviewImage: LinkPreviewImage = .none
     /// Opens the preview's page.
     var onOpenLinkPreview: (() -> Void)? = nil
+    /// Reaction chips; when there are any the time moves to the end of the chip row.
+    var reactions: [ReactionChipContent] = []
+    /// Tapping a chip (by emoji).
+    var onReactionTap: ((String) -> Void)? = nil
 
     @Environment(\.chatRowWidth) private var chatRowWidth
 
@@ -497,7 +501,9 @@ struct MessageBubbleView: View {
     /// Compact single-line when it fits; otherwise multi-line body with meta on the last line.
     private var bubbleCore: some View {
         Group {
-            if let linkPreview, !isDeleted {
+            if !reactions.isEmpty, !isDeleted {
+                reactedBubble
+            } else if let linkPreview, !isDeleted {
                 linkBubble(linkPreview)
             } else if let reply {
                 quotedBubble(reply)
@@ -621,8 +627,8 @@ struct MessageBubbleView: View {
     ///
     /// Human: The bubble is as wide as the wider of text and preview, never wider than the row
     /// allows; a large picture always takes the full width, like a photo would.
-    private func linkBubble(_ preview: LinkPreview) -> some View {
-        let block = LinkPreviewView(
+    private func linkBlock(_ preview: LinkPreview) -> some View {
+        LinkPreviewView(
             preview: preview,
             image: linkPreviewImage,
             style: isMine ? .outgoing : .incoming,
@@ -631,6 +637,10 @@ struct MessageBubbleView: View {
         .padding(.horizontal, 6)
         .padding(.top, 6)
         .layoutValue(key: LinkBubbleRole.self, value: .ideal)
+    }
+
+    private func linkBubble(_ preview: LinkPreview) -> some View {
+        let block = linkBlock(preview)
 
         return LinkBubbleLayout(
             maxWidth: maxBubbleWidth,
@@ -677,6 +687,55 @@ struct MessageBubbleView: View {
                     .padding(.bottom, 5)
                     .layoutValue(key: LinkBubbleRole.self, value: .trailing)
             }
+        }
+        .background(bubbleFill)
+        .clipShape(corners)
+        .background { frameReporter }
+    }
+
+    // MARK: - Reactions (chips + time at the foot)
+
+    /// Quote, text and link preview as usual, then a foot row of chips with the time at its end
+    /// (Telegram). Stacked by `LinkBubbleLayout`, which already hugs the widest row.
+    ///
+    /// Human: A reacted bubble never reserves room for the time on its last text line — the
+    /// time lives on the chip row instead, so the plain layouts stay untouched.
+    private var reactedBubble: some View {
+        let showsPreviewAbove = linkPreview?.showsAboveText == true
+        return LinkBubbleLayout(
+            maxWidth: maxBubbleWidth,
+            fillsWidth: linkPreview != nil && linkPreviewImage.isLarge
+        ) {
+            if let reply {
+                ReplyQuoteView(
+                    content: reply,
+                    style: isMine ? .outgoing : .incoming,
+                    onTap: onReplyTap
+                )
+                .padding(.horizontal, 6)
+                .padding(.top, 6)
+                .layoutValue(key: LinkBubbleRole.self, value: .ideal)
+            }
+            if let linkPreview, showsPreviewAbove {
+                linkBlock(linkPreview)
+            }
+            bodyText
+                .multilineTextAlignment(.leading)
+                .lineSpacing(2.5)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, MessageBubbleMetrics.textLeadingPad)
+                .padding(.trailing, MessageBubbleMetrics.textTrailingPad)
+                .padding(.top, reply == nil && !showsPreviewAbove ? 7 : 5)
+            if let linkPreview, !showsPreviewAbove {
+                linkBlock(linkPreview)
+            }
+            ReactionFooter(chips: reactions, onOutgoingBubble: isMine, onTap: onReactionTap) {
+                metaRow
+            }
+            .padding(.leading, 8)
+            .padding(.trailing, MessageBubbleMetrics.metaTrailingPad)
+            .padding(.top, 5)
+            .padding(.bottom, 6)
         }
         .background(bubbleFill)
         .clipShape(corners)

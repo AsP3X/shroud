@@ -37,6 +37,7 @@ enum ThreadMessageMerge {
             if kept.transcript == nil { kept.transcript = decoded.transcript }
             if kept.replyTo == nil { kept.replyTo = decoded.replyTo }
             if kept.linkPreview == nil { kept.linkPreview = decoded.linkPreview }
+            kept.reactions = prior.reactions
             // Prefer a more specific media kind once we know it (e.g. "Media" → video).
             if kept.kind != decoded.kind, !decodedFailed {
                 if decoded.kind == .video || decoded.kind == .image || decoded.kind == .voice {
@@ -53,6 +54,9 @@ enum ThreadMessageMerge {
         if merged.voiceData == nil { merged.voiceData = prior.voiceData }
         if merged.videoData == nil { merged.videoData = prior.videoData }
         if merged.transcript == nil { merged.transcript = prior.transcript }
+        // Reactions live only on this device's copy until a page reconciles them (never on a
+        // fresh decode), so the held ones carry over — unless the message is gone.
+        merged.reactions = merged.deleted ? [] : prior.reactions
         // A re-decode from a cache written before replies existed has no quote; keep the one
         // the bubble already showed rather than dropping the reply header on a reload.
         if merged.replyTo == nil { merged.replyTo = prior.replyTo }

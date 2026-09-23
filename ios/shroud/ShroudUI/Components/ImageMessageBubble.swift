@@ -19,6 +19,9 @@ struct ImageMessageBubble: View {
     var reply: ReplyQuoteContent? = nil
     /// Jump to the quoted message.
     var onReplyTap: (() -> Void)? = nil
+    /// Reaction chips, drawn in a foot strip under the media (with the caption, if any).
+    var reactions: [ReactionChipContent] = []
+    var onReactionTap: ((String) -> Void)? = nil
 
     @Environment(\.chatRowWidth) private var chatRowWidth
 
@@ -28,6 +31,11 @@ struct ImageMessageBubble: View {
     private var canOpen: Bool {
         !message.deleted && !isFailed && message.imageData != nil
     }
+
+    private var hasReactions: Bool { !reactions.isEmpty && !message.deleted }
+
+    /// The bubble continues under the media: a caption, reaction chips, or both.
+    private var hasFooter: Bool { hasCaption || hasReactions }
 
     private var hasCaption: Bool {
         let t = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -141,7 +149,7 @@ struct ImageMessageBubble: View {
                             onTap: { transfer == nil ? onDownload?() : onCancelDownload?() }
                         )
                         .transition(.scale(scale: 0.8).combined(with: .opacity))
-                    } else if !hasCaption {
+                    } else if !hasFooter {
                         VStack {
                             Spacer()
                             HStack {
@@ -167,7 +175,7 @@ struct ImageMessageBubble: View {
                     onOpen?()
                 }
 
-                if hasCaption, !message.deleted {
+                if hasFooter, !message.deleted {
                     captionFooter
                 }
             }
@@ -201,8 +209,8 @@ struct ImageMessageBubble: View {
         let hasHeader = reply != nil && !message.deleted
         return UnevenRoundedRectangle(
             topLeadingRadius: hasHeader ? 0 : 17.5,
-            bottomLeadingRadius: hasCaption ? 0 : (isMine ? 17.5 : 5),
-            bottomTrailingRadius: hasCaption ? 0 : (isMine ? 5 : 17.5),
+            bottomLeadingRadius: hasFooter ? 0 : (isMine ? 17.5 : 5),
+            bottomTrailingRadius: hasFooter ? 0 : (isMine ? 5 : 17.5),
             topTrailingRadius: hasHeader ? 0 : 17.5,
             style: .continuous
         )
@@ -312,21 +320,46 @@ struct ImageMessageBubble: View {
         .frame(width: displaySize.width, height: 120)
     }
 
+    /// Caption and/or reaction chips under the media. With chips the time leaves the caption's
+    /// last line (and the media) for the end of the chip row, as in Telegram.
     private var captionFooter: some View {
-        ZStack(alignment: .bottomTrailing) {
-            Text("\(captionBodyText)\(captionMetaSpacerText)")
-                .multilineTextAlignment(.leading)
-                .lineSpacing(2.5)
-                .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 0) {
+            if hasReactions {
+                if hasCaption {
+                    captionBodyText
+                        .multilineTextAlignment(.leading)
+                        .lineSpacing(2.5)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, MessageBubbleMetrics.textLeadingPad)
+                        .padding(.trailing, MessageBubbleMetrics.textTrailingPad)
+                        .padding(.top, 7)
+                }
+                ReactionFooter(chips: reactions, onOutgoingBubble: isMine, onTap: onReactionTap) {
+                    captionMetaRow
+                }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.leading, MessageBubbleMetrics.textLeadingPad)
-                .padding(.trailing, MessageBubbleMetrics.textTrailingPad)
-                .padding(.top, 7)
-                .padding(.bottom, 6)
-
-            captionMetaRow
+                .padding(.leading, 8)
                 .padding(.trailing, MessageBubbleMetrics.metaTrailingPad)
-                .padding(.bottom, 5)
+                .padding(.top, hasCaption ? 5 : 6)
+                .padding(.bottom, 6)
+            } else {
+                ZStack(alignment: .bottomTrailing) {
+                    Text("\(captionBodyText)\(captionMetaSpacerText)")
+                        .multilineTextAlignment(.leading)
+                        .lineSpacing(2.5)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, MessageBubbleMetrics.textLeadingPad)
+                        .padding(.trailing, MessageBubbleMetrics.textTrailingPad)
+                        .padding(.top, 7)
+                        .padding(.bottom, 6)
+
+                    captionMetaRow
+                        .padding(.trailing, MessageBubbleMetrics.metaTrailingPad)
+                        .padding(.bottom, 5)
+                }
+            }
         }
         .frame(width: displaySize.width, alignment: .leading)
         .background(isMine ? Theme.accent : Theme.bubbleIncoming)

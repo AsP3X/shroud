@@ -119,6 +119,17 @@ final class MessagingController {
     /// Transcripts that landed while their note was still sending, by optimistic id;
     /// shared once the server has keyed the note.
     private var transcriptsAwaitingSend: [UUID: String] = [:]
+    /// Our latest wanted reaction per message while a send for it is in flight: taps during
+    /// the request collapse into one follow-up with the last choice.
+    private var reactionIntents: [UUID: ReactionIntent] = [:]
+    private var reactionSendTasks: [UUID: Task<Void, Never>] = [:]
+    /// Our reaction as the server last confirmed it, per message with a send in flight.
+    private var reactionRollback: [UUID: ReactionRollback] = [:]
+    /// Catch-up cursors (store peer → highest reaction `seq` applied), read from disk once.
+    private var reactionCursorCache: [UUID: Int64]?
+    /// The last reaction of ours that could not be saved; the chip was put back. The chat shows
+    /// it as a toast.
+    private(set) var reactionFailure: ReactionFailure?
 
     /// Expose realtime health for diagnostics UI if needed.
     var isRealtimeConnected: Bool { realtime.isConnected }
@@ -179,6 +190,9 @@ final class MessagingController {
         /// that image is this message's media blob: `mediaObjectId` / `imageData` /
         /// `previewData` (blurred placeholder) / `imageWidth` + `imageHeight` describe it.
         var linkPreview: LinkPreview?
+        /// Everyone's reactions, oldest change first; removals stay as entries without an emoji
+        /// (`MessageReaction`). Chips come from `ReactionMerge.chips`.
+        var reactions: [MessageReaction]
 
         init(
             id: UUID,
@@ -205,7 +219,8 @@ final class MessagingController {
             todoDone: Bool? = nil,
             pendingSync: Bool = false,
             replyTo: MessageReplyReference? = nil,
-            linkPreview: LinkPreview? = nil
+            linkPreview: LinkPreview? = nil,
+            reactions: [MessageReaction] = []
         ) {
             self.id = id
             self.peerUserID = peerUserID
@@ -232,6 +247,7 @@ final class MessagingController {
             self.pendingSync = pendingSync
             self.replyTo = replyTo
             self.linkPreview = linkPreview
+            self.reactions = reactions
         }
 
         /// A text message whose link preview carries a large image (Telegram's big layout).
@@ -354,6 +370,7 @@ final class MessagingController {
     /// Signed-in account id, for views that have to tell "You" from the peer (reply quotes).
     /// Nil while signed out.
     var myUserID: UUID? { sessionController?.userID }
+    var myUsername: String? { sessionController?.username }
 
     func isNotesChat(_ peerID: UUID) -> Bool {
         NotesLocal.isNotes(peerID)
@@ -488,6 +505,7 @@ final class MessagingController {
         clearAllTyping()
         presenceByUser = [:]
         unreadCountByPeer = [:]
+        reactionCursorCache = nil
         identityChanges = [:]
         verifiedPeerIDs = []
         isLoadingContacts = false
@@ -524,6 +542,7 @@ final class MessagingController {
         threads = [:]
         clearAllTyping()
         unreadCountByPeer = [:]
+        reactionCursorCache = nil
         activePeerID = nil
         threadLoadTasks.values.forEach { $0.cancel() }
         threadLoadTasks.removeAll()
@@ -903,6 +922,11 @@ final class MessagingController {
         var older: HistoryCursor?
         /// Every id the server returned, to tell whether a refresh has met what we hold.
         var serverIDs: Set<UUID> = []
+        /// Opened reactions per message; a message the page returned without any is absent.
+        var reactions: [UUID: [MessageReaction]] = [:]
+        /// The server's reaction `seq` as it read the page (`ReactionMerge.reconcile`); nil from
+        /// a server without reactions, which leaves held reactions alone.
+        var reactionSnapshot: Int64?
     }
 
     private struct HistoryCursor {
@@ -971,7 +995,17 @@ final class MessagingController {
             if !isNotes, dto.senderUserId != me {
                 page.inboundIDs.append(dto.id)
             }
+            if let reactions = dto.reactions, !reactions.isEmpty, !message.deleted {
+                page.reactions[dto.id] = await openReactions(
+                    reactions,
+                    held: message.reactions,
+                    me: me,
+                    material: material,
+                    token: token
+                )
+            }
         }
+        page.reactionSnapshot = response.reactionSeq
 
         let oldest = response.messages.last // newest-first from server → oldest of page
         let mayHaveMore = response.hasMore == true || response.messages.count >= limit
@@ -984,13 +1018,26 @@ final class MessagingController {
     /// Merges a decoded page into the live thread (re-read, so sends made meanwhile stay).
     private func publishHistoryPage(_ page: HistoryPage, storePeerID: UUID) {
         let currentThread = threads[storePeerID] ?? []
-        let merged = foldSharedTranscripts(
+        var merged = foldSharedTranscripts(
             into: ThreadMessageMerge.mergeThread(
                 decoded: page.messages,
                 previous: currentThread,
                 pendingLocal: currentThread.filter(\.pendingSync)
             )
         )
+        if let snapshot = page.reactionSnapshot {
+            for index in merged.indices where page.serverIDs.contains(merged[index].id) {
+                guard !merged[index].deleted else { continue }
+                let reconciled = ReactionMerge.reconcile(
+                    held: merged[index].reactions,
+                    page: page.reactions[merged[index].id] ?? [],
+                    snapshot: snapshot
+                )
+                if reconciled != merged[index].reactions {
+                    merged[index].reactions = reconciled
+                }
+            }
+        }
         if threads[storePeerID] != merged {
             threads[storePeerID] = merged
         }
@@ -1018,6 +1065,7 @@ final class MessagingController {
             var before: HistoryCursor?
             var fetched = 0
             var pendingDeliveryIDs: [UUID] = []
+            var newestReactionSnapshot: Int64?
 
             while true {
                 let limit = fetched == 0 ? Self.firstPageSize : Self.historyPageSize
@@ -1030,6 +1078,7 @@ final class MessagingController {
                     me: me,
                     material: material
                 )
+                if fetched == 0 { newestReactionSnapshot = page.reactionSnapshot }
                 fetched += limit
                 // Publish each page as it lands so the newest messages show at once.
                 publishHistoryPage(page, storePeerID: storePeerID)
@@ -1072,6 +1121,14 @@ final class MessagingController {
                 {
                     presenceByUser[apiPeerID] = presence
                 }
+            }
+            if let newestReactionSnapshot {
+                await catchUpReactions(
+                    apiPeerID: apiPeerID,
+                    storePeerID: storePeerID,
+                    newestSnapshot: newestReactionSnapshot,
+                    token: token
+                )
             }
             if lastError != nil { lastError = nil }
             isOffline = false
@@ -3740,6 +3797,8 @@ final class MessagingController {
                 handleReadEvent(json)
             } else if type == "message.deleted" {
                 handleDeletedEvent(json)
+            } else if type == "message.reaction" {
+                handleReactionEvent(json)
             } else if type == "conversation.deleted" {
                 handleConversationDeletedEvent(json)
             } else if type == "typing" {
@@ -4524,6 +4583,303 @@ final class MessagingController {
             }
         }
         await refreshConversations(force: true)
+    }
+}
+
+// MARK: - Reactions
+
+extension MessagingController {
+    struct ReactionFailure: Equatable, Sendable {
+        let id = UUID()
+        let messageID: UUID
+        let message: String
+    }
+
+    fileprivate struct ReactionIntent {
+        let storePeerID: UUID
+        /// Nil removes our reaction.
+        let emoji: String?
+    }
+
+    fileprivate struct ReactionRollback {
+        /// Nil: we had no reaction on the message.
+        var entry: MessageReaction?
+    }
+
+    /// A message has a server id and can carry reactions: not deleted, not still sending.
+    func canReact(to message: ChatMessage) -> Bool {
+        !message.deleted
+            && message.kind != .todo
+            && !message.pendingSync
+            && message.receipt != .sending
+            && message.receipt != .failed
+            && message.sendError == nil
+    }
+
+    /// The emoji we show on `message`, unconfirmed changes included.
+    func myReaction(on message: ChatMessage) -> String? {
+        guard let me = sessionController?.userID else { return nil }
+        return ReactionMerge.emoji(of: me, in: message.reactions)
+    }
+
+    /// Picking an emoji: sets it, or takes it back when it already is ours (Telegram).
+    func toggleReaction(_ emoji: String, on messageID: UUID, peerUserID: UUID) {
+        guard let message = threads[peerUserID]?.first(where: { $0.id == messageID }) else { return }
+        setMyReaction(myReaction(on: message) == emoji ? nil : emoji, on: messageID, peerUserID: peerUserID)
+    }
+
+    /// Shows our reaction at once and saves it in the background.
+    ///
+    /// Human: One request per message at a time. Taps while it runs only update what we want;
+    /// when it returns, one more request carries the last choice. If that fails the chip goes
+    /// back to what the server holds and `reactionFailure` is set.
+    /// Agent: WRITES threads[peerUserID] (pending entry); CALLS drainReactionIntents.
+    func setMyReaction(_ emoji: String?, on messageID: UUID, peerUserID: UUID) {
+        guard let me = sessionController?.userID,
+              var thread = threads[peerUserID],
+              let index = thread.firstIndex(where: { $0.id == messageID }),
+              canReact(to: thread[index])
+        else { return }
+        if let emoji, !MessageReactionPayload.isSingleEmoji(emoji) { return }
+        let reactions = thread[index].reactions
+        let current = reactions.first(where: { $0.userID == me })
+        guard current?.emoji != emoji else { return }
+
+        if reactionSendTasks[messageID] == nil {
+            reactionRollback[messageID] = ReactionRollback(entry: current)
+        }
+        let optimistic = MessageReaction(userID: me, emoji: emoji, seq: current?.seq ?? 0, pending: true)
+        thread[index].reactions = ReactionMerge.replacing(me, with: optimistic, in: reactions)
+        threads[peerUserID] = thread
+
+        reactionIntents[messageID] = ReactionIntent(storePeerID: peerUserID, emoji: emoji)
+        if reactionSendTasks[messageID] == nil {
+            reactionSendTasks[messageID] = Task { [weak self] in
+                await self?.drainReactionIntents(messageID)
+            }
+        }
+    }
+
+    private func drainReactionIntents(_ messageID: UUID) async {
+        var storePeerID: UUID?
+        while let intent = reactionIntents.removeValue(forKey: messageID) {
+            storePeerID = intent.storePeerID
+            guard let me = sessionController?.userID else { break }
+            do {
+                let dto = try await sendReaction(intent, messageID: messageID)
+                // 204 on a removal: the server held none, which is what we wanted.
+                let confirmed = dto.map { MessageReaction(userID: me, emoji: intent.emoji, seq: $0.seq) }
+                    ?? reactionRollback[messageID]?.entry.map { MessageReaction(userID: me, emoji: nil, seq: $0.seq) }
+                reactionRollback[messageID] = ReactionRollback(entry: confirmed)
+                if reactionIntents[messageID] == nil {
+                    replaceMyReaction(confirmed, on: messageID, peerUserID: intent.storePeerID, me: me)
+                }
+            } catch {
+                // A newer choice is queued; it tries again with its own request.
+                if reactionIntents[messageID] != nil { continue }
+                replaceMyReaction(
+                    reactionRollback[messageID]?.entry,
+                    on: messageID,
+                    peerUserID: intent.storePeerID,
+                    me: me
+                )
+                reactionFailure = ReactionFailure(
+                    messageID: messageID,
+                    message: connectivity.isOnline
+                        ? "Couldn't save your reaction."
+                        : "You're offline. Your reaction wasn't saved."
+                )
+            }
+        }
+        reactionSendTasks[messageID] = nil
+        reactionRollback[messageID] = nil
+        if let storePeerID { persistThread(storePeerID) }
+    }
+
+    private func sendReaction(_ intent: ReactionIntent, messageID: UUID) async throws -> ReactionDTO? {
+        guard connectivity.isOnline,
+              let token = sessionController?.bearerToken,
+              let material = cryptoController?.material
+        else { throw APIError.transport("offline") }
+        guard let emoji = intent.emoji else {
+            return try await messagesService.deleteReaction(messageID: messageID, token: token)
+        }
+        let plaintext = try JSONEncoder().encode(MessageReactionPayload.make(emoji, for: messageID))
+        let peerPublic = isNotesChat(intent.storePeerID)
+            ? material.identityPublicKeyData
+            : try await peerIdentityForSending(peerUserID: intent.storePeerID, token: token)
+        // v2 on purpose: a reaction is overwritten in place, so ratchet steps would be lost, and
+        // every device must be able to open it at any time (docs/architecture.md).
+        let sealed = try MessageCrypto.seal(
+            plaintext: plaintext,
+            toPeerIdentityPublicKey: peerPublic,
+            ourPrivateKey: material.agreementPrivateKey,
+            ourIdentityPublicKey: material.identityPublicKeyData
+        )
+        return try await messagesService.putReaction(messageID: messageID, ciphertext: sealed, token: token)
+    }
+
+    private func replaceMyReaction(_ entry: MessageReaction?, on messageID: UUID, peerUserID: UUID, me: UUID) {
+        guard var thread = threads[peerUserID],
+              let index = thread.firstIndex(where: { $0.id == messageID }),
+              !thread[index].deleted
+        else { return }
+        let updated = ReactionMerge.replacing(me, with: entry, in: thread[index].reactions)
+        guard updated != thread[index].reactions else { return }
+        thread[index].reactions = updated
+        threads[peerUserID] = thread
+    }
+
+    /// Opens sealed reaction records. A record we already hold at the same `seq` is reused
+    /// instead of decrypted again; one that does not open counts as no reaction.
+    private func openReactions(
+        _ dtos: [ReactionDTO],
+        held: [MessageReaction],
+        me: UUID,
+        material: IdentityKeyMaterial,
+        token: String
+    ) async -> [MessageReaction] {
+        var result: [MessageReaction] = []
+        result.reserveCapacity(dtos.count)
+        for dto in dtos {
+            result.append(await openReaction(dto, held: held, me: me, material: material, token: token))
+        }
+        return result
+    }
+
+    private func openReaction(
+        _ dto: ReactionDTO,
+        held: [MessageReaction],
+        me: UUID,
+        material: IdentityKeyMaterial,
+        token: String
+    ) async -> MessageReaction {
+        let removed = MessageReaction(userID: dto.userId, emoji: nil, seq: dto.seq)
+        guard let ciphertext = dto.ciphertext else { return removed }
+        if let known = held.first(where: { $0.userID == dto.userId && $0.seq == dto.seq && !$0.pending }) {
+            return known
+        }
+        guard let envelope = Data(base64Encoded: ciphertext) else { return removed }
+        do {
+            let plaintext: Data
+            if dto.userId == me {
+                plaintext = try MessageCrypto.open(
+                    envelopeData: envelope,
+                    with: material.agreementPrivateKey,
+                    ourIdentityPublicKey: material.identityPublicKeyData,
+                    senderIdentityPublicKey: material.identityPublicKeyData,
+                    as: .sender,
+                    sentAt: dto.updatedAt
+                )
+            } else {
+                let senderPublic = try await resolvePeerIdentityPublicKey(peerUserID: dto.userId, token: token)
+                plaintext = try MessageCrypto.open(
+                    envelopeData: envelope,
+                    with: material.agreementPrivateKey,
+                    ourIdentityPublicKey: material.identityPublicKeyData,
+                    senderIdentityPublicKey: senderPublic,
+                    as: .recipient,
+                    sentAt: dto.updatedAt
+                )
+            }
+            let emoji = MessageReactionPayload.parse(plaintext, for: dto.messageId)
+            return MessageReaction(userID: dto.userId, emoji: emoji, seq: dto.seq)
+        } catch {
+            return removed
+        }
+    }
+
+    /// Opens changes (WebSocket, catch-up) and applies them to the messages this device holds;
+    /// a change for a message it does not hold waits for that message's history page.
+    private func applyReactionChanges(_ dtos: [ReactionDTO], storePeerID: UUID) async {
+        guard let me = sessionController?.userID,
+              let token = sessionController?.bearerToken,
+              let material = cryptoController?.material
+        else { return }
+        // Decrypt first, then apply to the thread as it is by then (it may have moved on).
+        var opened: [(messageID: UUID, entry: MessageReaction)] = []
+        for dto in dtos {
+            guard let held = threads[storePeerID]?.first(where: { $0.id == dto.messageId }),
+                  !held.deleted
+            else { continue }
+            let entry = await openReaction(dto, held: held.reactions, me: me, material: material, token: token)
+            opened.append((dto.messageId, entry))
+        }
+        guard !opened.isEmpty, var thread = threads[storePeerID] else { return }
+        var changed = false
+        for (messageID, entry) in opened {
+            guard let index = thread.firstIndex(where: { $0.id == messageID }),
+                  !thread[index].deleted,
+                  let updated = ReactionMerge.apply(entry, to: thread[index].reactions)
+            else { continue }
+            thread[index].reactions = updated
+            changed = true
+        }
+        guard changed else { return }
+        threads[storePeerID] = thread
+        persistThread(storePeerID)
+    }
+
+    /// WS `message.reaction` from the peer or one of our other devices.
+    ///
+    /// Agent: Never moves the catch-up cursor: an event dropped from the socket queue must still
+    /// come back through catch-up, and re-applying one is harmless (same `seq`).
+    private func handleReactionEvent(_ json: [String: Any]) {
+        guard let body = json["reaction"],
+              let data = try? JSONSerialization.data(withJSONObject: body),
+              let dto = try? JSONDecoder.api.decode(ReactionDTO.self, from: data),
+              let storePeerID = peerID(forMessage: dto.messageId)
+        else { return }
+        Task { await applyReactionChanges([dto], storePeerID: storePeerID) }
+    }
+
+    private func reactionCursors() -> [UUID: Int64] {
+        if let reactionCursorCache { return reactionCursorCache }
+        let loaded = local.reactionCursors(userID: sessionController?.userID)
+        reactionCursorCache = loaded
+        return loaded
+    }
+
+    private func saveReactionCursor(_ seq: Int64, for storePeerID: UUID) {
+        var cursors = reactionCursors()
+        guard cursors[storePeerID] != seq else { return }
+        cursors[storePeerID] = seq
+        reactionCursorCache = cursors
+        local.saveReactionCursors(cursors, userID: sessionController?.userID)
+    }
+
+    /// Brings reactions on messages this device already holds up to date after a refresh.
+    ///
+    /// Human: A history refresh only re-reads the newest page, so a reaction to an older message
+    /// made while this device was away arrives here. A chat seen for the first time starts from
+    /// the newest page's snapshot: everything it holds came with that page.
+    /// Agent: READS/WRITES reaction cursors; CALLS GET /conversations/{peer}/reactions.
+    private func catchUpReactions(
+        apiPeerID: UUID,
+        storePeerID: UUID,
+        newestSnapshot: Int64,
+        token: String
+    ) async {
+        guard let start = reactionCursors()[storePeerID] else {
+            saveReactionCursor(newestSnapshot, for: storePeerID)
+            return
+        }
+        guard start < newestSnapshot else { return }
+        var after = start
+        // A long absence is walked a few pages per refresh; the next one carries on.
+        for _ in 0 ..< 5 {
+            guard let response = try? await messagesService.reactionChanges(
+                peerUserID: apiPeerID,
+                afterSeq: after,
+                token: token
+            ) else { break }
+            if !response.reactions.isEmpty {
+                await applyReactionChanges(response.reactions, storePeerID: storePeerID)
+            }
+            after = response.nextSeq
+            if !response.hasMore { break }
+        }
+        if after > start { saveReactionCursor(after, for: storePeerID) }
     }
 }
 

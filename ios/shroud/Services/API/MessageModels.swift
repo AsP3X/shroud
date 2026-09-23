@@ -45,6 +45,8 @@ struct MessageDTO: Decodable, Equatable, Sendable, Identifiable {
     let delivered: Bool?
     /// Outbound only — peer user read.
     let read: Bool?
+    /// History only — live sealed reactions (omitted when there are none).
+    let reactions: [ReactionDTO]?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -59,6 +61,7 @@ struct MessageDTO: Decodable, Equatable, Sendable, Identifiable {
         case createdAt = "created_at"
         case delivered
         case read
+        case reactions
     }
 }
 
@@ -122,11 +125,15 @@ struct ListMessagesResponse: Decodable, Equatable, Sendable {
     let messages: [MessageDTO]
     /// When false, no older page exists (or server omitted the field — treat as false).
     let hasMore: Bool?
+    /// The conversation's highest reaction `seq` as the page was read: the page's `reactions`
+    /// are the whole live set as of this value. Nil from servers without reactions.
+    let reactionSeq: Int64?
 
     enum CodingKeys: String, CodingKey {
         case conversationId = "conversation_id"
         case messages
         case hasMore = "has_more"
+        case reactionSeq = "reaction_seq"
     }
 }
 

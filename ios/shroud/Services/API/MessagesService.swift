@@ -67,6 +67,41 @@ struct MessagesService: Sendable {
         )
     }
 
+    /// Sets or replaces our reaction on a message.
+    func putReaction(messageID: UUID, ciphertext: Data, token: String) async throws -> ReactionDTO {
+        try await client.put(
+            "messages/\(messageID.uuidString.lowercased())/reaction",
+            body: PutReactionBody(ciphertext: ciphertext.base64EncodedString()),
+            as: ReactionDTO.self,
+            bearerToken: token
+        )
+    }
+
+    /// Removes our reaction. Nil when there was none (`204`).
+    func deleteReaction(messageID: UUID, token: String) async throws -> ReactionDTO? {
+        let data = try await client.deleteRaw(
+            path: "messages/\(messageID.uuidString.lowercased())/reaction",
+            bearerToken: token
+        )
+        guard !data.isEmpty else { return nil }
+        return try JSONDecoder.api.decode(ReactionDTO.self, from: data)
+    }
+
+    /// Reaction changes in the chat with `peerUserID` after `afterSeq`, oldest first.
+    func reactionChanges(
+        peerUserID: UUID,
+        afterSeq: Int64,
+        token: String,
+        limit: Int = 200
+    ) async throws -> ReactionChangesResponse {
+        try await client.get(
+            "conversations/\(peerUserID.uuidString.lowercased())/reactions",
+            query: ["after_seq": String(afterSeq), "limit": String(limit)],
+            as: ReactionChangesResponse.self,
+            bearerToken: token
+        )
+    }
+
     func markDelivered(messageID: UUID, token: String) async throws {
         try await client.postNoContent(
             path: "messages/\(messageID.uuidString.lowercased())/delivered",

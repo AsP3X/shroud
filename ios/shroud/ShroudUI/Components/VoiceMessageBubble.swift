@@ -24,6 +24,9 @@ struct VoiceMessageBubble: View {
     var reply: ReplyQuoteContent? = nil
     /// Jump to the quoted message.
     var onReplyTap: (() -> Void)? = nil
+    /// Reaction chips, in a row under the waveform (the time stays in the waveform footer).
+    var reactions: [ReactionChipContent] = []
+    var onReactionTap: ((String) -> Void)? = nil
 
     @State private var playback = VoicePlaybackCoordinator.shared
     @State private var install = TranscriptionModelInstall.shared
@@ -230,6 +233,15 @@ struct VoiceMessageBubble: View {
                         insertion: .opacity.combined(with: .offset(y: -6)),
                         removal: .opacity
                     ))
+            }
+
+            if !reactions.isEmpty, !message.deleted {
+                // The footer layout wants a meta view last; the time already sits above.
+                ReactionFooter(chips: reactions, onOutgoingBubble: isMine, onTap: onReactionTap) {
+                    Color.clear.frame(width: 0, height: 0)
+                }
+                .frame(width: Self.playButtonSize + Self.playButtonGap + columnWidth, alignment: .leading)
+                .padding(.top, 7)
             }
         }
         .padding(.horizontal, 10)

@@ -78,6 +78,9 @@ enum MessageTapClaim {
 private struct MessageContextLongPress: ViewModifier {
     let minimumDuration: TimeInterval
     let onTap: (() -> Void)?
+    /// Quick reaction (Telegram's double tap). Simultaneous like the tap, so only bubbles
+    /// without controls of their own should set it.
+    let onDoubleTap: (() -> Void)?
     let perform: (CGRect) -> Void
 
     /// Live global frame of the row — the menu hero flies from and back to it.
@@ -116,6 +119,13 @@ private struct MessageContextLongPress: ViewModifier {
                 },
                 isEnabled: onTap != nil
             )
+            .simultaneousGesture(
+                TapGesture(count: 2).onEnded {
+                    guard !MessageTapClaim.isClaimed() else { return }
+                    onDoubleTap?()
+                },
+                isEnabled: onDoubleTap != nil
+            )
     }
 }
 
@@ -125,12 +135,14 @@ extension View {
     func messageContextLongPress(
         minimumDuration: TimeInterval = 0.25,
         onTap: (() -> Void)? = nil,
+        onDoubleTap: (() -> Void)? = nil,
         perform: @escaping (_ globalFrame: CGRect) -> Void
     ) -> some View {
         modifier(
             MessageContextLongPress(
                 minimumDuration: minimumDuration,
                 onTap: onTap,
+                onDoubleTap: onDoubleTap,
                 perform: perform
             )
         )

@@ -353,6 +353,12 @@ struct ConversationView: View {
                 guard !items.isEmpty else { return }
                 Task { await loadPickedMedia(items) }
             }
+            .onChange(of: messaging.reactionFailure) { _, failure in
+                guard let failure else { return }
+                toast = failure.message
+                Haptics.notification(.error)
+                scheduleToastClear()
+            }
             .fullScreenCover(isPresented: $showCamera) {
                 CameraPicker { capture in
                     showCamera = false
@@ -808,6 +814,13 @@ struct ConversationView: View {
                                     onTap: (message.kind == .image || message.kind == .video)
                                         ? {
                                             handleMediaTap(message)
+                                        }
+                                        : nil,
+                                    // Quick reaction on text only: other bubbles have controls
+                                    // of their own that would take both taps too.
+                                    onDoubleTap: message.kind == .text && messaging.canReact(to: message)
+                                        ? {
+                                            react(Self.quickReaction, to: message)
                                         }
                                         : nil
                                 ) { rowGlobalFrame in
@@ -1362,7 +1375,9 @@ struct ConversationView: View {
                 reply: reply,
                 onReplyTap: message.replyTo.map { reference in
                     { jumpToQuoted(reference.messageID) }
-                }
+                },
+                reactions: reactionChips(for: message),
+                onReactionTap: { emoji in react(emoji, to: message) }
             )
         case .video:
             VideoMessageBubble(
@@ -1398,7 +1413,9 @@ struct ConversationView: View {
                 reply: reply,
                 onReplyTap: message.replyTo.map { reference in
                     { jumpToQuoted(reference.messageID) }
-                }
+                },
+                reactions: reactionChips(for: message),
+                onReactionTap: { emoji in react(emoji, to: message) }
             )
         case .voice:
             VoiceMessageBubble(
@@ -1438,7 +1455,9 @@ struct ConversationView: View {
                 reply: reply,
                 onReplyTap: message.replyTo.map { reference in
                     { jumpToQuoted(reference.messageID) }
-                }
+                },
+                reactions: reactionChips(for: message),
+                onReactionTap: { emoji in react(emoji, to: message) }
             )
         case .text:
             MessageBubbleView(
@@ -1456,7 +1475,9 @@ struct ConversationView: View {
                 linkPreviewImage: linkPreviewImage(for: message),
                 onOpenLinkPreview: message.linkPreview?.openURL.map { url in
                     { _ = openLink(url) }
-                }
+                },
+                reactions: reactionChips(for: message),
+                onReactionTap: { emoji in react(emoji, to: message) }
             )
             .onAppear {
                 // Preview pictures are small and load on their own (photos wait for a tap).
@@ -1839,13 +1860,13 @@ struct ConversationView: View {
             progress: menuProgress,
             onReaction: { emoji in
                 dismissMessageMenu()
-                toast = "Reacted \(emoji)"
-                scheduleToastClear()
+                // The live copy: the menu's snapshot may predate a reaction that just landed.
+                let current = messages.first(where: { $0.id == message.id }) ?? message
+                react(emoji, to: current)
             },
-            onMoreReactions: {
-                dismissMessageMenu()
-                showComingSoon("More reactions")
-            },
+            selectedReaction: messaging.myReaction(
+                on: messages.first(where: { $0.id == message.id }) ?? message
+            ),
             onBackdropTap: {
                 // The finger that opened the menu is usually still down; its release lands on
                 // the backdrop and would close what the hold just opened.
@@ -1861,7 +1882,8 @@ struct ConversationView: View {
                 heroImage: session.heroImage,
                 inTranscriptTail: transcriptTail.contains(message.id),
                 reply: replyContent(for: message, quoted: quotedMessagesByID),
-                linkPreviewImage: linkPreviewImage(for: message)
+                linkPreviewImage: linkPreviewImage(for: message),
+                reactions: reactionChips(for: message)
             )
         } card: {
             MessageContextMenuCard(
@@ -1876,6 +1898,38 @@ struct ConversationView: View {
         }
         // A new message is a new menu: no scroll position carries over from the last one.
         .id(message.id)
+    }
+
+    /// Telegram's double-tap reaction.
+    private static let quickReaction = "❤️"
+
+    /// Chips for a bubble, with the names this chat knows (ours and the peer's).
+    private func reactionChips(for message: MessagingController.ChatMessage) -> [ReactionChipContent] {
+        guard !message.reactions.isEmpty, !message.deleted else { return [] }
+        let me = messaging.myUserID
+        return ReactionMerge.chips(message.reactions, me: me).map { chip in
+            ReactionChipContent(
+                emoji: chip.emoji,
+                reactors: chip.userIDs.map { id in
+                    id == me
+                        ? ReactionChipContent.Reactor(id: id, name: messaging.myUsername ?? "You", isMe: true)
+                        : ReactionChipContent.Reactor(id: id, name: peerUsername)
+                },
+                includesMe: chip.includesMe
+            )
+        }
+    }
+
+    /// Picking `emoji` (bar, grid, chip or double tap): sets it, or takes it back when it is
+    /// already ours.
+    private func react(_ emoji: String, to message: MessagingController.ChatMessage) {
+        guard messaging.canReact(to: message) else {
+            toast = "You can react once the message is sent."
+            scheduleToastClear()
+            return
+        }
+        Haptics.impact(.light)
+        messaging.toggleReaction(emoji, on: message.id, peerUserID: peerUserID)
     }
 
     private func handleMenu(_ action: MessageMenuAction, message: MessagingController.ChatMessage) {
