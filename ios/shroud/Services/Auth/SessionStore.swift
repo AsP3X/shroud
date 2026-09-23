@@ -6,9 +6,6 @@ import Security
 /// Agent: READS/WRITES Keychain; never stores encryption phrase here.
 nonisolated struct SessionStore: Sendable {
     static let defaultService = "com.shroud.session"
-    /// Device id kept across logout. The next login of this username sends it back, so the
-    /// server reuses the device instead of minting one toward the 5-device cap.
-    static var appDeviceAnchorService: String { defaultService + ".device-anchor" }
 
     private let service: String
 
@@ -93,8 +90,7 @@ nonisolated struct SessionStore: Sendable {
         return record.deviceID
     }
 
-    /// Username and device id, if both are stored. Logout reads this so it can put the anchor
-    /// back when a keychain wipe cannot list items and has to delete the whole class.
+    /// Username and device id, if both are stored. A logout wipe deletes them with the rest.
     func loadDeviceAnchorRecord() -> DeviceAnchorRecord? {
         guard let username = readDevice(key: DeviceKey.username),
               !username.isEmpty,

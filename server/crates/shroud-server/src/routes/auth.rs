@@ -573,6 +573,14 @@ async fn resolve_login_device(
         // Unknown or foreign device_id → treat as new device (subject to cap).
     }
 
+    // Human: Two logins at once would both count below the cap, or both pick the same idle
+    // device (the second then revoking the first's session). The user row serializes them.
+    sqlx::query(r#"SELECT id FROM users WHERE id = $1 FOR UPDATE"#)
+        .bind(user_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|err| AppError::Internal(format!("lock user failed: {err}")))?;
+
     let count: i64 =
         sqlx::query_scalar(r#"SELECT COUNT(*)::bigint FROM devices WHERE user_id = $1"#)
             .bind(user_id)
@@ -581,7 +589,30 @@ async fn resolve_login_device(
             .map_err(|err| AppError::Internal(format!("count devices failed: {err}")))?;
 
     if count >= MAX_DEVICES_PER_USER {
-        return Err(AppError::device_limit());
+        // Human: A logout keeps the device row (messages and uploads cascade from it) but the
+        // client forgets its id, so the next login arrives without one. Hand it back the
+        // longest-idle device that nobody is signed in on; refuse only when all are live.
+        let idle: Option<Uuid> = sqlx::query_scalar(
+            r#"
+            SELECT d.id FROM devices d
+            WHERE d.user_id = $1
+              AND NOT EXISTS (
+                  SELECT 1 FROM sessions s WHERE s.device_id = d.id AND s.revoked_at IS NULL
+              )
+            ORDER BY COALESCE(d.last_seen_at, d.created_at), d.created_at
+            LIMIT 1
+            "#,
+        )
+        .bind(user_id)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(|err| AppError::Internal(format!("find idle device failed: {err}")))?;
+
+        let Some(id) = idle else {
+            return Err(AppError::device_limit());
+        };
+        reset_reclaimed_device(tx, id, device_name).await?;
+        return Ok(id);
     }
 
     let device_id = Uuid::new_v4();
@@ -599,6 +630,37 @@ async fn resolve_login_device(
     .map_err(|err| AppError::Internal(format!("insert login device failed: {err}")))?;
 
     Ok(device_id)
+}
+
+/// Human: The client that held this device is gone, and so are its private keys. Its published
+/// pre-keys would have peers encrypt to keys nobody holds (the new holder's upload only
+/// overwrites the key ids it reuses), its push token would ring someone else's phone, and its
+/// PIN guard belongs to a vault that no longer exists. The next login publishes fresh keys.
+async fn reset_reclaimed_device(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    device_id: Uuid,
+    device_name: Option<&str>,
+) -> Result<(), AppError> {
+    for table in [
+        "device_identity_keys",
+        "device_signed_prekeys",
+        "device_one_time_prekeys",
+        "push_tokens",
+        "device_pin_guards",
+    ] {
+        sqlx::query(&format!("DELETE FROM {table} WHERE device_id = $1"))
+            .bind(device_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(|err| AppError::Internal(format!("reset {table} failed: {err}")))?;
+    }
+    sqlx::query(r#"UPDATE devices SET name = $1, last_seen_at = now() WHERE id = $2"#)
+        .bind(device_name)
+        .bind(device_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|err| AppError::Internal(format!("reclaim device failed: {err}")))?;
+    Ok(())
 }
 
 fn normalize_optional_name(name: Option<String>) -> Option<String> {

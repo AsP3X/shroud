@@ -101,8 +101,8 @@ check(hasOrphanedAccountData(new FakeStorage({ "shroud.wipe-pending": "1" })), "
   check(hasOrphanedAccountData(new FakeStorage(leftover)), "a logout from before the wipe existed");
 }
 check(
-  !hasOrphanedAccountData(new FakeStorage({ "shroud.device-anchor": "{}" })),
-  "the device anchor is kept so the next login reuses this device",
+  hasOrphanedAccountData(new FakeStorage({ "shroud.device-anchor": "{}" })),
+  "a device anchor left by an older logout names the account",
 );
 check(
   hasOrphanedAccountData(new FakeStorage({ "transcription.languageStats": "{}" })),
@@ -113,8 +113,8 @@ check(
 
 check(describeStoredLeftovers(new FakeStorage({ "shroud.wipe-pending": "1" })).length === 0, "marker alone is clean");
 check(
-  describeStoredLeftovers(new FakeStorage({ "shroud.device-anchor": "{}" })).length === 0,
-  "the device anchor alone is clean",
+  describeStoredLeftovers(new FakeStorage({ "shroud.device-anchor": "{}" })).length === 1,
+  "the device anchor is a leftover",
 );
 {
   const store = new FakeStorage({
@@ -124,11 +124,11 @@ check(
     [`shroud.identity.${ME}`]: "secret",
   });
   removeKeys(store, (key) => !isPreservedStorageKey(key));
-  check(store.getItem("shroud.device-anchor") === "{\"deviceId\":\"x\"}", "anchor kept");
+  check(store.getItem("shroud.device-anchor") === null, "anchor cleared");
   check(store.getItem("shroud.wipe-pending") === "1", "marker kept");
   check(store.getItem("shroud.theme") === null, "theme cleared");
   check(store.getItem(`shroud.identity.${ME}`) === null, "identity cleared");
-  check(describeStoredLeftovers(store).length === 0, "anchor and marker are not leftovers");
+  check(describeStoredLeftovers(store).length === 0, "the marker is not a leftover");
 }
 {
   const found = describeStoredLeftovers(new FakeStorage(signedIn()));

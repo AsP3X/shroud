@@ -155,7 +155,7 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 | OutboundPending + ChatListFormatting | **done** — pure helpers for offline queue + list previews |
 | MessageDecoder + NotesLocal | **done** — decrypt pipeline and Notes CRUD pulled out of controller |
 | History key vault | **done** — biometry/passcode wrap; no plain historyKey in identity Keychain; RAM wipe on background |
-| Logout wipe | **done** — iOS and web clear every store the app uses (files, Keychain, defaults, HTTP cache, snapshots, notifications) behind a step-by-step overlay, then verify; identity keys go too, so signing in again takes the phrase. The device-id anchor stays so the next login reuses the device (5-device cap). Interrupted wipes finish on next launch. Server logout also drops the device's push token. |
+| Logout wipe | **done** — iOS and web clear every store the app uses (files, Keychain, defaults, HTTP cache, snapshots, notifications) behind a step-by-step overlay, then verify; identity keys go too, so signing in again takes the phrase. The device-id anchor goes too; at the 5-device cap a login reuses the account's longest-idle device with no live session. Interrupted wipes finish on next launch. Server logout also drops the device's push token. |
 | History pagination | **done** — a chat opens on its newest 40 messages; older `before_created_at`/`before_id` pages load in the background (up to ~300) and then as the reader scrolls up, within the 90-day window. Clients render only the newest rows and add older ones near the top |
 | Notes multi-device | **done** — Saved Messages via `peer_user_id = self`; excluded from chats list |
 | Notes to me | **done** — local-only self chat (text / photo / voice / todos); no server replies |

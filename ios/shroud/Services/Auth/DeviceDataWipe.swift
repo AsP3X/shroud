@@ -6,8 +6,8 @@ import UserNotifications
 
 /// Removes everything Shroud keeps on this device for the account, and proves it.
 ///
-/// The device-id anchor (`SessionStore.appDeviceAnchorService`) is the exception: it is not
-/// account content, and dropping it makes the next login mint a device until the 5-device cap.
+/// The device-id anchor goes too: at the 5-device cap the server hands the next login the
+/// account's longest-idle device with no live session.
 ///
 /// Human: "Logged out" has to mean nothing of the account is left — not the messages or the
 /// keys, and not a cached HTTP response, an app-switcher screenshot or the keyboard's learned
@@ -66,8 +66,8 @@ struct DeviceDataWipe {
     }
 
     enum KeychainScope: Sendable {
-        /// Every item this app can read, except the device-id anchor. There are no shared access
-        /// groups, so that is the session, identity, history vault, ratchets and peer pins.
+        /// Every item this app can read. There are no shared access groups, so that is the
+        /// session, identity, history vault, ratchets, peer pins and the device-id anchor.
         case app
         /// Only these services — unit tests, so they never touch the simulator's real session.
         case services([String])
@@ -147,36 +147,12 @@ struct DeviceDataWipe {
         sweep(locations.caches)
     }
 
-    /// Keys: every Keychain item — session, identity, history vault, ratchets, peer pins — except
-    /// the device-id anchor. Deleting never asks for Face ID, even for an item that needs it to
-    /// be read.
+    /// Keys: every Keychain item — session, identity, history vault, ratchets, peer pins, the
+    /// device anchor. Deleting never asks for Face ID, even for an item that needs it to be read.
     func wipeKeys() {
-        let preserving = preservedKeychainServices
-        // Tests name the services they own. An empty preserve set means "delete exactly those",
-        // never a scan of the simulator's real keychain.
-        if preserving.isEmpty || !deleteEnumeratedGenericPasswords(preserving: preserving) {
-            let anchor = preserving.isEmpty ? nil : SessionStore().loadDeviceAnchorRecord()
-            for query in keychainQueries() {
-                SecItemDelete(query as CFDictionary)
-            }
-            if let anchor {
-                SessionStore().saveDeviceAnchor(username: anchor.username, deviceID: anchor.deviceID)
-            }
-            return
-        }
-        for secClass in Self.keychainClasses where secClass != kSecClassGenericPassword {
-            let query: [String: Any] = [
-                kSecClass as String: secClass,
-                kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
-            ]
+        for query in keychainQueries() {
             SecItemDelete(query as CFDictionary)
         }
-    }
-
-    /// True when this item belongs to the account. A nil service is not the device anchor.
-    static func shouldDeleteKeychainService(_ service: String?, preserving: Set<String>) -> Bool {
-        guard let service else { return true }
-        return !preserving.contains(service)
     }
 
     /// Settings and traces: UserDefaults (minus the keep-list), every other file in the container
@@ -361,11 +337,10 @@ struct DeviceDataWipe {
     // MARK: - Keychain
 
     /// Items left, or nil when that cannot be read without asking for Face ID — which `verify`
-    /// counts as "still here" rather than as clean. The device-id anchor is not account data.
+    /// counts as "still here" rather than as clean.
     private func keychainItemCount() -> Int? {
         let context = LAContext()
         context.interactionNotAllowed = true
-        let preserving = preservedKeychainServices
         var total = 0
         for base in keychainQueries() {
             var query = base
@@ -375,17 +350,7 @@ struct DeviceDataWipe {
             var result: CFTypeRef?
             switch SecItemCopyMatching(query as CFDictionary, &result) {
             case errSecSuccess:
-                let rows = result as? [[String: Any]] ?? []
-                if rows.isEmpty {
-                    total += 1
-                } else {
-                    total += rows.filter {
-                        Self.shouldDeleteKeychainService(
-                            $0[kSecAttrService as String] as? String,
-                            preserving: preserving
-                        )
-                    }.count
-                }
+                total += max(1, (result as? [[String: Any]])?.count ?? 0)
             case errSecItemNotFound:
                 continue
             default:
@@ -393,57 +358,6 @@ struct DeviceDataWipe {
             }
         }
         return total
-    }
-
-    /// The real app keeps its device anchor. A test scope deletes only the services it created.
-    private var preservedKeychainServices: Set<String> {
-        switch keychain {
-        case .app: [SessionStore.appDeviceAnchorService]
-        case .services: []
-        }
-    }
-
-    /// Deletes generic passwords except `preserving`. False when the items cannot be listed —
-    /// the caller then deletes the class and writes the anchor back.
-    private func deleteEnumeratedGenericPasswords(preserving: Set<String>) -> Bool {
-        let context = LAContext()
-        context.interactionNotAllowed = true
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecMatchLimit as String: kSecMatchLimitAll,
-            kSecReturnAttributes as String: true,
-            kSecReturnPersistentRef as String: true,
-            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
-            kSecUseAuthenticationContext as String: context,
-        ]
-        var result: CFTypeRef?
-        switch SecItemCopyMatching(query as CFDictionary, &result) {
-        case errSecItemNotFound:
-            return true
-        case errSecSuccess:
-            break
-        default:
-            return false
-        }
-        for row in (result as? [[String: Any]]) ?? [] {
-            let service = row[kSecAttrService as String] as? String
-            guard Self.shouldDeleteKeychainService(service, preserving: preserving) else { continue }
-            if let ref = row[kSecValuePersistentRef as String] as? Data {
-                SecItemDelete([kSecValuePersistentRef as String: ref] as CFDictionary)
-                continue
-            }
-            var delete: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
-            ]
-            if let service { delete[kSecAttrService as String] = service }
-            if let account = row[kSecAttrAccount as String] as? String {
-                delete[kSecAttrAccount as String] = account
-            }
-            guard service != nil || row[kSecAttrAccount as String] != nil else { continue }
-            SecItemDelete(delete as CFDictionary)
-        }
-        return true
     }
 
     /// Synced and device-only items alike: a query without `kSecAttrSynchronizable` only matches

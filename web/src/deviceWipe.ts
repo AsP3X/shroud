@@ -8,9 +8,9 @@ import { sealStorage, storageSealed } from "./storageSeal";
  * previews, cached photos, videos and voice notes, the identity key, ratchet sessions, the PIN,
  * the session token and every preference. The origin belongs to Shroud, so "everything" is
  * literal — local and session storage are emptied, every IndexedDB database is deleted — and a
- * final pass proves it. Two things stay. The Whisper model weights are public files that cost
- * hundreds of megabytes to fetch again. The device-id anchor stays so the next login reuses
- * this browser's device instead of minting one toward the server's 5-device cap.
+ * final pass proves it. One thing stays: the Whisper model weights, public files that cost
+ * hundreds of megabytes to fetch again. The device-id anchor goes too; at the 5-device cap the
+ * server hands the next login a device nobody is signed in on.
  *
  * A wipe that is interrupted (tab closed, crash) is finished on the next page load: a marker is
  * written as it starts and removed only once the verify step passes.
@@ -43,17 +43,20 @@ export type StepResult = {
 export type WipeInventory = { messages: number; media: number; keys: number; settings: number };
 
 const PENDING_KEY = "shroud.wipe-pending";
-/** Kept across logout. See the file comment. */
-const DEVICE_ANCHOR_KEY = "shroud.device-anchor";
 const MESSAGE_PREFIXES = ["shroud.pt.", "shroud.preview."];
 const KEY_PREFIXES = ["shroud.identity.", "shroud.ratchet.", "shroud.vault.", "shroud.token.", "shroud.pin."];
 /** Left behind by a session: on their own they say someone used this browser. */
-const ACCOUNT_PREFIXES = [...MESSAGE_PREFIXES, ...KEY_PREFIXES, "transcription.languageStats"];
+const ACCOUNT_PREFIXES = [
+  ...MESSAGE_PREFIXES,
+  ...KEY_PREFIXES,
+  "shroud.device-anchor",
+  "transcription.languageStats",
+];
 const SESSION_KEY = "shroud.session";
 
-/** The wipe marker, and the device id the next login must still be able to send. */
+/** The wipe marker: removed last, once `verify` finds nothing else. */
 export function isPreservedStorageKey(key: string): boolean {
-  return key === PENDING_KEY || key === DEVICE_ANCHOR_KEY;
+  return key === PENDING_KEY;
 }
 /** transformers.js keeps the Whisper weights here. */
 const KEPT_CACHES = new Set(["transformers-cache"]);

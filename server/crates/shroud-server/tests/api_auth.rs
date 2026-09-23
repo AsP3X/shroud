@@ -5,6 +5,7 @@
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use shroud_server::routes;
@@ -445,4 +446,136 @@ async fn delete_account_requires_password_and_removes_user() {
         .await
         .expect("response");
     assert_eq!(me.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn login_at_device_cap_reclaims_an_idle_device() {
+    let Some(app) = test_app().await else {
+        eprintln!("skipping login_at_device_cap_reclaims_an_idle_device: DATABASE_URL unavailable");
+        return;
+    };
+
+    let (username, password) = unique_user();
+    let auth_request = |uri: &str, body: Value| {
+        Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("request")
+    };
+
+    let register = app
+        .clone()
+        .oneshot(auth_request(
+            "/api/v1/auth/register",
+            json!({ "username": username, "password": password }),
+        ))
+        .await
+        .expect("response");
+    assert_eq!(register.status(), StatusCode::CREATED);
+    let registered = json_body(register).await;
+    let first_device = registered["device"]["id"].as_str().unwrap().to_string();
+    let first_token = registered["token"].as_str().unwrap().to_string();
+
+    // Fill the cap with live devices.
+    for _ in 1..shroud_server::auth::MAX_DEVICES_PER_USER {
+        let login = app
+            .clone()
+            .oneshot(auth_request(
+                "/api/v1/auth/login",
+                json!({ "username": username, "password": password }),
+            ))
+            .await
+            .expect("response");
+        assert_eq!(login.status(), StatusCode::OK);
+    }
+
+    // Every device is signed in: nothing to reclaim.
+    let refused = app
+        .clone()
+        .oneshot(auth_request(
+            "/api/v1/auth/login",
+            json!({ "username": username, "password": password }),
+        ))
+        .await
+        .expect("response");
+    assert_eq!(refused.status(), StatusCode::CONFLICT);
+
+    // The first device published keys; its private halves leave with the logout wipe.
+    let stale = BASE64.encode([0xAB_u8; 32]);
+    let bundle = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/keys/bundle")
+                .header(header::AUTHORIZATION, format!("Bearer {first_token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "registration_id": 42,
+                        "identity_key": stale,
+                        "signed_pre_key": {
+                            "key_id": 7,
+                            "public_key": stale,
+                            "signature": BASE64.encode([0xAB_u8; 64]),
+                        },
+                        "one_time_pre_keys": (1..=3)
+                            .map(|id| json!({ "key_id": 100 + id, "public_key": stale }))
+                            .collect::<Vec<_>>(),
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(bundle.status(), StatusCode::NO_CONTENT);
+
+    // The first device logs out and forgets its id; the next login gets that device back.
+    let logout = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/logout")
+                .header(header::AUTHORIZATION, format!("Bearer {first_token}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(logout.status(), StatusCode::NO_CONTENT);
+
+    let reclaimed = app
+        .clone()
+        .oneshot(auth_request(
+            "/api/v1/auth/login",
+            json!({ "username": username, "password": password, "device_name": "Browser" }),
+        ))
+        .await
+        .expect("response");
+    assert_eq!(reclaimed.status(), StatusCode::OK);
+    let reclaimed = json_body(reclaimed).await;
+    assert_eq!(reclaimed["device"]["id"], first_device);
+    assert_eq!(reclaimed["device"]["name"], "Browser");
+
+    // Nothing the previous holder published is left for peers to encrypt to.
+    let reclaimed_token = reclaimed["token"].as_str().unwrap();
+    let status = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/keys/status")
+                .header(header::AUTHORIZATION, format!("Bearer {reclaimed_token}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(status.status(), StatusCode::OK);
+    let status = json_body(status).await;
+    assert_eq!(status["has_identity"], false);
+    assert_eq!(status["signed_pre_key_id"], Value::Null);
+    assert_eq!(status["otpk_count"], 0);
 }

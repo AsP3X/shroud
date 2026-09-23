@@ -207,18 +207,6 @@ struct DeviceDataWipeTests {
     }
 
     @Test
-    func deviceAnchorIsNotAccountKeychainData() {
-        let anchor = SessionStore.appDeviceAnchorService
-        #expect(anchor == "com.shroud.session.device-anchor")
-        #expect(SessionStore().deviceAnchorService == anchor)
-        let preserving: Set<String> = [anchor]
-        #expect(!DeviceDataWipe.shouldDeleteKeychainService(anchor, preserving: preserving))
-        #expect(DeviceDataWipe.shouldDeleteKeychainService("com.shroud.identity", preserving: preserving))
-        #expect(DeviceDataWipe.shouldDeleteKeychainService(nil, preserving: preserving))
-        #expect(DeviceDataWipe.shouldDeleteKeychainService(anchor, preserving: []))
-    }
-
-    @Test
     func noSessionOnlyWhenTheKeychainSaysSo() throws {
         let store = SessionStore(service: "com.shroud.session.test." + UUID().uuidString)
         #expect(store.hasNoSession())

@@ -61,7 +61,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Sessions | Opaque token; store **hash** only; `Authorization: Bearer`; bound to `device_id` |
 | Session lifetime | **No time expiry**; end on logout, device delete, password-change (others), account delete |
 | Devices | Max **5** per account; optional `device_name` |
-| Device limit | New device when full → `DEVICE_LIMIT` (no auto-evict) |
+| Device limit | New device when full → reuse the longest-idle device with no live session (its keys, push token and PIN guard are dropped); `DEVICE_LIMIT` only when every device is signed in |
 | Returning device | Optional `device_id` on login: reuse if owned by user; else new device (cap applies) |
 
 ### Crypto and keys
@@ -455,8 +455,8 @@ Redis: pub/sub fan-out, online sets, future rate limits.
 ### Auth and devices
 
 - **Register** — validate username/password → user + first device + session token.
-- **Login** — verify password; reuse `device_id` if owned, else new device if under cap; issue new session and **revoke any prior sessions on that same device** (one live token per device).
-- **Logout** — revoke **current session only**; device row remains (still counts toward cap until deleted).
+- **Login** — verify password; reuse `device_id` if owned, else new device if under cap, else reclaim the longest-idle device with no live session; issue new session and **revoke any prior sessions on that same device** (one live token per device).
+- **Logout** — revoke **current session only**; device row remains (counts toward the cap, but a login at the cap can reclaim it). Clients forget the device id on logout.
 - **Delete device** — revoke all sessions for that device; free a slot.
 - **Password change** — validate current; set new hash; revoke all sessions except current.
 - Client: store `token` + `device.id` in Keychain.
@@ -701,7 +701,7 @@ The web client wraps its vault key under PIN **and** a server-held pepper, so a 
 | `PASSWORD_TOO_SHORT` | Fewer than 8 characters |
 | `PASSWORD_TOO_COMMON` | On embedded denylist |
 | `INVALID_CREDENTIALS` | Failed login (no user enumeration) |
-| `DEVICE_LIMIT` | Would exceed 5 devices |
+| `DEVICE_LIMIT` | Would exceed 5 devices and all 5 are signed in |
 | `UNAUTHORIZED` | Missing / invalid / revoked token |
 | `FORBIDDEN` | Authenticated but not allowed |
 | `NOT_FOUND` | Device not found for user |
