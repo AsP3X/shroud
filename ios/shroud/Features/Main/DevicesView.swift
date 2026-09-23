@@ -112,13 +112,13 @@ struct DevicesView: View {
 
     /// Shared by both confirmations — what a removal actually does, server side included.
     ///
-    /// Human: The device row carries the messages it sent and the files it uploaded, so the
-    /// server deletes those with it. Chats already stored on a phone keep them; a fresh
-    /// device loading history from the server won't see them. Said here so nobody is surprised.
+    /// Human: The server keeps the removed device's row as history, so the messages and files
+    /// it sent stay in every chat. It only loses its sessions, keys and push token. The web
+    /// confirmation in `web/src/components/settings/DevicesView.tsx` says the same.
     private static func revokeConsequences(plural: Bool) -> String {
         plural
-            ? "They are signed out right away and stop receiving messages. Messages and files sent from them are deleted from the server, so they vanish from chat history wherever they aren't already stored. Signing in there again takes your password and 12-word phrase."
-            : "It is signed out right away and stops receiving messages. Messages and files sent from it are deleted from the server, so they vanish from chat history wherever they aren't already stored. Signing in there again takes your password and 12-word phrase."
+            ? "They are signed out right away and stop receiving messages. Messages and files already sent from them stay in your chats. Signing in there again takes your password and 12-word phrase."
+            : "It is signed out right away and stops receiving messages. Messages and files already sent from it stay in your chats. Signing in there again takes your password and 12-word phrase."
     }
 
     /// A 404 means the device is already gone (removed elsewhere meanwhile) — the goal is met.

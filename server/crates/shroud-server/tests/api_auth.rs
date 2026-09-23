@@ -579,3 +579,281 @@ async fn login_at_device_cap_reclaims_an_idle_device() {
     assert_eq!(status["signed_pre_key_id"], Value::Null);
     assert_eq!(status["otpk_count"], 0);
 }
+
+/// Sends one authenticated request and returns the response.
+async fn authed(
+    app: &axum::Router,
+    method: &str,
+    uri: &str,
+    token: &str,
+    body: Option<Value>,
+) -> axum::response::Response {
+    let builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::AUTHORIZATION, format!("Bearer {token}"));
+    let request = match body {
+        Some(body) => builder
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string())),
+        None => builder.body(Body::empty()),
+    }
+    .expect("request");
+    app.clone().oneshot(request).await.expect("response")
+}
+
+#[tokio::test]
+async fn removing_a_device_keeps_what_it_sent() {
+    let Some(app) = test_app().await else {
+        eprintln!("skipping removing_a_device_keeps_what_it_sent: DATABASE_URL unavailable");
+        return;
+    };
+
+    let auth_request = |uri: &str, body: Value| {
+        Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("request")
+    };
+
+    // Alice on a phone and a laptop; Bob on one device.
+    let (alice, password) = unique_user();
+    let phone = app
+        .clone()
+        .oneshot(auth_request(
+            "/api/v1/auth/register",
+            json!({ "username": alice, "password": password, "device_name": "Phone" }),
+        ))
+        .await
+        .expect("response");
+    assert_eq!(phone.status(), StatusCode::CREATED);
+    let phone = json_body(phone).await;
+    let phone_token = phone["token"].as_str().unwrap().to_string();
+    let alice_id = phone["user"]["id"].as_str().unwrap().to_string();
+
+    let laptop = app
+        .clone()
+        .oneshot(auth_request(
+            "/api/v1/auth/login",
+            json!({ "username": alice, "password": password, "device_name": "Laptop" }),
+        ))
+        .await
+        .expect("response");
+    assert_eq!(laptop.status(), StatusCode::OK);
+    let laptop = json_body(laptop).await;
+    let laptop_token = laptop["token"].as_str().unwrap().to_string();
+    let laptop_id = laptop["device"]["id"].as_str().unwrap().to_string();
+
+    let (bob, bob_password) = unique_user();
+    let bob = app
+        .clone()
+        .oneshot(auth_request(
+            "/api/v1/auth/register",
+            json!({ "username": bob, "password": bob_password }),
+        ))
+        .await
+        .expect("response");
+    let bob = json_body(bob).await;
+    let bob_token = bob["token"].as_str().unwrap().to_string();
+    let bob_id = bob["user"]["id"].as_str().unwrap().to_string();
+
+    let request = authed(
+        &app,
+        "POST",
+        "/api/v1/contacts/requests",
+        &phone_token,
+        Some(json!({ "user_id": bob_id })),
+    )
+    .await;
+    assert!(request.status().is_success());
+    let accept = authed(
+        &app,
+        "POST",
+        "/api/v1/contacts/requests",
+        &bob_token,
+        Some(json!({ "user_id": alice_id })),
+    )
+    .await;
+    assert_eq!(accept.status(), StatusCode::OK);
+
+    // The laptop sends a text and a photo; Bob's device acknowledges the text.
+    let text = authed(
+        &app,
+        "POST",
+        "/api/v1/messages",
+        &laptop_token,
+        Some(json!({
+            "peer_user_id": bob_id,
+            "client_message_id": Uuid::new_v4(),
+            "content_type": "text",
+            "ciphertext": BASE64.encode(b"sealed-from-laptop"),
+        })),
+    )
+    .await;
+    assert_eq!(text.status(), StatusCode::CREATED);
+    let text_id = json_body(text).await["id"].as_str().unwrap().to_string();
+
+    let upload = authed(
+        &app,
+        "POST",
+        "/api/v1/media/uploads",
+        &laptop_token,
+        Some(json!({ "size_bytes": 1024, "content_type": "application/octet-stream" })),
+    )
+    .await;
+    assert_eq!(upload.status(), StatusCode::CREATED);
+    let media_id = json_body(upload).await["media_object_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let photo = authed(
+        &app,
+        "POST",
+        "/api/v1/messages",
+        &laptop_token,
+        Some(json!({
+            "peer_user_id": bob_id,
+            "client_message_id": Uuid::new_v4(),
+            "content_type": "media",
+            "ciphertext": BASE64.encode(b"sealed-photo-envelope"),
+            "media_object_id": media_id,
+        })),
+    )
+    .await;
+    assert_eq!(photo.status(), StatusCode::CREATED);
+    let photo_id = json_body(photo).await["id"].as_str().unwrap().to_string();
+
+    let delivered = authed(
+        &app,
+        "POST",
+        &format!("/api/v1/messages/{text_id}/delivered"),
+        &bob_token,
+        None,
+    )
+    .await;
+    assert_eq!(delivered.status(), StatusCode::NO_CONTENT);
+
+    // The phone removes the laptop.
+    let removed = authed(
+        &app,
+        "DELETE",
+        &format!("/api/v1/devices/{laptop_id}"),
+        &phone_token,
+        None,
+    )
+    .await;
+    assert_eq!(removed.status(), StatusCode::NO_CONTENT);
+
+    // Both sides still see everything the laptop sent, with its sender device intact.
+    for (token, peer) in [(&bob_token, &alice_id), (&phone_token, &bob_id)] {
+        let list = authed(
+            &app,
+            "GET",
+            &format!("/api/v1/messages?peer_user_id={peer}"),
+            token,
+            None,
+        )
+        .await;
+        assert_eq!(list.status(), StatusCode::OK);
+        let history = json_body(list).await;
+        let messages = history["messages"].as_array().unwrap();
+        let mut ids: Vec<&str> = messages.iter().map(|m| m["id"].as_str().unwrap()).collect();
+        ids.sort_unstable();
+        let mut expected = vec![text_id.as_str(), photo_id.as_str()];
+        expected.sort_unstable();
+        assert_eq!(ids, expected);
+        assert!(messages.iter().all(|m| m["sender_device_id"] == laptop_id));
+    }
+
+    // The text keeps its delivered tick for the sender.
+    let alice_view = authed(
+        &app,
+        "GET",
+        &format!("/api/v1/messages?peer_user_id={bob_id}"),
+        &phone_token,
+        None,
+    )
+    .await;
+    let alice_view = json_body(alice_view).await;
+    let text_row = alice_view["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == text_id.as_str())
+        .unwrap()
+        .clone();
+    assert_eq!(text_row["delivered"], true);
+
+    // The photo it uploaded still downloads.
+    let download = authed(
+        &app,
+        "POST",
+        &format!("/api/v1/media/{media_id}/download"),
+        &bob_token,
+        None,
+    )
+    .await;
+    assert_eq!(download.status(), StatusCode::OK);
+
+    // The laptop is gone: signed out, unlisted, not removable twice.
+    let me = authed(&app, "GET", "/api/v1/auth/me", &laptop_token, None).await;
+    assert_eq!(me.status(), StatusCode::UNAUTHORIZED);
+    let devices = authed(&app, "GET", "/api/v1/devices", &phone_token, None).await;
+    let devices = json_body(devices).await;
+    let devices = devices["devices"].as_array().unwrap();
+    assert_eq!(devices.len(), 1);
+    assert_ne!(devices[0]["id"], laptop_id.as_str());
+    let again = authed(
+        &app,
+        "DELETE",
+        &format!("/api/v1/devices/{laptop_id}"),
+        &phone_token,
+        None,
+    )
+    .await;
+    assert_eq!(again.status(), StatusCode::NOT_FOUND);
+
+    // New messages no longer queue for it, and a login presenting its id gets a fresh device.
+    let later = authed(
+        &app,
+        "POST",
+        "/api/v1/messages",
+        &bob_token,
+        Some(json!({
+            "peer_user_id": alice_id,
+            "client_message_id": Uuid::new_v4(),
+            "content_type": "text",
+            "ciphertext": BASE64.encode(b"sealed-reply"),
+        })),
+    )
+    .await;
+    assert_eq!(later.status(), StatusCode::CREATED);
+
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&std::env::var("DATABASE_URL").unwrap())
+        .await
+        .expect("pool");
+    let laptop_uuid = Uuid::parse_str(&laptop_id).unwrap();
+    let pending: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::bigint FROM message_deliveries WHERE device_id = $1 AND delivered_at IS NULL",
+    )
+    .bind(laptop_uuid)
+    .fetch_one(&pool)
+    .await
+    .expect("pending deliveries");
+    assert_eq!(pending, 0);
+
+    let relogin = app
+        .oneshot(auth_request(
+            "/api/v1/auth/login",
+            json!({ "username": alice, "password": password, "device_id": laptop_id }),
+        ))
+        .await
+        .expect("response");
+    assert_eq!(relogin.status(), StatusCode::OK);
+    let relogin = json_body(relogin).await;
+    assert_ne!(relogin["device"]["id"], laptop_id.as_str());
+}

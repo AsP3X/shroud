@@ -256,11 +256,11 @@ pub async fn send_message(
         .map_err(|err| AppError::Internal(format!("link media to message failed: {err}")))?;
     }
 
-    // Delivery rows: all devices of both users; sender device already delivered.
+    // Delivery rows: all linked devices of both users; sender device already delivered.
     let device_ids: Vec<Uuid> = sqlx::query_scalar(
         r#"
         SELECT id FROM devices
-        WHERE user_id = $1 OR user_id = $2
+        WHERE (user_id = $1 OR user_id = $2) AND revoked_at IS NULL
         "#,
     )
     .bind(auth.user_id)

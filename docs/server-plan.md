@@ -231,8 +231,9 @@ Indexes: unique on `username` (constraint). Optional non-unique not required.
 | `name` | `TEXT` NULL | Optional display name |
 | `created_at` | `TIMESTAMPTZ` NOT NULL | `now()` |
 | `last_seen_at` | `TIMESTAMPTZ` NULL | Updated on authenticated activity |
+| `revoked_at` | `TIMESTAMPTZ` NULL | Set by `DELETE /devices/:id`; the row stays as history (migration 019) |
 
-Indexes: `(user_id)`. Max 5 devices enforced in application code (not a DB CHECK).
+Indexes: `(user_id)`, `(user_id) WHERE revoked_at IS NULL`. Max 5 non-revoked devices enforced in application code (not a DB CHECK). Revoked devices are skipped by `GET /devices`, delivery fan-out, key bundles, session auth and login (a revoked `device_id` gets a fresh device).
 
 #### `sessions`
 
@@ -681,7 +682,7 @@ Revokes all **other** sessions.
 
 #### `DELETE /devices/:id` → `204`
 
-Revokes sessions for that device. Deleting the current device invalidates the caller’s token.
+Revokes sessions for that device, deletes its keys, push token, PIN guard and undelivered delivery rows, and sets `devices.revoked_at`. The row is **not** deleted: messages, uploads and calls reference their sending device with `ON DELETE CASCADE`, so history the device sent stays for both participants. `404` for a foreign or already-removed id. Deleting the current device invalidates the caller’s token.
 
 #### PIN guard (web vault)
 

@@ -297,9 +297,9 @@ pub async fn login(
 /// `POST /auth/logout` — revoke the current session and forget this device's push token.
 ///
 /// Human: Pushes are selected per account, not per live session, so a token left behind kept
-/// ringing a logged-out phone with the account's messages and calls. The device row stays:
-/// messages and uploads reference it (`ON DELETE CASCADE`), and the next login re-registers
-/// its token.
+/// ringing a logged-out phone with the account's messages and calls. The device row stays
+/// (a logout is not a removal; see `routes::devices::delete_device`), and the next login
+/// re-registers its token.
 pub async fn logout(
     State(state): State<AppState>,
     auth: AuthContext,
@@ -542,7 +542,7 @@ async fn resolve_login_device(
     if let Some(device_id) = requested_device_id {
         let owned: Option<Uuid> = sqlx::query_scalar(
             r#"
-            SELECT id FROM devices WHERE id = $1 AND user_id = $2
+            SELECT id FROM devices WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
             "#,
         )
         .bind(device_id)
@@ -570,7 +570,7 @@ async fn resolve_login_device(
             }
             return Ok(id);
         }
-        // Unknown or foreign device_id → treat as new device (subject to cap).
+        // Unknown, foreign or removed device_id → treat as new device (subject to cap).
     }
 
     // Human: Two logins at once would both count below the cap, or both pick the same idle
@@ -581,21 +581,23 @@ async fn resolve_login_device(
         .await
         .map_err(|err| AppError::Internal(format!("lock user failed: {err}")))?;
 
-    let count: i64 =
-        sqlx::query_scalar(r#"SELECT COUNT(*)::bigint FROM devices WHERE user_id = $1"#)
-            .bind(user_id)
-            .fetch_one(&mut **tx)
-            .await
-            .map_err(|err| AppError::Internal(format!("count devices failed: {err}")))?;
+    let count: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*)::bigint FROM devices WHERE user_id = $1 AND revoked_at IS NULL"#,
+    )
+    .bind(user_id)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("count devices failed: {err}")))?;
 
     if count >= MAX_DEVICES_PER_USER {
-        // Human: A logout keeps the device row (messages and uploads cascade from it) but the
-        // client forgets its id, so the next login arrives without one. Hand it back the
-        // longest-idle device that nobody is signed in on; refuse only when all are live.
+        // Human: A logout keeps the device row but the client forgets its id, so the next login
+        // arrives without one. Hand it back the longest-idle device that nobody is signed in on;
+        // refuse only when all are live. Removed devices are history, not spare slots.
         let idle: Option<Uuid> = sqlx::query_scalar(
             r#"
             SELECT d.id FROM devices d
             WHERE d.user_id = $1
+              AND d.revoked_at IS NULL
               AND NOT EXISTS (
                   SELECT 1 FROM sessions s WHERE s.device_id = d.id AND s.revoked_at IS NULL
               )
@@ -641,6 +643,24 @@ async fn reset_reclaimed_device(
     device_id: Uuid,
     device_name: Option<&str>,
 ) -> Result<(), AppError> {
+    purge_device_secrets(tx, device_id).await?;
+    sqlx::query(r#"UPDATE devices SET name = $1, last_seen_at = now() WHERE id = $2"#)
+        .bind(device_name)
+        .bind(device_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|err| AppError::Internal(format!("reclaim device failed: {err}")))?;
+    Ok(())
+}
+
+/// Deletes the key material, push token and PIN guard a device's client left on the server.
+///
+/// Agent: DELETE FROM key tables, push_tokens, device_pin_guards WHERE device_id; the device
+/// row and everything it sent stay.
+pub(crate) async fn purge_device_secrets(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    device_id: Uuid,
+) -> Result<(), AppError> {
     for table in [
         "device_identity_keys",
         "device_signed_prekeys",
@@ -654,12 +674,6 @@ async fn reset_reclaimed_device(
             .await
             .map_err(|err| AppError::Internal(format!("reset {table} failed: {err}")))?;
     }
-    sqlx::query(r#"UPDATE devices SET name = $1, last_seen_at = now() WHERE id = $2"#)
-        .bind(device_name)
-        .bind(device_id)
-        .execute(&mut **tx)
-        .await
-        .map_err(|err| AppError::Internal(format!("reclaim device failed: {err}")))?;
     Ok(())
 }
 

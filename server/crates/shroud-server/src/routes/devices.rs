@@ -47,7 +47,7 @@ pub async fn list_devices(
         r#"
         SELECT id, name, created_at, last_seen_at
         FROM devices
-        WHERE user_id = $1
+        WHERE user_id = $1 AND revoked_at IS NULL
         ORDER BY created_at ASC
         "#,
     )
@@ -70,7 +70,14 @@ pub async fn list_devices(
     Ok(Json(DevicesResponse { devices }))
 }
 
-/// `DELETE /devices/:id` — revoke sessions and remove the device row.
+/// `DELETE /devices/:id` — sign the device out for good and forget its keys.
+///
+/// Human: Messages, uploads and calls reference their sending device (`ON DELETE CASCADE`), so
+/// deleting the row erased everything it ever sent, for both participants. The row stays,
+/// marked `revoked_at`: it leaves the device list, delivery fan-out, key bundles and the cap,
+/// and a login presenting its id gets a fresh device instead.
+/// Agent: UPDATE sessions + devices SET revoked_at; DELETE keys/push/PIN guard and undelivered
+/// delivery rows for the device; 404 for foreign or already-removed ids.
 pub async fn delete_device(
     State(state): State<AppState>,
     auth: AuthContext,
@@ -84,7 +91,8 @@ pub async fn delete_device(
 
     let owned: Option<Uuid> = sqlx::query_scalar(
         r#"
-        SELECT id FROM devices WHERE id = $1 AND user_id = $2
+        SELECT id FROM devices WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
+        FOR UPDATE
         "#,
     )
     .bind(device_id)
@@ -108,11 +116,24 @@ pub async fn delete_device(
     .await
     .map_err(|err| AppError::Internal(format!("revoke device sessions failed: {err}")))?;
 
-    sqlx::query(r#"DELETE FROM devices WHERE id = $1"#)
+    crate::routes::auth::purge_device_secrets(&mut tx, device_id).await?;
+
+    // Nobody will ever fetch these; delivered rows stay so sent messages keep their ticks.
+    sqlx::query(
+        r#"
+        DELETE FROM message_deliveries WHERE device_id = $1 AND delivered_at IS NULL
+        "#,
+    )
+    .bind(device_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("drop pending deliveries failed: {err}")))?;
+
+    sqlx::query(r#"UPDATE devices SET revoked_at = now() WHERE id = $1"#)
         .bind(device_id)
         .execute(&mut *tx)
         .await
-        .map_err(|err| AppError::Internal(format!("delete device failed: {err}")))?;
+        .map_err(|err| AppError::Internal(format!("revoke device failed: {err}")))?;
 
     tx.commit()
         .await
