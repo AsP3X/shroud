@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, Delete, KeyRound, Lock, LockOpen, Shield, ShieldCheck } from "lucide-react";
+import { Check, Delete, KeyRound, Lock, LockOpen, ShieldCheck } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { Avatar } from "../components/Avatar";
+import { BrandMark } from "../components/BrandMark";
 import { clearPin, hasPin, pinLength, setPin, unlockWithPin } from "../crypto/vaultAccess";
 import { clearSession, loadSession, setLocked, touchLastActive } from "../session";
 
@@ -230,7 +231,7 @@ export function Unlock() {
             <span>{verified ? "Unlocked" : "Sealed"}</span>
           </span>
           <span className="lock-mark">
-            <Shield size={48} strokeWidth={2} />
+            <BrandMark size={60} />
           </span>
           <span className="lock-badge">
             {verified ? <LockOpen size={18} strokeWidth={2.25} /> : <Lock size={18} strokeWidth={2.25} />}

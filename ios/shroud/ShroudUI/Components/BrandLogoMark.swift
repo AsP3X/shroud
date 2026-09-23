@@ -9,8 +9,10 @@ struct BrandLogoMark: View {
             RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
                 .fill(Theme.brandGradient)
                 .frame(width: size, height: size)
-            Image(systemName: "lock.shield.fill")
-                .font(.system(size: size * 0.38, weight: .semibold))
+            Image("BrandMark")
+                .resizable()
+                .scaledToFit()
+                .frame(width: size * 0.6, height: size * 0.6)
                 .foregroundStyle(Color.white)
         }
     }

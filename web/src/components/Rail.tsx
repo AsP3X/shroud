@@ -1,12 +1,13 @@
 import { useRef, useState } from "react";
-import { LogOut, MessageCircle, Settings, Shield, User, Users } from "lucide-react";
+import { LogOut, MessageCircle, Settings, User, Users, type LucideIcon } from "lucide-react";
 import { Avatar } from "./Avatar";
+import { BrandMark } from "./BrandMark";
 import { ContextMenu, type MenuAnchor, type MenuItem } from "./ContextMenu";
 import { displayName } from "./settings/SettingsHome";
 
 export type Tab = "chats" | "contacts" | "settings";
 
-export const TABS: { id: Tab; label: string; Icon: typeof Shield }[] = [
+export const TABS: { id: Tab; label: string; Icon: LucideIcon }[] = [
   { id: "chats", label: "Chats", Icon: MessageCircle },
   { id: "contacts", label: "Contacts", Icon: Users },
   { id: "settings", label: "Settings", Icon: Settings },
@@ -75,7 +76,7 @@ export function Rail({
   return (
     <nav className="rail" aria-label="Main">
       <div className="rail-mark" aria-hidden="true">
-        <Shield size={18} />
+        <BrandMark size={22} />
       </div>
       <div className="rail-tabs">
         {TABS.map(({ id, label, Icon }) => (

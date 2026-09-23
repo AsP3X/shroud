@@ -31,8 +31,12 @@ final class CallKitManager: NSObject {
         config.maximumCallGroups = 1
         config.supportedHandleTypes = [.generic]
         config.includesCallsInRecents = true
-        if let icon = UIImage(systemName: "lock.shield.fill") {
-            config.iconTemplateImageData = icon.pngData()
+        if let mark = UIImage(named: "BrandMark") {
+            // The vector asset's natural size is 680 pt; CallKit wants a ~40 pt template.
+            let size = CGSize(width: 40, height: 40)
+            config.iconTemplateImageData = UIGraphicsImageRenderer(size: size).image { _ in
+                mark.draw(in: CGRect(origin: .zero, size: size))
+            }.pngData()
         }
         provider = CXProvider(configuration: config)
         super.init()

@@ -1,3 +1,5 @@
+<p align="center"><img src="design/icon/shroud-favicon.svg" width="96" alt="Shroud"></p>
+
 # Shroud
 
 End-to-end encrypted messenger: **Rust + PostgreSQL** server, a **native iOS** app, and a **web client**.

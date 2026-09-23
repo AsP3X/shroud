@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { QrCode, Shield } from "lucide-react";
+import { QrCode } from "lucide-react";
 import {
   api,
   ApiError,
@@ -11,6 +11,7 @@ import {
   type WireMessage,
 } from "../api/client";
 import { Avatar } from "../components/Avatar";
+import { BrandMark } from "../components/BrandMark";
 import { ChatList, type ListEntry } from "../components/ChatList";
 import { TypingLabel } from "../components/Typing";
 import { DeviceWipeDialog, type WipeReason } from "../components/DeviceWipeDialog";
@@ -1325,7 +1326,7 @@ export function AppShell({ session }: { session: Session }) {
             ) : (
               <section className="thread thread-placeholder hidden-mobile">
                 <div className="placeholder-card">
-                  <Shield size={28} aria-hidden="true" />
+                  <BrandMark size={34} />
                   <strong>Select a conversation</strong>
                   <p>Your messages are end-to-end encrypted, on this device and on theirs.</p>
                 </div>
