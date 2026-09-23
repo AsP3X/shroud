@@ -321,7 +321,7 @@ export function DevicesView({
         </button>
         {!mine ? (
           busy ? (
-            <span className="dev-spinner dev-busy" aria-label="Removing" />
+            <span className="dev-spinner dev-busy" role="status" aria-label="Removing" />
           ) : (
             <button
               type="button"

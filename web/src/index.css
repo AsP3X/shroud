@@ -1860,7 +1860,8 @@ button.reply-quote { cursor: pointer; }
 }
 .set-body > * { width: min(var(--set-width), 100%); margin-inline: auto; flex-shrink: 0; }
 /* Overlays rendered inside a settings page are fixed to the viewport, not the column. */
-.set-body > .modal-scrim, .set-body > .set-toast { width: auto; margin-inline: 0; }
+.set-body > .modal-scrim { width: auto; margin-inline: 0; }
+.set-body > .set-toast { width: max-content; }
 
 .set-hero {
   display: flex; flex-direction: column; align-items: center; gap: 6px;
@@ -2079,8 +2080,9 @@ button.reply-quote { cursor: pointer; }
 }
 .set-row.dev-info .copy-pill { align-self: center; }
 .set-toast {
-  position: fixed; left: 50%; bottom: 28px; z-index: 90;
-  transform: translateX(-50%);
+  /* Centred with auto margins, not a transform, so the `modal-in` entrance can own transform. */
+  position: fixed; left: 16px; right: 16px; bottom: 28px; z-index: 90;
+  width: max-content; max-width: calc(100vw - 32px); margin-inline: auto;
   display: flex; align-items: center; gap: 8px;
   padding: 11px 16px; border-radius: var(--r-full);
   background: var(--surface-2); border: 1px solid var(--separator);
@@ -3005,6 +3007,8 @@ button.reply-quote { cursor: pointer; }
   .pane { width: 100%; border-right: 0; }
   .pane.hidden-mobile, .thread.hidden-mobile { display: none; }
   .tab-bar { display: flex; }
+  /* Clear the tab bar (62px) instead of landing on it. */
+  .set-toast { bottom: 78px; }
   .thread-head { height: 58px; padding: 0 8px 0 4px; gap: 10px; }
   .thread-head .avatar-md { width: 38px; height: 38px; font-size: var(--fs-sm); }
   .e2e-badge { display: none; }
