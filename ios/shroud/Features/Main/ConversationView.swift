@@ -1290,9 +1290,9 @@ struct ConversationView: View {
                     to: peerUserID,
                     waveform: take.waveform,
                     replyTo: reference,
-                    // Best-effort on-device transcript (Tier 1) — never blocks send on failure.
-                    // Runs after the bubble is on screen (see `sendVoice`), so a long recording
-                    // appears immediately instead of waiting on the transcriber.
+                    // Best-effort on-device transcript (Tier 1). Runs beside the send, never
+                    // in front of it (see `sendVoice`): the note goes out right away and the
+                    // transcript follows once ready.
                     transcriptProvider: { messageID in
                         // Never hold a note back for the one-time Whisper download (hundreds of
                         // megabytes); it keeps going in the background since recording began.

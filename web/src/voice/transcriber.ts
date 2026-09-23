@@ -28,17 +28,10 @@ import {
 } from "./language";
 import { concatPcm, transcriptionSession } from "./transcription/session";
 
-/** How long Send will wait for Whisper when the model is already on disk. */
-export const TRANSCRIBE_TIMEOUT_MS = 15_000;
-
 export function prepareTranscription(): void {
   void transcriptionSession.prepare().catch((err) => {
     console.warn("Whisper prepare failed:", err);
   });
-}
-
-export function isTranscriptionReady(): boolean {
-  return transcriptionSession.isPrepared;
 }
 
 /** Drops punctuation-only / empty decoder junk. Same idea as iOS `VoiceTranscript.cleaned`. */
@@ -51,8 +44,8 @@ export function cleanedTranscript(text: string): string {
 
 /**
  * Transcribe a recorded take. Resolves null when the clip is too short or
- * Whisper fails. Does not time out: the send path races this against
- * `TRANSCRIBE_TIMEOUT_MS` so a first-time download never blocks Send.
+ * Whisper fails. Does not time out; Send never waits on it — the transcript
+ * follows the note as an annotation.
  */
 export async function transcribeVoiceNote(
   chunks: Float32Array[],
@@ -134,21 +127,4 @@ async function decodeVoiceNote(
     peerId,
     audioSeconds,
   );
-}
-
-/** Resolves `work` or `fallback` after `ms`. Does not cancel `work`. */
-export function raceTimeout<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
-  return new Promise((resolve) => {
-    const timer = window.setTimeout(() => resolve(fallback), ms);
-    void work.then(
-      (value) => {
-        window.clearTimeout(timer);
-        resolve(value);
-      },
-      () => {
-        window.clearTimeout(timer);
-        resolve(fallback);
-      },
-    );
-  });
 }

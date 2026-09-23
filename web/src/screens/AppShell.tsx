@@ -58,11 +58,6 @@ import { adoptPoster, adoptVideo, ensureVideo, forgetVideos, rekeyVideo, release
 import { VideoTooLongError } from "../media/videoPlan";
 import type { VoiceTake } from "../voice/recorder";
 import { stopVoice } from "../voice/playback";
-import {
-  isTranscriptionReady,
-  raceTimeout,
-  TRANSCRIBE_TIMEOUT_MS,
-} from "../voice/transcriber";
 import { rekeyTranscriptView, setTranscribing } from "../voice/transcriptView";
 import { connectRealtime, type Realtime } from "../realtime";
 import {
@@ -830,26 +825,26 @@ export function AppShell({ session }: { session: Session }) {
     setThread((prev) => [...prev, optimistic]);
     setSendingPeer(peerId);
     setThreadError(null);
+    // The note goes out without waiting for Whisper, so the other side can play it
+    // right away; the transcript follows as an annotation (see below). Here it shows
+    // on the bubble as soon as it lands, even while the upload is still running.
+    if (!take.transcript) {
+      void pending.then((text) => {
+        if (!text || !alive.current) return;
+        if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
+        const id = noteId;
+        setThread((prev) =>
+          prev.map((m) => (m.id === id && !m.transcript ? { ...m, transcript: text, text } : m)),
+        );
+      });
+    }
     try {
-      // Same rule as iOS: wait for Whisper only when the model is already on
-      // disk. A first-time download must not hold the note.
-      let sealed = take.transcript;
-      if (!sealed && isTranscriptionReady()) {
-        sealed = await raceTimeout(pending, TRANSCRIBE_TIMEOUT_MS, null);
-        if (sealed && selectedRef.current?.id.toLowerCase() === peerId.toLowerCase()) {
-          const text = sealed;
-          setThread((prev) =>
-            prev.map((m) => (m.id === localId ? { ...m, transcript: text, text } : m)),
-          );
-        }
-      }
-      if (sealed) setTranscribing(localId, false);
       const msg = await sendVoice({
         token: session.token,
         me: session.user.id,
         peerUserId: peerId,
         material,
-        take: { ...take, transcript: sealed },
+        take,
         replyTo: reference,
       });
       rekeyTranscriptView(localId, msg.id);

@@ -112,6 +112,13 @@ final class MessagingController {
     private weak var cryptoController: CryptoController?
     /// Shared transcripts whose voice note is not in the thread yet (annotation arrived first).
     private var pendingSharedTranscripts: [UUID: String] = [:]
+    /// Own voice notes whose transcript is still being made, by optimistic id.
+    private var voiceTranscriptsInFlight: Set<UUID> = []
+    /// Server ids those notes were re-keyed to, so a late transcript finds its bubble.
+    private var sentVoiceIDs: [UUID: UUID] = [:]
+    /// Transcripts that landed while their note was still sending, by optimistic id;
+    /// shared once the server has keyed the note.
+    private var transcriptsAwaitingSend: [UUID: String] = [:]
 
     /// Expose realtime health for diagnostics UI if needed.
     var isRealtimeConnected: Bool { realtime.isConnected }
@@ -2964,11 +2971,11 @@ final class MessagingController {
     }
 
     /// Records are done by the view; this encrypts, uploads, and sends a voice message.
-    /// Optional on-device transcript is sealed inside the media payload (never sent as plaintext).
-    /// - Parameter transcriptProvider: Produces the on-device transcript. Called *after* the
-    ///   optimistic bubble is on screen, so a long recording is never held back by transcription
-    ///   (which can take seconds for a multi-minute note). The result is still sealed into the
-    ///   payload, so the recipient gets it without re-transcribing.
+    /// A `transcript` known up front is sealed inside the media payload (never sent as plaintext).
+    /// - Parameter transcriptProvider: Produces the on-device transcript. Runs *beside* the send,
+    ///   never in front of it: the note goes out as soon as it is sealed and uploaded, so the
+    ///   other side can play it right away. The transcript shows here when ready and follows
+    ///   as a sealed annotation, so the recipient still gets it without re-transcribing.
     func sendVoice(
         audioData: Data,
         durationMs: Int,
@@ -3003,18 +3010,20 @@ final class MessagingController {
         threads[peerUserID] = list
         local.saveSealedMedia(messageID: optimisticID, data: audioData)
 
-        // Bubble is visible now; only then pay for transcription.
-        var resolved = transcript?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if resolved?.isEmpty != false, let transcriptProvider {
-            resolved = (await transcriptProvider(optimisticID))?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        }
         // Capped so a long note's transcript can never push the sealed message past the
         // server's size limit (which would fail the whole voice message).
-        let trimmedTranscript = resolved.map(MessageAnnotation.clampTranscript).flatMap { $0.isEmpty ? nil : $0 }
+        let trimmedTranscript = transcript.map(MessageAnnotation.clampTranscript).flatMap { $0.isEmpty ? nil : $0 }
         let displayText = trimmedTranscript ?? "Voice message"
-        // Show the text now: sealing and uploading the note takes a moment longer, and the
-        // bubble would otherwise fold its "Transcribing…" away only to reopen once sent.
+        if trimmedTranscript == nil, let transcriptProvider {
+            // Bubble is visible now; transcribe beside the send rather than in front of it.
+            voiceTranscriptsInFlight.insert(optimisticID)
+            Task {
+                let made = await transcriptProvider(optimisticID)
+                    .map(MessageAnnotation.clampTranscript)
+                    .flatMap { $0.isEmpty ? nil : $0 }
+                await applyOwnVoiceTranscript(made, optimisticID: optimisticID, peerUserID: peerUserID)
+            }
+        }
         if let trimmedTranscript,
            var thread = threads[peerUserID],
            let idx = thread.firstIndex(where: { $0.id == optimisticID })
@@ -3040,7 +3049,7 @@ final class MessagingController {
                     voiceData: audioData,
                     voiceDurationMs: durationMs,
                     voiceWaveform: waveform,
-                    transcript: trimmedTranscript,
+                    transcript: thread[idx].transcript ?? trimmedTranscript,
                     replyTo: replyTo
                 )
                 threads[peerUserID] = thread
@@ -3064,7 +3073,6 @@ final class MessagingController {
                 var updated = thread[idx]
                 updated.receipt = .failed
                 updated.sendError = "Waiting for connection…"
-                updated.transcript = trimmedTranscript
                 updated.pendingSync = true
                 // Replace so display text can include the transcript.
                 thread[idx] = ChatMessage(
@@ -3081,7 +3089,7 @@ final class MessagingController {
                     voiceData: updated.voiceData,
                     voiceDurationMs: updated.voiceDurationMs,
                     voiceWaveform: updated.voiceWaveform,
-                    transcript: trimmedTranscript,
+                    transcript: updated.transcript ?? trimmedTranscript,
                     sendError: "Waiting for connection…",
                     pendingSync: true,
                     replyTo: replyTo
@@ -3128,7 +3136,7 @@ final class MessagingController {
                     voiceData: existing.voiceData ?? audioData,
                     voiceDurationMs: existing.voiceDurationMs ?? durationMs,
                     voiceWaveform: existing.voiceWaveform ?? waveform,
-                    transcript: trimmedTranscript,
+                    transcript: existing.transcript ?? trimmedTranscript,
                     sendError: message,
                     pendingSync: true,
                     replyTo: replyTo
@@ -3176,9 +3184,39 @@ final class MessagingController {
         thread[index].transcript = text
         threads[peerUserID] = thread
         persistThread(peerUserID)
+        await sendTranscriptAnnotation(text, forVoiceMessage: messageID, peerUserID: peerUserID)
+    }
 
+    /// Shows the transcript of a note we just recorded, and shares it once the note is sent.
+    /// `nil` means there is none (no model yet, no speech, or it failed); the note stays as is.
+    private func applyOwnVoiceTranscript(_ text: String?, optimisticID: UUID, peerUserID: UUID) async {
+        voiceTranscriptsInFlight.remove(optimisticID)
+        let messageID = sentVoiceIDs.removeValue(forKey: optimisticID) ?? optimisticID
+        guard let text,
+              var thread = threads[peerUserID],
+              let index = thread.firstIndex(where: { $0.id == messageID }),
+              thread[index].kind == .voice,
+              !thread[index].deleted
+        else { return }
+        if (thread[index].transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            thread[index].transcript = text
+            threads[peerUserID] = thread
+            persistThread(peerUserID)
+        }
         let note = thread[index]
+        if note.id == optimisticID, note.pendingSync || note.receipt == .sending || note.receipt == .failed {
+            // Still on its way (or queued offline); `finishVoiceSend` shares it once keyed.
+            transcriptsAwaitingSend[optimisticID] = text
+            return
+        }
+        await sendTranscriptAnnotation(text, forVoiceMessage: note.id, peerUserID: peerUserID)
+    }
+
+    /// Seals `text` as a transcript annotation for a sent voice note. Best effort; see
+    /// `shareTranscript`.
+    private func sendTranscriptAnnotation(_ text: String, forVoiceMessage messageID: UUID, peerUserID: UUID) async {
         guard !isNotesChat(peerUserID),
+              let note = threads[peerUserID]?.first(where: { $0.id == messageID }),
               !note.deleted,
               !note.pendingSync,
               note.receipt != .sending,
@@ -3212,7 +3250,7 @@ final class MessagingController {
             // DR is one-shot: our own history decode reads this instead of re-opening.
             local.saveSealedPlaintext(messageID: dto.id, data: plaintext)
         } catch {
-            // Kept locally either way; see Human note above.
+            // Kept locally either way; see the Human note on `shareTranscript`.
         }
     }
 
@@ -3324,8 +3362,19 @@ final class MessagingController {
         {
             // Same note, new id: its bubble carries on instead of landing again.
             VoiceTranscriptDisclosure.shared.handOff(from: optimisticID, to: dto.id)
-            thread[idx] = sent
+            TranscriptionModelInstall.shared.handOff(from: optimisticID, to: dto.id)
+            var replacement = sent
+            // A transcript that landed while this was uploading.
+            if replacement.transcript == nil { replacement.transcript = thread[idx].transcript }
+            thread[idx] = replacement
             threads[peerUserID] = foldSharedTranscripts(into: thread)
+        }
+        if voiceTranscriptsInFlight.contains(optimisticID) {
+            sentVoiceIDs[optimisticID] = dto.id
+        }
+        if let late = transcriptsAwaitingSend.removeValue(forKey: optimisticID), payload.c == nil {
+            // Sent without it: follow up with the annotation instead.
+            Task { await sendTranscriptAnnotation(late, forVoiceMessage: dto.id, peerUserID: peerUserID) }
         }
         await refreshConversations(force: true)
         persistSnapshot()

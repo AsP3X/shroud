@@ -43,6 +43,11 @@ final class TranscriptionModelInstall {
         }
     }
 
+    /// The server re-keyed the note being transcribed; its progress follows the bubble.
+    func handOff(from oldID: UUID, to newID: UUID) {
+        if messageID == oldID { messageID = newID }
+    }
+
     func downloading(languageName: String, fraction: Double, determinate: Bool) {
         phase = .downloading
         self.languageName = languageName
