@@ -552,6 +552,9 @@ final class MessagingController {
         if activePeerID != peerID { activePeerID = peerID }
         if let peerID, unreadCountByPeer[peerID] != 0 {
             unreadCountByPeer[peerID] = 0
+            // Saved here: refreshes only save what they changed, so a restart would bring
+            // the badge back.
+            persistThread(peerID)
         }
     }
 
@@ -662,6 +665,7 @@ final class MessagingController {
             }
             let requests = try await requestsTask
             let rosterChanged = contacts.map(\.userId) != sorted.map(\.userId)
+            let changed = contacts != sorted || incomingRequests != requests
             if contacts != sorted { contacts = sorted }
             if incomingRequests != requests { incomingRequests = requests }
             if contactsError != nil { contactsError = nil }
@@ -669,7 +673,8 @@ final class MessagingController {
             isOffline = false
             // Rows are publishable now — don't hold the skeleton up for the presence fan-out.
             if !hasLoadedContacts { hasLoadedContacts = true }
-            persistSnapshot()
+            // Every tab switch and poll lands here; an unchanged roster has nothing to save.
+            if changed { persistSnapshot() }
             // A new contact needs presence right away; otherwise stay on the slow sweep.
             await sweepPresenceIfNeeded(token: token, force: rosterChanged)
         } catch {
@@ -815,11 +820,13 @@ final class MessagingController {
         do {
             let list = try await messagesService.listConversations(token: token)
             // Same-value writes still invalidate observers — only publish real changes.
-            if conversations != list { conversations = list }
+            let changed = conversations != list
+            if changed { conversations = list }
             if chatsError != nil { chatsError = nil }
             if lastError != nil { lastError = nil }
             isOffline = false
-            persistSnapshot()
+            // Every tab switch lands here; an unchanged list has nothing to save.
+            if changed { persistSnapshot() }
         } catch {
             if !conversations.isEmpty || (threads[Self.notesPeerID]?.isEmpty == false) {
                 if chatsError != nil { chatsError = nil }
@@ -3844,9 +3851,10 @@ final class MessagingController {
             }
             var copy = thread
             let current = copy[idx].receipt
-            if status.rank >= current.rank {
+            if status.rank > current.rank {
                 copy[idx].receipt = status
                 threads[peerID] = copy
+                persistThread(peerID)
             }
             return
         }
@@ -3868,6 +3876,7 @@ final class MessagingController {
             }
             if changed {
                 threads[peerID] = copy
+                persistThread(peerID)
             }
         }
     }

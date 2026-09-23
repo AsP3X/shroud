@@ -21,8 +21,25 @@ final class MessagingLocalRepository {
 
     private(set) var historyKey: SymmetricKey?
 
+    /// What the roster and thread files hold, as this repository last wrote or read them.
+    ///
+    /// Human: Switching tabs refreshes Chats or Contacts, and every refresh saved the whole
+    /// store — each thread re-encoded, sealed and written even when nothing had changed, on the
+    /// main thread. A save that would write what the file already holds is now skipped.
+    /// Agent: Only this repository writes those files. Forgotten whenever the key changes or the
+    /// store is cleared; unknown (nil) means the next save writes.
+    private struct Written {
+        var userID: UUID
+        var roster: LocalMessageStore.Roster?
+        var threads: [String: [LocalMessageStore.StoredMessage]] = [:]
+        var peers: Set<String>?
+    }
+
+    private var written: Written?
+
     func setHistoryKey(_ key: SymmetricKey?) {
         historyKey = key
+        written = nil
         if key == nil {
             plaintextCache.clearMemory()
         }
@@ -31,6 +48,7 @@ final class MessagingLocalRepository {
     /// Revoke history key + L1 plaintext so sealed disk files cannot be opened until unlock.
     func lockSensitiveMemory() {
         historyKey = nil
+        written = nil
         plaintextCache.clearMemory()
     }
 
@@ -124,26 +142,20 @@ final class MessagingLocalRepository {
                 return message
             }
             state.threads[peerID] = messages
-            // A link message whose picture is a media blob keeps its sealed media payload (it
-            // holds the blob key); every other text message is re-cached with its quote and
-            // preview, so a decode from this cache rebuilds the same bubble.
-            for message in messages
-                where !message.deleted && message.kind == .text && message.mediaObjectId == nil
-            {
-                if !ThreadMessageMerge.isFailedDecryptText(message.text) {
-                    let wire = MessageTextPayload.wire(
-                        body: message.text,
-                        replyTo: message.replyTo,
-                        linkPreview: message.linkPreview
-                    )
-                    // Each save is an atomic write plus a read-back, for every message on every
-                    // unlock; an entry that already holds these bytes is left alone.
-                    if sealedPlaintextText(for: message.id) != wire {
-                        saveSealedPlaintext(messageID: message.id, text: wire)
-                    }
-                }
-            }
+            recachePlaintext(of: messages)
         }
+        // What was just read (or re-saved after the prune) is what the files hold.
+        var loaded = Written(userID: userID)
+        loaded.roster = Self.comparable(LocalMessageStore.Roster(
+            conversations: snapshot.conversations,
+            contacts: snapshot.contacts,
+            incomingRequests: snapshot.incomingRequests,
+            unreadByPeer: snapshot.unreadByPeer
+        ))
+        loaded.threads = snapshot.threads
+        // Left unknown: a thread file that did not decode is on disk but not in the snapshot,
+        // and the first save should still clear it out.
+        written = loaded
         if state.threads[LocalMessageStore.notesPeerID] == nil {
             state.threads[LocalMessageStore.notesPeerID] = []
         }
@@ -175,23 +187,7 @@ final class MessagingLocalRepository {
         var threadMap: [String: [LocalMessageStore.StoredMessage]] = [:]
         for (peerID, messages) in threads {
             threadMap[peerID.uuidString.lowercased()] = messages.map(LocalMessageStore.StoredMessage.from)
-            // A link message whose picture is a media blob keeps its sealed media payload (it
-            // holds the blob key); every other text message is re-cached with its quote and
-            // preview, so a decode from this cache rebuilds the same bubble.
-            for message in messages
-                where !message.deleted && message.kind == .text && message.mediaObjectId == nil
-            {
-                if !ThreadMessageMerge.isFailedDecryptText(message.text) {
-                    saveSealedPlaintext(
-                        messageID: message.id,
-                        text: MessageTextPayload.wire(
-                            body: message.text,
-                            replyTo: message.replyTo,
-                            linkPreview: message.linkPreview
-                        )
-                    )
-                }
-            }
+            recachePlaintext(of: messages)
         }
         snapshot.threads = threadMap
 
@@ -205,7 +201,7 @@ final class MessagingLocalRepository {
         if !pruned.1.isEmpty {
             removeCaches(messageIDs: pruned.1)
         }
-        messageStore.save(pruned.0, userID: userID, historyKey: key)
+        writeSnapshot(pruned.0, userID: userID, historyKey: key)
         return Set(pruned.1)
     }
 
@@ -243,18 +239,8 @@ final class MessagingLocalRepository {
                 removeCaches(messageIDs: dropped)
             }
         }
-        messageStore.saveThread(
-            peerID: peerID,
-            messages: prunedMessages,
-            userID: userID,
-            historyKey: key
-        )
-
-        for message in messages where !message.deleted && message.kind == .text {
-            if !ThreadMessageMerge.isFailedDecryptText(message.text) {
-                saveSealedPlaintext(messageID: message.id, text: message.text)
-            }
-        }
+        writeThread(peerID.uuidString.lowercased(), messages: prunedMessages, userID: userID, historyKey: key)
+        recachePlaintext(of: messages)
 
         // Roster always saved so list previews / unread stay current.
         var unread: [String: Int] = [:]
@@ -269,11 +255,95 @@ final class MessagingLocalRepository {
             unreadByPeer: unread,
             updatedAt: Date()
         )
-        messageStore.saveRoster(roster, userID: userID, historyKey: key)
+        writeRoster(roster, userID: userID, historyKey: key)
+    }
+
+    // MARK: - Writes
+
+    /// Keeps each text message's sealed plaintext equal to the wire it decodes from, quote and
+    /// preview included, so a decode from this cache rebuilds the same bubble. A link message
+    /// whose picture is a media blob keeps its sealed media payload: that holds the blob key.
+    /// Each save is an atomic write plus a read-back, so an entry that already holds these
+    /// bytes is left alone.
+    private func recachePlaintext(of messages: [MessagingController.ChatMessage]) {
+        for message in messages
+            where !message.deleted && message.kind == .text && message.mediaObjectId == nil
+        {
+            guard !ThreadMessageMerge.isFailedDecryptText(message.text) else { continue }
+            let wire = MessageTextPayload.wire(
+                body: message.text,
+                replyTo: message.replyTo,
+                linkPreview: message.linkPreview
+            )
+            if sealedPlaintextText(for: message.id) != wire {
+                saveSealedPlaintext(messageID: message.id, text: wire)
+            }
+        }
+    }
+
+    /// `updatedAt` is stamped on every write; it is not part of what the roster holds.
+    private static func comparable(_ roster: LocalMessageStore.Roster) -> LocalMessageStore.Roster {
+        var copy = roster
+        copy.updatedAt = .distantPast
+        return copy
+    }
+
+    private func writtenState(for userID: UUID) -> Written {
+        if let written, written.userID == userID { return written }
+        return Written(userID: userID)
+    }
+
+    private func writeRoster(_ roster: LocalMessageStore.Roster, userID: UUID, historyKey: SymmetricKey) {
+        var state = writtenState(for: userID)
+        let content = Self.comparable(roster)
+        guard state.roster != content else { return }
+        messageStore.saveRoster(roster, userID: userID, historyKey: historyKey)
+        state.roster = content
+        written = state
+    }
+
+    private func writeThread(
+        _ peerKey: String,
+        messages: [LocalMessageStore.StoredMessage],
+        userID: UUID,
+        historyKey: SymmetricKey
+    ) {
+        guard let peerID = UUID(uuidString: peerKey) else { return }
+        var state = writtenState(for: userID)
+        guard state.threads[peerKey] != messages else { return }
+        messageStore.saveThread(peerID: peerID, messages: messages, userID: userID, historyKey: historyKey)
+        state.threads[peerKey] = messages
+        state.peers?.insert(peerKey)
+        written = state
+    }
+
+    /// `LocalMessageStore.save`, one file at a time, skipping the files that would not change.
+    private func writeSnapshot(_ snapshot: LocalMessageStore.Snapshot, userID: UUID, historyKey: SymmetricKey) {
+        writeRoster(
+            LocalMessageStore.Roster(
+                conversations: snapshot.conversations,
+                contacts: snapshot.contacts,
+                incomingRequests: snapshot.incomingRequests,
+                unreadByPeer: snapshot.unreadByPeer
+            ),
+            userID: userID,
+            historyKey: historyKey
+        )
+        for (peerKey, messages) in snapshot.threads {
+            writeThread(peerKey, messages: messages, userID: userID, historyKey: historyKey)
+        }
+        let wanted = Set(snapshot.threads.keys)
+        var state = writtenState(for: userID)
+        guard state.peers != wanted else { return }
+        messageStore.removeThreads(notIn: wanted, userID: userID)
+        state.peers = wanted
+        state.threads = state.threads.filter { wanted.contains($0.key) }
+        written = state
     }
 
     func clearAll() {
         historyKey = nil
+        written = nil
         messageStore.clearAll()
         plaintextCache.clearAll()
         mediaCache.clearAll()
@@ -281,6 +351,7 @@ final class MessagingLocalRepository {
 
     func clear(userID: UUID?) {
         historyKey = nil
+        written = nil
         if let userID {
             messageStore.clear(userID: userID)
         } else {

@@ -295,13 +295,16 @@ struct LocalMessageStore: Sendable {
         )
         saveRoster(roster, userID: userID, historyKey: historyKey)
 
-        let wantedPeers = Set(snapshot.threads.keys)
         for (key, messages) in snapshot.threads {
             guard let peerID = UUID(uuidString: key) else { continue }
             saveThread(peerID: peerID, messages: messages, userID: userID, historyKey: historyKey)
         }
+        removeThreads(notIn: Set(snapshot.threads.keys), userID: userID)
+    }
 
-        // Remove thread files for peers no longer in the snapshot.
+    /// Removes thread files for peers no longer in the snapshot, and the legacy monolithic
+    /// files once the split save has run.
+    func removeThreads(notIn wantedPeers: Set<String>, userID: UUID) {
         let threadDir = threadsDirectory(for: userID)
         if let files = try? fileManager.contentsOfDirectory(
             at: threadDir,

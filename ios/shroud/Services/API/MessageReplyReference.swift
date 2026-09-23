@@ -145,7 +145,9 @@ nonisolated enum MessageTextPayload {
         ]
         if let replyTo { object["re"] = replyTo.wireObject }
         if let linkPreview { object["lp"] = linkPreview.wireObject }
-        guard let data = try? JSONSerialization.data(withJSONObject: object),
+        // Sorted, so the same message always yields the same bytes: the local cache skips a
+        // rewrite only when they match, and dictionary order differs from call to call.
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
               let json = String(data: data, encoding: .utf8)
         else { return body }
         return json
