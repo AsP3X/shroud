@@ -37,8 +37,11 @@ struct ConversationView: View {
     @State private var pendingDelete: PendingDelete?
     /// Whole-chat delete confirmation (scope is picked in the dialog).
     @State private var showChatDeleteConfirm = false
-    /// Live global frames of each bubble (visual only — no row spacers).
-    @State private var bubbleGlobalFrames: [UUID: CGRect] = [:]
+    /// Live global frames of each bubble (visual only — no row spacers). Only read when a menu
+    /// opens, so it lives in a reference type: as `@State` every scroll frame and every frame of
+    /// the back swipe redrew the whole thread, and the redraw re-fired the preference in the
+    /// same frame ("Bound preference MessageBubbleFrameKey tried to update multiple times").
+    @State private var bubbleFrames = BubbleFrameStore()
     @State private var viewingMedia: ViewingMedia?
     /// Full-screen video playback after decrypt.
     @State private var viewingVideo: ViewingVideo?
@@ -112,6 +115,15 @@ struct ConversationView: View {
             return "offline"
         }
         return "…"
+    }
+
+    /// The edge swipe pops the whole chat, so it waits while something else owns the screen: the
+    /// message menu, a voice take, and the in-screen overlays (viewer, editors, player), whose
+    /// own drags start at the left edge too.
+    private var allowsSwipeBack: Bool {
+        focusedMenu == nil && !voiceRecorder.isRecording
+            && viewingMedia == nil && viewingVideo == nil
+            && composeDraft == nil && videoDraft == nil && !isSendingMedia
     }
 
     private var presenceAccent: Bool {
@@ -241,6 +253,8 @@ struct ConversationView: View {
             .navigationBarBackButtonHidden(true)
             .toolbar(.hidden, for: .navigationBar)
             .toolbarBackground(.hidden, for: .navigationBar)
+            // Hiding the bar also kills the system edge swipe; bring it back.
+            .interactivePopGesture(enabled: allowsSwipeBack)
             .task {
                 // Pin immediately if the thread is already in memory, then again after network load.
                 pinToBottomToken &+= 1
@@ -749,7 +763,7 @@ struct ConversationView: View {
                                         : nil
                                 ) { rowGlobalFrame in
                                     // Prefer the true bubble frame; fall back to the press row.
-                                    let source = bubbleGlobalFrames[message.id] ?? rowGlobalFrame
+                                    let source = bubbleFrames.frames[message.id] ?? rowGlobalFrame
                                     openMessageMenu(for: message, sourceGlobalFrame: source)
                                 }
                         }
@@ -774,7 +788,7 @@ struct ConversationView: View {
                 // Springy, so the ink bubble pops out of its tail corner like a message landing.
                 .animation(Motion.bouncy, value: peerActivity)
                 .onPreferenceChange(MessageBubbleFrameKey.self) { frames in
-                    bubbleGlobalFrames.merge(frames, uniquingKeysWith: { $1 })
+                    bubbleFrames.frames.merge(frames, uniquingKeysWith: { $1 })
                 }
             }
             // Open chats pre-scrolled to newest (iOS 17+), like Telegram/Signal/WhatsApp.
@@ -1947,4 +1961,10 @@ struct ConversationView: View {
         )
     }
     .environment(MessagingController())
+}
+
+/// Where each bubble is drawn, for the long-press menu's hero. Not observed on purpose.
+@MainActor
+private final class BubbleFrameStore {
+    var frames: [UUID: CGRect] = [:]
 }
