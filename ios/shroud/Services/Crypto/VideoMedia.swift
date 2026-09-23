@@ -204,15 +204,38 @@ nonisolated enum VideoMedia {
             AVAssetExportPresetLowQuality,
         ]
 
+        // Human: Every preset used to be tried by running a full export and checking the size
+        // afterwards. A 40 s clip ran 720p, then 540p, then 480p: three full encodes, with the
+        // ring dropping back to zero each time, so the bubble looked stuck on "Compressing" for
+        // minutes. The session's size estimate costs nothing, so only presets it expects to
+        // fit get exported. The estimate can be about 10% low, hence the margin. The fallback
+        // loop stays in case an export still comes out too big.
+        let available = presets.filter { AVAssetExportSession.allExportPresets().contains($0) }
+        guard !available.isEmpty else { throw VideoError.exportFailed }
+        var estimates: [(preset: String, bytes: Int64?)] = []
+        for preset in available {
+            estimates.append((preset, await estimatedBytes(asset: exportAsset, preset: preset)))
+        }
+        let candidates = exportCandidates(estimates)
+        // Not even the lowest preset is expected to fit, so fail now instead of encoding
+        // several minutes of video that will only be rejected.
+        guard !candidates.isEmpty else { throw VideoError.tooLarge }
+
         var lastError: Error = VideoError.exportFailed
-        for preset in presets {
+        for (attempt, preset) in candidates.enumerated() {
             try Task.checkCancellation()
-            guard AVAssetExportSession.allExportPresets().contains(preset) else { continue }
             do {
+                // A fallback export continues the ring from where the last one stopped
+                // instead of sending it back to 0.
+                let window = progressWindow(attempt: attempt)
                 let exportedURL = try await export(
                     asset: exportAsset,
                     preset: preset,
-                    onProgress: onProgress
+                    onProgress: onProgress.map { report in
+                        { @Sendable fraction in
+                            report(window.lowerBound + fraction * (window.upperBound - window.lowerBound))
+                        }
+                    }
                 )
                 defer { try? FileManager.default.removeItem(at: exportedURL) }
                 let data = try Data(contentsOf: exportedURL, options: [.mappedIfSafe])
@@ -232,6 +255,7 @@ nonisolated enum VideoMedia {
                     outW = max(1, Int(d.width.rounded()))
                     outH = max(1, Int(d.height.rounded()))
                 }
+                onProgress?(1)
                 return EncodedVideo(
                     data: data,
                     width: outW,
@@ -277,6 +301,53 @@ nonisolated enum VideoMedia {
     }
 
     // MARK: - Private
+
+    /// Presets whose estimated output is under this share of the cap get exported.
+    static let estimateMargin = 0.85
+
+    /// The presets worth exporting, best first, given each one's size estimate.
+    ///
+    /// A preset with no estimate is kept, since only a real export can tell. When nothing
+    /// clears the margin, the smallest preset still gets one try if its estimate is under
+    /// the cap itself: the margin exists to avoid wasted encodes, not to refuse clips that
+    /// would fit.
+    static func exportCandidates(
+        _ estimates: [(preset: String, bytes: Int64?)],
+        cap: Int = maxPlaintextBytes
+    ) -> [String] {
+        let fits = estimates.filter { entry in
+            guard let bytes = entry.bytes else { return true }
+            return Double(bytes) <= Double(cap) * estimateMargin
+        }
+        if !fits.isEmpty { return fits.map(\.preset) }
+        guard let smallest = estimates.compactMap({ entry in entry.bytes.map { (entry.preset, $0) } })
+            .min(by: { $0.1 < $1.1 }),
+            smallest.1 <= Int64(cap)
+        else { return [] }
+        return [smallest.0]
+    }
+
+    /// The share of the 0…1 ring that export attempt `attempt` fills.
+    ///
+    /// The first export gets 0…0.9. Each fallback gets 90% of what is left, so the ring
+    /// keeps moving forward and only reaches 1 once an export is accepted.
+    static func progressWindow(attempt: Int) -> ClosedRange<Double> {
+        var lower = 0.0
+        var span = 0.9
+        for _ in 0 ..< max(0, attempt) {
+            lower += span
+            span = (1 - lower) * 0.9
+        }
+        return lower ... (lower + span)
+    }
+
+    /// The export session's own size prediction for `preset`; nil when it cannot tell.
+    private static func estimatedBytes(asset: AVAsset, preset: String) async -> Int64? {
+        guard let session = AVAssetExportSession(asset: asset, presetName: preset) else { return nil }
+        session.outputFileType = .mp4
+        guard let bytes = try? await session.estimatedOutputFileLengthInBytes, bytes > 0 else { return nil }
+        return bytes
+    }
 
     /// Video (+ optional audio) rewritten over `range` — how trim and mute are applied.
     private static func composition(
