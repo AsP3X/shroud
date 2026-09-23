@@ -18,6 +18,7 @@ struct LockScreenView: View {
     @Environment(CryptoController.self) private var cryptoController
     @Environment(MessagingController.self) private var messagingController
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
 
     /// Where the unlock choreography is.
     enum Phase: Equatable {
@@ -43,6 +44,9 @@ struct LockScreenView: View {
     @State private var badgeBreathing = false
     /// Device biometry, probed once per screen — LAContext is not free and this never changes.
     @State private var biometry = Self.detectBiometry()
+    /// No passcode means no protected wrap key, so chats cannot open at all. Re-probed on
+    /// "Check again" and whenever the app comes back from Settings.
+    @State private var hasDevicePasscode = HistoryKeyVault.canProtectWrapKey
 
     /// Verified → Release → Reveal, from the storyboard's time chips.
     private static let verifiedHold: Duration = .milliseconds(300)
@@ -68,7 +72,7 @@ struct LockScreenView: View {
     private var biometryName: String { biometry?.name ?? "Face ID" }
     private var biometrySymbol: String { biometry?.symbol ?? "faceid" }
 
-    private var canUseDeviceAuth: Bool { HistoryKeyVault.canProtectWrapKey }
+    private var canUseDeviceAuth: Bool { hasDevicePasscode }
 
     private var deviceName: String { UIDevice.current.model }
 
@@ -111,6 +115,9 @@ struct LockScreenView: View {
             } else {
                 withAnimation(Motion.snappy) { badgeBreathing = false }
             }
+        }
+        .onChange(of: scenePhase) { _, new in
+            if new == .active { recheckDevicePasscode(announce: false) }
         }
         .onDisappear { toastDismissTask?.cancel() }
         .serverSettingsSheet(
@@ -297,12 +304,16 @@ struct LockScreenView: View {
             }
 
             VStack(spacing: 10) {
-                Text("Chats are locked")
+                Text(canUseDeviceAuth ? "Chats are locked" : "Set a device passcode to use Shroud")
                     .font(.system(size: 30, weight: .bold))
                     .tracking(-0.6)
                     .foregroundStyle(Theme.textPrimary)
                     .multilineTextAlignment(.center)
-                Text("Your messages stay encrypted on this \(deviceName) until you unlock them.")
+                Text(
+                    canUseDeviceAuth
+                        ? "Your messages stay encrypted on this \(deviceName) until you unlock them."
+                        : "Shroud keeps your chats sealed behind this \(deviceName)'s passcode. Add one in Settings, then come back."
+                )
                     .font(.system(size: 15))
                     .foregroundStyle(Theme.textSecondary)
                     .multilineTextAlignment(.center)
@@ -322,7 +333,12 @@ struct LockScreenView: View {
 
     private var actions: some View {
         VStack(spacing: 12) {
-            if hasBiometry {
+            if !canUseDeviceAuth {
+                PrimaryButton(title: "Check again", showsArrow: false) {
+                    recheckDevicePasscode(announce: true)
+                }
+                .accessibilityIdentifier("lock.recheckPasscode")
+            } else if hasBiometry {
                 unlockButton(
                     title: primaryTitle(for: "Unlock with \(biometryName)"),
                     symbol: biometrySymbol,
@@ -332,18 +348,13 @@ struct LockScreenView: View {
                 if canUseDeviceAuth {
                     passcodeButton
                 }
-            } else if canUseDeviceAuth {
+            } else {
                 unlockButton(
                     title: primaryTitle(for: "Unlock with passcode"),
                     symbol: "lock.open",
                     method: .passcodeOnly
                 )
                 .accessibilityIdentifier("lock.unlockPasscode")
-            } else {
-                PrimaryButton(title: "Use encryption phrase", showsArrow: false) {
-                    router.showLogIn()
-                }
-                .accessibilityIdentifier("lock.usePhrase")
             }
 
             if canUseDeviceAuth {
@@ -464,6 +475,8 @@ struct LockScreenView: View {
         unlockingMethod = nil
         guard ok else {
             withAnimation(Motion.snappy) { phase = .idle }
+            // The passcode may have been removed while this screen was up.
+            recheckDevicePasscode(announce: false)
             if !cryptoController.hasLocalIdentity(for: userID) {
                 _ = await router.reconcileOrphanedSessionIfNeeded()
                 presentPostAuthToastIfNeeded()
@@ -506,6 +519,19 @@ struct LockScreenView: View {
         guard !router.isUnlocked else { return }
         messagingController.discardPreparedCachedState()
         withAnimation(Motion.gentle) { phase = .idle }
+    }
+
+    /// Without a passcode the phrase cannot help either: the vault it rebuilds needs one too.
+    private func recheckDevicePasscode(announce: Bool) {
+        let hasPasscode = HistoryKeyVault.canProtectWrapKey
+        if hasPasscode != hasDevicePasscode {
+            biometry = Self.detectBiometry()
+            withAnimation(Motion.snappy) { hasDevicePasscode = hasPasscode }
+        }
+        if announce, !hasPasscode {
+            Haptics.notification(.warning)
+            toastMessage = "No device passcode yet."
+        }
     }
 
     private func presentPostAuthToastIfNeeded() {

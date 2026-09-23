@@ -19,6 +19,8 @@ final class DoubleRatchetTests: Sendable {
         let ids = [UUID(), UUID()].sorted { $0.uuidString.lowercased() < $1.uuidString.lowercased() }
         aliceUser = ids[0]
         bobUser = ids[1]
+        // Sessions are sealed under the history key; without one the store reads nothing.
+        SealedTestKey.unlockSealedLocalState()
     }
 
     deinit {

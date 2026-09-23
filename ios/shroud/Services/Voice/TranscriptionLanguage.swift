@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import NaturalLanguage
 
@@ -199,10 +200,35 @@ nonisolated enum TranscriptionLanguage {
 /// stable per conversation: whoever you spoke German with yesterday you will speak German with
 /// today. So we learn from the messages that *were* long enough to be decisive, and lean on that
 /// history exactly when the audio itself cannot decide.
-/// Agent: READS/WRITES UserDefaults key `transcription.languageStats`; stores only BCP-47
-/// language codes and weights — never text, audio, or message ids beyond the peer UUID key.
-enum TranscriptionLanguageMemory {
-    private static let defaultsKey = "transcription.languageStats"
+/// Agent: READS/WRITES a sealed file (`shroud/voice/language-stats.sealed`, `LocalHistoryCrypto`
+/// context `.languageStats`); stores only language codes and weights — never text, audio, or
+/// message ids beyond the peer UUID key. The peer keys reveal who the user exchanges voice notes
+/// with, so the file is only open while chats are: locked, reads are empty and writes drop.
+/// Migrates and deletes the old plaintext UserDefaults key `transcription.languageStats`.
+nonisolated enum TranscriptionLanguageMemory {
+    /// Where older builds kept the statistics in the clear.
+    static let legacyDefaultsKey = "transcription.languageStats"
+
+    /// `Application Support/shroud/voice/language-stats.sealed`, next to the other sealed stores.
+    static var defaultFileURL: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return base
+            .appendingPathComponent("shroud", isDirectory: true)
+            .appendingPathComponent("voice", isDirectory: true)
+            .appendingPathComponent("language-stats.sealed")
+    }
+
+    /// Present only while unlocked. `stats` is the decrypted copy; the file is rewritten on
+    /// every `record`.
+    private struct Unlocked {
+        let historyKey: SymmetricKey
+        let fileURL: URL
+        var stats: [String: [String: Double]]
+    }
+
+    private static let stateLock = NSLock()
+    private nonisolated(unsafe) static var unlocked: Unlocked?
     /// Scope key for observations not tied to a specific conversation.
     private static let globalScope = "*"
     /// Older observations decay so a language switch is picked up within a few messages.
@@ -210,10 +236,79 @@ enum TranscriptionLanguageMemory {
     /// Weight at which a scope is considered to have a real opinion.
     private static let saturation = 3.0
 
-    /// `[scope: [languageCode: weight]]`
+    /// `[scope: [languageCode: weight]]`. Empty while locked; a write while locked is dropped.
     private static var store: [String: [String: Double]] {
-        get { UserDefaults.standard.dictionary(forKey: defaultsKey) as? [String: [String: Double]] ?? [:] }
-        set { UserDefaults.standard.set(newValue, forKey: defaultsKey) }
+        get { stateLock.withLock { unlocked?.stats ?? [:] } }
+        set {
+            stateLock.withLock {
+                guard var state = unlocked else { return }
+                state.stats = newValue
+                unlocked = state
+                write(newValue, historyKey: state.historyKey, to: state.fileURL)
+            }
+        }
+    }
+
+    // MARK: - Lock
+
+    /// Opens the sealed statistics and folds in (then deletes) the plaintext UserDefaults copy
+    /// an older build left. Called whenever chats unlock.
+    static func unlock(
+        historyKey: SymmetricKey,
+        fileURL: URL = defaultFileURL,
+        defaults: UserDefaults = .standard
+    ) {
+        stateLock.withLock {
+            var stats = (try? Data(contentsOf: fileURL))
+                .flatMap { open($0, historyKey: historyKey) } ?? [:]
+            if let legacy = defaults.dictionary(forKey: legacyDefaultsKey) as? [String: [String: Double]] {
+                // The sealed copy is newer wherever both know a conversation.
+                stats.merge(legacy) { sealed, _ in sealed }
+                if write(stats, historyKey: historyKey, to: fileURL) {
+                    defaults.removeObject(forKey: legacyDefaultsKey)
+                }
+            } else if defaults.object(forKey: legacyDefaultsKey) != nil {
+                // Unreadable leftover: nothing to keep, and it must not stay in the clear.
+                defaults.removeObject(forKey: legacyDefaultsKey)
+            }
+            unlocked = Unlocked(historyKey: historyKey, fileURL: fileURL, stats: stats)
+        }
+    }
+
+    /// Forgets the decrypted statistics and the key. The sealed file stays.
+    static func lock() {
+        stateLock.withLock { unlocked = nil }
+    }
+
+    // MARK: - Sealing
+
+    static func seal(_ stats: [String: [String: Double]], historyKey: SymmetricKey) throws -> Data {
+        let json = try JSONEncoder().encode(stats)
+        return try LocalHistoryCrypto.seal(json, masterKey: historyKey, context: .languageStats)
+    }
+
+    /// Nil for a file that does not open under `historyKey` (wrong account, tampered).
+    static func open(_ blob: Data, historyKey: SymmetricKey) -> [String: [String: Double]]? {
+        guard let json = try? LocalHistoryCrypto.open(blob, masterKey: historyKey, context: .languageStats)
+        else { return nil }
+        return try? JSONDecoder().decode([String: [String: Double]].self, from: json)
+    }
+
+    @discardableResult
+    private static func write(
+        _ stats: [String: [String: Double]],
+        historyKey: SymmetricKey,
+        to url: URL
+    ) -> Bool {
+        guard let sealed = try? seal(stats, historyKey: historyKey) else { return false }
+        LocalDataProtection.prepareDirectory(url.deletingLastPathComponent())
+        do {
+            try sealed.write(to: url, options: .atomic)
+            LocalDataProtection.lockDown(url: url)
+            return true
+        } catch {
+            return false
+        }
     }
 
     /// Learned likelihood of `languageCode`, 0…1. **0.5 means "no opinion"** — the neutral value
@@ -276,9 +371,9 @@ enum TranscriptionLanguageMemory {
         store = all
     }
 
-    /// Test seam — clears learned history.
+    /// Test seam — locks the memory and clears the test overrides. Does not touch the file.
     static func reset() {
-        UserDefaults.standard.removeObject(forKey: defaultsKey)
+        lock()
         TranscriptionLanguage.preferredLanguageTagsOverride = nil
         TranscriptionLanguage.currentLocaleOverride = nil
     }

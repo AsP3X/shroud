@@ -72,6 +72,7 @@ struct DeviceDataWipeTests {
             try write("Library/Application Support/shroud/plaintext/e09da208.sealed")
             try write("Library/Application Support/shroud/plaintext/bc159ab5.sealed")
             try write("Library/Application Support/shroud/media/46177c15.sealed", bytes: 4096)
+            try write("Library/Application Support/shroud/voice/language-stats.sealed")
             try write("tmp/decrypted-clip.mov", bytes: 2048)
             try write("Library/Caches/de.corespace.shroud/Cache.db", bytes: 1024)
             try write("Library/Caches/de.corespace.shroud/Cache.db-wal", bytes: 64)

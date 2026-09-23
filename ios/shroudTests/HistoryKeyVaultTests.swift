@@ -3,16 +3,37 @@ import XCTest
 @testable import shroud
 
 final class HistoryKeyVaultTests: XCTestCase {
-    override func setUp() {
-        super.setUp()
-        HistoryKeyVault.requiresUserPresence = false
+    /// The vault only exists behind a passcode. A simulator without one (or without enrolled
+    /// Face ID) cannot hold it, which `testNoPasscodeRefusesTheVault` covers instead.
+    override func setUpWithError() throws {
+        try super.setUpWithError()
         HistoryKeyVault.clear()
+        if name.contains("testNoPasscodeRefusesTheVault") { return }
+        try XCTSkipUnless(HistoryKeyVault.canProtectWrapKey, "device has no passcode")
     }
 
     override func tearDown() {
         HistoryKeyVault.clear()
-        HistoryKeyVault.requiresUserPresence = true
         super.tearDown()
+    }
+
+    func testNoPasscodeRefusesTheVault() throws {
+        try XCTSkipIf(HistoryKeyVault.canProtectWrapKey, "device has a passcode")
+        let userID = UUID()
+        XCTAssertThrowsError(
+            try HistoryKeyVault.store(historyKey: SymmetricKey(size: .bits256), userID: userID)
+        ) { error in
+            XCTAssertEqual(error as? HistoryKeyVault.VaultError, .passcodeNotSet)
+        }
+        XCTAssertFalse(HistoryKeyVault.hasBlob(for: userID))
+        XCTAssertThrowsError(try HistoryKeyVault.unlock(userID: userID)) { error in
+            XCTAssertEqual(error as? HistoryKeyVault.VaultError, .passcodeNotSet)
+        }
+    }
+
+    func testStoreMarksTheWrapKeyProtected() throws {
+        try HistoryKeyVault.store(historyKey: SymmetricKey(size: .bits256), userID: UUID())
+        XCTAssertTrue(HistoryKeyVault.isWrapKeyProtected)
     }
 
     func testStoreAndUnlockRoundTrip() throws {

@@ -508,6 +508,12 @@ enum DecodedImageCache {
         storage[id]
     }
 
+    /// Chats locked: every decoded photo leaves memory with the history it came from.
+    static func removeAll() {
+        storage.removeAll()
+        dataCounts.removeAll()
+    }
+
     /// Drop decoded bitmaps for deleted messages so nothing stays in RAM.
     static func remove(ids: [UUID]) {
         for id in ids {

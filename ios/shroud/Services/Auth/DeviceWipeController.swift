@@ -136,8 +136,6 @@ final class DeviceWipeController {
             detail = Self.removed(inventory.keys)
         case .settings:
             await wipe.wipeSettings()
-            // The vault flag is back to its default on disk; match it in memory.
-            SecurityPreferences.applyToVault()
             detail = "Cleared"
         case .verify:
             var found = await wipe.leftovers()
@@ -268,7 +266,6 @@ final class DeviceWipeController {
             _ = await endServerSession(token: token)
         }
         await wipe.wipeEverything()
-        SecurityPreferences.applyToVault()
         if await wipe.leftovers().isEmpty { wipe.clearPending() }
         guard pending else { return false }
         if session?.isSignedIn == true { await session?.logout() }

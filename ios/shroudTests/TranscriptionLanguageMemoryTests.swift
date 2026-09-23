@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 @testable import shroud
@@ -9,10 +10,32 @@ import Testing
 /// from the audio. These tests pin that behaviour down.
 @Suite(.serialized)
 struct TranscriptionLanguageMemoryTests {
+    /// Unlocked memory backed by a throwaway sealed file and UserDefaults suite.
     private func withCleanMemory(_ body: () throws -> Void) rethrows {
+        let scratch = Scratch()
+        defer { scratch.tearDown() }
         TranscriptionLanguageMemory.reset()
         defer { TranscriptionLanguageMemory.reset() }
+        TranscriptionLanguageMemory.unlock(
+            historyKey: scratch.key,
+            fileURL: scratch.fileURL,
+            defaults: scratch.defaults
+        )
         try body()
+    }
+
+    private struct Scratch {
+        let key = SymmetricKey(size: .bits256)
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lang-\(UUID().uuidString)", isDirectory: true)
+        let suite = "shroud.tests.lang." + UUID().uuidString
+        var fileURL: URL { directory.appendingPathComponent("voice/language-stats.sealed") }
+        var defaults: UserDefaults { UserDefaults(suiteName: suite)! }
+
+        func tearDown() {
+            try? FileManager.default.removeItem(at: directory)
+            UserDefaults.standard.removePersistentDomain(forName: suite)
+        }
     }
 
     // MARK: - Priors
@@ -358,5 +381,70 @@ struct TranscriptionLanguageMemoryTests {
             )
             #expect(chosen.language == "en")
         }
+    }
+
+    // MARK: - Sealed at rest
+
+    @Test
+    func lockedMemoryReadsEmptyAndDropsWrites() {
+        let scratch = Scratch()
+        defer { scratch.tearDown() }
+        TranscriptionLanguageMemory.reset()
+        defer { TranscriptionLanguageMemory.reset() }
+        let peer = UUID()
+        TranscriptionLanguageMemory.unlock(historyKey: scratch.key, fileURL: scratch.fileURL, defaults: scratch.defaults)
+        for _ in 0 ..< 4 {
+            TranscriptionLanguageMemory.record(languageCode: "de", peerID: peer, weight: 1)
+        }
+        TranscriptionLanguageMemory.lock()
+
+        #expect(TranscriptionLanguageMemory.expectedLanguage(peerID: peer) == nil)
+        #expect(TranscriptionLanguageMemory.prior(for: "de", peerID: peer) == 0.5)
+        let before = try? Data(contentsOf: scratch.fileURL)
+        TranscriptionLanguageMemory.record(languageCode: "fr", peerID: peer, weight: 5)
+        #expect((try? Data(contentsOf: scratch.fileURL)) == before)
+        #expect(scratch.defaults.object(forKey: TranscriptionLanguageMemory.legacyDefaultsKey) == nil)
+
+        // Unlocking again brings the sealed history back, without the dropped write.
+        TranscriptionLanguageMemory.unlock(historyKey: scratch.key, fileURL: scratch.fileURL, defaults: scratch.defaults)
+        #expect(TranscriptionLanguageMemory.expectedLanguage(peerID: peer) == "de")
+    }
+
+    @Test
+    func theFileNeverNamesThePeer() throws {
+        let scratch = Scratch()
+        defer { scratch.tearDown() }
+        TranscriptionLanguageMemory.reset()
+        defer { TranscriptionLanguageMemory.reset() }
+        let peer = UUID()
+        TranscriptionLanguageMemory.unlock(historyKey: scratch.key, fileURL: scratch.fileURL, defaults: scratch.defaults)
+        TranscriptionLanguageMemory.record(languageCode: "de", peerID: peer, weight: 1)
+
+        let blob = try Data(contentsOf: scratch.fileURL)
+        #expect(LocalHistoryCrypto.isSealedBlob(blob))
+        #expect(blob.range(of: Data(peer.uuidString.utf8)) == nil)
+        #expect(TranscriptionLanguageMemory.open(blob, historyKey: SymmetricKey(size: .bits256)) == nil)
+        let opened = try #require(TranscriptionLanguageMemory.open(blob, historyKey: scratch.key))
+        #expect(opened[peer.uuidString]?["de"] == 1)
+    }
+
+    @Test
+    func plaintextDefaultsAreMigratedThenDeleted() throws {
+        let scratch = Scratch()
+        defer { scratch.tearDown() }
+        TranscriptionLanguageMemory.reset()
+        defer { TranscriptionLanguageMemory.reset() }
+        let peer = UUID()
+        scratch.defaults.set(
+            [peer.uuidString: ["de": 4.0], "*": ["de": 4.0]],
+            forKey: TranscriptionLanguageMemory.legacyDefaultsKey
+        )
+
+        TranscriptionLanguageMemory.unlock(historyKey: scratch.key, fileURL: scratch.fileURL, defaults: scratch.defaults)
+
+        #expect(scratch.defaults.object(forKey: TranscriptionLanguageMemory.legacyDefaultsKey) == nil)
+        #expect(TranscriptionLanguageMemory.expectedLanguage(peerID: peer) == "de")
+        let blob = try Data(contentsOf: scratch.fileURL)
+        #expect(TranscriptionLanguageMemory.open(blob, historyKey: scratch.key)?[peer.uuidString]?["de"] == 4)
     }
 }

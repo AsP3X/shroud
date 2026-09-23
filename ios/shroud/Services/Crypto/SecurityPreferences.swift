@@ -3,8 +3,9 @@ import Foundation
 /// User-facing security toggles (non-secret; stored in UserDefaults).
 enum SecurityPreferences {
     private static let lockOnBackgroundKey = "security.lockChatsOnBackground"
-    private static let requireUserPresenceKey = "security.requireUserPresence"
-    private static let vaultNeedsRewrapKey = "security.vaultNeedsRewrap"
+    /// Retired: user presence can no longer be turned off, and a vault that needs re-wrapping
+    /// is spotted from the wrap key's own protection marker (`HistoryKeyVault`).
+    private static let retiredKeys = ["security.requireUserPresence", "security.vaultNeedsRewrap"]
     private static let generatesLinkPreviewsKey = "privacy.generateLinkPreviews"
 
     /// When true (default), typing a link fetches its preview **from this device** and seals it
@@ -37,30 +38,10 @@ enum SecurityPreferences {
         }
     }
 
-    /// Prefer biometry/passcode ACL on the history wrap key (default true).
-    static var requireUserPresence: Bool {
-        get {
-            if UserDefaults.standard.object(forKey: requireUserPresenceKey) == nil {
-                return true
-            }
-            return UserDefaults.standard.bool(forKey: requireUserPresenceKey)
+    /// Drops preferences older builds wrote. Turning user presence off made the lock UI-only.
+    static func removeRetiredKeys() {
+        for key in retiredKeys {
+            UserDefaults.standard.removeObject(forKey: key)
         }
-        set {
-            UserDefaults.standard.set(newValue, forKey: requireUserPresenceKey)
-            HistoryKeyVault.requiresUserPresence = newValue
-            // Next successful unlock rotates the wrap key so the new ACL applies.
-            vaultNeedsRewrap = true
-        }
-    }
-
-    /// After changing presence preference, re-seal on next unlock.
-    static var vaultNeedsRewrap: Bool {
-        get { UserDefaults.standard.bool(forKey: vaultNeedsRewrapKey) }
-        set { UserDefaults.standard.set(newValue, forKey: vaultNeedsRewrapKey) }
-    }
-
-    /// Apply persisted vault preference at process start.
-    static func applyToVault() {
-        HistoryKeyVault.requiresUserPresence = requireUserPresence
     }
 }

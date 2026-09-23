@@ -524,7 +524,7 @@ struct MediaImageViewerOverlay: View {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("shroud-photo-\(item.id.uuidString).\(ext)")
         do {
-            try data.write(to: url, options: .atomic)
+            try data.write(to: url, options: [.atomic, .completeFileProtectionUnlessOpen])
             return url
         } catch {
             return nil
@@ -534,14 +534,18 @@ struct MediaImageViewerOverlay: View {
     private func shareCurrent() {
         guard let item = currentItem else { return }
         let activityItem: Any
-        if let url = shareableURL(for: item) {
-            activityItem = url
+        let shared = shareableURL(for: item)
+        if let shared {
+            activityItem = shared
         } else if let image = item.image {
             activityItem = image
         } else {
             return
         }
-        presentActivity(with: [activityItem])
+        // The decrypted copy goes as soon as the sheet is done with it.
+        presentActivity(with: [activityItem]) {
+            if let shared { try? FileManager.default.removeItem(at: shared) }
+        }
     }
 
     private func copyCurrent() {
@@ -573,8 +577,9 @@ struct MediaImageViewerOverlay: View {
         }
     }
 
-    private func presentActivity(with items: [Any]) {
+    private func presentActivity(with items: [Any], completion: (() -> Void)? = nil) {
         let activity = UIActivityViewController(activityItems: items, applicationActivities: nil)
+        activity.completionWithItemsHandler = { _, _, _, _ in completion?() }
         guard let scene = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene })
             .first(where: { $0.activationState == .foregroundActive })

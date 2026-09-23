@@ -40,6 +40,13 @@ struct RootView: View {
                 .zIndex(100)
                 .allowsHitTesting(callController.active != nil)
 
+            // The app switcher snapshots the screen as the app leaves; this covers the chats
+            // first, so the snapshot on disk shows the mark, not a conversation.
+            if showsPrivacyCover {
+                AppSwitcherPrivacyCover()
+                    .zIndex(150)
+            }
+
             // Human: Above everything, calls included — the switch to Welcome happens under it.
             if deviceWipe.isPresented {
                 DeviceWipeOverlay()
@@ -55,7 +62,8 @@ struct RootView: View {
         .environment(serverConfig)
         .environment(deviceWipe)
         .task {
-            SecurityPreferences.applyToVault()
+            SensitiveTempFiles.prepareAtLaunch()
+            SecurityPreferences.removeRetiredKeys()
             // Wire before any network call so 401s during validateSession count toward force-logout.
             SessionAuthBridge.controller = sessionController
             router.sessionController = sessionController
@@ -151,6 +159,7 @@ struct RootView: View {
                 {
                     messagingController.lockSensitiveMemory()
                     cryptoController.lockHistoryInMemory()
+                    SensitiveTempFiles.sweep(olderThan: Self.staleTempFileAge)
                 }
             case .active:
                 guard sessionController.isSignedIn else { return }
@@ -170,6 +179,15 @@ struct RootView: View {
             }
         }
     }
+
+    /// Cover the main shell whenever the scene is not active. Not the lock screen: Face ID's
+    /// sheet makes the scene inactive, and the lock screen's choreography plays under it.
+    private var showsPrivacyCover: Bool {
+        scenePhase != .active && router.isUnlocked
+    }
+
+    /// Temp files untouched this long are no playback or recording in progress: locking clears them.
+    private static let staleTempFileAge: TimeInterval = 10 * 60
 
     /// True when a server session exists but the main shell is not shown (lock / Welcome).
     /// Drives the lock-screen auth probe task — messaging is stopped so it would not see 401s.
@@ -235,4 +253,15 @@ struct RootView: View {
 
 #Preview {
     RootView()
+}
+
+/// What the app switcher shows instead of an open chat.
+private struct AppSwitcherPrivacyCover: View {
+    var body: some View {
+        ZStack {
+            Theme.background.ignoresSafeArea()
+            BrandLogoMark(size: 72)
+        }
+        .accessibilityHidden(true)
+    }
 }

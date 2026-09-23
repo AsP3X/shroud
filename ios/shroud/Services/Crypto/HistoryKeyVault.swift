@@ -6,19 +6,21 @@ import Security
 /// Stores the phrase-derived **history key** wrapped so disk/Keychain dumps alone cannot open chats.
 ///
 /// Human: Opening local history needs Face ID / Touch ID / device passcode (or the 12-word phrase).
-/// Agent: Random wrap key in Keychain with `.userPresence` when possible; AES-GCM sealed history
-/// blob. Never stores raw `historyKey` bytes. Tests set `requiresUserPresence = false`.
+/// Agent: Random wrap key in Keychain, always `.userPresence` +
+/// `WhenPasscodeSetThisDeviceOnly`; AES-GCM sealed history blob. Never stores raw `historyKey`
+/// bytes. No passcode on the device means no vault: store and unlock throw `.passcodeNotSet`.
 enum HistoryKeyVault {
-    /// When false (unit tests / degraded envs), wrap key is stored without biometry ACL.
-    nonisolated(unsafe) static var requiresUserPresence: Bool = true
-
     private static let service = "com.shroud.history-vault"
     private static let wrapAccount = "history_wrap_key_v1"
     private static let blobAccount = "history_key_blob_v1"
     private static let userAccount = "history_vault_user"
-    /// Records whether `wrapAccount` actually carries the presence ACL, so a vault created on a
-    /// device without biometry can be spotted and upgraded later.
+    /// Records which protection `wrapAccount` was written with, so a vault from an older build
+    /// can be spotted and re-wrapped at its next unlock.
     private static let wrapProtectionAccount = "history_wrap_protected_v1"
+    /// Marker for `.userPresence` + `WhenPasscodeSetThisDeviceOnly`. Older builds wrote 0 (no
+    /// ACL: no passcode, or presence switched off) or 1 (`.userPresence` + `WhenUnlocked`, which
+    /// survives the passcode being removed).
+    private static let currentProtectionMarker = Data([2])
 
     enum VaultError: Error, Equatable {
         case sealFailed
@@ -28,6 +30,8 @@ enum HistoryKeyVault {
         case notFound
         /// App-side auth timeout — Face ID / passcode sheet did not finish in time.
         case timedOut
+        /// The device has no passcode, so the wrap key cannot be protected and chats stay shut.
+        case passcodeNotSet
     }
 
     /// How the user chooses to satisfy device-owner presence before unwrapping the vault.
@@ -52,18 +56,13 @@ enum HistoryKeyVault {
     /// Abort flag for the current unlock attempt (checked before presenting a new sheet).
     private nonisolated(unsafe) static var activeAuthAborted = false
 
-    /// Seals `historyKey` under a device wrap key (biometry/passcode gated when available).
-    /// - Parameter rotateWrapKey: When true, discards the old wrap key so ACL prefs apply.
-    static func store(
-        historyKey: SymmetricKey,
-        userID: UUID,
-        rotateWrapKey: Bool = false
-    ) throws {
-        if rotateWrapKey {
-            delete(account: wrapAccount)
-            delete(account: wrapProtectionAccount)
-        }
-        let wrapKey = try loadOrCreateWrapKey()
+    /// Seals `historyKey` under a fresh device wrap key gated by biometry or passcode.
+    ///
+    /// Always rotates: the blob is re-sealed anyway, and reading the old wrap key first would
+    /// raise a second Face ID sheet. Replacing it also retires an unprotected wrap key an older
+    /// build left behind.
+    static func store(historyKey: SymmetricKey, userID: UUID) throws {
+        let wrapKey = try createProtectedWrapKey()
         let plain = historyKey.withUnsafeBytes { Data($0) }
         let sealed = try AES.GCM.seal(plain, using: wrapKey)
         guard let combined = sealed.combined else { throw VaultError.sealFailed }
@@ -83,6 +82,9 @@ enum HistoryKeyVault {
         context: LAContext? = nil,
         allowKeychainUI: Bool = true
     ) throws -> SymmetricKey {
+        // A wrap key from an older build may carry no ACL at all. Without a passcode nothing
+        // could have been proven, so never read it.
+        guard canProtectWrapKey else { throw VaultError.passcodeNotSet }
         guard let storedUser = readData(account: userAccount),
               let storedID = String(data: storedUser, encoding: .utf8),
               storedID.caseInsensitiveCompare(userID.uuidString) == .orderedSame
@@ -153,14 +155,12 @@ enum HistoryKeyVault {
         method: UnlockMethod
     ) async throws -> SymmetricKey {
         if isAuthAborted() { throw VaultError.timedOut }
-        var context = makeContext()
-        if requiresUserPresence, canProtectWrapKey {
-            switch method {
-            case .biometryPreferred:
-                context = try await authenticatedContext()
-            case .passcodeOnly:
-                context = try await authenticatedPasscodeContext()
-            }
+        guard canProtectWrapKey else { throw VaultError.passcodeNotSet }
+        // Always authenticate first, even when the wrap key itself carries no ACL (an older
+        // build's vault): the unlock is what proves presence, and it re-wraps that key after.
+        let context: LAContext = switch method {
+        case .biometryPreferred: try await authenticatedContext()
+        case .passcodeOnly: try await authenticatedPasscodeContext()
         }
         try Task.checkCancellation()
         if isAuthAborted() { throw VaultError.timedOut }
@@ -301,7 +301,7 @@ enum HistoryKeyVault {
                     // Face ID failed, user chose passcode, or biometry unavailable → passcode.
                     break
                 case .passcodeNotSet:
-                    return makeContext()
+                    throw VaultError.passcodeNotSet
                 default:
                     // Any other biometry failure: still offer passcode rather than dead-ending.
                     break
@@ -459,15 +459,17 @@ enum HistoryKeyVault {
         delete(account: userAccount)
     }
 
-    /// True when the stored wrap key is actually gated behind biometry / passcode.
+    /// True when the stored wrap key carries the current protection.
     ///
-    /// A vault sealed while the device had neither reads back without any prompt, which is
-    /// indistinguishable from a working vault until you notice Face ID never appears.
+    /// A vault sealed without the ACL reads back without any prompt, which is indistinguishable
+    /// from a working vault until you notice Face ID never appears. One sealed with `WhenUnlocked`
+    /// survives the passcode being removed. Both are re-wrapped at the next unlock.
     static var isWrapKeyProtected: Bool {
-        readData(account: wrapProtectionAccount) == Data([1])
+        readData(account: wrapProtectionAccount) == currentProtectionMarker
     }
 
-    /// True when this device can gate the wrap key at all (biometry enrolled or passcode set).
+    /// True when this device has a passcode (biometry cannot be enrolled without one), so the
+    /// wrap key can be gated. False means Shroud must not open chats at all.
     static var canProtectWrapKey: Bool {
         var error: NSError?
         return LAContext().canEvaluatePolicy(.deviceOwnerAuthentication, error: &error)
@@ -484,30 +486,22 @@ enum HistoryKeyVault {
 
     // MARK: - Wrap key
 
-    private static func loadOrCreateWrapKey() throws -> SymmetricKey {
-        if let existing = try? loadWrapKey() {
-            return existing
-        }
+    private static func createProtectedWrapKey() throws -> SymmetricKey {
+        guard canProtectWrapKey else { throw VaultError.passcodeNotSet }
         let key = SymmetricKey(size: .bits256)
         let data = key.withUnsafeBytes { Data($0) }
-        var isProtected = requiresUserPresence
+        delete(account: wrapProtectionAccount)
         do {
-            try writeData(
-                account: wrapAccount,
-                value: data,
-                protectWithPresence: requiresUserPresence
-            )
+            try writeData(account: wrapAccount, value: data, protectWithPresence: true)
         } catch {
-            // No passcode and no enrolled biometry: keep the user able to open their own
-            // history rather than sealing it behind an ACL the device cannot satisfy.
-            // Recorded as unprotected so the next unlock can upgrade it once they enrol —
-            // this fallback used to be permanent, and Face ID would never appear again.
-            try writeData(account: wrapAccount, value: data, protectWithPresence: false)
-            isProtected = false
+            // No unprotected fallback: a wrap key readable without presence makes the lock
+            // screen decoration. The passcode can vanish between the check and the write.
+            delete(account: wrapAccount)
+            throw canProtectWrapKey ? error : VaultError.passcodeNotSet
         }
-        try? writeData(
+        try writeData(
             account: wrapProtectionAccount,
-            value: Data([isProtected ? 1 : 0]),
+            value: currentProtectionMarker,
             protectWithPresence: false
         )
         return key
@@ -572,10 +566,12 @@ enum HistoryKeyVault {
             kSecValueData as String: value,
         ]
         if protectWithPresence {
+            // `WhenPasscodeSet`: iOS deletes the item when the passcode is removed, so the
+            // vault cannot outlive the protection it relies on. Recovery is the phrase.
             var error: Unmanaged<CFError>?
             guard let access = SecAccessControlCreateWithFlags(
                 nil,
-                kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+                kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly,
                 .userPresence,
                 &error
             ) else {

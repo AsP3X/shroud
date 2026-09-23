@@ -299,6 +299,11 @@ struct SignUpView: View {
             errorMessage = "Wait until all 12 words are ready."
             return
         }
+        // Checked before the account exists: without a passcode the keys cannot be stored.
+        guard HistoryKeyVault.canProtectWrapKey else {
+            errorMessage = CryptoController.userMessage(for: HistoryKeyVault.VaultError.passcodeNotSet)
+            return
+        }
 
         do {
             _ = try BIP39Seed.validateMnemonic(words)
@@ -316,7 +321,9 @@ struct SignUpView: View {
             )
             router.unlockMessages()
         } catch {
-            if error is BIP39Seed.SeedError || error is CryptoControllerError {
+            if error is BIP39Seed.SeedError || error is CryptoControllerError
+                || error is HistoryKeyVault.VaultError
+            {
                 errorMessage = CryptoController.userMessage(for: error)
             } else {
                 errorMessage = SessionController.userMessage(for: error)

@@ -380,6 +380,11 @@ enum LinkPreviewImageCache {
         return image
     }
 
+    /// Chats locked: preview pictures leave memory with the messages they belong to.
+    static func removeAll() {
+        storage.removeAll()
+    }
+
     static func remove(ids: [UUID]) {
         for id in ids {
             for variant in [Variant.full, .placeholder, .thumbnail] {

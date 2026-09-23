@@ -10,7 +10,7 @@ import Foundation
 /// Agent: Master key = `IdentityKeyMaterial.historyKey` (HKDF from BIP39 seed,
 /// info `shroud-history-aes`). Domain-separated subkeys per store via HKDF. Combined
 /// AES-GCM layout (12-byte nonce ‖ ciphertext ‖ 16-byte tag). Never log keys or plaintext.
-enum LocalHistoryCrypto {
+nonisolated enum LocalHistoryCrypto {
     enum Error: Swift.Error, Equatable {
         case sealFailed
         case openFailed
@@ -22,6 +22,12 @@ enum LocalHistoryCrypto {
         case messagesSnapshot = "shroud-local-messages-v1"
         case mediaFile = "shroud-local-media-v1"
         case plaintextPayload = "shroud-local-plaintext-v1"
+        /// Identity, signed-prekey and one-time-prekey privates (Keychain values).
+        case identityKeychain = "shroud-keychain-identity-v1"
+        /// Double Ratchet session JSON, one Keychain item per peer.
+        case ratchetKeychain = "shroud-keychain-ratchet-v1"
+        /// Per-conversation voice transcription language statistics.
+        case languageStats = "shroud-local-language-stats-v1"
     }
 
     /// Magic prefix so we can tell sealed blobs from legacy plaintext leftovers.
@@ -82,7 +88,7 @@ enum LocalHistoryCrypto {
 
 // MARK: - File protection helpers
 
-enum LocalDataProtection {
+nonisolated enum LocalDataProtection {
     /// Marks a file excluded from iCloud / device backups.
     ///
     /// File-protection class is left at the default for Application Support. At-rest secrecy

@@ -10,7 +10,16 @@ import Foundation
 @MainActor
 @Observable
 final class CryptoController {
-    private(set) var material: IdentityKeyMaterial?
+    private(set) var material: IdentityKeyMaterial? {
+        didSet {
+            // Ratchet sessions and the voice language file follow the same lock as the chats.
+            if let material {
+                SealedLocalState.unlock(historyKey: material.historyKey)
+            } else if oldValue != nil {
+                SealedLocalState.lock()
+            }
+        }
+    }
     private let store: IdentityKeyStore
     private let keyBundleService: KeyBundleService
 
@@ -67,7 +76,7 @@ final class CryptoController {
         vaultUnlockInFlight = true
         defer { vaultUnlockInFlight = false }
 
-        guard let stored = store.load(), stored.userID == userID else {
+        guard store.hasIdentity(for: userID) else {
             material = nil
             needsHistoryUnlock = false
             // No identity on device — Face ID cannot work; session is orphaned after a wipe.
@@ -75,19 +84,26 @@ final class CryptoController {
             return false
         }
 
-        // Prefer vault; migrate legacy plain history key once.
-        if let legacy = store.loadLegacyPlainHistoryKey() {
-            try? HistoryKeyVault.store(historyKey: legacy, userID: userID)
+        // Prefer vault; migrate legacy plain history key once. Kept until the vault holds it:
+        // without a passcode the vault refuses, and dropping it would force the phrase.
+        if let legacy = store.loadLegacyPlainHistoryKey(),
+           (try? HistoryKeyVault.store(historyKey: legacy, userID: userID)) != nil
+        {
             store.clearLegacyPlainHistoryKey()
         }
 
         do {
             let historyKey = try await HistoryKeyVault.unlock(userID: userID, method: method)
+            // The private keys are sealed under the history key, so they open only now.
+            guard let stored = store.load(historyKey: historyKey), stored.userID == userID else {
+                throw HistoryKeyVault.VaultError.notFound
+            }
             rewrapHistoryIfNeeded(historyKey, userID: userID)
             let restored = IdentityKeyMaterial(stored: stored, historyKey: historyKey)
             material = restored
             needsHistoryUnlock = false
             suppressAutomaticVaultPrompt = false
+            // Re-seals identity items an older build stored as plaintext.
             try? store.save(restored)
             return true
         } catch HistoryKeyVault.VaultError.userCancelled {
@@ -143,13 +159,17 @@ final class CryptoController {
     ) async throws {
         _ = try BIP39Seed.validateMnemonic(mnemonicWords)
 
-        if let stored = store.load(), stored.userID == userID {
-            // Probe history key from phrase; verify identity matches Keychain shell.
-            let fromPhrase = try IdentityKeyMaterial.establish(
-                mnemonicWords: mnemonicWords,
-                userID: userID,
-                oneTimePreKeyCount: 0
-            )
+        // Probe history key from phrase; it opens the sealed Keychain shell. A shell that does
+        // not open (wrong phrase, damaged items) falls through to re-establishing, which checks
+        // the phrase against the account's published key before replacing anything.
+        if store.storedUserID() == userID,
+           let fromPhrase = try? IdentityKeyMaterial.establish(
+               mnemonicWords: mnemonicWords,
+               userID: userID,
+               oneTimePreKeyCount: 0
+           ),
+           let stored = store.load(historyKey: fromPhrase.historyKey)
+        {
             let shell = IdentityKeyMaterial(stored: stored, historyKey: fromPhrase.historyKey)
             guard shell.matchesMnemonic(mnemonicWords) else {
                 throw CryptoControllerError.phraseDoesNotMatchAccount
@@ -162,7 +182,7 @@ final class CryptoController {
             return
         }
 
-        if let stored = store.load(), stored.userID != userID {
+        if let storedID = store.storedUserID(), storedID != userID {
             store.clear()
             HistoryKeyVault.clear()
         }
@@ -189,7 +209,7 @@ final class CryptoController {
     /// Clears in-memory keys. Keychain identity is kept unless `wipeStore`.
     func lock(wipeStore: Bool = false) {
         material = nil
-        needsHistoryUnlock = !wipeStore && (store.load() != nil)
+        needsHistoryUnlock = !wipeStore && (store.storedUserID() != nil)
         suppressAutomaticVaultPrompt = false
         if wipeStore {
             store.clear()
@@ -201,38 +221,27 @@ final class CryptoController {
     /// Drop history material from RAM only (identity Keychain + vault blob remain sealed).
     func lockHistoryInMemory() {
         material = nil
-        needsHistoryUnlock = store.load() != nil
+        needsHistoryUnlock = store.storedUserID() != nil
         suppressAutomaticVaultPrompt = false
     }
 
     private func persistUnlocked(_ material: IdentityKeyMaterial) throws {
         try store.save(material)
-        try HistoryKeyVault.store(
-            historyKey: material.historyKey,
-            userID: material.userID,
-            rotateWrapKey: SecurityPreferences.vaultNeedsRewrap
-        )
-        SecurityPreferences.vaultNeedsRewrap = false
+        try HistoryKeyVault.store(historyKey: material.historyKey, userID: material.userID)
         store.clearLegacyPlainHistoryKey()
     }
 
-    /// Re-seal vault after biometry unlock when prefs changed (no phrase available).
+    /// Re-seal the vault after an unlock when its wrap key is from an older build (no phrase
+    /// available, but the history key is in hand).
     ///
-    /// Also upgrades a vault that was sealed while the device had no biometry or passcode. That
-    /// fallback is otherwise permanent — the unprotected wrap key keeps satisfying every later
-    /// unlock, so enrolling Face ID afterwards never brings the prompt back.
+    /// Covers a wrap key stored without any ACL (no passcode back then, or user presence
+    /// switched off) and one stored `WhenUnlocked`, which would outlive a removed passcode.
+    /// Either would otherwise stay as it is for good. `store` writes a fresh protected wrap key
+    /// and deletes the old item.
     private func rewrapHistoryIfNeeded(_ historyKey: SymmetricKey, userID: UUID) {
-        let canUpgradeProtection = HistoryKeyVault.requiresUserPresence
-            && !HistoryKeyVault.isWrapKeyProtected
-            && HistoryKeyVault.canProtectWrapKey
-        guard SecurityPreferences.vaultNeedsRewrap || canUpgradeProtection else { return }
+        guard !HistoryKeyVault.isWrapKeyProtected else { return }
         do {
-            try HistoryKeyVault.store(
-                historyKey: historyKey,
-                userID: userID,
-                rotateWrapKey: true
-            )
-            SecurityPreferences.vaultNeedsRewrap = false
+            try HistoryKeyVault.store(historyKey: historyKey, userID: userID)
         } catch {
             // Keep old vault; user can re-lock with phrase later.
         }
@@ -308,6 +317,8 @@ final class CryptoController {
                 return "Unlock timed out. Try again, use device passcode, or your encryption phrase."
             case .notFound:
                 return "Enter your encryption phrase to unlock chats on this device."
+            case .passcodeNotSet:
+                return "Set a device passcode to use Shroud."
             default:
                 return "Could not unlock encrypted chats. Try your encryption phrase."
             }

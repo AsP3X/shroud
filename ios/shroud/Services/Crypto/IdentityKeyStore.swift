@@ -5,9 +5,15 @@ import Security
 /// Persists identity private material in the Keychain (never the raw phrase).
 ///
 /// Human: Identity keys can restore for messaging; the **history key** that opens local chats
-/// is **not** stored here in the clear — see `HistoryKeyVault`.
+/// is **not** stored here in the clear — see `HistoryKeyVault`. The private keys are sealed
+/// under that history key, so they are as locked as the chats: the Keychain of an unlocked
+/// phone alone does not give them up.
 ///
-/// Agent: Service com.shroud.identity. Plain `history_key` is deleted on save (migration).
+/// Agent: Service com.shroud.identity. Private keys (identity, signed prekey, one-time
+/// prekeys) are AES-GCM sealed with `LocalHistoryCrypto` context `.identityKeychain`. User id,
+/// registration id and signed-prekey id stay plain so the lock screen can tell an identity is
+/// here. Items from older builds are plaintext; `load` still reads them and the next `save`
+/// (every unlock does one) seals them. Plain `history_key` is deleted on save (migration).
 nonisolated struct IdentityKeyStore: Sendable {
     private let service: String
 
@@ -26,17 +32,26 @@ nonisolated struct IdentityKeyStore: Sendable {
         let oneTimePreKeys: [UInt32: Curve25519.KeyAgreement.PrivateKey]
     }
 
-    func load() -> StoredIdentity? {
+    /// Account the stored identity belongs to. Readable while chats are locked.
+    func storedUserID() -> UUID? {
+        read(key: Key.userID).flatMap(UUID.init(uuidString:))
+    }
+
+    /// Opens the private keys with the history key. Nil while locked, with the wrong key, or
+    /// when an item is missing or tampered with.
+    func load(historyKey: SymmetricKey) -> StoredIdentity? {
+        func opened(_ key: String) -> Data? {
+            readData(key: key).flatMap { Self.openPrivate($0, historyKey: historyKey) }
+        }
         guard
-            let userIDString = read(key: Key.userID),
-            let userID = UUID(uuidString: userIDString),
+            let userID = storedUserID(),
             let regString = read(key: Key.registrationID),
             let registrationID = UInt32(regString),
-            let agreementData = readData(key: Key.agreementPrivate),
-            let signingData = readData(key: Key.signingPrivate),
+            let agreementData = opened(Key.agreementPrivate),
+            let signingData = opened(Key.signingPrivate),
             let spkIDString = read(key: Key.spkID),
             let spkID = UInt32(spkIDString),
-            let spkData = readData(key: Key.spkPrivate)
+            let spkData = opened(Key.spkPrivate)
         else {
             return nil
         }
@@ -50,7 +65,7 @@ nonisolated struct IdentityKeyStore: Sendable {
         }
 
         var otpks: [UInt32: Curve25519.KeyAgreement.PrivateKey] = [:]
-        if let mapData = readData(key: Key.otpkMap),
+        if let mapData = opened(Key.otpkMap),
            let dict = try? JSONDecoder().decode([String: Data].self, from: mapData)
         {
             for (idString, raw) in dict {
@@ -84,20 +99,26 @@ nonisolated struct IdentityKeyStore: Sendable {
         delete(key: Key.legacyHistoryKey)
     }
 
+    /// Writes the identity with every private value sealed under `material.historyKey`.
+    /// Rewrites plaintext items an older build left, which is how they are migrated.
     func save(_ material: IdentityKeyMaterial) throws {
+        let historyKey = material.historyKey
+        func writeSealed(_ key: String, _ value: Data) throws {
+            try writeData(key: key, value: Self.sealPrivate(value, historyKey: historyKey))
+        }
         try write(key: Key.userID, value: material.userID.uuidString)
         try write(key: Key.registrationID, value: String(material.registrationID))
-        try writeData(key: Key.agreementPrivate, value: material.agreementPrivateKey.rawRepresentation)
-        try writeData(key: Key.signingPrivate, value: material.signingPrivateKey.rawRepresentation)
+        try writeSealed(Key.agreementPrivate, material.agreementPrivateKey.rawRepresentation)
+        try writeSealed(Key.signingPrivate, material.signingPrivateKey.rawRepresentation)
         try write(key: Key.spkID, value: String(material.signedPreKeyID))
-        try writeData(key: Key.spkPrivate, value: material.signedPreKeyPrivate.rawRepresentation)
+        try writeSealed(Key.spkPrivate, material.signedPreKeyPrivate.rawRepresentation)
 
         var map: [String: Data] = [:]
         for otpk in material.oneTimePreKeys {
             map[String(otpk.keyID)] = otpk.privateKey.rawRepresentation
         }
         let mapData = try JSONEncoder().encode(map)
-        try writeData(key: Key.otpkMap, value: mapData)
+        try writeSealed(Key.otpkMap, mapData)
 
         // Never leave plaintext history key in the identity keychain.
         clearLegacyPlainHistoryKey()
@@ -110,9 +131,25 @@ nonisolated struct IdentityKeyStore: Sendable {
         clearLegacyPlainHistoryKey()
     }
 
-    /// True when Keychain holds identity for this user.
+    /// True when Keychain holds identity for this user. Does not open the sealed keys, so it
+    /// answers while chats are locked.
     func hasIdentity(for userID: UUID) -> Bool {
-        load()?.userID == userID
+        storedUserID() == userID && readData(key: Key.agreementPrivate) != nil
+    }
+
+    // MARK: - Sealing
+
+    /// Seals one private value for the Keychain.
+    static func sealPrivate(_ value: Data, historyKey: SymmetricKey) throws -> Data {
+        try LocalHistoryCrypto.seal(value, masterKey: historyKey, context: .identityKeychain)
+    }
+
+    /// Opens a Keychain value written by `sealPrivate`. A value without the sealed magic is an
+    /// older build's plaintext and is returned as-is so the unlock can re-save it sealed. A
+    /// sealed value that does not open is nil — never read as plaintext.
+    static func openPrivate(_ stored: Data, historyKey: SymmetricKey) -> Data? {
+        guard LocalHistoryCrypto.isSealedBlob(stored) else { return stored }
+        return try? LocalHistoryCrypto.open(stored, masterKey: historyKey, context: .identityKeychain)
     }
 
     // MARK: - Keychain

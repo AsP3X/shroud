@@ -527,6 +527,8 @@ final class MessagingController {
         threadLoadTasks.values.forEach { $0.cancel() }
         threadLoadTasks.removeAll()
         cancelHistoryPaging()
+        DecodedImageCache.removeAll()
+        LinkPreviewImageCache.removeAll()
     }
 
     /// Reacts to path changes (wired from RootView / scene phase optional).

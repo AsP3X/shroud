@@ -55,31 +55,6 @@ struct PrivacySecurityView: View {
                         }
 
                         settingsCard {
-                            Toggle(isOn: Binding(
-                                get: { SecurityPreferences.requireUserPresence },
-                                set: { newValue in
-                                    SecurityPreferences.requireUserPresence = newValue
-                                    Haptics.impact(.light)
-                                }
-                            )) {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("Require Face ID / passcode")
-                                        .font(.system(size: 16))
-                                        .foregroundStyle(Theme.textPrimary)
-                                    Text(
-                                        "When on, the history wrap key asks for biometrics or device passcode. Turn off only on devices that cannot prompt (e.g. some simulators). Lock and unlock chats after changing so the vault re-wraps."
-                                    )
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(Theme.textSecondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                }
-                            }
-                            .tint(Theme.accent)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 12)
-                        }
-
-                        settingsCard {
                             Button {
                                 lockChatsNow()
                             } label: {
