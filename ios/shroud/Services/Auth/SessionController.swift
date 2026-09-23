@@ -101,8 +101,16 @@ final class SessionController {
         }
         do {
             let refreshed = try await authService.refreshProfile(session: session)
-            // Same-value writes still invalidate every view observing the session.
-            if refreshed != self.session { self.session = refreshed }
+            // A logout or another login during the request owns the session now. Writing this
+            // one back would sign a logged-out app in again, or swap accounts.
+            guard self.session == session else { return }
+            // Human: The lock screen probes this every few seconds and again when the Face ID
+            // sheet closes, on the main actor. Saving every time was ~16 Keychain round trips in
+            // the unlock animation, and a same-value write still invalidates every observer.
+            if refreshed != session {
+                if !usesEphemeralSession { try authService.saveRefreshedProfile(refreshed) }
+                self.session = refreshed
+            }
             sessionValidated = true
             // Success is also recorded by APIClient; reset here so unit paths without the bridge work.
             resetAuthenticationFailures()

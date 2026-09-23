@@ -93,11 +93,9 @@ nonisolated struct AuthService: Sendable {
         return session
     }
 
-    /// Updates Keychain session fields from `/auth/me` (e.g. share code after migration).
-    ///
-    /// Human: The lock screen probes this every few seconds and again when the Face ID sheet
-    /// closes, on the main actor. An unconditional save was ~16 Keychain round trips each time,
-    /// landing in the unlock animation; an unchanged profile writes nothing.
+    /// Session fields as `/auth/me` reports them now (e.g. share code after migration). Does not
+    /// write: the caller saves with `saveRefreshedProfile` once it knows the session it asked
+    /// about is still the current one.
     func refreshProfile(session: SessionStore.Session) async throws -> SessionStore.Session {
         let me = try await fetchMe(session: session)
         let updated = SessionStore.Session(
@@ -108,10 +106,13 @@ nonisolated struct AuthService: Sendable {
             deviceID: me.device.id,
             deviceName: me.device.name ?? session.deviceName
         )
-        guard updated != session else { return session }
-        try sessionStore.save(updated)
-        sessionStore.saveDeviceAnchor(username: updated.username, deviceID: updated.deviceID)
         return updated
+    }
+
+    /// Writes a profile `refreshProfile` returned.
+    func saveRefreshedProfile(_ session: SessionStore.Session) throws {
+        try sessionStore.save(session)
+        sessionStore.saveDeviceAnchor(username: session.username, deviceID: session.deviceID)
     }
 
     /// UIDevice is main-actor state, so this hops rather than reading it off the caller's thread.
