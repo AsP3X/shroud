@@ -1,6 +1,6 @@
 import { useMemo, type CSSProperties } from "react";
-import { Shield } from "lucide-react";
 import { encode } from "uqr";
+import { BrandMark } from "../BrandMark";
 
 /* Geometry in viewBox units, taken 1:1 from the "QR Code" component in
    design/webclient.pen. Every styling choice here was checked with a decoder
@@ -102,7 +102,7 @@ export function QrCode({ value, label }: { value: string; label: string }) {
       </g>
       <g className="qr-mark">
         <rect x={mid - MARK / 2} y={mid - MARK / 2} width={MARK} height={MARK} rx={12} fill={ACCENT} />
-        <Shield x={mid - 10} y={mid - 10} width={20} height={20} color="#fff" strokeWidth={2.2} aria-hidden="true" />
+        <BrandMark x={mid - 12} y={mid - 12} size={24} color="#fff" />
       </g>
     </svg>
   );

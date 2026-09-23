@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import { ChevronLeft, KeyRound, Lock, Shield, Smartphone } from "lucide-react";
+import { ChevronLeft, KeyRound, Lock, Smartphone } from "lucide-react";
+import { BrandMark } from "../BrandMark";
 
 const TRUST = [
   {
@@ -57,7 +58,7 @@ export function AuthLayout({
         <span className="auth-glow" aria-hidden="true" />
         <div className="auth-brand-inner">
           <span className="auth-mark" aria-hidden="true">
-            <Shield size={26} />
+            <BrandMark size={32} />
           </span>
           <p className="auth-brand-title">
             Private messaging,
@@ -86,7 +87,7 @@ export function AuthLayout({
       <main className="auth-panel">
         <div className="auth-card">
           <span className="auth-mark auth-mark-compact" aria-hidden="true">
-            <Shield size={22} />
+            <BrandMark size={32} />
           </span>
           <p className="auth-mobile-kicker">Private messaging, fully encrypted</p>
           {onBack ? (

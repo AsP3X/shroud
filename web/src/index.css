@@ -1859,6 +1859,9 @@ button.reply-quote { cursor: pointer; }
   --set-width: 620px;
 }
 .set-body > * { width: min(var(--set-width), 100%); margin-inline: auto; flex-shrink: 0; }
+/* Overlays rendered inside a settings page are fixed to the viewport, not the column. */
+.set-body > .modal-scrim { width: auto; margin-inline: 0; }
+.set-body > .set-toast { width: max-content; }
 
 .set-hero {
   display: flex; flex-direction: column; align-items: center; gap: 6px;
@@ -2008,6 +2011,89 @@ button.reply-quote { cursor: pointer; }
   transition: background 0.15s ease;
 }
 .set-logout:hover { background: var(--danger-soft); border-color: var(--danger); }
+
+/* Devices — same sections as the iOS screen (DevicesView.swift). */
+.dev-row { padding: 0; }
+.set-row-button:disabled { cursor: default; opacity: 0.6; }
+.set-row-button:disabled:hover { background: transparent; }
+.dev-row-main {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 14px;
+  border: 0; background: transparent; color: inherit; text-align: left;
+  font: inherit; cursor: pointer;
+}
+/* The whole row lights up, Remove column included — the name area is what opens details. */
+.dev-row { transition: background 0.12s ease; }
+.dev-row:has(.dev-row-main:hover) { background: var(--hover); }
+.dev-row:has(.dev-row-main:active) { background: var(--pressed); }
+.dev-row-main:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.dev-row > .dev-link, .dev-row > .dev-busy { margin-right: 14px; }
+.set-row-copy > span.dev-active, .info-sheet > span.dev-active {
+  display: flex; align-items: center; gap: 6px;
+  color: var(--accent-text);
+}
+.info-sheet > span.dev-active { justify-content: center; }
+.dev-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+  background: var(--online);
+}
+.dev-link {
+  flex-shrink: 0; padding: 6px 8px; margin: -6px -8px;
+  border: 0; border-radius: var(--r-xs); background: transparent;
+  font: inherit; font-size: var(--fs-md); font-weight: 500;
+  color: var(--accent-text); cursor: pointer;
+}
+.dev-link:hover { background: var(--hover); }
+.dev-link.danger { color: var(--danger); }
+.dev-spinner {
+  display: inline-block; flex-shrink: 0;
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--text-primary) 18%, transparent);
+  border-top-color: var(--text-secondary);
+  animation: voice-spin 0.8s linear infinite;
+}
+.dev-state {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 24px 14px; text-align: center;
+}
+.dev-state p { margin: 0; font-size: var(--fs-sm); color: var(--text-secondary); }
+.dev-state-warn { color: #d08a0e; }
+.set-row.dev-capacity { flex-direction: column; align-items: stretch; gap: 10px; padding-block: 12px; }
+.dev-capacity-head { display: flex; align-items: center; justify-content: space-between; }
+.dev-capacity-head strong { font-size: var(--fs-base); font-weight: 500; }
+.dev-capacity-count { font-size: var(--fs-base); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.dev-capacity-count.full { color: #d08a0e; }
+.dev-meter { display: flex; gap: 4px; }
+.dev-meter i { flex: 1; height: 5px; border-radius: var(--r-full); background: var(--separator); }
+.dev-meter i.on { background: var(--accent); }
+.dev-meter i.on.full { background: #d08a0e; }
+.dev-detail .info-sheet strong { font-size: 22px; font-weight: 700; margin-top: 4px; }
+.dev-detail .set-card { background: var(--surface-1); }
+.set-row.dev-info { justify-content: space-between; align-items: baseline; }
+.set-row.dev-info > span:first-child { flex-shrink: 0; }
+.set-row.dev-info > span:last-child { color: var(--text-secondary); text-align: right; }
+.set-row.dev-info code {
+  flex: 1; min-width: 0; text-align: right;
+  font-family: var(--font-mono); font-size: var(--fs-xs);
+  color: var(--text-secondary); word-break: break-all;
+}
+.set-row.dev-info .copy-pill { align-self: center; }
+.set-toast {
+  /* Centred with auto margins, not a transform, so the `modal-in` entrance can own transform. */
+  position: fixed; left: 16px; right: 16px; bottom: 28px; z-index: 90;
+  width: max-content; max-width: calc(100vw - 32px); margin-inline: auto;
+  display: flex; align-items: center; gap: 8px;
+  padding: 11px 16px; border-radius: var(--r-full);
+  background: var(--surface-2); border: 1px solid var(--separator);
+  box-shadow: var(--shadow-md);
+  font-size: var(--fs-sm); font-weight: 600;
+  animation: modal-in 0.2s var(--ease);
+}
+.set-toast svg { color: var(--online); }
+@media (prefers-reduced-motion: reduce) {
+  .dev-spinner { animation-duration: 2.4s; }
+}
 
 .btn-destructive { background: var(--danger-bg); color: #fff; }
 .btn-destructive:hover:not(:disabled) { filter: brightness(1.1); }
@@ -2921,6 +3007,8 @@ button.reply-quote { cursor: pointer; }
   .pane { width: 100%; border-right: 0; }
   .pane.hidden-mobile, .thread.hidden-mobile { display: none; }
   .tab-bar { display: flex; }
+  /* Clear the tab bar (62px) instead of landing on it. */
+  .set-toast { bottom: 78px; }
   .thread-head { height: 58px; padding: 0 8px 0 4px; gap: 10px; }
   .thread-head .avatar-md { width: 38px; height: 38px; font-size: var(--fs-sm); }
   .e2e-badge { display: none; }

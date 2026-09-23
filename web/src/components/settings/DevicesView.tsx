@@ -1,23 +1,102 @@
-import { useCallback, useEffect, useState } from "react";
-import { Laptop, Smartphone, Monitor } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from "react";
+import {
+  Check,
+  ChevronRight,
+  Globe,
+  Hand,
+  Laptop,
+  Monitor,
+  MonitorSmartphone,
+  ShieldCheck,
+  Smartphone,
+  Tablet,
+  TriangleAlert,
+} from "lucide-react";
 import { api, ApiError, type Device, type Session } from "../../api/client";
-import { listTimestamp } from "../../format";
+import { fullTimestamp, listTimestamp } from "../../format";
+import { CopyButton } from "../CopyButton";
 import { SettingsGroup, SettingsNote } from "./SettingsRow";
 
-/** Five is the server-side cap; the list is the only place to get back under it. */
+/** Mirrors `MAX_DEVICES_PER_USER` on the server; the list is the only place to get back under it. */
 const DEVICE_LIMIT = 5;
 
-function DeviceIcon({ name }: { name: string }) {
-  const lower = name.toLowerCase();
-  if (/iphone|android|phone|mobile/.test(lower)) return <Smartphone size={16} />;
-  if (/mac|windows|linux|laptop/.test(lower)) return <Laptop size={16} />;
-  return <Monitor size={16} />;
+/**
+ * What a removal does, server side included — shared by both confirmations. Same wording as
+ * iOS `DevicesView.revokeConsequences`.
+ *
+ * The device row carries the messages it sent and the files it uploaded, so the server deletes
+ * those with it. Chats already stored on a device keep them; one loading history from the
+ * server won't see them. Said here so nobody is surprised.
+ */
+function revokeConsequences(plural: boolean): string {
+  return plural
+    ? "They are signed out right away and stop receiving messages. Messages and files sent from them are deleted from the server, so they vanish from chat history wherever they aren't already stored. Signing in there again takes your password and 12-word phrase."
+    : "It is signed out right away and stops receiving messages. Messages and files sent from it are deleted from the server, so they vanish from chat history wherever they aren't already stored. Signing in there again takes your password and 12-word phrase.";
 }
 
-function isCurrent(device: Device, session: Session): boolean {
-  return device.is_current || device.id === session.device.id;
+type IconProps = { size?: number };
+type DeviceKind = { label: string; Icon: ComponentType<IconProps>; tint: string };
+
+/**
+ * Best guess at what a device is from its name — the same rules as iOS `DeviceKind`. iOS
+ * registers `UIDevice.current.name` ("iPhone 17 Pro"); this client registers "<Browser> on <OS>".
+ */
+function deviceKind(name: string | null | undefined): DeviceKind {
+  const lower = (name ?? "").toLowerCase();
+  if (lower.includes("iphone")) return { label: "iPhone app", Icon: Smartphone, tint: "#2e8fe0" };
+  if (lower.includes("ipad")) return { label: "iPad app", Icon: Tablet, tint: "#2e8fe0" };
+  if (lower.includes("android") || lower.includes("phone")) {
+    return { label: "Phone", Icon: Smartphone, tint: "#2fa85b" };
+  }
+  if (["chrome", "safari", "firefox", "edge", "browser", " on "].some((w) => lower.includes(w))) {
+    return { label: "Web browser", Icon: Globe, tint: "#f76b1c" };
+  }
+  if (lower.includes("mac")) return { label: "Mac", Icon: Laptop, tint: "#9b4ae6" };
+  if (lower.includes("windows") || lower.includes("linux")) {
+    return { label: "Computer", Icon: Monitor, tint: "#9b4ae6" };
+  }
+  return { label: "Unknown", Icon: MonitorSmartphone, tint: "var(--text-secondary)" };
 }
 
+function DeviceTile({ name, size = 30 }: { name: string | null | undefined; size?: number }) {
+  const { Icon, tint } = deviceKind(name);
+  return (
+    <span
+      className="set-tile"
+      // Explicit white: `.info-sheet > span` would otherwise grey the icon in the detail sheet.
+      style={{ background: tint, color: "#fff", width: size, height: size, borderRadius: size * 0.27 }}
+      aria-hidden="true"
+    >
+      <Icon size={Math.round(size * 0.5)} />
+    </span>
+  );
+}
+
+function displayName(device: Device): string {
+  const trimmed = device.name?.trim() ?? "";
+  return trimmed || "Unnamed device";
+}
+
+function lastActiveLabel(device: Device): string {
+  return device.last_seen_at
+    ? `Last active ${listTimestamp(device.last_seen_at)}`
+    : `Linked ${listTimestamp(device.created_at)}`;
+}
+
+function lastActivity(device: Device): number {
+  return new Date(device.last_seen_at ?? device.created_at).getTime();
+}
+
+/** A 404 means the device is already gone (removed elsewhere meanwhile) — the goal is met. */
+function isAlreadyRemoved(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 404;
+}
+
+/**
+ * Settings → Devices: every device linked to the account, with a way to remove the others.
+ * Same sections, rules and wording as iOS `DevicesView.swift`: this browser can't be removed
+ * here (that's Log Out); every other device can, one at a time or all at once.
+ */
 export function DevicesView({
   session,
   onUnauthorized,
@@ -28,17 +107,31 @@ export function DevicesView({
   onCount?: (count: number) => void;
 }) {
   const [devices, setDevices] = useState<Device[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [revoking, setRevoking] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  /** Last removal (or refresh) failure, shown under the list; the toast only confirms successes. */
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [revoking, setRevoking] = useState<Set<string>>(() => new Set());
+  const [revokingAll, setRevokingAll] = useState(false);
   const [confirming, setConfirming] = useState<Device | null>(null);
+  const [confirmingAll, setConfirmingAll] = useState(false);
+  const [detail, setDetail] = useState<Device | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  /** Latest list for async code, without side effects inside state updaters. */
+  const devicesRef = useRef<Device[] | null>(null);
+  devicesRef.current = devices;
 
-  const fail = useCallback(
-    (err: unknown, fallback: string) => {
+  const isCurrent = useCallback(
+    (device: Device) => device.is_current || device.id === session.device.id,
+    [session.device.id],
+  );
+
+  const authFailed = useCallback(
+    (err: unknown) => {
       if (err instanceof ApiError && err.isAuthFailure) {
         onUnauthorized();
-        return;
+        return true;
       }
-      setError(err instanceof ApiError ? err.message : fallback);
+      return false;
     },
     [onUnauthorized],
   );
@@ -47,143 +140,456 @@ export function DevicesView({
     try {
       const res = await api.devices(session.token);
       setDevices(res.devices);
+      setLoadError(null);
       onCount?.(res.devices.length);
-      setError(null);
     } catch (err) {
-      fail(err, "Could not load devices.");
+      if (authFailed(err)) return;
+      const message = err instanceof ApiError ? err.message : "Could not load devices.";
+      // First load failing gets the retry card; a later refresh keeps the list on screen.
+      if (devicesRef.current === null) setLoadError(message);
+      else setActionError(message);
     }
-  }, [session.token, fail, onCount]);
+  }, [session.token, authFailed, onCount]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
+  // The web stand-in for pull-to-refresh: coming back to the tab re-reads the list.
   useEffect(() => {
-    if (!confirming) return;
+    function onVisible() {
+      if (document.visibilityState === "visible") void load();
+    }
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [load]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(null), 1800);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  // Escape closes the top dialog only — never the Settings page behind it.
+  const dialogOpen = Boolean(confirming || confirmingAll || detail);
+  useEffect(() => {
+    if (!dialogOpen) return;
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
       event.stopImmediatePropagation();
-      setConfirming(null);
+      if (confirming) setConfirming(null);
+      else if (confirmingAll) setConfirmingAll(false);
+      else setDetail(null);
     }
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [confirming]);
+  }, [dialogOpen, confirming, confirmingAll]);
 
-  async function revoke(device: Device) {
-    if (isCurrent(device, session)) return;
-    setConfirming(null);
-    setRevoking(device.id);
-    setError(null);
-    try {
-      await api.revokeDevice(session.token, device.id);
-      setDevices((prev) => {
-        const next = (prev ?? []).filter((item) => item.id !== device.id);
-        onCount?.(next.length);
-        return next;
-      });
-      await load();
-    } catch (err) {
-      fail(err, "Could not revoke that device.");
-    } finally {
-      setRevoking(null);
-    }
+  const list = useMemo(() => devices ?? [], [devices]);
+  const current = list.find(isCurrent) ?? null;
+  /** Most recently active first, so a stale device sinks to the bottom. */
+  const others = useMemo(
+    () => list.filter((d) => !isCurrent(d)).sort((a, b) => lastActivity(b) - lastActivity(a)),
+    [list, isCurrent],
+  );
+
+  function removeLocally(ids: string[]) {
+    const prev = devicesRef.current;
+    if (ids.length === 0 || !prev) return;
+    const next = prev.filter((d) => !ids.includes(d.id));
+    devicesRef.current = next;
+    setDevices(next);
+    onCount?.(next.length);
   }
 
-  const list = devices ?? [];
-  const others = list.filter((d) => !isCurrent(d, session));
+  async function revoke(device: Device) {
+    if (isCurrent(device)) return;
+    setConfirming(null);
+    setActionError(null);
+    setRevoking((prev) => new Set(prev).add(device.id));
+    try {
+      await api.revokeDevice(session.token, device.id);
+      removeLocally([device.id]);
+      setToast(`${displayName(device)} removed`);
+    } catch (err) {
+      if (isAlreadyRemoved(err)) {
+        removeLocally([device.id]);
+        setToast(`${displayName(device)} was already removed`);
+      } else if (!authFailed(err)) {
+        setActionError(err instanceof ApiError ? err.message : "Could not remove that device.");
+      }
+    } finally {
+      setRevoking((prev) => {
+        const next = new Set(prev);
+        next.delete(device.id);
+        return next;
+      });
+    }
+    await load();
+  }
+
+  /** No bulk endpoint — one DELETE per device, carrying on past failures. */
+  async function revokeAllOthers() {
+    const targets = others;
+    setConfirmingAll(false);
+    if (targets.length === 0) return;
+    setActionError(null);
+    setRevokingAll(true);
+    const removed: string[] = [];
+    let lastError: unknown = null;
+    for (const device of targets) {
+      try {
+        await api.revokeDevice(session.token, device.id);
+        removed.push(device.id);
+      } catch (err) {
+        if (isAlreadyRemoved(err)) {
+          removed.push(device.id);
+        } else if (authFailed(err)) {
+          setRevokingAll(false);
+          return;
+        } else {
+          lastError = err;
+        }
+      }
+    }
+    removeLocally(removed);
+    setRevokingAll(false);
+    if (lastError) {
+      const failed = targets.length - removed.length;
+      const reason = lastError instanceof ApiError ? lastError.message : "Try again.";
+      setActionError(`${failed} of ${targets.length} devices could not be removed. ${reason}`);
+    } else {
+      setToast(removed.length === 1 ? "1 device removed" : `${removed.length} devices removed`);
+    }
+    await load();
+  }
+
+  function retry() {
+    setLoadError(null);
+    void load();
+  }
+
+  if (devices === null) {
+    return (
+      <SettingsGroup>
+        {loadError ? (
+          <div className="dev-state">
+            <TriangleAlert size={22} className="dev-state-warn" aria-hidden="true" />
+            <p>{loadError}</p>
+            <button type="button" className="dev-link" onClick={retry}>
+              Try Again
+            </button>
+          </div>
+        ) : (
+          <div className="dev-state">
+            <span className="dev-spinner" aria-hidden="true" />
+            <p>Loading devices…</p>
+          </div>
+        )}
+      </SettingsGroup>
+    );
+  }
+
+  const count = list.length;
+  const full = count >= DEVICE_LIMIT;
+  const left = DEVICE_LIMIT - count;
+
+  function deviceRow(device: Device) {
+    const mine = isCurrent(device);
+    const busy = revoking.has(device.id) || revokingAll;
+    return (
+      <div key={device.id} className="set-row dev-row">
+        <button
+          type="button"
+          className="dev-row-main"
+          onClick={() => setDetail(device)}
+          aria-label={`${displayName(device)}, ${mine ? "this browser, active now" : lastActiveLabel(device)}. Show details`}
+        >
+          <DeviceTile name={device.name} />
+          <span className="set-row-copy">
+            <strong>{displayName(device)}</strong>
+            {mine ? (
+              <span className="dev-active">
+                <i className="dev-dot" aria-hidden="true" />
+                Active now · This browser
+              </span>
+            ) : (
+              <span>{lastActiveLabel(device)}</span>
+            )}
+          </span>
+          {mine ? <ChevronRight size={16} className="set-chevron" aria-hidden="true" /> : null}
+        </button>
+        {!mine ? (
+          busy ? (
+            <span className="dev-spinner dev-busy" role="status" aria-label="Removing" />
+          ) : (
+            <button
+              type="button"
+              className="dev-link danger"
+              onClick={() => setConfirming(device)}
+              aria-label={`Remove ${displayName(device)}`}
+            >
+              Remove
+            </button>
+          )
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <>
-      <SettingsGroup
-        title={
-          devices === null
-            ? "Linked devices"
-            : `Linked devices — ${list.length} of ${DEVICE_LIMIT}`
-        }
-      >
-        {devices === null ? (
-          <p className="set-placeholder">{error ?? "Loading devices…"}</p>
-        ) : list.length === 0 ? (
-          <p className="set-placeholder">{error ?? "No devices found."}</p>
+      <SettingsGroup title="This device">
+        {current ? (
+          deviceRow(current)
         ) : (
-          list.map((device) => {
-            const name = device.name ?? "Unnamed device";
-            const current = isCurrent(device, session);
-            return (
-              <div key={device.id} className="set-row">
-                <span className="set-tile set-tile-muted" aria-hidden="true">
-                  <DeviceIcon name={name} />
-                </span>
-                <span className="set-row-copy">
-                  <strong>
-                    {name}
-                    {current ? <span className="set-chip">This browser</span> : null}
-                  </strong>
-                  <span>
-                    {current
-                      ? "Active now"
-                      : device.last_seen_at
-                        ? `Last seen ${listTimestamp(device.last_seen_at)}`
-                        : `Linked ${listTimestamp(device.created_at)}`}
-                  </span>
-                </span>
-                {!current ? (
-                  <button
-                    type="button"
-                    className="mini-btn ghost danger"
-                    disabled={revoking === device.id}
-                    onClick={() => setConfirming(device)}
-                  >
-                    {revoking === device.id ? "Revoking…" : "Revoke"}
-                  </button>
-                ) : null}
-              </div>
-            );
-          })
+          // The server always lists the calling device; a miss means the list is stale.
+          <p className="set-placeholder">This browser is missing from the list. Reload the page.</p>
         )}
       </SettingsGroup>
 
-      {error && list.length > 0 ? <p className="set-error">{error}</p> : null}
+      {others.length > 0 ? (
+        <>
+          <div className="set-card">
+            <button
+              type="button"
+              className="set-row set-row-button"
+              onClick={() => setConfirmingAll(true)}
+              disabled={revokingAll || revoking.size > 0}
+            >
+              <span className="set-tile" style={{ background: "var(--danger-bg)" }} aria-hidden="true">
+                <Hand size={15} />
+              </span>
+              <span className="set-row-copy">
+                <strong className="danger">
+                  {revokingAll ? "Removing other devices…" : "Remove All Other Devices"}
+                </strong>
+              </span>
+              {revokingAll ? <span className="dev-spinner dev-busy" aria-hidden="true" /> : null}
+            </button>
+          </div>
+          <SettingsNote>Signs out every device except this browser.</SettingsNote>
+        </>
+      ) : null}
 
+      <SettingsGroup title={others.length > 0 ? `Other devices — ${others.length}` : "Other devices"}>
+        {others.length === 0 ? (
+          <div className="set-row">
+            <span className="set-row-copy">
+              <strong>No other devices</strong>
+              <span className="wrap">
+                To add one, sign in on the iPhone app or another browser with your username and
+                password, then unlock with your 12-word phrase.
+              </span>
+            </span>
+          </div>
+        ) : (
+          others.map(deviceRow)
+        )}
+      </SettingsGroup>
+
+      {actionError ? <p className="set-error">{actionError}</p> : null}
+
+      <SettingsGroup title="Device limit">
+        <div className="set-row dev-capacity">
+          <span className="dev-capacity-head">
+            <strong>Linked devices</strong>
+            <span className={full ? "dev-capacity-count full" : "dev-capacity-count"}>
+              {count} of {DEVICE_LIMIT}
+            </span>
+          </span>
+          <span className="dev-meter" aria-hidden="true">
+            {Array.from({ length: DEVICE_LIMIT }, (_, i) => (
+              <i key={i} className={i < count ? (full ? "on full" : "on") : undefined} />
+            ))}
+          </span>
+        </div>
+      </SettingsGroup>
       <SettingsNote>
-        Every device holds its own identity key. Revoking one ends its sessions immediately — that
-        device has to sign in again with your password and 12-word phrase.
-        {devices && list.length > 0 && others.length === 0
-          ? " This browser is your only linked device."
-          : ""}
+        {/* At the cap the server hands a new sign-in the longest-idle device nobody is signed
+            in on, and refuses only when every device is live. */}
+        {full
+          ? "Your account is at the limit. A new sign-in takes over a device that has been logged out; if every device is still signed in, it is refused until you remove one here."
+          : `You can sign in on ${left} more ${left === 1 ? "device" : "devices"}. A logged-out device stays listed until it signs in again or you remove it.`}
       </SettingsNote>
 
+      <div className="set-explainer">
+        <strong>
+          <ShieldCheck size={16} aria-hidden="true" />
+          Your phrase stays on each device
+        </strong>
+        <p>
+          Every device unlocks with your 12-word phrase, which never leaves it. For each device the
+          server records only the name it signed in with, when it was linked and when it was last
+          active — all shown here. Removing a device does not erase what is already stored on it.
+        </p>
+      </div>
+
+      {detail ? (
+        <DeviceDetail
+          device={detail}
+          isCurrent={isCurrent(detail)}
+          isRevoking={revoking.has(detail.id) || revokingAll}
+          onClose={() => setDetail(null)}
+          onRevoke={() => {
+            setDetail(null);
+            setConfirming(detail);
+          }}
+        />
+      ) : null}
+
       {confirming ? (
-        <div className="modal-scrim" onMouseDown={() => setConfirming(null)}>
-          <div
-            className="modal"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="revoke-title"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <header>
-              <h2 id="revoke-title">Revoke {confirming.name ?? "this device"}?</h2>
-            </header>
-            <p>
-              Its sessions end immediately and it loses access to new messages. Anything already
-              decrypted and stored on that device stays there.
-            </p>
-            <div className="modal-actions">
-              <button type="button" className="btn btn-secondary" onClick={() => setConfirming(null)}>
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn btn-destructive"
-                onClick={() => void revoke(confirming)}
-              >
-                Revoke device
-              </button>
-            </div>
-          </div>
+        <ConfirmDialog
+          title={`Remove ${displayName(confirming)}?`}
+          body={revokeConsequences(false)}
+          action="Remove"
+          onCancel={() => setConfirming(null)}
+          onConfirm={() => void revoke(confirming)}
+        />
+      ) : null}
+
+      {confirmingAll ? (
+        <ConfirmDialog
+          title="Remove all other devices?"
+          body={`Only this browser stays signed in. ${revokeConsequences(true)}`}
+          action={`Remove ${others.length}`}
+          onCancel={() => setConfirmingAll(false)}
+          onConfirm={() => void revokeAllOthers()}
+        />
+      ) : null}
+
+      {toast ? (
+        <div className="set-toast" role="status">
+          <Check size={16} aria-hidden="true" />
+          {toast}
         </div>
       ) : null}
     </>
+  );
+}
+
+function ConfirmDialog({
+  title,
+  body,
+  action,
+  onCancel,
+  onConfirm,
+}: {
+  title: string;
+  body: string;
+  action: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="modal-scrim" onMouseDown={onCancel}>
+      <div
+        className="modal"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="dev-confirm-title"
+        aria-describedby="dev-confirm-body"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header>
+          <h2 id="dev-confirm-title">{title}</h2>
+        </header>
+        <p id="dev-confirm-body">{body}</p>
+        <div className="modal-actions">
+          <button type="button" className="btn btn-secondary" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="button" className="btn btn-destructive" onClick={onConfirm} autoFocus>
+            {action}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Everything the server knows about one device, plus its actions — iOS `DeviceDetailSheet`. */
+function DeviceDetail({
+  device,
+  isCurrent,
+  isRevoking,
+  onClose,
+  onRevoke,
+}: {
+  device: Device;
+  isCurrent: boolean;
+  isRevoking: boolean;
+  onClose: () => void;
+  onRevoke: () => void;
+}) {
+  const kind = deviceKind(device.name);
+  const deviceId = device.id.toLowerCase();
+  return (
+    <div className="modal-scrim" onMouseDown={onClose}>
+      <div
+        className="modal dev-detail"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="dev-detail-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="info-sheet">
+          <DeviceTile name={device.name} size={64} />
+          <strong id="dev-detail-title">{displayName(device)}</strong>
+          <span className={isCurrent ? "dev-active" : undefined}>
+            {isCurrent ? "This browser · Active now" : lastActiveLabel(device)}
+          </span>
+        </div>
+
+        <div className="set-card">
+          <div className="set-row dev-info">
+            <span>Type</span>
+            <span>{kind.label}</span>
+          </div>
+          <div className="set-row dev-info">
+            <span>Linked</span>
+            <span>{fullTimestamp(device.created_at)}</span>
+          </div>
+          <div className="set-row dev-info">
+            <span>Last active</span>
+            <span>
+              {isCurrent
+                ? "Now"
+                : device.last_seen_at
+                  ? fullTimestamp(device.last_seen_at)
+                  : "Never"}
+            </span>
+          </div>
+          <div className="set-row dev-info">
+            <span>Device ID</span>
+            <code>{deviceId}</code>
+            <CopyButton value={deviceId} label="device ID" />
+          </div>
+        </div>
+
+        {isCurrent ? (
+          <p>
+            To remove this browser from your account, use Log Out in Settings. It also erases
+            everything Shroud keeps here.
+          </p>
+        ) : null}
+
+        <div className="modal-actions">
+          <button type="button" className="btn btn-secondary" onClick={onClose} autoFocus>
+            Done
+          </button>
+          {!isCurrent ? (
+            <button
+              type="button"
+              className="btn btn-destructive"
+              onClick={onRevoke}
+              disabled={isRevoking}
+            >
+              {isRevoking ? "Removing…" : "Remove Device"}
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </div>
   );
 }
