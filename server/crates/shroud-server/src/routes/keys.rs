@@ -305,7 +305,7 @@ pub async fn get_identity(
         SELECT d.id AS device_id, ik.registration_id, ik.public_key
         FROM devices d
         INNER JOIN device_identity_keys ik ON ik.device_id = d.id
-        WHERE d.user_id = $1
+        WHERE d.user_id = $1 AND d.revoked_at IS NULL
         ORDER BY d.last_seen_at DESC NULLS LAST, d.created_at DESC
         LIMIT 1
         "#,
@@ -451,7 +451,7 @@ pub async fn get_bundle(
         FROM devices d
         INNER JOIN device_identity_keys ik ON ik.device_id = d.id
         INNER JOIN device_signed_prekeys spk ON spk.device_id = d.id
-        WHERE d.user_id = $1
+        WHERE d.user_id = $1 AND d.revoked_at IS NULL
         ORDER BY d.last_seen_at DESC NULLS LAST, d.created_at DESC
         LIMIT 1
         "#,
@@ -514,7 +514,7 @@ pub async fn get_bundles(
         FROM devices d
         INNER JOIN device_identity_keys ik ON ik.device_id = d.id
         INNER JOIN device_signed_prekeys spk ON spk.device_id = d.id
-        WHERE d.user_id = $1
+        WHERE d.user_id = $1 AND d.revoked_at IS NULL
         ORDER BY d.last_seen_at DESC NULLS LAST, d.created_at DESC
         "#,
     )

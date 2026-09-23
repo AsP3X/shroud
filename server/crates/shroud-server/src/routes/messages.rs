@@ -174,6 +174,22 @@ pub async fn send_message(
         .await
         .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
 
+    // Human: Account deletion revokes the account's devices before it tombstones what they
+    // sent, and the users row outlives it (migration 021), so the foreign keys no longer stop a
+    // late send. Holding the device row until commit does: a racing send either commits first
+    // and is tombstoned with the rest, or finds the device revoked.
+    // Agent: SELECT devices FOR SHARE; waits behind devices::revoke_device's UPDATE.
+    let device_live: Option<Uuid> = sqlx::query_scalar(
+        r#"SELECT id FROM devices WHERE id = $1 AND revoked_at IS NULL FOR SHARE"#,
+    )
+    .bind(auth.device_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("lock sender device failed: {err}")))?;
+    if device_live.is_none() {
+        return Err(AppError::unauthorized());
+    }
+
     if let Some(media_id) = body.media_object_id {
         #[derive(FromRow)]
         struct MediaLock {
@@ -265,11 +281,11 @@ pub async fn send_message(
         .map_err(|err| AppError::Internal(format!("link media to message failed: {err}")))?;
     }
 
-    // Delivery rows: all devices of both users; sender device already delivered.
+    // Delivery rows: all linked devices of both users; sender device already delivered.
     let device_ids: Vec<Uuid> = sqlx::query_scalar(
         r#"
         SELECT id FROM devices
-        WHERE user_id = $1 OR user_id = $2
+        WHERE (user_id = $1 OR user_id = $2) AND revoked_at IS NULL
         "#,
     )
     .bind(auth.user_id)

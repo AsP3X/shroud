@@ -75,7 +75,8 @@ impl FromRequestParts<AppState> for AuthContext {
             FROM sessions s
             INNER JOIN devices d ON d.id = s.device_id
             INNER JOIN users u ON u.id = d.user_id
-            WHERE s.token_hash = $1 AND s.revoked_at IS NULL
+            WHERE s.token_hash = $1 AND s.revoked_at IS NULL AND d.revoked_at IS NULL
+              AND u.deleted_at IS NULL
             "#,
         )
         .bind(token_hash.as_slice())
@@ -150,7 +151,8 @@ pub async fn ids_for_token(pool: &sqlx::PgPool, token: &str) -> Result<(Uuid, Uu
         FROM sessions s
         INNER JOIN devices d ON d.id = s.device_id
         INNER JOIN users u ON u.id = d.user_id
-        WHERE s.token_hash = $1 AND s.revoked_at IS NULL
+        WHERE s.token_hash = $1 AND s.revoked_at IS NULL AND d.revoked_at IS NULL
+          AND u.deleted_at IS NULL
         "#,
     )
     .bind(token_hash.as_slice())

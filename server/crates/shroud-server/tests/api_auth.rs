@@ -18,6 +18,11 @@ fn test_state(pool: sqlx::PgPool) -> shroud_server::state::AppState {
 }
 
 async fn test_app() -> Option<axum::Router> {
+    test_app_and_state().await.map(|(app, _)| app)
+}
+
+/// The app plus its state, for tests that listen on the realtime hub.
+async fn test_app_and_state() -> Option<(axum::Router, shroud_server::state::AppState)> {
     let database_url = std::env::var("DATABASE_URL").ok()?;
     let pool = PgPoolOptions::new()
         .max_connections(5)
@@ -28,11 +33,11 @@ async fn test_app() -> Option<axum::Router> {
         .run(&pool)
         .await
         .ok()?;
-    Some(
-        axum::Router::new()
-            .merge(routes::router())
-            .with_state(test_state(pool)),
-    )
+    let state = test_state(pool);
+    let app = axum::Router::new()
+        .merge(routes::router())
+        .with_state(state.clone());
+    Some((app, state))
 }
 
 async fn json_body(response: axum::response::Response) -> Value {
@@ -372,7 +377,7 @@ async fn login_reuses_device_and_lists_devices() {
 
 #[tokio::test]
 async fn delete_account_requires_password_and_removes_user() {
-    let Some(app) = test_app().await else {
+    let Some((app, state)) = test_app_and_state().await else {
         eprintln!(
             "skipping delete_account_requires_password_and_removes_user: DATABASE_URL unavailable"
         );
@@ -436,6 +441,7 @@ async fn delete_account_requires_password_and_removes_user() {
     assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
 
     let me = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/api/v1/auth/me")
@@ -446,6 +452,80 @@ async fn delete_account_requires_password_and_removes_user() {
         .await
         .expect("response");
     assert_eq!(me.status(), StatusCode::UNAUTHORIZED);
+
+    // The row stays as a placeholder with nothing that names or signs in the account.
+    let user_id = registered["user"]["id"].as_str().unwrap();
+    let share_code = registered["user"]["share_code"].as_str().unwrap();
+    let scrubbed: bool = sqlx::query_scalar(
+        r#"
+        SELECT deleted_at IS NOT NULL AND username IS NULL AND share_code IS NULL
+               AND password_hash IS NULL
+        FROM users WHERE id = $1
+        "#,
+    )
+    .bind(Uuid::parse_str(user_id).unwrap())
+    .fetch_one(&state.pool)
+    .await
+    .expect("deleted user row");
+    assert!(scrubbed);
+    let live_devices: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)::bigint FROM devices
+        WHERE user_id = $1 AND (revoked_at IS NULL OR name IS NOT NULL)
+        "#,
+    )
+    .bind(Uuid::parse_str(user_id).unwrap())
+    .fetch_one(&state.pool)
+    .await
+    .expect("devices");
+    assert_eq!(live_devices, 0);
+
+    let login = login_request(&app, &username, &password).await;
+    assert_eq!(login.status(), StatusCode::UNAUTHORIZED);
+
+    // Nobody can find it any more, and its username and share code are free again.
+    let (other, _, _) = register_user(&app, &unique_user().0, &password).await;
+    for uri in [
+        format!("/api/v1/users/{user_id}"),
+        format!("/api/v1/users/by-username/{username}"),
+        format!("/api/v1/users/by-code/{share_code}"),
+    ] {
+        let lookup = authed(&app, "GET", &uri, &other, None).await;
+        assert_eq!(lookup.status(), StatusCode::NOT_FOUND, "{uri}");
+    }
+    let request = authed(
+        &app,
+        "POST",
+        "/api/v1/contacts/requests",
+        &other,
+        Some(json!({ "user_id": user_id })),
+    )
+    .await;
+    assert_eq!(request.status(), StatusCode::NOT_FOUND);
+
+    let (_, new_id, _) = register_user(&app, &username, &password).await;
+    assert_ne!(new_id, user_id);
+}
+
+/// `POST /auth/login` without a device id.
+async fn login_request(
+    app: &axum::Router,
+    username: &str,
+    password: &str,
+) -> axum::response::Response {
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "username": username, "password": password }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response")
 }
 
 #[tokio::test]
@@ -578,4 +658,727 @@ async fn login_at_device_cap_reclaims_an_idle_device() {
     assert_eq!(status["has_identity"], false);
     assert_eq!(status["signed_pre_key_id"], Value::Null);
     assert_eq!(status["otpk_count"], 0);
+}
+
+/// Sends one authenticated request and returns the response.
+async fn authed(
+    app: &axum::Router,
+    method: &str,
+    uri: &str,
+    token: &str,
+    body: Option<Value>,
+) -> axum::response::Response {
+    let builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::AUTHORIZATION, format!("Bearer {token}"));
+    let request = match body {
+        Some(body) => builder
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string())),
+        None => builder.body(Body::empty()),
+    }
+    .expect("request");
+    app.clone().oneshot(request).await.expect("response")
+}
+
+#[tokio::test]
+async fn removing_a_device_keeps_what_it_sent() {
+    let Some(app) = test_app().await else {
+        eprintln!("skipping removing_a_device_keeps_what_it_sent: DATABASE_URL unavailable");
+        return;
+    };
+
+    let auth_request = |uri: &str, body: Value| {
+        Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("request")
+    };
+
+    // Alice on a phone and a laptop; Bob on one device.
+    let (alice, password) = unique_user();
+    let phone = app
+        .clone()
+        .oneshot(auth_request(
+            "/api/v1/auth/register",
+            json!({ "username": alice, "password": password, "device_name": "Phone" }),
+        ))
+        .await
+        .expect("response");
+    assert_eq!(phone.status(), StatusCode::CREATED);
+    let phone = json_body(phone).await;
+    let phone_token = phone["token"].as_str().unwrap().to_string();
+    let alice_id = phone["user"]["id"].as_str().unwrap().to_string();
+
+    let laptop = app
+        .clone()
+        .oneshot(auth_request(
+            "/api/v1/auth/login",
+            json!({ "username": alice, "password": password, "device_name": "Laptop" }),
+        ))
+        .await
+        .expect("response");
+    assert_eq!(laptop.status(), StatusCode::OK);
+    let laptop = json_body(laptop).await;
+    let laptop_token = laptop["token"].as_str().unwrap().to_string();
+    let laptop_id = laptop["device"]["id"].as_str().unwrap().to_string();
+
+    let (bob, bob_password) = unique_user();
+    let bob = app
+        .clone()
+        .oneshot(auth_request(
+            "/api/v1/auth/register",
+            json!({ "username": bob, "password": bob_password }),
+        ))
+        .await
+        .expect("response");
+    let bob = json_body(bob).await;
+    let bob_token = bob["token"].as_str().unwrap().to_string();
+    let bob_id = bob["user"]["id"].as_str().unwrap().to_string();
+
+    let request = authed(
+        &app,
+        "POST",
+        "/api/v1/contacts/requests",
+        &phone_token,
+        Some(json!({ "user_id": bob_id })),
+    )
+    .await;
+    assert!(request.status().is_success());
+    let accept = authed(
+        &app,
+        "POST",
+        "/api/v1/contacts/requests",
+        &bob_token,
+        Some(json!({ "user_id": alice_id })),
+    )
+    .await;
+    assert_eq!(accept.status(), StatusCode::OK);
+
+    // The laptop sends a text and a photo; Bob's device acknowledges the text.
+    let text = authed(
+        &app,
+        "POST",
+        "/api/v1/messages",
+        &laptop_token,
+        Some(json!({
+            "peer_user_id": bob_id,
+            "client_message_id": Uuid::new_v4(),
+            "content_type": "text",
+            "ciphertext": BASE64.encode(b"sealed-from-laptop"),
+        })),
+    )
+    .await;
+    assert_eq!(text.status(), StatusCode::CREATED);
+    let text_id = json_body(text).await["id"].as_str().unwrap().to_string();
+
+    let upload = authed(
+        &app,
+        "POST",
+        "/api/v1/media/uploads",
+        &laptop_token,
+        Some(json!({ "size_bytes": 1024, "content_type": "application/octet-stream" })),
+    )
+    .await;
+    assert_eq!(upload.status(), StatusCode::CREATED);
+    let media_id = json_body(upload).await["media_object_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let photo = authed(
+        &app,
+        "POST",
+        "/api/v1/messages",
+        &laptop_token,
+        Some(json!({
+            "peer_user_id": bob_id,
+            "client_message_id": Uuid::new_v4(),
+            "content_type": "media",
+            "ciphertext": BASE64.encode(b"sealed-photo-envelope"),
+            "media_object_id": media_id,
+        })),
+    )
+    .await;
+    assert_eq!(photo.status(), StatusCode::CREATED);
+    let photo_id = json_body(photo).await["id"].as_str().unwrap().to_string();
+
+    let delivered = authed(
+        &app,
+        "POST",
+        &format!("/api/v1/messages/{text_id}/delivered"),
+        &bob_token,
+        None,
+    )
+    .await;
+    assert_eq!(delivered.status(), StatusCode::NO_CONTENT);
+
+    // The phone removes the laptop.
+    let removed = authed(
+        &app,
+        "DELETE",
+        &format!("/api/v1/devices/{laptop_id}"),
+        &phone_token,
+        None,
+    )
+    .await;
+    assert_eq!(removed.status(), StatusCode::NO_CONTENT);
+
+    // Both sides still see everything the laptop sent, with its sender device intact.
+    for (token, peer) in [(&bob_token, &alice_id), (&phone_token, &bob_id)] {
+        let list = authed(
+            &app,
+            "GET",
+            &format!("/api/v1/messages?peer_user_id={peer}"),
+            token,
+            None,
+        )
+        .await;
+        assert_eq!(list.status(), StatusCode::OK);
+        let history = json_body(list).await;
+        let messages = history["messages"].as_array().unwrap();
+        let mut ids: Vec<&str> = messages.iter().map(|m| m["id"].as_str().unwrap()).collect();
+        ids.sort_unstable();
+        let mut expected = vec![text_id.as_str(), photo_id.as_str()];
+        expected.sort_unstable();
+        assert_eq!(ids, expected);
+        assert!(messages.iter().all(|m| m["sender_device_id"] == laptop_id));
+    }
+
+    // The text keeps its delivered tick for the sender.
+    let alice_view = authed(
+        &app,
+        "GET",
+        &format!("/api/v1/messages?peer_user_id={bob_id}"),
+        &phone_token,
+        None,
+    )
+    .await;
+    let alice_view = json_body(alice_view).await;
+    let text_row = alice_view["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == text_id.as_str())
+        .unwrap()
+        .clone();
+    assert_eq!(text_row["delivered"], true);
+
+    // The photo it uploaded still downloads.
+    let download = authed(
+        &app,
+        "POST",
+        &format!("/api/v1/media/{media_id}/download"),
+        &bob_token,
+        None,
+    )
+    .await;
+    assert_eq!(download.status(), StatusCode::OK);
+
+    // The laptop is gone: signed out, unlisted, not removable twice.
+    let me = authed(&app, "GET", "/api/v1/auth/me", &laptop_token, None).await;
+    assert_eq!(me.status(), StatusCode::UNAUTHORIZED);
+    let devices = authed(&app, "GET", "/api/v1/devices", &phone_token, None).await;
+    let devices = json_body(devices).await;
+    let devices = devices["devices"].as_array().unwrap();
+    assert_eq!(devices.len(), 1);
+    assert_ne!(devices[0]["id"], laptop_id.as_str());
+    let again = authed(
+        &app,
+        "DELETE",
+        &format!("/api/v1/devices/{laptop_id}"),
+        &phone_token,
+        None,
+    )
+    .await;
+    assert_eq!(again.status(), StatusCode::NOT_FOUND);
+
+    // New messages no longer queue for it, and a login presenting its id gets a fresh device.
+    let later = authed(
+        &app,
+        "POST",
+        "/api/v1/messages",
+        &bob_token,
+        Some(json!({
+            "peer_user_id": alice_id,
+            "client_message_id": Uuid::new_v4(),
+            "content_type": "text",
+            "ciphertext": BASE64.encode(b"sealed-reply"),
+        })),
+    )
+    .await;
+    assert_eq!(later.status(), StatusCode::CREATED);
+
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&std::env::var("DATABASE_URL").unwrap())
+        .await
+        .expect("pool");
+    let laptop_uuid = Uuid::parse_str(&laptop_id).unwrap();
+    let pending: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::bigint FROM message_deliveries WHERE device_id = $1 AND delivered_at IS NULL",
+    )
+    .bind(laptop_uuid)
+    .fetch_one(&pool)
+    .await
+    .expect("pending deliveries");
+    assert_eq!(pending, 0);
+
+    let relogin = app
+        .oneshot(auth_request(
+            "/api/v1/auth/login",
+            json!({ "username": alice, "password": password, "device_id": laptop_id }),
+        ))
+        .await
+        .expect("response");
+    assert_eq!(relogin.status(), StatusCode::OK);
+    let relogin = json_body(relogin).await;
+    assert_ne!(relogin["device"]["id"], laptop_id.as_str());
+}
+
+/// Registers a user and returns (token, user id, device id).
+async fn register_user(
+    app: &axum::Router,
+    username: &str,
+    password: &str,
+) -> (String, String, String) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/register")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "username": username, "password": password }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let body = json_body(response).await;
+    (
+        body["token"].as_str().unwrap().to_string(),
+        body["user"]["id"].as_str().unwrap().to_string(),
+        body["device"]["id"].as_str().unwrap().to_string(),
+    )
+}
+
+/// Mutual requests between (token, user id) pairs: the second one auto-accepts.
+async fn become_contacts(app: &axum::Router, a: (&str, &str), b: (&str, &str)) {
+    let request = authed(
+        app,
+        "POST",
+        "/api/v1/contacts/requests",
+        a.0,
+        Some(json!({ "user_id": b.1 })),
+    )
+    .await;
+    assert!(request.status().is_success());
+    let accept = authed(
+        app,
+        "POST",
+        "/api/v1/contacts/requests",
+        b.0,
+        Some(json!({ "user_id": a.1 })),
+    )
+    .await;
+    assert_eq!(accept.status(), StatusCode::OK);
+}
+
+/// Sends a sealed text and returns the response.
+async fn send_sealed(
+    app: &axum::Router,
+    token: &str,
+    peer: &str,
+    sealed: &[u8],
+) -> axum::response::Response {
+    authed(
+        app,
+        "POST",
+        "/api/v1/messages",
+        token,
+        Some(json!({
+            "peer_user_id": peer,
+            "client_message_id": Uuid::new_v4(),
+            "content_type": "text",
+            "ciphertext": BASE64.encode(sealed),
+        })),
+    )
+    .await
+}
+
+/// Sends a sealed text that must be accepted, and returns its message id.
+async fn send_text(app: &axum::Router, token: &str, peer: &str, sealed: &[u8]) -> String {
+    let response = send_sealed(app, token, peer, sealed).await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    json_body(response).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+/// Every realtime event queued for one device so far, oldest first.
+fn drain_events(events: &mut tokio::sync::mpsc::Receiver<String>) -> Vec<Value> {
+    let mut drained = Vec::new();
+    while let Ok(payload) = events.try_recv() {
+        drained.push(serde_json::from_str(&payload).expect("event json"));
+    }
+    drained
+}
+
+#[tokio::test]
+async fn deleting_an_account_deletes_each_chat_for_both() {
+    let Some((app, state)) = test_app_and_state().await else {
+        eprintln!(
+            "skipping deleting_an_account_deletes_each_chat_for_both: DATABASE_URL unavailable"
+        );
+        return;
+    };
+
+    // Alice deletes her account. Bob keeps the default privacy setting; Carol lets contacts
+    // clear chats for her.
+    let (alice_name, password) = unique_user();
+    let (alice, alice_id, alice_device) = register_user(&app, &alice_name, &password).await;
+    let (bob_name, _) = unique_user();
+    let (bob, bob_id, bob_device) = register_user(&app, &bob_name, &password).await;
+    let (carol_name, _) = unique_user();
+    let (carol, carol_id, carol_device) = register_user(&app, &carol_name, &password).await;
+
+    let consent = authed(
+        &app,
+        "PUT",
+        "/api/v1/privacy/settings",
+        &carol,
+        Some(json!({ "allow_peer_chat_delete": true })),
+    )
+    .await;
+    assert_eq!(consent.status(), StatusCode::OK);
+    become_contacts(&app, (&alice, &alice_id), (&bob, &bob_id)).await;
+    become_contacts(&app, (&alice, &alice_id), (&carol, &carol_id)).await;
+
+    // Bob's chat: a text and a photo from Alice, and his reply.
+    let alice_text = send_text(&app, &alice, &bob_id, b"sealed-from-alice").await;
+    let upload = authed(
+        &app,
+        "POST",
+        "/api/v1/media/uploads",
+        &alice,
+        Some(json!({ "size_bytes": 1024, "content_type": "application/octet-stream" })),
+    )
+    .await;
+    assert_eq!(upload.status(), StatusCode::CREATED);
+    let media_id = json_body(upload).await["media_object_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let photo = authed(
+        &app,
+        "POST",
+        "/api/v1/messages",
+        &alice,
+        Some(json!({
+            "peer_user_id": bob_id,
+            "client_message_id": Uuid::new_v4(),
+            "content_type": "media",
+            "ciphertext": BASE64.encode(b"sealed-photo-envelope"),
+            "media_object_id": media_id,
+        })),
+    )
+    .await;
+    assert_eq!(photo.status(), StatusCode::CREATED);
+    let alice_photo = json_body(photo).await["id"].as_str().unwrap().to_string();
+    let bob_reply = send_text(&app, &bob, &alice_id, b"sealed-from-bob").await;
+
+    // Carol's chat, a note in Alice's Saved Messages, and Alice ringing Bob.
+    send_text(&app, &alice, &carol_id, b"sealed-to-carol").await;
+    send_text(&app, &carol, &alice_id, b"sealed-from-carol").await;
+    send_text(&app, &alice, &alice_id, b"sealed-note").await;
+    let call = authed(
+        &app,
+        "POST",
+        "/api/v1/calls",
+        &alice,
+        Some(json!({ "peer_user_id": bob_id, "modality": "voice" })),
+    )
+    .await;
+    assert_eq!(call.status(), StatusCode::CREATED);
+    let call_id = json_body(call).await["id"].as_str().unwrap().to_string();
+
+    let parse = |id: &str| Uuid::parse_str(id).unwrap();
+    let mut bob_events = state
+        .realtime
+        .subscribe(parse(&bob_id), parse(&bob_device))
+        .await
+        .expect("subscribe bob");
+    let mut carol_events = state
+        .realtime
+        .subscribe(parse(&carol_id), parse(&carol_device))
+        .await
+        .expect("subscribe carol");
+
+    let deleted = authed(
+        &app,
+        "DELETE",
+        "/api/v1/auth/account",
+        &alice,
+        Some(json!({ "password": password })),
+    )
+    .await;
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+
+    // Bob keeps his side: his reply as sent, and Alice's messages as tombstones that still name
+    // her account and device (both apps require those ids).
+    let history = authed(
+        &app,
+        "GET",
+        &format!("/api/v1/messages?peer_user_id={alice_id}"),
+        &bob,
+        None,
+    )
+    .await;
+    assert_eq!(history.status(), StatusCode::OK);
+    let history = json_body(history).await;
+    let conversation_id = history["conversation_id"].as_str().unwrap().to_string();
+    let messages = history["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 3);
+    for message in messages {
+        let id = message["id"].as_str().unwrap();
+        if id == bob_reply {
+            assert_eq!(message["deleted_for_everyone"], false);
+            assert_eq!(message["ciphertext"], BASE64.encode(b"sealed-from-bob"));
+            continue;
+        }
+        assert!(
+            id == alice_text || id == alice_photo,
+            "unexpected message {id}"
+        );
+        assert_eq!(message["deleted_for_everyone"], true);
+        assert_eq!(message["ciphertext"], Value::Null);
+        assert!(message.get("media_object_id").is_none());
+        assert_eq!(message["sender_user_id"], alice_id.as_str());
+        assert_eq!(message["sender_device_id"], alice_device.as_str());
+    }
+
+    let chats = authed(&app, "GET", "/api/v1/conversations", &bob, None).await;
+    assert_eq!(chats.status(), StatusCode::OK);
+    let chats = json_body(chats).await;
+    let chat = chats["conversations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|chat| chat["id"] == conversation_id.as_str())
+        .expect("Bob still lists the chat");
+    assert_eq!(chat["peer"]["id"], alice_id.as_str());
+    assert_eq!(chat["peer"]["username"], "Deleted account");
+
+    let events = drain_events(&mut bob_events);
+    let chat_event = events
+        .iter()
+        .find(|event| event["type"] == "conversation.deleted")
+        .expect("conversation.deleted for Bob");
+    assert_eq!(chat_event["conversation_id"], conversation_id.as_str());
+    assert_eq!(chat_event["user_id"], alice_id.as_str());
+    assert_eq!(chat_event["peer_user_id"], bob_id.as_str());
+    assert_eq!(chat_event["scope"], "everyone");
+    assert_eq!(chat_event["cleared_for_peer"], false);
+    assert!(events.iter().any(|event| event["type"] == "contact.removed"
+        && event["user_id"] == alice_id.as_str()
+        && event["peer_user_id"] == bob_id.as_str()));
+    // Her ringing call stops ringing on Bob's side, as if she had hung up.
+    let call_event = events
+        .iter()
+        .find(|event| event["type"] == "call.ended")
+        .expect("call.ended for Bob");
+    assert_eq!(call_event["call"]["id"], call_id.as_str());
+    assert_eq!(call_event["call"]["status"], "cancelled");
+
+    // Alice is no longer a contact of Bob's, he can't write to her, and her photo is gone.
+    let contacts = json_body(authed(&app, "GET", "/api/v1/contacts", &bob, None).await).await;
+    assert!(contacts["contacts"].as_array().unwrap().is_empty());
+    let late = send_sealed(&app, &bob, &alice_id, b"sealed-too-late").await;
+    assert_eq!(late.status(), StatusCode::FORBIDDEN);
+    let download = authed(
+        &app,
+        "POST",
+        &format!("/api/v1/media/{media_id}/download"),
+        &bob,
+        None,
+    )
+    .await;
+    assert_eq!(download.status(), StatusCode::NOT_FOUND);
+
+    // Carol allowed contacts to clear chats for her, so her copy went too.
+    let carol_history = authed(
+        &app,
+        "GET",
+        &format!("/api/v1/messages?peer_user_id={alice_id}"),
+        &carol,
+        None,
+    )
+    .await;
+    assert_eq!(carol_history.status(), StatusCode::OK);
+    let carol_history = json_body(carol_history).await;
+    assert!(carol_history["messages"].as_array().unwrap().is_empty());
+    let carol_chats =
+        json_body(authed(&app, "GET", "/api/v1/conversations", &carol, None).await).await;
+    assert!(
+        carol_chats["conversations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|chat| chat["peer"]["id"] != alice_id.as_str())
+    );
+    let events = drain_events(&mut carol_events);
+    let chat_event = events
+        .iter()
+        .find(|event| event["type"] == "conversation.deleted")
+        .expect("conversation.deleted for Carol");
+    assert_eq!(chat_event["user_id"], alice_id.as_str());
+    assert_eq!(chat_event["cleared_for_peer"], true);
+
+    // On the server: no ciphertext of Alice's left, Carol's chat and Alice's notes are empty,
+    // and her upload and call are gone.
+    let alice_uuid = parse(&alice_id);
+    let count = |sql: &'static str, id: Uuid| {
+        let pool = state.pool.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(sql)
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .expect(sql)
+        }
+    };
+    assert_eq!(
+        count(
+            "SELECT COUNT(*)::bigint FROM messages WHERE sender_user_id = $1 AND ciphertext IS NOT NULL",
+            alice_uuid,
+        )
+        .await,
+        0
+    );
+    let carol_conversation = carol_history["conversation_id"].as_str().unwrap();
+    assert_eq!(
+        count(
+            "SELECT COUNT(*)::bigint FROM messages WHERE conversation_id = $1",
+            parse(carol_conversation),
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        count(
+            "SELECT COUNT(*)::bigint FROM conversations WHERE user_a_id = $1 AND user_b_id = $1",
+            alice_uuid,
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        count(
+            "SELECT COUNT(*)::bigint FROM media_objects WHERE uploader_user_id = $1",
+            alice_uuid,
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        count(
+            "SELECT COUNT(*)::bigint FROM calls WHERE caller_user_id = $1 OR callee_user_id = $1",
+            alice_uuid,
+        )
+        .await,
+        0
+    );
+
+    // Once Bob clears the chat too, nobody can see it and the server drops it.
+    let cleared = authed(
+        &app,
+        "DELETE",
+        &format!("/api/v1/conversations/{alice_id}?scope=me"),
+        &bob,
+        None,
+    )
+    .await;
+    assert_eq!(cleared.status(), StatusCode::OK);
+    assert_eq!(
+        count(
+            "SELECT COUNT(*)::bigint FROM messages WHERE conversation_id = $1",
+            parse(&conversation_id),
+        )
+        .await,
+        0
+    );
+
+    // Reaction catch-up (`GET /conversations/:peer/reactions`) lives on feature/reactions; its
+    // account-deletion case belongs with that branch.
+}
+
+#[tokio::test]
+async fn a_send_racing_its_device_revocation_is_refused() {
+    let Some((app, state)) = test_app_and_state().await else {
+        eprintln!(
+            "skipping a_send_racing_its_device_revocation_is_refused: DATABASE_URL unavailable"
+        );
+        return;
+    };
+
+    let (alice_name, password) = unique_user();
+    let (alice, alice_id, alice_device) = register_user(&app, &alice_name, &password).await;
+    let (bob_name, _) = unique_user();
+    let (bob, bob_id, _) = register_user(&app, &bob_name, &password).await;
+    become_contacts(&app, (&alice, &alice_id), (&bob, &bob_id)).await;
+    let alice_device = Uuid::parse_str(&alice_device).unwrap();
+
+    // Account deletion revokes the device inside its transaction; hold one open like it.
+    let mut revoke = state.pool.begin().await.expect("begin");
+    let revoke_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *revoke)
+        .await
+        .expect("pid");
+    sqlx::query("UPDATE devices SET revoked_at = now() WHERE id = $1")
+        .bind(alice_device)
+        .execute(&mut *revoke)
+        .await
+        .expect("revoke");
+
+    // The send authenticates (the revocation isn't committed) and then queues on the device row.
+    let send = tokio::spawn({
+        let app = app.clone();
+        async move {
+            send_sealed(&app, &alice, &bob_id, b"sealed-in-flight")
+                .await
+                .status()
+        }
+    });
+    let mut polls = 0;
+    loop {
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))",
+        )
+        .bind(revoke_pid)
+        .fetch_one(&state.pool)
+        .await
+        .expect("blocked sessions");
+        if waiting > 0 {
+            break;
+        }
+        polls += 1;
+        assert!(polls < 300, "the send never waited for the device row");
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    revoke.commit().await.expect("commit revoke");
+
+    assert_eq!(send.await.expect("send task"), StatusCode::UNAUTHORIZED);
+    let sent: i64 =
+        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM messages WHERE sender_device_id = $1")
+            .bind(alice_device)
+            .fetch_one(&state.pool)
+            .await
+            .expect("messages");
+    assert_eq!(sent, 0);
 }

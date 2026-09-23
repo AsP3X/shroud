@@ -39,8 +39,9 @@ pub async fn get_user(
 ) -> Result<Json<UserCard>, AppError> {
     limit_user_lookup(&state, &headers).await?;
 
+    // A deleted account keeps its row (migration 021) but has no card to show.
     let row = sqlx::query_as::<_, UserCard>(
-        r#"SELECT id, username, share_code FROM users WHERE id = $1"#,
+        r#"SELECT id, username, share_code FROM users WHERE id = $1 AND deleted_at IS NULL"#,
     )
     .bind(user_id)
     .fetch_optional(&state.pool)

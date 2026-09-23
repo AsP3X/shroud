@@ -20,6 +20,9 @@ use crate::auth::session::AuthContext;
 use crate::error::AppError;
 use crate::state::AppState;
 
+/// `peer.username` for a chat whose peer deleted their account (migration 021 clears it).
+const DELETED_ACCOUNT_NAME: &str = "Deleted account";
+
 #[derive(Debug, Serialize)]
 pub struct ConversationsResponse {
     pub conversations: Vec<ConversationItem>,
@@ -86,14 +89,18 @@ pub async fn list_conversations(
     // person's live reactions to the caller's messages with `added_seq > seen_seq`, so it only
     // walks what the caller has not seen (a clear marks everything seen).
     // A chat the caller cleared stays hidden until something newer than their watermark
-    // arrives, which is what makes the next message read as a brand-new chat.
+    // arrives, which is what makes the next message read as a brand-new chat. A deleted
+    // account has no username left; both apps require one, so it is named here.
     // Agent: SELECT conversations JOIN users LEFT JOIN conversation_clears; RETURNS ConversationItem list.
     let rows = sqlx::query_as::<_, Row>(
         r#"
         SELECT
             c.id,
             CASE WHEN c.user_a_id = $1 THEN c.user_b_id ELSE c.user_a_id END AS peer_id,
-            CASE WHEN c.user_a_id = $1 THEN ub.username ELSE ua.username END AS peer_username,
+            COALESCE(
+                CASE WHEN c.user_a_id = $1 THEN ub.username ELSE ua.username END,
+                $2
+            ) AS peer_username,
             c.created_at,
             c.last_message_at,
             COALESCE(rs.seq, 0) AS reaction_seq,
@@ -130,6 +137,7 @@ pub async fn list_conversations(
         "#,
     )
     .bind(auth.user_id)
+    .bind(DELETED_ACCOUNT_NAME)
     .fetch_all(&state.pool)
     .await
     .map_err(|err| AppError::Internal(format!("list conversations failed: {err}")))?;
@@ -235,14 +243,13 @@ pub async fn delete_conversation(
     // Human: Tell the other participant (and our own other devices) to drop or reload the
     // thread instead of waiting for the next poll to notice it changed.
     // Agent: PUBLISHES conversation.deleted; `me` scope stays inside the requester's devices.
-    let event = serde_json::json!({
-        "type": "conversation.deleted",
-        "conversation_id": conversation_id,
-        "user_id": auth.user_id,
-        "peer_user_id": peer_user_id,
-        "scope": scope,
-        "cleared_for_peer": cleared_for_peer,
-    });
+    let event = conversation_deleted_event(
+        conversation_id,
+        auth.user_id,
+        peer_user_id,
+        scope,
+        cleared_for_peer,
+    );
     if let Ok(payload) = serde_json::to_string(&event) {
         let audience: Vec<Uuid> = if for_everyone {
             vec![auth.user_id, peer_user_id]
@@ -272,6 +279,125 @@ pub async fn delete_conversation(
         tombstoned,
         contact_removed,
     }))
+}
+
+/// `conversation.deleted` WS payload. `user_id` deleted the chat; `peer_user_id` is the other
+/// participant. Clients drop their copy when `cleared_for_peer` is true (or they deleted it),
+/// and reload the thread otherwise.
+pub(crate) fn conversation_deleted_event(
+    conversation_id: Option<Uuid>,
+    user_id: Uuid,
+    peer_user_id: Uuid,
+    scope: &str,
+    cleared_for_peer: bool,
+) -> serde_json::Value {
+    serde_json::json!({
+        "type": "conversation.deleted",
+        "conversation_id": conversation_id,
+        "user_id": user_id,
+        "peer_user_id": peer_user_id,
+        "scope": scope,
+        "cleared_for_peer": cleared_for_peer,
+    })
+}
+
+/// One chat of an account being deleted, as [`delete_chats_for_both`] left it.
+pub(crate) struct DeletedChat {
+    pub conversation_id: Uuid,
+    pub peer_user_id: Uuid,
+    /// The peer had `allow_peer_chat_delete` on, so their copy was cleared as well.
+    pub cleared_for_peer: bool,
+}
+
+/// "Delete chat for both" on every chat `user_id` has with someone else, for
+/// `DELETE /auth/account`.
+///
+/// Human: The same promise as `DELETE /conversations/{peer}?scope=everyone`: what the account
+/// sent becomes "Message deleted", a peer who allowed `allow_peer_chat_delete` loses the chat,
+/// and everyone else keeps their own messages. The caller revokes the account's devices first
+/// and drops its contacts itself.
+/// Agent: SELECT conversations FOR UPDATE (id order) JOIN users; UPDATE messages/media_objects
+/// (tombstones); upsert conversation_clears; purge fully cleared messages; RETURNS one
+/// DeletedChat per conversation.
+pub(crate) async fn delete_chats_for_both(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: Uuid,
+    at: DateTime<Utc>,
+) -> Result<Vec<DeletedChat>, AppError> {
+    #[derive(FromRow)]
+    struct Row {
+        id: Uuid,
+        peer_id: Uuid,
+        allow_peer_chat_delete: bool,
+    }
+
+    let rows = sqlx::query_as::<_, Row>(
+        r#"
+        SELECT c.id, p.id AS peer_id, p.allow_peer_chat_delete
+        FROM conversations c
+        INNER JOIN users p
+            ON p.id = CASE WHEN c.user_a_id = $1 THEN c.user_b_id ELSE c.user_a_id END
+        WHERE (c.user_a_id = $1 OR c.user_b_id = $1)
+          AND c.user_a_id <> c.user_b_id
+        ORDER BY c.id
+        FOR UPDATE OF c
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("list chats for account delete failed: {err}")))?;
+    let ids: Vec<Uuid> = rows.iter().map(|row| row.id).collect();
+
+    // `tombstone_own_messages` without its time bound: a send already under way when the
+    // deletion began stamps its own clock, which can be later than `at`.
+    sqlx::query(
+        r#"
+        UPDATE media_objects
+        SET message_id = NULL
+        WHERE message_id IN (
+            SELECT id FROM messages
+            WHERE conversation_id = ANY($1) AND sender_user_id = $2
+        )
+        "#,
+    )
+    .bind(&ids)
+    .bind(user_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("unlink media on account delete failed: {err}")))?;
+    sqlx::query(
+        r#"
+        UPDATE messages
+        SET ciphertext = NULL,
+            media_object_id = NULL,
+            deleted_for_everyone_at = $3
+        WHERE conversation_id = ANY($1)
+          AND sender_user_id = $2
+          AND deleted_for_everyone_at IS NULL
+        "#,
+    )
+    .bind(&ids)
+    .bind(user_id)
+    .bind(at)
+    .execute(&mut **tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("tombstone sent messages failed: {err}")))?;
+
+    let mut chats = Vec::with_capacity(rows.len());
+    for row in rows {
+        upsert_clear(tx, user_id, row.id, at).await?;
+        if row.allow_peer_chat_delete {
+            upsert_clear(tx, row.peer_id, row.id, at).await?;
+        }
+        purge_fully_cleared(tx, row.id).await?;
+        chats.push(DeletedChat {
+            conversation_id: row.id,
+            peer_user_id: row.peer_id,
+            cleared_for_peer: row.allow_peer_chat_delete,
+        });
+    }
+    Ok(chats)
 }
 
 /// Timestamp at or before which `user_id` has hidden this conversation, if ever.
