@@ -1,4 +1,4 @@
-//! Registration, login, logout, me, and password change.
+//! Registration, login, logout, me, password change, and account deletion.
 
 use axum::{
     Json,
@@ -367,7 +367,18 @@ pub struct DeleteAccountRequest {
     pub password: String,
 }
 
-/// `DELETE /auth/account` — hard-delete account after password check.
+/// `DELETE /auth/account` — delete the account after a password check.
+///
+/// Human: Every chat is deleted for both, exactly as `DELETE /conversations/{peer}?scope=everyone`
+/// would: what the account sent becomes "Message deleted", a peer who allowed
+/// `allow_peer_chat_delete` loses the chat, and everyone else keeps their own messages. The
+/// users row stays as a placeholder (migration 021) because conversations, messages, uploads
+/// and calls reference it with `ON DELETE CASCADE`; deleting it wiped the peer's side too.
+/// Username and share code are released, the devices are revoked, and Saved Messages, uploads,
+/// contacts, requests, blocks and calls go.
+/// Agent: one transaction: lock users row, revoke devices, tombstone messages, clear chats,
+/// scrub users; then purge media blobs and PUBLISH conversation.deleted / contact.removed /
+/// call.ended to the peers.
 pub async fn delete_account(
     State(state): State<AppState>,
     auth: AuthContext,
@@ -382,64 +393,177 @@ pub async fn delete_account(
         )
         .await?;
 
-    let password_hash: String =
-        sqlx::query_scalar(r#"SELECT password_hash FROM users WHERE id = $1"#)
-            .bind(auth.user_id)
-            .fetch_one(&state.pool)
-            .await
-            .map_err(|err| AppError::Internal(format!("load user for delete failed: {err}")))?;
+    let password_hash: Option<String> = sqlx::query_scalar(
+        r#"SELECT password_hash FROM users WHERE id = $1 AND deleted_at IS NULL"#,
+    )
+    .bind(auth.user_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("load user for delete failed: {err}")))?
+    .flatten();
+    let Some(password_hash) = password_hash else {
+        return Err(AppError::unauthorized());
+    };
 
     if !verify_password(&body.password, &password_hash)? {
         return Err(AppError::invalid_credentials());
     }
 
+    let user_id = auth.user_id;
+    let now = Utc::now();
     let mut tx = state
         .pool
         .begin()
         .await
         .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
 
-    // Human: Tombstone sent messages so peers keep conversation history without ciphertext.
-    sqlx::query(
-        r#"
-        UPDATE messages
-        SET ciphertext = NULL,
-            media_object_id = NULL,
-            deleted_for_everyone_at = COALESCE(deleted_for_everyone_at, now())
-        WHERE sender_user_id = $1
-        "#,
+    // Human: NO KEY UPDATE, not UPDATE: a send racing this still takes its foreign-key lock
+    // on the row, and a second delete from another device waits here and then finds it gone.
+    let live: Option<Uuid> = sqlx::query_scalar(
+        r#"SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL FOR NO KEY UPDATE"#,
     )
-    .bind(auth.user_id)
-    .execute(&mut *tx)
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
     .await
-    .map_err(|err| AppError::Internal(format!("tombstone sent messages failed: {err}")))?;
+    .map_err(|err| AppError::Internal(format!("lock user for delete failed: {err}")))?;
+    if live.is_none() {
+        return Err(AppError::unauthorized());
+    }
 
-    sqlx::query(
-        r#"
-        UPDATE media_objects mo
-        SET message_id = NULL
-        FROM messages m
-        WHERE mo.message_id = m.id AND m.sender_user_id = $1
-        "#,
+    // Devices first: `send_message` holds its device row while it inserts, so a send racing
+    // this either commits before the chats are tombstoned below (and gets one) or is refused.
+    let device_ids: Vec<Uuid> = sqlx::query_scalar(
+        r#"SELECT id FROM devices WHERE user_id = $1 AND revoked_at IS NULL ORDER BY id"#,
     )
-    .bind(auth.user_id)
-    .execute(&mut *tx)
+    .bind(user_id)
+    .fetch_all(&mut *tx)
     .await
-    .map_err(|err| AppError::Internal(format!("unlink media on account delete failed: {err}")))?;
-
-    sqlx::query(r#"DELETE FROM users WHERE id = $1"#)
-        .bind(auth.user_id)
+    .map_err(|err| AppError::Internal(format!("list devices for delete failed: {err}")))?;
+    for device_id in &device_ids {
+        crate::routes::devices::revoke_device(&mut tx, *device_id).await?;
+    }
+    sqlx::query(r#"UPDATE devices SET name = NULL WHERE user_id = $1"#)
+        .bind(user_id)
         .execute(&mut *tx)
         .await
-        .map_err(|err| AppError::Internal(format!("delete user failed: {err}")))?;
+        .map_err(|err| AppError::Internal(format!("scrub device names failed: {err}")))?;
+
+    // Locks each chat's row before touching its messages, the order `DELETE /conversations` uses.
+    let chats = crate::routes::conversations::delete_chats_for_both(&mut tx, user_id, now).await?;
+
+    // Saved Messages has nobody to keep it for (cascades its messages, clears and hides, and
+    // unlinks its media).
+    sqlx::query(r#"DELETE FROM conversations WHERE user_a_id = $1 AND user_b_id = $1"#)
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| AppError::Internal(format!("delete saved messages failed: {err}")))?;
+
+    // Two directed rows per contact, so each peer comes back twice.
+    let mut contact_ids: Vec<Uuid> = sqlx::query_scalar(
+        r#"
+        DELETE FROM contacts WHERE user_id = $1 OR contact_user_id = $1
+        RETURNING CASE WHEN user_id = $1 THEN contact_user_id ELSE user_id END
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|err| {
+        AppError::Internal(format!("delete contacts on account delete failed: {err}"))
+    })?;
+    contact_ids.sort_unstable();
+    contact_ids.dedup();
+    for (table, filter) in [
+        ("contact_requests", "from_user_id = $1 OR to_user_id = $1"),
+        ("blocks", "blocker_id = $1 OR blocked_id = $1"),
+        ("message_hides", "user_id = $1"),
+    ] {
+        sqlx::query(&format!("DELETE FROM {table} WHERE {filter}"))
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| AppError::Internal(format!("delete {table} failed: {err}")))?;
+    }
+
+    let ended_calls = crate::routes::calls::delete_calls_of_account(&mut tx, user_id, now).await?;
+
+    let media_ids: Vec<Uuid> =
+        sqlx::query_scalar(r#"SELECT id FROM media_objects WHERE uploader_user_id = $1"#)
+            .bind(user_id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(|err| AppError::Internal(format!("list media for delete failed: {err}")))?;
+
+    sqlx::query(
+        r#"
+        UPDATE users
+        SET username = NULL,
+            share_code = NULL,
+            password_hash = NULL,
+            allow_peer_chat_delete = false,
+            deleted_at = $2
+        WHERE id = $1
+        "#,
+    )
+    .bind(user_id)
+    .bind(now)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("scrub user failed: {err}")))?;
 
     tx.commit()
         .await
         .map_err(|err| AppError::Internal(format!("commit account delete failed: {err}")))?;
 
+    // The account is gone either way; blobs a failed purge leaves are unlinked, so the orphan
+    // GC takes them.
+    let media_purged = match crate::routes::media::purge_media_ids(&state, &media_ids).await {
+        Ok(purged) => purged,
+        Err(err) => {
+            tracing::warn!(user_id = %user_id, error = %err, "auth.account_delete media purge failed");
+            0
+        }
+    };
+
+    // Human: Peers' apps drop or reload the chat and the contact now rather than on their next
+    // poll. Same events as deleting the chat for both and removing the contact.
+    // Agent: PUBLISHES to peers only; the account's own devices are revoked.
+    let mut events: Vec<(Uuid, serde_json::Value)> = Vec::new();
+    for chat in &chats {
+        let event = crate::routes::conversations::conversation_deleted_event(
+            Some(chat.conversation_id),
+            user_id,
+            chat.peer_user_id,
+            "everyone",
+            chat.cleared_for_peer,
+        );
+        events.push((chat.peer_user_id, event));
+    }
+    for contact_id in &contact_ids {
+        let event = serde_json::json!({
+            "type": "contact.removed",
+            "user_id": user_id,
+            "peer_user_id": contact_id,
+        });
+        events.push((*contact_id, event));
+    }
+    events.extend(ended_calls);
+    for (peer_user_id, event) in events {
+        if let Ok(payload) = serde_json::to_string(&event) {
+            state
+                .realtime
+                .publish_to_users([peer_user_id], None, &payload)
+                .await;
+        }
+    }
+
     tracing::info!(
-        user_id = %auth.user_id,
-        username = %auth.username,
+        user_id = %user_id,
+        chats = chats.len(),
+        chats_cleared_for_peer = chats.iter().filter(|chat| chat.cleared_for_peer).count(),
+        devices_revoked = device_ids.len(),
+        media_purged,
         "auth.account_delete ok"
     );
 

@@ -41,11 +41,14 @@ pub async fn create_block(
         return Err(AppError::validation("Cannot block yourself."));
     }
 
-    let exists: bool = sqlx::query_scalar(r#"SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)"#)
-        .bind(body.user_id)
-        .fetch_one(&state.pool)
-        .await
-        .map_err(|err| AppError::Internal(format!("block target check failed: {err}")))?;
+    // A deleted account has no username for `GET /blocks` to list, and nothing left to block.
+    let exists: bool = sqlx::query_scalar(
+        r#"SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND deleted_at IS NULL)"#,
+    )
+    .bind(body.user_id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("block target check failed: {err}")))?;
     if !exists {
         return Err(AppError::not_found("User not found."));
     }
@@ -153,7 +156,7 @@ pub async fn list_blocks(
         r#"
         SELECT b.blocked_id, u.username, b.created_at
         FROM blocks b
-        INNER JOIN users u ON u.id = b.blocked_id
+        INNER JOIN users u ON u.id = b.blocked_id AND u.deleted_at IS NULL
         WHERE b.blocker_id = $1
         ORDER BY b.created_at DESC
         "#,

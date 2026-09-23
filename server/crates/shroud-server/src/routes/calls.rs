@@ -525,6 +525,56 @@ fn call_to_response(row: &CallRow) -> CallResponse {
     }
 }
 
+/// Deletes every call an account took part in, for `DELETE /auth/account`.
+///
+/// Human: A ringing or active call must end with the account, or the other person stays busy
+/// and their app keeps waiting on it. It ends the way the account's own hangup would (see
+/// `end_call_as`); the rows then go, as the old `ON DELETE CASCADE` removed them.
+/// Agent: DELETE FROM calls WHERE caller or callee; RETURNS (other participant, `call.ended`
+/// event) for calls that were still ringing or active, to publish after commit.
+pub(crate) async fn delete_calls_of_account(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: Uuid,
+    at: DateTime<Utc>,
+) -> Result<Vec<(Uuid, serde_json::Value)>, AppError> {
+    let rows = sqlx::query_as::<_, CallRow>(
+        r#"
+        DELETE FROM calls
+        WHERE caller_user_id = $1 OR callee_user_id = $1
+        RETURNING id, caller_user_id, caller_device_id, callee_user_id, callee_device_id,
+                  modality, status, ended_reason, created_at, answered_at, ended_at
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("delete account calls failed: {err}")))?;
+
+    let mut ended = Vec::new();
+    for mut call in rows {
+        let by_caller = call.caller_user_id == user_id;
+        let (status, reason) = match (call.status.as_str(), by_caller) {
+            ("ringing", true) => ("cancelled", "cancelled"),
+            ("ringing", false) => ("missed", "declined"),
+            ("active", _) => ("ended", "hangup"),
+            _ => continue,
+        };
+        call.status = status.into();
+        call.ended_reason = Some(reason.into());
+        call.ended_at = Some(at);
+        let peer = if by_caller {
+            call.callee_user_id
+        } else {
+            call.caller_user_id
+        };
+        ended.push((
+            peer,
+            serde_json::json!({ "type": "call.ended", "call": call_to_response(&call) }),
+        ));
+    }
+    Ok(ended)
+}
+
 /// Mark unanswered `ringing` calls as `missed` after [`RINGING_TIMEOUT_SECS`].
 ///
 /// Human: Prevents stuck busy state when the callee never answers and clients disconnect.

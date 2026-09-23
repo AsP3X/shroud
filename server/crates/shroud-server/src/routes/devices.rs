@@ -105,6 +105,24 @@ pub async fn delete_device(
         return Err(AppError::not_found("Device not found."));
     }
 
+    revoke_device(&mut tx, device_id).await?;
+
+    tx.commit()
+        .await
+        .map_err(|err| AppError::Internal(format!("commit delete device failed: {err}")))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Signs a device out for good: sessions, keys, push token, PIN guard and undelivered delivery
+/// rows go, and the row is marked `revoked_at`. Also used by `DELETE /auth/account`.
+///
+/// Agent: UPDATE sessions/devices SET revoked_at; DELETE key tables, push_tokens,
+/// device_pin_guards and undelivered message_deliveries for the device.
+pub(crate) async fn revoke_device(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    device_id: Uuid,
+) -> Result<(), AppError> {
     sqlx::query(
         r#"
         UPDATE sessions SET revoked_at = now()
@@ -112,11 +130,11 @@ pub async fn delete_device(
         "#,
     )
     .bind(device_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await
     .map_err(|err| AppError::Internal(format!("revoke device sessions failed: {err}")))?;
 
-    crate::routes::auth::purge_device_secrets(&mut tx, device_id).await?;
+    crate::routes::auth::purge_device_secrets(tx, device_id).await?;
 
     // Nobody will ever fetch these; delivered rows stay so sent messages keep their ticks.
     sqlx::query(
@@ -125,19 +143,15 @@ pub async fn delete_device(
         "#,
     )
     .bind(device_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await
     .map_err(|err| AppError::Internal(format!("drop pending deliveries failed: {err}")))?;
 
     sqlx::query(r#"UPDATE devices SET revoked_at = now() WHERE id = $1"#)
         .bind(device_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await
         .map_err(|err| AppError::Internal(format!("revoke device failed: {err}")))?;
 
-    tx.commit()
-        .await
-        .map_err(|err| AppError::Internal(format!("commit delete device failed: {err}")))?;
-
-    Ok(StatusCode::NO_CONTENT)
+    Ok(())
 }

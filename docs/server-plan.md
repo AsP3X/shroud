@@ -112,7 +112,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Block | Drop contact edges + cancel pending either way; store block; unblock does not re-friend |
 | Message delete | Delete-for-me via `message_hides`; delete-for-everyone **anytime** (tombstone + clear ciphertext) |
 | Delete WS | `message.deleted` fan-out for for-everyone |
-| Account delete | Hard delete user cascade; **tombstone** messages they sent for peers |
+| Account delete | Every chat deleted **for both**: their messages become tombstones; a peer with `allow_peer_chat_delete` loses the chat, others keep their own messages. Users row stays as a scrubbed placeholder (migration 021); username and share code are released |
 | Receipts | Delivery + optional read |
 | Multi-device send | Server fan-out to sender’s other devices |
 | History page | Keyset cursor `(created_at, id)` |
@@ -138,7 +138,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Area | Decision |
 | --- | --- |
 | Rate limits | Redis; budgets in [Rate limits](#rate-limits-starting-budgets) |
-| Account delete | Hard delete + cascade |
+| Account delete | Scrubbed placeholder row, never `DELETE FROM users` (conversations, messages, media and calls cascade from it) |
 | Push | Data APNs (opaque ids) after online WS, same overall v1 |
 | Calls | After messaging + data push; signaling + coturn |
 | Compose | Postgres + Redis + Nebular + API; + coturn for calls |
@@ -216,11 +216,14 @@ Forward-only sqlx migrations under `server/migrations/postgres/`. Do not edit ap
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | `UUID` PK | `gen_random_uuid()`; shareable public id |
-| `username` | `TEXT` NOT NULL UNIQUE | Case-folded form only |
-| `password_hash` | `TEXT` NOT NULL | argon2id PHC string |
+| `username` | `TEXT` NULL UNIQUE | Case-folded form only; NULL once deleted |
+| `password_hash` | `TEXT` NULL | argon2id PHC string; NULL once deleted |
+| `share_code` | `TEXT` NULL UNIQUE | QR / deep-link code (migration 011); NULL once deleted |
+| `allow_peer_chat_delete` | `BOOLEAN` NOT NULL | Default false (migration 016) |
 | `created_at` | `TIMESTAMPTZ` NOT NULL | `now()` |
+| `deleted_at` | `TIMESTAMPTZ` NULL | Set by `DELETE /auth/account`; the row stays as a placeholder (migration 021) |
 
-Indexes: unique on `username` (constraint). Optional non-unique not required.
+Indexes: unique on `username` (constraint). Optional non-unique not required. CHECK `users_deleted_scrubbed`: a live row has `username`, `share_code` and `password_hash`; a deleted row has none of them, so it can't sign in or be found, and its name and code are free for new signups.
 
 #### `devices`
 
@@ -1281,10 +1284,24 @@ Add optional:
 
 #### `DELETE /auth/account` → `204`
 
-- Authenticated; body `{ "password": "..." }` **required** (verify before hard delete).
-- Tombstone all messages where `sender_user_id = me` (clear ciphertext, set deleted_for_everyone_at).
-- `DELETE FROM users WHERE id = me` (cascades devices, sessions, keys, contacts, blocks, media ownership, hides, deliveries via FKs).
-- Remaining conversation rows may still exist for peer with tombstoned messages.
+- Authenticated; body `{ "password": "..." }` **required** (verified first; `401` when wrong).
+- Every chat is deleted **for both**, as `DELETE /conversations/:peer?scope=everyone` does: all messages
+  where `sender_user_id = me` become tombstones (ciphertext and media cleared, `deleted_for_everyone_at`
+  set), my clear watermark moves to now, and a peer with `allow_peer_chat_delete` gets theirs moved too
+  (their copy is gone; messages both have cleared past are deleted). Every other peer keeps the chat
+  with their own messages; `GET /conversations` names me `"Deleted account"`.
+- The `users` row is **not** deleted: conversations, messages, media and calls reference it (and my
+  devices) with `ON DELETE CASCADE`, so deleting it wiped each peer's side of the chat as well. It stays
+  as a placeholder (migration 021): `username`, `share_code` and `password_hash` NULL, `deleted_at` set.
+  The name and code can be registered again; `GET /users/*` and contact requests answer `404`.
+- Devices are revoked as by `DELETE /devices/:id` (sessions, keys, push tokens, PIN guards, undelivered
+  deliveries) and their names cleared. Saved Messages, my uploads (rows and blobs), contacts, contact
+  requests, blocks and hides are deleted. Ringing or active calls end as if I hung up, then all my call
+  rows are deleted.
+- WS to peers after commit: `conversation.deleted` per chat (`user_id` me, `scope: "everyone"`,
+  `cleared_for_peer`), `contact.removed` per contact, `call.ended` per call that was still live.
+- `POST /messages` holds the sender's device row (`FOR SHARE`) until commit, so a send racing the
+  deletion is either tombstoned with the rest or refused with `401`.
 
 ### Later routes (outline)
 
@@ -1322,7 +1339,7 @@ Add optional:
 | Risk | Note |
 | --- | --- |
 | No password recovery | No live session ⇒ no server history access even with phrase. Document in UI; optional recovery codes later. |
-| Indefinite retention | Storage growth; rely on user delete + account hard-delete + capacity planning. |
+| Indefinite retention | Storage growth; rely on user delete + account deletion + capacity planning. |
 | Shareable UUIDs | Still require contact accept; rate-limit lookups and requests. |
 
 ---

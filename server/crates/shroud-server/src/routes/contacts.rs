@@ -95,12 +95,13 @@ pub async fn create_request(
         ));
     }
 
-    let target_exists: bool =
-        sqlx::query_scalar(r#"SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)"#)
-            .bind(body.user_id)
-            .fetch_one(&state.pool)
-            .await
-            .map_err(|err| AppError::Internal(format!("target user check failed: {err}")))?;
+    let target_exists: bool = sqlx::query_scalar(
+        r#"SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND deleted_at IS NULL)"#,
+    )
+    .bind(body.user_id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("target user check failed: {err}")))?;
     if !target_exists {
         return Err(AppError::not_found("User not found."));
     }
@@ -330,11 +331,17 @@ pub async fn list_requests(
         } else {
             row.to_user_id
         };
-        let username: String = sqlx::query_scalar(r#"SELECT username FROM users WHERE id = $1"#)
-            .bind(peer_id)
-            .fetch_one(&state.pool)
-            .await
-            .map_err(|err| AppError::Internal(format!("peer username failed: {err}")))?;
+        let username: Option<String> =
+            sqlx::query_scalar(r#"SELECT username FROM users WHERE id = $1"#)
+                .bind(peer_id)
+                .fetch_one(&state.pool)
+                .await
+                .map_err(|err| AppError::Internal(format!("peer username failed: {err}")))?;
+        // A deleted account has no username (migration 021). Account deletion drops its
+        // requests; this only skips one written while that deletion was running.
+        let Some(username) = username else {
+            continue;
+        };
 
         requests.push(ContactRequestResponse {
             id: row.id,
@@ -546,7 +553,7 @@ pub async fn list_contacts(
         r#"
         SELECT c.contact_user_id, u.username, c.created_at
         FROM contacts c
-        INNER JOIN users u ON u.id = c.contact_user_id
+        INNER JOIN users u ON u.id = c.contact_user_id AND u.deleted_at IS NULL
         WHERE c.user_id = $1
         ORDER BY u.username ASC
         "#,
