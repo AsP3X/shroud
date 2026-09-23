@@ -190,6 +190,20 @@ export async function sealMessage(opts: {
   return utf8(JSON.stringify(envelope));
 }
 
+/**
+ * A v2 envelope (identity boxes only, tagged): for records overwritten in place, such as
+ * reactions, where ratchet steps would be lost and every device must open them at any time.
+ */
+export async function sealIdentityEnvelope(
+  plaintext: Uint8Array,
+  ourPrivate: Uint8Array,
+  peerPublic: Uint8Array,
+  ourPublic: Uint8Array,
+): Promise<Uint8Array> {
+  if (!isVaultOpen()) throw new Error("seal: vault is locked");
+  return sealV2(plaintext, ourPrivate, peerPublic, ourPublic);
+}
+
 async function sealV2(
   plaintext: Uint8Array,
   ourPrivate: Uint8Array,

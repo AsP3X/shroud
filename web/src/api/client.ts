@@ -366,8 +366,27 @@ export const api = {
       conversation_id: string | null;
       messages: WireMessage[];
       has_more: boolean;
+      /** Highest reaction seq in the chat as the page was read (see `reactions.ts`). */
+      reaction_seq?: number | null;
     }>(`/messages?${q.toString()}`, { token });
   },
+  putReaction: (token: string, messageId: string, ciphertext: string) =>
+    request<WireReaction>(`/messages/${encodeURIComponent(messageId.toLowerCase())}/reaction`, {
+      method: "PUT",
+      token,
+      body: JSON.stringify({ ciphertext }),
+    }),
+  /** Undefined (`204`) when there was no reaction to remove. */
+  deleteReaction: (token: string, messageId: string) =>
+    request<WireReaction | undefined>(
+      `/messages/${encodeURIComponent(messageId.toLowerCase())}/reaction`,
+      { method: "DELETE", token },
+    ),
+  reactionChanges: (token: string, peerUserId: string, afterSeq: number) =>
+    request<{ reactions: WireReaction[]; next_seq: number; has_more: boolean }>(
+      `/conversations/${encodeURIComponent(peerUserId.toLowerCase())}/reactions?after_seq=${afterSeq}`,
+      { token },
+    ),
   sendMessage: (
     token: string,
     body: {
@@ -413,4 +432,15 @@ export type WireMessage = {
   created_at: string;
   delivered?: boolean | null;
   read?: boolean | null;
+  /** History pages only: live sealed reactions (omitted when there are none). */
+  reactions?: WireReaction[];
+};
+
+/** One user's sealed reaction on one message; `ciphertext` null once taken back. */
+export type WireReaction = {
+  message_id: string;
+  user_id: string;
+  ciphertext: string | null;
+  seq: number;
+  updated_at: string;
 };

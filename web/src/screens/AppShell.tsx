@@ -9,6 +9,7 @@ import {
   type Conversation,
   type Session,
   type WireMessage,
+  type WireReaction,
 } from "../api/client";
 import { Avatar } from "../components/Avatar";
 import { ChatList, type ListEntry } from "../components/ChatList";
@@ -32,6 +33,7 @@ import {
   ensureVoiceLoaded,
   loadHistoryPage,
   peerIdForMessage,
+  peerIdentityPublic,
   forgetDecryptedState,
   forgetMessageLocally,
   isUnsent,
@@ -67,6 +69,14 @@ import {
   type PeerActivity,
 } from "../typing";
 import { lockNow as lockSession } from "../session";
+import {
+  applyReactionChanges,
+  emojiOf,
+  openReaction,
+  saveReaction,
+  withMyReaction,
+  type Reaction,
+} from "../reactions";
 import { useLinkPreviewComposer } from "../linkPreview/useLinkPreviewComposer";
 
 type PeerRef = { id: string; username: string };
@@ -154,6 +164,18 @@ export function AppShell({ session }: { session: Session }) {
   const droppedSends = useRef(new Set<string>());
   /** Server id for an optimistic bubble, once the send has been accepted. */
   const confirmedSends = useRef(new Map<string, string>());
+  /**
+   * Highest reaction seq applied to the open chat. Starts at the newest page's snapshot: every
+   * message loaded after that carries its own reactions, and changes to ones already on screen
+   * come through catch-up (`syncReactions`) or the socket.
+   */
+  const reactionCursor = useRef<number | null>(null);
+  const reactionSync = useRef<Promise<void> | null>(null);
+  /** Our latest wanted reaction per message while a save for it is in flight (taps collapse). */
+  const reactionIntents = useRef(new Map<string, string | null>());
+  /** Our reaction as the server last confirmed it, per message with a save in flight. */
+  const reactionConfirmed = useRef(new Map<string, Reaction | null>());
+  const [reactionNotice, setReactionNotice] = useState<{ id: number; text: string } | null>(null);
 
   function discardMessage(messageId: string) {
     releaseImage(messageId);
@@ -398,6 +420,136 @@ export function AppShell({ session }: { session: Session }) {
     };
   }, [refresh, endSession]);
 
+  /**
+   * Opens reaction changes and folds them into the open chat. Changes for messages it does not
+   * hold are skipped: those arrive with the message's own history page.
+   */
+  const applyWireReactions = useCallback(
+    async (wires: WireReaction[]) => {
+      const material = loadIdentity(session.user.id);
+      if (!material) return;
+      const epoch = historyEpoch.current;
+      const held = new Map(threadRef.current.map((m) => [m.id.toLowerCase(), m]));
+      const changes: { messageId: string; reaction: Reaction }[] = [];
+      for (const wire of wires) {
+        const message = held.get(wire.message_id.toLowerCase());
+        if (!message || message.deleted) continue;
+        const reaction = await openReaction(
+          wire,
+          session.user.id,
+          material,
+          (id) => peerIdentityPublic(session.token, id),
+          message.reactions,
+        );
+        changes.push({ messageId: wire.message_id, reaction });
+      }
+      if (epoch !== historyEpoch.current || changes.length === 0) return;
+      setThread((prev) => applyReactionChanges(prev, changes));
+    },
+    [session.token, session.user.id],
+  );
+
+  /** Brings reactions on messages already on screen up to `seen` (a page's snapshot). */
+  const syncReactions = useCallback(
+    (peerId: string, seen: number | null) => {
+      if (seen == null) return;
+      if (reactionCursor.current == null) {
+        reactionCursor.current = seen;
+        return;
+      }
+      if (seen <= reactionCursor.current || reactionSync.current) return;
+      const epoch = historyEpoch.current;
+      const run = (async () => {
+        let after = reactionCursor.current ?? seen;
+        // A long absence is walked a few pages per poll; the next one carries on.
+        for (let page = 0; page < 5; page += 1) {
+          const res = await api.reactionChanges(session.token, peerId, after);
+          if (epoch !== historyEpoch.current) return;
+          await applyWireReactions(res.reactions);
+          if (epoch !== historyEpoch.current) return;
+          after = res.next_seq;
+          reactionCursor.current = after;
+          if (!res.has_more) break;
+        }
+      })()
+        .catch(() => {
+          /* cursor kept: the next poll tries again */
+        })
+        .finally(() => {
+          if (reactionSync.current === run) reactionSync.current = null;
+        });
+      reactionSync.current = run;
+    },
+    [session.token, applyWireReactions],
+  );
+
+  /**
+   * Picking an emoji (bar, grid, chip): sets it, or takes it back when it already is ours.
+   * Shown at once; one save per message at a time, taps meanwhile collapse into one more save
+   * with the last choice. A failed save puts back what the server holds.
+   */
+  const react = useCallback(
+    (message: ChatMessage, emoji: string) => {
+      const peer = selectedRef.current;
+      const material = loadIdentity(session.user.id);
+      if (!peer || !material) return;
+      if (message.pending || message.failed || message.deleted || isUnsent(message)) {
+        setReactionNotice({ id: Date.now(), text: "You can react once the message is sent." });
+        return;
+      }
+      const me = session.user.id.toLowerCase();
+      const key = message.id.toLowerCase();
+      const live = threadRef.current.find((m) => m.id.toLowerCase() === key) ?? message;
+      const current = live.reactions?.find((r) => r.userId === me) ?? null;
+      const wanted = emojiOf(me, live.reactions) === emoji ? null : emoji;
+      const inFlight = reactionConfirmed.current.has(key);
+      if (!inFlight) reactionConfirmed.current.set(key, current);
+      setThread((prev) =>
+        withMyReaction(prev, key, me, { userId: me, emoji: wanted, seq: current?.seq ?? 0, pending: true }),
+      );
+      reactionIntents.current.set(key, wanted);
+      if (inFlight) return;
+
+      const epoch = historyEpoch.current;
+      void (async () => {
+        const peerPub = await peerIdentityPublic(session.token, peer.id).catch(() => null);
+        while (reactionIntents.current.has(key)) {
+          const next = reactionIntents.current.get(key) ?? null;
+          reactionIntents.current.delete(key);
+          try {
+            if (!peerPub) throw new Error("no peer key");
+            const saved = await saveReaction({
+              token: session.token,
+              me,
+              messageId: key,
+              emoji: next,
+              material,
+              peerIdentityPublic: peerPub,
+            });
+            // 204 on a removal: the server held none, which is what we wanted.
+            const confirmed = saved ?? null;
+            reactionConfirmed.current.set(key, confirmed);
+            if (!reactionIntents.current.has(key) && epoch === historyEpoch.current) {
+              setThread((prev) => withMyReaction(prev, key, me, confirmed));
+            }
+          } catch {
+            if (reactionIntents.current.has(key)) continue;
+            if (epoch === historyEpoch.current) {
+              const back = reactionConfirmed.current.get(key) ?? null;
+              setThread((prev) => withMyReaction(prev, key, me, back));
+              setReactionNotice({
+                id: Date.now(),
+                text: navigator.onLine ? "Couldn’t save your reaction." : "You’re offline. Your reaction wasn’t saved.",
+              });
+            }
+          }
+        }
+        reactionConfirmed.current.delete(key);
+      })();
+    },
+    [session.token, session.user.id],
+  );
+
   /** Fetches the page before the oldest one loaded; a no-op once the start is reached. */
   const loadOlder = useCallback((): Promise<void> => {
     if (olderLoad.current) return olderLoad.current;
@@ -438,6 +590,7 @@ export function AppShell({ session }: { session: Session }) {
     historyEpoch.current += 1;
     olderCursor.current = null;
     olderLoad.current = null;
+    reactionCursor.current = null;
     setHasOlder(false);
     setLoadingOlder(false);
     setThread([]);
@@ -458,6 +611,7 @@ export function AppShell({ session }: { session: Session }) {
         if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
         olderCursor.current = page.older;
         setHasOlder(page.older !== null);
+        reactionCursor.current = page.reactionSeq;
         // A message that arrived over the socket while the page was in flight stays.
         setThread((prev) => mergeMessages(page.messages, prev));
         setPreviewRev((n) => n + 1);
@@ -542,6 +696,13 @@ export function AppShell({ session }: { session: Session }) {
           })();
           return;
         }
+        if (event.type === "message.reaction") {
+          // Never moves the catch-up cursor: an event lost from the socket queue must still
+          // come back through catch-up, and applying one twice changes nothing (same seq).
+          const wire = event.raw.reaction as WireReaction | undefined;
+          if (wire?.message_id) void applyWireReactions([wire]);
+          return;
+        }
         if (
           event.type.startsWith("contact.") ||
           event.type === "conversation.deleted" ||
@@ -572,7 +733,7 @@ export function AppShell({ session }: { session: Session }) {
       realtime.current = null;
       connection.close();
     };
-  }, [session.token, session.user.id, navigate, refresh, markTyping, markRecording]);
+  }, [session.token, session.user.id, navigate, refresh, markTyping, markRecording, applyWireReactions]);
 
   useEffect(() => {
     if (!selected) return;
@@ -585,9 +746,12 @@ export function AppShell({ session }: { session: Session }) {
       const known = new Set(threadRef.current.map((m) => m.id));
       const peerId = open.id;
       fetchLatest(session.token, session.user.id, peerId, material, known)
-        .then((extra) => {
-          if (cancelled || extra.length === 0) return;
+        .then(({ messages: extra, reactionSeq }) => {
+          if (cancelled) return;
           if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
+          // Costs a request only when a reaction changed since the last one we applied.
+          syncReactions(peerId, reactionSeq);
+          if (extra.length === 0) return;
           setThread((prev) => mergeMessages(prev, extra));
           // A shared transcript may have filled in the chat preview.
           setPreviewRev((n) => n + 1);
@@ -600,7 +764,7 @@ export function AppShell({ session }: { session: Session }) {
       cancelled = true;
       window.clearInterval(tick);
     };
-  }, [selected?.id, session.token, session.user.id]);
+  }, [selected?.id, session.token, session.user.id, syncReactions]);
 
   const chatEntries = useMemo<ListEntry[]>(() => {
     void previewRev;
@@ -1320,6 +1484,9 @@ export function AppShell({ session }: { session: Session }) {
                 onCancelReply={() => setReplyTo(null)}
                 onDelete={(message, scope) => void deleteMessage(message, scope)}
                 myId={session.user.id}
+                myName={session.user.username}
+                onReact={react}
+                reactionNotice={reactionNotice}
                 linkPreview={linkPreview}
               />
             ) : (

@@ -45,6 +45,7 @@ export function ImageBubble({
   loadImage,
   onOpen,
   quote,
+  footer,
 }: {
   message: ChatMessage;
   /** The row's bubble classes (side, grouping, pending/failed). */
@@ -54,6 +55,8 @@ export function ImageBubble({
   onOpen: (message: ChatMessage) => void;
   /** Reply header drawn on the bubble above the photo. */
   quote?: ReactNode;
+  /** Under the media and caption: the reaction chips. */
+  footer?: ReactNode;
 }) {
   const [image, setImage] = useState<LoadedImage | null>(() => peekImage(message.id));
   const [status, setStatus] = useState<"idle" | "loading" | "failed">("idle");
@@ -222,6 +225,7 @@ export function ImageBubble({
           </span>
         </div>
       ) : null}
+      {footer ? <div className="media-reactions">{footer}</div> : null}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Copy, ExternalLink, Link, Reply, Trash2 } from "lucide-react";
 import { isUnsent, type ChatMessage } from "../messaging";
 import { ContextMenu, type MenuAnchor, type MenuItem } from "./ContextMenu";
@@ -18,10 +18,13 @@ export function MessageMenu({
   actions,
   copyLabel,
   settle = false,
+  header,
   onAction,
   onClose,
 }: {
   anchor: MessageMenuAnchor;
+  /** Above the actions: the reaction row. */
+  header?: ReactNode;
   actions: MessageMenuAction[];
   /** "Copy text", or "Copy selection" when part of the bubble is selected. */
   copyLabel?: string;
@@ -52,6 +55,7 @@ export function MessageMenu({
       anchor={anchor}
       items={actions.map((action) => all[action])}
       label="Message actions"
+      header={header}
       settle={settle}
       onSelect={onAction}
       onClose={onClose}

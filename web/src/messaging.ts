@@ -29,6 +29,7 @@ import {
   savePreview,
 } from "./crypto/plaintextCache";
 import { MAX_THUMB_BYTES } from "./media/envelopePreview";
+import { openReaction, type Reaction } from "./reactions";
 import { cacheSealedImage } from "./media/images";
 import type { PreparedImage } from "./media/prepareImage";
 import type { EncodedVideo } from "./media/prepareVideo";
@@ -103,6 +104,8 @@ export type ChatMessage = {
   localLinkImage?: boolean;
   delivered?: boolean;
   read?: boolean;
+  /** Everyone's reactions, oldest change first; removals stay as entries with no emoji. */
+  reactions?: Reaction[];
 };
 
 const peerKeyCache = new Map<string, Uint8Array>();
@@ -186,13 +189,30 @@ export async function ingestIncoming(
   return withPeerLock(peerUserId, () => decodeIncoming(dto, me, peerUserId, token, material));
 }
 
+/** A decoded message with the reactions its history page carried. */
+async function decodeWithReactions(
+  dto: WireMessage,
+  me: string,
+  peer: string,
+  token: string,
+  material: IdentityMaterial,
+): Promise<ChatMessage> {
+  const msg = await decodeIncoming(dto, me, peer, token, material);
+  if (!dto.reactions?.length || msg.deleted || msg.kind === "annotation") return msg;
+  const reactions: Reaction[] = [];
+  for (const wire of dto.reactions) {
+    reactions.push(await openReaction(wire, me, material, (id) => peerIdentityPublic(token, id)));
+  }
+  return { ...msg, reactions };
+}
+
 export async function fetchLatest(
   token: string,
   me: string,
   peerUserId: string,
   material: IdentityMaterial,
   knownIds: Set<string>,
-): Promise<ChatMessage[]> {
+): Promise<{ messages: ChatMessage[]; reactionSeq: number | null }> {
   const peer = peerUserId.toLowerCase();
   return withPeerLock(peer, async () => {
     const res = await api.listMessages(token, peer);
@@ -200,9 +220,9 @@ export async function fetchLatest(
     const out: ChatMessage[] = [];
     for (const dto of chronological) {
       if (knownIds.has(dto.id) || seenAnnotations.has(dto.id.toLowerCase())) continue;
-      out.push(await decodeIncoming(dto, me, peer, token, material));
+      out.push(await decodeWithReactions(dto, me, peer, token, material));
     }
-    return out;
+    return { messages: out, reactionSeq: res.reaction_seq ?? null };
   });
 }
 
@@ -572,6 +592,8 @@ export type HistoryPage = {
   messages: ChatMessage[];
   /** Pass back to `loadHistoryPage` for the page before this one; null once the start is reached. */
   older: HistoryCursor | null;
+  /** The chat's highest reaction seq as the page was read; null from servers without reactions. */
+  reactionSeq: number | null;
 };
 
 /** Newest page on open: small, so a chat shows up after one short decrypt. */
@@ -602,13 +624,14 @@ export async function loadHistoryPage(
     const res = await api.listMessages(token, peer, extra);
     const out: ChatMessage[] = [];
     for (const dto of [...res.messages].reverse()) {
-      out.push(await decodeIncoming(dto, me, peer, token, material));
+      out.push(await decodeWithReactions(dto, me, peer, token, material));
     }
     const oldest = res.messages[res.messages.length - 1];
     const more = (res.has_more || res.messages.length >= limit) && oldest;
     return {
       messages: applyAnnotations(out),
       older: more ? { createdAt: oldest.created_at, id: oldest.id } : null,
+      reactionSeq: res.reaction_seq ?? null,
     };
   });
 }
@@ -1054,6 +1077,7 @@ export function tombstone(message: ChatMessage): ChatMessage {
     mediaObjectId: null,
     replyTo: null,
     linkPreview: null,
+    reactions: [],
   };
 }
 

@@ -38,6 +38,7 @@ export function VideoBubble({
   query,
   onOpen,
   quote,
+  footer,
   onDownload,
   onCancelDownload,
 }: {
@@ -47,6 +48,8 @@ export function VideoBubble({
   onOpen: (message: ChatMessage) => void;
   /** Reply header drawn on the bubble above the poster. */
   quote?: ReactNode;
+  /** Under the media and caption: the reaction chips. */
+  footer?: ReactNode;
   onDownload: (message: ChatMessage) => void;
   onCancelDownload: (id: string) => void;
 }) {
@@ -181,6 +184,7 @@ export function VideoBubble({
           </span>
         </div>
       ) : null}
+      {footer ? <div className="media-reactions">{footer}</div> : null}
     </div>
   );
 }
