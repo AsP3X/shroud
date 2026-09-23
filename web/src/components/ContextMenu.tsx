@@ -61,6 +61,7 @@ export function ContextMenu<Id extends string>({
   onSelect,
   onClose,
   trigger,
+  returnFocus,
   settle = false,
 }: {
   anchor: MenuAnchor;
@@ -76,6 +77,9 @@ export function ContextMenu<Id extends string>({
    * pressing it again is left to its own click (a toggle) rather than counted as "outside".
    */
   trigger?: HTMLElement | null;
+  /** Where focus goes back when there is no `trigger` (the control focused when the keyboard
+   * opened the menu); clicks on it still close the menu. */
+  returnFocus?: HTMLElement | null;
   /** Opened by a finger that is still down. Ignore that gesture, then accept taps. */
   settle?: boolean;
 }) {
@@ -84,17 +88,17 @@ export function ContextMenu<Id extends string>({
     null,
   );
   const [live, setLive] = useState(!settle);
-  /* Content that grows after opening (the reaction row expanding) re-fits the menu on screen. */
+  /* Content that grows after opening (the reaction row expanding) re-fits the menu on screen.
+     Compared with the size it was placed at, not "skip the first callback": a throttled frame can
+     deliver that first callback only after the menu has already grown. */
   const [grown, setGrown] = useState(0);
+  const placedSize = useRef({ width: 0, height: 0 });
   useEffect(() => {
     const node = menu.current;
     if (!node || typeof ResizeObserver === "undefined") return;
-    let first = true;
     const observer = new ResizeObserver(() => {
-      if (first) {
-        first = false;
-        return;
-      }
+      const placed = placedSize.current;
+      if (node.offsetWidth === placed.width && node.offsetHeight === placed.height) return;
       setGrown((n) => n + 1);
     });
     observer.observe(node);
@@ -104,8 +108,10 @@ export function ContextMenu<Id extends string>({
      on every render would drop events mid-gesture. */
   const close = useRef(onClose);
   close.current = onClose;
-  const opener = useRef(trigger);
-  opener.current = trigger;
+  const toggler = useRef(trigger);
+  toggler.current = trigger;
+  const opener = useRef(trigger ?? returnFocus);
+  opener.current = trigger ?? returnFocus;
 
   /* Measure once mounted (invisible until then), then clamp into the viewport. The layout size,
      not getBoundingClientRect: that includes the scale-in animation's first frame and comes up
@@ -114,6 +120,7 @@ export function ContextMenu<Id extends string>({
     const node = menu.current;
     if (!node) return;
     const { offsetWidth: width, offsetHeight: height } = node;
+    placedSize.current = { width, height };
     const maxLeft = Math.max(EDGE, window.innerWidth - width - EDGE);
     const maxTop = Math.max(EDGE, window.innerHeight - height - EDGE);
     const fitsRight = anchor.x + width + EDGE <= window.innerWidth;
@@ -148,7 +155,7 @@ export function ContextMenu<Id extends string>({
     if (placed && live) {
       // The first action, not a control in the header: Enter must not pick a reaction.
       const first =
-        menu.current?.querySelector<HTMLButtonElement>('[role="menuitem"]') ??
+        menu.current?.querySelector<HTMLButtonElement>(".ctx-menu-item") ??
         menu.current?.querySelector<HTMLButtonElement>("button");
       first?.focus({ preventScroll: true });
     }
@@ -167,7 +174,7 @@ export function ContextMenu<Id extends string>({
     };
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
-      if (menu.current?.contains(target) || opener.current?.contains(target)) return;
+      if (menu.current?.contains(target) || toggler.current?.contains(target)) return;
       close.current();
     };
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -192,7 +199,8 @@ export function ContextMenu<Id extends string>({
   }, []);
 
   /* Arrow keys walk the items and wrap; Home/End jump; Tab leaves the menu. A header with
-     controls (the reaction row) is one stop for Up/Down, walked with Left/Right. */
+     controls (the reaction row) is one stop for Up/Down, walked with Left/Right; grown into a
+     grid (the full set), Up/Down move a row within it and leave it past its first or last row. */
   function onMenuKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     const root = menu.current;
     if (!root) return;
@@ -205,6 +213,25 @@ export function ContextMenu<Id extends string>({
       event.preventDefault();
       headerButtons[(at + step + headerButtons.length) % headerButtons.length]?.focus();
       return;
+    }
+    if (inHeader && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      // Rows by centre line: a smaller button centred in a row ("more") is in that row.
+      const down = event.key === "ArrowDown";
+      const centre = (b: HTMLElement) => b.offsetTop + b.offsetHeight / 2;
+      const middle = (b: HTMLElement) => b.offsetLeft + b.offsetWidth / 2;
+      const here = centre(active);
+      const half = active.offsetHeight / 2;
+      const beyond = headerButtons.filter((b) => (down ? centre(b) - here : here - centre(b)) >= half);
+      if (beyond.length > 0) {
+        const rowCentre = down ? Math.min(...beyond.map(centre)) : Math.max(...beyond.map(centre));
+        const row = beyond.filter((b) => Math.abs(centre(b) - rowCentre) < half);
+        const nearest = row.reduce((best, b) =>
+          Math.abs(middle(b) - middle(active)) < Math.abs(middle(best) - middle(active)) ? b : best,
+        );
+        event.preventDefault();
+        nearest.focus();
+        return;
+      }
     }
     const items = [...root.querySelectorAll<HTMLButtonElement>(".ctx-menu-item")];
     const headerStop =

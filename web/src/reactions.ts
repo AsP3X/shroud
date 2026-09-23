@@ -8,7 +8,7 @@
  * the server cannot move it onto another; a removal keeps its entry with no emoji, so a late,
  * older change cannot bring the reactions back. See docs/architecture.md.
  */
-import { api, type WireReaction } from "./api/client";
+import { api, ApiError, type WireReaction } from "./api/client";
 import { utf8, utf8decode } from "./crypto/bytes";
 import {
   envelopeToWireB64,
@@ -53,12 +53,58 @@ export const ALL_REACTIONS = [
 ];
 
 const MAX_EMOJI_BYTES = 32;
-const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+/* Made on first use: `Intl.Segmenter` is missing from older browsers (Firefox before 125), and
+   this module loads with the app. */
+let segmenter: Intl.Segmenter | null | undefined;
+
+/**
+ * Emoji graphemes without `Intl.Segmenter`: joiners, variation selectors, skin tones, keycaps
+ * and tags extend the one before; a joiner joins an emoji only to an emoji (as Unicode's GB11
+ * rule does); two regional indicators are one flag. Exported for the selftest.
+ */
+export function roughGraphemeCount(text: string): number {
+  let count = 0;
+  let pictographic = false;
+  let joiner = false;
+  let regional = 0;
+  for (const char of text) {
+    const cp = char.codePointAt(0) ?? 0;
+    if (cp === 0x200d) {
+      joiner = pictographic;
+      continue;
+    }
+    const extending =
+      (cp >= 0xfe00 && cp <= 0xfe0f) || (cp >= 0x1f3fb && cp <= 0x1f3ff) || cp === 0x20e3 || (cp >= 0xe0020 && cp <= 0xe007f);
+    if (extending) continue;
+    const isPictographic = /\p{Extended_Pictographic}/u.test(char);
+    if (joiner && isPictographic) {
+      joiner = false;
+      continue;
+    }
+    joiner = false;
+    if (cp >= 0x1f1e6 && cp <= 0x1f1ff) {
+      regional += 1;
+      if (regional % 2 === 0) continue;
+    } else {
+      regional = 0;
+    }
+    pictographic = isPictographic;
+    count += 1;
+  }
+  return count;
+}
+
+function graphemeCount(text: string): number {
+  if (segmenter === undefined) {
+    segmenter = typeof Intl.Segmenter === "function" ? new Intl.Segmenter(undefined, { granularity: "grapheme" }) : null;
+  }
+  return segmenter ? [...segmenter.segment(text)].length : roughGraphemeCount(text);
+}
 
 /** One grapheme drawn as an emoji: rejects text, digits and several emoji at once. */
 export function isSingleEmoji(text: string): boolean {
   if (!text || utf8(text).length > MAX_EMOJI_BYTES) return false;
-  if ([...segmenter.segment(text)].length !== 1) return false;
+  if (graphemeCount(text) !== 1) return false;
   if (/^\p{Emoji_Presentation}/u.test(text)) return true;
   // "❤" + VS16, keycaps, flags: an emoji-capable base made an emoji by what follows.
   return /^\p{Emoji}/u.test(text) && [...text].length > 1;
@@ -98,6 +144,19 @@ export function toggledReactions(emoji: string, current: string[], limit: number
   const next = [...current, emoji];
   const cap = Math.max(1, limit);
   return next.length > cap ? next.slice(next.length - cap) : next;
+}
+
+/**
+ * What we changed (`base` → `mine`) re-applied onto the set the server holds now (`theirs`,
+ * written by our other device meanwhile): emoji we added are added, emoji we took back go, the
+ * rest stays theirs. Past `limit` the oldest go, as with `toggledReactions`.
+ */
+export function rebasedReactions(mine: string[], base: string[], theirs: string[], limit: number): string[] {
+  const takenBack = new Set(base.filter((e) => !mine.includes(e)));
+  const result = theirs.filter((e) => !takenBack.has(e));
+  for (const emoji of mine) if (!base.includes(emoji) && !result.includes(emoji)) result.push(emoji);
+  const cap = Math.max(1, limit);
+  return result.length > cap ? result.slice(result.length - cap) : result;
 }
 
 function sortKey(reaction: Reaction): number {
@@ -214,8 +273,11 @@ export function withMyReaction(
 }
 
 /**
- * Opens one sealed record. A record already held at the same seq is reused; one that does not
- * open counts as no reaction (its seq still wins over older ones).
+ * Opens one sealed record. A record already held at the same seq is reused — ours too: an entry
+ * of ours that isn't pending is the record at its seq. One that does not open counts as no
+ * reaction (its seq still wins over older ones). Rejects only when the sender's key is out of
+ * reach right now (offline, the server struggling) — no verdict on the record, so the caller
+ * must come back for it rather than record a removal.
  */
 export async function openReaction(
   wire: WireReaction,
@@ -227,16 +289,23 @@ export async function openReaction(
   const userId = wire.user_id.toLowerCase();
   const removed: Reaction = { userId, emojis: [], seq: wire.seq };
   if (!wire.ciphertext) return removed;
+  const mine = userId === me.toLowerCase();
   const known = held.find((r) => r.userId === userId && r.seq === wire.seq && !r.pending);
   if (known) return known;
+  let sender: Uint8Array;
+  try {
+    sender = mine ? material.agreementPublic : await peerIdentity(userId);
+  } catch (err) {
+    if (err instanceof ApiError && (err.status === 0 || err.status === 429 || err.status >= 500)) throw err;
+    return removed;
+  }
   try {
     // Tagged v2 only: every build that writes reactions tags its boxes.
-    const mine = userId === me.toLowerCase();
     const plain = await openTaggedEnvelope({
       envelopeData: wireB64ToEnvelope(wire.ciphertext),
       ourPrivate: material.agreementPrivate,
       ourIdentityPublic: material.agreementPublic,
-      senderIdentityPublic: mine ? material.agreementPublic : await peerIdentity(userId),
+      senderIdentityPublic: sender,
       asSender: mine,
     });
     return { userId, emojis: parseReaction(utf8decode(plain), wire.message_id) ?? [], seq: wire.seq };
@@ -245,30 +314,49 @@ export async function openReaction(
   }
 }
 
+/** What a save did: written (null — a removal with nothing to remove), or refused because our
+ * other device wrote first, with our record as it is now. */
+export type SaveResult = { saved: Reaction | null } | { changed: WireReaction };
+
 /**
- * Saves our whole set (empty removes it). Sealed as a v2 envelope, never through the ratchet:
- * the record is overwritten in place, and every device must open it at any time.
- * Resolves to the confirmed entry, or null when there was nothing to remove.
+ * Saves our whole set (empty removes it), built on `base` — our record as the server last
+ * confirmed it. Sealed as a v2 envelope, never through the ratchet: the record is overwritten
+ * in place, and every device must open it at any time.
  */
 export async function saveReaction(opts: {
   token: string;
   me: string;
   messageId: string;
   emojis: string[];
+  base: Reaction | null;
   material: IdentityMaterial;
   peerIdentityPublic: Uint8Array;
-}): Promise<Reaction | null> {
+}): Promise<SaveResult> {
   const me = opts.me.toLowerCase();
-  if (opts.emojis.length === 0) {
-    const res = await api.deleteReaction(opts.token, opts.messageId);
-    return res ? { userId: me, emojis: [], seq: res.seq } : null;
+  // A removal is "none": base_seq 0 matches a removal row whatever its seq (after a 204 we
+  // don't know it), and a live record there is still a conflict.
+  const baseSeq = opts.base && opts.base.emojis.length > 0 ? opts.base.seq : 0;
+  try {
+    if (opts.emojis.length === 0) {
+      const res = await api.deleteReaction(opts.token, opts.messageId, baseSeq);
+      return { saved: res ? { userId: me, emojis: [], seq: res.seq } : null };
+    }
+    const envelope = await sealIdentityEnvelope(
+      utf8(reactionPayload(opts.emojis, opts.messageId)),
+      opts.material.agreementPrivate,
+      opts.peerIdentityPublic,
+      opts.material.agreementPublic,
+    );
+    // Only an emoji the base lacked is news for the message's author; taking one back isn't.
+    const baseEmojis = opts.base?.emojis ?? [];
+    const added = opts.emojis.some((e) => !baseEmojis.includes(e));
+    const res = await api.putReaction(opts.token, opts.messageId, envelopeToWireB64(envelope), baseSeq, added);
+    return { saved: { userId: me, emojis: opts.emojis, seq: res.seq } };
+  } catch (err) {
+    const current = err instanceof ApiError && err.code === "REACTION_CHANGED"
+      ? (err.body as { current?: WireReaction } | undefined)?.current
+      : undefined;
+    if (current) return { changed: current };
+    throw err;
   }
-  const envelope = await sealIdentityEnvelope(
-    utf8(reactionPayload(opts.emojis, opts.messageId)),
-    opts.material.agreementPrivate,
-    opts.peerIdentityPublic,
-    opts.material.agreementPublic,
-  );
-  const res = await api.putReaction(opts.token, opts.messageId, envelopeToWireB64(envelope));
-  return { userId: me, emojis: opts.emojis, seq: res.seq };
 }

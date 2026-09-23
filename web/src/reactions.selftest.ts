@@ -7,7 +7,9 @@ import {
   parseReaction,
   reactionChips,
   reactionPayload,
+  rebasedReactions,
   replacingReaction,
+  roughGraphemeCount,
   type Reaction,
 } from "./reactions";
 import type { ChatMessage } from "./messaging";
@@ -27,6 +29,24 @@ function check(ok: boolean, what: string): void {
 }
 
 /* --- wire ---------------------------------------------------------------- */
+
+/* Browsers without Intl.Segmenter count emoji graphemes the rough way; it must agree. */
+for (const one of ["❤️", "🔥", "👍🏽", "❤️‍🔥", "👨‍💻", "👨‍👩‍👧", "🇩🇪", "🏳️‍🌈", "1️⃣", "🫡"]) {
+  check(roughGraphemeCount(one) === 1, `one grapheme: ${one}`);
+}
+for (const [text, count] of [
+  ["🔥🔥", 2],
+  ["ok", 2],
+  ["🇩🇪🇫🇷", 2],
+  ["👍 ", 2],
+  // A joiner joins an emoji only to an emoji.
+  ["🔥\u200dx", 2],
+  ["1\u200d2", 2],
+  ["1\u200d🔥", 2],
+  ["#\u200d#", 2],
+] as const) {
+  check(roughGraphemeCount(text) === count, `${count} graphemes: ${text}`);
+}
 
 const wire = reactionPayload(["🔥", "👍"], MESSAGE.toUpperCase());
 check(wire === `{"t":"reaction","r":"${MESSAGE}","e":["🔥","👍"]}`, "payload: lowercased id, the whole set");
@@ -84,6 +104,13 @@ check(toggledReactions("🔥", ["❤️"], 5).join() === "❤️,🔥", "a pick 
 check(toggledReactions("❤️", ["❤️", "🔥"], 5).join() === "🔥", "a second pick takes it back");
 check(toggledReactions("🎉", ["❤️", "🔥", "👍", "😮", "🙏"], 5).join() === "🔥,👍,😮,🙏,🎉", "past the limit, oldest goes");
 check(toggledReactions("❤️", [], 0).join() === "❤️", "never below one");
+
+/* Our other device wrote first: what we changed goes on top of its set. */
+check(rebasedReactions(["❤️", "🔥"], ["❤️"], ["❤️", "👍"], 5).join() === "❤️,👍,🔥", "rebase: both adds kept");
+check(rebasedReactions([], ["❤️"], ["❤️", "👍"], 5).join() === "👍", "rebase: our take-back applies");
+check(rebasedReactions(["🔥"], [], ["🔥"], 5).join() === "🔥", "rebase: the same add once");
+check(rebasedReactions(["❤️", "🔥"], ["❤️"], [], 5).join() === "🔥", "rebase: their removal stands, our add too");
+check(rebasedReactions(["😮", "🔥"], ["😮"], ["😮", "👍", "❤️"], 3).join() === "👍,❤️,🔥", "rebase: past the limit, oldest goes");
 
 const thread = [{ id: MESSAGE, deleted: false, reactions: [] } as unknown as ChatMessage];
 const next = applyReactionChanges(thread, [{ messageId: MESSAGE.toUpperCase(), reaction: r(PEER, "😮", 11) }]);

@@ -175,6 +175,8 @@ function MessageRow({
     row: HTMLElement | null,
     settle?: boolean,
     link?: string | null,
+    trigger?: HTMLElement | null,
+    returnFocus?: HTMLElement | null,
   ) => void;
   onJump: (id: string) => void;
   onOpenPhoto: (message: ChatMessage) => void;
@@ -345,7 +347,8 @@ function MessageRow({
         event.preventDefault();
         const bubbleNode = event.currentTarget.querySelector(".bubble") ?? event.currentTarget;
         const rect = bubbleNode.getBoundingClientRect();
-        onMenu(message, { x: rect.left + 12, y: rect.bottom - 4 }, event.currentTarget);
+        const focused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        onMenu(message, { x: rect.left + 12, y: rect.bottom - 4 }, event.currentTarget, false, null, null, focused);
       }}
     >
       {bubble}
@@ -358,9 +361,17 @@ function MessageRow({
               aria-label="React to this message"
               title="React"
               onClick={(event) => {
-                // The message menu, opened at the button: its first row is the reactions.
+                // The message menu, opened at the button: its first row is the reactions. A
+                // second press closes it; focus comes back here either way.
                 const rect = event.currentTarget.getBoundingClientRect();
-                onMenu(message, { x: rect.left, y: rect.bottom + 4 }, event.currentTarget.closest(".msg-row"));
+                onMenu(
+                  message,
+                  { x: rect.left, y: rect.bottom + 4 },
+                  event.currentTarget.closest(".msg-row"),
+                  false,
+                  null,
+                  event.currentTarget,
+                );
               }}
             >
               <SmilePlus size={15} aria-hidden="true" />
@@ -598,6 +609,10 @@ export function Thread({
     settle: boolean;
     /** The link the menu acts on: the one under the pointer, else the message's first. */
     link: string | null;
+    /** The button that opened it (a second press closes it); focus returns there. */
+    trigger: HTMLElement | null;
+    /** Opened from the keyboard: the control focused then, where focus returns. */
+    returnFocus: HTMLElement | null;
   } | null>(null);
   /** Message waiting on the delete confirmation (scope is picked there). */
   const [confirmDelete, setConfirmDelete] = useState<ChatMessage | null>(null);
@@ -1018,6 +1033,8 @@ export function Thread({
       row: HTMLElement | null,
       settle = false,
       link: string | null = null,
+      trigger: HTMLElement | null = null,
+      returnFocus: HTMLElement | null = null,
     ) => {
       const selected = window.getSelection();
       let selection = "";
@@ -1025,7 +1042,12 @@ export function Thread({
         const node = selected.getRangeAt(0).commonAncestorContainer;
         if (row.contains(node)) selection = selected.toString().trim();
       }
-      setMenu({ message, anchor, selection, settle, link: link ?? primaryLink(message) });
+      setMenu((open) =>
+        // The button that opened this menu, pressed again, closes it.
+        trigger && open?.trigger === trigger && open.message.id === message.id
+          ? null
+          : { message, anchor, selection, settle, link: link ?? primaryLink(message), trigger, returnFocus },
+      );
     },
     [],
   );
@@ -1384,6 +1406,8 @@ export function Thread({
           actions={menuActions(menu.message, menu.selection, menu.link)}
           copyLabel={menu.selection ? "Copy selection" : undefined}
           settle={menu.settle}
+          trigger={menu.trigger}
+          returnFocus={menu.returnFocus}
           header={
             canReact(menu.message) ? (
               <ReactionPicker
@@ -1394,6 +1418,8 @@ export function Thread({
                 }
                 onPick={(emoji) => {
                   const target = messages.find((m) => m.id === menu.message.id) ?? menu.message;
+                  // Out of the menu that is about to go: back to whatever opened it.
+                  (menu.trigger ?? menu.returnFocus)?.focus({ preventScroll: true });
                   closeMenu();
                   onReact(target, emoji);
                 }}

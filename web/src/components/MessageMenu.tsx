@@ -19,10 +19,17 @@ export function MessageMenu({
   copyLabel,
   settle = false,
   header,
+  trigger,
+  returnFocus,
   onAction,
   onClose,
 }: {
   anchor: MessageMenuAnchor;
+  /** The button that opened the menu (the hover React button): pressing it again closes the
+   * menu, and focus goes back there. */
+  trigger?: HTMLElement | null;
+  /** Opened from the keyboard: the control that was focused, where focus goes back. */
+  returnFocus?: HTMLElement | null;
   /** Above the actions: the reaction row. */
   header?: ReactNode;
   actions: MessageMenuAction[];
@@ -57,6 +64,8 @@ export function MessageMenu({
       label="Message actions"
       header={header}
       settle={settle}
+      trigger={trigger}
+      returnFocus={returnFocus}
       onSelect={onAction}
       onClose={onClose}
     />

@@ -1242,6 +1242,10 @@ button.reply-quote { cursor: pointer; }
 .ctx-menu {
   position: fixed; z-index: 70;
   min-width: 200px; max-width: 260px;
+  /* The full reaction set makes it tall: on a short window it scrolls instead of hiding
+     Copy and Delete off screen. */
+  max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px);
+  overflow-y: auto; overscroll-behavior: contain;
   padding: 6px;
   display: flex; flex-direction: column; gap: 2px;
   background: var(--surface-2);
@@ -3073,21 +3077,25 @@ button.reply-quote { cursor: pointer; }
    Chips at the foot of a reacted bubble: the emoji and the reactors' faces
    (Telegram 1:1). On a text bubble the time moves to the end of the chip row.
    ---------------------------------------------------------------------------- */
-.bubble.has-reactions { flex-wrap: wrap; }
+/* A column, so the bubble is as wide as its widest part: a wrapping row would size itself to
+   the text and the chips side by side before wrapping the chips under the text. */
+.bubble.has-reactions { flex-direction: column; align-items: stretch; }
 /* Telegram's in-bubble reaction button: 30 tall, a 20 emoji, 24 faces overlapping by half,
    6 between buttons. */
 .reaction-strip {
-  flex: 1 0 100%;
+  flex: none;
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
   margin-top: 3px;
 }
 .reaction-strip-meta { margin-left: auto; padding-left: 6px; display: inline-flex; }
 /* One person's emoji and face; each emoji is its own button. */
+/* A set wider than the bubble (a raised server limit, a modified client) wraps inside its chip;
+   the corners stay a one-line chip's. */
 .reaction-chip {
   --chip-bg: color-mix(in srgb, var(--accent) 16%, transparent);
-  display: inline-flex; align-items: center; gap: 0;
-  height: 30px; padding: 0 3px 0 4px;
-  border-radius: var(--r-full);
+  display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0;
+  min-height: 30px; max-width: 100%; padding: 0 3px 0 4px;
+  border-radius: 15px;
   background: var(--chip-bg);
   transition: background 0.12s var(--ease);
 }

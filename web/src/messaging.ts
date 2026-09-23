@@ -189,19 +189,30 @@ export async function ingestIncoming(
   return withPeerLock(peerUserId, () => decodeIncoming(dto, me, peerUserId, token, material));
 }
 
-/** A decoded message with the reactions its history page carried. */
+/** The lowest seq of a page's reactions left unopened: the sender's key was out of reach. */
+type Unopened = { seq: number | null };
+
+/**
+ * A decoded message with the reactions its history page carried. A record whose sender's key
+ * can't be fetched right now is left out and noted in `unopened`: catch-up goes back for it.
+ */
 async function decodeWithReactions(
   dto: WireMessage,
   me: string,
   peer: string,
   token: string,
   material: IdentityMaterial,
+  unopened: Unopened,
 ): Promise<ChatMessage> {
   const msg = await decodeIncoming(dto, me, peer, token, material);
   if (!dto.reactions?.length || msg.deleted || msg.kind === "annotation") return msg;
   const reactions: Reaction[] = [];
   for (const wire of pageReactionsFor(dto.id, dto.reactions, new Set([me.toLowerCase(), peer]))) {
-    reactions.push(await openReaction(wire, me, material, (id) => peerIdentityPublic(token, id)));
+    try {
+      reactions.push(await openReaction(wire, me, material, (id) => peerIdentityPublic(token, id)));
+    } catch {
+      unopened.seq = Math.min(unopened.seq ?? wire.seq, wire.seq);
+    }
   }
   return { ...msg, reactions };
 }
@@ -212,17 +223,18 @@ export async function fetchLatest(
   peerUserId: string,
   material: IdentityMaterial,
   knownIds: Set<string>,
-): Promise<{ messages: ChatMessage[]; reactionSeq: number | null }> {
+): Promise<{ messages: ChatMessage[]; reactionSeq: number | null; reactionUnopened: number | null }> {
   const peer = peerUserId.toLowerCase();
   return withPeerLock(peer, async () => {
     const res = await api.listMessages(token, peer);
     const chronological = [...res.messages].reverse();
     const out: ChatMessage[] = [];
+    const unopened: Unopened = { seq: null };
     for (const dto of chronological) {
       if (knownIds.has(dto.id) || seenAnnotations.has(dto.id.toLowerCase())) continue;
-      out.push(await decodeWithReactions(dto, me, peer, token, material));
+      out.push(await decodeWithReactions(dto, me, peer, token, material, unopened));
     }
-    return { messages: out, reactionSeq: res.reaction_seq ?? null };
+    return { messages: out, reactionSeq: res.reaction_seq ?? null, reactionUnopened: unopened.seq };
   });
 }
 
@@ -594,6 +606,8 @@ export type HistoryPage = {
   older: HistoryCursor | null;
   /** The chat's highest reaction seq as the page was read; null from servers without reactions. */
   reactionSeq: number | null;
+  /** The lowest seq of a reaction on the page left unopened (see `decodeWithReactions`). */
+  reactionUnopened: number | null;
 };
 
 /** Newest page on open: small, so a chat shows up after one short decrypt. */
@@ -623,8 +637,9 @@ export async function loadHistoryPage(
     }
     const res = await api.listMessages(token, peer, extra);
     const out: ChatMessage[] = [];
+    const unopened: Unopened = { seq: null };
     for (const dto of [...res.messages].reverse()) {
-      out.push(await decodeWithReactions(dto, me, peer, token, material));
+      out.push(await decodeWithReactions(dto, me, peer, token, material, unopened));
     }
     const oldest = res.messages[res.messages.length - 1];
     const more = (res.has_more || res.messages.length >= limit) && oldest;
@@ -632,6 +647,7 @@ export async function loadHistoryPage(
       messages: applyAnnotations(out),
       older: more ? { createdAt: oldest.created_at, id: oldest.id } : null,
       reactionSeq: res.reaction_seq ?? null,
+      reactionUnopened: unopened.seq,
     };
   });
 }

@@ -7,10 +7,13 @@ const UUID_RE =
 export class ApiError extends Error {
   readonly code: string;
   readonly status: number;
-  constructor(code: string, message: string, status: number) {
+  /** The error response's JSON, for answers that carry data (a reaction's `409`). */
+  readonly body: unknown;
+  constructor(code: string, message: string, status: number, body?: unknown) {
     super(message);
     this.code = code;
     this.status = status;
+    this.body = body;
   }
   get isAuthFailure(): boolean {
     return this.status === 401;
@@ -95,14 +98,16 @@ async function request<T>(
   if (!res.ok) {
     let code = "http";
     let message = res.statusText || `HTTP ${res.status}`;
+    let body: unknown;
     try {
-      const body = (await res.json()) as { error?: { code?: string; message?: string } };
-      if (body.error?.code) code = body.error.code;
-      if (body.error?.message) message = body.error.message;
+      body = await res.json();
+      const envelope = body as { error?: { code?: string; message?: string } };
+      if (envelope.error?.code) code = envelope.error.code;
+      if (envelope.error?.message) message = envelope.error.message;
     } catch {
       /* envelope optional */
     }
-    throw new ApiError(code, message, res.status);
+    throw new ApiError(code, message, res.status, body);
   }
   if (res.status === 204) return undefined as T;
   const text = await res.text();
@@ -374,16 +379,20 @@ export const api = {
       reaction_seq?: number | null;
     }>(`/messages?${q.toString()}`, { token });
   },
-  putReaction: (token: string, messageId: string, ciphertext: string) =>
+  /**
+   * Our whole set, built on our record at `baseSeq` (0: none). `409 REACTION_CHANGED` (its
+   * `current` on the ApiError's body) when our other device wrote it first.
+   */
+  putReaction: (token: string, messageId: string, ciphertext: string, baseSeq: number, added: boolean) =>
     request<WireReaction>(`/messages/${encodeURIComponent(messageId.toLowerCase())}/reaction`, {
       method: "PUT",
       token,
-      body: JSON.stringify({ ciphertext }),
+      body: JSON.stringify({ ciphertext, base_seq: baseSeq, added }),
     }),
-  /** Undefined (`204`) when there was no reaction to remove. */
-  deleteReaction: (token: string, messageId: string) =>
+  /** Undefined (`204`) when there was no reaction to remove; `409` as for `putReaction`. */
+  deleteReaction: (token: string, messageId: string, baseSeq: number) =>
     request<WireReaction | undefined>(
-      `/messages/${encodeURIComponent(messageId.toLowerCase())}/reaction`,
+      `/messages/${encodeURIComponent(messageId.toLowerCase())}/reaction?base_seq=${baseSeq}`,
       { method: "DELETE", token },
     ),
   /** Settings the server operator sets for clients (the reaction limit). */

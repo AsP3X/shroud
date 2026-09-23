@@ -75,6 +75,7 @@ import {
   DEFAULT_REACTION_LIMIT,
   emojisOf,
   openReaction,
+  rebasedReactions,
   saveReaction,
   toggledReactions,
   withMyReaction,
@@ -83,6 +84,9 @@ import {
 import { useLinkPreviewComposer } from "../linkPreview/useLinkPreviewComposer";
 
 type PeerRef = { id: string; username: string };
+
+/** Rounds a reaction save may lose to our other device writing first before its set stands. */
+const MAX_REACTION_REBASES = 3;
 
 /** Messages walked in behind the newest page before older ones wait for the reader to scroll up. */
 const PREFETCH_MESSAGES = 300;
@@ -150,6 +154,15 @@ export function AppShell({ session }: { session: Session }) {
   const [previewRev, setPreviewRev] = useState(0);
   const mobileShowThread = Boolean(selected) && tab !== "settings";
   const identity = loadIdentity(session.user.id);
+  /** The tab is on screen (a background tab still polls and hears the socket). */
+  const [pageVisible, setPageVisible] = useState(() => !document.hidden);
+  /**
+   * The chat someone is actually reading: selected, not behind Settings, the browser unlocked
+   * and the tab on screen. Only there does a heart badge clear.
+   */
+  const lookingAt = selected && tab !== "settings" && identity && pageVisible ? selected.id.toLowerCase() : null;
+  const lookingAtRef = useRef(lookingAt);
+  lookingAtRef.current = lookingAt;
   const alive = useRef(true);
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
@@ -182,6 +195,8 @@ export function AppShell({ session }: { session: Session }) {
   const reactionConfirmed = useRef(new Map<string, Reaction | null>());
   /** The catch-up cursor when a message's first tap went out (see `react`). */
   const reactionCursorAtTap = useRef(new Map<string, number | null>());
+  /** While a catch-up runs: the lowest point a page or a failed tap sent the cursor back to. */
+  const reactionFloor = useRef<number | null>(null);
   const [reactionNotice, setReactionNotice] = useState<{ id: number; text: string } | null>(null);
   /**
    * Highest reaction seq this browser marked seen, per peer. A conversations refresh that
@@ -427,6 +442,12 @@ export function AppShell({ session }: { session: Session }) {
   }, []);
 
   useEffect(() => {
+    const onVisibility = () => setPageVisible(!document.hidden);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     const run = () =>
       refresh().catch((err: unknown) => {
@@ -480,26 +501,38 @@ export function AppShell({ session }: { session: Session }) {
       const open = selectedRef.current?.id.toLowerCase() === key ? reactionCursor.current ?? 0 : 0;
       const seq = Math.max(upTo, conv?.reaction_seq ?? 0, open);
       if (seq <= 0) return;
-      reactionsSeen.current.set(key, Math.max(reactionsSeen.current.get(key) ?? 0, seq));
+      const previous = reactionsSeen.current.get(key);
+      reactionsSeen.current.set(key, Math.max(previous ?? 0, seq));
       setConversations((prev) => withLocalSeen(prev));
       void api.markReactionsSeen(session.token, key, seq).catch(() => {
-        /* the badge is already cleared here; the next open retries */
+        // Not saved: back to what we knew (another device's mark included), so the next list
+        // shows the badge again and the next look tries again.
+        if (reactionsSeen.current.get(key) !== seq) return;
+        if (previous == null) reactionsSeen.current.delete(key);
+        else reactionsSeen.current.set(key, previous);
       });
     },
     [session.token, withLocalSeen],
   );
 
-  /* The open chat is being looked at: whatever reacted to our messages there is seen. */
+  /* The chat on screen is being read: whatever reacted to our messages there is seen. Not
+     while the tab is hidden or Settings covers it — nobody sees it then, here or on the phone. */
   useEffect(() => {
-    if (!selected) return;
-    const key = selected.id.toLowerCase();
-    const conv = conversations.find((c) => c.peer.id.toLowerCase() === key);
-    if ((conv?.unseen_reactions ?? 0) > 0) markReactionsSeen(selected.id);
-  }, [conversations, selected, markReactionsSeen]);
+    if (!lookingAt) return;
+    const conv = conversations.find((c) => c.peer.id.toLowerCase() === lookingAt);
+    if ((conv?.unseen_reactions ?? 0) > 0) markReactionsSeen(lookingAt);
+  }, [conversations, lookingAt, markReactionsSeen]);
+
+  /** Moves the open chat's catch-up cursor back, never forward; a catch-up running stops there. */
+  const lowerReactionCursor = useCallback((to: number) => {
+    if (reactionCursor.current != null && to < reactionCursor.current) reactionCursor.current = to;
+    if (reactionFloor.current != null && to < reactionFloor.current) reactionFloor.current = to;
+  }, []);
 
   /**
    * Opens reaction changes and folds them into the open chat. Changes for messages it does not
-   * hold are skipped: those arrive with the message's own history page.
+   * hold are skipped: those arrive with the message's own history page. Rejects, applying
+   * nothing, when a sender's key is out of reach: the caller must not move past them.
    */
   const applyWireReactions = useCallback(
     async (wires: WireReaction[]) => {
@@ -539,6 +572,7 @@ export function AppShell({ session }: { session: Session }) {
       }
       if (seen <= reactionCursor.current || reactionSync.current) return;
       const epoch = historyEpoch.current;
+      reactionFloor.current = Number.POSITIVE_INFINITY;
       const run = (async () => {
         let after = reactionCursor.current ?? seen;
         // A long absence is walked a few pages per poll; the next one carries on.
@@ -548,15 +582,18 @@ export function AppShell({ session }: { session: Session }) {
           await applyWireReactions(res.reactions);
           if (epoch !== historyEpoch.current) return;
           after = res.next_seq;
-          reactionCursor.current = after;
+          // A page or a failed tap that went back meanwhile keeps the cursor there.
+          reactionCursor.current = Math.min(after, reactionFloor.current ?? after);
           if (!res.has_more) break;
         }
       })()
         .catch(() => {
-          /* cursor kept: the next poll tries again */
+          /* cursor kept (a sender's key out of reach, too): the next poll tries again */
         })
         .finally(() => {
-          if (reactionSync.current === run) reactionSync.current = null;
+          if (reactionSync.current !== run) return;
+          reactionSync.current = null;
+          reactionFloor.current = null;
         });
       reactionSync.current = run;
     },
@@ -566,7 +603,9 @@ export function AppShell({ session }: { session: Session }) {
   /**
    * Picking an emoji (bar, grid, chip): sets it, or takes it back when it already is ours.
    * Shown at once; one save per message at a time, taps meanwhile collapse into one more save
-   * with the last choice. A failed save puts back what the server holds.
+   * with the last choice. Each save is built on our record as last confirmed; when our other
+   * device wrote in between, what we changed goes on top of its set. A failed save puts back
+   * what the server holds.
    */
   const react = useCallback(
     (message: ChatMessage, emoji: string) => {
@@ -597,46 +636,94 @@ export function AppShell({ session }: { session: Session }) {
       // no-op (`withMyReaction` finds nothing), and skipping it would leave the tap pending.
       void (async () => {
         const peerPub = await peerIdentityPublic(session.token, peer.id).catch(() => null);
+        /* Seqs and the notice belong to the chat the tap was made in. */
+        const stillOpen = () => selectedRef.current?.id.toLowerCase() === peer.id.toLowerCase();
+        const couldNotSave = () => {
+          if (!stillOpen()) return;
+          setReactionNotice({
+            id: Date.now(),
+            text: navigator.onLine ? "Couldn’t save your reaction." : "You’re offline. Your reaction wasn’t saved.",
+          });
+        };
+        let rebases = 0;
+        /* The set of a save whose answer never came (it may have landed all the same). */
+        let unanswered: string[] | null = null;
         while (reactionIntents.current.has(key)) {
           const next = reactionIntents.current.get(key) ?? [];
           reactionIntents.current.delete(key);
+          const base = reactionConfirmed.current.get(key) ?? null;
           try {
             if (!peerPub) throw new Error("no peer key");
-            const saved = await saveReaction({
+            const result = await saveReaction({
               token: session.token,
               me,
               messageId: key,
               emojis: next,
+              base,
               material,
               peerIdentityPublic: peerPub,
             });
-            // 204 on a removal: the server held none, which is what we wanted.
-            const confirmed = saved ?? null;
-            reactionConfirmed.current.set(key, confirmed);
-            if (!reactionIntents.current.has(key)) {
-              setThread((prev) => withMyReaction(prev, key, me, confirmed));
+            if ("saved" in result) {
+              unanswered = null;
+              rebases = 0;
+              // 204 on a removal: the server held none, which is what we wanted.
+              const confirmed = result.saved ?? (base ? { userId: me, emojis: [], seq: base.seq } : null);
+              reactionConfirmed.current.set(key, confirmed);
+              if (!reactionIntents.current.has(key)) {
+                setThread((prev) => withMyReaction(prev, key, me, confirmed));
+              }
+              continue;
+            }
+            // Only our own record on this very message can be that answer.
+            if (result.changed.user_id.toLowerCase() !== me || result.changed.message_id.toLowerCase() !== key) {
+              throw new Error("409 names another record");
+            }
+            // Our other device wrote first: what we changed since `base` goes on top of its set,
+            // so neither device's pick is lost.
+            const now = await openReaction(result.changed, me, material, (id) =>
+              peerIdentityPublic(session.token, id),
+            );
+            reactionConfirmed.current.set(key, now);
+            // A save whose answer was lost may have landed: when the record is exactly what it
+            // sent, it is ours, and what we changed since counts from there.
+            const landed =
+              unanswered != null &&
+              unanswered.length === now.emojis.length &&
+              unanswered.every((e, i) => e === now.emojis[i]);
+            unanswered = null;
+            const merged = rebasedReactions(
+              reactionIntents.current.get(key) ?? next,
+              landed ? now.emojis : base?.emojis ?? [],
+              now.emojis,
+              reactionLimit.current,
+            );
+            rebases += 1;
+            const settled = merged.length === now.emojis.length && merged.every((e, i) => e === now.emojis[i]);
+            if (settled || rebases > MAX_REACTION_REBASES) {
+              reactionIntents.current.delete(key);
+              setThread((prev) => withMyReaction(prev, key, me, now));
+              if (!settled) couldNotSave();
+            } else {
+              reactionIntents.current.set(key, merged);
+              setThread((prev) => withMyReaction(prev, key, me, { ...now, emojis: merged, pending: true }));
             }
           } catch {
+            unanswered = next;
             if (reactionIntents.current.has(key)) continue;
             const back = reactionConfirmed.current.get(key) ?? null;
             setThread((prev) => withMyReaction(prev, key, me, back));
             // A change from our other device, ignored while this tap was pending, comes back
             // with the next catch-up.
             const atTap = reactionCursorAtTap.current.get(key);
-            if (atTap != null && reactionCursor.current != null && atTap < reactionCursor.current) {
-              reactionCursor.current = atTap;
-            }
-            setReactionNotice({
-              id: Date.now(),
-              text: navigator.onLine ? "Couldn’t save your reaction." : "You’re offline. Your reaction wasn’t saved.",
-            });
+            if (atTap != null && stillOpen()) lowerReactionCursor(atTap);
+            couldNotSave();
           }
         }
         reactionConfirmed.current.delete(key);
         reactionCursorAtTap.current.delete(key);
       })();
     },
-    [session.token, session.user.id],
+    [session.token, session.user.id, lowerReactionCursor],
   );
 
   /** Fetches the page before the oldest one loaded; a no-op once the start is reached. */
@@ -654,9 +741,9 @@ export function AppShell({ session }: { session: Session }) {
         olderCursor.current = page.older;
         setHasOlder(page.older !== null);
         // A change catch-up skipped while this page was in flight (its message wasn't here
-        // yet) is not in the page either: go back to the page's snapshot to apply it again.
-        if (page.reactionSeq != null && reactionCursor.current != null) {
-          reactionCursor.current = Math.min(reactionCursor.current, page.reactionSeq);
+        // yet) is not in the page either, nor is one the page couldn't open: go back for them.
+        if (page.reactionSeq != null) {
+          lowerReactionCursor(Math.min(page.reactionSeq, (page.reactionUnopened ?? Number.POSITIVE_INFINITY) - 1));
         }
         setThread((prev) => mergeMessages(prev, page.messages));
       })
@@ -669,7 +756,7 @@ export function AppShell({ session }: { session: Session }) {
       });
     olderLoad.current = run;
     return run;
-  }, [session.token, session.user.id]);
+  }, [session.token, session.user.id, lowerReactionCursor]);
 
   useEffect(() => {
     const material = loadIdentity(session.user.id);
@@ -705,7 +792,11 @@ export function AppShell({ session }: { session: Session }) {
         if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
         olderCursor.current = page.older;
         setHasOlder(page.older !== null);
-        reactionCursor.current = page.reactionSeq;
+        // A reaction the page couldn't open (its sender's key out of reach) comes via catch-up.
+        reactionCursor.current =
+          page.reactionSeq != null && page.reactionUnopened != null
+            ? Math.min(page.reactionSeq, page.reactionUnopened - 1)
+            : page.reactionSeq;
         // A message that arrived over the socket while the page was in flight stays.
         setThread((prev) => mergeMessages(page.messages, prev));
         setPreviewRev((n) => n + 1);
@@ -795,17 +886,22 @@ export function AppShell({ session }: { session: Session }) {
           // come back through catch-up, and applying one twice changes nothing (same seq).
           const wire = event.raw.reaction as WireReaction | undefined;
           if (!wire?.message_id) return;
-          void applyWireReactions([wire]);
-          // The other side reacted to one of our messages: seen if its chat is open, otherwise
-          // the chat list's heart badge is re-read.
+          void applyWireReactions([wire]).catch(() => {
+            /* the sender's key was out of reach: catch-up brings the change back */
+          });
+          // The other side reacted to one of our messages: seen if its chat is being read,
+          // otherwise the chat list's heart badge is re-read. Taking back one emoji of several
+          // is no news; a whole removal may still lower the count.
           const me = session.user.id.toLowerCase();
           const sender = String(event.raw.message_sender_id ?? "").toLowerCase();
           if (wire.user_id.toLowerCase() === me || (sender && sender !== me)) return;
+          const added = event.raw.added !== false;
+          if (!added && wire.ciphertext) return;
           const conversationId = String(event.raw.conversation_id ?? "").toLowerCase();
           const conv = conversationsRef.current.find((c) => c.id.toLowerCase() === conversationId);
-          const open = selectedRef.current;
-          if (open && conv && conv.peer.id.toLowerCase() === open.id.toLowerCase()) {
-            markReactionsSeen(open.id, wire.seq);
+          const looking = lookingAtRef.current;
+          if (looking && conv && conv.peer.id.toLowerCase() === looking) {
+            if (added) markReactionsSeen(looking, wire.seq);
           } else {
             refreshSoon();
           }
@@ -874,9 +970,18 @@ export function AppShell({ session }: { session: Session }) {
       const known = new Set(threadRef.current.map((m) => m.id));
       const peerId = open.id;
       fetchLatest(session.token, session.user.id, peerId, material, known)
-        .then(({ messages: extra, reactionSeq }) => {
+        .then(({ messages: extra, reactionSeq, reactionUnopened }) => {
           if (cancelled) return;
           if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
+          // A reaction on a new message whose sender's key was out of reach: catch-up retries.
+          // With no cursor yet (the first page failed), it starts below that one.
+          if (reactionUnopened != null) {
+            if (reactionCursor.current == null && reactionSeq != null) {
+              reactionCursor.current = Math.min(reactionSeq, reactionUnopened - 1);
+            } else {
+              lowerReactionCursor(reactionUnopened - 1);
+            }
+          }
           // Costs a request only when a reaction changed since the last one we applied.
           syncReactions(peerId, reactionSeq);
           if (extra.length === 0) return;
@@ -892,7 +997,7 @@ export function AppShell({ session }: { session: Session }) {
       cancelled = true;
       window.clearInterval(tick);
     };
-  }, [selected?.id, session.token, session.user.id, syncReactions]);
+  }, [selected?.id, session.token, session.user.id, syncReactions, lowerReactionCursor]);
 
   const chatEntries = useMemo<ListEntry[]>(() => {
     void previewRev;
