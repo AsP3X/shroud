@@ -91,6 +91,13 @@ final class MessagingController {
     private var conversationsRefreshTask: Task<Void, Never>?
     /// One in-flight thread load per peer.
     private var threadLoadTasks: [UUID: Task<Void, Never>] = [:]
+    /// One in-flight older-page load per peer, and the background walk that drives it.
+    private var olderLoadTasks: [UUID: Task<Void, Never>] = [:]
+    private var olderPrefetchTasks: [UUID: Task<Void, Never>] = [:]
+    /// Peers whose history is all in `threads` (the server has nothing older to give).
+    private(set) var olderHistoryExhausted: Set<UUID> = []
+    /// Peers with an older page in flight (the chat shows a spinner at the top).
+    private(set) var loadingOlderPeerIDs: Set<UUID> = []
     /// Dedup concurrent image/voice hydrate for the same message id.
     private var mediaHydrateTasks: [UUID: Task<Void, Never>] = [:]
     /// Serializes outbound flush so reconnect + poll don't double-send.
@@ -438,6 +445,7 @@ final class MessagingController {
         conversationsRefreshTask = nil
         threadLoadTasks.values.forEach { $0.cancel() }
         threadLoadTasks.removeAll()
+        cancelHistoryPaging()
         // Next sign-in is a genuine first load again, so the skeleton is allowed back.
         hasLoadedContacts = false
         hasLoadedChats = false
@@ -511,6 +519,7 @@ final class MessagingController {
         activePeerID = nil
         threadLoadTasks.values.forEach { $0.cancel() }
         threadLoadTasks.removeAll()
+        cancelHistoryPaging()
     }
 
     /// Reacts to path changes (wired from RootView / scene phase optional).
@@ -818,7 +827,7 @@ final class MessagingController {
     /// The 3s poll, WS `message.new`, and the chat view's `.task` all land here. They share a
     /// single in-flight load per peer — duplicate fetches decrypt the same page twice and
     /// rewrite `threads`, which redraws every bubble. Callers still await real data.
-    /// Loads a peer thread (or Notes). Walks `before_*` pages newest→older until the 90-day window.
+    /// Loads a peer thread (or Notes): the newest page, then whatever is newer than what we hold.
     func loadThread(peerUserID: UUID) async {
         guard sessionController?.bearerToken != nil,
               sessionController?.userID != nil,
@@ -853,20 +862,132 @@ final class MessagingController {
         threadLoadTasks[taskKey] = task
         await task.value
         if threadLoadTasks[taskKey] == task { threadLoadTasks[taskKey] = nil }
+        if activePeerID == storePeer { startOlderPrefetch(storePeer) }
     }
 
-    /// Page size for history HTTP calls (server max is 100).
+    /// Newest page on open and on each refresh: small, so a chat shows after one short decrypt.
+    private static let firstPageSize = 40
+    /// Older pages, walked in the background or as the reader scrolls up (server max is 100).
     private static let historyPageSize = 100
-    /// Hard stop: 40 × 100 = 4000 messages (still clamped by 90-day retention).
-    private static let historyMaxPages = 40
+    /// Hard stop: 4000 messages (still clamped by 90-day retention).
+    private static let historyMaxMessages = 4000
+    /// Messages walked in behind the newest page before older ones wait for the reader.
+    private static let olderPrefetchTarget = 300
+    /// Pause between those background pages, so decrypting never competes with scrolling.
+    private static let olderPrefetchPause: Duration = .milliseconds(600)
+
+    /// One decoded history page.
+    private struct HistoryPage {
+        /// Chronological, annotations left out (they fold into their targets).
+        var messages: [ChatMessage] = []
+        /// Inbound ids (annotations included) the server may still want a delivery ack for.
+        var inboundIDs: [UUID] = []
+        /// Cursor for the page before this one; nil once the start (or retention) is reached.
+        var older: HistoryCursor?
+        /// Every id the server returned, to tell whether a refresh has met what we hold.
+        var serverIDs: Set<UUID> = []
+    }
+
+    private struct HistoryCursor {
+        let createdAt: Date
+        let id: UUID
+    }
+
+    private var retentionCutoff: Date {
+        Calendar.current.date(
+            byAdding: .day,
+            value: -LocalMessageStore.retentionDays,
+            to: Date()
+        ) ?? Date().addingTimeInterval(-TimeInterval(LocalMessageStore.retentionDays) * 86_400)
+    }
+
+    /// Fetches and decodes the page just older than `before` (the newest page when nil).
+    private func fetchHistoryPage(
+        apiPeerID: UUID,
+        storePeerID: UUID,
+        before: HistoryCursor?,
+        limit: Int,
+        token: String,
+        me: UUID,
+        material: IdentityKeyMaterial
+    ) async throws -> HistoryPage {
+        let isNotes = isNotesChat(storePeerID)
+        let cutoff = retentionCutoff
+        let response = try await messagesService.listMessages(
+            peerUserID: apiPeerID,
+            token: token,
+            limit: limit,
+            beforeCreatedAt: before?.createdAt,
+            beforeID: before?.id
+        )
+
+        // Server returns newest-first; reverse → chronological within this page.
+        var page = HistoryPage()
+        page.messages.reserveCapacity(response.messages.count)
+        for dto in response.messages.reversed() {
+            page.serverIDs.insert(dto.id)
+            var message = await decodeMessage(
+                dto,
+                me: me,
+                material: material,
+                token: token,
+                forcePeerUserID: isNotes ? storePeerID : nil
+            )
+            if dto.contentType == MessageAnnotation.contentType {
+                // Not a bubble: it attaches to a message; folded in after the merge.
+                if let shared = MessageAnnotation.parseTranscript(message.text) {
+                    noteSharedTranscript(shared.text, for: shared.messageID)
+                }
+                if !isNotes, dto.senderUserId != me {
+                    page.inboundIDs.append(dto.id)
+                }
+                continue
+            }
+            if isNotes {
+                message = notesMessageFromServer(message)
+            }
+            // Drop over-retention early so we don't publish then strip.
+            if !isNotes, message.createdAt < cutoff, !message.pendingSync {
+                continue
+            }
+            page.messages.append(message)
+            if !isNotes, dto.senderUserId != me {
+                page.inboundIDs.append(dto.id)
+            }
+        }
+
+        let oldest = response.messages.last // newest-first from server → oldest of page
+        let mayHaveMore = response.hasMore == true || response.messages.count >= limit
+        if mayHaveMore, let oldest, oldest.createdAt >= cutoff {
+            page.older = HistoryCursor(createdAt: oldest.createdAt, id: oldest.id)
+        }
+        return page
+    }
+
+    /// Merges a decoded page into the live thread (re-read, so sends made meanwhile stay).
+    private func publishHistoryPage(_ page: HistoryPage, storePeerID: UUID) {
+        let currentThread = threads[storePeerID] ?? []
+        let merged = foldSharedTranscripts(
+            into: ThreadMessageMerge.mergeThread(
+                decoded: page.messages,
+                previous: currentThread,
+                pendingLocal: currentThread.filter(\.pendingSync)
+            )
+        )
+        if threads[storePeerID] != merged {
+            threads[storePeerID] = merged
+        }
+    }
 
     /// - Parameters:
     ///   - apiPeerID: Peer id for HTTP (`me` for Notes).
     ///   - storePeerID: Key in `threads` (sentinel for Notes).
     ///
-    /// Publishes each page as soon as it is decoded (newest batch first) so the chat UI
-    /// is usable while older pages continue to load. Media bytes are **not** fetched here —
-    /// bubbles call `ensureImageLoaded` / `ensureVoiceLoaded` when they appear.
+    /// Opening a chat decodes only the newest page; `startOlderPrefetch` and the chat's scroll
+    /// position bring in the rest (`loadOlderMessages`). A refresh walks back from the newest
+    /// page only until it meets a message already held, so a poll costs one small page.
+    /// Media bytes are **not** fetched here — bubbles call `ensureImageLoaded` /
+    /// `ensureVoiceLoaded` when they appear.
     private func performThreadLoad(apiPeerID: UUID, storePeerID: UUID) async {
         guard let token = sessionController?.bearerToken,
               let me = sessionController?.userID,
@@ -874,100 +995,44 @@ final class MessagingController {
         else { return }
 
         let isNotes = isNotesChat(storePeerID)
-        let retentionCutoff = Calendar.current.date(
-            byAdding: .day,
-            value: -LocalMessageStore.retentionDays,
-            to: Date()
-        ) ?? Date().addingTimeInterval(-TimeInterval(LocalMessageStore.retentionDays) * 86_400)
+        let known = Set((threads[storePeerID] ?? []).lazy.filter { !$0.pendingSync }.map(\.id))
 
         do {
-            /// Server pages newest→older; we prepend older pages so chronological order is oldest…newest.
-            var accumulatedNewestFirstPages: [ChatMessage] = []
-            var beforeAt: Date?
-            var beforeID: UUID?
-            var pages = 0
+            var before: HistoryCursor?
+            var fetched = 0
             var pendingDeliveryIDs: [UUID] = []
 
-            repeat {
-                let response = try await messagesService.listMessages(
-                    peerUserID: apiPeerID,
+            while true {
+                let limit = fetched == 0 ? Self.firstPageSize : Self.historyPageSize
+                let page = try await fetchHistoryPage(
+                    apiPeerID: apiPeerID,
+                    storePeerID: storePeerID,
+                    before: before,
+                    limit: limit,
                     token: token,
-                    limit: Self.historyPageSize,
-                    beforeCreatedAt: beforeAt,
-                    beforeID: beforeID
+                    me: me,
+                    material: material
                 )
-                pages += 1
+                fetched += limit
+                // Publish each page as it lands so the newest messages show at once.
+                publishHistoryPage(page, storePeerID: storePeerID)
+                pendingDeliveryIDs += page.inboundIDs.filter { !known.contains($0) }
 
-                // Server returns newest-first; reverse → chronological within this page.
-                var pageChronological: [ChatMessage] = []
-                pageChronological.reserveCapacity(response.messages.count)
-                for dto in response.messages.reversed() {
-                    var message = await decodeMessage(
-                        dto,
-                        me: me,
-                        material: material,
-                        token: token,
-                        forcePeerUserID: isNotes ? storePeerID : nil
-                    )
-                    if dto.contentType == MessageAnnotation.contentType {
-                        // Not a bubble: it attaches to a message; folded in after the merge.
-                        if let shared = MessageAnnotation.parseTranscript(message.text) {
-                            noteSharedTranscript(shared.text, for: shared.messageID)
-                        }
-                        if !isNotes, dto.senderUserId != me {
-                            pendingDeliveryIDs.append(dto.id)
-                        }
-                        continue
-                    }
-                    if isNotes {
-                        message = notesMessageFromServer(message)
-                    }
-                    // Drop over-retention early so we don't publish then strip.
-                    if !isNotes, message.createdAt < retentionCutoff, !message.pendingSync {
-                        continue
-                    }
-                    pageChronological.append(message)
-                    if !isNotes, dto.senderUserId != me {
-                        pendingDeliveryIDs.append(dto.id)
-                    }
+                guard let older = page.older else {
+                    olderHistoryExhausted.insert(storePeerID)
+                    break
                 }
-
-                // First page = newest batch. Later pages are older → prepend.
-                if accumulatedNewestFirstPages.isEmpty {
-                    accumulatedNewestFirstPages = pageChronological
-                } else {
-                    accumulatedNewestFirstPages = pageChronological + accumulatedNewestFirstPages
-                }
-
-                // Publish immediately so the open chat shows the newest messages while older
-                // pages keep loading. Re-read the live thread each page to pick up sends.
-                let currentThread = threads[storePeerID] ?? []
-                let merged = foldSharedTranscripts(
-                    into: ThreadMessageMerge.mergeThread(
-                        decoded: accumulatedNewestFirstPages,
-                        previous: currentThread,
-                        pendingLocal: currentThread.filter(\.pendingSync)
-                    )
-                )
-                if threads[storePeerID] != merged {
-                    threads[storePeerID] = merged
-                }
-
-                let oldest = response.messages.last // newest-first from server → oldest of page
-                let pageFull = response.messages.count >= Self.historyPageSize
-                let mayHaveMore = response.hasMore == true || pageFull
-                if mayHaveMore,
-                   let oldest,
-                   oldest.createdAt >= retentionCutoff,
-                   pages < Self.historyMaxPages
+                // A first open (or one after a clear) stops at the newest page and leaves the
+                // rest to older paging; a refresh stops where it meets what we already hold
+                // (a long absence may take a few pages).
+                if known.isEmpty { olderHistoryExhausted.remove(storePeerID) }
+                if known.isEmpty || !page.serverIDs.isDisjoint(with: known)
+                    || fetched >= Self.historyMaxMessages
                 {
-                    beforeAt = oldest.createdAt
-                    beforeID = oldest.id
-                } else {
-                    beforeAt = nil
-                    beforeID = nil
+                    break
                 }
-            } while beforeAt != nil && beforeID != nil
+                before = older
+            }
 
             // Delivery acks after the visible thread is populated (don't stall first paint).
             if !isNotes {
@@ -1003,6 +1068,106 @@ final class MessagingController {
                 if lastError != nil { lastError = nil }
             }
         }
+    }
+
+    /// Whether the server may still hold messages older than the thread's oldest.
+    func hasOlderHistory(for peerUserID: UUID) -> Bool {
+        !olderHistoryExhausted.contains(peerUserID)
+    }
+
+    /// Whether an older page is being fetched for this chat right now.
+    func isLoadingOlderHistory(for peerUserID: UUID) -> Bool {
+        loadingOlderPeerIDs.contains(peerUserID)
+    }
+
+    /// Fetches the page just older than the thread's oldest message and merges it in.
+    /// One in flight per peer; the background prefetch and the reader's scrolling share it.
+    func loadOlderMessages(peerUserID: UUID) async {
+        guard !olderHistoryExhausted.contains(peerUserID) else { return }
+        if let running = olderLoadTasks[peerUserID] {
+            await running.value
+            return
+        }
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.performOlderLoad(storePeerID: peerUserID)
+        }
+        olderLoadTasks[peerUserID] = task
+        loadingOlderPeerIDs.insert(peerUserID)
+        await task.value
+        if olderLoadTasks[peerUserID] == task {
+            olderLoadTasks[peerUserID] = nil
+            loadingOlderPeerIDs.remove(peerUserID)
+        }
+    }
+
+    private func performOlderLoad(storePeerID: UUID) async {
+        // The newest page decides where older paging starts; let it land first.
+        if let initial = threadLoadTasks[storePeerID] { await initial.value }
+        guard let token = sessionController?.bearerToken,
+              let me = sessionController?.userID,
+              let material = cryptoController?.material,
+              let thread = threads[storePeerID],
+              let oldest = thread.first(where: { !$0.pendingSync })
+        else { return }
+        let apiPeer = isNotesChat(storePeerID) ? me : storePeerID
+        let known = Set(thread.lazy.map(\.id))
+
+        do {
+            let page = try await fetchHistoryPage(
+                apiPeerID: apiPeer,
+                storePeerID: storePeerID,
+                before: HistoryCursor(createdAt: oldest.createdAt, id: oldest.id),
+                limit: Self.historyPageSize,
+                token: token,
+                me: me,
+                material: material
+            )
+            guard !Task.isCancelled, threads[storePeerID] != nil else { return } // locked meanwhile
+            publishHistoryPage(page, storePeerID: storePeerID)
+            if page.older == nil || (threads[storePeerID]?.count ?? 0) >= Self.historyMaxMessages {
+                olderHistoryExhausted.insert(storePeerID)
+            }
+            if !isNotesChat(storePeerID) {
+                for id in page.inboundIDs where !known.contains(id) {
+                    try? await messagesService.markDelivered(messageID: id, token: token)
+                }
+            }
+            persistThread(storePeerID)
+        } catch {
+            // The cursor is the thread itself: the next scroll to the top tries again.
+        }
+    }
+
+    /// Walks a few older pages in behind the newest one while the chat stays open, one at a
+    /// time with a pause between them. Past `olderPrefetchTarget` it waits for the reader.
+    private func startOlderPrefetch(_ peerID: UUID) {
+        guard olderPrefetchTasks[peerID] == nil else { return }
+        olderPrefetchTasks[peerID] = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.olderPrefetchPause)
+                guard let self, !Task.isCancelled,
+                      self.activePeerID == peerID,
+                      self.hasOlderHistory(for: peerID)
+                else { break }
+                let before = self.threads[peerID]?.count ?? 0
+                guard before < Self.olderPrefetchTarget else { break }
+                await self.loadOlderMessages(peerUserID: peerID)
+                // Offline or nothing new: stop rather than spin; scrolling retries.
+                if (self.threads[peerID]?.count ?? 0) <= before { break }
+            }
+            self?.olderPrefetchTasks[peerID] = nil
+        }
+    }
+
+    /// Stops all history paging and forgets what was learned (threads are being dropped).
+    private func cancelHistoryPaging() {
+        olderLoadTasks.values.forEach { $0.cancel() }
+        olderLoadTasks.removeAll()
+        olderPrefetchTasks.values.forEach { $0.cancel() }
+        olderPrefetchTasks.removeAll()
+        olderHistoryExhausted.removeAll()
+        loadingOlderPeerIDs.removeAll()
     }
 
     /// Map server plaintext to Notes todo markers when present.

@@ -30,7 +30,7 @@ import {
   hydratePreviews,
   ingestIncoming,
   ensureVoiceLoaded,
-  loadHistory,
+  loadHistoryPage,
   peerIdForMessage,
   forgetDecryptedState,
   forgetMessageLocally,
@@ -46,6 +46,7 @@ import {
   sendVoice,
   shareTranscript,
   type ChatMessage,
+  type HistoryCursor,
 } from "../messaging";
 import { saveMediaBlob } from "../crypto/mediaCache";
 import { redactPreviewsFor } from "../crypto/plaintextCache";
@@ -74,6 +75,11 @@ import { lockNow as lockSession } from "../session";
 import { useLinkPreviewComposer } from "../linkPreview/useLinkPreviewComposer";
 
 type PeerRef = { id: string; username: string };
+
+/** Messages walked in behind the newest page before older ones wait for the reader to scroll up. */
+const PREFETCH_MESSAGES = 300;
+/** Pause between those background pages. */
+const PREFETCH_PAUSE_MS = 600;
 
 /** Pure (it runs inside `setThread` updaters, which React may call twice). */
 function mergeMessages(primary: ChatMessage[], extra: ChatMessage[]): ChatMessage[] {
@@ -121,6 +127,9 @@ export function AppShell({ session }: { session: Session }) {
   const [thread, setThread] = useState<ChatMessage[]>([]);
   const [threadLoading, setThreadLoading] = useState(false);
   const [threadError, setThreadError] = useState<string | null>(null);
+  /** The server has messages older than the thread holds (see `loadOlder`). */
+  const [hasOlder, setHasOlder] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [draft, setDraft] = useState("");
   /** Message being answered in the open chat; cleared when it is sent or the chat changes. */
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
@@ -140,6 +149,12 @@ export function AppShell({ session }: { session: Session }) {
   conversationsRef.current = conversations;
   const threadRef = useRef(thread);
   threadRef.current = thread;
+  /** Start of the next older page for the open chat; null once its history is all here. */
+  const olderCursor = useRef<HistoryCursor | null>(null);
+  /** The older page in flight, shared by the background walk and the reader's scrolling. */
+  const olderLoad = useRef<Promise<void> | null>(null);
+  /** Bumped per opened chat, so a page for the previous one is dropped on arrival. */
+  const historyEpoch = useRef(0);
   /** Optimistic ids the reader deleted while the send was still in flight. */
   const droppedSends = useRef(new Set<string>());
   /** Server id for an optimistic bubble, once the send has been accepted. */
@@ -388,6 +403,33 @@ export function AppShell({ session }: { session: Session }) {
     };
   }, [refresh, endSession]);
 
+  /** Fetches the page before the oldest one loaded; a no-op once the start is reached. */
+  const loadOlder = useCallback((): Promise<void> => {
+    if (olderLoad.current) return olderLoad.current;
+    const cursor = olderCursor.current;
+    const open = selectedRef.current;
+    const material = loadIdentity(session.user.id);
+    if (!cursor || !open || !material) return Promise.resolve();
+    const epoch = historyEpoch.current;
+    setLoadingOlder(true);
+    const run: Promise<void> = loadHistoryPage(session.token, session.user.id, open.id, material, cursor)
+      .then((page) => {
+        if (epoch !== historyEpoch.current) return;
+        olderCursor.current = page.older;
+        setHasOlder(page.older !== null);
+        setThread((prev) => mergeMessages(prev, page.messages));
+      })
+      .catch(() => {
+        /* cursor kept: the next scroll to the top tries again */
+      })
+      .finally(() => {
+        if (olderLoad.current === run) olderLoad.current = null;
+        if (epoch === historyEpoch.current) setLoadingOlder(false);
+      });
+    olderLoad.current = run;
+    return run;
+  }, [session.token, session.user.id]);
+
   useEffect(() => {
     const material = loadIdentity(session.user.id);
     if (!selected || !material) {
@@ -397,17 +439,34 @@ export function AppShell({ session }: { session: Session }) {
     }
     const peerId = selected.id;
     let cancelled = false;
+    let prefetchTimer = 0;
+    historyEpoch.current += 1;
+    olderCursor.current = null;
+    olderLoad.current = null;
+    setHasOlder(false);
+    setLoadingOlder(false);
     setThread([]);
     setDraft("");
     setReplyTo(null);
     setThreadLoading(true);
     setThreadError(null);
-    loadHistory(session.token, session.user.id, peerId, material)
-      .then((msgs) => {
+    /* Only the newest page is decrypted before the chat shows. A few older pages follow
+       in the background, one at a time with a pause between them so decrypting never
+       competes with the reader; past that, pages load as they scroll up (`loadOlder`). */
+    const prefetch = () => {
+      if (cancelled || !olderCursor.current || threadRef.current.length >= PREFETCH_MESSAGES) return;
+      prefetchTimer = window.setTimeout(() => void loadOlder().then(prefetch), PREFETCH_PAUSE_MS);
+    };
+    loadHistoryPage(session.token, session.user.id, peerId, material)
+      .then((page) => {
         if (cancelled) return;
         if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
-        setThread(msgs);
+        olderCursor.current = page.older;
+        setHasOlder(page.older !== null);
+        // A message that arrived over the socket while the page was in flight stays.
+        setThread((prev) => mergeMessages(page.messages, prev));
         setPreviewRev((n) => n + 1);
+        prefetch();
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -418,8 +477,9 @@ export function AppShell({ session }: { session: Session }) {
       });
     return () => {
       cancelled = true;
+      window.clearTimeout(prefetchTimer);
     };
-  }, [selected?.id, session.token, session.user.id]);
+  }, [selected?.id, session.token, session.user.id, loadOlder]);
 
   useEffect(() => {
     const connection = connectRealtime({
@@ -1232,6 +1292,9 @@ export function AppShell({ session }: { session: Session }) {
                 activity={selectedActivity ?? null}
                 messages={thread}
                 loading={threadLoading}
+                hasOlder={hasOlder}
+                loadingOlder={loadingOlder}
+                onLoadOlder={loadOlder}
                 error={threadError}
                 canSend={Boolean(identity)}
                 sending={sendingPeer?.toLowerCase() === selected.id.toLowerCase()}

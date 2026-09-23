@@ -75,9 +75,44 @@ struct ConversationView: View {
     @State private var highlightTask: Task<Void, Never>?
     /// Link preview for the first link in the draft (Telegram's strip above the composer).
     @State private var linkComposer = LinkPreviewComposer()
+    /// Oldest rendered message; moves up as the reader nears the top. Pinned to a message, not a
+    /// count, so a page landing above or a message arriving below never adds or drops rows on
+    /// its own (either would shift the thread under the reader, or under a send's scroll).
+    @State private var renderFrom: RenderAnchor?
+    /// Drives the thread's offset when rows are added above the reader.
+    @State private var threadScroll = ScrollPosition(edge: .bottom)
+    /// Scroll geometry, kept out of view state so scrolling doesn't redraw the thread.
+    @State private var scrollState = ThreadScrollState()
 
     private var messages: [MessagingController.ChatMessage] {
         messaging.threads[peerUserID] ?? []
+    }
+
+    /// Index of the oldest rendered message; everything before it waits for the reader.
+    private var renderStart: Int {
+        let fallback = max(0, messages.count - Self.renderWindow)
+        guard let renderFrom else { return fallback }
+        // From the end: the anchor is usually near the newest messages.
+        if let index = messages.lastIndex(where: { $0.id == renderFrom.id }) { return index }
+        // Gone (deleted just for us): start at whatever took its place in time.
+        return messages.firstIndex(where: { $0.createdAt >= renderFrom.createdAt }) ?? fallback
+    }
+
+    /// Older messages in memory but held back from the thread until the reader scrolls up.
+    private var hiddenCount: Int {
+        renderStart
+    }
+
+    /// Moves the top of the rendered window to `index`.
+    private func moveRenderStart(to index: Int) {
+        guard messages.indices.contains(index) else { return }
+        let message = messages[index]
+        renderFrom = RenderAnchor(id: message.id, createdAt: message.createdAt)
+    }
+
+    /// The server may have more above what is in memory (and the chat has started).
+    private var hasOlderOnServer: Bool {
+        !messages.isEmpty && messaging.hasOlderHistory(for: peerUserID)
     }
 
     /// Stable identity of the newest bubble (count alone misses same-count reloads).
@@ -338,6 +373,14 @@ struct ConversationView: View {
 
     /// Horizontal inset on the message list; bubbles subtract it to get their row width.
     private static let threadHorizontalInset: CGFloat = 16
+    /// Newest messages rendered when a chat opens; older ones are added as the reader scrolls up.
+    private static let renderWindow = 60
+    /// Rows added above the reader each time they near the top.
+    private static let renderStep = 50
+    /// How close to the top (pt) the reader gets before older rows are added or fetched.
+    private static let revealSlack: CGFloat = 600
+    /// Scroll to a message landing at the bottom.
+    private static let followAnimation = Animation.easeOut(duration: 0.25)
 
     // MARK: - Full-screen layers
     //
@@ -708,8 +751,14 @@ struct ConversationView: View {
                 // Non-lazy VStack so the bottom anchor exists as soon as messages are set
                 // (LazyVStack often fails first `scrollTo` because the last row is not realized).
                 VStack(spacing: 3) {
-                    headerChips
-                        .padding(.bottom, 6)
+                    // The E2E notice marks the start of the chat, so it waits until the
+                    // oldest message is on screen; until then the top row loads more.
+                    if hiddenCount > 0 || hasOlderOnServer {
+                        olderHistoryRow
+                    } else {
+                        headerChips
+                            .padding(.bottom, 6)
+                    }
 
                     ForEach(groupedTimeline, id: \.id) { item in
                         switch item {
@@ -774,7 +823,7 @@ struct ConversationView: View {
                             .id("typing-indicator")
                     }
 
-                    // Stable end anchor — always scroll here when opening / pinning to newest.
+                    // Keeps the thread's bottom spacing; pins scroll to the content edge below it.
                     Color.clear
                         .frame(height: 1)
                         .id("thread-bottom")
@@ -783,22 +832,73 @@ struct ConversationView: View {
                 .padding(.vertical, 12)
                 // Drives the bubble insertion transition above. Keyed on the newest id (not
                 // just `count`) so a same-count reload still resolves without re-animating
-                // the whole thread. The bottom-pin below runs on the same change.
-                .animation(Motion.bouncy, value: newestMessageID)
+                // the whole thread. The bottom-pin below runs on the same change. Not for the
+                // first messages shown: a chat opens settled, it doesn't pop in bubble by bubble.
+                .animation(renderFrom == nil ? nil : Motion.bouncy, value: newestMessageID)
                 // Springy, so the ink bubble pops out of its tail corner like a message landing.
                 .animation(Motion.bouncy, value: peerActivity)
                 .onPreferenceChange(MessageBubbleFrameKey.self) { frames in
                     bubbleFrames.frames.merge(frames, uniquingKeysWith: { $1 })
                 }
             }
-            // Open chats pre-scrolled to newest (iOS 17+), like Telegram/Signal/WhatsApp.
-            .defaultScrollAnchor(.bottom)
+            // Open chats pre-scrolled to newest, like Telegram/Signal/WhatsApp, and sit a short
+            // thread on the composer. Not for size changes: that role snaps to the new bottom
+            // the instant a message lands, so a send jumped instead of scrolling. Following the
+            // bottom is done below, animated.
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .defaultScrollAnchor(.bottom, for: .alignment)
+            .scrollPosition($threadScroll)
             .scrollDismissesKeyboard(.interactively)
-            .onChange(of: messages.count) { _, _ in
-                scrollToBottom(proxy)
+            .onScrollGeometryChange(for: ThreadScrollMetrics.self) { geometry in
+                ThreadScrollMetrics(
+                    contentHeight: geometry.contentSize.height,
+                    offsetY: geometry.contentOffset.y,
+                    nearTop: geometry.contentOffset.y + geometry.contentInsets.top < Self.revealSlack,
+                    topInset: geometry.contentInsets.top,
+                    // Offsets here start under the top inset (see `scrollTo(y:)` below).
+                    atBottom: geometry.contentOffset.y >= geometry.contentSize.height
+                        - geometry.containerSize.height - geometry.contentInsets.top - 2,
+                    containerHeight: geometry.containerSize.height
+                )
+            } action: { old, new in
+                scrollState.metrics = new
+                // Rows went in above the reader: put back the distance to the bottom so the
+                // message they were reading stays where it was.
+                if let hold = scrollState.holdFromBottom, new.contentHeight != old.contentHeight {
+                    scrollState.holdFromBottom = nil
+                    // `scrollTo(y:)` counts from under the top inset; `contentOffset` doesn't.
+                    threadScroll.scrollTo(y: new.contentHeight - hold + new.topInset)
+                    scrollState.staleOffset = new.offsetY
+                    return
+                }
+                // Until the restore lands, the offset is the old one and still reads "near
+                // the top"; revealing on it would add a second batch against a stale hold.
+                if let stale = scrollState.staleOffset {
+                    guard new.offsetY != stale else { return }
+                    scrollState.staleOffset = nil
+                }
+                // Reading the newest message: stay on it. Content growing under it (a send, an
+                // arrival, a transcript unfolding) scrolls along; the keyboard just re-pins.
+                if old.atBottom, renderFrom != nil {
+                    if new.contentHeight > old.contentHeight {
+                        withAnimation(Self.followAnimation) { threadScroll.scrollTo(edge: .bottom) }
+                    } else if new.containerHeight != old.containerHeight {
+                        threadScroll.scrollTo(edge: .bottom)
+                    }
+                }
+                if new.nearTop { revealOlder() }
             }
-            .onChange(of: newestMessageID) { _, _ in
-                scrollToBottom(proxy)
+            .onChange(of: messages.isEmpty, initial: true) { _, isEmpty in
+                // Freeze the window on the first messages shown; it only grows from here.
+                if renderFrom == nil, !isEmpty { moveRenderStart(to: renderStart) }
+            }
+            .onChange(of: messages.count) { _, _ in
+                // An older page landed (or a send went out) while the reader sits at the top.
+                revealOlder()
+            }
+            .onChange(of: newestMessageID) { old, _ in
+                // The first messages shown are already at the bottom; only later ones scroll.
+                scrollToBottom(animated: old != nil, force: old == nil)
             }
             .onChange(of: transcriptTail) { old, new in
                 // Pushed off the bottom by something newer: forget the reader's choice so the
@@ -810,7 +910,7 @@ struct ConversationView: View {
                 }
             }
             .onChange(of: peerActivity) { _, activity in
-                if activity != nil { scrollToBottom(proxy) }
+                if activity != nil { scrollToBottom() }
             }
             .onChange(of: jumpTarget) { _, target in
                 guard let target else { return }
@@ -822,11 +922,41 @@ struct ConversationView: View {
             }
             .onChange(of: pinToBottomToken) { _, _ in
                 // Opening + post-load: force pin without animation so we never flash the top.
-                scrollToBottom(proxy, animated: false, force: true)
+                scrollToBottom(animated: false, force: true)
             }
             .onAppear {
-                scrollToBottom(proxy, animated: false, force: true)
+                scrollToBottom(animated: false, force: true)
             }
+        }
+    }
+
+    /// Top of a thread that goes back further: a spinner while an older page is fetched,
+    /// the same height either way so rows below it don't shift when it stops.
+    private var olderHistoryRow: some View {
+        ZStack {
+            if hiddenCount == 0, messaging.isLoadingOlderHistory(for: peerUserID) {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("Loading earlier messages")
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 28)
+    }
+
+    /// Near the top: render the next older rows already in memory, or fetch another page.
+    /// Re-checked as pages land and as the added rows settle, so a thread shorter than the
+    /// screen keeps filling until it isn't.
+    private func revealOlder() {
+        let state = scrollState
+        guard state.settled, state.pinning == 0, state.metrics.nearTop,
+              state.holdFromBottom == nil, state.staleOffset == nil
+        else { return }
+        let start = renderStart
+        if start > 0 {
+            state.holdFromBottom = state.metrics.contentHeight - state.metrics.offsetY
+            moveRenderStart(to: max(0, start - Self.renderStep))
+        } else if hasOlderOnServer, !messaging.isLoadingOlderHistory(for: peerUserID) {
+            Task { await messaging.loadOlderMessages(peerUserID: peerUserID) }
         }
     }
 
@@ -859,7 +989,7 @@ struct ConversationView: View {
         var items: [TimelineItem] = []
         var lastDay: String?
         let calendar = Calendar.current
-        for message in messages {
+        for message in messages[renderStart...] {
             let dayKey = dayKey(for: message.createdAt, calendar: calendar)
             if dayKey != lastDay {
                 items.append(.date(dayLabel(for: message.createdAt, calendar: calendar), id: "day-\(dayKey)"))
@@ -883,23 +1013,12 @@ struct ConversationView: View {
 
     /// Pins the thread to the newest content (bottom).
     /// - Parameter force: When true, retries after layout so open/load always lands on the latest message.
-    private func scrollToBottom(
-        _ proxy: ScrollViewProxy,
-        animated: Bool = true,
-        force: Bool = false
-    ) {
-        let pin = {
-            // Prefer the fixed end anchor so Lazy/layout races cannot miss a message id.
-            if peerActivity != nil {
-                proxy.scrollTo("typing-indicator", anchor: .bottom)
-            }
-            proxy.scrollTo("thread-bottom", anchor: .bottom)
-            if let last = messages.last {
-                proxy.scrollTo(last.id, anchor: .bottom)
-            }
-        }
+    private func scrollToBottom(animated: Bool = true, force: Bool = false) {
+        // The content's real end (typing bubble and bottom padding included). Scrolling to the
+        // last bubble stopped 16 pt short, which also read as "not at the bottom" afterwards.
+        let pin = { threadScroll.scrollTo(edge: .bottom) }
         if animated {
-            withAnimation(.easeOut(duration: 0.2), pin)
+            withAnimation(Self.followAnimation, pin)
         } else {
             // Disable implicit animation so open does not animate from the top of the thread.
             var transaction = Transaction()
@@ -909,18 +1028,18 @@ struct ConversationView: View {
 
         guard force else { return }
         // `defaultScrollAnchor` + first layout pass can still leave us mid-thread; re-pin after frames settle.
+        scrollState.pinning += 1
         Task { @MainActor in
             for delayNs in [16_000_000, 50_000_000, 120_000_000] as [UInt64] {
                 try? await Task.sleep(nanoseconds: delayNs)
                 var transaction = Transaction()
                 transaction.disablesAnimations = true
-                withTransaction(transaction) {
-                    proxy.scrollTo("thread-bottom", anchor: .bottom)
-                    if let last = messages.last {
-                        proxy.scrollTo(last.id, anchor: .bottom)
-                    }
-                }
+                withTransaction(transaction, pin)
             }
+            // Only now is "near the top" the reader's doing and not the first layout pass.
+            scrollState.pinning -= 1
+            scrollState.settled = true
+            revealOlder()
         }
     }
 
@@ -993,14 +1112,24 @@ struct ConversationView: View {
     /// Scrolls to a quoted message and flashes it. Says so when it is no longer on the device
     /// (older than the local window, or deleted just for us).
     private func jumpToQuoted(_ messageID: UUID) {
-        guard messages.contains(where: { $0.id == messageID }) else {
+        guard let index = messages.firstIndex(where: { $0.id == messageID }) else {
             toast = "The original message isn't in this chat any more."
             Haptics.notification(.warning)
             scheduleToastClear()
             return
         }
         jumpNonce &+= 1
-        jumpTarget = JumpTarget(id: messageID, nonce: jumpNonce)
+        let target = JumpTarget(id: messageID, nonce: jumpNonce)
+        guard index < renderStart else {
+            jumpTarget = target
+            return
+        }
+        // Above the rendered rows: render down to it (and a few older for context) first.
+        moveRenderStart(to: max(0, index - 10))
+        Task { @MainActor in
+            await Task.yield()
+            jumpTarget = target
+        }
     }
 
     private func flashHighlight(_ messageID: UUID) {
@@ -1963,8 +2092,39 @@ struct ConversationView: View {
     .environment(MessagingController())
 }
 
+/// The oldest rendered message (its date finds the spot again if it is deleted).
+private struct RenderAnchor: Equatable {
+    let id: UUID
+    let createdAt: Date
+}
+
+/// What the thread needs of its scroll geometry: enough to hold a reading position.
+private struct ThreadScrollMetrics: Equatable {
+    var contentHeight: CGFloat = 0
+    var offsetY: CGFloat = 0
+    var nearTop = false
+    var topInset: CGFloat = 0
+    var atBottom = false
+    var containerHeight: CGFloat = 0
+}
+
 /// Where each bubble is drawn, for the long-press menu's hero. Not observed on purpose.
 @MainActor
 private final class BubbleFrameStore {
     var frames: [UUID: CGRect] = [:]
+}
+
+/// Per-thread scroll bookkeeping. A reference type on purpose: it changes every frame while
+/// scrolling, and none of it should redraw the thread.
+@MainActor
+private final class ThreadScrollState {
+    var metrics = ThreadScrollMetrics()
+    /// Distance from the content's bottom edge to restore once rows added above have laid out.
+    var holdFromBottom: CGFloat?
+    /// Offset from before that restore, until the scroll view reports the new one.
+    var staleOffset: CGFloat?
+    /// Forced pins to the bottom still settling (the first layout reads as "at the top").
+    var pinning = 0
+    /// The opening pin has landed; before that the offset says nothing about the reader.
+    var settled = false
 }

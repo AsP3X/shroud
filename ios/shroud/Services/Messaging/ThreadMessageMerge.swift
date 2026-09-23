@@ -11,9 +11,15 @@ enum ThreadMessageMerge {
         _ decoded: MessagingController.ChatMessage,
         previous: [MessagingController.ChatMessage]
     ) -> MessagingController.ChatMessage {
-        guard let prior = previous.first(where: { $0.id == decoded.id }) else {
-            return decoded
-        }
+        preferReadable(decoded, prior: previous.first(where: { $0.id == decoded.id }))
+    }
+
+    /// `preferReadable(_:previous:)` with the prior copy already looked up.
+    static func preferReadable(
+        _ decoded: MessagingController.ChatMessage,
+        prior: MessagingController.ChatMessage?
+    ) -> MessagingController.ChatMessage {
+        guard let prior else { return decoded }
         let decodedFailed = isFailedDecryptText(decoded.text)
         let priorFailed = isFailedDecryptText(prior.text)
 
@@ -70,15 +76,16 @@ enum ThreadMessageMerge {
         previous: [MessagingController.ChatMessage],
         pendingLocal: [MessagingController.ChatMessage]
     ) -> [MessagingController.ChatMessage] {
-        var result = decoded.map { preferReadable($0, previous: previous) }
+        // Keyed lookups: a thread holds thousands once older pages are in, and this runs per page.
+        let previousByID = Dictionary(previous.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var result = decoded.map { preferReadable($0, prior: previousByID[$0.id]) }
+        var seen = Set(result.map(\.id))
 
-        for pending in pendingLocal where !result.contains(where: { $0.id == pending.id }) {
+        for pending in pendingLocal where seen.insert(pending.id).inserted {
             result.append(pending)
         }
-        for prior in previous where !result.contains(where: { $0.id == prior.id }) {
-            if !isFailedDecryptText(prior.text) {
-                result.append(prior)
-            }
+        for prior in previous where !isFailedDecryptText(prior.text) && seen.insert(prior.id).inserted {
+            result.append(prior)
         }
         result.sort { $0.createdAt < $1.createdAt }
         return result

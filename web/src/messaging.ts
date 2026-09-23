@@ -563,43 +563,52 @@ export async function hydratePreviews(
   }
 }
 
-export async function loadHistory(
+/** Where the next older page starts: the oldest message the server has handed us so far. */
+export type HistoryCursor = { createdAt: string; id: string };
+
+export type HistoryPage = {
+  /** Oldest first, annotations already folded in. */
+  messages: ChatMessage[];
+  /** Pass back to `loadHistoryPage` for the page before this one; null once the start is reached. */
+  older: HistoryCursor | null;
+};
+
+/** Newest page on open: small, so a chat shows up after one short decrypt. */
+export const FIRST_PAGE_SIZE = 40;
+/** Older pages walked in the background or on scroll (server max is 100). */
+export const OLDER_PAGE_SIZE = 100;
+
+/**
+ * One page of a thread, newest first from the server. Without `before` it is the newest
+ * page; with it, the page just older than that cursor. The chat opens on the first and
+ * walks back a page at a time, so a long history never has to be decrypted in one go.
+ */
+export async function loadHistoryPage(
   token: string,
   me: string,
   peerUserId: string,
   material: IdentityMaterial,
-): Promise<ChatMessage[]> {
+  before: HistoryCursor | null = null,
+  limit = before ? OLDER_PAGE_SIZE : FIRST_PAGE_SIZE,
+): Promise<HistoryPage> {
   const peer = peerUserId.toLowerCase();
   return withPeerLock(peer, async () => {
-    const pages: WireMessage[][] = [];
-    let beforeAt: string | undefined;
-    let beforeId: string | undefined;
-    for (let i = 0; i < 40; i++) {
-      const extra: Record<string, string> = {};
-      if (beforeAt && beforeId) {
-        extra.before_created_at = beforeAt;
-        extra.before_id = beforeId.toLowerCase();
-      }
-      const res = await api.listMessages(token, peer, extra);
-      pages.push(res.messages);
-      const oldest = res.messages[res.messages.length - 1];
-      const full = res.messages.length >= 100;
-      if ((res.has_more || full) && oldest) {
-        beforeAt = oldest.created_at;
-        beforeId = oldest.id;
-      } else {
-        break;
-      }
+    const extra: Record<string, string> = { limit: String(limit) };
+    if (before) {
+      extra.before_created_at = before.createdAt;
+      extra.before_id = before.id.toLowerCase();
     }
-    const chronological: WireMessage[] = [];
-    for (let i = pages.length - 1; i >= 0; i--) {
-      chronological.push(...[...pages[i]].reverse());
-    }
+    const res = await api.listMessages(token, peer, extra);
     const out: ChatMessage[] = [];
-    for (const dto of chronological) {
+    for (const dto of [...res.messages].reverse()) {
       out.push(await decodeIncoming(dto, me, peer, token, material));
     }
-    return applyAnnotations(out);
+    const oldest = res.messages[res.messages.length - 1];
+    const more = (res.has_more || res.messages.length >= limit) && oldest;
+    return {
+      messages: applyAnnotations(out),
+      older: more ? { createdAt: oldest.created_at, id: oldest.id } : null,
+    };
   });
 }
 

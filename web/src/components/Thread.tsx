@@ -85,6 +85,12 @@ const GROUP_WINDOW = 5 * MINUTE;
 const PIN_SLACK = 120;
 /** The typing bubble's exit animation (index.css `typing-out`). */
 const TYPING_OUT_MS = 180;
+/** Newest messages in the DOM when a chat opens; the rest are added as the reader scrolls up. */
+const RENDER_WINDOW = 60;
+/** Messages added above the reader each time they near the top. */
+const RENDER_STEP = 50;
+/** How close to the top the reader gets before older messages are added (or fetched). */
+const REVEAL_SLACK = 600;
 
 type Row =
   | { kind: "day"; key: string; label: string }
@@ -423,6 +429,9 @@ export function Thread({
   messages,
   loading,
   error,
+  hasOlder = false,
+  loadingOlder = false,
+  onLoadOlder,
   canSend,
   sending,
   draft,
@@ -452,6 +461,10 @@ export function Thread({
   messages: ChatMessage[];
   loading: boolean;
   error: string | null;
+  /** The server holds messages older than `messages`; `onLoadOlder` fetches the next page. */
+  hasOlder?: boolean;
+  loadingOlder?: boolean;
+  onLoadOlder?: () => Promise<void>;
   canSend: boolean;
   sending: boolean;
   draft: string;
@@ -491,6 +504,16 @@ export function Thread({
   const [searchQuery, setSearchQuery] = useState("");
   const searchField = useRef<HTMLInputElement>(null);
   const seenCount = useRef(0);
+  /** Oldest message at the last render, to tell a page landing above from new ones below. */
+  const seenFirst = useRef<string | null>(null);
+  /** Oldest rendered message; moves up as the reader nears the top. Pinned to a message, not
+      a count, so a page landing above or a message arriving below never adds or drops rows on
+      its own (either would shift the thread under the reader, or under a send's scroll). */
+  const [renderFrom, setRenderFrom] = useState<{ id: string; createdAt: string } | null>(null);
+  /** Distance from the bottom to restore once rows added above the reader are laid out. */
+  const holdFromBottom = useRef<number | null>(null);
+  /** Quoted message to scroll to once the rows that hold it are rendered. */
+  const pendingJump = useRef<string | null>(null);
   /** Rendered rows, for the resize observer to tell new messages from in-place growth. */
   const rowCount = useRef(0);
   const photoPicker = useRef<HTMLInputElement>(null);
@@ -538,6 +561,7 @@ export function Thread({
     pinnedRef.current = atBottom;
     setPinned(atBottom);
     if (atBottom) setUnseen(0);
+    revealOlder.current();
   }, []);
 
   const finePointer = () => window.matchMedia?.("(pointer: fine)").matches ?? false;
@@ -582,6 +606,10 @@ export function Thread({
 
   useLayoutEffect(() => {
     seenCount.current = 0;
+    seenFirst.current = null;
+    holdFromBottom.current = null;
+    pendingJump.current = null;
+    setRenderFrom(null);
     setUnseen(0);
     setSearchOpen(false);
     setSearchQuery("");
@@ -592,8 +620,12 @@ export function Thread({
   }, [peer.id, toBottom]);
 
   useLayoutEffect(() => {
-    const added = messages.length - seenCount.current;
+    // An older page lands above the oldest message we had; only what's left came in below.
+    const firstBefore = seenFirst.current;
+    const prepended = firstBefore ? Math.max(0, messages.findIndex((m) => m.id === firstBefore)) : 0;
+    const added = messages.length - seenCount.current - prepended;
     seenCount.current = messages.length;
+    seenFirst.current = messages[0]?.id ?? null;
     if (added <= 0) return;
     const last = messages[messages.length - 1];
     if (pinned || last?.isMine) toBottom(messages.length === added ? "auto" : "smooth");
@@ -605,16 +637,70 @@ export function Thread({
   }, [searchOpen]);
 
   const query = searchOpen ? searchQuery.trim() : "";
+  /** Index of the oldest rendered message; everything before it waits for the reader. */
+  const renderStart = useMemo(() => {
+    const fallback = Math.max(0, messages.length - RENDER_WINDOW);
+    if (!renderFrom) return fallback;
+    for (let i = messages.length - 1; i >= 0; i--) if (messages[i].id === renderFrom.id) return i;
+    // Gone (deleted just for us): start at whatever took its place in time.
+    const later = messages.findIndex((m) => m.createdAt >= renderFrom.createdAt);
+    return later >= 0 ? later : fallback;
+  }, [messages, renderFrom]);
+  const moveRenderStart = useCallback(
+    (index: number) => {
+      const message = messages[Math.max(0, Math.min(index, messages.length - 1))];
+      if (message) setRenderFrom({ id: message.id, createdAt: message.createdAt });
+    },
+    [messages],
+  );
+  /* Freeze the window on the first messages shown (before paint); it only grows from here. */
+  useLayoutEffect(() => {
+    if (!renderFrom && messages.length > 0) moveRenderStart(renderStart);
+  }, [renderFrom, messages.length, renderStart, moveRenderStart]);
+  /** Older messages held back from the DOM (none while searching: a search covers them all). */
+  const hidden = query ? 0 : renderStart;
   const visible = useMemo(() => {
-    if (!query) return messages;
+    if (!query) return hidden > 0 ? messages.slice(hidden) : messages;
     const needle = query.toLowerCase();
     return messages.filter((m) => {
       if (m.deleted) return false;
       if (m.text.toLowerCase().includes(needle)) return true;
       return Boolean(m.transcript && m.transcript.toLowerCase().includes(needle));
     });
-  }, [messages, query]);
+  }, [messages, query, hidden]);
   const rows = useMemo(() => buildRows(visible), [visible]);
+
+  /* Near the top: add the next older rows that are already here, or fetch another page.
+     Read through a ref so the scroll handler, bound once, always sees this render. */
+  const revealOlder = useRef(() => {});
+  revealOlder.current = () => {
+    const node = scroller.current;
+    if (!node || query || holdFromBottom.current !== null || node.scrollTop > REVEAL_SLACK) return;
+    if (hidden > 0) {
+      holdFromBottom.current = node.scrollHeight - node.scrollTop;
+      moveRenderStart(hidden - RENDER_STEP);
+    } else if (hasOlder && !loadingOlder) {
+      void onLoadOlder?.();
+    }
+  };
+  /* Keeps the reader on the message they were reading while rows are added above it,
+     then checks again: a thread shorter than the screen keeps filling until it isn't. */
+  useLayoutEffect(() => {
+    const node = scroller.current;
+    const hold = holdFromBottom.current;
+    if (node && hold !== null) {
+      node.scrollTop = node.scrollHeight - hold;
+      holdFromBottom.current = null;
+    }
+    const jump = pendingJump.current;
+    if (jump) {
+      pendingJump.current = null;
+      jumpTo(jump);
+    }
+  }, [visible]);
+  useEffect(() => {
+    revealOlder.current();
+  }, [messages.length, renderStart, hasOlder, loadingOlder]);
 
   /* The activity bubble sinks away when the peer stops, but gives way at once when
      their message arrives, so the message lands where the bubble was. */
@@ -822,6 +908,13 @@ export function Thread({
       const node = scroller.current?.querySelector<HTMLElement>(
         `[data-message-id="${CSS.escape(key)}"]`,
       );
+      // Still in the thread but above the rendered rows: render down to it, then jump.
+      const index = node ? -1 : messages.findIndex((m) => m.id.toLowerCase() === key);
+      if (index >= 0 && index < renderStart && !query) {
+        pendingJump.current = key;
+        moveRenderStart(index - 10);
+        return;
+      }
       if (!node) {
         showNotice("The original message isn’t in this chat any more.", 2400);
         return;
@@ -831,7 +924,7 @@ export function Thread({
       window.clearTimeout(flashTimer.current);
       flashTimer.current = window.setTimeout(() => setFlashing(null), 1400);
     },
-    [showNotice],
+    [showNotice, messages, query, renderStart, moveRenderStart],
   );
 
   useEffect(
@@ -1013,35 +1106,42 @@ export function Thread({
               </p>
             </div>
           ) : (
-            rows.map((row) => {
-              if (row.kind === "day") {
+            <>
+              {!query && (hidden > 0 || hasOlder) ? (
+                <p className="thread-older" aria-live="polite">
+                  {loadingOlder && hidden === 0 ? "Loading earlier messages…" : ""}
+                </p>
+              ) : null}
+              {rows.map((row) => {
+                if (row.kind === "day") {
+                  return (
+                    <div className="day-sep" key={row.key}>
+                      <span>{row.label}</span>
+                    </div>
+                  );
+                }
                 return (
-                  <div className="day-sep" key={row.key}>
-                    <span>{row.label}</span>
-                  </div>
+                  <MessageRow
+                    key={row.key}
+                    row={row}
+                    query={query}
+                    inTail={tail.has(row.message.id)}
+                    peerName={peer.username}
+                    myId={myId}
+                    quoted={quoted}
+                    flashing={flashing === row.message.id.toLowerCase()}
+                    onReply={onReply}
+                    onMenu={openMenu}
+                    onJump={jumpTo}
+                    onOpenPhoto={(opened) => setViewing(opened.id)}
+                    onOpenVideo={(opened) => setWatching(opened.id)}
+                    onLoadImage={onLoadImage}
+                    onLoadVideo={onLoadVideo}
+                    onLoadVoice={onLoadVoice}
+                  />
                 );
-              }
-              return (
-                <MessageRow
-                  key={row.key}
-                  row={row}
-                  query={query}
-                  inTail={tail.has(row.message.id)}
-                  peerName={peer.username}
-                  myId={myId}
-                  quoted={quoted}
-                  flashing={flashing === row.message.id.toLowerCase()}
-                  onReply={onReply}
-                  onMenu={openMenu}
-                  onJump={jumpTo}
-                  onOpenPhoto={(opened) => setViewing(opened.id)}
-                  onOpenVideo={(opened) => setWatching(opened.id)}
-                  onLoadImage={onLoadImage}
-                  onLoadVideo={onLoadVideo}
-                  onLoadVoice={onLoadVoice}
-                />
-              );
-            })
+              })}
+            </>
           )}
           {showActivity && !query ? (
             <TypingBubble name={peer.username} leaving={!activity} word={activityWord} />
