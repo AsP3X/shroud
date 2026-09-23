@@ -27,8 +27,10 @@ struct MainTabView: View {
     /// The keyboard came up for the bar's own field; stays set until it is fully down, so
     /// closing search rides the keyboard down instead of blinking the bar out and back.
     @State private var keyboardServesSearch = false
-    /// Home-indicator inset, measured with the keyboard ignored.
-    @State private var homeIndicatorInset: CGFloat = 0
+    /// Home-indicator inset, measured with the keyboard ignored. Seeded from the window: the
+    /// geometry reading lands after the first layout, and starting at 0 dropped the bar 12 pt
+    /// on the shell's first frame (visible as a jump at the end of the unlock reveal).
+    @State private var homeIndicatorInset: CGFloat = Self.windowBottomInset()
 
     // Same curve as before, now expressed as a design-system token (`Motion.standard`).
     private let tabAnimation = Motion.standard
@@ -165,6 +167,14 @@ struct MainTabView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { note in
             updateKeyboardHeight(from: note, hiding: true)
         }
+    }
+
+    private static func windowBottomInset() -> CGFloat {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow)?
+            .safeAreaInsets.bottom ?? 0
     }
 
     private func updateKeyboardHeight(from note: Notification, hiding: Bool = false) {

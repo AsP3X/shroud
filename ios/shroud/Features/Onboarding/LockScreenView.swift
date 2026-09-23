@@ -7,14 +7,16 @@ import SwiftUI
 /// Human: Shown instead of Welcome when a server session and a local identity exist but the
 /// history vault is still sealed. One job: unlock. The success animation runs here through
 /// `.releasing`; the final cross-fade into Chats is `RootView`'s transition.
-/// Agent: CALLS cryptoController.unlockHistoryIfPossible; on success plays phases then
-/// router.unlockMessages(). Never auto-prompts biometry — every prompt is a tap.
+/// Agent: CALLS cryptoController.unlockHistoryIfPossible; on success loads the chats cache
+/// (messagingController.prepareCachedState), plays phases, then router.unlockMessages().
+/// Never auto-prompts biometry — every prompt is a tap.
 struct LockScreenView: View {
     @Bindable var router: AppRouter
 
     @Environment(ServerConfigurationController.self) private var serverConfig
     @Environment(SessionController.self) private var sessionController
     @Environment(CryptoController.self) private var cryptoController
+    @Environment(MessagingController.self) private var messagingController
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Where the unlock choreography is.
@@ -471,6 +473,9 @@ struct LockScreenView: View {
             }
             return
         }
+        // Heavy and synchronous: load the chats while the screen still reads "Checking…",
+        // so nothing is moving and Chats is inserted with its rows already in place.
+        messagingController.prepareCachedState()
         await playUnlockChoreography()
     }
 
@@ -499,6 +504,7 @@ struct LockScreenView: View {
     /// faded, disabled screen.
     private func recoverIfStillLocked() {
         guard !router.isUnlocked else { return }
+        messagingController.discardPreparedCachedState()
         withAnimation(Motion.gentle) { phase = .idle }
     }
 
@@ -521,5 +527,6 @@ struct LockScreenView: View {
             .environment(ServerConfigurationController())
             .environment(SessionController())
             .environment(CryptoController())
+            .environment(MessagingController())
     }
 }

@@ -131,14 +131,16 @@ final class MessagingLocalRepository {
                 where !message.deleted && message.kind == .text && message.mediaObjectId == nil
             {
                 if !ThreadMessageMerge.isFailedDecryptText(message.text) {
-                    saveSealedPlaintext(
-                        messageID: message.id,
-                        text: MessageTextPayload.wire(
-                            body: message.text,
-                            replyTo: message.replyTo,
-                            linkPreview: message.linkPreview
-                        )
+                    let wire = MessageTextPayload.wire(
+                        body: message.text,
+                        replyTo: message.replyTo,
+                        linkPreview: message.linkPreview
                     )
+                    // Each save is an atomic write plus a read-back, for every message on every
+                    // unlock; an entry that already holds these bytes is left alone.
+                    if sealedPlaintextText(for: message.id) != wire {
+                        saveSealedPlaintext(messageID: message.id, text: wire)
+                    }
                 }
             }
         }

@@ -78,6 +78,8 @@ final class MessagingController {
     private let peerKeys = PeerIdentityStore()
     /// Encrypted offline history + decrypt/media caches (not the network layer).
     private let local = MessagingLocalRepository()
+    /// `prepareCachedState()` already loaded the sealed cache; the next `start()` skips it.
+    private var hydratedAheadOfStart = false
     private let connectivity = ConnectivityMonitor()
     private let realtime = RealtimeClient()
     /// Polling fallback when the WebSocket is down (common behind some reverse proxies).
@@ -352,13 +354,36 @@ final class MessagingController {
         }
     }
 
+    /// Loads the sealed offline cache into memory ahead of `start()`.
+    ///
+    /// Human: The lock screen calls this while it still says "Checking…". The load is
+    /// synchronous disk + crypto work; left to `start()` it ran on the frame the unlock
+    /// animation hands over to Chats, froze its last beat and inserted Chats empty.
+    func prepareCachedState() {
+        guard !hydratedAheadOfStart, let key = cryptoController?.material?.historyKey else { return }
+        local.setHistoryKey(key)
+        hydrateFromDisk()
+        hydratedAheadOfStart = true
+    }
+
+    /// Drops what `prepareCachedState()` loaded when the unlock it was for did not go through.
+    func discardPreparedCachedState() {
+        guard hydratedAheadOfStart else { return }
+        lockSensitiveMemory()
+        clearInMemoryState()
+    }
+
     func start() {
         guard let token = sessionController?.bearerToken else { return }
         local.setHistoryKey(cryptoController?.material?.historyKey)
         connectivity.start()
         isOffline = !connectivity.isOnline
         // Paint cached chats/contacts immediately so offline / cold start feels instant.
-        hydrateFromDisk()
+        if hydratedAheadOfStart {
+            hydratedAheadOfStart = false
+        } else {
+            hydrateFromDisk()
+        }
         realtime.connect(token: token)
         startPollingFallback()
         startContactsPolling()
@@ -439,6 +464,7 @@ final class MessagingController {
     }
 
     private func clearInMemoryState() {
+        hydratedAheadOfStart = false
         contacts = []
         incomingRequests = []
         conversations = []
@@ -477,6 +503,7 @@ final class MessagingController {
     /// Call when the app backgrounds so a seized unlocked device cannot read chats from memory.
     func lockSensitiveMemory() {
         local.lockSensitiveMemory()
+        hydratedAheadOfStart = false
         // Drop message bodies; keep conversation list shells for a less jarring re-unlock.
         threads = [:]
         clearAllTyping()
