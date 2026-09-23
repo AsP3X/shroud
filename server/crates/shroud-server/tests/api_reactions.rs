@@ -569,3 +569,72 @@ async fn reacting_while_the_message_is_deleted_never_errors() {
         );
     }
 }
+
+#[tokio::test]
+async fn deleting_the_chat_for_everyone_while_reacting_never_errors() {
+    let Some(app) = test_app().await else {
+        eprintln!(
+            "skipping deleting_the_chat_for_everyone_while_reacting_never_errors: no DATABASE_URL"
+        );
+        return;
+    };
+    let a = register(&app).await;
+    let b = register(&app).await;
+    become_contacts(&app, &a, &b).await;
+    let mut messages = Vec::new();
+    for _ in 0..4 {
+        messages.push(send(&app, &a, &b.1, "text").await);
+    }
+    // One reaction already there before the race: it must not outlive the tombstone.
+    let (status, _) = react(&app, &b, &messages[0], b"heart").await;
+    assert_eq!(status, StatusCode::OK);
+
+    let mut tasks = Vec::new();
+    for i in 0..12usize {
+        let app = app.clone();
+        let b = b.clone();
+        let message = messages[i % messages.len()].clone();
+        tasks.push(tokio::spawn(async move {
+            react(&app, &b, &message, format!("r{i}").as_bytes()).await
+        }));
+    }
+    let deleter = {
+        let app = app.clone();
+        let a = a.clone();
+        let peer = b.1.clone();
+        tokio::spawn(async move {
+            call(
+                &app,
+                "DELETE",
+                &format!("/api/v1/conversations/{peer}?scope=everyone"),
+                &a.0,
+                None,
+            )
+            .await
+        })
+    };
+    for task in tasks {
+        let (status, body) = task.await.expect("task");
+        // Before the delete: fine. After it: the message is gone or the contact link is.
+        assert!(
+            matches!(
+                status,
+                StatusCode::OK | StatusCode::NOT_FOUND | StatusCode::FORBIDDEN
+            ),
+            "a lock-order deadlock would surface as a 500: {status} {body}"
+        );
+    }
+    let (status, body) = deleter.await.expect("task");
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // B keeps A's messages as tombstones (no consent was given): no sealed reaction survives.
+    let caught_up = changes(&app, &b, &a.1, 0).await;
+    for row in caught_up["reactions"].as_array().unwrap() {
+        if messages.iter().any(|m| row["message_id"] == m.as_str()) {
+            assert!(
+                row["ciphertext"].is_null(),
+                "live reaction on a tombstone: {row}"
+            );
+        }
+    }
+}

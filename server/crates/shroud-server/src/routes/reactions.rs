@@ -5,9 +5,10 @@
 //! its row (ciphertext NULL) so an offline device can catch up with
 //! `GET /conversations/{peer}/reactions?after_seq=`.
 //!
-//! Every write locks in one order — the message row, then the conversation's counter, then
-//! reaction rows — which is the order `delete_for_everyone` takes too, so the two never
-//! deadlock, and a reaction can never land on a message deleted a moment earlier.
+//! Every write locks in one order — the conversation row (`FOR KEY SHARE`), the message row,
+//! the conversation's counter, reaction rows. Deleting a message (message row first) and
+//! deleting a chat (conversation row first) take their locks in that same order, so none of
+//! them deadlock, and a reaction never lands on a message deleted a moment earlier.
 //! Agent: WRITES message_reactions, conversation_reaction_seqs, reaction_reads (migration 020);
 //! READS messages, conversations, conversation_clears; PUBLISHES WS `message.reaction` (both
 //! participants except the acting device) and `reactions.seen` (the caller's other devices).
@@ -144,6 +145,7 @@ pub async fn put_reaction(
     let target = load_target(&state, &auth, message_id).await?;
 
     let mut tx = begin(&state).await?;
+    lock_conversation(&mut tx, target.conversation_id).await?;
     // Re-checked under the lock: a message deleted after `load_target` looked is not found.
     if !lock_message(&mut tx, message_id, true).await? {
         return Err(AppError::not_found("Message not found."));
@@ -193,6 +195,7 @@ pub async fn delete_reaction(
     let target = load_target_for_removal(&state, &auth, message_id).await?;
 
     let mut tx = begin(&state).await?;
+    lock_conversation(&mut tx, target.conversation_id).await?;
     if !lock_message(&mut tx, message_id, false).await? {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
@@ -347,43 +350,66 @@ pub(crate) async fn latest_reaction_seq(
     Ok(seq.unwrap_or(0))
 }
 
-/// Clears every live reaction on a message deleted for everyone, each with a new `seq` so
-/// devices catching up drop them too.
-/// Agent: CALLED inside messages::delete_for_everyone's transaction, which already holds the
-/// message row `FOR UPDATE` — the same lock order as a reaction write.
-pub(crate) async fn clear_for_deleted_message(
+/// Clears every live reaction on messages deleted for everyone, each with its own new `seq` so
+/// devices catching up drop them too — and so no sealed reaction outlives its message.
+/// Agent: CALLED inside messages::delete_for_everyone (message row held `FOR UPDATE`) and
+/// conversations::tombstone_own_messages (conversation row held `FOR UPDATE`): a reaction write
+/// waits on either lock, so the rows counted here can't change before they are updated.
+pub(crate) async fn clear_reactions_on(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    message_id: Uuid,
     conversation_id: Uuid,
+    message_ids: &[Uuid],
 ) -> Result<(), AppError> {
-    let reactors: Vec<Uuid> = sqlx::query_scalar(
+    if message_ids.is_empty() {
+        return Ok(());
+    }
+    let live: i64 = sqlx::query_scalar(
         r#"
-        SELECT user_id FROM message_reactions
-        WHERE message_id = $1 AND ciphertext IS NOT NULL
-        ORDER BY user_id
+        SELECT COUNT(*) FROM message_reactions
+        WHERE message_id = ANY($1) AND ciphertext IS NOT NULL
         "#,
     )
-    .bind(message_id)
-    .fetch_all(&mut **tx)
+    .bind(message_ids)
+    .fetch_one(&mut **tx)
     .await
-    .map_err(|err| AppError::Internal(format!("list reactions on delete failed: {err}")))?;
-    // One number per row: catch-up pages by seq, so two rows must never share one.
-    for user_id in reactors {
-        let seq = next_seq(tx, conversation_id).await?;
-        sqlx::query(
-            r#"
-            UPDATE message_reactions
-            SET ciphertext = NULL, seq = $3, updated_at = now()
-            WHERE message_id = $1 AND user_id = $2
-            "#,
-        )
-        .bind(message_id)
-        .bind(user_id)
-        .bind(seq)
-        .execute(&mut **tx)
-        .await
-        .map_err(|err| AppError::Internal(format!("clear reactions on delete failed: {err}")))?;
+    .map_err(|err| AppError::Internal(format!("count reactions on delete failed: {err}")))?;
+    if live == 0 {
+        return Ok(());
     }
+    // All the numbers in one step; catch-up pages by seq, so two rows must never share one.
+    let end: i64 = sqlx::query_scalar(
+        r#"
+        INSERT INTO conversation_reaction_seqs (conversation_id, seq)
+        VALUES ($1, $2)
+        ON CONFLICT (conversation_id)
+        DO UPDATE SET seq = conversation_reaction_seqs.seq + EXCLUDED.seq
+        RETURNING seq
+        "#,
+    )
+    .bind(conversation_id)
+    .bind(live)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("reserve reaction seqs failed: {err}")))?;
+    sqlx::query(
+        r#"
+        WITH live AS (
+            SELECT message_id, user_id,
+                   row_number() OVER (ORDER BY message_id, user_id) AS n
+            FROM message_reactions
+            WHERE message_id = ANY($1) AND ciphertext IS NOT NULL
+        )
+        UPDATE message_reactions r
+        SET ciphertext = NULL, seq = $2 + live.n, updated_at = now()
+        FROM live
+        WHERE r.message_id = live.message_id AND r.user_id = live.user_id
+        "#,
+    )
+    .bind(message_ids)
+    .bind(end - live)
+    .execute(&mut **tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("clear reactions on delete failed: {err}")))?;
     Ok(())
 }
 
@@ -451,6 +477,20 @@ pub async fn mark_reactions_seen(
     }))
 }
 
+/// First lock of every reaction write: waits out a whole-chat delete in flight (it holds the
+/// row `FOR UPDATE`) without blocking sends, which only take `FOR NO KEY UPDATE`.
+async fn lock_conversation(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    conversation_id: Uuid,
+) -> Result<(), AppError> {
+    sqlx::query(r#"SELECT 1 FROM conversations WHERE id = $1 FOR KEY SHARE"#)
+        .bind(conversation_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|err| AppError::Internal(format!("lock reaction conversation failed: {err}")))?;
+    Ok(())
+}
+
 async fn begin(state: &AppState) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, AppError> {
     state
         .pool
@@ -465,7 +505,7 @@ async fn commit(tx: sqlx::Transaction<'_, sqlx::Postgres>) -> Result<(), AppErro
         .map_err(|err| AppError::Internal(format!("commit reaction failed: {err}")))
 }
 
-/// First lock of every reaction write. `FOR KEY SHARE` waits for a `delete_for_everyone` in
+/// Second lock of every reaction write. `FOR KEY SHARE` waits for a `delete_for_everyone` in
 /// flight (it holds the row `FOR UPDATE`) and then re-reads the row, so `live_only` sees the
 /// delete. False when the message is gone (or deleted, with `live_only`).
 async fn lock_message(

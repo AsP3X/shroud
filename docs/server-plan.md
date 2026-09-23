@@ -1299,10 +1299,13 @@ change up to N, and every later change gets a higher number. Global sequence val
 order — a snapshot taken between two such commits would skip a change for good (a client's cursor
 passes it; a page reconciled against it drops it).
 
-**Lock order** for every reaction write: the message row (`FOR KEY SHARE`), then the counter, then
-reaction rows — the order `delete_for_everyone` takes (`FOR UPDATE` on the message first). The two
-never deadlock, and a reaction can't land on a message deleted a moment earlier: the lock waits for
-the delete and re-reads the row.
+**Lock order** for every reaction write: the conversation row (`FOR KEY SHARE`, which sends'
+`last_message_at` updates don't block), the message row (`FOR KEY SHARE`), the counter, reaction
+rows. Deleting a message takes the message row `FOR UPDATE` first and deleting a chat takes the
+conversation row `FOR UPDATE` first — the same order — so none of them deadlock, and a reaction
+can't land on a message deleted a moment earlier: the lock waits for the delete and re-reads the
+row. Both deletes clear the deleted messages' reactions (a new `seq` each), so no sealed reaction
+outlives its message.
 
 #### `PUT /messages/:id/reaction` `{ "ciphertext": "<base64>" }` → `200` reaction
 

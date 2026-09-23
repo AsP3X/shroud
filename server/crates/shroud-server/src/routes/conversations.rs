@@ -384,7 +384,7 @@ async fn tombstone_own_messages(
     .await
     .map_err(|err| AppError::Internal(format!("unlink media on chat delete failed: {err}")))?;
 
-    let result = sqlx::query(
+    let tombstoned: Vec<Uuid> = sqlx::query_scalar(
         r#"
         UPDATE messages
         SET ciphertext = NULL,
@@ -394,16 +394,20 @@ async fn tombstone_own_messages(
           AND sender_user_id = $2
           AND created_at <= $3
           AND deleted_for_everyone_at IS NULL
+        RETURNING id
         "#,
     )
     .bind(conversation_id)
     .bind(sender_user_id)
     .bind(at)
-    .execute(&mut **tx)
+    .fetch_all(&mut **tx)
     .await
     .map_err(|err| AppError::Internal(format!("tombstone chat messages failed: {err}")))?;
 
-    Ok(result.rows_affected())
+    // A tombstone carries no reactions, sealed ones included.
+    crate::routes::reactions::clear_reactions_on(tx, conversation_id, &tombstoned).await?;
+
+    Ok(tombstoned.len() as u64)
 }
 
 /// Deletes messages both participants have cleared past. `LEAST` alone would be wrong here
