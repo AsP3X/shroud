@@ -283,6 +283,9 @@ struct QuotedBubbleLayout: Layout {
 nonisolated enum LinkBubbleRole: LayoutValueKey {
     /// Wraps at the bubble width; its hugging width counts (message text).
     case wrapping
+    /// Its unproposed (one-line) width counts, capped by the row; then it gets the bubble's full
+    /// width (reaction chips, with the time at the trailing edge).
+    case footer
     /// A block with a flexible frame (quote, preview): its *ideal* width counts, then it is
     /// stretched to the bubble's width.
     case ideal
@@ -353,7 +356,7 @@ struct LinkBubbleLayout: Layout {
         for subview in subviews {
             let width: CGFloat = switch subview[LinkBubbleRole.self] {
             case .wrapping: subview.sizeThatFits(ProposedViewSize(width: cap, height: nil)).width
-            case .ideal, .trailing: subview.sizeThatFits(.unspecified).width
+            case .ideal, .trailing, .footer: subview.sizeThatFits(.unspecified).width
             }
             widest = max(widest, width)
         }
@@ -496,6 +499,7 @@ struct MessageBubbleView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
+        .reactionAccessibilityActions(isDeleted ? [] : reactions, onTap: onReactionTap)
     }
 
     /// Compact single-line when it fits; otherwise multi-line body with meta on the last line.
@@ -729,13 +733,19 @@ struct MessageBubbleView: View {
             if let linkPreview, !showsPreviewAbove {
                 linkBlock(linkPreview)
             }
-            ReactionFooter(chips: reactions, onOutgoingBubble: isMine, onTap: onReactionTap) {
+            ReactionFooter(
+                chips: reactions,
+                onOutgoingBubble: isMine,
+                onTap: onReactionTap,
+                chipsAccessible: false
+            ) {
                 metaRow
             }
             .padding(.leading, 8)
             .padding(.trailing, MessageBubbleMetrics.metaTrailingPad)
             .padding(.top, 5)
             .padding(.bottom, 6)
+            .layoutValue(key: LinkBubbleRole.self, value: .footer)
         }
         .background(bubbleFill)
         .clipShape(corners)
@@ -780,6 +790,9 @@ struct MessageBubbleView: View {
         var parts = [isMine ? "You" : "Them", displayText]
         if let linkPreview, !isDeleted {
             parts.append("Link preview: " + ([linkPreview.displaySiteName, linkPreview.title].compactMap { $0 }.joined(separator: ", ")))
+        }
+        if !isDeleted, let reactionsSummary = reactions.spokenSummary {
+            parts.append(reactionsSummary)
         }
         parts.append(time)
         if isMine {

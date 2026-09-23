@@ -14,8 +14,47 @@ struct ReactionChipContent: Equatable, Hashable, Identifiable {
     /// Oldest first.
     let reactors: [Reactor]
     let includesMe: Bool
+    /// The message the chip belongs to, so a reaction flying in can find it. Nil where no
+    /// flight should land (the long-press preview).
+    var messageID: UUID?
 
     var id: String { emoji }
+}
+
+extension [ReactionChipContent] {
+    /// "Reactions: ❤️ from anna, 👍 from you" — for a bubble VoiceOver reads as one element.
+    var spokenSummary: String? {
+        guard !isEmpty else { return nil }
+        let parts = map { chip in
+            let names = chip.reactors.map { $0.isMe ? "you" : $0.name }
+            return "\(chip.emoji) from \(ListFormatter.localizedString(byJoining: names))"
+        }
+        return "Reactions: " + parts.joined(separator: ", ")
+    }
+}
+
+extension View {
+    /// A bubble that VoiceOver reads as one element hides its chip buttons; each chip comes
+    /// back as a named action on the bubble, and so does the double-tap quick reaction.
+    func reactionAccessibilityActions(
+        _ chips: [ReactionChipContent],
+        onTap: ((String) -> Void)?
+    ) -> some View {
+        accessibilityActions {
+            if let onTap {
+                ForEach(chips) { chip in
+                    Button(chip.includesMe ? "Remove your \(chip.emoji) reaction" : "React with \(chip.emoji)") {
+                        onTap(chip.emoji)
+                    }
+                }
+                if !chips.contains(where: { $0.emoji == MessageReactionBar.quickReaction }) {
+                    Button("React with \(MessageReactionBar.quickReaction)") {
+                        onTap(MessageReactionBar.quickReaction)
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// A reaction chip inside a bubble (Telegram 1:1: the emoji plus the reactors' avatars instead
@@ -26,10 +65,24 @@ struct ReactionChipView: View {
     let onOutgoingBubble: Bool
     var onTap: (() -> Void)?
 
-    static let height: CGFloat = 26
-    private static let avatarSize: CGFloat = 18
+    // Telegram's in-bubble reaction button (ReactionButtonListComponent): 30 pt tall, a 20 pt
+    // emoji, 24 pt faces overlapping by half.
+    static let height: CGFloat = 30
+    /// Point size of the emoji glyph; it fills a 20 pt box like Telegram's animated one.
+    static let emojiFontSize: CGFloat = 17
+    private static let emojiBox: CGFloat = 20
+    private static let avatarSize: CGFloat = 24
+    private static let avatarStep: CGFloat = 12
     /// Telegram stacks at most three faces; more reactors than that is a group chat.
     private static let maxAvatars = 3
+
+    @Environment(\.reactionFlightTarget) private var flightTarget
+
+    /// A reaction is flying in to this chip: its emoji waits, and says where it is.
+    private var isFlightTarget: Bool {
+        guard let flightTarget, let messageID = chip.messageID else { return false }
+        return flightTarget.messageID == messageID && flightTarget.emoji == chip.emoji
+    }
 
     private var fill: Color {
         switch (onOutgoingBubble, chip.includesMe) {
@@ -42,34 +95,44 @@ struct ReactionChipView: View {
 
     var body: some View {
         Button {
-            // The row's own taps (double-tap reaction) see this touch too.
             MessageTapClaim.claim()
             onTap?()
         } label: {
             HStack(spacing: 4) {
                 Text(chip.emoji)
-                    .font(.system(size: 15))
+                    .font(.system(size: Self.emojiFontSize))
                     .fixedSize()
-                HStack(spacing: -6) {
+                    .frame(width: Self.emojiBox, height: Self.emojiBox)
+                    .opacity(isFlightTarget ? 0 : 1)
+                    .background {
+                        if isFlightTarget {
+                            GeometryReader { geo in
+                                Color.clear.preference(
+                                    key: ReactionFlightFrameKey.self,
+                                    value: geo.frame(in: .global)
+                                )
+                            }
+                        }
+                    }
+                HStack(spacing: Self.avatarStep - Self.avatarSize) {
                     ForEach(chip.reactors.prefix(Self.maxAvatars), id: \.id) { reactor in
                         AvatarView(
                             initials: AvatarView.initials(for: reactor.name),
                             size: Self.avatarSize,
                             gradient: AvatarView.gradient(for: reactor.name),
-                            fontSize: 8
+                            fontSize: 9
                         )
                         .overlay { Circle().stroke(fill, lineWidth: 1.5) }
                     }
                 }
             }
-            .padding(.leading, 7)
-            .padding(.trailing, chip.reactors.isEmpty ? 7 : 4)
+            .padding(.leading, 8)
+            .padding(.trailing, chip.reactors.isEmpty ? 8 : 3)
             .frame(height: Self.height)
             .background(Capsule().fill(fill))
             .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
-        .pressable(scale: 0.88, dimming: 0)
+        .buttonStyle(ReactionChipButtonStyle())
         .accessibilityLabel(accessibilityLabel)
         .accessibilityHint(chip.includesMe ? "Removes your reaction" : "Reacts with the same emoji")
     }
@@ -80,15 +143,33 @@ struct ReactionChipView: View {
     }
 }
 
+/// The chip's press: it squashes, and it claims the touch as the finger lands.
+///
+/// Human: The row's own taps (open a photo or video, the double-tap reaction) see a chip's touch
+/// too. A claim made in the button's action comes too late — the row reads the release first —
+/// so it is made on touch-down, well inside `MessageTapClaim`'s window when the release comes.
+private struct ReactionChipButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.88 : 1)
+            .animation(configuration.isPressed ? Motion.press : Motion.release, value: configuration.isPressed)
+            .onChange(of: configuration.isPressed) { _, pressed in
+                if pressed { MessageTapClaim.claim() }
+            }
+    }
+}
+
 /// Chips and the time at the foot of a reacted bubble.
 ///
 /// Human: Telegram's layout: chips flow left to right and wrap; the time (and ticks) sit at the
 /// trailing end of the last chip row when there is room, else on a line of their own.
-/// Agent: Subviews are the chips followed by exactly one meta view (last). The bubble's own
-/// width decides wrapping; measured without a width it lays everything on one line.
+/// Agent: Subviews are the chips followed by exactly one meta view (last). Given a width it takes
+/// all of it — wrapping at it, with the time at its trailing edge — so the bubble decides the
+/// width (`LinkBubbleRole.footer` measures it unproposed: one line, the hugging width).
 struct ReactionFooterLayout: Layout {
-    var spacing: CGFloat = 4
-    var rowSpacing: CGFloat = 4
+    /// Telegram's gap between reaction buttons, both ways.
+    var spacing: CGFloat = 6
+    var rowSpacing: CGFloat = 6
     /// Clear space between the last chip and the time.
     var metaGap: CGFloat = 8
 
@@ -104,8 +185,8 @@ struct ReactionFooterLayout: Layout {
         chips: [CGSize],
         meta: CGSize,
         width: CGFloat?,
-        spacing: CGFloat = 4,
-        rowSpacing: CGFloat = 4,
+        spacing: CGFloat = 6,
+        rowSpacing: CGFloat = 6,
         metaGap: CGFloat = 8
     ) -> Arrangement {
         let limit = width ?? .infinity
@@ -157,7 +238,10 @@ struct ReactionFooterLayout: Layout {
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) -> CGSize {
         let width = proposal.width.flatMap { $0.isFinite ? $0 : nil }
-        return arrangement(width: width, subviews: subviews).size
+        let size = arrangement(width: width, subviews: subviews).size
+        // Fill a proposed width: the time belongs at the bubble's trailing edge, not after the
+        // last chip.
+        return CGSize(width: max(size.width, width ?? 0), height: size.height)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) {
@@ -179,6 +263,10 @@ struct ReactionFooter<Meta: View>: View {
     let chips: [ReactionChipContent]
     let onOutgoingBubble: Bool
     var onTap: ((String) -> Void)?
+    /// False inside a bubble VoiceOver reads as one element: there the chips come back as the
+    /// bubble's actions (`reactionAccessibilityActions`), and a hidden button can't be what a
+    /// double tap on the bubble activates.
+    var chipsAccessible = true
     @ViewBuilder var meta: Meta
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -189,6 +277,7 @@ struct ReactionFooter<Meta: View>: View {
                 ReactionChipView(chip: chip, onOutgoingBubble: onOutgoingBubble) {
                     onTap?(chip.emoji)
                 }
+                .accessibilityHidden(!chipsAccessible)
                 .transition(reduceMotion ? .opacity : .scale(scale: 0.4).combined(with: .opacity))
             }
             meta

@@ -10,7 +10,7 @@ struct MessageActionMenu: View {
 
     var body: some View {
         VStack(spacing: 9) {
-            MessageReactionBar(onReaction: onReaction, onMore: { onAction(.moreReactions) })
+            MessageReactionBar(onReaction: { emoji, _ in onReaction(emoji) }, onMore: { onAction(.moreReactions) })
             MessageContextMenuCard(isMine: isMine, onAction: onAction)
         }
         .frame(width: 250)
@@ -19,15 +19,26 @@ struct MessageActionMenu: View {
 
 // MARK: - Reaction bar (above the focused bubble)
 
+/// Where each emoji of the bar (or grid) is on screen, so a pick can fly from it.
+/// A reference type in `@State`: writing a frame never redraws the bar.
+final class ReactionPickFrames {
+    var frames: [String: CGRect] = [:]
+}
+
 struct MessageReactionBar: View {
-    var onReaction: (String) -> Void
+    /// The emoji, and where it was on screen (the start of its flight to the chip).
+    var onReaction: (String, CGRect?) -> Void
     var onMore: () -> Void
     /// 0…1 continuous progress (drives opacity + offset; avoid Bool for smooth close).
     var progress: CGFloat = 1
     /// Our current reaction on the message: ringed, and tapping it takes it back.
     var selected: String? = nil
 
+    @State private var pickFrames = ReactionPickFrames()
+
     static let reactions = ["❤️", "🔥", "👍", "😢", "🙏", "😮", "👎"]
+    /// Telegram's double tap (and the VoiceOver action standing in for it).
+    static let quickReaction = "❤️"
     /// Telegram's standard reaction set, shown when the bar expands ("More"). The quick seven
     /// come first so they keep their places.
     static let expanded: [String] = reactions + [
@@ -62,11 +73,14 @@ struct MessageReactionBar: View {
         HStack(spacing: Self.itemSpacing) {
             ForEach(Self.reactions, id: \.self) { emoji in
                 Button {
-                    onReaction(emoji)
+                    onReaction(emoji, pickFrames.frames[emoji])
                 } label: {
                     Text(emoji)
                         .font(.system(size: 26))
                         .frame(width: Self.emojiSize, height: Self.emojiSize)
+                        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { frame in
+                            pickFrames.frames[emoji] = frame
+                        }
                         .background {
                             if emoji == selected {
                                 Circle().fill(Color.white.opacity(0.18))
@@ -112,8 +126,10 @@ struct MessageReactionBar: View {
 
 /// The reaction bar grown in place into Telegram's full standard set, over the bubble.
 struct MessageReactionGrid: View {
-    var onReaction: (String) -> Void
+    var onReaction: (String, CGRect?) -> Void
     var selected: String? = nil
+
+    @State private var pickFrames = ReactionPickFrames()
 
     static let columns = 7
     private static let cell: CGFloat = 40
@@ -131,11 +147,14 @@ struct MessageReactionGrid: View {
             ) {
                 ForEach(MessageReactionBar.expanded, id: \.self) { emoji in
                     Button {
-                        onReaction(emoji)
+                        onReaction(emoji, pickFrames.frames[emoji])
                     } label: {
                         Text(emoji)
                             .font(.system(size: 26))
                             .frame(width: Self.cell, height: Self.cell)
+                            .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { frame in
+                                pickFrames.frames[emoji] = frame
+                            }
                             .background {
                                 if emoji == selected {
                                     Circle().fill(Color.white.opacity(0.18))
@@ -399,9 +418,12 @@ struct MessageMenuOverlay<Hero: View, Card: View>: View {
     let cardHeight: CGFloat
     /// 0 = bubble in its list slot, 1 = menu open.
     let progress: CGFloat
-    var onReaction: (String) -> Void
+    var onReaction: (String, CGRect?) -> Void
     /// Our current reaction on the message, ringed in the bar and the grid.
     var selectedReaction: String? = nil
+    /// False for a message that can't take reactions (still sending, failed, a todo): no bar,
+    /// and the bubble no longer makes room for one.
+    var showsReactions: Bool = true
     /// A tap outside the stack.
     var onBackdropTap: () -> Void
     @ViewBuilder var hero: () -> Hero
@@ -433,7 +455,9 @@ struct MessageMenuOverlay<Hero: View, Card: View>: View {
             height: max(1, sourceGlobalFrame.height)
         )
         let metrics = MessageMenuLayout.Metrics(
-            reactionSize: CGSize(width: MessageReactionBar.barWidth, height: MessageReactionBar.barHeight),
+            reactionSize: showsReactions
+                ? CGSize(width: MessageReactionBar.barWidth, height: MessageReactionBar.barHeight)
+                : .zero,
             cardSize: CGSize(width: MessageContextMenuCard.width, height: cardHeight)
         )
         let plan = MessageMenuLayout.plan(source: source, container: proxy.size, safeArea: safeArea, metrics: metrics)
@@ -469,7 +493,9 @@ struct MessageMenuOverlay<Hero: View, Card: View>: View {
             }
 
             // Over the bubble: on a scrolled tall message the bar stays pinned at the top.
-            if showsAllReactions {
+            if !showsReactions {
+                EmptyView()
+            } else if showsAllReactions {
                 let grid = gridFrame(bar: chrome.reactions, container: proxy.size, safeArea: safeArea)
                 MessageReactionGrid(onReaction: onReaction, selected: selectedReaction)
                     .frame(width: grid.width, height: grid.height)
@@ -712,7 +738,7 @@ struct MessageMenuHeroContent: View {
     ZStack {
         MessageMenuBackdrop(onTap: {}, progress: 1)
         VStack(spacing: 10) {
-            MessageReactionBar(onReaction: { _ in }, onMore: {}, progress: 1)
+            MessageReactionBar(onReaction: { _, _ in }, onMore: {}, progress: 1)
             MessageBubbleView(
                 text: "Hey! How are you?",
                 time: "14:22",

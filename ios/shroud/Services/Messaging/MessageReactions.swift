@@ -50,8 +50,9 @@ nonisolated enum ReactionMerge {
 
     /// Reconciles what the thread holds with a history page's live set for the same message.
     ///
-    /// The page lists every live reaction as of `snapshot` (the conversation's highest `seq` when
-    /// the server read it). An entry we hold that is newer than the snapshot — or still pending —
+    /// The page lists every live reaction as of `snapshot` (the conversation's latest `seq` when
+    /// the server read it — before the page, so a page entry may be newer still). An entry we
+    /// hold that is newer than the snapshot and than the page's entry — or still pending —
     /// stays; an older one the page no longer lists was removed or replaced, and goes.
     static func reconcile(
         held: [MessageReaction],
@@ -59,14 +60,14 @@ nonisolated enum ReactionMerge {
         snapshot: Int64
     ) -> [MessageReaction] {
         var byUser: [UUID: MessageReaction] = [:]
-        for entry in page {
+        for entry in page where (byUser[entry.userID]?.seq ?? .min) < entry.seq {
             byUser[entry.userID] = entry
         }
-        for entry in held {
-            // Page entries are never newer than the snapshot, so these win outright.
-            if entry.pending || entry.seq > snapshot {
-                byUser[entry.userID] = entry
+        for entry in held where entry.pending || entry.seq > snapshot {
+            if !entry.pending, let fromPage = byUser[entry.userID], fromPage.seq >= entry.seq {
+                continue
             }
+            byUser[entry.userID] = entry
         }
         return sorted(Array(byUser.values))
     }
@@ -88,8 +89,9 @@ nonisolated enum ReactionMerge {
         reactions.first(where: { $0.userID == userID })?.emoji
     }
 
-    /// Chips in the order each emoji first appeared; an unconfirmed reaction of ours goes last,
-    /// where it will land once the server gives it the newest `seq`.
+    /// Chips in Telegram's order: most reactions from others first, then the one that includes
+    /// ours, then the one that appeared first. In a 1:1 chat that is simply the other side's
+    /// reaction, then ours — a stable place, whoever reacted first.
     static func chips(_ reactions: [MessageReaction], me: UUID?) -> [ReactionChip] {
         var order: [String] = []
         var users: [String: [UUID]] = [:]
@@ -98,10 +100,17 @@ nonisolated enum ReactionMerge {
             if users[emoji] == nil { order.append(emoji) }
             users[emoji, default: []].append(entry.userID)
         }
-        return order.map { emoji in
+        let chips = order.map { emoji in
             let ids = users[emoji] ?? []
             return ReactionChip(emoji: emoji, userIDs: ids, includesMe: me.map(ids.contains) ?? false)
         }
+        return chips.enumerated().sorted { lhs, rhs in
+            let left = lhs.element.userIDs.count - (lhs.element.includesMe ? 1 : 0)
+            let right = rhs.element.userIDs.count - (rhs.element.includesMe ? 1 : 0)
+            if left != right { return left > right }
+            if lhs.element.includesMe != rhs.element.includesMe { return lhs.element.includesMe }
+            return lhs.offset < rhs.offset
+        }.map(\.element)
     }
 
     private static func sorted(_ reactions: [MessageReaction]) -> [MessageReaction] {

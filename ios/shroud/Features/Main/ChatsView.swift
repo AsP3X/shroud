@@ -131,6 +131,7 @@ struct ChatsView: View {
                                     let n = messaging.unreadCount(for: conversation.peer.id)
                                     return n > 0 ? n : nil
                                 }(),
+                                hasUnseenReactions: messaging.hasUnseenReactions(for: conversation.peer.id),
                                 activity: messaging.peerActivity(for: conversation.peer.id),
                                 avatarGradient: AvatarView.gradient(for: conversation.peer.username)
                             )

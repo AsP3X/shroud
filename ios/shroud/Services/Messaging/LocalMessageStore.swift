@@ -56,6 +56,9 @@ struct LocalMessageStore: Sendable {
         let peerUsername: String
         let createdAt: Date
         let lastMessageAt: Date?
+        /// Optional so rosters written before reactions still decode.
+        var reactionSeq: Int64?
+        var unseenReactions: Int?
     }
 
     struct CachedContact: Codable, Equatable, Sendable {
@@ -265,8 +268,11 @@ struct LocalMessageStore: Sendable {
         var byPeer: [String: Int64] = [:]
     }
 
+    /// Nil when the file exists but does not open; an empty set when there is none yet.
     func loadReactionCursors(userID: UUID, historyKey: SymmetricKey) -> ReactionCursors? {
-        decodeSealed(reactionCursorsURL(for: userID), as: ReactionCursors.self, historyKey: historyKey)
+        let url = reactionCursorsURL(for: userID)
+        guard fileManager.fileExists(atPath: url.path) else { return ReactionCursors() }
+        return decodeSealed(url, as: ReactionCursors.self, historyKey: historyKey)
     }
 
     func saveReactionCursors(_ cursors: ReactionCursors, userID: UUID, historyKey: SymmetricKey) {
@@ -476,6 +482,8 @@ extension LocalMessageStore.CachedConversation {
         peerUsername = dto.peer.username
         createdAt = dto.createdAt
         lastMessageAt = dto.lastMessageAt
+        reactionSeq = dto.reactionSeq
+        unseenReactions = dto.unseenReactions
     }
 
     func toDTO() -> ConversationItemDTO {
@@ -483,7 +491,9 @@ extension LocalMessageStore.CachedConversation {
             id: id,
             peer: ConversationPeerDTO(id: peerID, username: peerUsername),
             createdAt: createdAt,
-            lastMessageAt: lastMessageAt
+            lastMessageAt: lastMessageAt,
+            reactionSeq: reactionSeq,
+            unseenReactions: unseenReactions
         )
     }
 }

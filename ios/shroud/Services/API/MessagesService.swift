@@ -102,6 +102,17 @@ struct MessagesService: Sendable {
         )
     }
 
+    /// Reactions to our messages in the chat with `peerUserID` are seen up to `upToSeq`.
+    @discardableResult
+    func markReactionsSeen(peerUserID: UUID, upToSeq: Int64, token: String) async throws -> MarkReactionsSeenResponse {
+        try await client.post(
+            "conversations/\(peerUserID.uuidString.lowercased())/reactions/seen",
+            body: MarkReactionsSeenBody(upToSeq: upToSeq),
+            as: MarkReactionsSeenResponse.self,
+            bearerToken: token
+        )
+    }
+
     func markDelivered(messageID: UUID, token: String) async throws {
         try await client.postNoContent(
             path: "messages/\(messageID.uuidString.lowercased())/delivered",

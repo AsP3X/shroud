@@ -314,6 +314,42 @@ enum MessageCrypto {
         return plain
     }
 
+    /// Opens a v2 envelope whose box must carry a sender tag that verifies.
+    ///
+    /// Human: For records that never existed untagged — reactions. Accepting an untagged or v1
+    /// box (as history must, for messages from before the tag) would let the server build one
+    /// from public keys alone and date it before the sender's watermark.
+    /// Agent: No ratchet and no `SenderTagStore` (no Keychain write per record).
+    static func openTagged(
+        envelopeData: Data,
+        with ourPrivateKey: Curve25519.KeyAgreement.PrivateKey,
+        ourIdentityPublicKey: Data,
+        senderIdentityPublicKey: Data,
+        as role: OpenAs
+    ) throws -> Data {
+        let envelope = try JSONDecoder().decode(SealedEnvelope.self, from: envelopeData)
+        guard envelope.v == versionV2 else { throw CryptoError.unsupportedVersion }
+        // Our own boxes are sealed from and to our identity.
+        let sender = role == .sender ? ourIdentityPublicKey : senderIdentityPublicKey
+        guard let box = role == .recipient ? envelope.peer : envelope.selfBox else {
+            throw CryptoError.openFailed
+        }
+        guard try verifyBoxTag(
+            box,
+            with: ourPrivateKey,
+            senderIdentityPublic: sender,
+            recipientIdentityPublic: ourIdentityPublicKey
+        ) else {
+            throw CryptoError.unauthenticatedSender
+        }
+        return try openBox(
+            box,
+            with: ourPrivateKey,
+            senderIdentityPublic: sender,
+            recipientIdentityPublic: ourIdentityPublicKey
+        )
+    }
+
     // MARK: - Session helpers
 
     private static func sessionForEncrypt(

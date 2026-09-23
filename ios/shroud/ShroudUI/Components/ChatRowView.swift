@@ -6,6 +6,8 @@ struct ChatRowView: View {
     let subtitle: String
     var time: String? = nil
     var unreadCount: Int? = nil
+    /// The other side reacted to our messages since we last looked (Telegram's heart badge).
+    var hasUnseenReactions: Bool = false
     var subtitleAccent: Bool = false
     /// "typing" / "recording" with the live dots replaces the subtitle.
     var activity: ChatPeerActivity? = nil
@@ -68,6 +70,16 @@ struct ChatRowView: View {
                     .animation(Motion.fade, value: activity)
                     .animation(Motion.snappy, value: subtitleAccent)
 
+                    if hasUnseenReactions {
+                        Image(systemName: "heart.fill")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(Color.white)
+                            .frame(width: 20, height: 20)
+                            .background(Theme.accent, in: Circle())
+                            .transition(Motion.iconSwap)
+                            .accessibilityHidden(true)
+                    }
+
                     if let unreadCount, unreadCount > 0 {
                         Text(unreadBadgeText(unreadCount))
                             .font(.system(size: 12, weight: .semibold))
@@ -84,6 +96,7 @@ struct ChatRowView: View {
                 }
                 // A new unread badge pops; an increment rolls.
                 .animation(Motion.bouncy, value: unreadCount)
+                .animation(Motion.bouncy, value: hasUnseenReactions)
             }
         }
         .padding(.horizontal, 16)
@@ -103,6 +116,9 @@ struct ChatRowView: View {
         if let time { parts.append(time) }
         if let unreadCount, unreadCount > 0 {
             parts.append("\(unreadCount) unread")
+        }
+        if hasUnseenReactions {
+            parts.append("new reactions")
         }
         return parts.joined(separator: ", ")
     }

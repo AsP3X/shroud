@@ -147,12 +147,34 @@ struct ConversationItemDTO: Codable, Equatable, Sendable, Identifiable {
     let peer: ConversationPeerDTO
     let createdAt: Date
     let lastMessageAt: Date?
+    /// The chat's latest reaction change; nil from servers without reactions.
+    var reactionSeq: Int64?
+    /// The other side's reactions to our messages we have not marked seen (the heart badge).
+    var unseenReactions: Int?
 
     enum CodingKeys: String, CodingKey {
         case id
         case peer
         case createdAt = "created_at"
         case lastMessageAt = "last_message_at"
+        case reactionSeq = "reaction_seq"
+        case unseenReactions = "unseen_reactions"
+    }
+}
+
+struct MarkReactionsSeenBody: Encodable, Equatable, Sendable {
+    let upToSeq: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case upToSeq = "up_to_seq"
+    }
+}
+
+struct MarkReactionsSeenResponse: Decodable, Equatable, Sendable {
+    let seenSeq: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case seenSeq = "seen_seq"
     }
 }
 
