@@ -1,12 +1,17 @@
 //! Message reactions: one sealed record per (message, user).
 //!
 //! Human: The server stores and relays an opaque blob per reaction; the emoji lives inside it.
-//! Setting, replacing and removing all take a new `seq` from one global sequence, and a removal
-//! keeps its row (ciphertext NULL) so an offline device can catch up with
+//! Setting, replacing and removing all take the conversation's next `seq`, and a removal keeps
+//! its row (ciphertext NULL) so an offline device can catch up with
 //! `GET /conversations/{peer}/reactions?after_seq=`.
-//! Agent: WRITES message_reactions (migration 020); READS messages, conversations,
-//! conversation_clears; PUBLISHES WS `message.reaction` to both participants except the acting
-//! device. No push and no `last_message_at` bump, like annotations.
+//!
+//! Every write locks in one order — the message row, then the conversation's counter, then
+//! reaction rows — which is the order `delete_for_everyone` takes too, so the two never
+//! deadlock, and a reaction can never land on a message deleted a moment earlier.
+//! Agent: WRITES message_reactions, conversation_reaction_seqs, reaction_reads (migration 020);
+//! READS messages, conversations, conversation_clears; PUBLISHES WS `message.reaction` (both
+//! participants except the acting device) and `reactions.seen` (the caller's other devices).
+//! No push and no `last_message_at` bump, like annotations.
 
 use std::collections::HashMap;
 
@@ -58,6 +63,17 @@ pub struct ReactionChangesQuery {
     pub limit: Option<i64>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct MarkReactionsSeenRequest {
+    /// Highest reaction `seq` the caller has shown; clamped to the conversation's latest.
+    pub up_to_seq: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MarkReactionsSeenResponse {
+    pub seen_seq: i64,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ReactionChangesResponse {
     pub reactions: Vec<ReactionEntry>,
@@ -90,6 +106,7 @@ impl From<ReactionRow> for ReactionEntry {
 #[derive(Debug, FromRow)]
 struct ReactionTarget {
     conversation_id: Uuid,
+    sender_user_id: Uuid,
     content_type: String,
     deleted_for_everyone_at: Option<DateTime<Utc>>,
     user_a_id: Uuid,
@@ -126,28 +143,32 @@ pub async fn put_reaction(
 
     let target = load_target(&state, &auth, message_id).await?;
 
-    // Human: The `deleted_for_everyone_at IS NULL` guard sits in the statement itself so a
-    // reaction cannot land on a message that was deleted after `load_target` looked.
+    let mut tx = begin(&state).await?;
+    // Re-checked under the lock: a message deleted after `load_target` looked is not found.
+    if !lock_message(&mut tx, message_id, true).await? {
+        return Err(AppError::not_found("Message not found."));
+    }
+    let seq = next_seq(&mut tx, target.conversation_id).await?;
     let row = sqlx::query_as::<_, ReactionRow>(
         r#"
-        INSERT INTO message_reactions (message_id, user_id, conversation_id, ciphertext)
-        SELECT m.id, $2, m.conversation_id, $3
-        FROM messages m
-        WHERE m.id = $1 AND m.deleted_for_everyone_at IS NULL
+        INSERT INTO message_reactions (message_id, user_id, conversation_id, ciphertext, seq)
+        VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT (message_id, user_id) DO UPDATE
         SET ciphertext = EXCLUDED.ciphertext,
             seq = EXCLUDED.seq,
-            updated_at = EXCLUDED.updated_at
+            updated_at = now()
         RETURNING message_id, user_id, ciphertext, seq, updated_at
         "#,
     )
     .bind(message_id)
     .bind(auth.user_id)
+    .bind(target.conversation_id)
     .bind(&ciphertext)
-    .fetch_optional(&state.pool)
+    .bind(seq)
+    .fetch_one(&mut *tx)
     .await
-    .map_err(|err| AppError::Internal(format!("upsert reaction failed: {err}")))?
-    .ok_or_else(|| AppError::not_found("Message not found."))?;
+    .map_err(|err| AppError::Internal(format!("upsert reaction failed: {err}")))?;
+    commit(tx).await?;
 
     let entry = ReactionEntry::from(row);
     publish(&state, &auth, &target, &entry).await;
@@ -171,11 +192,16 @@ pub async fn delete_reaction(
     check_budget(&state, &auth).await?;
     let target = load_target_for_removal(&state, &auth, message_id).await?;
 
+    let mut tx = begin(&state).await?;
+    if !lock_message(&mut tx, message_id, false).await? {
+        return Ok(StatusCode::NO_CONTENT.into_response());
+    }
+    let seq = next_seq(&mut tx, target.conversation_id).await?;
     let row = sqlx::query_as::<_, ReactionRow>(
         r#"
         UPDATE message_reactions
         SET ciphertext = NULL,
-            seq = nextval('message_reaction_seq'),
+            seq = $3,
             updated_at = now()
         WHERE message_id = $1 AND user_id = $2 AND ciphertext IS NOT NULL
         RETURNING message_id, user_id, ciphertext, seq, updated_at
@@ -183,13 +209,19 @@ pub async fn delete_reaction(
     )
     .bind(message_id)
     .bind(auth.user_id)
-    .fetch_optional(&state.pool)
+    .bind(seq)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|err| AppError::Internal(format!("remove reaction failed: {err}")))?;
 
+    // Nothing to take back: rolling back also returns the counter's number.
     let Some(row) = row else {
+        tx.rollback().await.map_err(|err| {
+            AppError::Internal(format!("rollback reaction removal failed: {err}"))
+        })?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     };
+    commit(tx).await?;
     let entry = ReactionEntry::from(row);
     publish(&state, &auth, &target, &entry).await;
 
@@ -298,42 +330,183 @@ pub(crate) async fn live_reactions_batch(
     Ok(map)
 }
 
-/// Highest reaction `seq` in a conversation, 0 when there is none. Clients without a catch-up
-/// cursor start from the value read *before* their first history page.
+/// The conversation's latest reaction `seq`, 0 when there is none. Every change up to it is
+/// committed, so a client without a catch-up cursor can start from the value read *before*
+/// its first history page.
 pub(crate) async fn latest_reaction_seq(
     pool: &sqlx::PgPool,
     conversation_id: Uuid,
 ) -> Result<i64, AppError> {
-    let seq: Option<i64> =
-        sqlx::query_scalar(r#"SELECT MAX(seq) FROM message_reactions WHERE conversation_id = $1"#)
-            .bind(conversation_id)
-            .fetch_one(pool)
-            .await
-            .map_err(|err| AppError::Internal(format!("latest reaction seq failed: {err}")))?;
+    let seq: Option<i64> = sqlx::query_scalar(
+        r#"SELECT seq FROM conversation_reaction_seqs WHERE conversation_id = $1"#,
+    )
+    .bind(conversation_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("latest reaction seq failed: {err}")))?;
     Ok(seq.unwrap_or(0))
 }
 
-/// Clears every live reaction on a message deleted for everyone, bumping `seq` so devices
-/// catching up drop them too.
-/// Agent: CALLED inside messages::delete_for_everyone's transaction.
+/// Clears every live reaction on a message deleted for everyone, each with a new `seq` so
+/// devices catching up drop them too.
+/// Agent: CALLED inside messages::delete_for_everyone's transaction, which already holds the
+/// message row `FOR UPDATE` — the same lock order as a reaction write.
 pub(crate) async fn clear_for_deleted_message(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     message_id: Uuid,
+    conversation_id: Uuid,
 ) -> Result<(), AppError> {
-    sqlx::query(
+    let reactors: Vec<Uuid> = sqlx::query_scalar(
         r#"
-        UPDATE message_reactions
-        SET ciphertext = NULL,
-            seq = nextval('message_reaction_seq'),
-            updated_at = now()
+        SELECT user_id FROM message_reactions
         WHERE message_id = $1 AND ciphertext IS NOT NULL
+        ORDER BY user_id
         "#,
     )
     .bind(message_id)
-    .execute(&mut **tx)
+    .fetch_all(&mut **tx)
     .await
-    .map_err(|err| AppError::Internal(format!("clear reactions on delete failed: {err}")))?;
+    .map_err(|err| AppError::Internal(format!("list reactions on delete failed: {err}")))?;
+    // One number per row: catch-up pages by seq, so two rows must never share one.
+    for user_id in reactors {
+        let seq = next_seq(tx, conversation_id).await?;
+        sqlx::query(
+            r#"
+            UPDATE message_reactions
+            SET ciphertext = NULL, seq = $3, updated_at = now()
+            WHERE message_id = $1 AND user_id = $2
+            "#,
+        )
+        .bind(message_id)
+        .bind(user_id)
+        .bind(seq)
+        .execute(&mut **tx)
+        .await
+        .map_err(|err| AppError::Internal(format!("clear reactions on delete failed: {err}")))?;
+    }
     Ok(())
+}
+
+/// `POST /conversations/:peer_user_id/reactions/seen` — the caller has seen reactions to their
+/// messages up to `up_to_seq`. Never moves backwards; the caller's other devices are told so
+/// their chat-list badge clears too.
+pub async fn mark_reactions_seen(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path(peer_user_id): Path<Uuid>,
+    Json(body): Json<MarkReactionsSeenRequest>,
+) -> Result<Json<MarkReactionsSeenResponse>, AppError> {
+    let Some(conversation_id) = find_conversation(&state.pool, auth.user_id, peer_user_id).await?
+    else {
+        return Ok(Json(MarkReactionsSeenResponse { seen_seq: 0 }));
+    };
+    let latest = latest_reaction_seq(&state.pool, conversation_id).await?;
+    let up_to = body.up_to_seq.clamp(0, latest);
+
+    #[derive(FromRow)]
+    struct Seen {
+        seen_seq: i64,
+        moved: bool,
+    }
+    // `moved` compares with the row as it was before this statement (a CTE snapshot).
+    let seen = sqlx::query_as::<_, Seen>(
+        r#"
+        WITH before AS (
+            SELECT seen_seq FROM reaction_reads WHERE user_id = $1 AND conversation_id = $2
+        ), upsert AS (
+            INSERT INTO reaction_reads (user_id, conversation_id, seen_seq)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (user_id, conversation_id)
+            DO UPDATE SET seen_seq = GREATEST(reaction_reads.seen_seq, EXCLUDED.seen_seq)
+            RETURNING seen_seq
+        )
+        SELECT upsert.seen_seq,
+               upsert.seen_seq > COALESCE((SELECT seen_seq FROM before), 0) AS moved
+        FROM upsert
+        "#,
+    )
+    .bind(auth.user_id)
+    .bind(conversation_id)
+    .bind(up_to)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("mark reactions seen failed: {err}")))?;
+
+    if seen.moved {
+        let event = serde_json::json!({
+            "type": "reactions.seen",
+            "conversation_id": conversation_id,
+            "peer_user_id": peer_user_id,
+            "seen_seq": seen.seen_seq,
+        });
+        if let Ok(payload) = serde_json::to_string(&event) {
+            state
+                .realtime
+                .publish_to_users([auth.user_id], Some(auth.device_id), &payload)
+                .await;
+        }
+    }
+    Ok(Json(MarkReactionsSeenResponse {
+        seen_seq: seen.seen_seq,
+    }))
+}
+
+async fn begin(state: &AppState) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, AppError> {
+    state
+        .pool
+        .begin()
+        .await
+        .map_err(|err| AppError::Internal(format!("begin reaction transaction failed: {err}")))
+}
+
+async fn commit(tx: sqlx::Transaction<'_, sqlx::Postgres>) -> Result<(), AppError> {
+    tx.commit()
+        .await
+        .map_err(|err| AppError::Internal(format!("commit reaction failed: {err}")))
+}
+
+/// First lock of every reaction write. `FOR KEY SHARE` waits for a `delete_for_everyone` in
+/// flight (it holds the row `FOR UPDATE`) and then re-reads the row, so `live_only` sees the
+/// delete. False when the message is gone (or deleted, with `live_only`).
+async fn lock_message(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    message_id: Uuid,
+    live_only: bool,
+) -> Result<bool, AppError> {
+    let found: Option<Uuid> = sqlx::query_scalar(
+        r#"
+        SELECT id FROM messages
+        WHERE id = $1 AND (NOT $2 OR deleted_for_everyone_at IS NULL)
+        FOR KEY SHARE
+        "#,
+    )
+    .bind(message_id)
+    .bind(live_only)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("lock reaction message failed: {err}")))?;
+    Ok(found.is_some())
+}
+
+/// The conversation's next change number. The counter row stays locked until the transaction
+/// ends, which is what makes seq order commit order within a conversation (migration 020).
+async fn next_seq(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    conversation_id: Uuid,
+) -> Result<i64, AppError> {
+    sqlx::query_scalar(
+        r#"
+        INSERT INTO conversation_reaction_seqs (conversation_id, seq)
+        VALUES ($1, 1)
+        ON CONFLICT (conversation_id)
+        DO UPDATE SET seq = conversation_reaction_seqs.seq + 1
+        RETURNING seq
+        "#,
+    )
+    .bind(conversation_id)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("next reaction seq failed: {err}")))
 }
 
 async fn check_budget(state: &AppState, auth: &AuthContext) -> Result<(), AppError> {
@@ -354,7 +527,7 @@ async fn load_target_row(
 ) -> Result<ReactionTarget, AppError> {
     let target = sqlx::query_as::<_, ReactionTarget>(
         r#"
-        SELECT m.conversation_id, m.content_type, m.deleted_for_everyone_at,
+        SELECT m.conversation_id, m.sender_user_id, m.content_type, m.deleted_for_everyone_at,
                c.user_a_id, c.user_b_id
         FROM messages m
         INNER JOIN conversations c ON c.id = m.conversation_id
@@ -418,9 +591,12 @@ async fn publish(
     target: &ReactionTarget,
     entry: &ReactionEntry,
 ) {
+    // `message_sender_id` lets a client tell a reaction to its own message (a chat-list badge)
+    // from one to the other side's, without holding the message.
     let event = serde_json::json!({
         "type": "message.reaction",
         "conversation_id": target.conversation_id,
+        "message_sender_id": target.sender_user_id,
         "device_id": auth.device_id,
         "reaction": entry,
     });

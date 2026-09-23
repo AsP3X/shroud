@@ -1288,9 +1288,21 @@ Add optional:
 ### Milestone 10 — Reactions
 
 Migration 020: `message_reactions(message_id, user_id, conversation_id, ciphertext NULL, seq, updated_at)`,
-primary key `(message_id, user_id)`, index `(conversation_id, seq)`. `seq` comes from one global
-sequence and changes on every set, replace and remove; a removal keeps the row with `ciphertext NULL`.
-No push, no `last_message_at` bump. Own budget `REACTION_USER` (120/min).
+primary key `(message_id, user_id)`, index `(conversation_id, seq)`; `conversation_reaction_seqs`
+(one change counter per conversation); `reaction_reads(user_id, conversation_id, seen_seq)`.
+Every set, replace and remove takes the conversation's next `seq`; a removal keeps the row with
+`ciphertext NULL`. No push, no `last_message_at` bump. Own budget `REACTION_USER` (120/min).
+
+**Why a counter row and not a sequence.** A write bumps the counter under its row lock in the same
+transaction, so within a conversation `seq` order is commit order: a reader that sees N sees every
+change up to N, and every later change gets a higher number. Global sequence values commit out of
+order — a snapshot taken between two such commits would skip a change for good (a client's cursor
+passes it; a page reconciled against it drops it).
+
+**Lock order** for every reaction write: the message row (`FOR KEY SHARE`), then the counter, then
+reaction rows — the order `delete_for_everyone` takes (`FOR UPDATE` on the message first). The two
+never deadlock, and a reaction can't land on a message deleted a moment earlier: the lock waits for
+the delete and re-reads the row.
 
 #### `PUT /messages/:id/reaction` `{ "ciphertext": "<base64>" }` → `200` reaction
 
@@ -1308,10 +1320,11 @@ Reaction body (also the WS payload's `reaction`):
 { "message_id": "<uuid>", "user_id": "<uuid>", "ciphertext": "<base64>|null", "seq": 42, "updated_at": "…" }
 ```
 
-WS, to both users' online devices except the acting one:
+WS, to both users' online devices except the acting one (`message_sender_id` is who wrote the
+message, so a client can tell a reaction to its own message without holding it):
 
 ```json
-{ "type": "message.reaction", "conversation_id": "<uuid>", "device_id": "<uuid>", "reaction": { … } }
+{ "type": "message.reaction", "conversation_id": "<uuid>", "message_sender_id": "<uuid>", "device_id": "<uuid>", "reaction": { … } }
 ```
 
 #### `GET /conversations/:peer_user_id/reactions?after_seq=&limit=` → `200`
@@ -1323,10 +1336,21 @@ first, removals included; `limit` default 200, max 500. Rows for messages the ca
 #### History
 
 `GET /messages` adds `reactions` (live ones, oldest change first; omitted when empty) to each message,
-and `reaction_seq`: the conversation's highest `seq`, read before the page. The page's reactions are
+and `reaction_seq`: the conversation's latest `seq`, read before the page. The page's reactions are
 the full live set as of that value, so a client keeps its own newer changes and drops older ones the
-page no longer lists; a client without a catch-up cursor starts from it. Deleting for everyone clears the message's
-reactions (new `seq`, so catch-up reports it).
+page no longer lists; a client without a catch-up cursor starts from it. Deleting for everyone clears
+the message's reactions (a new `seq` each, so catch-up reports them).
+
+#### Unseen reactions (the chat list's heart badge)
+
+`GET /conversations` adds, per chat, `reaction_seq` (latest change, 0 when none) and
+`unseen_reactions`: live reactions by the other participant to the caller's messages with a `seq`
+above the caller's `seen_seq` (deleted, hidden and cleared messages excluded). A changed reaction
+counts again; a removed one stops counting.
+
+`POST /conversations/:peer_user_id/reactions/seen` `{ "up_to_seq": 57 }` → `{ "seen_seq": 57 }` —
+clamped to the latest `seq`, never moves backwards. When it moves, the caller's other devices get
+`{ "type": "reactions.seen", "conversation_id", "peer_user_id", "seen_seq" }` so their badge clears.
 
 ### Later routes (outline)
 

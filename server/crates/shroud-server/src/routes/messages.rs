@@ -1211,7 +1211,7 @@ async fn delete_for_everyone(
         .await
         .map_err(|err| AppError::Internal(format!("unlink media on delete failed: {err}")))?;
 
-        reactions::clear_for_deleted_message(&mut tx, message_id).await?;
+        reactions::clear_for_deleted_message(&mut tx, message_id, meta.conversation_id).await?;
     }
 
     #[derive(FromRow)]

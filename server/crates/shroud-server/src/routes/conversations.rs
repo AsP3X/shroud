@@ -32,6 +32,12 @@ pub struct ConversationItem {
     pub created_at: DateTime<Utc>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_message_at: Option<DateTime<Utc>>,
+    /// The chat's latest reaction change (0 when none): a client whose catch-up cursor is
+    /// behind knows without opening the chat.
+    pub reaction_seq: i64,
+    /// Live reactions by the other participant to the caller's messages that the caller has
+    /// not marked seen (`POST /conversations/{peer}/reactions/seen`): the heart badge.
+    pub unseen_reactions: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -70,9 +76,13 @@ pub async fn list_conversations(
         peer_username: String,
         created_at: DateTime<Utc>,
         last_message_at: Option<DateTime<Utc>>,
+        reaction_seq: i64,
+        unseen_reactions: i64,
     }
 
     // Human: Join peer username; use denormalized last_message_at (no correlated subquery).
+    // The unseen-reaction count is one index range per chat — `seq > seen_seq` on
+    // (conversation_id, seq) — and empty for every chat whose reactions are all seen.
     // A chat the caller cleared stays hidden until something newer than their watermark
     // arrives, which is what makes the next message read as a brand-new chat.
     // Agent: SELECT conversations JOIN users LEFT JOIN conversation_clears; RETURNS ConversationItem list.
@@ -83,12 +93,31 @@ pub async fn list_conversations(
             CASE WHEN c.user_a_id = $1 THEN c.user_b_id ELSE c.user_a_id END AS peer_id,
             CASE WHEN c.user_a_id = $1 THEN ub.username ELSE ua.username END AS peer_username,
             c.created_at,
-            c.last_message_at
+            c.last_message_at,
+            COALESCE(rs.seq, 0) AS reaction_seq,
+            (
+                SELECT COUNT(*)
+                FROM message_reactions r
+                INNER JOIN messages m ON m.id = r.message_id
+                WHERE r.conversation_id = c.id
+                  AND r.seq > COALESCE(rr.seen_seq, 0)
+                  AND r.ciphertext IS NOT NULL
+                  AND r.user_id <> $1
+                  AND m.sender_user_id = $1
+                  AND m.deleted_for_everyone_at IS NULL
+                  AND (cc.cleared_at IS NULL OR m.created_at > cc.cleared_at)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM message_hides h
+                      WHERE h.message_id = m.id AND h.user_id = $1
+                  )
+            ) AS unseen_reactions
         FROM conversations c
         INNER JOIN users ua ON ua.id = c.user_a_id
         INNER JOIN users ub ON ub.id = c.user_b_id
         LEFT JOIN conversation_clears cc
             ON cc.conversation_id = c.id AND cc.user_id = $1
+        LEFT JOIN conversation_reaction_seqs rs ON rs.conversation_id = c.id
+        LEFT JOIN reaction_reads rr ON rr.conversation_id = c.id AND rr.user_id = $1
         WHERE (c.user_a_id = $1 OR c.user_b_id = $1)
           AND c.user_a_id <> c.user_b_id
           AND (
@@ -113,6 +142,8 @@ pub async fn list_conversations(
             },
             created_at: row.created_at,
             last_message_at: row.last_message_at,
+            reaction_seq: row.reaction_seq,
+            unseen_reactions: row.unseen_reactions,
         })
         .collect();
 

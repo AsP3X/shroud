@@ -99,6 +99,10 @@ pub fn router() -> Router<AppState> {
                 "/conversations/{peer_user_id}/reactions",
                 get(reactions::list_reaction_changes),
             )
+            .route(
+                "/conversations/{peer_user_id}/reactions/seen",
+                post(reactions::mark_reactions_seen),
+            )
             .route("/privacy/settings", get(privacy::get_settings))
             .route("/privacy/settings", put(privacy::put_settings))
             .route("/media/uploads", post(media::create_upload))

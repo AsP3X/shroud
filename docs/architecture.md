@@ -81,6 +81,11 @@ accepts one emoji of at most 32 bytes and ignores anything else. Clients keep th
 (message, user) and catch up per conversation with `GET /conversations/{peer}/reactions?after_seq=`
 (removals come back with a null ciphertext).
 
+What reactions do not protect against: a removal is not sealed (it is the absence of a
+ciphertext), so the server can hide a reaction, or put back an older genuine one for the same
+message and user. It cannot invent one, change the emoji, or move one to another message. The
+unseen-reaction badge is server metadata of the same kind as read receipts.
+
 `lp` is a link preview (`LinkPreview.swift` / `web/src/links.ts`): `u` the page URL (http/https
 only), `n` site name, `ti` title, `d` description, `th` a ≤6 KB square JPEG for the small layout,
 `w`/`h` the image size, `vd` a video page (play badge), `ab` drawn above the text instead of under

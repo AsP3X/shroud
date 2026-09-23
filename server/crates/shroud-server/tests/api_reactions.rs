@@ -244,7 +244,10 @@ async fn set_replace_remove_and_catch_up() {
     assert_eq!(status, StatusCode::NO_CONTENT);
 
     let page = history(&app, &a, &b.1).await;
-    assert_eq!(page["reaction_seq"], removed["seq"], "snapshot covers the removal");
+    assert_eq!(
+        page["reaction_seq"], removed["seq"],
+        "snapshot covers the removal"
+    );
     assert_eq!(
         find_message(&page, &message)["reactions"]
             .as_array()
@@ -282,7 +285,11 @@ async fn reaction_access_rules() {
     let message = send(&app, &a, &b.1, "text").await;
 
     let (status, _) = react(&app, &outsider, &message, b"heart").await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "outsiders cannot tell it exists");
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "outsiders cannot tell it exists"
+    );
     let (status, _) = react(&app, &b, &Uuid::new_v4().to_string(), b"heart").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
@@ -346,4 +353,219 @@ async fn delete_for_everyone_clears_reactions() {
 
     let (status, _) = react(&app, &b, &message, b"heart").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+async fn conversation_entry(app: &axum::Router, who: &(String, String), peer: &str) -> Value {
+    let (status, body) = call(app, "GET", "/api/v1/conversations", &who.0, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body["conversations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["peer"]["id"] == peer)
+        .cloned()
+        .expect("conversation listed")
+}
+
+async fn mark_seen(app: &axum::Router, who: &(String, String), peer: &str, up_to: i64) -> Value {
+    let (status, body) = call(
+        app,
+        "POST",
+        &format!("/api/v1/conversations/{peer}/reactions/seen"),
+        &who.0,
+        Some(json!({ "up_to_seq": up_to })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body
+}
+
+#[tokio::test]
+async fn concurrent_writes_get_ordered_unique_seqs() {
+    let Some(app) = test_app().await else {
+        eprintln!("skipping concurrent_writes_get_ordered_unique_seqs: no DATABASE_URL");
+        return;
+    };
+    let a = register(&app).await;
+    let b = register(&app).await;
+    become_contacts(&app, &a, &b).await;
+    let mut messages = Vec::new();
+    for _ in 0..3 {
+        messages.push(send(&app, &a, &b.1, "text").await);
+    }
+
+    // Both people tapping away on the same chat at once: sets, replaces and removals interleave.
+    let mut tasks = Vec::new();
+    for i in 0..30usize {
+        let app = app.clone();
+        let who = if i % 2 == 0 { a.clone() } else { b.clone() };
+        let message = messages[i % messages.len()].clone();
+        tasks.push(tokio::spawn(async move {
+            if i % 5 == 4 {
+                call(
+                    &app,
+                    "DELETE",
+                    &format!("/api/v1/messages/{message}/reaction"),
+                    &who.0,
+                    None,
+                )
+                .await
+            } else {
+                react(&app, &who, &message, format!("emoji-{i}").as_bytes()).await
+            }
+        }));
+    }
+    let mut seqs = Vec::new();
+    for task in tasks {
+        let (status, body) = task.await.expect("task");
+        match status {
+            StatusCode::OK => seqs.push(body["seq"].as_i64().unwrap()),
+            StatusCode::NO_CONTENT => {}
+            other => panic!("unexpected {other}: {body}"),
+        }
+    }
+    let unique: std::collections::HashSet<_> = seqs.iter().copied().collect();
+    assert_eq!(unique.len(), seqs.len(), "every write gets its own number");
+
+    // The snapshot is the last write, and catch-up from zero ends exactly there, in order.
+    let snapshot = history(&app, &a, &b.1).await["reaction_seq"]
+        .as_i64()
+        .unwrap();
+    assert_eq!(snapshot, *seqs.iter().max().unwrap());
+    let caught_up = changes(&app, &a, &b.1, 0).await;
+    let rows: Vec<i64> = caught_up["reactions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["seq"].as_i64().unwrap())
+        .collect();
+    assert!(rows.windows(2).all(|w| w[0] < w[1]), "ascending: {rows:?}");
+    assert_eq!(caught_up["next_seq"].as_i64(), Some(snapshot));
+}
+
+#[tokio::test]
+async fn unseen_reactions_count_and_clear() {
+    let Some(app) = test_app().await else {
+        eprintln!("skipping unseen_reactions_count_and_clear: no DATABASE_URL");
+        return;
+    };
+    let a = register(&app).await;
+    let b = register(&app).await;
+    become_contacts(&app, &a, &b).await;
+    let mine = send(&app, &a, &b.1, "text").await;
+
+    let (_, set) = react(&app, &b, &mine, b"heart").await;
+    let entry = conversation_entry(&app, &a, &b.1).await;
+    assert_eq!(entry["unseen_reactions"], 1, "B reacted to A's message");
+    assert_eq!(entry["reaction_seq"], set["seq"]);
+    assert_eq!(
+        conversation_entry(&app, &b, &a.1).await["unseen_reactions"],
+        0
+    );
+
+    // A opens the chat: seen, clamped to what exists.
+    let seen = mark_seen(&app, &a, &b.1, 9_999).await;
+    assert_eq!(seen["seen_seq"], set["seq"]);
+    assert_eq!(
+        conversation_entry(&app, &a, &b.1).await["unseen_reactions"],
+        0
+    );
+    // Never backwards.
+    assert_eq!(mark_seen(&app, &a, &b.1, 0).await["seen_seq"], set["seq"]);
+
+    // A changed reaction is new again; a removed one is not there to see.
+    react(&app, &b, &mine, b"fire").await;
+    assert_eq!(
+        conversation_entry(&app, &a, &b.1).await["unseen_reactions"],
+        1
+    );
+    call(
+        &app,
+        "DELETE",
+        &format!("/api/v1/messages/{mine}/reaction"),
+        &b.0,
+        None,
+    )
+    .await;
+    assert_eq!(
+        conversation_entry(&app, &a, &b.1).await["unseen_reactions"],
+        0
+    );
+
+    // Your own reactions, and reactions to the other side's messages, never count for you.
+    react(&app, &a, &mine, b"star").await;
+    assert_eq!(
+        conversation_entry(&app, &a, &b.1).await["unseen_reactions"],
+        0
+    );
+    let theirs = send(&app, &b, &a.1, "text").await;
+    react(&app, &a, &theirs, b"thumbs").await;
+    assert_eq!(
+        conversation_entry(&app, &a, &b.1).await["unseen_reactions"],
+        0
+    );
+    assert_eq!(
+        conversation_entry(&app, &b, &a.1).await["unseen_reactions"],
+        1
+    );
+}
+
+#[tokio::test]
+async fn reacting_while_the_message_is_deleted_never_errors() {
+    let Some(app) = test_app().await else {
+        eprintln!("skipping reacting_while_the_message_is_deleted_never_errors: no DATABASE_URL");
+        return;
+    };
+    let a = register(&app).await;
+    let b = register(&app).await;
+    become_contacts(&app, &a, &b).await;
+
+    for round in 0..5 {
+        let message = send(&app, &a, &b.1, "text").await;
+        let mut tasks = Vec::new();
+        for i in 0..8usize {
+            let app = app.clone();
+            let who = if i % 2 == 0 { a.clone() } else { b.clone() };
+            let message = message.clone();
+            tasks.push(tokio::spawn(async move {
+                react(&app, &who, &message, format!("r{round}-{i}").as_bytes()).await
+            }));
+        }
+        let deleter = {
+            let app = app.clone();
+            let a = a.clone();
+            let message = message.clone();
+            tokio::spawn(async move {
+                call(
+                    &app,
+                    "DELETE",
+                    &format!("/api/v1/messages/{message}?scope=everyone"),
+                    &a.0,
+                    None,
+                )
+                .await
+            })
+        };
+        for task in tasks {
+            let (status, body) = task.await.expect("task");
+            assert!(
+                status == StatusCode::OK || status == StatusCode::NOT_FOUND,
+                "a lock-order deadlock would surface as a 500: {status} {body}"
+            );
+        }
+        assert_eq!(deleter.await.expect("task").0, StatusCode::NO_CONTENT);
+
+        // Whatever won the race, nothing live is left on the deleted message.
+        let page = history(&app, &b, &a.1).await;
+        assert!(find_message(&page, &message).get("reactions").is_none());
+        let rows = changes(&app, &b, &a.1, 0).await;
+        assert!(
+            rows["reactions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|row| row["message_id"] == message.as_str())
+                .all(|row| row["ciphertext"].is_null())
+        );
+    }
 }
