@@ -326,6 +326,13 @@ pub async fn logout(
         .await
         .map_err(|err| AppError::Internal(format!("logout push token delete failed: {err}")))?;
 
+    // The browser that logs out wipes its vault; its PIN must not unlock anything afterwards.
+    sqlx::query(r#"DELETE FROM device_pin_guards WHERE device_id = $1"#)
+        .bind(auth.device_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| AppError::Internal(format!("logout pin guard delete failed: {err}")))?;
+
     tx.commit()
         .await
         .map_err(|err| AppError::Internal(format!("commit logout failed: {err}")))?;

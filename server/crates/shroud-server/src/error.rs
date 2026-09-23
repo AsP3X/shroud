@@ -176,6 +176,24 @@ impl AppError {
     }
 
     /// Legacy-friendly constructors used by existing routes/tests.
+    /// Wrong PIN against a PIN guard; the message carries the attempts left.
+    pub fn pin_incorrect(attempts_left: i32) -> Self {
+        Self::Api {
+            status: StatusCode::FORBIDDEN,
+            code: "PIN_INCORRECT",
+            message: format!("Wrong PIN. {attempts_left} attempts left."),
+        }
+    }
+
+    /// The PIN guard is gone (too many wrong PINs, or never created): only the phrase unlocks.
+    pub fn pin_guard_gone() -> Self {
+        Self::Api {
+            status: StatusCode::GONE,
+            code: "PIN_GUARD_GONE",
+            message: "This PIN no longer unlocks Shroud here. Use your encryption phrase.".into(),
+        }
+    }
+
     pub fn bad_request(message: impl Into<String>) -> Self {
         Self::validation(message)
     }

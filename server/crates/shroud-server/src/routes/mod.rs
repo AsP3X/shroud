@@ -19,6 +19,7 @@ pub mod keys;
 pub mod link_relay;
 pub mod media;
 pub mod messages;
+pub mod pin_guard;
 pub mod presence;
 pub mod privacy;
 pub mod push;
@@ -40,6 +41,11 @@ pub fn router() -> Router<AppState> {
             .route("/auth/me", get(auth::me))
             .route("/auth/password", post(auth::change_password))
             .route("/auth/account", delete(auth::delete_account))
+            .route(
+                "/pin-guard",
+                post(pin_guard::create_guard).delete(pin_guard::delete_guard),
+            )
+            .route("/pin-guard/unlock", post(pin_guard::unlock))
             .route("/devices", get(devices::list_devices))
             .route("/devices/{id}", delete(devices::delete_device))
             .route("/keys/bundle", axum::routing::put(keys::put_bundle))

@@ -639,7 +639,7 @@ Success body: same as register.
 
 #### `POST /auth/logout` → `204`
 
-`Authorization: Bearer <token>` — empty body; revokes current session only.
+`Authorization: Bearer <token>` — empty body; revokes current session only, forgets the device's push token and deletes its PIN guard.
 
 #### `GET /auth/me` → `200`
 
@@ -683,6 +683,14 @@ Revokes all **other** sessions.
 
 Revokes sessions for that device. Deleting the current device invalidates the caller’s token.
 
+#### PIN guard (web vault)
+
+The web client wraps its vault key under PIN **and** a server-held pepper, so a copied browser profile cannot be brute-forced offline (`web/src/crypto/vault.ts`). One guard per device (`device_pin_guards`); the server stores `SHA-256(auth_key)` and the pepper, never the PIN or the auth key.
+
+- `POST /pin-guard` (session) `{ "verifier": "<b64 SHA-256(auth_key)>" }` → `201 { "guard_id", "pepper", "max_attempts" }`. Replaces the device's guard (new id, new pepper, counter reset).
+- `POST /pin-guard/unlock` (**no session** — the web token is sealed in the vault this opens) `{ "guard_id", "auth_key" }` → `200 { "pepper" }`; wrong key `403 PIN_INCORRECT` (message says attempts left); the 10th wrong key in a row deletes the guard, and it and every later call get `410 PIN_GUARD_GONE` — only the phrase opens the vault then. A success resets the counter. Rate limit: 20/min per IP.
+- `DELETE /pin-guard` (session) → `204`. Logout and device removal delete it too.
+
 #### Auth error codes
 
 | Code | When |
@@ -698,6 +706,8 @@ Revokes sessions for that device. Deleting the current device invalidates the ca
 | `FORBIDDEN` | Authenticated but not allowed |
 | `NOT_FOUND` | Device not found for user |
 | `RATE_LIMITED` | Budget exceeded |
+| `PIN_INCORRECT` | Wrong PIN against a PIN guard (403) |
+| `PIN_GUARD_GONE` | PIN guard deleted after too many wrong PINs, or never created (410) |
 
 ### Milestone 2 — Key bundles (locked)
 

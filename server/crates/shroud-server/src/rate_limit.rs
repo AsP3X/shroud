@@ -39,6 +39,11 @@ pub mod budgets {
     pub const LINK_RELAY_IP: (u64, Duration) = (120, Duration::from_secs(60));
     /// Link-preview relay connections per account.
     pub const LINK_RELAY_USER: (u64, Duration) = (60, Duration::from_secs(60));
+    /// PIN-guard unlocks per client IP. The guard's own counter is the real limit; this keeps
+    /// one address from probing many guards.
+    pub const PIN_GUARD_IP: (u64, Duration) = (20, Duration::from_secs(60));
+    /// PIN changes per account.
+    pub const PIN_GUARD_USER: (u64, Duration) = (10, Duration::from_secs(3600));
 }
 
 struct MemoryWindow {
