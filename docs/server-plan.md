@@ -98,7 +98,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Real-time m4 | HTTP send + history (done) |
 | Real-time 4b | **WebSocket** in-process fan-out (**done**) |
 | Redis fan-out | **Optional** when `REDIS_URL` set: local hub + pub/sub on `shroud:user:{user_id}` |
-| WS events | `message.new`, `message.delivered`, `message.read`, `message.deleted`, `typing`, `recording`, `presence.update` |
+| WS events | `message.new`, `message.delivered`, `message.read`, `message.deleted`, `message.reaction`, `typing`, `recording`, `presence.update` |
 | WS recipients | Peer devices + sender’s **other** devices (not the sending device for new) |
 | Delivery receipts | `POST /messages/:id/delivered` for current device (m4); read later |
 | Retention | Indefinite until user delete |
@@ -1284,6 +1284,48 @@ Add optional:
 - Tombstone all messages where `sender_user_id = me` (clear ciphertext, set deleted_for_everyone_at).
 - `DELETE FROM users WHERE id = me` (cascades devices, sessions, keys, contacts, blocks, media ownership, hides, deliveries via FKs).
 - Remaining conversation rows may still exist for peer with tombstoned messages.
+
+### Milestone 10 — Reactions
+
+Migration 020: `message_reactions(message_id, user_id, conversation_id, ciphertext NULL, seq, updated_at)`,
+primary key `(message_id, user_id)`, index `(conversation_id, seq)`. `seq` comes from one global
+sequence and changes on every set, replace and remove; a removal keeps the row with `ciphertext NULL`.
+No push, no `last_message_at` bump. Own budget `REACTION_USER` (120/min).
+
+#### `PUT /messages/:id/reaction` `{ "ciphertext": "<base64>" }` → `200` reaction
+
+- Caller must be a participant; the message must not be deleted for everyone or be an annotation
+  (`400`); outside Notes the peer must be an accepted, unblocked contact (`403`). Unknown or foreign
+  message → `404`. Ciphertext 1–4096 bytes.
+
+#### `DELETE /messages/:id/reaction` → `200` reaction (ciphertext null) or `204` when there was none
+
+- Participants only; allowed after the contact is gone so a reaction can always be taken back.
+
+Reaction body (also the WS payload's `reaction`):
+
+```json
+{ "message_id": "<uuid>", "user_id": "<uuid>", "ciphertext": "<base64>|null", "seq": 42, "updated_at": "…" }
+```
+
+WS, to both users' online devices except the acting one:
+
+```json
+{ "type": "message.reaction", "conversation_id": "<uuid>", "device_id": "<uuid>", "reaction": { … } }
+```
+
+#### `GET /conversations/:peer_user_id/reactions?after_seq=&limit=` → `200`
+
+`{ "reactions": [ … ], "next_seq": 57, "has_more": false }` — every change after `after_seq`, oldest
+first, removals included; `limit` default 200, max 500. Rows for messages the caller cannot see
+(deleted for everyone, deleted for me, before a chat clear) come back with a null ciphertext.
+
+#### History
+
+`GET /messages` adds `reactions` (live ones, oldest change first; omitted when empty) to each message,
+and on the newest page (no `before_*`) `reaction_seq`: the conversation's highest `seq`, read before
+the page, for a client that has no catch-up cursor yet. Deleting for everyone clears the message's
+reactions (new `seq`, so catch-up reports it).
 
 ### Later routes (outline)
 

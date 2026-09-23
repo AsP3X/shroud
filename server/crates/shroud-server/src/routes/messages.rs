@@ -18,6 +18,7 @@ use crate::error::AppError;
 use crate::rate_limit::budgets;
 use crate::routes::contacts::{are_contacts, is_blocked_either_way};
 use crate::routes::conversations::clear_watermark;
+use crate::routes::reactions::{self, ReactionEntry};
 use crate::state::AppState;
 
 const MAX_CIPHERTEXT_BYTES: usize = 64 * 1024;
@@ -63,6 +64,9 @@ pub struct MessageResponse {
     /// Outbound only: peer user has marked this message read.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub read: Option<bool>,
+    /// History only: live sealed reactions, oldest change first.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub reactions: Vec<ReactionEntry>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -77,6 +81,10 @@ pub struct ListMessagesResponse {
     pub messages: Vec<MessageResponse>,
     /// True when another page may exist (caller got a full page).
     pub has_more: bool,
+    /// Newest page only (no `before_*` cursor): the conversation's highest reaction `seq`, read
+    /// before the page. A client with no catch-up cursor yet starts from here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reaction_seq: Option<i64>,
 }
 
 #[derive(Debug, FromRow)]
@@ -327,6 +335,7 @@ pub async fn send_message(
         created_at: now,
         delivered: Some(false),
         read: Some(false),
+        reactions: vec![],
     };
 
     // Human: Notify online peer devices and sender's other devices (not this sender device).
@@ -393,7 +402,16 @@ pub async fn list_messages(
             conversation_id: None,
             messages: vec![],
             has_more: false,
+            reaction_seq: None,
         }));
+    };
+
+    // Read before the page: a reaction committed later has a higher seq and reaches the client
+    // through catch-up, so the page plus the cursor never miss one.
+    let reaction_seq = if query.before_created_at.is_none() {
+        Some(reactions::latest_reaction_seq(&state.pool, conversation_id).await?)
+    } else {
+        None
     };
 
     // Human: A cleared chat stays empty for this caller until newer messages arrive; the peer
@@ -470,10 +488,18 @@ pub async fn list_messages(
         peer_receipt_status_batch(&state.pool, &outbound_ids, query.peer_user_id).await?
     };
 
+    let live_ids: Vec<Uuid> = rows
+        .iter()
+        .filter(|row| row.deleted_for_everyone_at.is_none() && row.content_type != "annotation")
+        .map(|row| row.id)
+        .collect();
+    let mut reaction_map = reactions::live_reactions_batch(&state.pool, &live_ids).await?;
+
     let page_len = rows.len() as i64;
     let mut messages = Vec::with_capacity(rows.len());
     for row in rows {
         let mut response = message_to_response(row);
+        response.reactions = reaction_map.remove(&response.id).unwrap_or_default();
         if !is_notes && response.sender_user_id == auth.user_id {
             let (delivered, read) = receipt_map
                 .get(&response.id)
@@ -489,6 +515,7 @@ pub async fn list_messages(
         conversation_id: Some(conversation_id),
         messages,
         has_more: page_len >= limit,
+        reaction_seq,
     }))
 }
 
@@ -908,6 +935,7 @@ fn message_to_response(row: MessageRow) -> MessageResponse {
         created_at: row.created_at,
         delivered: None,
         read: None,
+        reactions: vec![],
     }
 }
 
@@ -1185,6 +1213,8 @@ async fn delete_for_everyone(
         .execute(&mut *tx)
         .await
         .map_err(|err| AppError::Internal(format!("unlink media on delete failed: {err}")))?;
+
+        reactions::clear_for_deleted_message(&mut tx, message_id).await?;
     }
 
     #[derive(FromRow)]

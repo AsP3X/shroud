@@ -62,11 +62,24 @@ envelope. What the two clients agree on *inside* that envelope:
 | Link with a large preview image | `content_type = media`: `MediaMessagePayload` with `t:"link"`, `c` = the whole message text, `lp`, and the image as the encrypted blob | iOS `deliverLinkWithImage` (read by `web/src/crypto/mediaPayload.ts`) |
 | Media | `MediaMessagePayload` JSON (`t`, `mime`, `k`, …), with the same `re` object when it is a reply | `MediaModels.swift` / `web/src/crypto/mediaPayload.ts` |
 | Annotation | `{"t":"transcript","r":<message id>,"c":<text>}` | `MessageAnnotation` |
+| Reaction (not a message: `PUT /messages/{id}/reaction`) | `{"t":"reaction","r":<message id>,"e":[<emoji>]}`, always a v2 envelope | `MessageReaction.swift` / `web/src/reactions.ts` |
 
 `re` carries the quoted message's id (`id`), its author (`u`), its kind (`k`) and a ≤120-character
 snippet (`x`) so a quote still reads when the original has aged out of the local window. Anything
 that does not parse as one of these shapes is treated as plain text, which is what keeps old and
 new builds interoperable in both directions.
+
+**Reactions** are not messages. Each user has at most one sealed record per message on the server
+(`message_reactions`, migration 020), so the server learns who reacted to which message and when,
+never the emoji. They are sealed as a v2 envelope (identity boxes only, with the sender tag), not
+through the Double Ratchet: a reaction is overwritten in place, so ratchet steps would be lost, and
+every device must be able to open it at any time. That costs forward secrecy for the emoji only.
+`r` binds the record to its message — a reader drops a reaction whose `r` is not the message it is
+attached to, which stops the server moving a genuine box onto another message. `e` is a list so
+several reactions per user need no new format; v1 clients send one and read the first. A reader
+accepts one emoji of at most 32 bytes and ignores anything else. Clients keep the highest `seq` per
+(message, user) and catch up per conversation with `GET /conversations/{peer}/reactions?after_seq=`
+(removals come back with a null ciphertext).
 
 `lp` is a link preview (`LinkPreview.swift` / `web/src/links.ts`): `u` the page URL (http/https
 only), `n` site name, `ti` title, `d` description, `th` a ≤6 KB square JPEG for the small layout,
