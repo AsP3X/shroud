@@ -417,7 +417,10 @@ struct LockScreenView: View {
                     .contentTransition(.symbolEffect(.replace))
                 Text(title)
                     .font(.system(size: 17, weight: .semibold))
-                    .contentTransition(.numericText())
+                    // Human: Not `.numericText()`. Its glyph morph blurs on the CPU, on the main
+                    // thread, every frame, and it runs as "Checking…" turns "Unlocked" — right on
+                    // top of the unlock animation (136 ms of main-thread drawing per unlock).
+                    .contentTransition(.opacity)
             }
             .foregroundStyle(Color.white)
             .frame(maxWidth: .infinity)
@@ -440,7 +443,8 @@ struct LockScreenView: View {
             Text(unlockingMethod == .passcodeOnly && phase == .checking ? "Checking…" : "Use device passcode")
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(Theme.accent)
-                .contentTransition(.numericText())
+                // Same as the unlock button's title: no CPU-blurred glyph morph mid-unlock.
+                .contentTransition(.opacity)
                 .frame(maxWidth: .infinity)
                 .frame(height: 54)
                 .background(Theme.backgroundGrouped)
@@ -489,6 +493,8 @@ struct LockScreenView: View {
         // Heavy and synchronous: load the chats while the screen still reads "Checking…",
         // so nothing is moving and Chats is inserted with its rows already in place.
         messagingController.prepareCachedState()
+        // Then build Chats itself, hidden, for the same reason: the reveal only fades it in.
+        await router.prewarmMainShell()
         await playUnlockChoreography()
     }
 
@@ -517,6 +523,7 @@ struct LockScreenView: View {
     /// faded, disabled screen.
     private func recoverIfStillLocked() {
         guard !router.isUnlocked else { return }
+        router.cancelMainShellPrewarm()
         messagingController.discardPreparedCachedState()
         withAnimation(Motion.gentle) { phase = .idle }
     }

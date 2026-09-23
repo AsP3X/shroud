@@ -23,14 +23,23 @@ struct RootView: View {
     var body: some View {
         ZStack {
             // Unlock reveal: Chats rises in from 0.96 while the lock screen dissolves over it.
+            // The lock screen may have built the shell already (hidden, see
+            // `AppRouter.prewarmMainShell`); the reveal then animates that same view in.
             Group {
-                if router.isUnlocked {
+                if router.mountsMainShell {
                     MainTabView(router: router)
+                        .opacity(router.isUnlocked ? 1 : 0)
+                        .scaleEffect(router.isUnlocked || reduceMotion ? 1 : 0.96)
+                        .allowsHitTesting(router.isUnlocked)
+                        .accessibilityHidden(!router.isUnlocked)
+                        .onAppear { router.mainShellMounted = true }
+                        .onDisappear { router.mainShellMounted = false }
                         .transition(.asymmetric(
                             insertion: .scale(scale: 0.96).combined(with: .opacity),
                             removal: .opacity
                         ))
-                } else {
+                }
+                if !router.isUnlocked {
                     onboardingStack
                         .transition(.opacity)
                         .zIndex(1)

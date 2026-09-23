@@ -41,6 +41,37 @@ final class AppRouter {
             && cryptoController?.isUnlocked == true
     }
 
+    /// The lock screen asked for the main shell to be built, hidden, ahead of its reveal.
+    ///
+    /// Human: Building Chats (tab shell, lists, glass bar) is ~250 ms of main-thread work. Done
+    /// on the reveal's first frame, it swallowed the start of the unlock animation — the mark
+    /// jumped instead of lifting away. The lock screen now builds it while it still reads
+    /// "Checking…" under the Face ID sheet, and the reveal only fades a view that exists.
+    private(set) var prewarmsMainShell = false
+    /// Set by the shell itself once it is in the hierarchy.
+    var mainShellMounted = false
+
+    /// Whether `RootView` keeps the main shell in the hierarchy: shown, or built and hidden.
+    /// Never while the vault is sealed, so a prewarm cannot outlive a lock.
+    var mountsMainShell: Bool {
+        isUnlocked || (prewarmsMainShell && cryptoController?.isUnlocked == true)
+    }
+
+    /// Mounts the shell hidden and waits (briefly) until it has been built.
+    func prewarmMainShell() async {
+        guard cryptoController?.isUnlocked == true else { return }
+        prewarmsMainShell = true
+        let deadline = ContinuousClock.now + .milliseconds(600)
+        while !mainShellMounted, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(8))
+        }
+    }
+
+    /// Drops a prewarmed shell the unlock it was for did not use.
+    func cancelMainShellPrewarm() {
+        prewarmsMainShell = false
+    }
+
     func showWelcome() {
         path = []
     }
@@ -69,6 +100,7 @@ final class AppRouter {
     func unlockMessages() {
         guard cryptoController?.isUnlocked == true else { return }
         hasUnlockedMessaging = true
+        prewarmsMainShell = false
         path = []
     }
 
