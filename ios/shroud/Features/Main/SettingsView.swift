@@ -5,6 +5,7 @@ enum SettingsRoute: Hashable {
     case server
     case transcription
     case privacySecurity
+    case devices
 }
 
 /// Settings tab — Telegram-style profile hero for the **title-only** sticky bar
@@ -20,6 +21,8 @@ struct SettingsView: View {
 
     @State private var scrollOffsetY: CGFloat = 0
     @State private var showLogOutConfirm = false
+    /// Linked device count for the Devices row; nil until the first load.
+    @State private var deviceCount: Int?
 
     // MARK: - Layout metrics (title-only compact bar)
 
@@ -171,6 +174,8 @@ struct SettingsView: View {
                         TranscriptionLanguageView()
                     case .privacySecurity:
                         PrivacySecurityView(router: router)
+                    case .devices:
+                        DevicesView(onCount: { deviceCount = $0 })
                     }
                 }
         }
@@ -222,6 +227,7 @@ struct SettingsView: View {
             }
         }
         .background(Theme.backgroundGrouped)
+        .task { await loadDeviceCount() }
         .confirmationDialog(
             "Log out of Shroud?",
             isPresented: $showLogOutConfirm,
@@ -398,8 +404,11 @@ struct SettingsView: View {
             SettingsRowView(
                 title: "Devices",
                 systemImage: "laptopcomputer.and.iphone",
-                iconBackground: Color(red: 247 / 255, green: 107 / 255, blue: 28 / 255)
-            )
+                iconBackground: Color(red: 247 / 255, green: 107 / 255, blue: 28 / 255),
+                value: deviceCount.map(String.init)
+            ) {
+                navigationPath.append(.devices)
+            }
             groupDivider()
             SettingsRowView(
                 title: "Chat Folders",
@@ -509,6 +518,14 @@ struct SettingsView: View {
         .disabled(router.isLoggingOut)
         .pressable(scale: 0.98, dimming: 0.1, haptic: .medium)
         .accessibilityLabel(router.isLoggingOut ? "Signing out" : "Log Out")
+    }
+
+    /// Best effort — the row just shows no count when offline.
+    private func loadDeviceCount() async {
+        guard let token = sessionController.bearerToken,
+              let devices = try? await DevicesService().list(token: token)
+        else { return }
+        deviceCount = devices.count
     }
 
     private func groupDivider(leading: CGFloat = 54) -> some View {

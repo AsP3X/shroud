@@ -5,6 +5,8 @@ struct SettingsRowView: View {
     let title: String
     let systemImage: String
     let iconBackground: Color
+    /// Secondary text before the chevron (e.g. a count).
+    var value: String? = nil
     var action: (() -> Void)? = nil
 
     var body: some View {
@@ -24,6 +26,11 @@ struct SettingsRowView: View {
                     .font(.system(size: 16))
                     .foregroundStyle(Theme.textPrimary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                if let value, action != nil {
+                    Text(value)
+                        .font(.system(size: 16))
+                        .foregroundStyle(Theme.textSecondary)
+                }
                 if action != nil {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 13, weight: .semibold))
