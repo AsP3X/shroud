@@ -86,15 +86,15 @@ final class CryptoController {
 
         // Prefer vault; migrate legacy plain history key once. Kept until the vault holds it:
         // without a passcode the vault refuses, and dropping it would force the phrase.
-        if let legacy = store.loadLegacyPlainHistoryKey(),
-           (try? HistoryKeyVault.store(historyKey: legacy, userID: userID)) != nil
-        {
+        let legacy = store.loadLegacyPlainHistoryKey()
+        if let legacy, (try? HistoryKeyVault.store(historyKey: legacy, userID: userID)) != nil {
             store.clearLegacyPlainHistoryKey()
         }
 
         do {
             let historyKey = try await HistoryKeyVault.unlock(userID: userID, method: method)
-            // The private keys are sealed under the history key, so they open only now.
+            // The private keys are sealed under the history key, so they open only now. No await
+            // from here on: a lock arriving mid-unlock must not be followed by `material` being set.
             guard let stored = store.load(historyKey: historyKey), stored.userID == userID else {
                 throw HistoryKeyVault.VaultError.notFound
             }
@@ -103,8 +103,14 @@ final class CryptoController {
             material = restored
             needsHistoryUnlock = false
             suppressAutomaticVaultPrompt = false
-            // Re-seals identity items an older build stored as plaintext.
-            try? store.save(restored)
+            // Only when an older build left plaintext: the rewrite is 14 Keychain calls on the
+            // main thread, in the middle of the unlock animation.
+            if stored.needsResealing {
+                try? store.save(restored)
+            } else if legacy != nil {
+                // The vault opened, so a plain copy of its key has no reason to stay.
+                store.clearLegacyPlainHistoryKey()
+            }
             return true
         } catch HistoryKeyVault.VaultError.userCancelled {
             material = nil

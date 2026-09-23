@@ -12,8 +12,9 @@ import Security
 /// Agent: Service com.shroud.identity. Private keys (identity, signed prekey, one-time
 /// prekeys) are AES-GCM sealed with `LocalHistoryCrypto` context `.identityKeychain`. User id,
 /// registration id and signed-prekey id stay plain so the lock screen can tell an identity is
-/// here. Items from older builds are plaintext; `load` still reads them and the next `save`
-/// (every unlock does one) seals them. Plain `history_key` is deleted on save (migration).
+/// here. Items from older builds are plaintext; `load` still reads them and flags
+/// `needsResealing`, and the unlock's `save` seals them. Plain `history_key` is deleted on
+/// save (migration).
 nonisolated struct IdentityKeyStore: Sendable {
     private let service: String
 
@@ -30,6 +31,8 @@ nonisolated struct IdentityKeyStore: Sendable {
         let signedPreKeyID: UInt32
         let signedPreKeyPrivate: Curve25519.KeyAgreement.PrivateKey
         let oneTimePreKeys: [UInt32: Curve25519.KeyAgreement.PrivateKey]
+        /// An item was still an older build's plaintext: the caller should `save` to seal it.
+        var needsResealing = false
     }
 
     /// Account the stored identity belongs to. Readable while chats are locked.
@@ -40,8 +43,11 @@ nonisolated struct IdentityKeyStore: Sendable {
     /// Opens the private keys with the history key. Nil while locked, with the wrong key, or
     /// when an item is missing or tampered with.
     func load(historyKey: SymmetricKey) -> StoredIdentity? {
+        var sawPlaintext = false
         func opened(_ key: String) -> Data? {
-            readData(key: key).flatMap { Self.openPrivate($0, historyKey: historyKey) }
+            guard let stored = readData(key: key) else { return nil }
+            if !LocalHistoryCrypto.isSealedBlob(stored) { sawPlaintext = true }
+            return Self.openPrivate(stored, historyKey: historyKey)
         }
         guard
             let userID = storedUserID(),
@@ -83,7 +89,8 @@ nonisolated struct IdentityKeyStore: Sendable {
             signingPrivateKey: signing,
             signedPreKeyID: spkID,
             signedPreKeyPrivate: spk,
-            oneTimePreKeys: otpks
+            oneTimePreKeys: otpks,
+            needsResealing: sawPlaintext
         )
     }
 

@@ -68,6 +68,18 @@ struct SealedKeychainValuesTests {
         #expect(opened.wasPlaintext)
     }
 
+    /// The unlock reads only items the marker does not vouch for: older plaintext, and sealed
+    /// items written before the marker existed.
+    @Test
+    func unlockReadsOnlyUnmarkedRatchetItems() {
+        let rows: [[String: Any]] = [
+            [kSecAttrAccount as String: "sealed", kSecAttrGeneric as String: RatchetSessionStore.sealedMarker],
+            [kSecAttrAccount as String: "legacy"],
+            [kSecAttrAccount as String: "other", kSecAttrGeneric as String: Data("x".utf8)],
+        ]
+        #expect(RatchetSessionStore.accountsWithoutSealedMarker(rows) == ["legacy", "other"])
+    }
+
     /// Distinct HKDF info strings: a value sealed for one store does not open as another.
     @Test
     func storesUseSeparateSubkeys() throws {
