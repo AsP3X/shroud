@@ -100,7 +100,9 @@ final class SessionController {
             return
         }
         do {
-            self.session = try await authService.refreshProfile(session: session)
+            let refreshed = try await authService.refreshProfile(session: session)
+            // Same-value writes still invalidate every view observing the session.
+            if refreshed != self.session { self.session = refreshed }
             sessionValidated = true
             // Success is also recorded by APIClient; reset here so unit paths without the bridge work.
             resetAuthenticationFailures()

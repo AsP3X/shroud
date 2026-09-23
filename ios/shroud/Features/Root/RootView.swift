@@ -16,6 +16,8 @@ struct RootView: View {
     @State private var serverConfig = ServerConfigurationController()
     @State private var router = AppRouter()
     @State private var deviceWipe = DeviceWipeController()
+    /// Set when the scene leaves `.active` with the chats open. See `showsPrivacyCover`.
+    @State private var privacyCoverArmed = false
     @Namespace private var onboardingNamespace
 
     var body: some View {
@@ -150,6 +152,7 @@ struct RootView: View {
             }
         }
         .onChange(of: scenePhase) { _, phase in
+            privacyCoverArmed = phase != .active && router.isUnlocked
             switch phase {
             case .background:
                 // Drop plaintext history from RAM; sealed files stay on disk.
@@ -180,10 +183,15 @@ struct RootView: View {
         }
     }
 
-    /// Cover the main shell whenever the scene is not active. Not the lock screen: Face ID's
-    /// sheet makes the scene inactive, and the lock screen's choreography plays under it.
+    /// Cover the main shell while the scene is not active — but only if it was already showing
+    /// when the scene left `.active`. Not the lock screen: Face ID's sheet makes the scene
+    /// inactive, and the lock screen's choreography plays under it.
+    ///
+    /// Human: On a device the Face ID indicator is still up when the unlock reveal hands over
+    /// to Chats, so the scene is still inactive. Keyed on `isUnlocked` alone, the cover faded in
+    /// over the reveal — a second mark on a dark screen — and vanished once Face ID let go.
     private var showsPrivacyCover: Bool {
-        scenePhase != .active && router.isUnlocked
+        privacyCoverArmed && scenePhase != .active && router.isUnlocked
     }
 
     /// Temp files untouched this long are no playback or recording in progress: locking clears them.
