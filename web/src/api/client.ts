@@ -260,6 +260,19 @@ export const api = {
     }),
   me: (token: string) => request<{ user: Session["user"]; device: Session["device"] }>("/auth/me", { token }),
   logout: (token: string) => request<void>("/auth/logout", { method: "POST", token }),
+  /** New PIN: the server keeps the pepper and the auth-key verifier (see crypto/vault.ts). */
+  createPinGuard: (token: string, verifier: string) =>
+    request<{ guard_id: string; pepper: string; max_attempts: number }>("/pin-guard", {
+      method: "POST",
+      token,
+      body: JSON.stringify({ verifier }),
+    }),
+  /** No session: the token is sealed in the vault this unlocks. 403 wrong PIN, 410 guard gone. */
+  unlockPinGuard: (guardId: string, authKey: string) =>
+    request<{ pepper: string }>("/pin-guard/unlock", {
+      method: "POST",
+      body: JSON.stringify({ guard_id: guardId, auth_key: authKey }),
+    }),
   conversations: (token: string) =>
     request<{ conversations: Conversation[] }>("/conversations", { token }),
   contacts: (token: string) => request<{ contacts: Contact[] }>("/contacts", { token }),

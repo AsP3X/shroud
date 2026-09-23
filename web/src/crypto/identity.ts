@@ -78,6 +78,11 @@ export function establish(
   };
 }
 
+/** The phrase's history key alone — what opens the vault after a forgotten PIN (vault.ts). */
+export function historyKeyFromMnemonic(mnemonicWords: string[]): Uint8Array {
+  return hkdfShroud(mnemonicToSeed(mnemonicWords), "shroud-history-aes", 32);
+}
+
 export function matchesMnemonic(material: IdentityMaterial, words: string[]): boolean {
   try {
     const seed = mnemonicToSeed(words);

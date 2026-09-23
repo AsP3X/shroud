@@ -3,16 +3,8 @@ import { Check, Delete, KeyRound, Lock, LockOpen, Shield, ShieldCheck } from "lu
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { Avatar } from "../components/Avatar";
-import {
-  clearPin,
-  clearSession,
-  hasPin,
-  loadSession,
-  setLocked,
-  setPin,
-  touchLastActive,
-  verifyPin,
-} from "../session";
+import { clearPin, hasPin, pinLength, setPin, unlockWithPin } from "../crypto/vaultAccess";
+import { clearSession, loadSession, setLocked, touchLastActive } from "../session";
 
 const PIN_LEN = 6;
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "del"] as const;
@@ -118,6 +110,9 @@ export function Unlock() {
 
     if (creating) return;
     if (pin.length < 4) return;
+    // A vault PIN costs a key derivation per try, so wait for all of its digits.
+    const expected = pinLength(userId);
+    if (expected !== null && pin.length !== expected) return;
 
     const wait = pin.length === PIN_LEN ? 40 : 320;
     const timer = window.setTimeout(() => {
@@ -125,12 +120,20 @@ export function Unlock() {
         if (inflight.current) return;
         inflight.current = true;
         try {
-          const ok = await verifyPin(userId, pin);
-          if (ok) {
+          const result = await unlockWithPin(userId, pin);
+          if (result.ok) {
             await enterApp();
             return;
           }
-          if (pin.length >= PIN_LEN) fail("Wrong PIN.");
+          if (result.kind === "gone") {
+            // Too many wrong PINs: the server deleted its half of the key. The token is sealed
+            // in the vault too, so the way back is a full sign-in and the phrase.
+            const username = session?.user.username;
+            clearSession();
+            navigate("/login", { replace: true, state: { notice: result.message, username } });
+            return;
+          }
+          if (result.kind === "offline" || pin.length >= PIN_LEN) fail(result.message);
         } finally {
           inflight.current = false;
         }
@@ -171,13 +174,17 @@ export function Unlock() {
     setError(null);
   }
 
-  /* "Forgot PIN": drop the local PIN and session, keep the identity keys, and log in again.
-     The phrase step re-derives the history key, and a fresh PIN is chosen on the way back. */
+  /* "Forgot PIN": drop the PIN wrap and the session, keep the vault and the identity inside it.
+     The phrase step opens the vault with its history key, and a fresh PIN is chosen on the way back. */
   function resetWithPhrase() {
     if (!session) return;
-    void api.logout(session.token).catch(() => {
-      /* still drop the local token, as Auth does */
-    });
+    // Locked, the token is sealed in the vault and unreadable. The next login on this device
+    // revokes it on the server anyway (one live session per device).
+    if (session.token) {
+      void api.logout(session.token).catch(() => {
+        /* still drop the local token, as Auth does */
+      });
+    }
     clearPin(session.user.id);
     clearSession();
     navigate("/login", { replace: true });
@@ -195,7 +202,7 @@ export function Unlock() {
     creating && phase === "confirm"
       ? "Enter the same 6 digits again."
       : creating
-        ? "This PIN unlocks Shroud in this browser. Idle and hidden tabs lock after 5 minutes."
+        ? "This PIN encrypts and unlocks Shroud in this browser. Idle and hidden tabs lock after 5 minutes."
         : "Your messages stay encrypted in this browser until you unlock them. Idle and hidden tabs lock after 5 minutes.";
   const cardLabel = creating
     ? phase === "confirm"

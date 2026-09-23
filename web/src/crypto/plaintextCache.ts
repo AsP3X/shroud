@@ -1,5 +1,12 @@
 import { storageSealed } from "../storageSeal";
 import { clearMediaBlobs } from "./mediaCache";
+import { vaultGet, vaultName, vaultSet } from "./vault";
+
+/*
+ * Decrypted message bodies (voice transcripts included) and chat-list previews. Both are
+ * sealed in the vault (vault.ts) under hashed names; while the vault is locked nothing
+ * here can be read, and nothing is written.
+ */
 
 const prefix = "shroud.pt.";
 const previewPrefix = "shroud.preview.";
@@ -19,20 +26,43 @@ export type ChatPreview = {
   failed?: boolean;
 };
 
-function previewKey(me: string, peer: string): string {
-  return `${previewPrefix}${me.toLowerCase()}.${peer.toLowerCase()}`;
+/** What is sealed under a preview name: the preview, plus whose chat it is. */
+type StoredPreview = ChatPreview & { me?: string; peer?: string };
+
+function previewKey(me: string, peer: string): string | null {
+  return vaultName(previewPrefix, `${me.toLowerCase()}.${peer.toLowerCase()}`);
 }
 
-export function loadPreview(me: string, peer: string): ChatPreview | null {
+function plaintextKey(messageId: string): string | null {
+  return vaultName(prefix, messageId);
+}
+
+function readPreview(name: string): StoredPreview | null {
   try {
-    const raw = localStorage.getItem(previewKey(me, peer));
+    const raw = vaultGet(name);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as ChatPreview;
+    const parsed = JSON.parse(raw) as StoredPreview;
     if (!parsed.text || !parsed.at) return null;
     return parsed;
   } catch {
     return null;
   }
+}
+
+function writePreview(me: string, peer: string, preview: ChatPreview): void {
+  const name = previewKey(me, peer);
+  if (!name) return;
+  const { me: _me, peer: _peer, ...rest } = preview as StoredPreview;
+  vaultSet(name, JSON.stringify({ ...rest, me: me.toLowerCase(), peer: peer.toLowerCase() }));
+}
+
+export function loadPreview(me: string, peer: string): ChatPreview | null {
+  const name = previewKey(me, peer);
+  if (!name) return null;
+  const stored = readPreview(name);
+  if (!stored) return null;
+  const { me: _me, peer: _peer, ...preview } = stored;
+  return preview;
 }
 
 export function savePreview(me: string, peer: string, preview: ChatPreview): void {
@@ -47,39 +77,31 @@ export function savePreview(me: string, peer: string, preview: ChatPreview): voi
     if (haveT > nextT) return;
     if (haveT === nextT && !existing.failed && preview.failed) return;
   }
-  try {
-    localStorage.setItem(previewKey(me, peer), JSON.stringify(preview));
-  } catch {
-    /* quota */
-  }
+  writePreview(me, peer, preview);
 }
 
 export function loadPlaintext(messageId: string): string | null {
   const key = messageId.toLowerCase();
   if (withdrawn.has(key)) return null;
-  try {
-    return localStorage.getItem(prefix + key);
-  } catch {
-    return null;
-  }
+  const name = plaintextKey(key);
+  return name ? vaultGet(name) : null;
 }
 
 export function savePlaintext(messageId: string, text: string): void {
   const key = messageId.toLowerCase();
   if (withdrawn.has(key) || storageSealed()) return;
-  try {
-    localStorage.setItem(prefix + key, text);
-  } catch {
-    /* quota */
-  }
+  const name = plaintextKey(key);
+  if (name) vaultSet(name, text);
 }
 
 /** Forgets one decrypted body — a deleted message must not linger in the cache. */
 export function forgetPlaintext(messageId: string): void {
   const key = messageId.toLowerCase();
   withdrawn.add(key);
+  const name = plaintextKey(key);
+  if (!name) return;
   try {
-    localStorage.removeItem(prefix + key);
+    localStorage.removeItem(name);
   } catch {
     /* storage unavailable */
   }
@@ -92,25 +114,14 @@ export function forgetPlaintext(messageId: string): void {
  */
 export function redactPreviewsFor(me: string, messageId: string): void {
   const id = messageId.toLowerCase();
-  const head = `${previewPrefix}${me.toLowerCase()}.`;
-  const keys: string[] = [];
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key?.startsWith(head)) keys.push(key);
-    }
-  } catch {
-    return;
-  }
-  for (const key of keys) {
-    try {
-      const parsed = JSON.parse(localStorage.getItem(key) ?? "") as ChatPreview;
-      if (parsed.id?.toLowerCase() !== id) continue;
-      const peer = key.slice(head.length);
-      replacePreview(me, peer, { ...parsed, text: "Message deleted", failed: false });
-    } catch {
-      /* a damaged preview is left alone */
-    }
+  const owner = me.toLowerCase();
+  for (const key of cacheKeys()) {
+    if (!key.startsWith(previewPrefix)) continue;
+    const stored = readPreview(key);
+    if (!stored || stored.me !== owner || !stored.peer) continue;
+    if (stored.id?.toLowerCase() !== id) continue;
+    const { me: _me, peer, ...preview } = stored;
+    replacePreview(me, peer, { ...preview, text: "Message deleted", failed: false });
   }
 }
 
@@ -121,11 +132,16 @@ export function redactPreviewsFor(me: string, messageId: string): void {
  */
 export function replacePreview(me: string, peer: string, preview: ChatPreview | null): void {
   if (storageSealed()) return;
+  if (preview) {
+    writePreview(me, peer, preview);
+    return;
+  }
+  const name = previewKey(me, peer);
+  if (!name) return;
   try {
-    if (preview) localStorage.setItem(previewKey(me, peer), JSON.stringify(preview));
-    else localStorage.removeItem(previewKey(me, peer));
+    localStorage.removeItem(name);
   } catch {
-    /* quota */
+    /* storage unavailable */
   }
 }
 
@@ -156,7 +172,7 @@ export function cacheStats(): CacheStats {
   return { messages, previews, bytes };
 }
 
-/** Drops every decrypted message body and chat preview held on this device. */
+/** Drops every stored message body and chat preview held on this device. */
 export function clearCache(): void {
   for (const key of cacheKeys()) {
     try {

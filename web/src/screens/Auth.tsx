@@ -1,16 +1,24 @@
 import { useState, type FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { TriangleAlert } from "lucide-react";
 import { api, ApiError } from "../api/client";
 import { deviceName } from "../config";
 import { generateMnemonic, PhraseError, validateMnemonic, WORD_COUNT } from "../crypto/bip39";
 import { b64ToBytes, bytesEqual } from "../crypto/bytes";
-import { establish, matchesMnemonic, putBundleRequest, type IdentityMaterial } from "../crypto/identity";
+import {
+  establish,
+  historyKeyFromMnemonic,
+  matchesMnemonic,
+  putBundleRequest,
+  type IdentityMaterial,
+} from "../crypto/identity";
 import { AuthLayout } from "../components/auth/AuthLayout";
 import { PasswordField, TextField } from "../components/auth/Fields";
 import { PhraseDisplay, PhraseEntry } from "../components/auth/Phrase";
-import { hasIdentity, loadIdentity, saveIdentity } from "../crypto/store";
-import { hasPin, clearSession, loadDeviceAnchor, loadSession, saveSession } from "../session";
+import { hasIdentity, loadIdentity, loadPlaintextIdentity, saveIdentity } from "../crypto/store";
+import { hasVault, isVaultOpen, openVaultWithPhrase } from "../crypto/vault";
+import { hasPin, needsPhrase, sealLegacyStorage } from "../crypto/vaultAccess";
+import { clearSession, loadDeviceAnchor, loadSession, saveSession } from "../session";
 
 /**
  * The account's published identity key is determined by the phrase. Refuse a phrase
@@ -36,15 +44,23 @@ async function assertMatchesPublishedIdentity(
 
 export function Auth() {
   const navigate = useNavigate();
+  const location = useLocation();
   const existing = loadSession();
   const [phase, setPhase] = useState<"credentials" | "phrase">(
-    existing && !hasIdentity(existing.user.id) ? "phrase" : "credentials",
+    // The phrase step talks to the server, so it needs a token this page can read.
+    existing?.token && (!hasIdentity(existing.user.id) || needsPhrase(existing.user.id))
+      ? "phrase"
+      : "credentials",
   );
-  const [username, setUsername] = useState(existing?.user.username ?? "");
+  const [username, setUsername] = useState(
+    existing?.user.username ?? (location.state as { username?: string } | null)?.username ?? "",
+  );
   const [password, setPassword] = useState("");
   const [words, setWords] = useState<string[]>(Array.from({ length: WORD_COUNT }, () => ""));
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Set by the unlock screen when the server has stopped accepting this browser's PIN.
+  const notice = (location.state as { notice?: string } | null)?.notice ?? null;
+  const [error, setError] = useState<string | null>(notice);
   const [creatingPhrase, setCreatingPhrase] = useState(false);
 
   function afterUnlock() {
@@ -88,7 +104,15 @@ export function Auth() {
     setBusy(true);
     try {
       const normalized = validateMnemonic(words);
-      const stored = loadIdentity(session.user.id);
+      const userId = session.user.id;
+      // The phrase opens this browser's vault too — how "Forgot PIN" gets the data back.
+      // A phrase that does not open it simply leaves it closed; the checks below decide.
+      if (!creatingPhrase && hasVault(userId) && !isVaultOpen(userId)) {
+        if (openVaultWithPhrase(userId, historyKeyFromMnemonic(normalized))) {
+          await sealLegacyStorage(userId);
+        }
+      }
+      const stored = loadIdentity(userId) ?? loadPlaintextIdentity(userId);
       const sameLocal = stored !== null && !creatingPhrase && matchesMnemonic(stored, normalized);
       if (stored && !creatingPhrase && !sameLocal) {
         throw new PhraseError("invalid_checksum", "mismatch");

@@ -1,13 +1,15 @@
 import { useEffect, useRef } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { hasIdentity } from "./crypto/store";
+import { isVaultOpen } from "./crypto/vault";
+import { hasPin, needsPhrase } from "./crypto/vaultAccess";
 import { AppShell } from "./screens/AppShell";
 import { Auth } from "./screens/Auth";
 import { SignUp } from "./screens/SignUp";
 import { Unlock } from "./screens/Unlock";
 import { Welcome } from "./screens/Welcome";
 import { storageSealed } from "./storageSeal";
-import { hasPin, installAutoLock, isLocked, loadSession } from "./session";
+import { installAutoLock, isLocked, loadSession } from "./session";
 import type { Session } from "./api/client";
 
 export function App() {
@@ -20,8 +22,12 @@ export function App() {
   if (loaded) held.current = loaded;
   const sealing = storageSealed();
   const session = loaded ?? (sealing ? held.current : null);
-  const keyed = sealing ? Boolean(session) : Boolean(session && hasIdentity(session.user.id));
-  const locked = sealing ? false : isLocked();
+  const keyed = sealing
+    ? Boolean(session)
+    : Boolean(session && hasIdentity(session.user.id) && !needsPhrase(session.user.id));
+  // Nothing on disk is readable without the vault key, so a closed vault is a locked app —
+  // a reload included: the key only ever lives in this page's memory.
+  const locked = sealing ? false : isLocked() || Boolean(session && !isVaultOpen(session.user.id));
   const needsPinSetup = sealing ? false : Boolean(keyed && session && !hasPin(session.user.id));
   const sessionToken = session?.token;
 

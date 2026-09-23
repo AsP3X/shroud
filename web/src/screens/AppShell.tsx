@@ -32,6 +32,7 @@ import {
   ensureVoiceLoaded,
   loadHistory,
   peerIdForMessage,
+  forgetDecryptedState,
   forgetMessageLocally,
   isUnsent,
   previewLine,
@@ -68,7 +69,7 @@ import {
   TYPING_EXPIRE_MS,
   type PeerActivity,
 } from "../typing";
-import { setLocked } from "../session";
+import { lockNow as lockSession } from "../session";
 
 type PeerRef = { id: string; username: string };
 
@@ -574,7 +575,7 @@ export function AppShell({ session }: { session: Session }) {
   }, [contacts, presenceByUser, query, typingPeers, recordingPeers]);
 
   const lockNow = useCallback(() => {
-    setLocked(true);
+    lockSession();
     navigate("/unlock", { replace: true });
   }, [navigate]);
 
@@ -594,9 +595,10 @@ export function AppShell({ session }: { session: Session }) {
   );
 
   useEffect(() => () => stopVoice(), []);
-  // Decrypted photos and videos live only as long as the unlocked shell does.
+  // Decrypted photos, videos and transcripts live only as long as the unlocked shell does.
   useEffect(
     () => () => {
+      forgetDecryptedState();
       forgetImages();
       forgetVideos();
       resetVideoWorker();

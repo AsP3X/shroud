@@ -1,5 +1,6 @@
 import { api, ApiError } from "./api/client";
 import { closeMediaDb, MEDIA_DB_NAME } from "./crypto/mediaCache";
+import { closeVault } from "./crypto/vault";
 import { sealStorage, storageSealed } from "./storageSeal";
 
 /*
@@ -45,7 +46,7 @@ const PENDING_KEY = "shroud.wipe-pending";
 /** Kept across logout. See the file comment. */
 const DEVICE_ANCHOR_KEY = "shroud.device-anchor";
 const MESSAGE_PREFIXES = ["shroud.pt.", "shroud.preview."];
-const KEY_PREFIXES = ["shroud.identity.", "shroud.ratchet.", "shroud.pin."];
+const KEY_PREFIXES = ["shroud.identity.", "shroud.ratchet.", "shroud.vault.", "shroud.token.", "shroud.pin."];
 /** Left behind by a session: on their own they say someone used this browser. */
 const ACCOUNT_PREFIXES = [...MESSAGE_PREFIXES, ...KEY_PREFIXES, "transcription.languageStats"];
 const SESSION_KEY = "shroud.session";
@@ -258,7 +259,11 @@ export function followWipesInOtherTabs(): void {
  */
 export async function beginWipe(): Promise<WipeInventory> {
   sealStorage();
-  removeKeys(localStorage, (key) => key === SESSION_KEY || key === "shroud.last-active");
+  closeVault();
+  removeKeys(
+    localStorage,
+    (key) => key === SESSION_KEY || key === "shroud.last-active" || key.startsWith("shroud.token."),
+  );
   try {
     sessionStorage.clear();
   } catch {

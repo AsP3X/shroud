@@ -12,6 +12,7 @@ import {
 } from "./ratchet";
 import { openBox, sealBox, type SealedBox } from "./sealedBox";
 import { storageSealed } from "../storageSeal";
+import { isVaultOpen, vaultGet, vaultName, vaultSet } from "./vault";
 
 export type RatchetEnvelope = {
   v: number;
@@ -32,13 +33,16 @@ export type SealedEnvelope = {
   self?: SealedBox;
 };
 
-function sessionKey(ourUserId: string, peerUserId: string): string {
-  return `shroud.ratchet.${ourUserId.toLowerCase()}.${peerUserId.toLowerCase()}`;
+/** Storage name of a ratchet session: a keyed hash, so the names do not list who we talk to. */
+export function ratchetStorageName(ourUserId: string, peerUserId: string): string | null {
+  return vaultName("shroud.ratchet.", `${ourUserId.toLowerCase()}.${peerUserId.toLowerCase()}`);
 }
 
 export function loadRatchet(ourUserId: string, peerUserId: string): RatchetSession | null {
+  const name = ratchetStorageName(ourUserId, peerUserId);
+  if (!name) return null;
   try {
-    const raw = localStorage.getItem(sessionKey(ourUserId, peerUserId));
+    const raw = vaultGet(name);
     if (!raw) return null;
     return deserializeSession(raw);
   } catch {
@@ -46,9 +50,16 @@ export function loadRatchet(ourUserId: string, peerUserId: string): RatchetSessi
   }
 }
 
+/**
+ * Sealed into the vault. The shell only runs unlocked, so a locked vault here means the lock
+ * landed mid-message; the step is dropped rather than written in the clear.
+ */
 export function saveRatchet(ourUserId: string, peerUserId: string, session: RatchetSession): void {
   if (storageSealed()) return;
-  localStorage.setItem(sessionKey(ourUserId, peerUserId), serializeSession(session));
+  const name = ratchetStorageName(ourUserId, peerUserId);
+  if (!name || !vaultSet(name, serializeSession(session))) {
+    throw new Error("ratchet: vault is locked");
+  }
 }
 
 function peekVersion(data: Uint8Array): number | null {
@@ -68,6 +79,8 @@ export async function sealMessage(opts: {
   ourIdentityPublic: Uint8Array;
   peerIdentityPublic: Uint8Array;
 }): Promise<Uint8Array> {
+  // Locked, the stored session cannot be read; starting a fresh one would fork the ratchet.
+  if (!isVaultOpen()) throw new Error("seal: vault is locked");
   const existing = loadRatchet(opts.ourUserId, opts.peerUserId);
   const mayStartRatchet =
     existing != null || opts.ourUserId.toLowerCase() < opts.peerUserId.toLowerCase();
@@ -128,6 +141,7 @@ export async function openMessage(opts: {
   senderIdentityPublic: Uint8Array;
   asSender: boolean;
 }): Promise<Uint8Array> {
+  if (!isVaultOpen()) throw new Error("open: vault is locked");
   const version = peekVersion(opts.envelopeData);
   if (version === 3) {
     const v3 = JSON.parse(utf8decode(opts.envelopeData)) as RatchetEnvelope;

@@ -21,8 +21,14 @@ Object.defineProperty(globalThis, "localStorage", { value: storage, configurable
 
 const { forgetPlaintext, loadPlaintext, loadPreview, redactPreviewsFor, replacePreview, savePlaintext, savePreview } =
   await import("./plaintextCache.ts");
+const { createVault, derivePinSecrets } = await import("./vault.ts");
 
 const me = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+createVault(
+  me,
+  { secrets: await derivePinSecrets("123456"), pepper: new Uint8Array(32), guardId: "test" },
+  new Uint8Array(32).fill(7),
+);
 const peer = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const messageId = "CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC";
 

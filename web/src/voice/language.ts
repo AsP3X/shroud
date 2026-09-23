@@ -5,9 +5,10 @@
  * and keep the better transcript.
  */
 
+import { vaultGet, vaultSet } from "../crypto/vault";
 import { storageSealed } from "../storageSeal";
 
-const STATS_KEY = "transcription.languageStats";
+export const STATS_KEY = "transcription.languageStats";
 const OVERRIDE_KEY = "transcription.locale";
 const GLOBAL_SCOPE = "*";
 const DECAY = 0.9;
@@ -69,6 +70,14 @@ export function setCurrentLocale(tag: string | null): void {
 }
 
 const memoryFallback = new Map<string, string>();
+
+function hasLocalStorage(): boolean {
+  try {
+    return typeof localStorage !== "undefined";
+  } catch {
+    return false;
+  }
+}
 
 function storage(): { getItem(k: string): string | null; setItem(k: string, v: string): void; removeItem(k: string): void } {
   try {
@@ -177,7 +186,7 @@ type Stats = Record<string, Record<string, number>>;
 
 function loadStats(): Stats {
   try {
-    const raw = storage().getItem(STATS_KEY);
+    const raw = hasLocalStorage() ? vaultGet(STATS_KEY) : storage().getItem(STATS_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as unknown;
     if (!parsed || typeof parsed !== "object") return {};
@@ -189,8 +198,10 @@ function loadStats(): Stats {
 
 function saveStats(stats: Stats): void {
   // Which languages someone speaks, per chat — account data like the messages themselves.
+  // Sealed in the vault like the messages; locked, nothing is recorded.
   if (storageSealed()) return;
-  storage().setItem(STATS_KEY, JSON.stringify(stats));
+  if (hasLocalStorage()) vaultSet(STATS_KEY, JSON.stringify(stats));
+  else storage().setItem(STATS_KEY, JSON.stringify(stats));
 }
 
 export function prior(languageCode: string, peerId?: string | null): number {

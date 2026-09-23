@@ -61,9 +61,17 @@ const box = await sealBox(msg, bPub, aPub, bPub);
 const opened = await openBox(box, bob, aPub, bPub);
 if (utf8decode(opened) !== "sealed hello") throw new Error("sealed box roundtrip");
 
-const { sealMessage, openMessage } = await import("./messageCrypto");
+const { sealMessage, openMessage, ratchetStorageName } = await import("./messageCrypto");
+const { createVault, derivePinSecrets } = await import("./vault");
 const aliceId = "00000000-0000-4000-8000-00000000000a";
 const bobId = "00000000-0000-4000-8000-00000000000b";
+// One vault stands in for both browsers; sessions are named by (our id, peer id) within it.
+createVault(
+  aliceId,
+  { secrets: await derivePinSecrets("123456"), pepper: randomBytes(32), guardId: "test" },
+  randomBytes(32),
+);
+const aliceSession = ratchetStorageName(aliceId, bobId)!;
 for (let i = localStorage.length - 1; i >= 0; i--) {
   const key = localStorage.key(i);
   if (key?.startsWith("shroud.ratchet.")) localStorage.removeItem(key);
@@ -87,10 +95,10 @@ if (utf8decode(await openMessage({
 })) !== "A1") throw new Error("bob open A1");
 const a1env = JSON.parse(utf8decode(a1)) as { v?: number; peer?: { ek?: string }; self?: { ek?: string } };
 if (a1env.v !== 3 || !a1env.peer?.ek || !a1env.self?.ek) throw new Error("v3 missing identity boxes");
-const phoneAlice = localStorage.getItem(`shroud.ratchet.${aliceId}.${bobId}`);
+const phoneAlice = localStorage.getItem(aliceSession);
 if (!phoneAlice) throw new Error("alice session missing after A1");
 
-localStorage.removeItem(`shroud.ratchet.${aliceId}.${bobId}`);
+localStorage.removeItem(aliceSession);
 await sealMessage({
   plaintext: utf8("A-web"),
   peerUserId: bobId,
@@ -99,7 +107,7 @@ await sealMessage({
   ourIdentityPublic: aPub,
   peerIdentityPublic: bPub,
 });
-const webAlice = localStorage.getItem(`shroud.ratchet.${aliceId}.${bobId}`);
+const webAlice = localStorage.getItem(aliceSession);
 if (!webAlice) throw new Error("alice web session missing");
 
 const b1 = await sealMessage({
@@ -119,11 +127,11 @@ if (utf8decode(await openMessage({
   senderIdentityPublic: bPub,
   asSender: false,
 })) !== "B1") throw new Error("alice web open B1 via peer box");
-if (localStorage.getItem(`shroud.ratchet.${aliceId}.${bobId}`) !== webAlice) {
+if (localStorage.getItem(aliceSession) !== webAlice) {
   throw new Error("peer-box fallback overwrote sibling session");
 }
 
-localStorage.removeItem(`shroud.ratchet.${aliceId}.${bobId}`);
+localStorage.removeItem(aliceSession);
 if (utf8decode(await openMessage({
   envelopeData: b1,
   peerUserId: bobId,
@@ -134,7 +142,7 @@ if (utf8decode(await openMessage({
   asSender: false,
 })) !== "B1") throw new Error("alice sibling with no session open B1 via peer box");
 
-localStorage.removeItem(`shroud.ratchet.${aliceId}.${bobId}`);
+localStorage.removeItem(aliceSession);
 const a2 = await sealMessage({
   plaintext: utf8("A2"),
   peerUserId: bobId,
@@ -152,7 +160,7 @@ if (utf8decode(await openMessage({
   senderIdentityPublic: aPub,
   asSender: false,
 })) !== "A2") throw new Error("bob open sibling A2 via peer box");
-localStorage.setItem(`shroud.ratchet.${aliceId}.${bobId}`, phoneAlice);
+localStorage.setItem(aliceSession, phoneAlice);
 const a3 = await sealMessage({
   plaintext: utf8("A3"),
   peerUserId: bobId,

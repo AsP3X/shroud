@@ -10,7 +10,8 @@ import { saveIdentity } from "../crypto/store";
 import { AuthLayout } from "../components/auth/AuthLayout";
 import { PasswordField, RuleList, StrengthMeter, TextField } from "../components/auth/Fields";
 import { PhraseDisplay } from "../components/auth/Phrase";
-import { hasPin, saveSession } from "../session";
+import { hasPin } from "../crypto/vaultAccess";
+import { saveSession } from "../session";
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,32}$/;
 /** How many words we ask back before the account is created. */

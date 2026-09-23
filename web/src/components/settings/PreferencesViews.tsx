@@ -69,8 +69,8 @@ export function DataStorageView({ onCleared }: { onCleared?: () => void }) {
       <SettingsGroup title="On this browser">
         <div className="set-row">
           <span className="set-row-copy">
-            <strong>Decrypted messages</strong>
-            <span>{stats.messages} cached for instant reload</span>
+            <strong>Saved messages</strong>
+            <span>{stats.messages} kept encrypted under your PIN</span>
           </span>
           <span className="set-row-value">{formatBytes(stats.bytes)}</span>
         </div>
@@ -85,7 +85,7 @@ export function DataStorageView({ onCleared }: { onCleared?: () => void }) {
       <SettingsCard>
         <SettingsRow
           title={cleared ? "Local cache cleared" : "Clear local cache"}
-          subtitle="Removes decrypted text from this browser. Messages stay on the server."
+          subtitle="Removes saved messages and previews from this browser. Messages stay on the server."
           Icon={Trash2}
           tint="var(--danger-bg)"
           onClick={stats.messages + stats.previews > 0 ? clear : undefined}

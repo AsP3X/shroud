@@ -115,6 +115,12 @@ const seenAnnotations = new Set<string>();
 const sharedTranscripts = new Map<string, string>();
 const peerLocks = new Map<string, Promise<unknown>>();
 
+/** Lock and logout: shared transcripts leave memory with the rest of the unlocked shell. */
+export function forgetDecryptedState(): void {
+  sharedTranscripts.clear();
+  seenAnnotations.clear();
+}
+
 function noteSharedTranscript(annotation: Annotation): void {
   if (!sharedTranscripts.has(annotation.r)) sharedTranscripts.set(annotation.r, annotation.c);
 }

@@ -1,12 +1,14 @@
 import type { Session } from "./api/client";
+import { closeVault, hasVault, isVaultOpen, vaultGet, vaultSet } from "./crypto/vault";
 import { storageSealed } from "./storageSeal";
 
 const TOKEN_KEY = "shroud.session";
+/** The bearer token, sealed in the vault; `shroud.session` keeps only who is signed in. */
+export const SEALED_TOKEN_PREFIX = "shroud.token.";
 const DEVICE_KEY = "shroud.device-anchor";
 const LOCKED_KEY = "shroud.locked";
 const TAB_LIVE_KEY = "shroud.tab-live";
 const LAST_ACTIVE_KEY = "shroud.last-active";
-const PIN_KEY_PREFIX = "shroud.pin.";
 const LOCK_HIDDEN_KEY = "shroud.lock-on-hidden";
 const IDLE_MS = 5 * 60 * 1000;
 /** Delay before a hidden tab locks, so reload/navigation does not demand a PIN. */
@@ -17,8 +19,12 @@ const PIN_AFTER_MS = 12 * 60 * 60 * 1000;
 const LOGOUT_AFTER_MS = 14 * 24 * 60 * 60 * 1000;
 
 /**
- * Session token lives in localStorage (survives tab close).
- * Closing a tab is not a logout. A reload of the same tab stays unlocked.
+ * `shroud.session` says who is signed in on which device; the bearer token itself is sealed in
+ * the vault (`shroud.token.<user>`) and only readable unlocked. Between login and the first PIN
+ * there is no vault yet, so the token waits in memory; a reload in that window means logging
+ * in again.
+ * Session metadata lives in localStorage (survives tab close).
+ * Closing a tab is not a logout. A reload asks for the PIN: the vault key lived only in that page.
  * Returning after 12h asks for the PIN. 14 days idle clears the session.
  */
 function expireIfStale(): boolean {
@@ -85,14 +91,36 @@ gateSessionLock();
 
 export type DeviceAnchor = { username: string; deviceId: string };
 
-type PinRecord = { salt: string; hash: string };
+/** The token this page holds in memory: from a login, or read out of the vault. */
+let liveToken: { userId: string; token: string } | null = null;
 
+function sealedTokenKey(userId: string): string {
+  return SEALED_TOKEN_PREFIX + userId.toLowerCase();
+}
+
+function readMeta(): Session | null {
+  const raw = localStorage.getItem(TOKEN_KEY);
+  if (!raw) return null;
+  return JSON.parse(raw) as Session;
+}
+
+/**
+ * The signed-in session. Locked, `token` is empty: the app only routes to the unlock screen
+ * then. Null when nobody is signed in, or when the token is gone for good (lost before a vault
+ * existed, or superseded) — the next step is a login.
+ */
 export function loadSession(): Session | null {
   try {
     if (expireIfStale()) return null;
-    const raw = localStorage.getItem(TOKEN_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as Session;
+    const meta = readMeta();
+    if (!meta) return null;
+    // Stored before the vault: the unlock seals it (`sealSessionToken`).
+    if (meta.token) return meta;
+    const userId = meta.user.id.toLowerCase();
+    const token =
+      (liveToken?.userId === userId ? liveToken.token : null) ?? vaultGet(sealedTokenKey(userId)) ?? "";
+    if (token) return { ...meta, token };
+    return hasVault(userId) && !isVaultOpen(userId) ? { ...meta, token: "" } : null;
   } catch {
     return null;
   }
@@ -100,16 +128,59 @@ export function loadSession(): Session | null {
 
 export function saveSession(session: Session): void {
   if (storageSealed()) return;
-  localStorage.setItem(TOKEN_KEY, JSON.stringify(session));
+  const userId = session.user.id.toLowerCase();
+  liveToken = { userId, token: session.token };
+  // A new login supersedes whatever token the vault held; unlocking must not bring it back.
+  localStorage.removeItem(sealedTokenKey(userId));
+  localStorage.setItem(TOKEN_KEY, JSON.stringify({ ...session, token: "" }));
+  sealSessionToken();
   sessionStorage.setItem(TAB_LIVE_KEY, "1");
   touchLastActive(true);
   saveDeviceAnchor({ username: session.user.username, deviceId: session.device.id });
   setLocked(false);
 }
 
+/**
+ * Seals the token into the open vault: one held in memory since login, or one a pre-vault
+ * browser stored in the clear (which is then stripped from `shroud.session`).
+ */
+export function sealSessionToken(): void {
+  if (storageSealed()) return;
+  try {
+    const meta = readMeta();
+    if (meta?.token) liveToken = { userId: meta.user.id.toLowerCase(), token: meta.token };
+    if (!liveToken || !isVaultOpen(liveToken.userId)) return;
+    if (!vaultSet(sealedTokenKey(liveToken.userId), liveToken.token)) return;
+    if (meta?.token) localStorage.setItem(TOKEN_KEY, JSON.stringify({ ...meta, token: "" }));
+  } catch {
+    /* storage unavailable: the next unlock tries again */
+  }
+}
+
+/** Lock: the token leaves memory too, once the vault holds a sealed copy. */
+function forgetLiveToken(): void {
+  if (liveToken && hasVault(liveToken.userId)) liveToken = null;
+}
+
+/**
+ * Locks for real: the vault key and the token leave memory, so nothing on disk can be read
+ * until the PIN (or the phrase) opens the vault again. Every lock goes through here.
+ */
+export function lockNow(): void {
+  if (storageSealed()) return;
+  closeVault();
+  forgetLiveToken();
+  setLocked(true);
+}
+
 export function clearSession(): void {
+  liveToken = null;
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(LAST_ACTIVE_KEY);
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const key = localStorage.key(i);
+    if (key?.startsWith(SEALED_TOKEN_PREFIX)) localStorage.removeItem(key);
+  }
   sessionStorage.removeItem(TOKEN_KEY);
   sessionStorage.removeItem(LOCKED_KEY);
   sessionStorage.removeItem(TAB_LIVE_KEY);
@@ -170,64 +241,6 @@ export function setLocked(locked: boolean): void {
   else sessionStorage.removeItem(LOCKED_KEY);
 }
 
-function pinKey(userId: string): string {
-  return PIN_KEY_PREFIX + userId.toLowerCase();
-}
-
-export function hasPin(userId: string): boolean {
-  return readPinRecord(userId) !== null;
-}
-
-/** Forgets the browser PIN so the next unlock chooses a new one (the "forgot PIN" path). */
-export function clearPin(userId: string): void {
-  localStorage.removeItem(pinKey(userId));
-}
-
-function readPinRecord(userId: string): PinRecord | null {
-  try {
-    const raw = localStorage.getItem(pinKey(userId));
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as PinRecord;
-    if (!parsed.salt || !parsed.hash) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-async function sha256Hex(value: string): Promise<string> {
-  const data = new TextEncoder().encode(value);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-function newSalt(): string {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-function pinsEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
-
-export async function setPin(userId: string, pin: string): Promise<void> {
-  if (storageSealed()) return;
-  const salt = newSalt();
-  const hash = await sha256Hex(`${salt}:${pin}`);
-  localStorage.setItem(pinKey(userId), JSON.stringify({ salt, hash }));
-}
-
-export async function verifyPin(userId: string, pin: string): Promise<boolean> {
-  const record = readPinRecord(userId);
-  if (!record) return false;
-  const hash = await sha256Hex(`${record.salt}:${pin}`);
-  return pinsEqual(hash, record.hash);
-}
-
 /** Idle + hidden-tab lock. Returns a disposer. */
 export function installAutoLock(onLock: () => void): () => void {
   let timer = window.setTimeout(lock, IDLE_MS);
@@ -238,12 +251,14 @@ export function installAutoLock(onLock: () => void): () => void {
     // A wipe already dropped the token and is clearing the tab. Navigating to unlock here
     // would unmount it before it finishes.
     if (storageSealed()) return;
+    const wasLocked = isLocked();
+    // Idempotent, and first: whatever else happens, the keys leave memory.
+    lockNow();
     if (!loadSession()) {
       onLock();
       return;
     }
-    if (isLocked()) return;
-    setLocked(true);
+    if (wasLocked) return;
     onLock();
   }
 
