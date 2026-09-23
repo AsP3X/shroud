@@ -7,8 +7,8 @@ import Foundation
 /// emoji, so a late or replayed older change (a delayed WebSocket event, a stale page) cannot
 /// bring the reactions back.
 /// Agent: `seq` is the server's change cursor; the highest one per user wins. `pending` marks our
-/// own change before the server confirmed it — it keeps the previous `seq` and is not persisted,
-/// so after a relaunch it is judged like any other old entry and the next page corrects it.
+/// own change before the server confirmed it — it keeps the previous `seq`, and the thread is saved
+/// with our last confirmed entry in its place, so nothing unconfirmed outlives a relaunch.
 nonisolated struct MessageReaction: Codable, Equatable, Hashable, Sendable {
     let userID: UUID
     /// Oldest first; empty when the user took their reactions back.
@@ -102,6 +102,20 @@ nonisolated enum ReactionMerge {
         let cap = max(1, limit)
         if next.count > cap { next.removeFirst(next.count - cap) }
         return next
+    }
+
+    /// What we changed (`base` → `mine`) re-applied onto the set the server holds now
+    /// (`theirs`, written by our other device meanwhile): emoji we added are added, emoji we took
+    /// back go, the rest stays theirs. Past `limit` the oldest go, as with `toggled`.
+    static func rebased(_ mine: [String], from base: [String], onto theirs: [String], limit: Int) -> [String] {
+        let takenBack = Set(base).subtracting(mine)
+        var result = theirs.filter { !takenBack.contains($0) }
+        for emoji in mine where !base.contains(emoji) && !result.contains(emoji) {
+            result.append(emoji)
+        }
+        let cap = max(1, limit)
+        if result.count > cap { result.removeFirst(result.count - cap) }
+        return result
     }
 
     /// One chip per person (both people share one when they picked exactly the same emoji), the

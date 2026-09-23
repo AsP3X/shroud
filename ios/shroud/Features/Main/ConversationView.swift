@@ -778,8 +778,9 @@ struct ConversationView: View {
                                 .padding(.vertical, 8)
                         case let .message(message):
                             // Redraws only when this bubble's own content changes.
-                            EquatableMessageRow(key: rowKey(for: message, quoted: quoted)) {
-                                messageRow(message, quoted: quoted)
+                            let key = rowKey(for: message, quoted: quoted)
+                            EquatableMessageRow(key: key) {
+                                messageRow(message, key: key)
                             }
                                 .equatable()
                                 .id(message.id)
@@ -860,7 +861,10 @@ struct ConversationView: View {
                 .animation(Motion.bouncy, value: peerActivity)
                 // Chips spring in and out and bubbles grow instead of jumping — for our taps and
                 // for the other side's reactions arriving over the socket alike.
-                .animation(Motion.respecting(reduceMotion, Motion.bouncy), value: reactionsDigest)
+                .animation(
+                    Motion.respecting(reduceMotion, Motion.bouncy),
+                    value: messaging.reactionRevision(for: peerUserID)
+                )
                 .environment(\.reactionFlightTarget, reactionFlight?.target)
                 .onPreferenceChange(ReactionFlightFrameKey.self) { frame in
                     landReactionFlight(at: frame)
@@ -1350,12 +1354,19 @@ struct ConversationView: View {
         }
     }
 
+    /// One thread row. Reads per-message state from `key` only: an observable read in here (a
+    /// transfer, the thread) would redraw the row on every change of it, whatever
+    /// `EquatableMessageRow` says.
     @ViewBuilder
     private func messageRow(
         _ message: MessagingController.ChatMessage,
-        quoted: [UUID: MessagingController.ChatMessage]
+        key: MessageRowKey
     ) -> some View {
-        let reply = replyContent(for: message, quoted: quoted)
+        let reply = key.reply
+        // Reacting where it can't happen (sending, failed, Saved Messages) offers nothing.
+        let onReactionTap: ((String) -> Void)? = messaging.canReact(to: message)
+            ? { emoji in react(emoji, to: message) }
+            : nil
         switch message.kind {
         case .image:
             ImageMessageBubble(
@@ -1364,7 +1375,7 @@ struct ConversationView: View {
                 onDownload: {
                     downloadMedia(message)
                 },
-                transfer: messaging.mediaTransfers[message.id],
+                transfer: key.transfer,
                 onCancelDownload: {
                     messaging.cancelMediaDownload(messageID: message.id)
                 },
@@ -1394,7 +1405,7 @@ struct ConversationView: View {
                     { jumpToQuoted(reference.messageID) }
                 },
                 reactions: reactionChips(for: message),
-                onReactionTap: { emoji in react(emoji, to: message) }
+                onReactionTap: onReactionTap
             )
         case .video:
             VideoMessageBubble(
@@ -1403,7 +1414,7 @@ struct ConversationView: View {
                 onDownload: {
                     downloadMedia(message)
                 },
-                transfer: messaging.mediaTransfers[message.id],
+                transfer: key.transfer,
                 onCancelDownload: {
                     messaging.cancelMediaDownload(messageID: message.id)
                 },
@@ -1432,7 +1443,7 @@ struct ConversationView: View {
                     { jumpToQuoted(reference.messageID) }
                 },
                 reactions: reactionChips(for: message),
-                onReactionTap: { emoji in react(emoji, to: message) }
+                onReactionTap: onReactionTap
             )
         case .voice:
             VoiceMessageBubble(
@@ -1468,13 +1479,13 @@ struct ConversationView: View {
                         return nil
                     }
                 },
-                inTranscriptTail: transcriptTail.contains(message.id),
+                inTranscriptTail: key.inTranscriptTail,
                 reply: reply,
                 onReplyTap: message.replyTo.map { reference in
                     { jumpToQuoted(reference.messageID) }
                 },
                 reactions: reactionChips(for: message),
-                onReactionTap: { emoji in react(emoji, to: message) }
+                onReactionTap: onReactionTap
             )
         case .text:
             MessageBubbleView(
@@ -1494,7 +1505,7 @@ struct ConversationView: View {
                     { _ = openLink(url) }
                 },
                 reactions: reactionChips(for: message),
-                onReactionTap: { emoji in react(emoji, to: message) }
+                onReactionTap: onReactionTap
             )
             .onAppear {
                 // Preview pictures are small and load on their own (photos wait for a tap).
@@ -1926,6 +1937,7 @@ struct ConversationView: View {
     ) -> [ReactionChipContent] {
         guard !message.reactions.isEmpty, !message.deleted else { return [] }
         let me = messaging.myUserID
+        let mine = messaging.myReactions(on: message)
         return ReactionMerge.chips(message.reactions, me: me).map { chip in
             ReactionChipContent(
                 emojis: chip.emojis,
@@ -1935,6 +1947,7 @@ struct ConversationView: View {
                         : ReactionChipContent.Reactor(id: id, name: peerUsername)
                 },
                 includesMe: chip.includesMe,
+                myEmojis: mine,
                 messageID: anchored ? message.id : nil
             )
         }
@@ -1966,6 +1979,7 @@ struct ConversationView: View {
 
     /// Double tap on a text bubble: Telegram's quick reaction, flying out from under the finger.
     private func quickReact(_ message: MessagingController.ChatMessage, at point: CGPoint) {
+        guard focusedMenu == nil else { return }
         if !messaging.myReactions(on: message).contains(Self.quickReaction) {
             let start = CGRect(x: point.x - 22, y: point.y - 22, width: 44, height: 44)
             beginReactionFlight(Self.quickReaction, messageID: message.id, from: start, scale: 1.6)
@@ -2001,16 +2015,6 @@ struct ConversationView: View {
             guard reactionFlight?.id == flight.id else { return }
             reactionFlight = nil
         }
-    }
-
-    /// Changes whenever a reaction in the loaded thread does (drives the chip animation).
-    private var reactionsDigest: Int {
-        var hasher = Hasher()
-        for message in messages[renderStart...] where !message.reactions.isEmpty {
-            hasher.combine(message.id)
-            hasher.combine(message.reactions)
-        }
-        return hasher.finalize()
     }
 
     /// Everything a row's bubble is drawn from (see `EquatableMessageRow`).

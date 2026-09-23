@@ -92,6 +92,21 @@ struct ClientConfigDTO: Decodable, Equatable, Sendable {
 
 struct PutReactionBody: Encodable, Equatable, Sendable {
     let ciphertext: String
+    /// `seq` of our record the set was built on; 0 when we had none.
+    let baseSeq: Int64
+    /// The set has an emoji the base lacked (news for the message's author).
+    let added: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case ciphertext
+        case baseSeq = "base_seq"
+        case added
+    }
+}
+
+/// `409 REACTION_CHANGED`: our other device wrote the record first; `current` is it now.
+nonisolated struct ReactionConflictDTO: Decodable, Sendable {
+    let current: ReactionDTO
 }
 
 struct ReactionChangesResponse: Decodable, Equatable, Sendable {

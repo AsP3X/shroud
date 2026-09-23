@@ -11,6 +11,22 @@ struct MessageReactionTests {
     private let me = UUID()
     private let peer = UUID()
 
+    private static let webSealedReaction = """
+        eyJ2IjoyLCJwZWVyIjp7ImVrIjoibEtaSnd0KzZiSy9nSEJiUlBZNkMydS8vUExJTkluSTJEU1Q3K0YxODNGaz0i\
+        LCJjdCI6ImdHWXZpVWpxaTRSQkxHdTRhS2p4eHRnTnJjZnlReVNneUNaelQ1Ym1LUFp5L0VWYzlYRTdhcnlRSE1L\
+        QWU0MnVERHNrK2s5dytRa0FZSk9Lb0tDSHhUNWM4Yk1MUXNmKy9Cclc4cDd6ais0aXhMdjJFVVpoZks0a3d0cHhK\
+        M3VSM0h4OVpJZzFwVFEraFVzTS9rZXNLWGtadjJKMVRleU0vTTZqdDN0OHk2MERmZVBOdVlsTmFLWmF6eFBrQldN\
+        UXNmcEtvSGRnN0lkU0QweDY5a3hxOUFZL040ckthV2hVeHR3SzZ4VHptZlRsZG1ZcTFRb1BLN0tEUEh3ZUJJU0pN\
+        amd3R0dJeFc4bUNSQ2hGUjYvVUF2d0IzVFdpRmttMFhicmZhcm89IiwidCI6InUwa0NxSlBzdThIYkwrOElzM3V5\
+        ZEZNZEZLNVRLMkFHN1Q4MUtsZDZGWXM9In0sInNlbGYiOnsiZWsiOiJaTi92QXgzZkJTTjBpWStOaUVYSlE0TCs4\
+        RW5pbmdsRWl1SGJmUjBIRmtBPSIsImN0Ijoib3QvaHBodjY1SG4zbHhVYkYxbTE1MEtmcUdpVCtETFZ5QmJxUWJH\
+        MUpsZlFkd0xYVEpKckpLai9sN3BtTnl4OTROLzBhZHRxY2JKSDkzVzZrTHdQbStvUE5Yb1ZCLzVPeE13TEtnVmR5\
+        Vlk4eXBEcWdrWmpEVVh2YmRsbDBmbEZmZWxIUjE4OUZEN2d2NURvV1V3M2F1QnlyUW5MKzhyU1VkTEFTTkVtaTgw\
+        RkgwZURoKzdhc0NDY2luRFdqMzJ4bXRxTHBXSXRjWURUR212TmJoTUlNeUYwQzlpem1RdmZHOUZFME5adlNKNHVQ\
+        aThLOTdWNTFGWTNQU0haQ2tiYTRZQWNUdStxNlpnRlladVdweldkRnRHcjl0MzVwQkVuWVVEdVpzaz0iLCJ0Ijoi\
+        cllhcm9RNWZZY2ZlZ2lEa2JvN3RKUThoNVVyaVE5ajI2NnN4S1FwcDBHST0ifX0=
+        """
+
     private func entry(_ user: UUID, _ emojis: [String], _ seq: Int64, pending: Bool = false) -> MessageReaction {
         MessageReaction(userID: user, emojis: emojis, seq: seq, pending: pending)
     }
@@ -80,7 +96,77 @@ struct MessageReactionTests {
         #expect(MessageReactionPayload.parse(forUs, for: message) == ["😮"])
     }
 
+    /// Sealed by the web client (`sealIdentityEnvelope` + `reactionPayload`) from 0xa1… to 0xb2…:
+    /// both clients must agree on the envelope, the sender tag and which strings are one emoji.
+    /// The web selftest opens the reverse (`reactionsCrypto.selftest.ts`).
+    @Test
+    func reactionSealedOnTheWebOpensHere() throws {
+        let alice = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: Data(repeating: 0xa1, count: 32))
+        let bob = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: Data(repeating: 0xb2, count: 32))
+        let message = try #require(UUID(uuidString: "7C9E6679-7425-40DE-944B-E07FC1F90AE7"))
+        let sealed = try #require(Data(base64Encoded: Self.webSealedReaction))
+        let forBob = try MessageCrypto.openTagged(
+            envelopeData: sealed,
+            with: bob,
+            ourIdentityPublicKey: bob.publicKey.rawRepresentation,
+            senderIdentityPublicKey: alice.publicKey.rawRepresentation,
+            as: .recipient
+        )
+        let forAlice = try MessageCrypto.openTagged(
+            envelopeData: sealed,
+            with: alice,
+            ourIdentityPublicKey: alice.publicKey.rawRepresentation,
+            senderIdentityPublicKey: alice.publicKey.rawRepresentation,
+            as: .sender
+        )
+        // Sealed with "ok", "🔥🔥", a bare "❤" and a repeat on the end, which neither client shows.
+        let expected = ["👍🏽", "🏳️‍🌈", "🇩🇪", "❤️", "❤️‍🔥", "1️⃣", "👨‍👩‍👧"]
+        #expect(MessageReactionPayload.parse(forBob, for: message) == expected)
+        #expect(MessageReactionPayload.parse(forAlice, for: message) == expected)
+    }
+
+    /// The server's answers to a reaction write, as `routes/reactions.rs` shapes them.
+    @Test
+    func reactionWriteAnswersDecode() throws {
+        let conflict = #"{"error":{"code":"REACTION_CHANGED","message":"Your reaction changed on another device."},"current":{"message_id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","user_id":"3f2504e0-4f89-41d3-9a0c-0305e82c3301","ciphertext":null,"seq":42,"updated_at":"2026-09-23T21:08:35.759754Z"}}"#
+        guard case let .changedElsewhere(current) = try MessagesService.reactionWrite(status: 409, data: Data(conflict.utf8)) else {
+            Issue.record("a 409 with a current record is a merge, not an error")
+            return
+        }
+        #expect(current.seq == 42)
+        #expect(current.ciphertext == nil)
+
+        let saved = #"{"message_id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","user_id":"3f2504e0-4f89-41d3-9a0c-0305e82c3301","ciphertext":"aGVhcnQ=","seq":43,"updated_at":"2026-09-23T21:08:36Z"}"#
+        guard case let .saved(dto) = try MessagesService.reactionWrite(status: 200, data: Data(saved.utf8)) else {
+            Issue.record("a 200 is saved")
+            return
+        }
+        #expect(dto?.seq == 43)
+        #expect(try MessagesService.reactionWrite(status: 204, data: Data()) == .saved(nil))
+        // Anything else stays an error, a 409 without a record included.
+        #expect(throws: APIError.self) {
+            try MessagesService.reactionWrite(status: 404, data: Data(#"{"error":{"code":"NOT_FOUND","message":"Message not found."}}"#.utf8))
+        }
+        #expect(throws: APIError.self) {
+            try MessagesService.reactionWrite(status: 409, data: Data(#"{"error":{"code":"REACTION_CHANGED","message":"Try again."}}"#.utf8))
+        }
+    }
+
     // MARK: - Merge
+
+    @Test
+    func rebasingKeepsBothDevicesPicks() {
+        // The phone had ❤️ and added 👍; the laptop, still seeing ❤️, added 🔥.
+        #expect(ReactionMerge.rebased(["❤️", "🔥"], from: ["❤️"], onto: ["❤️", "👍"], limit: 5) == ["❤️", "👍", "🔥"])
+        // The laptop took ❤️ back: the phone's 👍 stays.
+        #expect(ReactionMerge.rebased([], from: ["❤️"], onto: ["❤️", "👍"], limit: 5) == ["👍"])
+        // Both added the same one: once.
+        #expect(ReactionMerge.rebased(["🔥"], from: [], onto: ["🔥"], limit: 5) == ["🔥"])
+        // The phone took everything back meanwhile: only what the laptop added survives.
+        #expect(ReactionMerge.rebased(["❤️", "🔥"], from: ["❤️"], onto: [], limit: 5) == ["🔥"])
+        // Past the limit the oldest go.
+        #expect(ReactionMerge.rebased(["😮", "🔥"], from: ["😮"], onto: ["😮", "👍", "❤️"], limit: 3) == ["👍", "❤️", "🔥"])
+    }
 
     @Test
     func newerChangeWinsAndOlderIsIgnored() throws {
@@ -255,6 +341,19 @@ struct MessageReactionTests {
         #expect(result.frames[3].minY >= CGFloat(32))
         #expect(result.size.height == CGFloat(58))
         #expect(result.size.width <= CGFloat(110))
+    }
+
+    @Test
+    func aWideSetWrapsInsideItsChip() {
+        let emoji = CGSize(width: 24, height: 30)
+        let oneLine = ReactionEmojiFlow.arrange(Array(repeating: emoji, count: 5), width: nil)
+        #expect(oneLine.size == CGSize(width: 5 * 24 + 4 * 2, height: 30))
+        // Twenty at 200 pt: seven a row (7 × 24 + 6 × 2 = 180; an eighth would end at 206).
+        let wrapped = ReactionEmojiFlow.arrange(Array(repeating: emoji, count: 20), width: 200)
+        #expect(wrapped.frames[7].origin == CGPoint(x: 0, y: 30))
+        #expect(wrapped.size == CGSize(width: 180, height: 90))
+        // Room enough: still one line.
+        #expect(ReactionEmojiFlow.arrange(Array(repeating: emoji, count: 5), width: 300).size == oneLine.size)
     }
 
     @Test

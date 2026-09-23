@@ -16,6 +16,9 @@ struct ReactionChipContent: Equatable, Hashable, Identifiable {
     /// In the order they reacted.
     let reactors: [Reactor]
     let includesMe: Bool
+    /// Our own set on the message (any chip): the other person's emoji we have already are
+    /// not added again.
+    var myEmojis: [String] = []
     /// The message the chip belongs to, so a reaction flying in can find it. Nil where no
     /// flight should land (the long-press preview).
     var messageID: UUID?
@@ -71,7 +74,8 @@ extension View {
 
 /// A reaction chip inside a bubble: one person's emoji, then their face (Telegram 1:1 shows
 /// faces, not counts). Filled when it's ours. Each emoji is its own tap target, as each chip is
-/// in Telegram: ours are taken back, theirs are added to ours.
+/// in Telegram: ours are taken back, theirs are added to ours. A set wider than the bubble
+/// wraps inside the chip.
 struct ReactionChipView: View {
     let chip: ReactionChipContent
     /// The chip sits on our own (accent) bubble.
@@ -107,8 +111,8 @@ struct ReactionChipView: View {
     }
 
     var body: some View {
-        HStack(spacing: 4) {
-            HStack(spacing: 2) {
+        HStack(alignment: .bottom, spacing: 4) {
+            ReactionEmojiFlow(spacing: 2) {
                 ForEach(chip.emojis, id: \.self) { emoji in
                     emojiButton(emoji)
                         .transition(.scale(scale: 0.4).combined(with: .opacity))
@@ -126,16 +130,31 @@ struct ReactionChipView: View {
                         .accessibilityHidden(true)
                 }
             }
+            .frame(height: Self.height)
         }
         .padding(.leading, 6)
         .padding(.trailing, chip.reactors.isEmpty ? 6 : 3)
-        .frame(height: Self.height)
-        .background(Capsule().fill(fill))
+        .frame(minHeight: Self.height)
+        // A capsule while it is one line; a wrapped set keeps the same corners.
+        .background(RoundedRectangle(cornerRadius: Self.height / 2).fill(fill))
+    }
+
+    /// Ours: taken back. Theirs: added to ours — unless we have it already.
+    private func adds(_ emoji: String) -> Bool {
+        !chip.includesMe && !chip.myEmojis.contains(emoji)
+    }
+
+    /// Whether a tap on it does anything: not without a handler (Saved Messages, a message still
+    /// sending), nor on the other person's emoji we have already.
+    private func acts(_ emoji: String) -> Bool {
+        onTap != nil && (chip.includesMe || adds(emoji))
     }
 
     private func emojiButton(_ emoji: String) -> some View {
         Button {
+            // Claimed even when it does nothing: the photo underneath must not open.
             MessageTapClaim.claim()
+            guard acts(emoji) else { return }
             onTap?(emoji)
         } label: {
             Text(emoji)
@@ -159,8 +178,13 @@ struct ReactionChipView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(ReactionChipButtonStyle())
-        .accessibilityLabel("\(emoji), \(chip.spokenNames)")
-        .accessibilityHint(chip.includesMe ? "Removes your reaction" : "Reacts with the same emoji")
+        .accessibilityLabel(
+            !chip.includesMe && chip.myEmojis.contains(emoji)
+                ? "\(emoji), \(chip.spokenNames), and you"
+                : "\(emoji), \(chip.spokenNames)"
+        )
+        .accessibilityHint(!acts(emoji) ? "" : chip.includesMe ? "Removes your reaction" : "Adds the same reaction")
+        .accessibilityRemoveTraits(acts(emoji) ? [] : .isButton)
     }
 }
 
@@ -177,6 +201,50 @@ private struct ReactionChipButtonStyle: ButtonStyle {
             .onChange(of: configuration.isPressed) { _, pressed in
                 if pressed { MessageTapClaim.claim() }
             }
+    }
+}
+
+/// A chip's emoji, left to right, wrapping at the proposed width (a person's set wider than the
+/// bubble, which only a raised server limit or a modified client makes).
+struct ReactionEmojiFlow: Layout {
+    var spacing: CGFloat = 2
+
+    /// Pure geometry, unit-tested.
+    static func arrange(_ sizes: [CGSize], width: CGFloat?, spacing: CGFloat = 2) -> (frames: [CGRect], size: CGSize) {
+        let limit = width ?? .infinity
+        var frames: [CGRect] = []
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var used: CGFloat = 0
+        for size in sizes {
+            if x > 0, x + size.width > limit {
+                y += rowHeight
+                x = 0
+                rowHeight = 0
+            }
+            frames.append(CGRect(origin: CGPoint(x: x, y: y), size: size))
+            used = max(used, x + size.width)
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        return (frames, CGSize(width: used, height: y + rowHeight))
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) -> CGSize {
+        let width = proposal.width.flatMap { $0.isFinite ? $0 : nil }
+        return Self.arrange(subviews.map { $0.sizeThatFits(.unspecified) }, width: width, spacing: spacing).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let frames = Self.arrange(sizes, width: bounds.width, spacing: spacing).frames
+        for (subview, frame) in zip(subviews, frames) {
+            subview.place(
+                at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY),
+                proposal: ProposedViewSize(frame.size)
+            )
+        }
     }
 }
 
@@ -246,7 +314,8 @@ struct ReactionFooterLayout: Layout {
 
     private func arrangement(width: CGFloat?, subviews: Subviews) -> Arrangement {
         guard let metaView = subviews.last else { return Arrangement(frames: [], size: .zero) }
-        let chips = subviews.dropLast().map { $0.sizeThatFits(.unspecified) }
+        // A chip given the width wraps its emoji at it; otherwise it is one line.
+        let chips = subviews.dropLast().map { $0.sizeThatFits(ProposedViewSize(width: width, height: nil)) }
         return Self.arrange(
             chips: Array(chips),
             meta: metaView.sizeThatFits(.unspecified),
