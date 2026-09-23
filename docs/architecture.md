@@ -92,6 +92,68 @@ checked, caps bytes in both directions, and holds at most six pipes per account.
 browser builds is sealed into the message exactly as the iPhone's is — recipients still never
 contact the website.
 
+## Message envelopes and sender authentication
+
+`MessageCrypto.swift` / `web/src/crypto/messageCrypto.ts` + `sealedBox.ts`. The envelope is JSON
+inside the server's opaque `ciphertext`:
+
+| `v` | Contents | Sent by |
+| --- | --- | --- |
+| 1 | `ek`, `ct`: one box to the peer | nothing any more; still read |
+| 2 | `peer` box + `self` box | the higher `user_id` until a ratchet session exists |
+| 3 | Double Ratchet `dh`/`n`/`pn`/`ct` + `peer` box + `self` box | everything else |
+
+**Identity box.** `ek` = ephemeral X25519 key, key = HKDF(ECDH(ephemeral, recipient identity),
+salt `shroud-v1`, info `shroud-msg-v1 ‖ ek ‖ sender IK ‖ recipient IK`), AES-GCM. That key uses no
+secret of the sender's, so **anyone holding the two public identity keys — the server included —
+can build a box that opens "from" the peer**. Builds before the sender tag had exactly that hole on
+every v1/v2 message and on every v3 peer-box fallback (a junk ratchet body forces the fallback), and
+on `self` boxes ("sent by me" on our other devices).
+
+**Sender tag (`t`).** Every box now carries
+`t = HMAC-SHA256(K, "shroud-box-tag-v1" ‖ ek ‖ ct)` with
+`K = HKDF(ECDH(sender IK, recipient IK), salt "shroud-box-auth-v1", info "shroud-box-auth-v1" ‖ sender IK ‖ recipient IK)`.
+Only the two identity private keys can compute the static ECDH, the ordered keys in the info stop
+a box being reflected back to its sender, and `ek ‖ ct` fix the plaintext. It gives the sender
+authentication of libsodium `crypto_box` (deniable in the same way: the recipient could tag too).
+A box with a `t` that does not verify is refused; it is never read as untagged. The Double Ratchet
+body needs no tag: its root is HKDF of the same identity ECDH. On a ratchet read the `peer` tag is
+still checked, so the device that reads by ratchet learns that the sender tags.
+
+**Why a tag and not a new `v`.** Builds before the tag throw on an unknown `v`, and nothing tells a
+sender what its peer runs (the server is not involved). The tag is one extra JSON field those builds
+ignore, so every build keeps reading every message. Separate `crypto_box`-style boxes next to the
+old ones would have carried the plaintext four or five times and pushed media envelopes past the
+server's 64 KiB cap. Folding the static ECDH into the box key as a `v:4` is possible later, once no
+build without the tag is left; it would add nothing the tag does not already give.
+
+**Untagged boxes** (v1, and builds before the tag) are the policy's business (`openIdentityBox`):
+
+1. Each sender has a watermark: the server time of the earliest message with a verified tag from
+   them. It lives in the vault (`shroud.boxauth.*`) / Keychain (`SenderTagStore`), keyed by the
+   sender's identity key (our own for `self` boxes), and is wiped on sign-out.
+2. No watermark yet: the untagged box opens. This is the transition for peers on old builds.
+3. With a watermark, an untagged box opens only if its message is older, so a fresh device still
+   reads the history from before the upgrade. Newer ones are refused (`unauthenticatedSender`,
+   shown as "Unable to decrypt"). An unreadable time or a locked store refuses too.
+4. `legacyBoxCutoff` / `LEGACY_BOX_CUTOFF` (unset) refuses untagged boxes from everyone at or after
+   a server time. Set it once the builds without the tag are gone, with a grace period.
+
+What the tag does not cover:
+
+- **Before the watermark** a forged untagged box still opens — for peers still on old builds, and
+  for a new contact until their first tagged message arrives.
+- **The server sets `created_at`.** It can date a forged untagged message before the watermark (or
+  the cutoff), and it lands in old history. Only refusing untagged boxes outright closes that,
+  at the cost of pre-tag history on devices without a plaintext cache.
+- **Mixed builds on one account.** Once a peer's new build has been seen, messages from their
+  other, not-yet-updated devices that fall back to an untagged box are refused. v3 messages read
+  by ratchet are unaffected.
+- **Replays.** A genuine envelope re-sent under a new message id still verifies; tags bind the
+  box, not the message id.
+- **Key substitution.** The tag proves the key the directory returned. Safety numbers are what
+  catch the server handing out the wrong identity key.
+
 ## Security invariants
 
 1. Message plaintext exists **only on devices**, and **only in memory** while messaging is unlocked.
@@ -105,6 +167,7 @@ contact the website.
 9. Sessions are **device-bound opaque tokens** with no time-based logout (revoke on logout / device remove / password change of other devices). Logout also forgets the device's push token, so a logged-out phone stops receiving the account's pushes.
 10. Presence is visible only to **accepted contacts**.
 11. Identity Keychain items use `WhenUnlockedThisDeviceOnly` (no backup restore; unavailable while device locked).
+12. A message reads as coming from a contact only if its ratchet body decrypts or its identity box carries a verified **sender tag**; untagged boxes are read only under the watermark policy above.
 
 ## Local development
 
@@ -169,3 +232,4 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 | Sealed messaging (live) | **v3 Double Ratchet** (default) + self dual-seal; first message from non-initiator uses **v2** |
 | Dual-initiator prevention | **done** — only lower `user_id` starts a new DR session; higher UUID sends v2 until session exists |
 | Legacy v1/v2 open | **done** — still openable; `useRatchet: false` forces v2 |
+| Sender tags | **done** — every identity box carries `t` (static identity ECDH → HMAC); untagged boxes refused after the sender's watermark; `legacyBoxCutoff` unset |

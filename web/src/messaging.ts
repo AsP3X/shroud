@@ -382,6 +382,7 @@ export async function decodeIncoming(
       ourIdentityPublic: material.agreementPublic,
       senderIdentityPublic: senderPub,
       asSender: isMine,
+      sentAt: Date.parse(dto.created_at),
     });
     const decoded = utf8decode(plain);
     if (isAnnotation) {

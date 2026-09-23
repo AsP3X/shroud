@@ -57,9 +57,10 @@ if (utf8decode(await ratchetDecrypt(e3, bobS)) !== "alice again") throw new Erro
 
 const { sealBox, openBox } = await import("./sealedBox");
 const msg = utf8("sealed hello");
-const box = await sealBox(msg, bPub, aPub, bPub);
+const box = await sealBox(msg, alice, aPub, bPub);
 const opened = await openBox(box, bob, aPub, bPub);
-if (utf8decode(opened) !== "sealed hello") throw new Error("sealed box roundtrip");
+if (utf8decode(opened.plaintext) !== "sealed hello") throw new Error("sealed box roundtrip");
+if (!opened.authenticated) throw new Error("sealed box lost its sender tag");
 
 const { sealMessage, openMessage, ratchetStorageName } = await import("./messageCrypto");
 const { createVault, derivePinSecrets } = await import("./vault");
@@ -92,6 +93,7 @@ if (utf8decode(await openMessage({
   ourIdentityPublic: bPub,
   senderIdentityPublic: aPub,
   asSender: false,
+  sentAt: Date.now(),
 })) !== "A1") throw new Error("bob open A1");
 const a1env = JSON.parse(utf8decode(a1)) as { v?: number; peer?: { ek?: string }; self?: { ek?: string } };
 if (a1env.v !== 3 || !a1env.peer?.ek || !a1env.self?.ek) throw new Error("v3 missing identity boxes");
@@ -126,6 +128,7 @@ if (utf8decode(await openMessage({
   ourIdentityPublic: aPub,
   senderIdentityPublic: bPub,
   asSender: false,
+  sentAt: Date.now(),
 })) !== "B1") throw new Error("alice web open B1 via peer box");
 if (localStorage.getItem(aliceSession) !== webAlice) {
   throw new Error("peer-box fallback overwrote sibling session");
@@ -140,6 +143,7 @@ if (utf8decode(await openMessage({
   ourIdentityPublic: aPub,
   senderIdentityPublic: bPub,
   asSender: false,
+  sentAt: Date.now(),
 })) !== "B1") throw new Error("alice sibling with no session open B1 via peer box");
 
 localStorage.removeItem(aliceSession);
@@ -159,6 +163,7 @@ if (utf8decode(await openMessage({
   ourIdentityPublic: bPub,
   senderIdentityPublic: aPub,
   asSender: false,
+  sentAt: Date.now(),
 })) !== "A2") throw new Error("bob open sibling A2 via peer box");
 localStorage.setItem(aliceSession, phoneAlice);
 const a3 = await sealMessage({
@@ -177,6 +182,7 @@ if (utf8decode(await openMessage({
   ourIdentityPublic: bPub,
   senderIdentityPublic: aPub,
   asSender: false,
+  sentAt: Date.now(),
 })) !== "A3") throw new Error("bob open phone A3 after sibling send");
 
 console.log("ratchet selftest ok");

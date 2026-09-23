@@ -12,16 +12,28 @@ import Foundation
 /// (same phrase, different DR session) open a message after a sibling device has
 /// ratcheted — otherwise only the device that last sent can decrypt the reply.
 ///
+/// Every identity box carries `t`, a sender tag keyed by the static ECDH of the two identity
+/// keys. The box key itself is ECDH(ephemeral, recipient) only, so without the tag anyone
+/// holding both public keys — the server included — could seal a box that opens as the peer.
+/// Untagged boxes (v1, and builds before the tag) are read under the `SenderTagStore` policy.
+///
 /// Human: Plaintext never leaves the device unencrypted; server only sees ciphertext bytes.
 /// Agent: Seal/open; DR sessions in Keychain; self dual-seal on every v3 message.
 enum MessageCrypto {
-    /// One sealed box (ephemeral ECDH → AES-GCM).
+    /// One sealed box (ephemeral ECDH → AES-GCM) and its sender tag.
     nonisolated struct SealedBox: Codable, Equatable, Sendable {
         /// Ephemeral X25519 public key (standard Base64).
         var ek: String
         /// AES-GCM combined nonce+ciphertext (Base64).
         var ct: String
+        /// HMAC-SHA256 over `ek ‖ ct` under the sender↔recipient identity key (Base64).
+        /// Nil on boxes from builds before the tag; those builds ignore it when reading.
+        var t: String?
     }
+
+    /// Untagged boxes from everyone are refused at or after this server time. Nil until the
+    /// builds that cannot tag are gone; see `docs/architecture.md`.
+    static let legacyBoxCutoff: Date? = nil
 
     /// Wire envelope JSON (stored as server ciphertext Base64 outer layer).
     nonisolated struct SealedEnvelope: Codable, Equatable, Sendable {
@@ -43,6 +55,8 @@ enum MessageCrypto {
         case sealingFailed
         case openFailed
         case unsupportedVersion
+        /// A tag that does not verify, or an untagged box the policy refuses.
+        case unauthenticatedSender
     }
 
     /// Who is opening the envelope.
@@ -56,7 +70,7 @@ enum MessageCrypto {
     private static let versionV3 = DoubleRatchet.envelopeVersion
 
     /// v3 wire: Double Ratchet body + identity boxes for each side's other devices.
-    struct RatchetEnvelope: Codable, Equatable, Sendable {
+    nonisolated struct RatchetEnvelope: Codable, Equatable, Sendable {
         var v: Int
         var dh: String
         var n: UInt32
@@ -78,17 +92,18 @@ enum MessageCrypto {
     static func seal(
         plaintext: Data,
         toPeerIdentityPublicKey peerPublic: Data,
+        ourPrivateKey: Curve25519.KeyAgreement.PrivateKey,
         ourIdentityPublicKey: Data
     ) throws -> Data {
         let peerBox = try sealBox(
             plaintext: plaintext,
-            recipientPublic: peerPublic,
+            senderPrivate: ourPrivateKey,
             senderIdentityPublic: ourIdentityPublicKey,
             recipientIdentityPublic: peerPublic
         )
         let selfBox = try sealBox(
             plaintext: plaintext,
-            recipientPublic: ourIdentityPublicKey,
+            senderPrivate: ourPrivateKey,
             senderIdentityPublic: ourIdentityPublicKey,
             recipientIdentityPublic: ourIdentityPublicKey
         )
@@ -126,6 +141,7 @@ enum MessageCrypto {
             return try seal(
                 plaintext: plaintext,
                 toPeerIdentityPublicKey: peerPublic,
+                ourPrivateKey: ourPrivateKey,
                 ourIdentityPublicKey: ourIdentityPublicKey
             )
         }
@@ -143,6 +159,7 @@ enum MessageCrypto {
             return try seal(
                 plaintext: plaintext,
                 toPeerIdentityPublicKey: peerPublic,
+                ourPrivateKey: ourPrivateKey,
                 ourIdentityPublicKey: ourIdentityPublicKey
             )
         }
@@ -158,13 +175,13 @@ enum MessageCrypto {
 
         let selfBox = try sealBox(
             plaintext: plaintext,
-            recipientPublic: ourIdentityPublicKey,
+            senderPrivate: ourPrivateKey,
             senderIdentityPublic: ourIdentityPublicKey,
             recipientIdentityPublic: ourIdentityPublicKey
         )
         let peerBox = try sealBox(
             plaintext: plaintext,
-            recipientPublic: peerPublic,
+            senderPrivate: ourPrivateKey,
             senderIdentityPublic: ourIdentityPublicKey,
             recipientIdentityPublic: peerPublic
         )
@@ -184,13 +201,29 @@ enum MessageCrypto {
     // MARK: - Open
 
     /// Opens v1/v2 (and v3 self-box for sender). Prefer the peerUserID overload for live chats.
+    ///
+    /// - Parameter sentAt: Server time of the message; untagged boxes are judged against the
+    ///   sender's `SenderTagStore` watermark by it.
     static func open(
         envelopeData: Data,
         with ourPrivateKey: Curve25519.KeyAgreement.PrivateKey,
         ourIdentityPublicKey: Data,
         senderIdentityPublicKey: Data,
-        as role: OpenAs = .recipient
+        as role: OpenAs = .recipient,
+        sentAt: Date
     ) throws -> Data {
+        // Our own boxes are sealed from and to our identity, and tagged under it.
+        let boxSender = role == .sender ? ourIdentityPublicKey : senderIdentityPublicKey
+        func openIdentity(_ box: SealedBox) throws -> Data {
+            try openIdentityBox(
+                box,
+                with: ourPrivateKey,
+                senderIdentityPublic: boxSender,
+                recipientIdentityPublic: ourIdentityPublicKey,
+                sentAt: sentAt
+            )
+        }
+
         if let version = peekEnvelopeVersion(envelopeData), version == versionV3 {
             guard role == .sender else {
                 // Recipient needs peerUserID for DR session store.
@@ -198,45 +231,21 @@ enum MessageCrypto {
             }
             let v3 = try JSONDecoder().decode(RatchetEnvelope.self, from: envelopeData)
             guard let box = v3.selfBox else { throw CryptoError.openFailed }
-            return try openBox(
-                box,
-                with: ourPrivateKey,
-                senderIdentityPublic: ourIdentityPublicKey,
-                recipientIdentityPublic: ourIdentityPublicKey
-            )
+            return try openIdentity(box)
         }
 
         let envelope = try JSONDecoder().decode(SealedEnvelope.self, from: envelopeData)
         switch envelope.v {
         case versionV1:
-            guard let ek = envelope.ek, let ct = envelope.ct else {
+            // v1 never carried a tag and only ever went peer-ward.
+            guard role == .recipient, let ek = envelope.ek, let ct = envelope.ct else {
                 throw CryptoError.openFailed
             }
-            return try openBox(
-                SealedBox(ek: ek, ct: ct),
-                with: ourPrivateKey,
-                senderIdentityPublic: senderIdentityPublicKey,
-                recipientIdentityPublic: ourIdentityPublicKey
-            )
+            return try openIdentity(SealedBox(ek: ek, ct: ct))
         case versionV2:
-            switch role {
-            case .recipient:
-                guard let box = envelope.peer else { throw CryptoError.openFailed }
-                return try openBox(
-                    box,
-                    with: ourPrivateKey,
-                    senderIdentityPublic: senderIdentityPublicKey,
-                    recipientIdentityPublic: ourIdentityPublicKey
-                )
-            case .sender:
-                guard let box = envelope.selfBox else { throw CryptoError.openFailed }
-                return try openBox(
-                    box,
-                    with: ourPrivateKey,
-                    senderIdentityPublic: ourIdentityPublicKey,
-                    recipientIdentityPublic: ourIdentityPublicKey
-                )
-            }
+            let box = role == .recipient ? envelope.peer : envelope.selfBox
+            guard let box else { throw CryptoError.openFailed }
+            return try openIdentity(box)
         default:
             throw CryptoError.unsupportedVersion
         }
@@ -249,52 +258,60 @@ enum MessageCrypto {
         with ourPrivateKey: Curve25519.KeyAgreement.PrivateKey,
         ourIdentityPublicKey: Data,
         senderIdentityPublicKey: Data,
-        as role: OpenAs = .recipient
+        as role: OpenAs = .recipient,
+        sentAt: Date
     ) throws -> Data {
         guard let version = peekEnvelopeVersion(envelopeData) else {
             throw CryptoError.openFailed
         }
 
-        if version == versionV3 {
-            let v3 = try JSONDecoder().decode(RatchetEnvelope.self, from: envelopeData)
-            if role == .sender {
-                guard let box = v3.selfBox else { throw CryptoError.openFailed }
-                return try openBox(
-                    box,
-                    with: ourPrivateKey,
-                    senderIdentityPublic: ourIdentityPublicKey,
-                    recipientIdentityPublic: ourIdentityPublicKey
-                )
-            }
-
-            // Recipient: DR first (forward secrecy). If this device's session is stale —
-            // typically because a sibling device sent and the peer ratcheted to that DH —
-            // open the identity peer-box instead of wiping the local session.
-            do {
-                return try openRatchetV3Recipient(
-                    v3,
-                    peerUserID: peerUserID,
-                    ourPrivateKey: ourPrivateKey,
-                    senderIdentityPublicKey: senderIdentityPublicKey
-                )
-            } catch {
-                guard let box = v3.peer else { throw error }
-                return try openBox(
-                    box,
-                    with: ourPrivateKey,
-                    senderIdentityPublic: senderIdentityPublicKey,
-                    recipientIdentityPublic: ourIdentityPublicKey
-                )
-            }
+        guard version == versionV3, role == .recipient else {
+            return try open(
+                envelopeData: envelopeData,
+                with: ourPrivateKey,
+                ourIdentityPublicKey: ourIdentityPublicKey,
+                senderIdentityPublicKey: senderIdentityPublicKey,
+                as: role,
+                sentAt: sentAt
+            )
         }
 
-        return try open(
-            envelopeData: envelopeData,
-            with: ourPrivateKey,
-            ourIdentityPublicKey: ourIdentityPublicKey,
-            senderIdentityPublicKey: senderIdentityPublicKey,
-            as: role
-        )
+        let v3 = try JSONDecoder().decode(RatchetEnvelope.self, from: envelopeData)
+        // Recipient: DR first (forward secrecy). If this device's session is stale —
+        // typically because a sibling device sent and the peer ratcheted to that DH —
+        // open the identity peer-box instead of wiping the local session.
+        let plain: Data
+        do {
+            plain = try openRatchetV3Recipient(
+                v3,
+                peerUserID: peerUserID,
+                ourPrivateKey: ourPrivateKey,
+                senderIdentityPublicKey: senderIdentityPublicKey
+            )
+        } catch {
+            guard let box = v3.peer else { throw error }
+            return try openIdentityBox(
+                box,
+                with: ourPrivateKey,
+                senderIdentityPublic: senderIdentityPublicKey,
+                recipientIdentityPublic: ourIdentityPublicKey,
+                sentAt: sentAt
+            )
+        }
+        // The ratchet body is authentic on its own. A tag on its peer box still marks the
+        // sender as tagging, or the device that reads by ratchet would never learn it.
+        // A bad tag next to a good ratchet body proves nothing either way.
+        if let box = v3.peer,
+           (try? verifyBoxTag(
+               box,
+               with: ourPrivateKey,
+               senderIdentityPublic: senderIdentityPublicKey,
+               recipientIdentityPublic: ourIdentityPublicKey
+           )) == true
+        {
+            SenderTagStore.noteTagged(senderIdentityPublic: senderIdentityPublicKey, sentAt: sentAt)
+        }
+        return plain
     }
 
     // MARK: - Session helpers
@@ -387,16 +404,62 @@ enum MessageCrypto {
         return try? JSONDecoder().decode(VersionPeek.self, from: data).v
     }
 
+    // MARK: - Sender tag policy
+
+    /// Opens an identity box, then applies the untagged-box policy:
+    ///
+    /// - A tag that verifies moves the sender's watermark back to this message's time.
+    /// - An untagged box opens only if the message predates the sender's watermark (history
+    ///   from before they upgraded) and `legacyBoxCutoff`. Fails closed while locked.
+    private static func openIdentityBox(
+        _ box: SealedBox,
+        with ourPrivateKey: Curve25519.KeyAgreement.PrivateKey,
+        senderIdentityPublic: Data,
+        recipientIdentityPublic: Data,
+        sentAt: Date
+    ) throws -> Data {
+        let tagged = try verifyBoxTag(
+            box,
+            with: ourPrivateKey,
+            senderIdentityPublic: senderIdentityPublic,
+            recipientIdentityPublic: recipientIdentityPublic
+        )
+        if !tagged {
+            if let legacyBoxCutoff, sentAt >= legacyBoxCutoff {
+                throw CryptoError.unauthenticatedSender
+            }
+            switch SenderTagStore.taggedSince(senderIdentityPublic: senderIdentityPublic) {
+            case .untagged:
+                break
+            case .locked:
+                throw CryptoError.unauthenticatedSender
+            case let .since(watermark):
+                guard sentAt < watermark else { throw CryptoError.unauthenticatedSender }
+            }
+        }
+        let plain = try openBox(
+            box,
+            with: ourPrivateKey,
+            senderIdentityPublic: senderIdentityPublic,
+            recipientIdentityPublic: recipientIdentityPublic
+        )
+        if tagged {
+            SenderTagStore.noteTagged(senderIdentityPublic: senderIdentityPublic, sentAt: sentAt)
+        }
+        return plain
+    }
+
     // MARK: - Sealed box primitives (v1/v2/self)
 
     private static func sealBox(
         plaintext: Data,
-        recipientPublic: Data,
+        senderPrivate: Curve25519.KeyAgreement.PrivateKey,
         senderIdentityPublic: Data,
         recipientIdentityPublic: Data
     ) throws -> SealedBox {
-        guard let recipientKey = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: recipientPublic)
-        else {
+        guard let recipientKey = try? Curve25519.KeyAgreement.PublicKey(
+            rawRepresentation: recipientIdentityPublic
+        ) else {
             throw CryptoError.invalidPeerKey
         }
 
@@ -413,10 +476,91 @@ enum MessageCrypto {
         guard let combined = sealed.combined else {
             throw CryptoError.sealingFailed
         }
+        let ek = ephemeral.publicKey.rawRepresentation
+        let tag = try boxTag(
+            ourPrivateKey: senderPrivate,
+            theirIdentityPublic: recipientIdentityPublic,
+            senderIdentityPublic: senderIdentityPublic,
+            recipientIdentityPublic: recipientIdentityPublic,
+            ek: ek,
+            ct: combined
+        )
 
         return SealedBox(
-            ek: ephemeral.publicKey.rawRepresentation.base64EncodedString(),
-            ct: combined.base64EncodedString()
+            ek: ek.base64EncodedString(),
+            ct: combined.base64EncodedString(),
+            t: tag.base64EncodedString()
+        )
+    }
+
+    /// `true` when the tag proves the sender, `false` for an untagged box. Throws on a tag
+    /// that does not verify: a box that carries one is never read without it.
+    private static func verifyBoxTag(
+        _ box: SealedBox,
+        with ourPrivateKey: Curve25519.KeyAgreement.PrivateKey,
+        senderIdentityPublic: Data,
+        recipientIdentityPublic: Data
+    ) throws -> Bool {
+        guard let t = box.t else { return false }
+        guard let tag = Data(base64Encoded: t),
+              let ek = Data(base64Encoded: box.ek),
+              let ct = Data(base64Encoded: box.ct)
+        else { throw CryptoError.unauthenticatedSender }
+        let key = try boxTagKey(
+            ourPrivateKey: ourPrivateKey,
+            theirIdentityPublic: senderIdentityPublic,
+            senderIdentityPublic: senderIdentityPublic,
+            recipientIdentityPublic: recipientIdentityPublic
+        )
+        var message = Data("shroud-box-tag-v1".utf8)
+        message.append(ek)
+        message.append(ct)
+        // Constant-time compare.
+        guard HMAC<SHA256>.isValidAuthenticationCode(tag, authenticating: message, using: key) else {
+            throw CryptoError.unauthenticatedSender
+        }
+        return true
+    }
+
+    private static func boxTag(
+        ourPrivateKey: Curve25519.KeyAgreement.PrivateKey,
+        theirIdentityPublic: Data,
+        senderIdentityPublic: Data,
+        recipientIdentityPublic: Data,
+        ek: Data,
+        ct: Data
+    ) throws -> Data {
+        let key = try boxTagKey(
+            ourPrivateKey: ourPrivateKey,
+            theirIdentityPublic: theirIdentityPublic,
+            senderIdentityPublic: senderIdentityPublic,
+            recipientIdentityPublic: recipientIdentityPublic
+        )
+        var message = Data("shroud-box-tag-v1".utf8)
+        message.append(ek)
+        message.append(ct)
+        return Data(HMAC<SHA256>.authenticationCode(for: message, using: key))
+    }
+
+    /// ECDH(sender identity, recipient identity) is the same from either end. The ordered
+    /// public keys in the info make the A→B key differ from B→A, so a box cannot be reflected.
+    private static func boxTagKey(
+        ourPrivateKey: Curve25519.KeyAgreement.PrivateKey,
+        theirIdentityPublic: Data,
+        senderIdentityPublic: Data,
+        recipientIdentityPublic: Data
+    ) throws -> SymmetricKey {
+        guard let theirKey = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: theirIdentityPublic)
+        else { throw CryptoError.invalidPeerKey }
+        let staticShared = try ourPrivateKey.sharedSecretFromKeyAgreement(with: theirKey)
+        var info = Data("shroud-box-auth-v1".utf8)
+        info.append(senderIdentityPublic)
+        info.append(recipientIdentityPublic)
+        return staticShared.hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: Data("shroud-box-auth-v1".utf8),
+            sharedInfo: info,
+            outputByteCount: 32
         )
     }
 

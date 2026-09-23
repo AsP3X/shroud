@@ -26,6 +26,8 @@ nonisolated enum LocalHistoryCrypto {
         case identityKeychain = "shroud-keychain-identity-v1"
         /// Double Ratchet session JSON, one Keychain item per peer.
         case ratchetKeychain = "shroud-keychain-ratchet-v1"
+        /// Per-sender watermark of the first tagged identity box (`SenderTagStore`).
+        case senderTagKeychain = "shroud-keychain-sender-tag-v1"
         /// Per-conversation voice transcription language statistics.
         case languageStats = "shroud-local-language-stats-v1"
     }

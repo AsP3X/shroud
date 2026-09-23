@@ -4,6 +4,12 @@ import Testing
 @testable import shroud
 
 struct MessageCryptoTests {
+    init() {
+        // The legacy v1 case reads an untagged box; keep the policy off the Keychain, which
+        // simulator test hosts may not be entitled to.
+        SenderTagStore.useInMemoryStorageForTesting()
+    }
+
     @Test
     func sealAndOpenAsRecipient() throws {
         let alice = Curve25519.KeyAgreement.PrivateKey()
@@ -13,6 +19,7 @@ struct MessageCryptoTests {
         let sealed = try MessageCrypto.seal(
             plaintext: plaintext,
             toPeerIdentityPublicKey: bob.publicKey.rawRepresentation,
+            ourPrivateKey: alice,
             ourIdentityPublicKey: alice.publicKey.rawRepresentation
         )
 
@@ -21,7 +28,8 @@ struct MessageCryptoTests {
             with: bob,
             ourIdentityPublicKey: bob.publicKey.rawRepresentation,
             senderIdentityPublicKey: alice.publicKey.rawRepresentation,
-            as: .recipient
+            as: .recipient,
+            sentAt: Date()
         )
         #expect(opened == plaintext)
     }
@@ -35,6 +43,7 @@ struct MessageCryptoTests {
         let sealed = try MessageCrypto.seal(
             plaintext: plaintext,
             toPeerIdentityPublicKey: bob.publicKey.rawRepresentation,
+            ourPrivateKey: alice,
             ourIdentityPublicKey: alice.publicKey.rawRepresentation
         )
 
@@ -44,7 +53,8 @@ struct MessageCryptoTests {
             with: alice,
             ourIdentityPublicKey: alice.publicKey.rawRepresentation,
             senderIdentityPublicKey: alice.publicKey.rawRepresentation,
-            as: .sender
+            as: .sender,
+            sentAt: Date()
         )
         #expect(opened == plaintext)
     }
@@ -57,6 +67,7 @@ struct MessageCryptoTests {
         let sealed = try MessageCrypto.seal(
             plaintext: Data("secret".utf8),
             toPeerIdentityPublicKey: bob.publicKey.rawRepresentation,
+            ourPrivateKey: alice,
             ourIdentityPublicKey: alice.publicKey.rawRepresentation
         )
 
@@ -66,7 +77,8 @@ struct MessageCryptoTests {
                 with: eve,
                 ourIdentityPublicKey: eve.publicKey.rawRepresentation,
                 senderIdentityPublicKey: alice.publicKey.rawRepresentation,
-                as: .recipient
+                as: .recipient,
+                sentAt: Date()
             )
         }
     }
@@ -106,7 +118,8 @@ struct MessageCryptoTests {
             with: bob,
             ourIdentityPublicKey: bob.publicKey.rawRepresentation,
             senderIdentityPublicKey: alice.publicKey.rawRepresentation,
-            as: .recipient
+            as: .recipient,
+            sentAt: Date()
         )
         #expect(opened == plaintext)
     }

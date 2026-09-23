@@ -476,6 +476,7 @@ final class MessagingController {
         clearInMemoryState()
         peerKeys.clear()
         RatchetSessionStore.deleteAll()
+        SenderTagStore.deleteAll()
     }
 
     private func clearInMemoryState() {
@@ -3626,7 +3627,8 @@ final class MessagingController {
                 with: material.agreementPrivateKey,
                 ourIdentityPublicKey: material.identityPublicKeyData,
                 senderIdentityPublicKey: material.identityPublicKeyData,
-                as: .sender
+                as: .sender,
+                sentAt: dto.createdAt
             )
             if MessageDecoder.isMediaPayloadData(payloadData) {
                 local.saveSealedPlaintext(messageID: message.id, data: payloadData)
@@ -3667,7 +3669,8 @@ final class MessagingController {
             with: material.agreementPrivateKey,
             ourIdentityPublicKey: material.identityPublicKeyData,
             senderIdentityPublicKey: senderPub,
-            as: .recipient
+            as: .recipient,
+            sentAt: dto.createdAt
         )
         guard MessageDecoder.isMediaPayloadData(payloadData) else { return nil }
         local.saveSealedPlaintext(messageID: message.id, data: payloadData)

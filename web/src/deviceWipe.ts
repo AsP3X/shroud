@@ -44,7 +44,7 @@ export type WipeInventory = { messages: number; media: number; keys: number; set
 
 const PENDING_KEY = "shroud.wipe-pending";
 const MESSAGE_PREFIXES = ["shroud.pt.", "shroud.preview."];
-const KEY_PREFIXES = ["shroud.identity.", "shroud.ratchet.", "shroud.vault.", "shroud.token.", "shroud.pin."];
+const KEY_PREFIXES = ["shroud.identity.", "shroud.ratchet.", "shroud.boxauth.", "shroud.vault.", "shroud.token.", "shroud.pin."];
 /** Left behind by a session: on their own they say someone used this browser. */
 const ACCOUNT_PREFIXES = [
   ...MESSAGE_PREFIXES,
