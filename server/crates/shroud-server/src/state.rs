@@ -42,6 +42,8 @@ pub struct AppState {
     pub metrics: Arc<Metrics>,
     /// Link-preview relay: target policy and each account's open pipes.
     pub link_relay: Arc<LinkRelay>,
+    /// Most emoji one person may leave on one message; clients read it from `GET /config`.
+    pub reactions_max_per_user: u32,
 }
 
 impl AppState {
@@ -70,6 +72,7 @@ impl AppState {
             realtime,
             push,
             ice_servers: vec![],
+            reactions_max_per_user: 5,
             rate_limiter,
             redis_required: false,
             http_client: reqwest::Client::new(),

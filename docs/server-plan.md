@@ -1344,6 +1344,15 @@ the full live set as of that value, so a client keeps its own newer changes and 
 page no longer lists; a client without a catch-up cursor starts from it. Deleting for everyone clears
 the message's reactions (a new `seq` each, so catch-up reports them).
 
+#### Several reactions per person
+
+A record's sealed `e` holds a person's whole set (oldest first); `PUT` replaces it, `DELETE`
+removes it. How many one person may leave is a server setting, `REACTIONS_MAX_PER_USER` (default
+5), handed to clients by `GET /config` → `{ "reactions": { "max_per_user": 5 } }`. The server can't
+count sealed emoji, so clients enforce it when adding (a pick past the limit drops that person's
+oldest); readers show what a record holds, deduplicated, up to their own cap of 20. The 4 KiB
+ciphertext cap bounds what a modified client could store.
+
 #### Unseen reactions (the chat list's heart badge)
 
 `GET /conversations` adds, per chat, `reaction_seq` (latest change, 0 when none) and
@@ -1371,6 +1380,7 @@ clamped to the latest `seq`, never moves backwards. When it moves, the caller's 
 | `DATABASE_POOL_MAX` | Pool size per instance |
 | `REDIS_URL` | Optional; enables multi-replica WS fan-out, shared rate limits, presence |
 | `TRUST_FORWARDED_HEADERS` | Honor XFF / X-Real-IP for rate-limit keys (trusted proxy only; default false) |
+| `REACTIONS_MAX_PER_USER` | Most emoji one person may leave on one message (default 5, 1–20); clients read it from `GET /config` |
 | `HOST` / `PORT` | Bind (default localhost:8080) |
 | `RUN_MIGRATIONS` | Prefer single migrator when scaled |
 | `MEDIA_DATA_DIR` | Local ciphertext blob directory |

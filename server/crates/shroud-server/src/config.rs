@@ -8,6 +8,9 @@ use crate::error::AppError;
 
 /// Default Postgres pool size when `DATABASE_POOL_MAX` is unset.
 pub const DEFAULT_DATABASE_POOL_MAX: u32 = 10;
+/// Telegram Premium allows 3; Shroud starts at 5 (see `docs/server-plan.md`).
+const DEFAULT_REACTIONS_MAX_PER_USER: u32 = 5;
+const MAX_REACTIONS_PER_USER: u32 = 20;
 
 /// WebRTC ICE server entry advertised to clients.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,6 +45,8 @@ pub struct Config {
     pub cors_allowed_origins: Vec<String>,
     /// STUN/TURN servers for WebRTC clients.
     pub ice_servers: Vec<IceServer>,
+    /// Most emoji one person may leave on one message (`REACTIONS_MAX_PER_USER`, 1–20).
+    pub reactions_max_per_user: u32,
 }
 
 impl Config {
@@ -103,6 +108,20 @@ impl Config {
         let ice_servers = ice_servers_from_env();
         let cors_allowed_origins = cors_origins_from_env();
 
+        // Human: Handed to clients by `GET /config`; the server can't count sealed emoji, so the
+        // clients enforce it. Above 20 a chip stops fitting a bubble, so the value is capped.
+        let reactions_max_per_user = parse_u32_env(
+            "REACTIONS_MAX_PER_USER",
+            std::env::var("REACTIONS_MAX_PER_USER").ok().as_deref(),
+            DEFAULT_REACTIONS_MAX_PER_USER,
+        )?;
+        if reactions_max_per_user == 0 {
+            return Err(AppError::Internal(
+                "REACTIONS_MAX_PER_USER must be at least 1".into(),
+            ));
+        }
+        let reactions_max_per_user = reactions_max_per_user.min(MAX_REACTIONS_PER_USER);
+
         Ok(Self {
             database_url,
             database_pool_max,
@@ -115,6 +134,7 @@ impl Config {
             trust_forwarded_headers,
             cors_allowed_origins,
             ice_servers,
+            reactions_max_per_user,
         })
     }
 

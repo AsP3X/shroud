@@ -8,6 +8,7 @@ use axum::{
 
 use crate::state::AppState;
 
+pub mod app_config;
 pub mod auth;
 pub mod blocks;
 pub mod calls;
@@ -36,6 +37,7 @@ pub fn router() -> Router<AppState> {
             .route("/health/live", get(health::live))
             .route("/health/ready", get(health::ready))
             .route("/metrics", get(health::metrics))
+            .route("/config", get(app_config::get_config))
             .route("/auth/register", post(auth::register))
             .route("/auth/login", post(auth::login))
             .route("/auth/logout", post(auth::logout))

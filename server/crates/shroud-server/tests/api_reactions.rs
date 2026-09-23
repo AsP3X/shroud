@@ -638,3 +638,15 @@ async fn deleting_the_chat_for_everyone_while_reacting_never_errors() {
         }
     }
 }
+
+#[tokio::test]
+async fn config_hands_out_the_reaction_limit() {
+    let Some(app) = test_app().await else {
+        eprintln!("skipping config_hands_out_the_reaction_limit: no DATABASE_URL");
+        return;
+    };
+    let a = register(&app).await;
+    let (status, body) = call(&app, "GET", "/api/v1/config", &a.0, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["reactions"]["max_per_user"], 5);
+}
