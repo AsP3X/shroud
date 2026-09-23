@@ -13084,8 +13084,8 @@
     {
       "type": "frame",
       "id": "l9hUE",
-      "x": 2580,
-      "y": 0,
+      "x": 2584,
+      "y": -325,
       "name": "Components — links",
       "theme": {
         "mode": "dark"
