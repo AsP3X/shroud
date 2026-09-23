@@ -2986,31 +2986,39 @@ button.reply-quote { cursor: pointer; }
    (Telegram 1:1). On a text bubble the time moves to the end of the chip row.
    ---------------------------------------------------------------------------- */
 .bubble.has-reactions { flex-wrap: wrap; }
+/* Telegram's in-bubble reaction button: 30 tall, a 20 emoji, 24 faces overlapping by half,
+   6 between buttons. */
 .reaction-strip {
   flex: 1 0 100%;
-  display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
-  margin-top: 2px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin-top: 3px;
 }
 .reaction-strip-meta { margin-left: auto; padding-left: 6px; display: inline-flex; }
 .reaction-chip {
+  --chip-bg: color-mix(in srgb, var(--accent) 16%, transparent);
   display: inline-flex; align-items: center; gap: 4px;
-  height: 26px; padding: 0 4px 0 7px;
+  height: 30px; padding: 0 3px 0 8px;
   border: 0; border-radius: var(--r-full);
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  background: var(--chip-bg);
   color: inherit; font: inherit; cursor: pointer;
-  animation: reaction-pop 0.28s var(--ease);
   transition: background 0.12s var(--ease), transform 0.08s var(--ease);
 }
+.reaction-chip.is-new { animation: reaction-pop 0.3s var(--ease); }
 .reaction-chip:active { transform: scale(0.9); }
-.reaction-chip.is-mine { background: var(--accent); }
-.bubble.out .reaction-chip { background: rgba(255, 255, 255, 0.2); }
-.bubble.out .reaction-chip.is-mine { background: #fff; }
-.reaction-emoji { font-size: 15px; line-height: 1; }
+.reaction-chip.is-mine { --chip-bg: var(--accent); }
+.bubble.out .reaction-chip { --chip-bg: rgba(255, 255, 255, 0.2); }
+.bubble.out .reaction-chip.is-mine { --chip-bg: #fff; }
+/* Faces sit in a ring of the chip's own colour, so overlapping ones stay apart. The out-bubble
+   chip is translucent, so its ring takes the bubble's colour under it. */
+.reaction-chip .avatar-xs { box-shadow: 0 0 0 1.5px var(--chip-bg); }
+.bubble.out .reaction-chip:not(.is-mine) .avatar-xs { box-shadow: 0 0 0 1.5px var(--accent); }
+.bubble.in .reaction-chip:not(.is-mine) .avatar-xs { box-shadow: 0 0 0 1.5px var(--bubble-in); }
+.reaction-emoji { width: 20px; text-align: center; font-size: 18px; line-height: 1; }
 .reaction-faces { display: inline-flex; }
-.reaction-faces .avatar + .avatar { margin-left: -6px; }
-.avatar-xs { width: 18px; height: 18px; font-size: 8px; box-shadow: 0 0 0 1.5px var(--bubble-in); }
-.bubble.out .avatar-xs { box-shadow: 0 0 0 1.5px var(--accent); }
-.media-reactions { padding: 6px 8px 7px; }
+.reaction-faces .avatar + .avatar { margin-left: -12px; }
+.avatar-xs { width: 24px; height: 24px; font-size: 9px; }
+.media-reactions { padding: 6px 8px 8px; }
+.media-reactions .reaction-strip { margin-top: 0; }
 .bubble.voice-msg .reaction-strip { margin-top: 7px; }
 @keyframes reaction-pop {
   0% { transform: scale(0.4); opacity: 0; }
@@ -3034,7 +3042,10 @@ button.reply-quote { cursor: pointer; }
   font-size: 21px; line-height: 1; cursor: pointer;
   transition: transform 0.08s var(--ease), background 0.12s var(--ease);
 }
-.reaction-pick:hover, .reaction-pick:focus-visible { transform: scale(1.18); outline: none; }
+.reaction-pick:hover { transform: scale(1.18); }
+.reaction-pick:focus-visible, .reaction-more:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px; transform: scale(1.1);
+}
 .reaction-pick:active { transform: scale(0.85); }
 .reaction-pick.is-selected { background: var(--accent-soft); }
 .reaction-more { background: var(--hover); width: 26px; height: 26px; }
@@ -3044,3 +3055,24 @@ button.reply-quote { cursor: pointer; }
 }
 .ctx-menu:has(.reaction-picker) { max-width: 300px; }
 .ctx-menu-header:has(.reaction-picker) { padding: 4px 4px 6px; }
+
+/* Hover actions beside a bubble: react (opens the menu with the reaction row), reply. */
+.bubble-hover-actions { display: flex; align-items: flex-end; gap: 4px; flex: 0 0 auto; }
+.msg-row.mine .bubble-hover-actions { order: -1; }
+
+/* The chat list's heart: the other side reacted to our messages since we last looked. */
+.row-side {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+  flex-shrink: 0; align-self: stretch;
+}
+.row-side .row-time { align-self: auto; }
+.row-reaction-badge {
+  width: 20px; height: 20px;
+  display: grid; place-items: center;
+  border-radius: var(--r-full);
+  background: var(--accent); color: var(--on-accent);
+  animation: reaction-pop 0.3s var(--ease);
+}
+@media (prefers-reduced-motion: reduce) {
+  .reaction-chip.is-new, .row-reaction-badge { animation: none; }
+}

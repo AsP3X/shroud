@@ -9,7 +9,12 @@
  */
 import { api, type WireReaction } from "./api/client";
 import { utf8, utf8decode } from "./crypto/bytes";
-import { envelopeToWireB64, openMessage, sealIdentityEnvelope, wireB64ToEnvelope } from "./crypto/messageCrypto";
+import {
+  envelopeToWireB64,
+  openTaggedEnvelope,
+  sealIdentityEnvelope,
+  wireB64ToEnvelope,
+} from "./crypto/messageCrypto";
 import type { IdentityMaterial } from "./crypto/identity";
 import type { ChatMessage } from "./messaging";
 
@@ -97,14 +102,47 @@ export function emojiOf(userId: string, reactions: Reaction[] | undefined): stri
   return reactions?.find((r) => r.userId === userId)?.emoji ?? null;
 }
 
-/** Chips in the order each emoji first appeared. */
+/**
+ * Chips in Telegram's order: most reactions from others first, then the one with ours, then
+ * the one that appeared first. In a 1:1 chat: the other side's reaction, then ours.
+ */
 export function reactionChips(reactions: Reaction[] | undefined, me: string): ReactionChip[] {
   const chips = new Map<string, string[]>();
   for (const reaction of reactions ?? []) {
     if (!reaction.emoji) continue;
     chips.set(reaction.emoji, [...(chips.get(reaction.emoji) ?? []), reaction.userId]);
   }
-  return [...chips].map(([emoji, userIds]) => ({ emoji, userIds, includesMe: userIds.includes(me) }));
+  const others = (chip: ReactionChip) => chip.userIds.length - (chip.includesMe ? 1 : 0);
+  return [...chips]
+    .map(([emoji, userIds]) => ({ emoji, userIds, includesMe: userIds.includes(me) }))
+    .map((chip, order) => ({ chip, order }))
+    .sort(
+      (a, b) =>
+        others(b.chip) - others(a.chip) ||
+        Number(b.chip.includesMe) - Number(a.chip.includesMe) ||
+        a.order - b.order,
+    )
+    .map(({ chip }) => chip);
+}
+
+/**
+ * Records a history page lists under `messageId`, as the page may be trusted with them: only
+ * records for that very message, from the two people in the chat, the newest per person. The
+ * server could otherwise list a genuine reaction under another message, or a stranger's.
+ */
+export function pageReactionsFor(
+  messageId: string,
+  wires: WireReaction[] | undefined,
+  allowed: ReadonlySet<string>,
+): WireReaction[] {
+  const latest = new Map<string, WireReaction>();
+  for (const wire of wires ?? []) {
+    const user = wire.user_id.toLowerCase();
+    if (wire.message_id.toLowerCase() !== messageId.toLowerCase() || !allowed.has(user)) continue;
+    const held = latest.get(user);
+    if (!held || held.seq < wire.seq) latest.set(user, wire);
+  }
+  return [...latest.values()];
 }
 
 /** Folds opened changes into a thread. Pure: it runs inside `setThread` updaters. */
@@ -163,16 +201,14 @@ export async function openReaction(
   const known = held.find((r) => r.userId === userId && r.seq === wire.seq && !r.pending);
   if (known) return known;
   try {
+    // Tagged v2 only: every build that writes reactions tags its boxes.
     const mine = userId === me.toLowerCase();
-    const plain = await openMessage({
+    const plain = await openTaggedEnvelope({
       envelopeData: wireB64ToEnvelope(wire.ciphertext),
-      peerUserId: userId,
-      ourUserId: me,
       ourPrivate: material.agreementPrivate,
       ourIdentityPublic: material.agreementPublic,
       senderIdentityPublic: mine ? material.agreementPublic : await peerIdentity(userId),
       asSender: mine,
-      sentAt: Date.parse(wire.updated_at),
     });
     return { userId, emoji: parseReaction(utf8decode(plain), wire.message_id), seq: wire.seq };
   } catch {

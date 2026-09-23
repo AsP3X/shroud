@@ -29,7 +29,7 @@ import {
   savePreview,
 } from "./crypto/plaintextCache";
 import { MAX_THUMB_BYTES } from "./media/envelopePreview";
-import { openReaction, type Reaction } from "./reactions";
+import { openReaction, pageReactionsFor, type Reaction } from "./reactions";
 import { cacheSealedImage } from "./media/images";
 import type { PreparedImage } from "./media/prepareImage";
 import type { EncodedVideo } from "./media/prepareVideo";
@@ -200,7 +200,7 @@ async function decodeWithReactions(
   const msg = await decodeIncoming(dto, me, peer, token, material);
   if (!dto.reactions?.length || msg.deleted || msg.kind === "annotation") return msg;
   const reactions: Reaction[] = [];
-  for (const wire of dto.reactions) {
+  for (const wire of pageReactionsFor(dto.id, dto.reactions, new Set([me.toLowerCase(), peer]))) {
     reactions.push(await openReaction(wire, me, material, (id) => peerIdentityPublic(token, id)));
   }
   return { ...msg, reactions };

@@ -28,6 +28,10 @@ export type Conversation = {
   peer: { id: string; username: string };
   created_at: string;
   last_message_at: string | null;
+  /** The chat's latest reaction change (see `reactions.ts`); absent from older servers. */
+  reaction_seq?: number;
+  /** The other side's reactions to our messages we have not marked seen (the heart badge). */
+  unseen_reactions?: number;
 };
 
 export type Contact = {
@@ -381,6 +385,12 @@ export const api = {
     request<WireReaction | undefined>(
       `/messages/${encodeURIComponent(messageId.toLowerCase())}/reaction`,
       { method: "DELETE", token },
+    ),
+  /** Reactions to our messages in this chat are seen up to `upToSeq` (clamped by the server). */
+  markReactionsSeen: (token: string, peerUserId: string, upToSeq: number) =>
+    request<{ seen_seq: number }>(
+      `/conversations/${encodeURIComponent(peerUserId.toLowerCase())}/reactions/seen`,
+      { method: "POST", token, body: JSON.stringify({ up_to_seq: upToSeq }) },
     ),
   reactionChanges: (token: string, peerUserId: string, afterSeq: number) =>
     request<{ reactions: WireReaction[]; next_seq: number; has_more: boolean }>(

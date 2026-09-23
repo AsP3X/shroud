@@ -216,6 +216,31 @@ async function sealV2(
   return utf8(JSON.stringify(envelope));
 }
 
+/**
+ * Opens a v2 envelope whose box must carry a sender tag that verifies — for records that never
+ * existed untagged (reactions). Accepting an untagged or v1 box, as history must for messages
+ * from before the tag, would let the server build one from public keys alone. No ratchet state
+ * and no untagged-box watermark are touched.
+ */
+export async function openTaggedEnvelope(opts: {
+  envelopeData: Uint8Array;
+  ourPrivate: Uint8Array;
+  ourIdentityPublic: Uint8Array;
+  senderIdentityPublic: Uint8Array;
+  asSender: boolean;
+}): Promise<Uint8Array> {
+  if (!isVaultOpen()) throw new Error("open: vault is locked");
+  const envelope = JSON.parse(utf8decode(opts.envelopeData)) as SealedEnvelope;
+  if (envelope.v !== 2) throw new Error("open: expected a v2 envelope");
+  const box = opts.asSender ? envelope.self : envelope.peer;
+  if (!box) throw new Error("open: missing box");
+  // Our own boxes are sealed from and to our identity.
+  const sender = opts.asSender ? opts.ourIdentityPublic : opts.senderIdentityPublic;
+  const opened = await openBox(box, opts.ourPrivate, sender, opts.ourIdentityPublic);
+  if (!opened.authenticated) throw new Error("open: untagged box");
+  return opened.plaintext;
+}
+
 export async function openMessage(opts: {
   envelopeData: Uint8Array;
   peerUserId: string;

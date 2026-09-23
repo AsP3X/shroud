@@ -84,6 +84,22 @@ export function ContextMenu<Id extends string>({
     null,
   );
   const [live, setLive] = useState(!settle);
+  /* Content that grows after opening (the reaction row expanding) re-fits the menu on screen. */
+  const [grown, setGrown] = useState(0);
+  useEffect(() => {
+    const node = menu.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    let first = true;
+    const observer = new ResizeObserver(() => {
+      if (first) {
+        first = false;
+        return;
+      }
+      setGrown((n) => n + 1);
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
   /* Read through refs: callers pass inline closures, and re-subscribing the window listeners
      on every render would drop events mid-gesture. */
   const close = useRef(onClose);
@@ -107,7 +123,7 @@ export function ContextMenu<Id extends string>({
     /* Grow out of the corner at the anchor, the way native menus open. */
     const origin = `${fitsRight ? "left" : "right"} ${fitsBelow ? "top" : "bottom"}`;
     setPosition({ left, top, origin });
-  }, [anchor.x, anchor.y, items.length]);
+  }, [anchor.x, anchor.y, items.length, grown]);
 
   /* The finger that opened the menu is still down. Hits pass through until it lifts. */
   useEffect(() => {
@@ -130,7 +146,11 @@ export function ContextMenu<Id extends string>({
   const placed = position !== null;
   useEffect(() => {
     if (placed && live) {
-      menu.current?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
+      // The first action, not a control in the header: Enter must not pick a reaction.
+      const first =
+        menu.current?.querySelector<HTMLButtonElement>('[role="menuitem"]') ??
+        menu.current?.querySelector<HTMLButtonElement>("button");
+      first?.focus({ preventScroll: true });
     }
   }, [placed, live]);
 
@@ -139,6 +159,10 @@ export function ContextMenu<Id extends string>({
     const dismiss = (event?: Event) => {
       // Focusing the first item can nudge a scroller in the same turn the menu opens.
       if (event?.type === "scroll" && performance.now() - openedAt < 350) return;
+      // Scrolling inside the menu (the full reaction set) is using it, not leaving it.
+      if (event?.type === "scroll" && event.target instanceof Node && menu.current?.contains(event.target)) {
+        return;
+      }
       close.current();
     };
     const onPointerDown = (event: PointerEvent) => {
@@ -167,23 +191,39 @@ export function ContextMenu<Id extends string>({
     };
   }, []);
 
-  /* Arrow keys walk the items and wrap; Home/End jump; Tab leaves the menu. */
+  /* Arrow keys walk the items and wrap; Home/End jump; Tab leaves the menu. A header with
+     controls (the reaction row) is one stop for Up/Down, walked with Left/Right. */
   function onMenuKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    const buttons = [...(menu.current?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
-    if (buttons.length === 0) return;
-    const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    const root = menu.current;
+    if (!root) return;
+    const active = document.activeElement as HTMLButtonElement | null;
+    const headerButtons = [...root.querySelectorAll<HTMLButtonElement>(".ctx-menu-header button")];
+    const inHeader = active != null && headerButtons.includes(active);
+    if (inHeader && (event.key === "ArrowRight" || event.key === "ArrowLeft")) {
+      const at = headerButtons.indexOf(active);
+      const step = event.key === "ArrowRight" ? 1 : -1;
+      event.preventDefault();
+      headerButtons[(at + step + headerButtons.length) % headerButtons.length]?.focus();
+      return;
+    }
+    const items = [...root.querySelectorAll<HTMLButtonElement>(".ctx-menu-item")];
+    const headerStop =
+      headerButtons.find((button) => button.getAttribute("aria-checked") === "true") ?? headerButtons[0];
+    const stops = [...(headerStop ? [inHeader ? active : headerStop] : []), ...items];
+    if (stops.length === 0) return;
+    const index = inHeader ? 0 : stops.indexOf(active as HTMLButtonElement);
     let next = -1;
-    if (event.key === "ArrowDown") next = (index + 1) % buttons.length;
-    else if (event.key === "ArrowUp") next = (index - 1 + buttons.length) % buttons.length;
+    if (event.key === "ArrowDown") next = (index + 1) % stops.length;
+    else if (event.key === "ArrowUp") next = (index - 1 + stops.length) % stops.length;
     else if (event.key === "Home") next = 0;
-    else if (event.key === "End") next = buttons.length - 1;
+    else if (event.key === "End") next = stops.length - 1;
     else if (event.key === "Tab") {
       close.current();
       return;
     }
     if (next < 0) return;
     event.preventDefault();
-    buttons[next]?.focus();
+    stops[next]?.focus();
   }
 
   return (

@@ -16,6 +16,7 @@ import {
 import {
   ArrowDown,
   ChevronLeft,
+  SmilePlus,
   Image,
   ImagePlus,
   Info,
@@ -198,6 +199,12 @@ function MessageRow({
   const photo = isPhoto(message);
   const video = isVideo(message);
   const reacted = !message.deleted && (message.reactions ?? []).some((r) => r.emoji);
+  /* What the message already wore when its row appeared (opening a chat isn't news); chips
+     added after that pop in. */
+  const settledReactions = useRef<ReadonlySet<string> | null>(null);
+  settledReactions.current ??= new Set(
+    (message.reactions ?? []).flatMap((r) => (r.emoji ? [r.emoji] : [])),
+  );
   const strip = (meta: ReactNode = null) =>
     reacted ? (
       <ReactionStrip
@@ -207,6 +214,7 @@ function MessageRow({
         peerName={peerName}
         onToggle={(emoji) => onReact(message, emoji)}
         meta={meta}
+        settled={settledReactions.current ?? undefined}
       />
     ) : null;
   const bubbleClass = [
@@ -341,16 +349,35 @@ function MessageRow({
       }}
     >
       {bubble}
-      {canReply ? (
-        <button
-          className="bubble-reply-btn"
-          type="button"
-          aria-label="Reply to this message"
-          title="Reply"
-          onClick={() => onReply(message)}
-        >
-          <Reply size={15} aria-hidden="true" />
-        </button>
+      {canReply || canReact(message) ? (
+        <span className="bubble-hover-actions">
+          {canReact(message) ? (
+            <button
+              className="bubble-reply-btn"
+              type="button"
+              aria-label="React to this message"
+              title="React"
+              onClick={(event) => {
+                // The message menu, opened at the button: its first row is the reactions.
+                const rect = event.currentTarget.getBoundingClientRect();
+                onMenu(message, { x: rect.left, y: rect.bottom + 4 }, event.currentTarget.closest(".msg-row"));
+              }}
+            >
+              <SmilePlus size={15} aria-hidden="true" />
+            </button>
+          ) : null}
+          {canReply ? (
+            <button
+              className="bubble-reply-btn"
+              type="button"
+              aria-label="Reply to this message"
+              title="Reply"
+              onClick={() => onReply(message)}
+            >
+              <Reply size={15} aria-hidden="true" />
+            </button>
+          ) : null}
+        </span>
       ) : null}
       {swipe.swiping ? (
         <span className="swipe-reply" aria-hidden="true">
@@ -933,9 +960,13 @@ export function Thread({
   }, [messages]);
 
   /* A short, neutral status line under the thread; the newest notice replaces the last. */
-  /* A reaction that could not be saved. */
+  /* A reaction that could not be saved. The thread remounts per chat: a notice from before
+     this chat opened is not shown again. */
+  const shownNotice = useRef(reactionNotice?.id);
   useEffect(() => {
-    if (reactionNotice) showNotice(reactionNotice.text, 2400);
+    if (!reactionNotice || reactionNotice.id === shownNotice.current) return;
+    shownNotice.current = reactionNotice.id;
+    showNotice(reactionNotice.text, 2400);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per notice
   }, [reactionNotice?.id]);
 

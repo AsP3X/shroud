@@ -1,4 +1,5 @@
 import {
+  pageReactionsFor,
   applyReaction,
   applyReactionChanges,
   isSingleEmoji,
@@ -64,10 +65,24 @@ check(replacingReaction([r(ME, "👍", 3, true)], ME, r(ME, "👍", 10))[0].pend
 
 const chips = reactionChips([r(PEER, "❤️", 2), r(ME, "❤️", 3), r(PEER.replace("b", "c"), "🔥", 4)], ME);
 check(chips.length === 2 && chips[0].userIds.length === 2 && chips[0].includesMe, "chips group by emoji");
+const order = reactionChips([r(ME, "👍", 1), r(PEER, "🔥", 2)], ME).map((chip) => chip.emoji);
+check(order.join() === "🔥,👍", "Telegram order: the other side's reaction, then ours");
 
 const thread = [{ id: MESSAGE, deleted: false, reactions: [] } as unknown as ChatMessage];
 const next = applyReactionChanges(thread, [{ messageId: MESSAGE.toUpperCase(), reaction: r(PEER, "😮", 11) }]);
 check(next !== thread && next[0].reactions?.[0].emoji === "😮", "changes fold into the thread");
 check(applyReactionChanges(next, [{ messageId: MESSAGE, reaction: r(PEER, "😮", 11) }]) === next, "no-op keeps identity");
+
+/* --- history pages ------------------------------------------------------- */
+
+const OTHER = "cccccccc-0000-4000-8000-000000000003";
+const wires = [
+  { message_id: MESSAGE, user_id: PEER, ciphertext: "a", seq: 3, updated_at: "" },
+  { message_id: MESSAGE, user_id: PEER, ciphertext: "b", seq: 5, updated_at: "" },
+  { message_id: OTHER, user_id: PEER, ciphertext: "c", seq: 6, updated_at: "" },
+  { message_id: MESSAGE, user_id: OTHER, ciphertext: "d", seq: 7, updated_at: "" },
+];
+const trusted = pageReactionsFor(MESSAGE, wires, new Set([ME, PEER]));
+check(trusted.length === 1 && trusted[0].ciphertext === "b", "page: own message, chat members, newest only");
 
 console.log("reactions selftest: ok");
