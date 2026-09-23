@@ -2952,14 +2952,6 @@ button.reply-quote { cursor: pointer; }
     color: var(--accent-text); letter-spacing: -0.01em;
   }
   .auth-card h1 { font-size: 26px; }
-}
-
-@media (max-width: 600px) {
-  .phrase-grid { grid-template-columns: repeat(2, 1fr); }
-  .auth-panel { padding: 24px 16px 40px; }
-}
-
-@media (prefers-reduced-motion: reduce) {
 
   .lock-screen { flex-direction: column; justify-content: flex-start; gap: 12px; padding: 20px 16px 32px; }
   .lock-hero-col { gap: 14px; }
@@ -2972,6 +2964,14 @@ button.reply-quote { cursor: pointer; }
   .lock-card { background: transparent; border: 0; box-shadow: none; padding: 4px 0 0; gap: 14px; }
   .lock-pad { gap: 10px 14px; }
   .lock-card-label { display: none; }
+}
+
+@media (max-width: 600px) {
+  .phrase-grid { grid-template-columns: repeat(2, 1fr); }
+  .auth-panel { padding: 24px 16px 40px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
