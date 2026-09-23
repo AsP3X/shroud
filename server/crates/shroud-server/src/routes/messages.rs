@@ -81,8 +81,9 @@ pub struct ListMessagesResponse {
     pub messages: Vec<MessageResponse>,
     /// True when another page may exist (caller got a full page).
     pub has_more: bool,
-    /// Newest page only (no `before_*` cursor): the conversation's highest reaction `seq`, read
-    /// before the page. A client with no catch-up cursor yet starts from here.
+    /// The conversation's highest reaction `seq`, read before the page. The page's `reactions`
+    /// are the complete live set as of this value: a client keeps its own newer changes and
+    /// drops older ones the page no longer lists. Also the first catch-up cursor.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reaction_seq: Option<i64>,
 }
@@ -408,11 +409,7 @@ pub async fn list_messages(
 
     // Read before the page: a reaction committed later has a higher seq and reaches the client
     // through catch-up, so the page plus the cursor never miss one.
-    let reaction_seq = if query.before_created_at.is_none() {
-        Some(reactions::latest_reaction_seq(&state.pool, conversation_id).await?)
-    } else {
-        None
-    };
+    let reaction_seq = Some(reactions::latest_reaction_seq(&state.pool, conversation_id).await?);
 
     // Human: A cleared chat stays empty for this caller until newer messages arrive; the peer
     // keeps whatever their own watermark still allows.

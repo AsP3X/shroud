@@ -244,6 +244,7 @@ async fn set_replace_remove_and_catch_up() {
     assert_eq!(status, StatusCode::NO_CONTENT);
 
     let page = history(&app, &a, &b.1).await;
+    assert_eq!(page["reaction_seq"], removed["seq"], "snapshot covers the removal");
     assert_eq!(
         find_message(&page, &message)["reactions"]
             .as_array()

@@ -1323,8 +1323,9 @@ first, removals included; `limit` default 200, max 500. Rows for messages the ca
 #### History
 
 `GET /messages` adds `reactions` (live ones, oldest change first; omitted when empty) to each message,
-and on the newest page (no `before_*`) `reaction_seq`: the conversation's highest `seq`, read before
-the page, for a client that has no catch-up cursor yet. Deleting for everyone clears the message's
+and `reaction_seq`: the conversation's highest `seq`, read before the page. The page's reactions are
+the full live set as of that value, so a client keeps its own newer changes and drops older ones the
+page no longer lists; a client without a catch-up cursor starts from it. Deleting for everyone clears the message's
 reactions (new `seq`, so catch-up reports it).
 
 ### Later routes (outline)
