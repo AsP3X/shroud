@@ -386,6 +386,9 @@ export const api = {
       `/messages/${encodeURIComponent(messageId.toLowerCase())}/reaction`,
       { method: "DELETE", token },
     ),
+  /** Settings the server operator sets for clients (the reaction limit). */
+  clientConfig: (token: string) =>
+    request<{ reactions: { max_per_user: number } }>("/config", { token }),
   /** Reactions to our messages in this chat are seen up to `upToSeq` (clamped by the server). */
   markReactionsSeen: (token: string, peerUserId: string, upToSeq: number) =>
     request<{ seen_seq: number }>(

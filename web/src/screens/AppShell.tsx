@@ -71,9 +71,11 @@ import {
 import { lockNow as lockSession } from "../session";
 import {
   applyReactionChanges,
-  emojiOf,
+  DEFAULT_REACTION_LIMIT,
+  emojisOf,
   openReaction,
   saveReaction,
+  toggledReactions,
   withMyReaction,
   type Reaction,
 } from "../reactions";
@@ -171,8 +173,10 @@ export function AppShell({ session }: { session: Session }) {
    */
   const reactionCursor = useRef<number | null>(null);
   const reactionSync = useRef<Promise<void> | null>(null);
-  /** Our latest wanted reaction per message while a save for it is in flight (taps collapse). */
-  const reactionIntents = useRef(new Map<string, string | null>());
+  /** Our latest wanted set per message while a save for it is in flight (taps collapse). */
+  const reactionIntents = useRef(new Map<string, string[]>());
+  /** How many emoji one person may leave on a message: the server's setting (`GET /config`). */
+  const reactionLimit = useRef(DEFAULT_REACTION_LIMIT);
   /** Our reaction as the server last confirmed it, per message with a save in flight. */
   const reactionConfirmed = useRef(new Map<string, Reaction | null>());
   /** The catch-up cursor when a message's first tap went out (see `react`). */
@@ -441,6 +445,17 @@ export function AppShell({ session }: { session: Session }) {
     };
   }, [refresh, endSession]);
 
+  useEffect(() => {
+    void api
+      .clientConfig(session.token)
+      .then((config) => {
+        reactionLimit.current = Math.max(1, config.reactions.max_per_user);
+      })
+      .catch(() => {
+        /* the default stands until the next load */
+      });
+  }, [session.token]);
+
   /** One roster refresh for a burst of reaction events (their heart badges). */
   const refreshSoon = useCallback(() => {
     if (refreshSoonTimer.current) return;
@@ -565,14 +580,14 @@ export function AppShell({ session }: { session: Session }) {
       const key = message.id.toLowerCase();
       const live = threadRef.current.find((m) => m.id.toLowerCase() === key) ?? message;
       const current = live.reactions?.find((r) => r.userId === me) ?? null;
-      const wanted = emojiOf(me, live.reactions) === emoji ? null : emoji;
+      const wanted = toggledReactions(emoji, emojisOf(me, live.reactions), reactionLimit.current);
       const inFlight = reactionConfirmed.current.has(key);
       if (!inFlight) {
         reactionConfirmed.current.set(key, current);
         reactionCursorAtTap.current.set(key, reactionCursor.current);
       }
       setThread((prev) =>
-        withMyReaction(prev, key, me, { userId: me, emoji: wanted, seq: current?.seq ?? 0, pending: true }),
+        withMyReaction(prev, key, me, { userId: me, emojis: wanted, seq: current?.seq ?? 0, pending: true }),
       );
       reactionIntents.current.set(key, wanted);
       if (inFlight) return;
@@ -582,7 +597,7 @@ export function AppShell({ session }: { session: Session }) {
       void (async () => {
         const peerPub = await peerIdentityPublic(session.token, peer.id).catch(() => null);
         while (reactionIntents.current.has(key)) {
-          const next = reactionIntents.current.get(key) ?? null;
+          const next = reactionIntents.current.get(key) ?? [];
           reactionIntents.current.delete(key);
           try {
             if (!peerPub) throw new Error("no peer key");
@@ -590,7 +605,7 @@ export function AppShell({ session }: { session: Session }) {
               token: session.token,
               me,
               messageId: key,
-              emoji: next,
+              emojis: next,
               material,
               peerIdentityPublic: peerPub,
             });

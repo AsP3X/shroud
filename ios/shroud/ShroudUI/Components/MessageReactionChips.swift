@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// What one reaction chip shows: the emoji and who picked it.
+/// What one reaction chip shows: one person's emoji and their face — or both faces, when the two
+/// picked exactly the same emoji.
 struct ReactionChipContent: Equatable, Hashable, Identifiable {
     struct Reactor: Equatable, Hashable {
         let id: UUID
@@ -10,26 +11,37 @@ struct ReactionChipContent: Equatable, Hashable, Identifiable {
         var isMe = false
     }
 
-    let emoji: String
     /// Oldest first.
+    let emojis: [String]
+    /// In the order they reacted.
     let reactors: [Reactor]
     let includesMe: Bool
     /// The message the chip belongs to, so a reaction flying in can find it. Nil where no
     /// flight should land (the long-press preview).
     var messageID: UUID?
 
-    var id: String { emoji }
+    var id: String { reactors.map(\.id.uuidString).joined(separator: "+") }
+
+    var spokenNames: String {
+        ListFormatter.localizedString(byJoining: reactors.map { $0.isMe ? "you" : $0.name })
+    }
 }
 
 extension [ReactionChipContent] {
-    /// "Reactions: ❤️ from anna, 👍 from you" — for a bubble VoiceOver reads as one element.
+    /// "Reactions: anna ❤️ 🔥, you 👍" — for a bubble VoiceOver reads as one element.
     var spokenSummary: String? {
         guard !isEmpty else { return nil }
-        let parts = map { chip in
-            let names = chip.reactors.map { $0.isMe ? "you" : $0.name }
-            return "\(chip.emoji) from \(ListFormatter.localizedString(byJoining: names))"
-        }
+        let parts = map { chip in "\(chip.spokenNames) \(chip.emojis.joined(separator: " "))" }
         return "Reactions: " + parts.joined(separator: ", ")
+    }
+
+    /// Every emoji on the bubble, once, in chip order; and which of them are ours.
+    var emojiActions: [(emoji: String, isMine: Bool)] {
+        let mine = Set(filter(\.includesMe).flatMap(\.emojis))
+        var seen = Set<String>()
+        return flatMap(\.emojis).compactMap { emoji in
+            seen.insert(emoji).inserted ? (emoji, mine.contains(emoji)) : nil
+        }
     }
 }
 
@@ -42,12 +54,12 @@ extension View {
     ) -> some View {
         accessibilityActions {
             if let onTap {
-                ForEach(chips) { chip in
-                    Button(chip.includesMe ? "Remove your \(chip.emoji) reaction" : "React with \(chip.emoji)") {
-                        onTap(chip.emoji)
+                ForEach(chips.emojiActions, id: \.emoji) { action in
+                    Button(action.isMine ? "Remove your \(action.emoji) reaction" : "React with \(action.emoji)") {
+                        onTap(action.emoji)
                     }
                 }
-                if !chips.contains(where: { $0.emoji == MessageReactionBar.quickReaction }) {
+                if !chips.contains(where: { $0.emojis.contains(MessageReactionBar.quickReaction) }) {
                     Button("React with \(MessageReactionBar.quickReaction)") {
                         onTap(MessageReactionBar.quickReaction)
                     }
@@ -57,13 +69,14 @@ extension View {
     }
 }
 
-/// A reaction chip inside a bubble (Telegram 1:1: the emoji plus the reactors' avatars instead
-/// of a count). Filled when the reaction is ours.
+/// A reaction chip inside a bubble: one person's emoji, then their face (Telegram 1:1 shows
+/// faces, not counts). Filled when it's ours. Each emoji is its own tap target, as each chip is
+/// in Telegram: ours are taken back, theirs are added to ours.
 struct ReactionChipView: View {
     let chip: ReactionChipContent
     /// The chip sits on our own (accent) bubble.
     let onOutgoingBubble: Bool
-    var onTap: (() -> Void)?
+    var onTap: ((String) -> Void)?
 
     // Telegram's in-bubble reaction button (ReactionButtonListComponent): 30 pt tall, a 20 pt
     // emoji, 24 pt faces overlapping by half.
@@ -78,10 +91,10 @@ struct ReactionChipView: View {
 
     @Environment(\.reactionFlightTarget) private var flightTarget
 
-    /// A reaction is flying in to this chip: its emoji waits, and says where it is.
-    private var isFlightTarget: Bool {
-        guard let flightTarget, let messageID = chip.messageID else { return false }
-        return flightTarget.messageID == messageID && flightTarget.emoji == chip.emoji
+    /// A reaction of ours is flying in to this emoji of our chip: it waits, and says where it is.
+    private func isFlightTarget(_ emoji: String) -> Bool {
+        guard chip.includesMe, let flightTarget, let messageID = chip.messageID else { return false }
+        return flightTarget.messageID == messageID && flightTarget.emoji == emoji
     }
 
     private var fill: Color {
@@ -94,27 +107,14 @@ struct ReactionChipView: View {
     }
 
     var body: some View {
-        Button {
-            MessageTapClaim.claim()
-            onTap?()
-        } label: {
-            HStack(spacing: 4) {
-                Text(chip.emoji)
-                    .font(.system(size: Self.emojiFontSize))
-                    .fixedSize()
-                    .frame(width: Self.emojiBox, height: Self.emojiBox)
-                    .opacity(isFlightTarget ? 0 : 1)
-                    .background {
-                        if isFlightTarget {
-                            GeometryReader { geo in
-                                Color.clear.preference(
-                                    key: ReactionFlightFrameKey.self,
-                                    value: geo.frame(in: .global)
-                                )
-                            }
-                        }
-                    }
-                HStack(spacing: Self.avatarStep - Self.avatarSize) {
+        HStack(spacing: 4) {
+            HStack(spacing: 2) {
+                ForEach(chip.emojis, id: \.self) { emoji in
+                    emojiButton(emoji)
+                        .transition(.scale(scale: 0.4).combined(with: .opacity))
+                }
+            }
+            HStack(spacing: Self.avatarStep - Self.avatarSize) {
                     ForEach(chip.reactors.prefix(Self.maxAvatars), id: \.id) { reactor in
                         AvatarView(
                             initials: AvatarView.initials(for: reactor.name),
@@ -123,23 +123,44 @@ struct ReactionChipView: View {
                             fontSize: 9
                         )
                         .overlay { Circle().stroke(fill, lineWidth: 1.5) }
-                    }
+                        .accessibilityHidden(true)
                 }
             }
-            .padding(.leading, 8)
-            .padding(.trailing, chip.reactors.isEmpty ? 8 : 3)
-            .frame(height: Self.height)
-            .background(Capsule().fill(fill))
-            .contentShape(Capsule())
         }
-        .buttonStyle(ReactionChipButtonStyle())
-        .accessibilityLabel(accessibilityLabel)
-        .accessibilityHint(chip.includesMe ? "Removes your reaction" : "Reacts with the same emoji")
+        .padding(.leading, 6)
+        .padding(.trailing, chip.reactors.isEmpty ? 6 : 3)
+        .frame(height: Self.height)
+        .background(Capsule().fill(fill))
     }
 
-    private var accessibilityLabel: String {
-        let names = chip.reactors.map { $0.isMe ? "you" : $0.name }
-        return "\(chip.emoji), \(ListFormatter.localizedString(byJoining: names))"
+    private func emojiButton(_ emoji: String) -> some View {
+        Button {
+            MessageTapClaim.claim()
+            onTap?(emoji)
+        } label: {
+            Text(emoji)
+                .font(.system(size: Self.emojiFontSize))
+                .fixedSize()
+                .frame(width: Self.emojiBox, height: Self.emojiBox)
+                .opacity(isFlightTarget(emoji) ? 0 : 1)
+                .background {
+                    if isFlightTarget(emoji) {
+                        GeometryReader { geo in
+                            Color.clear.preference(
+                                key: ReactionFlightFrameKey.self,
+                                value: geo.frame(in: .global)
+                            )
+                        }
+                    }
+                }
+                // The whole height of the chip, and a little either side, takes the tap.
+                .padding(.horizontal, 2)
+                .frame(height: Self.height)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(ReactionChipButtonStyle())
+        .accessibilityLabel("\(emoji), \(chip.spokenNames)")
+        .accessibilityHint(chip.includesMe ? "Removes your reaction" : "Reacts with the same emoji")
     }
 }
 
@@ -274,9 +295,7 @@ struct ReactionFooter<Meta: View>: View {
     var body: some View {
         ReactionFooterLayout {
             ForEach(chips) { chip in
-                ReactionChipView(chip: chip, onOutgoingBubble: onOutgoingBubble) {
-                    onTap?(chip.emoji)
-                }
+                ReactionChipView(chip: chip, onOutgoingBubble: onOutgoingBubble, onTap: onTap)
                 .accessibilityHidden(!chipsAccessible)
                 .transition(reduceMotion ? .opacity : .scale(scale: 0.4).combined(with: .opacity))
             }

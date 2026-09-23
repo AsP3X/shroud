@@ -1,34 +1,38 @@
 import Foundation
 
-/// One user's reaction on a message, as the thread holds it.
+/// One user's reactions on a message, as the thread holds them.
 ///
-/// Human: A removal stays as an entry with no emoji, so a late or replayed older change (a
-/// delayed WebSocket event, a stale page) cannot bring the reaction back.
+/// Human: A person may leave several emoji on one message — up to the server's limit
+/// (`GET /config`) — and they travel as one sealed record. A removal stays as an entry with no
+/// emoji, so a late or replayed older change (a delayed WebSocket event, a stale page) cannot
+/// bring the reactions back.
 /// Agent: `seq` is the server's change cursor; the highest one per user wins. `pending` marks our
 /// own change before the server confirmed it — it keeps the previous `seq` and is not persisted,
 /// so after a relaunch it is judged like any other old entry and the next page corrects it.
 nonisolated struct MessageReaction: Codable, Equatable, Hashable, Sendable {
     let userID: UUID
-    /// Nil when the user removed their reaction.
-    let emoji: String?
+    /// Oldest first; empty when the user took their reactions back.
+    let emojis: [String]
     let seq: Int64
     var pending: Bool = false
 
     enum CodingKeys: String, CodingKey {
-        case userID, emoji, seq
+        case userID, emojis, seq
     }
 
-    var isLive: Bool { emoji != nil }
+    var isLive: Bool { !emojis.isEmpty }
 }
 
-/// A chip under a bubble: one emoji and who picked it.
+/// A chip under a bubble: one person's emoji and their face — or both people's faces when they
+/// picked exactly the same emoji. Several reactions by one person share one chip.
 nonisolated struct ReactionChip: Equatable, Hashable, Sendable, Identifiable {
-    let emoji: String
+    /// Oldest first.
+    let emojis: [String]
     /// In the order they reacted.
     let userIDs: [UUID]
     let includesMe: Bool
 
-    var id: String { emoji }
+    var id: String { userIDs.map(\.uuidString).joined(separator: "+") }
 }
 
 /// Pure merge rules for reactions (server `seq` is last-write-wins per user).
@@ -85,30 +89,43 @@ nonisolated enum ReactionMerge {
     }
 
     /// The emoji `userID` currently shows on the message, pending changes included.
-    static func emoji(of userID: UUID, in reactions: [MessageReaction]) -> String? {
-        reactions.first(where: { $0.userID == userID })?.emoji
+    static func emojis(of userID: UUID, in reactions: [MessageReaction]) -> [String] {
+        reactions.first(where: { $0.userID == userID })?.emojis ?? []
     }
 
-    /// Chips in Telegram's order: most reactions from others first, then the one that includes
-    /// ours, then the one that appeared first. In a 1:1 chat that is simply the other side's
-    /// reaction, then ours — a stable place, whoever reacted first.
+    /// Our set after picking `emoji`: taken back when it is there, otherwise added — and when
+    /// that makes more than `limit` (the server's `max_per_user`), our oldest goes, so a pick
+    /// always shows.
+    static func toggled(_ emoji: String, in current: [String], limit: Int) -> [String] {
+        if current.contains(emoji) { return current.filter { $0 != emoji } }
+        var next = current + [emoji]
+        let cap = max(1, limit)
+        if next.count > cap { next.removeFirst(next.count - cap) }
+        return next
+    }
+
+    /// One chip per person (both people share one when they picked exactly the same emoji), the
+    /// other side's first and ours after — Telegram's place for them, whoever reacted first.
     static func chips(_ reactions: [MessageReaction], me: UUID?) -> [ReactionChip] {
-        var order: [String] = []
-        var users: [String: [UUID]] = [:]
-        for entry in reactions {
-            guard let emoji = entry.emoji else { continue }
-            if users[emoji] == nil { order.append(emoji) }
-            users[emoji, default: []].append(entry.userID)
-        }
-        let chips = order.map { emoji in
-            let ids = users[emoji] ?? []
-            return ReactionChip(emoji: emoji, userIDs: ids, includesMe: me.map(ids.contains) ?? false)
+        var chips: [ReactionChip] = []
+        for entry in reactions where entry.isLive {
+            if let index = chips.firstIndex(where: { Set($0.emojis) == Set(entry.emojis) }) {
+                let users = chips[index].userIDs + [entry.userID]
+                chips[index] = ReactionChip(
+                    emojis: chips[index].emojis,
+                    userIDs: users,
+                    includesMe: me.map(users.contains) ?? false
+                )
+            } else {
+                chips.append(ReactionChip(
+                    emojis: entry.emojis,
+                    userIDs: [entry.userID],
+                    includesMe: entry.userID == me
+                ))
+            }
         }
         return chips.enumerated().sorted { lhs, rhs in
-            let left = lhs.element.userIDs.count - (lhs.element.includesMe ? 1 : 0)
-            let right = rhs.element.userIDs.count - (rhs.element.includesMe ? 1 : 0)
-            if left != right { return left > right }
-            if lhs.element.includesMe != rhs.element.includesMe { return lhs.element.includesMe }
+            if lhs.element.includesMe != rhs.element.includesMe { return !lhs.element.includesMe }
             return lhs.offset < rhs.offset
         }.map(\.element)
     }

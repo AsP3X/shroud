@@ -198,12 +198,12 @@ function MessageRow({
   const voice = message.kind === "voice" && !message.deleted;
   const photo = isPhoto(message);
   const video = isVideo(message);
-  const reacted = !message.deleted && (message.reactions ?? []).some((r) => r.emoji);
+  const reacted = !message.deleted && (message.reactions ?? []).some((r) => r.emojis.length > 0);
   /* What the message already wore when its row appeared (opening a chat isn't news); chips
      added after that pop in. */
   const settledReactions = useRef<ReadonlySet<string> | null>(null);
   settledReactions.current ??= new Set(
-    (message.reactions ?? []).flatMap((r) => (r.emoji ? [r.emoji] : [])),
+    (message.reactions ?? []).flatMap((r) => r.emojis.map((emoji) => `${r.userId}:${emoji}`)),
   );
   const strip = (meta: ReactNode = null) =>
     reacted ? (
@@ -1390,7 +1390,7 @@ export function Thread({
                 selected={
                   (messages.find((m) => m.id === menu.message.id) ?? menu.message).reactions?.find(
                     (r) => r.userId === myId.toLowerCase(),
-                  )?.emoji ?? null
+                  )?.emojis ?? []
                 }
                 onPick={(emoji) => {
                   const target = messages.find((m) => m.id === menu.message.id) ?? menu.message;

@@ -4,8 +4,9 @@ import { Avatar } from "./Avatar";
 import { ALL_REACTIONS, QUICK_REACTIONS, reactionChips, type Reaction } from "../reactions";
 
 /**
- * Chips at the foot of a reacted bubble (Telegram 1:1: the emoji and the reactors' faces instead
- * of a count). `meta` — the bubble's time and ticks — sits at the end of the last chip row.
+ * Chips at the foot of a reacted bubble: each person's emoji in one chip with their face (Telegram
+ * 1:1 shows faces, not counts). Each emoji is its own button — ours are taken back, theirs added to
+ * ours. `meta` — the bubble's time and ticks — sits at the end of the last chip row.
  */
 export function ReactionStrip({
   reactions,
@@ -22,7 +23,7 @@ export function ReactionStrip({
   peerName: string;
   onToggle: (emoji: string) => void;
   meta?: ReactNode;
-  /** Emoji the message already had when its row appeared; only the others pop in. */
+  /** "user:emoji" pairs the message already had when its row appeared; only others pop in. */
   settled?: ReadonlySet<string>;
 }) {
   const me = myId.toLowerCase();
@@ -31,31 +32,37 @@ export function ReactionStrip({
   return (
     <div className="reaction-strip">
       {chips.map((chip) => {
-        const names = chip.userIds.map((id) => (id === me ? "you" : peerName));
-        const isNew = !settled?.has(chip.emoji);
+        const names = chip.userIds.map((id) => (id === me ? "you" : peerName)).join(" and ");
         return (
-          <button
-            key={chip.emoji}
-            type="button"
-            className={`reaction-chip${chip.includesMe ? " is-mine" : ""}${isNew ? " is-new" : ""}`}
-            aria-pressed={chip.includesMe}
-            aria-label={`${chip.emoji}, ${names.join(" and ")}. ${
-              chip.includesMe ? "Remove your reaction" : "React with the same emoji"
-            }`}
-            onClick={(event) => {
-              event.stopPropagation();
-              onToggle(chip.emoji);
-            }}
+          <span
+            key={chip.userIds.join("+")}
+            className={`reaction-chip${chip.includesMe ? " is-mine" : ""}`}
+            role="group"
+            aria-label={`Reactions from ${names}`}
           >
-            <span className="reaction-emoji" aria-hidden="true">
-              {chip.emoji}
-            </span>
+            {chip.emojis.map((emoji) => (
+              <button
+                key={emoji}
+                type="button"
+                className={`reaction-emoji${settled?.has(`${chip.userIds[0]}:${emoji}`) ? "" : " is-new"}`}
+                aria-pressed={chip.includesMe}
+                aria-label={`${emoji}, ${names}. ${
+                  chip.includesMe ? "Remove your reaction" : "React with the same emoji"
+                }`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onToggle(emoji);
+                }}
+              >
+                {emoji}
+              </button>
+            ))}
             <span className="reaction-faces" aria-hidden="true">
               {chip.userIds.slice(0, 3).map((id) => (
                 <Avatar key={id} name={id === me ? myName : peerName} seed={id} size="xs" />
               ))}
             </span>
-          </button>
+          </span>
         );
       })}
       {meta ? <span className="reaction-strip-meta">{meta}</span> : null}
@@ -65,13 +72,13 @@ export function ReactionStrip({
 
 /**
  * The reaction row over a message's menu; "more" grows it in place into Telegram's standard
- * set. Our current reaction is ringed, and picking it again takes it back.
+ * set. Our reactions are ringed, and picking one again takes it back.
  */
 export function ReactionPicker({
   selected,
   onPick,
 }: {
-  selected: string | null;
+  selected: readonly string[];
   onPick: (emoji: string) => void;
 }) {
   const [all, setAll] = useState(false);
@@ -94,8 +101,8 @@ export function ReactionPicker({
           key={emoji}
           type="button"
           role="menuitemradio"
-          className={`reaction-pick${emoji === selected ? " is-selected" : ""}`}
-          aria-checked={emoji === selected}
+          className={`reaction-pick${selected.includes(emoji) ? " is-selected" : ""}`}
+          aria-checked={selected.includes(emoji)}
           aria-label={emoji}
           onClick={(event) => {
             if (event.detail !== 0 && !pressedHere.current) return;

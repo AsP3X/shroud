@@ -1,5 +1,6 @@
 import {
   pageReactionsFor,
+  toggledReactions,
   applyReaction,
   applyReactionChanges,
   isSingleEmoji,
@@ -27,11 +28,14 @@ function check(ok: boolean, what: string): void {
 
 /* --- wire ---------------------------------------------------------------- */
 
-const wire = reactionPayload("🔥", MESSAGE.toUpperCase());
-check(wire === `{"t":"reaction","r":"${MESSAGE}","e":["🔥"]}`, "payload: lowercased id, one emoji");
-check(parseReaction(wire, MESSAGE) === "🔥", "payload round-trips");
+const wire = reactionPayload(["🔥", "👍"], MESSAGE.toUpperCase());
+check(wire === `{"t":"reaction","r":"${MESSAGE}","e":["🔥","👍"]}`, "payload: lowercased id, the whole set");
+check(parseReaction(wire, MESSAGE)?.join() === "🔥,👍", "payload round-trips");
 check(parseReaction(wire, PEER) === null, "a record moved onto another message is dropped");
-check(parseReaction(`{"t":"reaction","r":"${MESSAGE}","e":["❤️","👍"]}`, MESSAGE) === "❤️", "first of several");
+check(
+  parseReaction(`{"t":"reaction","r":"${MESSAGE}","e":["❤️","👍","❤️","ok"]}`, MESSAGE)?.join() === "❤️,👍",
+  "each emoji once, in order; not-emoji dropped",
+);
 check(parseReaction(`{"t":"transcript","r":"${MESSAGE}","c":"x"}`, MESSAGE) === null, "not a reaction");
 check(parseReaction("not json", MESSAGE) === null, "garbage");
 
@@ -46,13 +50,13 @@ for (const text of ["", "a", "1", "ok", "🔥🔥", "❤", " 👍"]) {
 
 const r = (userId: string, emoji: string | null, seq: number, pending = false): Reaction => ({
   userId,
-  emoji,
+  emojis: emoji ? [emoji] : [],
   seq,
   ...(pending ? { pending } : {}),
 });
 
 const replaced = applyReaction([r(PEER, "❤️", 5)], r(PEER, "🔥", 7));
-check(replaced?.[0].emoji === "🔥", "newer change wins");
+check(replaced?.[0].emojis.join() === "🔥", "newer change wins");
 check(applyReaction(replaced!, r(PEER, "👍", 6)) === null, "late older change is ignored");
 check(applyReaction(replaced!, r(PEER, "🔥", 7)) === null, "a replay changes nothing");
 
@@ -63,14 +67,27 @@ check(applyReaction(removed, r(PEER, "❤️", 5)) === null, "removal cannot be 
 check(applyReaction([r(ME, "👍", 3, true)], r(ME, "😢", 8)) === null, "our pending tap outlives events");
 check(replacingReaction([r(ME, "👍", 3, true)], ME, r(ME, "👍", 10))[0].pending === undefined, "ack replaces");
 
-const chips = reactionChips([r(PEER, "❤️", 2), r(ME, "❤️", 3), r(PEER.replace("b", "c"), "🔥", 4)], ME);
-check(chips.length === 2 && chips[0].userIds.length === 2 && chips[0].includesMe, "chips group by emoji");
-const order = reactionChips([r(ME, "👍", 1), r(PEER, "🔥", 2)], ME).map((chip) => chip.emoji);
-check(order.join() === "🔥,👍", "Telegram order: the other side's reaction, then ours");
+const several = reactionChips(
+  [{ userId: PEER, emojis: ["❤️", "🔥", "👍"], seq: 2 }, { userId: ME, emojis: ["😮"], seq: 3 }],
+  ME,
+);
+check(several.length === 2 && several[0].emojis.join() === "❤️,🔥,👍", "one chip per person, emoji combined");
+const shared = reactionChips(
+  [{ userId: PEER, emojis: ["❤️", "🔥"], seq: 2 }, { userId: ME, emojis: ["🔥", "❤️"], seq: 3 }],
+  ME,
+);
+check(shared.length === 1 && shared[0].userIds.length === 2 && shared[0].includesMe, "same set, one chip");
+const order = reactionChips([r(ME, "👍", 1), r(PEER, "🔥", 2)], ME).map((chip) => chip.emojis.join());
+check(order.join() === "🔥,👍", "Telegram order: the other side's chip, then ours");
+
+check(toggledReactions("🔥", ["❤️"], 5).join() === "❤️,🔥", "a pick adds");
+check(toggledReactions("❤️", ["❤️", "🔥"], 5).join() === "🔥", "a second pick takes it back");
+check(toggledReactions("🎉", ["❤️", "🔥", "👍", "😮", "🙏"], 5).join() === "🔥,👍,😮,🙏,🎉", "past the limit, oldest goes");
+check(toggledReactions("❤️", [], 0).join() === "❤️", "never below one");
 
 const thread = [{ id: MESSAGE, deleted: false, reactions: [] } as unknown as ChatMessage];
 const next = applyReactionChanges(thread, [{ messageId: MESSAGE.toUpperCase(), reaction: r(PEER, "😮", 11) }]);
-check(next !== thread && next[0].reactions?.[0].emoji === "😮", "changes fold into the thread");
+check(next !== thread && next[0].reactions?.[0].emojis.join() === "😮", "changes fold into the thread");
 check(applyReactionChanges(next, [{ messageId: MESSAGE, reaction: r(PEER, "😮", 11) }]) === next, "no-op keeps identity");
 
 /* --- history pages ------------------------------------------------------- */

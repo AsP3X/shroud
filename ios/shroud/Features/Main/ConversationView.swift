@@ -1879,7 +1879,7 @@ struct ConversationView: View {
                 dismissMessageMenu()
                 reactAfterMenu(emoji, to: message, from: source)
             },
-            selectedReaction: messaging.myReaction(on: liveMessage(message)),
+            selectedReactions: Set(messaging.myReactions(on: liveMessage(message))),
             showsReactions: messaging.canReact(to: liveMessage(message)),
             onBackdropTap: {
                 // The finger that opened the menu is usually still down; its release lands on
@@ -1928,7 +1928,7 @@ struct ConversationView: View {
         let me = messaging.myUserID
         return ReactionMerge.chips(message.reactions, me: me).map { chip in
             ReactionChipContent(
-                emoji: chip.emoji,
+                emojis: chip.emojis,
                 reactors: chip.userIDs.map { id in
                     id == me
                         ? ReactionChipContent.Reactor(id: id, name: messaging.myUsername ?? "You", isMe: true)
@@ -1954,7 +1954,7 @@ struct ConversationView: View {
         from source: CGRect?
     ) {
         let live = liveMessage(message)
-        if let source, messaging.canReact(to: live), messaging.myReaction(on: live) != emoji {
+        if let source, messaging.canReact(to: live), !messaging.myReactions(on: live).contains(emoji) {
             beginReactionFlight(emoji, messageID: message.id, from: source)
         }
         let settle = reduceMotion ? Motion.reducedDuration : Motion.menuDropDuration
@@ -1966,7 +1966,7 @@ struct ConversationView: View {
 
     /// Double tap on a text bubble: Telegram's quick reaction, flying out from under the finger.
     private func quickReact(_ message: MessagingController.ChatMessage, at point: CGPoint) {
-        if messaging.myReaction(on: message) != Self.quickReaction {
+        if !messaging.myReactions(on: message).contains(Self.quickReaction) {
             let start = CGRect(x: point.x - 22, y: point.y - 22, width: 44, height: 44)
             beginReactionFlight(Self.quickReaction, messageID: message.id, from: start, scale: 1.6)
         }

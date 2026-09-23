@@ -67,7 +67,12 @@ struct MessagesService: Sendable {
         )
     }
 
-    /// Sets or replaces our reaction on a message.
+    /// Server settings for clients (the reaction limit).
+    func clientConfig(token: String) async throws -> ClientConfigDTO {
+        try await client.get("config", as: ClientConfigDTO.self, bearerToken: token)
+    }
+
+    /// Sets or replaces our reactions on a message (the whole set).
     func putReaction(messageID: UUID, ciphertext: Data, token: String) async throws -> ReactionDTO {
         try await client.put(
             "messages/\(messageID.uuidString.lowercased())/reaction",

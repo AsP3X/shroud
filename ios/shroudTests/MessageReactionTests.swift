@@ -11,8 +11,8 @@ struct MessageReactionTests {
     private let me = UUID()
     private let peer = UUID()
 
-    private func entry(_ user: UUID, _ emoji: String?, _ seq: Int64, pending: Bool = false) -> MessageReaction {
-        MessageReaction(userID: user, emoji: emoji, seq: seq, pending: pending)
+    private func entry(_ user: UUID, _ emojis: [String], _ seq: Int64, pending: Bool = false) -> MessageReaction {
+        MessageReaction(userID: user, emojis: emojis, seq: seq, pending: pending)
     }
 
     // MARK: - Wire format
@@ -20,21 +20,23 @@ struct MessageReactionTests {
     @Test
     func payloadRoundTripsAndBindsTheMessage() throws {
         let message = UUID()
-        let data = try JSONEncoder().encode(MessageReactionPayload.make("🔥", for: message))
+        let data = try JSONEncoder().encode(MessageReactionPayload.make(["🔥", "👍"], for: message))
         let json = try #require(String(data: data, encoding: .utf8))
         #expect(json.contains("\"t\":\"reaction\""))
         #expect(json.contains(message.uuidString.lowercased()))
-        #expect(MessageReactionPayload.parse(data, for: message) == "🔥")
+        #expect(MessageReactionPayload.parse(data, for: message) == ["🔥", "👍"])
         // A genuine record moved onto another message by the server is dropped.
         #expect(MessageReactionPayload.parse(data, for: UUID()) == nil)
     }
 
     @Test
-    func webPayloadParses() {
+    func webPayloadParses() throws {
         let message = UUID()
-        let json = #"{"t":"reaction","r":"\#(message.uuidString.lowercased())","e":["❤️","👍"]}"#
-        // A newer build may send several; this one shows the first.
-        #expect(MessageReactionPayload.parse(Data(json.utf8), for: message) == "❤️")
+        let json = #"{"t":"reaction","r":"\#(message.uuidString.lowercased())","e":["❤️","👍","❤️","ok"]}"#
+        // Each emoji once, in order; anything that isn't one emoji is dropped.
+        #expect(MessageReactionPayload.parse(Data(json.utf8), for: message) == ["❤️", "👍"])
+        let flood = try JSONEncoder().encode(MessageReactionPayload.make(MessageReactionBar.expanded, for: message))
+        #expect(MessageReactionPayload.parse(flood, for: message)?.count == MessageReactionPayload.readerCap)
         #expect(MessageReactionPayload.parse(Data(#"{"t":"transcript","r":"x","c":"y"}"#.utf8), for: message) == nil)
     }
 
@@ -53,7 +55,7 @@ struct MessageReactionTests {
         let ours = Curve25519.KeyAgreement.PrivateKey()
         let theirs = Curve25519.KeyAgreement.PrivateKey()
         let message = UUID()
-        let plaintext = try JSONEncoder().encode(MessageReactionPayload.make("😮", for: message))
+        let plaintext = try JSONEncoder().encode(MessageReactionPayload.make(["😮"], for: message))
         let sealed = try MessageCrypto.seal(
             plaintext: plaintext,
             toPeerIdentityPublicKey: theirs.publicKey.rawRepresentation,
@@ -74,62 +76,62 @@ struct MessageReactionTests {
             senderIdentityPublicKey: ours.publicKey.rawRepresentation,
             as: .sender
         )
-        #expect(MessageReactionPayload.parse(forPeer, for: message) == "😮")
-        #expect(MessageReactionPayload.parse(forUs, for: message) == "😮")
+        #expect(MessageReactionPayload.parse(forPeer, for: message) == ["😮"])
+        #expect(MessageReactionPayload.parse(forUs, for: message) == ["😮"])
     }
 
     // MARK: - Merge
 
     @Test
     func newerChangeWinsAndOlderIsIgnored() throws {
-        let held = [entry(peer, "❤️", 5)]
-        let replaced = try #require(ReactionMerge.apply(entry(peer, "🔥", 7), to: held))
-        #expect(replaced == [entry(peer, "🔥", 7)])
-        #expect(ReactionMerge.apply(entry(peer, "👍", 6), to: replaced) == nil, "a late event is stale")
-        #expect(ReactionMerge.apply(entry(peer, "🔥", 7), to: replaced) == nil, "a replay changes nothing")
+        let held = [entry(peer, ["❤️"], 5)]
+        let replaced = try #require(ReactionMerge.apply(entry(peer, ["🔥"], 7), to: held))
+        #expect(replaced == [entry(peer, ["🔥"], 7)])
+        #expect(ReactionMerge.apply(entry(peer, ["👍"], 6), to: replaced) == nil, "a late event is stale")
+        #expect(ReactionMerge.apply(entry(peer, ["🔥"], 7), to: replaced) == nil, "a replay changes nothing")
     }
 
     @Test
     func removalIsKeptSoAnOlderSetCannotResurrectIt() throws {
-        let removed = try #require(ReactionMerge.apply(entry(peer, nil, 9), to: [entry(peer, "❤️", 5)]))
+        let removed = try #require(ReactionMerge.apply(entry(peer, [], 9), to: [entry(peer, ["❤️"], 5)]))
         #expect(ReactionMerge.chips(removed, me: me).isEmpty)
-        #expect(ReactionMerge.apply(entry(peer, "❤️", 5), to: removed) == nil)
+        #expect(ReactionMerge.apply(entry(peer, ["❤️"], 5), to: removed) == nil)
     }
 
     @Test
     func pendingChangeOfOursOutlivesServerEvents() {
-        let held = [entry(me, "👍", 3, pending: true)]
+        let held = [entry(me, ["👍"], 3, pending: true)]
         // Our other device's older state arriving over the socket must not undo the tap.
-        #expect(ReactionMerge.apply(entry(me, "😢", 8), to: held) == nil)
-        let confirmed = ReactionMerge.replacing(me, with: entry(me, "👍", 10), in: held)
-        #expect(confirmed == [entry(me, "👍", 10)])
+        #expect(ReactionMerge.apply(entry(me, ["😢"], 8), to: held) == nil)
+        let confirmed = ReactionMerge.replacing(me, with: entry(me, ["👍"], 10), in: held)
+        #expect(confirmed == [entry(me, ["👍"], 10)])
     }
 
     @Test
     func pageReconcileDropsWhatThePageNoLongerLists() {
-        let held = [entry(peer, "❤️", 4), entry(me, "👍", 12)]
+        let held = [entry(peer, ["❤️"], 4), entry(me, ["👍"], 12)]
         // Snapshot 10: the peer's heart is gone by then; our 12 happened after the page was read.
         let result = ReactionMerge.reconcile(held: held, page: [], snapshot: 10)
-        #expect(result == [entry(me, "👍", 12)])
+        #expect(result == [entry(me, ["👍"], 12)])
     }
 
     @Test
     func pageReconcileTakesThePageUpToItsSnapshot() {
-        let held = [entry(peer, "❤️", 4), entry(me, nil, 6)]
-        let page = [entry(peer, "🔥", 9)]
+        let held = [entry(peer, ["❤️"], 4), entry(me, [], 6)]
+        let page = [entry(peer, ["🔥"], 9)]
         #expect(ReactionMerge.reconcile(held: held, page: page, snapshot: 9) == page)
-        let pending = entry(me, "😮", 6, pending: true)
-        #expect(ReactionMerge.reconcile(held: [pending], page: page, snapshot: 9) == [entry(peer, "🔥", 9), pending])
+        let pending = entry(me, ["😮"], 6, pending: true)
+        #expect(ReactionMerge.reconcile(held: [pending], page: page, snapshot: 9) == [entry(peer, ["🔥"], 9), pending])
     }
 
     @Test
     func pageEntryNewerThanItsSnapshotBeatsAnOlderHeldOne() {
         // The server reads the snapshot before the page: the page may carry seq 12 > 10.
-        let held = [entry(peer, "❤️", 11)]
-        let page = [entry(peer, "🔥", 12)]
+        let held = [entry(peer, ["❤️"], 11)]
+        let page = [entry(peer, ["🔥"], 12)]
         #expect(ReactionMerge.reconcile(held: held, page: page, snapshot: 10) == page)
         // …while a held entry newer than both still wins.
-        #expect(ReactionMerge.reconcile(held: [entry(peer, "😮", 13)], page: page, snapshot: 10) == [entry(peer, "😮", 13)])
+        #expect(ReactionMerge.reconcile(held: [entry(peer, ["😮"], 13)], page: page, snapshot: 10) == [entry(peer, ["😮"], 13)])
     }
 
     @Test
@@ -171,18 +173,35 @@ struct MessageReactionTests {
     }
 
     @Test
-    func chipsGroupByEmojiInFirstSeenOrder() {
-        let reactions = [entry(peer, "❤️", 2), entry(me, "❤️", 3)]
-        let chips = ReactionMerge.chips(reactions, me: me)
-        #expect(chips.count == 1)
-        #expect(chips[0].userIDs == [peer, me])
-        #expect(chips[0].includesMe)
+    func onePersonsReactionsShareOneChip() {
+        // Several emoji by one person: one chip, not one per emoji.
+        let chips = ReactionMerge.chips([entry(peer, ["❤️", "🔥", "👍"], 2), entry(me, ["😮"], 3)], me: me)
+        #expect(chips.map(\.emojis) == [["❤️", "🔥", "👍"], ["😮"]])
+        #expect(chips.map(\.includesMe) == [false, true])
 
-        // Telegram's order: the other side's reaction first, ours after, whoever came first.
-        let split = ReactionMerge.chips([entry(me, "👍", 1), entry(peer, "🔥", 2)], me: me)
-        #expect(split.map(\.emoji) == ["🔥", "👍"])
-        #expect(split.map(\.includesMe) == [false, true])
-        #expect(ReactionMerge.emoji(of: me, in: [entry(me, "👍", 1)]) == "👍")
+        // The same emoji picked by both people: one chip with both faces.
+        let shared = ReactionMerge.chips([entry(peer, ["❤️", "🔥"], 2), entry(me, ["🔥", "❤️"], 3)], me: me)
+        #expect(shared.count == 1)
+        #expect(shared[0].userIDs == [peer, me])
+        #expect(shared[0].includesMe)
+
+        // The other side's chip first, ours after, whoever reacted first.
+        let order = ReactionMerge.chips([entry(me, ["👍"], 1), entry(peer, ["🔥"], 2)], me: me)
+        #expect(order.map(\.emojis) == [["🔥"], ["👍"]])
+        #expect(ReactionMerge.emojis(of: me, in: [entry(me, ["👍", "🔥"], 1)]) == ["👍", "🔥"])
+    }
+
+    @Test
+    func pickingTogglesAndTheLimitDropsTheOldest() {
+        #expect(ReactionMerge.toggled("❤️", in: [], limit: 5) == ["❤️"])
+        #expect(ReactionMerge.toggled("🔥", in: ["❤️"], limit: 5) == ["❤️", "🔥"])
+        #expect(ReactionMerge.toggled("❤️", in: ["❤️", "🔥"], limit: 5) == ["🔥"], "a second pick takes it back")
+        let full = ["❤️", "🔥", "👍", "😮", "🙏"]
+        #expect(ReactionMerge.toggled("🎉", in: full, limit: 5) == ["🔥", "👍", "😮", "🙏", "🎉"])
+        // A limit lowered on the server trims on the next pick, never before.
+        #expect(ReactionMerge.toggled("🎉", in: full, limit: 3) == ["😮", "🙏", "🎉"])
+        #expect(ReactionMerge.toggled("❤️", in: full, limit: 3) == ["🔥", "👍", "😮", "🙏"])
+        #expect(ReactionMerge.toggled("❤️", in: [], limit: 0) == ["❤️"], "never below one")
     }
 
     @Test
@@ -190,7 +209,7 @@ struct MessageReactionTests {
         let message = MessagingController.ChatMessage(
             id: UUID(), peerUserID: peer, senderUserID: peer, text: "hi",
             createdAt: Date(timeIntervalSince1970: 1_700_000_000), isMine: false, deleted: false,
-            reactions: [entry(peer, "❤️", 4), entry(me, nil, 5)]
+            reactions: [entry(peer, ["❤️"], 4), entry(me, [], 5)]
         )
         let stored = LocalMessageStore.StoredMessage.from(message)
         let data = try JSONEncoder().encode(stored)

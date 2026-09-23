@@ -62,7 +62,7 @@ envelope. What the two clients agree on *inside* that envelope:
 | Link with a large preview image | `content_type = media`: `MediaMessagePayload` with `t:"link"`, `c` = the whole message text, `lp`, and the image as the encrypted blob | iOS `deliverLinkWithImage` (read by `web/src/crypto/mediaPayload.ts`) |
 | Media | `MediaMessagePayload` JSON (`t`, `mime`, `k`, …), with the same `re` object when it is a reply | `MediaModels.swift` / `web/src/crypto/mediaPayload.ts` |
 | Annotation | `{"t":"transcript","r":<message id>,"c":<text>}` | `MessageAnnotation` |
-| Reaction (not a message: `PUT /messages/{id}/reaction`) | `{"t":"reaction","r":<message id>,"e":[<emoji>]}`, always a v2 envelope | `MessageReaction.swift` / `web/src/reactions.ts` |
+| Reaction (not a message: `PUT /messages/{id}/reaction`) | `{"t":"reaction","r":<message id>,"e":[<emoji>, …]}` (the person's whole set, oldest first), always a tagged v2 envelope | `MessageReaction.swift` / `web/src/reactions.ts` |
 
 `re` carries the quoted message's id (`id`), its author (`u`), its kind (`k`) and a ≤120-character
 snippet (`x`) so a quote still reads when the original has aged out of the local window. Anything
@@ -70,21 +70,28 @@ that does not parse as one of these shapes is treated as plain text, which is wh
 new builds interoperable in both directions.
 
 **Reactions** are not messages. Each user has at most one sealed record per message on the server
-(`message_reactions`, migration 020), so the server learns who reacted to which message and when,
-never the emoji. They are sealed as a v2 envelope (identity boxes only, with the sender tag), not
-through the Double Ratchet: a reaction is overwritten in place, so ratchet steps would be lost, and
-every device must be able to open it at any time. That costs forward secrecy for the emoji only.
-`r` binds the record to its message — a reader drops a reaction whose `r` is not the message it is
-attached to, which stops the server moving a genuine box onto another message. `e` is a list so
-several reactions per user need no new format; v1 clients send one and read the first. A reader
-accepts one emoji of at most 32 bytes and ignores anything else. Clients keep the highest `seq` per
-(message, user) and catch up per conversation with `GET /conversations/{peer}/reactions?after_seq=`
-(removals come back with a null ciphertext).
+(`message_reactions`, migration 020) — their whole set of emoji — so the server learns who reacted
+to which message and when, never the emoji or how many. They are sealed as a v2 envelope (identity
+boxes only, with the sender tag), not through the Double Ratchet: a reaction is overwritten in
+place, so ratchet steps would be lost, and every device must be able to open it at any time. That
+costs forward secrecy for the emoji only. A reader accepts only a *tagged* v2 box, from one of the
+chat's two people: every build that writes reactions tags, so an untagged one could only be the
+server's invention. `r` binds the record to its message — a reader drops a reaction whose `r` is
+not the message it is attached to, which stops the server moving a genuine box onto another message.
+
+`e` holds the person's set, oldest first. How many one person may leave is a server setting
+(`REACTIONS_MAX_PER_USER`, default 5, handed out by `GET /config`); clients enforce it when adding
+(a pick past it drops the oldest), since the server can't count sealed emoji. A reader keeps each
+single emoji of at most 32 bytes once, up to 20, and ignores anything else. Each person's emoji
+share one chip under the bubble. Clients keep the highest `seq` per (message, user) and catch up per
+conversation with `GET /conversations/{peer}/reactions?after_seq=` (removals come back with a null
+ciphertext).
 
 What reactions do not protect against: a removal is not sealed (it is the absence of a
 ciphertext), so the server can hide a reaction, or put back an older genuine one for the same
-message and user. It cannot invent one, change the emoji, or move one to another message. The
-unseen-reaction badge is server metadata of the same kind as read receipts.
+message and user. It cannot invent one, change the emoji, or move one to another message. A
+modified client can leave more emoji than the limit, up to the 4 KiB record cap; readers show at
+most 20. The unseen-reaction badge is server metadata of the same kind as read receipts.
 
 `lp` is a link preview (`LinkPreview.swift` / `web/src/links.ts`): `u` the page URL (http/https
 only), `n` site name, `ti` title, `d` description, `th` a ≤6 KB square JPEG for the small layout,

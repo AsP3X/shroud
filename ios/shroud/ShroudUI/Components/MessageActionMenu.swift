@@ -31,8 +31,8 @@ struct MessageReactionBar: View {
     var onMore: () -> Void
     /// 0…1 continuous progress (drives opacity + offset; avoid Bool for smooth close).
     var progress: CGFloat = 1
-    /// Our current reaction on the message: ringed, and tapping it takes it back.
-    var selected: String? = nil
+    /// Our reactions on the message: ringed, and tapping one takes it back.
+    var selected: Set<String> = []
 
     @State private var pickFrames = ReactionPickFrames()
 
@@ -82,7 +82,7 @@ struct MessageReactionBar: View {
                             pickFrames.frames[emoji] = frame
                         }
                         .background {
-                            if emoji == selected {
+                            if selected.contains(emoji) {
                                 Circle().fill(Color.white.opacity(0.18))
                                     .frame(width: Self.emojiSize + 4, height: Self.emojiSize + 4)
                             }
@@ -92,7 +92,7 @@ struct MessageReactionBar: View {
                 // Emoji squash hard on press — the most playful control in the app.
                 .pressable(scale: 0.78, dimming: 0)
                 .accessibilityLabel(emoji)
-                .accessibilityAddTraits(emoji == selected ? .isSelected : [])
+                .accessibilityAddTraits(selected.contains(emoji) ? .isSelected : [])
             }
             Button(action: onMore) {
                 Image(systemName: "chevron.down")
@@ -127,7 +127,7 @@ struct MessageReactionBar: View {
 /// The reaction bar grown in place into Telegram's full standard set, over the bubble.
 struct MessageReactionGrid: View {
     var onReaction: (String, CGRect?) -> Void
-    var selected: String? = nil
+    var selected: Set<String> = []
 
     @State private var pickFrames = ReactionPickFrames()
 
@@ -156,7 +156,7 @@ struct MessageReactionGrid: View {
                                 pickFrames.frames[emoji] = frame
                             }
                             .background {
-                                if emoji == selected {
+                                if selected.contains(emoji) {
                                     Circle().fill(Color.white.opacity(0.18))
                                 }
                             }
@@ -164,7 +164,7 @@ struct MessageReactionGrid: View {
                     }
                     .pressable(scale: 0.78, dimming: 0)
                     .accessibilityLabel(emoji)
-                    .accessibilityAddTraits(emoji == selected ? .isSelected : [])
+                    .accessibilityAddTraits(selected.contains(emoji) ? .isSelected : [])
                 }
             }
             .padding(Self.padding)
@@ -419,8 +419,8 @@ struct MessageMenuOverlay<Hero: View, Card: View>: View {
     /// 0 = bubble in its list slot, 1 = menu open.
     let progress: CGFloat
     var onReaction: (String, CGRect?) -> Void
-    /// Our current reaction on the message, ringed in the bar and the grid.
-    var selectedReaction: String? = nil
+    /// Our reactions on the message, ringed in the bar and the grid.
+    var selectedReactions: Set<String> = []
     /// False for a message that can't take reactions (still sending, failed, a todo): no bar,
     /// and the bubble no longer makes room for one.
     var showsReactions: Bool = true
@@ -497,7 +497,7 @@ struct MessageMenuOverlay<Hero: View, Card: View>: View {
                 EmptyView()
             } else if showsAllReactions {
                 let grid = gridFrame(bar: chrome.reactions, container: proxy.size, safeArea: safeArea)
-                MessageReactionGrid(onReaction: onReaction, selected: selectedReaction)
+                MessageReactionGrid(onReaction: onReaction, selected: selectedReactions)
                     .frame(width: grid.width, height: grid.height)
                     .position(x: grid.midX, y: grid.midY)
                     .opacity(progress)
@@ -513,7 +513,7 @@ struct MessageMenuOverlay<Hero: View, Card: View>: View {
                         }
                     },
                     progress: progress,
-                    selected: selectedReaction
+                    selected: selectedReactions
                 )
                 .frame(width: chrome.reactions.width, height: chrome.reactions.height)
                 .position(x: chrome.reactions.midX, y: chrome.reactions.midY)

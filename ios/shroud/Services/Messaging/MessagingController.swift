@@ -130,6 +130,10 @@ final class MessagingController {
     /// The last reaction of ours that could not be saved; the chip was put back. The chat shows
     /// it as a toast.
     private(set) var reactionFailure: ReactionFailure?
+    /// Most emoji one person may leave on one message: the server's setting (`GET /config`),
+    /// remembered for offline starts. 5 until the server has said.
+    private(set) var reactionLimit: Int = UserDefaults.standard.object(forKey: MessagingController.reactionLimitKey) as? Int ?? 5
+    nonisolated static let reactionLimitKey = "shroud.reactions.maxPerUser"
     /// Saves of threads whose reactions changed, batched: a burst of events writes once.
     private var reactionPersistTasks: [UUID: Task<Void, Never>] = [:]
     /// Highest reaction seq this device marked seen per chat. A conversations refresh that
@@ -428,6 +432,7 @@ final class MessagingController {
             await refreshContacts()
             await refreshConversations()
             await refreshPrivacySettings()
+            await refreshServerConfig()
             await flushPendingSends()
         }
     }
@@ -533,6 +538,7 @@ final class MessagingController {
             await refreshContacts()
             await refreshConversations()
             await refreshPrivacySettings()
+            await refreshServerConfig()
             if let peer = activePeerID, !isNotesChat(peer) {
                 await loadThread(peerUserID: peer)
             }
@@ -4635,8 +4641,8 @@ extension MessagingController {
 
     fileprivate struct ReactionIntent {
         let storePeerID: UUID
-        /// Nil removes our reaction.
-        let emoji: String?
+        /// Our whole set; empty removes our record.
+        let emojis: [String]
     }
 
     fileprivate struct ReactionRollback {
@@ -4660,16 +4666,29 @@ extension MessagingController {
             && message.sendError == nil
     }
 
-    /// The emoji we show on `message`, unconfirmed changes included.
-    func myReaction(on message: ChatMessage) -> String? {
-        guard let me = sessionController?.userID else { return nil }
-        return ReactionMerge.emoji(of: me, in: message.reactions)
+    /// The emoji we show on `message`, oldest first, unconfirmed changes included.
+    func myReactions(on message: ChatMessage) -> [String] {
+        guard let me = sessionController?.userID else { return [] }
+        return ReactionMerge.emojis(of: me, in: message.reactions)
     }
 
-    /// Picking an emoji: sets it, or takes it back when it already is ours (Telegram).
+    /// Picking an emoji: takes it back when it is ours, otherwise adds it — past the server's
+    /// limit our oldest goes (`ReactionMerge.toggled`).
     func toggleReaction(_ emoji: String, on messageID: UUID, peerUserID: UUID) {
         guard let message = threads[peerUserID]?.first(where: { $0.id == messageID }) else { return }
-        setMyReaction(myReaction(on: message) == emoji ? nil : emoji, on: messageID, peerUserID: peerUserID)
+        let next = ReactionMerge.toggled(emoji, in: myReactions(on: message), limit: reactionLimit)
+        setMyReactions(next, on: messageID, peerUserID: peerUserID)
+    }
+
+    /// Reads the server's settings for clients (the reaction limit); keeps the last answer.
+    func refreshServerConfig() async {
+        guard let token = sessionController?.bearerToken,
+              let config = try? await messagesService.clientConfig(token: token)
+        else { return }
+        let limit = max(1, config.reactions.maxPerUser)
+        guard limit != reactionLimit else { return }
+        reactionLimit = limit
+        UserDefaults.standard.set(limit, forKey: Self.reactionLimitKey)
     }
 
     /// Shows our reaction at once and saves it in the background.
@@ -4678,25 +4697,26 @@ extension MessagingController {
     /// when it returns, one more request carries the last choice. If that fails the chip goes
     /// back to what the server holds and `reactionFailure` is set.
     /// Agent: WRITES threads[peerUserID] (pending entry); CALLS drainReactionIntents.
-    func setMyReaction(_ emoji: String?, on messageID: UUID, peerUserID: UUID) {
+    func setMyReactions(_ emojis: [String], on messageID: UUID, peerUserID: UUID) {
         guard let me = sessionController?.userID,
               var thread = threads[peerUserID],
               let index = thread.firstIndex(where: { $0.id == messageID }),
-              canReact(to: thread[index])
+              canReact(to: thread[index]),
+              emojis.allSatisfy(MessageReactionPayload.isSingleEmoji),
+              Set(emojis).count == emojis.count
         else { return }
-        if let emoji, !MessageReactionPayload.isSingleEmoji(emoji) { return }
         let reactions = thread[index].reactions
         let current = reactions.first(where: { $0.userID == me })
-        guard current?.emoji != emoji else { return }
+        guard (current?.emojis ?? []) != emojis else { return }
 
         if reactionSendTasks[messageID] == nil {
             reactionRollback[messageID] = ReactionRollback(entry: current, cursor: reactionCursors()[peerUserID])
         }
-        let optimistic = MessageReaction(userID: me, emoji: emoji, seq: current?.seq ?? 0, pending: true)
+        let optimistic = MessageReaction(userID: me, emojis: emojis, seq: current?.seq ?? 0, pending: true)
         thread[index].reactions = ReactionMerge.replacing(me, with: optimistic, in: reactions)
         threads[peerUserID] = thread
 
-        reactionIntents[messageID] = ReactionIntent(storePeerID: peerUserID, emoji: emoji)
+        reactionIntents[messageID] = ReactionIntent(storePeerID: peerUserID, emojis: emojis)
         if reactionSendTasks[messageID] == nil {
             reactionSendTasks[messageID] = Task { [weak self] in
                 await self?.drainReactionIntents(messageID)
@@ -4712,8 +4732,8 @@ extension MessagingController {
             do {
                 let dto = try await sendReaction(intent, messageID: messageID)
                 // 204 on a removal: the server held none, which is what we wanted.
-                let confirmed = dto.map { MessageReaction(userID: me, emoji: intent.emoji, seq: $0.seq) }
-                    ?? reactionRollback[messageID]?.entry.map { MessageReaction(userID: me, emoji: nil, seq: $0.seq) }
+                let confirmed = dto.map { MessageReaction(userID: me, emojis: intent.emojis, seq: $0.seq) }
+                    ?? reactionRollback[messageID]?.entry.map { MessageReaction(userID: me, emojis: [], seq: $0.seq) }
                 reactionRollback[messageID]?.entry = confirmed
                 if reactionIntents[messageID] == nil {
                     replaceMyReaction(confirmed, on: messageID, peerUserID: intent.storePeerID, me: me)
@@ -4750,10 +4770,10 @@ extension MessagingController {
               let token = sessionController?.bearerToken,
               let material = cryptoController?.material
         else { throw APIError.transport("offline") }
-        guard let emoji = intent.emoji else {
+        guard !intent.emojis.isEmpty else {
             return try await messagesService.deleteReaction(messageID: messageID, token: token)
         }
-        let plaintext = try JSONEncoder().encode(MessageReactionPayload.make(emoji, for: messageID))
+        let plaintext = try JSONEncoder().encode(MessageReactionPayload.make(intent.emojis, for: messageID))
         let peerPublic = isNotesChat(intent.storePeerID)
             ? material.identityPublicKeyData
             : try await peerIdentityForSending(peerUserID: intent.storePeerID, token: token)
@@ -4803,7 +4823,7 @@ extension MessagingController {
         material: IdentityKeyMaterial,
         token: String
     ) async -> MessageReaction {
-        let removed = MessageReaction(userID: dto.userId, emoji: nil, seq: dto.seq)
+        let removed = MessageReaction(userID: dto.userId, emojis: [], seq: dto.seq)
         guard let ciphertext = dto.ciphertext else { return removed }
         if let known = held.first(where: { $0.userID == dto.userId && $0.seq == dto.seq && !$0.pending }) {
             return known
@@ -4830,8 +4850,8 @@ extension MessagingController {
                     as: .recipient
                 )
             }
-            let emoji = MessageReactionPayload.parse(plaintext, for: dto.messageId)
-            return MessageReaction(userID: dto.userId, emoji: emoji, seq: dto.seq)
+            let emojis = MessageReactionPayload.parse(plaintext, for: dto.messageId) ?? []
+            return MessageReaction(userID: dto.userId, emojis: emojis, seq: dto.seq)
         } catch {
             return removed
         }

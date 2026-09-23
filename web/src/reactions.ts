@@ -2,10 +2,11 @@
  * Message reactions: the sealed wire payload (shared with iOS `MessageReactionPayload`), and the
  * last-write-wins rules that fold server changes into a thread.
  *
- * A reaction is not a message. The server keeps one sealed record per (message, user) and learns
- * who reacted to which message, never the emoji (`PUT /messages/{id}/reaction`). `r` ties the
- * record to its message so the server cannot move it onto another; a removal keeps its entry with
- * `emoji: null`, so a late, older change cannot bring the reaction back. See docs/architecture.md.
+ * A reaction is not a message. The server keeps one sealed record per (message, user) — the
+ * person's whole set of emoji, up to the server's `max_per_user` — and learns who reacted to which
+ * message, never the emoji (`PUT /messages/{id}/reaction`). `r` ties the record to its message so
+ * the server cannot move it onto another; a removal keeps its entry with no emoji, so a late,
+ * older change cannot bring the reactions back. See docs/architecture.md.
  */
 import { api, type WireReaction } from "./api/client";
 import { utf8, utf8decode } from "./crypto/bytes";
@@ -20,15 +21,24 @@ import type { ChatMessage } from "./messaging";
 
 export type Reaction = {
   userId: string;
-  /** Null when the user took their reaction back. */
-  emoji: string | null;
+  /** Oldest first; empty when the user took their reactions back. */
+  emojis: string[];
   /** The server's change cursor; the highest per user wins. */
   seq: number;
   /** Our own change the server has not confirmed yet; it keeps the previous `seq`. */
   pending?: boolean;
 };
 
-export type ReactionChip = { emoji: string; userIds: string[]; includesMe: boolean };
+/**
+ * One person's emoji and face — or both faces, when the two picked exactly the same emoji. Several
+ * reactions by one person share one chip.
+ */
+export type ReactionChip = { emojis: string[]; userIds: string[]; includesMe: boolean };
+
+/** How many emoji one person may leave on a message until the server says otherwise. */
+export const DEFAULT_REACTION_LIMIT = 5;
+/** Most emoji a reader shows from one record, whatever the server's limit is today. */
+export const READER_CAP = 20;
 
 /** The bar under a message's menu: Telegram's quick seven. */
 export const QUICK_REACTIONS = ["❤️", "🔥", "👍", "😢", "🙏", "😮", "👎"];
@@ -54,21 +64,40 @@ export function isSingleEmoji(text: string): boolean {
   return /^\p{Emoji}/u.test(text) && [...text].length > 1;
 }
 
-export function reactionPayload(emoji: string, messageId: string): string {
-  return JSON.stringify({ t: "reaction", r: messageId.toLowerCase(), e: [emoji] });
+export function reactionPayload(emojis: string[], messageId: string): string {
+  return JSON.stringify({ t: "reaction", r: messageId.toLowerCase(), e: emojis });
 }
 
-/** The emoji in `raw` when it is a reaction to `messageId`, else null. */
-export function parseReaction(raw: string, messageId: string): string | null {
+/**
+ * The emoji in `raw` when it is a reaction to `messageId` — single emoji only, each once, oldest
+ * first, at most `READER_CAP` — else null.
+ */
+export function parseReaction(raw: string, messageId: string): string[] | null {
   try {
     const value = JSON.parse(raw) as { t?: unknown; r?: unknown; e?: unknown } | null;
     if (!value || value.t !== "reaction" || typeof value.r !== "string") return null;
     if (value.r.toLowerCase() !== messageId.toLowerCase()) return null;
-    const first = Array.isArray(value.e) ? value.e[0] : null;
-    return typeof first === "string" && isSingleEmoji(first) ? first : null;
+    const emojis: string[] = [];
+    for (const emoji of Array.isArray(value.e) ? value.e : []) {
+      if (typeof emoji !== "string" || !isSingleEmoji(emoji) || emojis.includes(emoji)) continue;
+      emojis.push(emoji);
+      if (emojis.length === READER_CAP) break;
+    }
+    return emojis;
   } catch {
     return null;
   }
+}
+
+/**
+ * Our set after picking `emoji`: taken back when it is there, otherwise added — and past `limit`
+ * (the server's `max_per_user`) our oldest goes, so a pick always shows.
+ */
+export function toggledReactions(emoji: string, current: string[], limit: number): string[] {
+  if (current.includes(emoji)) return current.filter((e) => e !== emoji);
+  const next = [...current, emoji];
+  const cap = Math.max(1, limit);
+  return next.length > cap ? next.slice(next.length - cap) : next;
 }
 
 function sortKey(reaction: Reaction): number {
@@ -98,30 +127,30 @@ export function replacingReaction(reactions: Reaction[], userId: string, entry: 
   return sorted(entry ? [...rest, entry] : rest);
 }
 
-export function emojiOf(userId: string, reactions: Reaction[] | undefined): string | null {
-  return reactions?.find((r) => r.userId === userId)?.emoji ?? null;
+export function emojisOf(userId: string, reactions: Reaction[] | undefined): string[] {
+  return reactions?.find((r) => r.userId === userId)?.emojis ?? [];
 }
 
 /**
- * Chips in Telegram's order: most reactions from others first, then the one with ours, then
- * the one that appeared first. In a 1:1 chat: the other side's reaction, then ours.
+ * One chip per person (both share one when they picked exactly the same emoji), the other side's
+ * first and ours after — Telegram's place for them, whoever reacted first.
  */
 export function reactionChips(reactions: Reaction[] | undefined, me: string): ReactionChip[] {
-  const chips = new Map<string, string[]>();
+  const same = (a: string[], b: string[]) => a.length === b.length && a.every((e) => b.includes(e));
+  const chips: ReactionChip[] = [];
   for (const reaction of reactions ?? []) {
-    if (!reaction.emoji) continue;
-    chips.set(reaction.emoji, [...(chips.get(reaction.emoji) ?? []), reaction.userId]);
+    if (reaction.emojis.length === 0) continue;
+    const shared = chips.find((chip) => same(chip.emojis, reaction.emojis));
+    if (shared) {
+      shared.userIds = [...shared.userIds, reaction.userId];
+      shared.includesMe = shared.includesMe || reaction.userId === me;
+    } else {
+      chips.push({ emojis: reaction.emojis, userIds: [reaction.userId], includesMe: reaction.userId === me });
+    }
   }
-  const others = (chip: ReactionChip) => chip.userIds.length - (chip.includesMe ? 1 : 0);
-  return [...chips]
-    .map(([emoji, userIds]) => ({ emoji, userIds, includesMe: userIds.includes(me) }))
+  return chips
     .map((chip, order) => ({ chip, order }))
-    .sort(
-      (a, b) =>
-        others(b.chip) - others(a.chip) ||
-        Number(b.chip.includesMe) - Number(a.chip.includesMe) ||
-        a.order - b.order,
-    )
+    .sort((a, b) => Number(a.chip.includesMe) - Number(b.chip.includesMe) || a.order - b.order)
     .map(({ chip }) => chip);
 }
 
@@ -196,7 +225,7 @@ export async function openReaction(
   held: Reaction[] = [],
 ): Promise<Reaction> {
   const userId = wire.user_id.toLowerCase();
-  const removed: Reaction = { userId, emoji: null, seq: wire.seq };
+  const removed: Reaction = { userId, emojis: [], seq: wire.seq };
   if (!wire.ciphertext) return removed;
   const known = held.find((r) => r.userId === userId && r.seq === wire.seq && !r.pending);
   if (known) return known;
@@ -210,14 +239,14 @@ export async function openReaction(
       senderIdentityPublic: mine ? material.agreementPublic : await peerIdentity(userId),
       asSender: mine,
     });
-    return { userId, emoji: parseReaction(utf8decode(plain), wire.message_id), seq: wire.seq };
+    return { userId, emojis: parseReaction(utf8decode(plain), wire.message_id) ?? [], seq: wire.seq };
   } catch {
     return removed;
   }
 }
 
 /**
- * Saves our reaction (`null` removes it). Sealed as a v2 envelope, never through the ratchet:
+ * Saves our whole set (empty removes it). Sealed as a v2 envelope, never through the ratchet:
  * the record is overwritten in place, and every device must open it at any time.
  * Resolves to the confirmed entry, or null when there was nothing to remove.
  */
@@ -225,21 +254,21 @@ export async function saveReaction(opts: {
   token: string;
   me: string;
   messageId: string;
-  emoji: string | null;
+  emojis: string[];
   material: IdentityMaterial;
   peerIdentityPublic: Uint8Array;
 }): Promise<Reaction | null> {
   const me = opts.me.toLowerCase();
-  if (!opts.emoji) {
+  if (opts.emojis.length === 0) {
     const res = await api.deleteReaction(opts.token, opts.messageId);
-    return res ? { userId: me, emoji: null, seq: res.seq } : null;
+    return res ? { userId: me, emojis: [], seq: res.seq } : null;
   }
   const envelope = await sealIdentityEnvelope(
-    utf8(reactionPayload(opts.emoji, opts.messageId)),
+    utf8(reactionPayload(opts.emojis, opts.messageId)),
     opts.material.agreementPrivate,
     opts.peerIdentityPublic,
     opts.material.agreementPublic,
   );
   const res = await api.putReaction(opts.token, opts.messageId, envelopeToWireB64(envelope));
-  return { userId: me, emoji: opts.emoji, seq: res.seq };
+  return { userId: me, emojis: opts.emojis, seq: res.seq };
 }
