@@ -3130,13 +3130,65 @@ button.reply-quote { cursor: pointer; }
   100% { transform: none; }
 }
 
-/* The reaction row over a message's menu; "more" opens the full set in place. */
-.reaction-picker {
-  display: flex; flex-wrap: nowrap; align-items: center; gap: 2px;
-}
+/* The reaction row over a message's menu; "more" grows it in place into the full set, with a
+   search box and a way back above it. The menu itself animates the growth (ContextMenu's
+   MenuFit); in here only the new rows and the search row fade in behind the growing edge. */
+.reaction-picker { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .reaction-picker.is-expanded {
-  display: grid; grid-template-columns: repeat(7, 1fr);
-  max-height: 206px; overflow-y: auto;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 4px; row-gap: 6px; align-items: center;
+}
+.reaction-picker-list { display: flex; flex-wrap: nowrap; align-items: center; gap: 2px; }
+.reaction-picker.is-expanded .reaction-picker-list { grid-column: 1 / -1; }
+/* Eight columns at the row's pitch: the quick seven stay where they were, the eighth takes the
+   place of "more". As tall as the rows a search leaves, up to five and a half, then it scrolls;
+   the picker animates every change of that height together with the menu. */
+.reaction-picker-list.is-grid {
+  display: grid; grid-template-columns: repeat(8, 30px); gap: 4px 2px;
+  align-content: start; justify-content: start;
+  min-height: 30px; max-height: 184px; overflow-y: auto; overscroll-behavior: contain;
+}
+.reaction-picker-list.is-grid .reaction-pick:nth-child(n + 8) {
+  animation: reaction-grid-in 0.32s var(--ease) both;
+}
+@keyframes reaction-grid-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+.reaction-search {
+  height: 30px; min-width: 0;
+  display: flex; align-items: center; gap: 6px; padding: 0 9px;
+  border-radius: var(--r-full);
+  background: var(--hover); color: var(--text-tertiary);
+  animation: reaction-head-in 0.24s var(--ease) both;
+}
+.reaction-search:focus-within { box-shadow: 0 0 0 2px var(--accent); color: var(--text-secondary); }
+.reaction-search input {
+  flex: 1; min-width: 0; padding: 0;
+  background: transparent; border: 0; outline: none;
+  color: var(--text-primary); font: inherit; font-size: var(--fs-sm);
+}
+.reaction-search input::placeholder { color: var(--text-tertiary); }
+.reaction-search input::-webkit-search-cancel-button { display: none; }
+.reaction-search-clear {
+  width: 20px; height: 20px; padding: 0;
+  display: grid; place-items: center;
+  border: 0; border-radius: var(--r-full);
+  background: transparent; color: var(--text-tertiary); cursor: pointer;
+}
+.reaction-search-clear:hover, .reaction-search-clear:focus-visible {
+  color: var(--text-primary); background: var(--hover); outline: none;
+}
+.reaction-more.is-open { animation: reaction-head-in 0.24s var(--ease) both; }
+@keyframes reaction-head-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.reaction-empty {
+  grid-column: 1 / -1; justify-self: center; height: 30px;
+  display: grid; place-items: center;
+  margin: 0; padding: 0 12px; text-align: center;
+  font-size: var(--fs-sm); color: var(--text-tertiary);
 }
 .reaction-pick, .reaction-more {
   width: 30px; height: 30px;
@@ -3153,9 +3205,11 @@ button.reply-quote { cursor: pointer; }
 .reaction-pick:active { transform: scale(0.85); }
 .reaction-pick.is-selected { background: var(--accent-soft); }
 .reaction-more { background: var(--hover); width: 26px; height: 26px; }
+.reaction-picker-list.is-grid:has(.reaction-empty) { align-content: center; justify-content: center; }
 @media (prefers-reduced-motion: reduce) {
   .reaction-emoji { animation: none; }
   .reaction-pick:hover { transform: none; }
+  .reaction-picker-list.is-grid .reaction-pick, .reaction-search, .reaction-more.is-open { animation: none; }
 }
 .ctx-menu:has(.reaction-picker) { max-width: 300px; }
 .ctx-menu-header:has(.reaction-picker) { padding: 4px 4px 6px; }

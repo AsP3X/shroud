@@ -33,6 +33,9 @@ struct MessageReactionBar: View {
     var progress: CGFloat = 1
     /// Our reactions on the message: ringed, and tapping one takes it back.
     var selected: Set<String> = []
+    /// Inside `MessageReactionPanel`, which draws the capsule itself and moves the quick seven
+    /// into the grid's first row when it grows.
+    var glide: Namespace.ID?
 
     @State private var pickFrames = ReactionPickFrames()
 
@@ -88,6 +91,7 @@ struct MessageReactionBar: View {
                             }
                         }
                         .contentShape(Rectangle())
+                        .reactionGlide(emoji, in: glide)
                 }
                 // Emoji squash hard on press — the most playful control in the app.
                 .pressable(scale: 0.78, dimming: 0)
@@ -109,12 +113,16 @@ struct MessageReactionBar: View {
         .padding(.vertical, Self.verticalPadding)
         .fixedSize(horizontal: true, vertical: true)
         .background {
-            Capsule()
-                .fill(Color(red: 0.14, green: 0.14, blue: 0.16).opacity(0.92))
+            if glide == nil {
+                Capsule()
+                    .fill(MessageReactionPanel.surface)
+            }
         }
         .overlay {
-            Capsule()
-                .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+            if glide == nil {
+                Capsule()
+                    .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+            }
         }
         // Fade with the hero flight (no extra slide — hero owns the travel).
         .opacity(progress)
@@ -124,61 +132,270 @@ struct MessageReactionBar: View {
 
 // MARK: - Expanded reactions (the bar's "More")
 
-/// The reaction bar grown in place into Telegram's full standard set, over the bubble.
+/// The full standard set with a search field over it, inside `MessageReactionPanel` once the
+/// bar has grown. Eight columns at the bar's pitch, so the quick seven land in the first row a
+/// hair from where they were, and the eighth takes the place of "More".
 struct MessageReactionGrid: View {
     var onReaction: (String, CGRect?) -> Void
+    /// The "fewer" button: back to the bar.
+    var onCollapse: () -> Void
     var selected: Set<String> = []
+    @Binding var query: String
+    /// What `query` leaves of the set (`ReactionSearch.matches`), sized for by the panel.
+    var results: [String]
+    var glide: Namespace.ID?
 
     @State private var pickFrames = ReactionPickFrames()
+    @FocusState private var searchFocused: Bool
 
-    static let columns = 7
-    private static let cell: CGFloat = 40
-    private static let padding: CGFloat = 10
+    static let columns = 8
+    static let cell: CGFloat = 40
+    static let padding: CGFloat = 10
+    /// The grid's side padding: eight cells fill the bar's width.
+    static var sidePadding: CGFloat { (MessageReactionBar.barWidth - cell * CGFloat(columns)) / 2 }
+    static let searchHeight: CGFloat = 36
+    /// Between the search row and the grid.
+    static let searchGap: CGFloat = 6
     /// Rows shown before the grid scrolls.
-    private static let visibleRows: CGFloat = 5.5
+    static let visibleRows: CGFloat = 5.5
 
-    static var height: CGFloat { cell * visibleRows + padding * 2 }
+    /// The panel's tallest: the search row and 5.5 rows of emoji.
+    static var height: CGFloat { height(rows: Int(visibleRows.rounded(.up))) }
+
+    /// The panel's height showing `rows` rows of emoji: as tall as they need, up to 5.5 rows
+    /// (the rest scrolls); never less than one row, which the "no matches" line takes.
+    static func height(rows: Int) -> CGFloat {
+        let shown = min(CGFloat(max(rows, 1)), visibleRows)
+        return padding + searchHeight + searchGap + cell * shown + padding
+    }
+
+    /// How many rows `count` emoji fill.
+    static func rows(for count: Int) -> Int {
+        (count + columns - 1) / columns
+    }
 
     var body: some View {
-        ScrollView {
-            LazyVGrid(
-                columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: Self.columns),
-                spacing: 0
-            ) {
-                ForEach(MessageReactionBar.expanded, id: \.self) { emoji in
-                    Button {
-                        onReaction(emoji, pickFrames.frames[emoji])
-                    } label: {
-                        Text(emoji)
-                            .font(.system(size: 26))
-                            .frame(width: Self.cell, height: Self.cell)
-                            .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { frame in
-                                pickFrames.frames[emoji] = frame
+        VStack(spacing: Self.searchGap) {
+            searchRow
+                .padding(.horizontal, Self.padding)
+                .padding(.top, Self.padding)
+            ScrollView {
+                if results.isEmpty {
+                    Text("No reactions match “\(query.trimmingCharacters(in: .whitespaces))”")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color.white.opacity(0.55))
+                        .lineLimit(1)
+                        .padding(.horizontal, 20)
+                        .frame(maxWidth: .infinity, minHeight: Self.cell)
+                } else {
+                    LazyVGrid(
+                        columns: Array(repeating: GridItem(.fixed(Self.cell), spacing: 0), count: Self.columns),
+                        spacing: 0
+                    ) {
+                        ForEach(results, id: \.self) { emoji in
+                            Button {
+                                onReaction(emoji, pickFrames.frames[emoji])
+                            } label: {
+                                Text(emoji)
+                                    .font(.system(size: 26))
+                                    .frame(width: Self.cell, height: Self.cell)
+                                    .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { frame in
+                                        pickFrames.frames[emoji] = frame
+                                    }
+                                    .background {
+                                        if selected.contains(emoji) {
+                                            Circle().fill(Color.white.opacity(0.18))
+                                        }
+                                    }
+                                    .contentShape(Rectangle())
+                                    .reactionGlide(emoji, in: glide)
                             }
-                            .background {
-                                if selected.contains(emoji) {
-                                    Circle().fill(Color.white.opacity(0.18))
-                                }
-                            }
-                            .contentShape(Rectangle())
+                            .pressable(scale: 0.78, dimming: 0)
+                            .accessibilityLabel(emoji)
+                            .accessibilityAddTraits(selected.contains(emoji) ? .isSelected : [])
+                        }
                     }
-                    .pressable(scale: 0.78, dimming: 0)
-                    .accessibilityLabel(emoji)
-                    .accessibilityAddTraits(selected.contains(emoji) ? .isSelected : [])
+                    .padding(.horizontal, Self.sidePadding)
+                    .padding(.bottom, Self.padding)
+                    // The results themselves switch at once; only the panel around them animates.
+                    // A crowd of cells fading and sliding under a shrinking panel reads as noise.
+                    .transaction(value: query) { $0.animation = nil }
                 }
             }
-            .padding(Self.padding)
+            .scrollIndicators(.hidden)
+            .scrollDismissesKeyboard(.immediately)
         }
-        .scrollIndicators(.hidden)
-        .background {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(Color(red: 0.14, green: 0.14, blue: 0.16).opacity(0.97))
+    }
+
+    /// The search field and, beside it, the way back to the bar.
+    private var searchRow: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(searchFocused ? 0.85 : 0.55))
+                TextField("", text: $query, prompt: Text("Search reactions").foregroundStyle(Color.white.opacity(0.45)))
+                    .font(.system(size: 15))
+                    .foregroundStyle(.white)
+                    .tint(.white)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.search)
+                    .focused($searchFocused)
+                    .accessibilityLabel("Search reactions")
+                if !query.isEmpty {
+                    Button {
+                        query = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 14))
+                            .foregroundStyle(Color.white.opacity(0.55))
+                            .frame(width: 24, height: 24)
+                            .contentShape(Rectangle())
+                    }
+                    .pressable(scale: 0.8, dimming: 0)
+                    .accessibilityLabel("Clear search")
+                    .transition(Motion.iconSwap)
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(height: Self.searchHeight)
+            .background(Capsule().fill(Color.white.opacity(0.1)))
+            .overlay {
+                Capsule().strokeBorder(Color.white.opacity(searchFocused ? 0.35 : 0), lineWidth: 1)
+                    .allowsHitTesting(false)
+            }
+            .animation(Motion.snappy, value: searchFocused)
+            .animation(Motion.snappy, value: query.isEmpty)
+            Button {
+                searchFocused = false
+                onCollapse()
+            } label: {
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Color.white.opacity(0.85))
+                    .frame(width: 30, height: 30)
+                    .background(Color.white.opacity(0.12))
+                    .clipShape(Circle())
+            }
+            .pressable(scale: 0.85, dimming: 0)
+            .accessibilityLabel("Fewer reactions")
         }
-        .overlay {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+    }
+}
+
+// MARK: - Reaction panel (the bar, and the set it grows into)
+
+/// The reaction bar and the full set it grows into, one surface over the lifted bubble.
+///
+/// Human: "More" grows the capsule in place into a rounded panel — down from the bar's top
+/// edge, kept on screen — with a search field over the grid and a "fewer" button back. The
+/// quick seven slide into the grid's first row while the rest fade in; the panel's shape,
+/// size and place animate together, so it feels like one thing changing rather than a swap.
+/// Agent: The host gives it the bar's frame and the container; it places itself with
+/// `frame(expanded:bar:container:safeArea:height:)` and animates the change of `expanded` and
+/// of its own height (`Motion.standard`). READS the safe area it is given — the keyboard
+/// included, so an open search never leaves the panel under it. Draw it in a container-sized
+/// slot aligned top-leading.
+struct MessageReactionPanel: View {
+    var onReaction: (String, CGRect?) -> Void
+    @Binding var expanded: Bool
+    /// 0…1: fades with the hero flight, like the bar did.
+    var progress: CGFloat = 1
+    var selected: Set<String> = []
+    /// Where the bar sits (the panel grows down from its top edge), in the container's space.
+    var bar: CGRect
+    var container: CGSize
+    var safeArea: EdgeInsets
+
+    @State private var query = ""
+    @Namespace private var glide
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// The dark surface both states share (not the theme: the menu floats over a dimmed thread).
+    static let surface = Color(red: 0.14, green: 0.14, blue: 0.16).opacity(0.94)
+    static let expandedCornerRadius: CGFloat = 22
+
+    /// Where the panel sits: on the bar's frame collapsed; expanded, `height` tall — as tall as
+    /// the rows a search leaves — grown down from the bar's top edge, no higher than 8 pt under
+    /// the status bar and no lower than 10 pt above the home indicator or the keyboard, and no
+    /// taller than that leaves room for.
+    static func frame(
+        expanded: Bool,
+        bar: CGRect,
+        container: CGSize,
+        safeArea: EdgeInsets,
+        height: CGFloat = MessageReactionGrid.height
+    ) -> CGRect {
+        guard expanded else { return bar }
+        let height = min(height, container.height - safeArea.top - safeArea.bottom - 16)
+        let lowest = container.height - safeArea.bottom - 10 - height
+        return CGRect(x: bar.minX, y: max(safeArea.top + 8, min(bar.minY, lowest)), width: bar.width, height: height)
+    }
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(
+            cornerRadius: expanded ? Self.expandedCornerRadius : MessageReactionBar.barHeight / 2,
+            style: .continuous
+        )
+    }
+
+    var body: some View {
+        let results = ReactionSearch.matches(query, in: MessageReactionBar.expanded)
+        let wanted = MessageReactionGrid.height(rows: MessageReactionGrid.rows(for: results.count))
+        let frame = Self.frame(expanded: expanded, bar: bar, container: container, safeArea: safeArea, height: wanted)
+        ZStack(alignment: .top) {
+            if expanded {
+                MessageReactionGrid(
+                    onReaction: onReaction,
+                    onCollapse: { setExpanded(false) },
+                    selected: selected,
+                    query: $query,
+                    results: results,
+                    glide: glide
+                )
+                .transition(.opacity)
+            } else {
+                MessageReactionBar(
+                    onReaction: onReaction,
+                    onMore: { setExpanded(true) },
+                    selected: selected,
+                    glide: glide
+                )
+                .transition(.opacity)
+            }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .frame(width: frame.width, height: frame.height, alignment: .top)
+        .background { shape.fill(Self.surface) }
+        .overlay { shape.stroke(Color.white.opacity(0.08), lineWidth: 0.5) }
+        .clipShape(shape)
+        .position(x: frame.midX, y: frame.midY)
+        // A search that leaves fewer rows shrinks the panel around them, and back. Keyed on the
+        // wanted height, not the frame: the bar has to ride the hero flight with no lag.
+        .animation(Motion.respecting(reduceMotion, Motion.standard), value: wanted)
+        .opacity(progress)
+        .allowsHitTesting(progress > 0.5)
+    }
+
+    private func setExpanded(_ next: Bool) {
+        Haptics.impact(.light)
+        if !next { query = "" }
+        withAnimation(Motion.respecting(reduceMotion, Motion.standard)) {
+            expanded = next
+        }
+    }
+}
+
+private extension View {
+    /// Moves an emoji between the bar and the grid's first row when the panel grows or shrinks:
+    /// whichever of the two is being shown is the source, the other follows it in.
+    @ViewBuilder
+    func reactionGlide(_ emoji: String, in namespace: Namespace.ID?) -> some View {
+        if let namespace {
+            matchedGeometryEffect(id: emoji, in: namespace, properties: .position)
+        } else {
+            self
+        }
     }
 }
 
@@ -431,9 +648,9 @@ struct MessageMenuOverlay<Hero: View, Card: View>: View {
 
     /// Content offset of a scrolling stack; nil until the scroll view reports it.
     @State private var scrollOffset: CGFloat?
-    /// "More" grows the bar in place into the full grid (Telegram), over bubble and card.
+    /// "More" grows the bar in place into the full set (Telegram), over bubble and card; the
+    /// panel animates it and puts it back.
     @State private var showsAllReactions = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { outer in
@@ -492,31 +709,19 @@ struct MessageMenuOverlay<Hero: View, Card: View>: View {
                 bubbleAndCard(hero: heroOnScreen, card: chrome.card)
             }
 
-            // Over the bubble: on a scrolled tall message the bar stays pinned at the top.
-            if !showsReactions {
-                EmptyView()
-            } else if showsAllReactions {
-                let grid = gridFrame(bar: chrome.reactions, container: proxy.size, safeArea: safeArea)
-                MessageReactionGrid(onReaction: onReaction, selected: selectedReactions)
-                    .frame(width: grid.width, height: grid.height)
-                    .position(x: grid.midX, y: grid.midY)
-                    .opacity(progress)
-                    .allowsHitTesting(progress > 0.5)
-                    .transition(.scale(scale: 0.9, anchor: .top).combined(with: .opacity))
-            } else {
-                MessageReactionBar(
+            // Over the bubble: on a scrolled tall message the bar stays pinned at the top;
+            // grown into the full set, the panel keeps the bar's top edge where it can.
+            if showsReactions {
+                MessageReactionPanel(
                     onReaction: onReaction,
-                    onMore: {
-                        Haptics.impact(.light)
-                        withAnimation(Motion.respecting(reduceMotion, Motion.snappy)) {
-                            showsAllReactions = true
-                        }
-                    },
+                    expanded: $showsAllReactions,
                     progress: progress,
-                    selected: selectedReactions
+                    selected: selectedReactions,
+                    bar: chrome.reactions,
+                    container: proxy.size,
+                    safeArea: safeArea
                 )
-                .frame(width: chrome.reactions.width, height: chrome.reactions.height)
-                .position(x: chrome.reactions.midX, y: chrome.reactions.midY)
+                .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
             }
         }
         .frame(width: proxy.size.width, height: proxy.size.height)
@@ -546,13 +751,6 @@ struct MessageMenuOverlay<Hero: View, Card: View>: View {
                 .frame(width: cardFrame.width, height: cardFrame.height, alignment: .top)
                 .position(x: cardFrame.midX, y: cardFrame.midY)
         }
-    }
-
-    /// The grid grows down from where the bar was, kept on screen above the home indicator.
-    private func gridFrame(bar: CGRect, container: CGSize, safeArea: EdgeInsets) -> CGRect {
-        let height = min(MessageReactionGrid.height, container.height - safeArea.top - safeArea.bottom - 16)
-        let lowest = container.height - safeArea.bottom - 10 - height
-        return CGRect(x: bar.minX, y: max(safeArea.top + 8, min(bar.minY, lowest)), width: bar.width, height: height)
     }
 
     private static func lerp(_ a: CGRect, _ b: CGRect, _ t: CGFloat) -> CGRect {
