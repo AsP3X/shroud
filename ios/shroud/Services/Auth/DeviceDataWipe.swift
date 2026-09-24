@@ -66,8 +66,10 @@ struct DeviceDataWipe {
     }
 
     enum KeychainScope: Sendable {
-        /// Every item this app can read. There are no shared access groups, so that is the
-        /// session, identity, history vault, ratchets, peer pins and the device-id anchor.
+        /// Every item this app can read: the session, identity, history vault, ratchets, peer
+        /// pins and the device-id anchor, and in the app group's access group the key the
+        /// notification extension opens sender names with. A query without an access group
+        /// covers all of the app's groups.
         case app
         /// Only these services — unit tests, so they never touch the simulator's real session.
         case services([String])

@@ -301,7 +301,7 @@ pub async fn login(
     }))
 }
 
-/// `POST /auth/logout` — revoke the current session and forget this device's push token.
+/// `POST /auth/logout` — revoke the current session and forget how this device is pushed to.
 ///
 /// Human: Pushes are selected per account, not per live session, so a token left behind kept
 /// ringing a logged-out phone with the account's messages and calls. The device row stays
@@ -327,11 +327,18 @@ pub async fn logout(
     .await
     .map_err(|err| AppError::Internal(format!("logout failed: {err}")))?;
 
-    sqlx::query(r#"DELETE FROM push_tokens WHERE device_id = $1"#)
-        .bind(auth.device_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|err| AppError::Internal(format!("logout push token delete failed: {err}")))?;
+    // Every way this device was reached by push, and what it asked to be pushed.
+    for table in [
+        "push_tokens",
+        "web_push_subscriptions",
+        "device_notification_settings",
+    ] {
+        sqlx::query(&format!("DELETE FROM {table} WHERE device_id = $1"))
+            .bind(auth.device_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| AppError::Internal(format!("logout {table} delete failed: {err}")))?;
+    }
 
     // The browser that logs out wipes its vault; its PIN must not unlock anything afterwards.
     sqlx::query(r#"DELETE FROM device_pin_guards WHERE device_id = $1"#)
@@ -493,6 +500,8 @@ pub async fn delete_account(
         ("blocks", "blocker_id = $1 OR blocked_id = $1"),
         ("message_hides", "user_id = $1"),
         ("reaction_reads", "user_id = $1"),
+        ("conversation_reads", "user_id = $1"),
+        ("chat_mutes", "user_id = $1 OR peer_user_id = $1"),
     ] {
         sqlx::query(&format!("DELETE FROM {table} WHERE {filter}"))
             .bind(user_id)
@@ -804,10 +813,12 @@ async fn reset_reclaimed_device(
     Ok(())
 }
 
-/// Deletes the key material, push token and PIN guard a device's client left on the server.
+/// Deletes the key material, push registrations, notification settings and PIN guard a
+/// device's client left on the server.
 ///
-/// Agent: DELETE FROM key tables, push_tokens, device_pin_guards WHERE device_id; the device
-/// row and everything it sent stay.
+/// Agent: DELETE FROM key tables, push_tokens, web_push_subscriptions,
+/// device_notification_settings, device_pin_guards WHERE device_id; the device row and
+/// everything it sent stay.
 pub(crate) async fn purge_device_secrets(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     device_id: Uuid,
@@ -817,6 +828,8 @@ pub(crate) async fn purge_device_secrets(
         "device_signed_prekeys",
         "device_one_time_prekeys",
         "push_tokens",
+        "web_push_subscriptions",
+        "device_notification_settings",
         "device_pin_guards",
     ] {
         sqlx::query(&format!("DELETE FROM {table} WHERE device_id = $1"))

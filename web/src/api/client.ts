@@ -35,6 +35,29 @@ export type Conversation = {
   reaction_seq?: number;
   /** The other side's reactions to our messages we have not marked seen (the heart badge). */
   unseen_reactions?: number;
+  /** Their messages after our read marker (capped at 999); absent from older servers. */
+  unread_count?: number;
+  /** Set while we have the chat muted; `until` null means until we unmute it. */
+  mute?: ChatMute | null;
+};
+
+export type ChatMute = { until: string | null };
+
+/** What this device asks the server to push (see `server/.../routes/notifications.rs`). */
+export type NotificationSettings = {
+  enabled: boolean;
+  show_sender: boolean;
+  reactions: boolean;
+  contact_requests: boolean;
+  sound: string;
+  badge: boolean;
+  badge_includes_muted: boolean;
+};
+
+export type TestPushOutcome = {
+  channel: "apns" | "web" | null;
+  status: "sent" | "not_registered" | "not_configured" | "rejected" | "failed";
+  detail?: string;
 };
 
 export type Contact = {
@@ -395,6 +418,45 @@ export const api = {
       `/messages/${encodeURIComponent(messageId.toLowerCase())}/reaction?base_seq=${baseSeq}`,
       { method: "DELETE", token },
     ),
+  /** This device's push settings (defaults until it saves some). */
+  notificationSettings: (token: string) =>
+    request<NotificationSettings>("/notifications/settings", { token }),
+  /** Only the fields given change; returns what the server stored. */
+  updateNotificationSettings: (token: string, patch: Partial<NotificationSettings>) =>
+    request<NotificationSettings>("/notifications/settings", {
+      method: "PUT",
+      token,
+      body: JSON.stringify(patch),
+    }),
+  /** Silences a chat on every device of the account; `seconds` null = until unmuted. */
+  muteChat: (token: string, peerUserId: string, seconds: number | null) =>
+    request<{ peer_user_id: string; mute: ChatMute }>(
+      `/conversations/${encodeURIComponent(peerUserId.toLowerCase())}/mute`,
+      { method: "PUT", token, body: JSON.stringify({ seconds }) },
+    ),
+  unmuteChat: (token: string, peerUserId: string) =>
+    request<void>(`/conversations/${encodeURIComponent(peerUserId.toLowerCase())}/mute`, {
+      method: "DELETE",
+      token,
+    }),
+  /** We looked at the chat: its unread count clears everywhere and the peer gets receipts. */
+  markChatRead: (token: string, peerUserId: string) =>
+    request<{ read_at: string | null; unread_count: number; receipts: number }>(
+      `/conversations/${encodeURIComponent(peerUserId.toLowerCase())}/read`,
+      { method: "POST", token, body: "{}" },
+    ),
+  /** The VAPID key browsers subscribe with. */
+  webPushKey: (token: string) => request<{ public_key: string }>("/push/web/key", { token }),
+  putWebPushSubscription: (token: string, subscription: PushSubscriptionJSON) =>
+    request<void>("/push/web/subscription", {
+      method: "PUT",
+      token,
+      body: JSON.stringify(subscription),
+    }),
+  deleteWebPushSubscription: (token: string) =>
+    request<void>("/push/web/subscription", { method: "DELETE", token }),
+  /** A notification through the push service, even with the app open. */
+  testPush: (token: string) => request<TestPushOutcome>("/push/test", { method: "POST", token }),
   /** Settings the server operator sets for clients (the reaction limit). */
   clientConfig: (token: string) =>
     request<{ reactions: { max_per_user: number } }>("/config", { token }),

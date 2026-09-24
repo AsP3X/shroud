@@ -26,7 +26,7 @@ pub struct AppState {
     pub media_prefer_nebular: bool,
     /// In-process WebSocket fan-out hub (single instance).
     pub realtime: Arc<RealtimeHub>,
-    /// APNs data-push dispatcher (no-ops send when credentials missing).
+    /// Push dispatcher: APNs (sends only with credentials) and Web Push.
     pub push: PushService,
     /// STUN/TURN servers advertised to clients for WebRTC.
     pub ice_servers: Vec<IceServer>,
@@ -63,7 +63,8 @@ impl AppState {
     /// Like [`Self::for_integration_tests`] but with a custom rate limiter (e.g. enabled).
     pub fn for_integration_tests_with_limiter(pool: PgPool, rate_limiter: RateLimiter) -> Self {
         let realtime = Arc::new(RealtimeHub::new());
-        let push = PushService::new(pool.clone(), realtime.clone(), None);
+        // Pushes are recorded (`state.push.recorded()`), never sent.
+        let push = PushService::recording(pool.clone(), realtime.clone());
         Self {
             pool,
             nebular_url: None,

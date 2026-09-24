@@ -5,6 +5,7 @@ import "@fontsource-variable/inter";
 import "./index.css";
 import { App } from "./App";
 import { finishWipeOnLoad, followWipesInOtherTabs } from "./deviceWipe";
+import { installNotificationClicks } from "./notifications/push";
 import { installTheme } from "./theme";
 
 // Before anything reads storage: an interrupted logout is finished, and what an old logout
@@ -12,6 +13,8 @@ import { installTheme } from "./theme";
 void finishWipeOnLoad();
 followWipesInOtherTabs();
 installTheme();
+// A notification click routes to its chat — also the one that opened this window.
+installNotificationClicks();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

@@ -20,6 +20,7 @@ pub mod keys;
 pub mod link_relay;
 pub mod media;
 pub mod messages;
+pub mod notifications;
 pub mod pin_guard;
 pub mod presence;
 pub mod privacy;
@@ -105,6 +106,18 @@ pub fn router() -> Router<AppState> {
                 "/conversations/{peer_user_id}/reactions/seen",
                 post(reactions::mark_reactions_seen),
             )
+            .route(
+                "/conversations/{peer_user_id}/read",
+                post(conversations::mark_chat_read),
+            )
+            .route(
+                "/conversations/{peer_user_id}/mute",
+                put(notifications::put_mute).delete(notifications::delete_mute),
+            )
+            .route(
+                "/notifications/settings",
+                get(notifications::get_settings).put(notifications::put_settings),
+            )
             .route("/privacy/settings", get(privacy::get_settings))
             .route("/privacy/settings", put(privacy::put_settings))
             .route("/media/uploads", post(media::create_upload))
@@ -126,6 +139,15 @@ pub fn router() -> Router<AppState> {
             .route("/calls/{id}/signal", post(calls::signal_call))
             .route("/ws", get(ws::ws_upgrade))
             .route("/link-relay", get(link_relay::link_relay_upgrade))
-            .route("/push/token", put(push::put_token)),
+            .route(
+                "/push/token",
+                put(push::put_token).delete(push::delete_token),
+            )
+            .route("/push/web/key", get(push::web_key))
+            .route(
+                "/push/web/subscription",
+                put(push::put_web_subscription).delete(push::delete_web_subscription),
+            )
+            .route("/push/test", post(push::test_push)),
     )
 }

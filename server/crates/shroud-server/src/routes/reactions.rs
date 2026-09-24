@@ -271,6 +271,20 @@ pub async fn put_reaction(
 
     let (entry, added) = written.into_parts();
     publish(&state, &auth, &target, &entry, added, visible.peer).await;
+    // Someone else's emoji on the peer's own message is news for the peer. Taking one back,
+    // or reacting to our own message, is not.
+    let peer = target.peer_of(auth.user_id);
+    if added && visible.peer && target.sender_user_id == peer && peer != auth.user_id {
+        state
+            .push
+            .dispatch(crate::push::PushEvent::Reaction {
+                recipient: peer,
+                reactor: auth.user_id,
+                conversation_id: target.conversation_id,
+                message_id,
+            })
+            .await;
+    }
 
     tracing::info!(
         message_id = %message_id,

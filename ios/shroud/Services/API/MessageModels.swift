@@ -151,6 +151,10 @@ struct ConversationItemDTO: Codable, Equatable, Sendable, Identifiable {
     var reactionSeq: Int64?
     /// The other side's reactions to our messages we have not marked seen (the heart badge).
     var unseenReactions: Int?
+    /// Their messages after our read marker, the same on every device; nil from older servers.
+    var unreadCount: Int?
+    /// Set while we have the chat muted (`until` nil = until unmuted).
+    var mute: ChatMuteDTO?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -159,6 +163,8 @@ struct ConversationItemDTO: Codable, Equatable, Sendable, Identifiable {
         case lastMessageAt = "last_message_at"
         case reactionSeq = "reaction_seq"
         case unseenReactions = "unseen_reactions"
+        case unreadCount = "unread_count"
+        case mute
     }
 }
 

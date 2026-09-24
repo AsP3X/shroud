@@ -1,14 +1,16 @@
 import { api, ApiError } from "./api/client";
 import { closeMediaDb, MEDIA_DB_NAME } from "./crypto/mediaCache";
 import { closeVault } from "./crypto/vault";
+import { forgetPushRegistration, hasPushRegistration } from "./notifications/push";
 import { sealStorage, storageSealed } from "./storageSeal";
 
 /*
  * Logging out leaves nothing of the account in this browser: decrypted messages and chat
  * previews, cached photos, videos and voice notes, the identity key, ratchet sessions, the PIN,
- * the session token and every preference. The origin belongs to Shroud, so "everything" is
- * literal — local and session storage are emptied, every IndexedDB database is deleted — and a
- * final pass proves it. One thing stays: the Whisper model weights, public files that cost
+ * the session token, every preference and the push registration (the service worker, its
+ * subscription and any notification still on screen). The origin belongs to Shroud, so
+ * "everything" is literal — local and session storage are emptied, every IndexedDB database is
+ * deleted — and a final pass proves it. One thing stays: the Whisper model weights, public files that cost
  * hundreds of megabytes to fetch again. The device-id anchor goes too; at the 5-device cap the
  * server hands the next login a device nobody is signed in on.
  *
@@ -336,6 +338,8 @@ export async function runWipeStep(
         /* nothing to clear */
       }
       expireCookies();
+      // The server forgot the subscription at logout; this browser forgets it too.
+      await forgetPushRegistration();
       return { removed: opts.inventory.settings };
     case "verify": {
       let leftovers = await findLeftovers();
@@ -375,6 +379,7 @@ export async function findLeftovers(): Promise<Leftover[]> {
     }
   }
   if (document.cookie.trim() !== "") found.push({ step: "settings", label: "cookies" });
+  if (await hasPushRegistration()) found.push({ step: "settings", label: "notifications" });
   return found;
 }
 
@@ -408,6 +413,7 @@ export function finishWipeOnLoad(): Promise<void> | null {
     await deleteCaches();
     if (signedInAgain()) return;
     expireCookies();
+    await forgetPushRegistration();
     if (signedInAgain()) return;
     if ((await findLeftovers()).length === 0) {
       removeKeys(localStorage, (key) => key === PENDING_KEY);

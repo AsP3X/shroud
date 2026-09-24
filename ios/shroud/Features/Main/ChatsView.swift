@@ -132,6 +132,7 @@ struct ChatsView: View {
                                     return n > 0 ? n : nil
                                 }(),
                                 hasUnseenReactions: messaging.hasUnseenReactions(for: conversation.peer.id),
+                                isMuted: messaging.isMuted(conversation.peer.id),
                                 activity: messaging.peerActivity(for: conversation.peer.id),
                                 avatarGradient: AvatarView.gradient(for: conversation.peer.username)
                             )
@@ -141,6 +142,7 @@ struct ChatsView: View {
                         // Telegram's long-press entry point — the list is a LazyVStack, not a
                         // List, so `.swipeActions` is not available here.
                         .contextMenu {
+                            chatNotificationButtons(conversation)
                             deleteChatButton(
                                 peerID: conversation.peer.id,
                                 username: conversation.peer.username,
@@ -220,6 +222,56 @@ struct ChatsView: View {
         }
         .task {
             await messaging.refreshConversations()
+        }
+    }
+
+    // MARK: - Notifications
+
+    /// Mark as read, and mute (for a while, or until turned back on) or unmute — on every device.
+    @ViewBuilder
+    private func chatNotificationButtons(_ conversation: ConversationItemDTO) -> some View {
+        let peerID = conversation.peer.id
+        if messaging.unreadCount(for: peerID) > 0 {
+            Button {
+                messaging.markChatRead(peerUserID: peerID)
+                Haptics.impact(.light)
+            } label: {
+                Label("Mark as Read", systemImage: "checkmark.message")
+            }
+        }
+        if messaging.isMuted(peerID) {
+            Button {
+                changeMute(peerID, to: nil)
+            } label: {
+                Label("Unmute", systemImage: "bell")
+            }
+        } else {
+            Menu {
+                ForEach(MuteDuration.allCases) { duration in
+                    Button(duration.title) { changeMute(peerID, to: duration) }
+                }
+            } label: {
+                Label("Mute", systemImage: "bell.slash")
+            }
+        }
+    }
+
+    private func changeMute(_ peerID: UUID, to duration: MuteDuration?) {
+        Task {
+            let error = if let duration {
+                await messaging.muteChat(peerUserID: peerID, duration: duration)
+            } else {
+                await messaging.unmuteChat(peerUserID: peerID)
+            }
+            if let error {
+                toast = error
+                Haptics.notification(.error)
+            } else {
+                toast = duration == nil ? "Notifications on" : (MuteDuration.label(for: messaging.mute(for: peerID)) ?? "Muted")
+                Haptics.impact(.light)
+            }
+            try? await Task.sleep(nanoseconds: 1_800_000_000)
+            toast = nil
         }
     }
 

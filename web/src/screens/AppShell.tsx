@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { QrCode } from "lucide-react";
+import { Bell, BellOff, QrCode, X } from "lucide-react";
 import {
   api,
   ApiError,
+  type ChatMute,
   type Contact,
   type ContactRequest,
   type Conversation,
@@ -14,6 +15,8 @@ import {
 import { Avatar } from "../components/Avatar";
 import { BrandMark } from "../components/BrandMark";
 import { ChatList, type ListEntry } from "../components/ChatList";
+import { ChatMenu, muteSeconds, type ChatMenuAction } from "../components/ChatMenu";
+import type { MenuAnchor } from "../components/ContextMenu";
 import { TypingLabel } from "../components/Typing";
 import { DeviceWipeDialog, type WipeReason } from "../components/DeviceWipeDialog";
 import { LogoutDialog } from "../components/LogoutDialog";
@@ -35,6 +38,7 @@ import {
   loadHistoryPage,
   peerIdForMessage,
   peerIdentityPublic,
+  previewCopy,
   forgetDecryptedState,
   forgetMessageLocally,
   isUnsent,
@@ -84,6 +88,20 @@ import {
   type Reaction,
 } from "../reactions";
 import { useLinkPreviewComposer } from "../linkPreview/useLinkPreviewComposer";
+import { announce, hideUnreadCount, showUnreadCount } from "../notifications/attention";
+import { isMuted, muteLabel } from "../notifications/mute";
+import { updateNotificationPrefs, useNotificationPrefs } from "../notifications/prefs";
+import {
+  closeChatNotifications,
+  closeNotifications,
+  enableNotifications,
+  notificationPermission,
+  onNotificationOpen,
+  reactionTag,
+  syncNotifications,
+  type OpenRequest,
+  type Permission,
+} from "../notifications/push";
 
 type PeerRef = { id: string; username: string };
 
@@ -154,6 +172,21 @@ export function AppShell({ session }: { session: Session }) {
   /** Peers recording a voice note to us right now, by lowercased user id. */
   const [recordingPeers, setRecordingPeers] = useState<ReadonlySet<string>>(() => new Set());
   const [previewRev, setPreviewRev] = useState(0);
+  const notificationPrefs = useNotificationPrefs();
+  /** For the chat list's offer to turn notifications on. */
+  const [permission, setPermission] = useState<Permission>(() => notificationPermission());
+  /** The window has focus: only then is the open chat read (a visible, unfocused window may
+   * sit behind another app's). */
+  const [windowFocused, setWindowFocused] = useState(() => document.hasFocus());
+  /** A chat's own menu: right-click on its row, or Notifications in its info. */
+  const [chatMenu, setChatMenu] = useState<{
+    peerId: string;
+    username: string;
+    anchor: MenuAnchor;
+    trigger: HTMLElement | null;
+  } | null>(null);
+  /** A notification click whose chat is opened once the chats it names are loaded. */
+  const [pendingOpen, setPendingOpen] = useState<OpenRequest | null>(null);
   const mobileShowThread = Boolean(selected) && tab !== "settings";
   const identity = loadIdentity(session.user.id);
   /** The tab is on screen (a background tab still polls and hears the socket). */
@@ -205,6 +238,16 @@ export function AppShell({ session }: { session: Session }) {
    * raced the seen call still carries the old heart badge; this keeps it from coming back.
    */
   const reactionsSeen = useRef(new Map<string, number>());
+  /**
+   * Chats this browser (or our other device) read, by peer: up to their `last_message_at` at the
+   * time. A list that raced the read still counts those messages; this keeps the count at 0 until
+   * something newer arrives.
+   */
+  const readThrough = useRef(new Map<string, number>());
+  /** Mutes being saved, by peer, so a racing list does not flip the bell back meanwhile. */
+  const pendingMutes = useRef(new Map<string, ChatMute | null>());
+  /** Which change holds a pending mute: an earlier change's timer leaves a newer one alone. */
+  const pendingMuteHolds = useRef(new Map<string, symbol>());
   const refreshSoonTimer = useRef(0);
 
   function discardMessage(messageId: string) {
@@ -360,15 +403,33 @@ export function AppShell({ session }: { session: Session }) {
     };
   }, [selected?.id, typingSender, recordingSender]);
 
-  /** Zeroes heart badges this browser already marked seen (pure: runs in state updaters). */
-  const withLocalSeen = useCallback((list: Conversation[]): Conversation[] => {
-    if (reactionsSeen.current.size === 0) return list;
+  /**
+   * What this browser did that a racing list may not show yet (pure: runs in state updaters):
+   * heart badges it marked seen, chats read here or on our other device, mutes being saved.
+   */
+  const withLocalState = useCallback((list: Conversation[]): Conversation[] => {
+    if (reactionsSeen.current.size === 0 && readThrough.current.size === 0 && pendingMutes.current.size === 0) {
+      return list;
+    }
     let changed = false;
     const next = list.map((c) => {
-      const seen = reactionsSeen.current.get(c.peer.id.toLowerCase());
-      if (seen == null || !c.unseen_reactions || (c.reaction_seq ?? 0) > seen) return c;
-      changed = true;
-      return { ...c, unseen_reactions: 0 };
+      const key = c.peer.id.toLowerCase();
+      let out = c;
+      const seen = reactionsSeen.current.get(key);
+      if (seen != null && out.unseen_reactions && (out.reaction_seq ?? 0) <= seen) {
+        out = { ...out, unseen_reactions: 0 };
+      }
+      const readTo = readThrough.current.get(key);
+      const latest = Date.parse(out.last_message_at ?? out.created_at);
+      if (readTo != null && (out.unread_count ?? 0) > 0 && !(latest > readTo)) {
+        out = { ...out, unread_count: 0 };
+      }
+      if (pendingMutes.current.has(key)) {
+        const mute = pendingMutes.current.get(key) ?? null;
+        if (JSON.stringify(out.mute ?? null) !== JSON.stringify(mute)) out = { ...out, mute };
+      }
+      if (out !== c) changed = true;
+      return out;
     });
     return changed ? next : list;
   }, []);
@@ -387,7 +448,7 @@ export function AppShell({ session }: { session: Session }) {
       throw authFail.reason;
     }
     const errors: string[] = [];
-    const nextConv = conv.status === "fulfilled" ? withLocalSeen(conv.value.conversations) : null;
+    const nextConv = conv.status === "fulfilled" ? withLocalState(conv.value.conversations) : null;
     if (nextConv) setConversations(nextConv);
     else errors.push(conv.status === "rejected" && conv.reason instanceof ApiError ? conv.reason.message : "chats");
     if (roster.status === "fulfilled") setContacts(roster.value.contacts);
@@ -435,7 +496,7 @@ export function AppShell({ session }: { session: Session }) {
       });
     }
     return convs;
-  }, [session.token, session.user.id, withLocalSeen]);
+  }, [session.token, session.user.id, withLocalState]);
 
   useEffect(() => {
     alive.current = true;
@@ -506,7 +567,8 @@ export function AppShell({ session }: { session: Session }) {
       if (seq <= 0) return;
       const previous = reactionsSeen.current.get(key);
       reactionsSeen.current.set(key, Math.max(previous ?? 0, seq));
-      setConversations((prev) => withLocalSeen(prev));
+      setConversations((prev) => withLocalState(prev));
+      if (conv) void closeNotifications(reactionTag(conv.id));
       void api.markReactionsSeen(session.token, key, seq).catch(() => {
         // Not saved: back to what we knew (another device's mark included), so the next list
         // shows the badge again and the next look tries again.
@@ -515,7 +577,7 @@ export function AppShell({ session }: { session: Session }) {
         else reactionsSeen.current.set(key, previous);
       });
     },
-    [session.token, withLocalSeen],
+    [session.token, withLocalState],
   );
 
   /* The chat on screen is being read: whatever reacted to our messages there is seen. Not
@@ -525,6 +587,185 @@ export function AppShell({ session }: { session: Session }) {
     const conv = conversations.find((c) => c.peer.id.toLowerCase() === lookingAt);
     if ((conv?.unseen_reactions ?? 0) > 0) markReactionsSeen(lookingAt);
   }, [conversations, lookingAt, markReactionsSeen]);
+
+  /**
+   * The chat was read here: its count clears at once, its notifications close, and the server
+   * clears it on our other devices (and sends the peer read receipts).
+   */
+  const markChatRead = useCallback(
+    (peerId: string) => {
+      const key = peerId.toLowerCase();
+      const conv = conversationsRef.current.find((c) => c.peer.id.toLowerCase() === key);
+      if (!conv) return;
+      const through = Date.parse(conv.last_message_at ?? conv.created_at);
+      readThrough.current.set(key, Math.max(readThrough.current.get(key) ?? 0, through));
+      setConversations((prev) => withLocalState(prev));
+      void closeChatNotifications(conv.id);
+      void api.markChatRead(session.token, key).catch(() => {
+        // Not saved: the next list brings the count back, and the next look tries again.
+        if (readThrough.current.get(key) === through) readThrough.current.delete(key);
+      });
+    },
+    [session.token, withLocalState],
+  );
+
+  /** Mutes a chat on every device of ours (`null` = until unmuted), or unmutes it (`"off"`). */
+  const setChatMute = useCallback(
+    async (peerId: string, seconds: number | null | "off") => {
+      const key = peerId.toLowerCase();
+      const previous =
+        conversationsRef.current.find((c) => c.peer.id.toLowerCase() === key)?.mute ?? null;
+      const optimistic: ChatMute | null =
+        seconds === "off"
+          ? null
+          : { until: seconds === null ? null : new Date(Date.now() + seconds * 1000).toISOString() };
+      const hold = Symbol("mute");
+      pendingMuteHolds.current.set(key, hold);
+      pendingMutes.current.set(key, optimistic);
+      setConversations((prev) => withLocalState(prev));
+      try {
+        if (seconds === "off") {
+          await api.unmuteChat(session.token, key);
+        } else {
+          const saved = await api.muteChat(session.token, key, seconds);
+          if (pendingMuteHolds.current.get(key) === hold) pendingMutes.current.set(key, saved.mute);
+          setConversations((prev) => withLocalState(prev));
+        }
+      } catch (err) {
+        // Back to what it was — offline, a refresh could not say — and the error stays up
+        // until the next list.
+        if (pendingMuteHolds.current.get(key) === hold) {
+          pendingMutes.current.delete(key);
+          pendingMuteHolds.current.delete(key);
+          setConversations((prev) =>
+            prev.map((c) => (c.peer.id.toLowerCase() === key ? { ...c, mute: previous } : c)),
+          );
+        }
+        setError(err instanceof ApiError ? err.message : "Could not change the chat's notifications.");
+        throw err;
+      }
+      // Held until a list that includes it has surely landed.
+      window.setTimeout(() => {
+        if (pendingMuteHolds.current.get(key) !== hold) return;
+        pendingMutes.current.delete(key);
+        pendingMuteHolds.current.delete(key);
+      }, 6000);
+    },
+    [session.token, withLocalState],
+  );
+
+  function runChatMenu(peerId: string, action: ChatMenuAction) {
+    setChatMenu(null);
+    if (action === "read") {
+      markChatRead(peerId);
+      return;
+    }
+    if (action === "unmute") {
+      void setChatMute(peerId, "off").catch(() => undefined);
+      return;
+    }
+    const seconds = muteSeconds(action);
+    if (seconds !== undefined) void setChatMute(peerId, seconds).catch(() => undefined);
+  }
+
+  useEffect(() => {
+    const focus = () => setWindowFocused(document.hasFocus());
+    window.addEventListener("focus", focus);
+    window.addEventListener("blur", focus);
+    document.addEventListener("visibilitychange", focus);
+    return () => {
+      window.removeEventListener("focus", focus);
+      window.removeEventListener("blur", focus);
+      document.removeEventListener("visibilitychange", focus);
+    };
+  }, []);
+
+  /* The chat on screen, in a focused window, is being read: its unread count goes, here and on
+     every other device of ours. */
+  const readingNow = lookingAt && windowFocused ? lookingAt : null;
+  useEffect(() => {
+    if (!readingNow) return;
+    const conv = conversations.find((c) => c.peer.id.toLowerCase() === readingNow);
+    if ((conv?.unread_count ?? 0) > 0) markChatRead(readingNow);
+  }, [conversations, readingNow, markChatRead]);
+  /* Whatever this browser shows about the chat being read goes, whatever its count: reactions,
+     and pushes from while it was locked for messages read elsewhere since. */
+  const readingConversationId = readingNow
+    ? conversations.find((c) => c.peer.id.toLowerCase() === readingNow)?.id ?? null
+    : null;
+  useEffect(() => {
+    if (readingConversationId) void closeChatNotifications(readingConversationId);
+  }, [readingConversationId]);
+  /* The first list after unlocking: notifications of chats read meanwhile (on another device,
+     while this one was locked) go. */
+  const closedReadOnes = useRef(false);
+  useEffect(() => {
+    if (loading || closedReadOnes.current) return;
+    closedReadOnes.current = true;
+    for (const c of conversations) {
+      if ((c.unread_count ?? 0) === 0) void closeNotifications(c.id.toLowerCase());
+      if ((c.unseen_reactions ?? 0) === 0) void closeNotifications(reactionTag(c.id));
+    }
+  }, [loading, conversations]);
+  /* Looking at the requests answers their notifications. */
+  useEffect(() => {
+    if (tab === "contacts" && windowFocused) void closeNotifications("contacts");
+  }, [tab, windowFocused]);
+
+  /** Unread messages across chats; muted chats only when the badge setting counts them. */
+  const unreadTotal = useMemo(
+    () =>
+      conversations.reduce((sum, c) => {
+        if (!notificationPrefs.badgeIncludesMuted && isMuted(c.mute)) return sum;
+        return sum + (c.unread_count ?? 0);
+      }, 0),
+    [conversations, notificationPrefs.badgeIncludesMuted],
+  );
+  useEffect(() => {
+    // Not before the first list: an empty one would clear the badge a push just set.
+    if (loading) return;
+    showUnreadCount(notificationPrefs.badge ? unreadTotal : 0);
+  }, [unreadTotal, notificationPrefs.badge, loading]);
+  useEffect(() => () => hideUnreadCount(), []);
+
+  /* The browser's own settings can change it while Shroud is in the background. */
+  useEffect(() => {
+    if (windowFocused) setPermission(notificationPermission());
+  }, [windowFocused]);
+
+  /* Each unlock: this browser's push subscription and settings, as the server should know them. */
+  useEffect(() => {
+    void syncNotifications(session.token).finally(() => setPermission(notificationPermission()));
+  }, [session.token]);
+
+  /* A click on a notification opens its chat (or the requests, for a contact request). */
+  useEffect(
+    () =>
+      onNotificationOpen((open) => {
+        if (open.kind === "contact_request") {
+          setTab("contacts");
+          setSelected(null);
+          return;
+        }
+        setTab("chats");
+        if (open.peer) setPendingOpen(open);
+      }),
+    [],
+  );
+  useEffect(() => {
+    if (!pendingOpen?.peer) return;
+    const key = pendingOpen.peer.toLowerCase();
+    const conv = conversations.find((c) => c.peer.id.toLowerCase() === key);
+    const contact = contacts.find((c) => c.user_id.toLowerCase() === key);
+    const username = conv?.peer.username ?? contact?.username;
+    if (username) {
+      setPendingOpen(null);
+      setSelected({ id: conv?.peer.id ?? contact?.user_id ?? pendingOpen.peer, username });
+    } else if (!loading) {
+      // Not a chat of ours (any more): the list it would be in is open anyway.
+      setPendingOpen(null);
+    }
+  }, [pendingOpen, conversations, contacts, loading]);
 
   /** Moves the open chat's catch-up cursor back, never forward; a catch-up running stops there. */
   const lowerReactionCursor = useCallback((to: number) => {
@@ -945,6 +1186,21 @@ export function AppShell({ session }: { session: Session }) {
               if (open && open.id.toLowerCase() === peer.toLowerCase()) {
                 setThread((prev) => mergeMessages(prev, [msg]));
               }
+              if (msg.isMine) {
+                // Written on our other device: that chat has been read there.
+                void closeChatNotifications(dto.conversation_id);
+              } else if (msg.kind !== "annotation") {
+                const conv = convs.find((c) => c.peer.id.toLowerCase() === peer.toLowerCase());
+                announce({
+                  kind: "message",
+                  tag: dto.conversation_id,
+                  peer,
+                  sender: conv?.peer.username ?? "New message",
+                  text: previewCopy(msg),
+                  muted: isMuted(conv?.mute),
+                  lookingAtThis: lookingAtRef.current === peer.toLowerCase(),
+                });
+              }
             } catch {
               /* roster refresh already ran; next poll/WS event retries */
               markTyping(dto.sender_user_id, false);
@@ -990,6 +1246,47 @@ export function AppShell({ session }: { session: Session }) {
           } else {
             refreshSoon();
           }
+          if (added && wire.ciphertext && conv) {
+            announce({
+              kind: "reaction",
+              tag: reactionTag(conv.id),
+              peer: conv.peer.id,
+              sender: conv.peer.username,
+              text: null,
+              muted: isMuted(conv.mute),
+              lookingAtThis: looking === conv.peer.id.toLowerCase(),
+            });
+          }
+          return;
+        }
+        if (event.type === "conversation.read") {
+          // Our other device read this chat: the count and its notifications go here too.
+          const peer = String(event.raw.peer_user_id ?? "").toLowerCase();
+          const readAt = Date.parse(String(event.raw.read_at ?? ""));
+          const conversationId = String(event.raw.conversation_id ?? "");
+          if (!peer) return;
+          if (Number.isFinite(readAt)) {
+            readThrough.current.set(peer, Math.max(readThrough.current.get(peer) ?? 0, readAt));
+          }
+          const left = Number(event.raw.unread_count ?? 0);
+          setConversations((prev) =>
+            withLocalState(
+              prev.map((c) =>
+                c.peer.id.toLowerCase() === peer ? { ...c, unread_count: Number.isFinite(left) ? left : 0 } : c,
+              ),
+            ),
+          );
+          if (conversationId) void closeChatNotifications(conversationId);
+          return;
+        }
+        if (event.type === "conversation.mute") {
+          // Muted or unmuted on our other device.
+          const peer = String(event.raw.peer_user_id ?? "").toLowerCase();
+          if (!peer) return;
+          const mute = (event.raw.mute as ChatMute | null | undefined) ?? null;
+          setConversations((prev) =>
+            prev.map((c) => (c.peer.id.toLowerCase() === peer ? { ...c, mute } : c)),
+          );
           return;
         }
         if (event.type === "reactions.seen") {
@@ -998,14 +1295,34 @@ export function AppShell({ session }: { session: Session }) {
           const seen = Number(event.raw.seen_seq ?? 0);
           if (!peer || !Number.isFinite(seen)) return;
           reactionsSeen.current.set(peer, Math.max(reactionsSeen.current.get(peer) ?? 0, seen));
-          setConversations((prev) => withLocalSeen(prev));
+          setConversations((prev) => withLocalState(prev));
           return;
+        }
+        if (event.type === "contact.request") {
+          const request = event.raw.request as ContactRequest | undefined;
+          if (
+            request?.status === "pending" &&
+            request.to_user_id.toLowerCase() === session.user.id.toLowerCase()
+          ) {
+            announce({
+              kind: "contact_request",
+              tag: "contacts",
+              peer: request.from_user_id,
+              sender: request.user?.username ?? "Someone",
+              text: null,
+              muted: false,
+              lookingAtThis: false,
+            });
+          }
         }
         if (event.type.startsWith("contact.") || event.type === "message.deleted") {
           void refresh();
           const open = selectedRef.current;
           if (event.type === "message.deleted") {
             const id = String(event.raw.message_id ?? "");
+            // A page notification may quote it (previews on): the chat's go with it.
+            const conversationId = String(event.raw.conversation_id ?? "");
+            if (conversationId) void closeChatNotifications(conversationId);
             // Unsent by its author: nothing of it may linger here, open chat or not.
             if (id) {
               discardMessage(id);
@@ -1037,7 +1354,7 @@ export function AppShell({ session }: { session: Session }) {
     applyWireReactions,
     markReactionsSeen,
     refreshSoon,
-    withLocalSeen,
+    withLocalState,
   ]);
 
   useEffect(() => {
@@ -1094,6 +1411,8 @@ export function AppShell({ session }: { session: Session }) {
         // The open chat never shows one: it is being looked at.
         newReactions:
           (c.unseen_reactions ?? 0) > 0 && selected?.id.toLowerCase() !== c.peer.id.toLowerCase(),
+        unread: c.unread_count ?? 0,
+        muted: isMuted(c.mute),
       }))
       .filter(
         (entry) =>
@@ -1703,6 +2022,27 @@ export function AppShell({ session }: { session: Session }) {
     id: request.id,
     username: request.user?.username ?? "Unknown",
   }));
+  const mutedChats = conversations
+    .filter((c) => isMuted(c.mute))
+    .map((c) => ({ peerId: c.peer.id, username: c.peer.username, mute: c.mute as ChatMute }));
+  const selectedConversation = selected
+    ? conversations.find((c) => c.peer.id.toLowerCase() === selected.id.toLowerCase())
+    : undefined;
+  /** Offered once, until notifications are on, turned down, or the offer closed. */
+  const offerNotifications =
+    tab === "chats" &&
+    !notificationPrefs.enabled &&
+    !notificationPrefs.offerDismissed &&
+    (permission === "default" || permission === "granted");
+
+  async function turnOnNotifications() {
+    await enableNotifications(session.token).catch(() => undefined);
+    setPermission(notificationPermission());
+  }
+
+  function openChatMenu(peerId: string, username: string, anchor: MenuAnchor, trigger: HTMLElement | null) {
+    setChatMenu({ peerId, username, anchor, trigger });
+  }
 
   return (
     <div className="shell">
@@ -1710,6 +2050,7 @@ export function AppShell({ session }: { session: Session }) {
         tab={tab}
         onSelect={openTab}
         requestCount={requests.length}
+        unreadCount={unreadTotal}
         user={{ id: session.user.id, username: session.user.username }}
         onProfile={() => setShowProfile(true)}
         onLogout={() => setConfirmLogout(true)}
@@ -1726,6 +2067,8 @@ export function AppShell({ session }: { session: Session }) {
             onLockNow={lockNow}
             onShowQr={() => setShowQr(true)}
             onCacheCleared={() => setPreviewRev((n) => n + 1)}
+            mutedChats={mutedChats}
+            onUnmute={(peerId) => setChatMute(peerId, "off")}
           />
         ) : (
           <>
@@ -1744,6 +2087,37 @@ export function AppShell({ session }: { session: Session }) {
               entries={tab === "chats" ? chatEntries : contactEntries}
               selectedId={selected?.id ?? null}
               onSelect={(entry) => setSelected({ id: entry.id, username: entry.username })}
+              onEntryMenu={
+                tab === "chats"
+                  ? (entry, event) =>
+                      openChatMenu(entry.id, entry.username, { x: event.clientX, y: event.clientY }, event.currentTarget)
+                  : undefined
+              }
+              banner={
+                offerNotifications ? (
+                  <div className="notify-offer" role="region" aria-label="Notifications">
+                    <span className="notify-offer-icon" aria-hidden="true">
+                      <Bell size={17} />
+                    </span>
+                    <div className="notify-offer-copy">
+                      <strong>Get notified of new messages</strong>
+                      <p>Even when this tab is closed or locked.</p>
+                      <button type="button" onClick={() => void turnOnNotifications()}>
+                        Turn on notifications
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      aria-label="Not now"
+                      title="Not now"
+                      onClick={() => updateNotificationPrefs({ offerDismissed: true })}
+                    >
+                      <X size={15} />
+                    </button>
+                  </div>
+                ) : null
+              }
               empty={
                 tab === "chats"
                   ? {
@@ -1819,7 +2193,27 @@ export function AppShell({ session }: { session: Session }) {
         )}
       </div>
 
-      <TabBar tab={tab} onSelect={openTab} requestCount={requests.length} />
+      <TabBar tab={tab} onSelect={openTab} requestCount={requests.length} unreadCount={unreadTotal} />
+
+      {chatMenu ? (
+        // Its own layer: opened from the contact info it has to sit above the dialog.
+        <div className="chat-menu-layer">
+        <ChatMenu
+          anchor={chatMenu.anchor}
+          username={chatMenu.username}
+          trigger={chatMenu.trigger}
+          muted={isMuted(
+            conversations.find((c) => c.peer.id.toLowerCase() === chatMenu.peerId.toLowerCase())?.mute,
+          )}
+          unread={
+            conversations.find((c) => c.peer.id.toLowerCase() === chatMenu.peerId.toLowerCase())
+              ?.unread_count ?? 0
+          }
+          onAction={(action) => runChatMenu(chatMenu.peerId, action)}
+          onClose={() => setChatMenu(null)}
+        />
+        </div>
+      ) : null}
 
       {adding ? (
         <Modal
@@ -1909,6 +2303,27 @@ export function AppShell({ session }: { session: Session }) {
             )}
           </div>
           <div className="set-card">
+            {/* A mute shows in the chat list: without a chat yet there is none to show it in. */}
+            <button
+              type="button"
+              className="set-row set-row-button"
+              aria-haspopup="menu"
+              disabled={!selectedConversation}
+              onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect();
+                openChatMenu(selected.id, selected.username, { x: rect.right - 12, y: rect.bottom }, event.currentTarget);
+              }}
+            >
+              <span className="set-tile" style={{ background: "#e64a72" }} aria-hidden="true">
+                {isMuted(selectedConversation?.mute) ? <BellOff size={15} /> : <Bell size={15} />}
+              </span>
+              <span className="set-row-copy">
+                <strong>Notifications</strong>
+              </span>
+              <span className="set-row-value">
+                {selectedConversation ? muteLabel(selectedConversation.mute) : "After the first message"}
+              </span>
+            </button>
             <div className="set-row">
               <div className="set-row-copy">
                 <strong>User ID</strong>

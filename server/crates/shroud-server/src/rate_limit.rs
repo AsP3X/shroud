@@ -47,6 +47,8 @@ pub mod budgets {
     pub const PIN_GUARD_IP: (u64, Duration) = (20, Duration::from_secs(60));
     /// PIN changes per account.
     pub const PIN_GUARD_USER: (u64, Duration) = (10, Duration::from_secs(3600));
+    /// Test notifications per device: a settings button, not a way to spam a relay.
+    pub const PUSH_TEST_DEVICE: (u64, Duration) = (6, Duration::from_secs(60));
 }
 
 struct MemoryWindow {

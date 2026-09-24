@@ -78,6 +78,26 @@ server {
         try_files $uri =404;
     }
 
+    # The Web Push service worker. Always revalidated so a new version reaches browsers on
+    # their next visit; a missing file must 404, never fall back to index.html (a worker
+    # served as HTML fails to register).
+    location = /sw.js {
+        include /etc/nginx/security-headers.conf;
+        add_header Cache-Control "no-cache, must-revalidate";
+        default_type application/javascript;
+        try_files $uri =404;
+    }
+
+    # Notification sounds. Stock mime.types has no wav, and an octet-stream answer with nosniff
+    # is one Safari will not play.
+    location /sounds/ {
+        include /etc/nginx/security-headers.conf;
+        types { audio/wav wav; }
+        default_type audio/wav;
+        add_header Cache-Control "public, max-age=86400";
+        try_files $uri =404;
+    }
+
     location / {
         try_files $uri $uri/ /index.html;
     }

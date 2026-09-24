@@ -262,6 +262,14 @@ pub async fn create_request(
 
     // Fan-out to the target user so their Contacts "Pending" section updates live.
     publish_contact_event(&state, "contact.request", &response, [body.user_id], None).await;
+    // And a notification on their devices that are not open.
+    state
+        .push
+        .dispatch(crate::push::PushEvent::ContactRequest {
+            recipient: body.user_id,
+            requester: auth.user_id,
+        })
+        .await;
     // Sender's other devices: keep outgoing request state in sync.
     publish_contact_event(
         &state,

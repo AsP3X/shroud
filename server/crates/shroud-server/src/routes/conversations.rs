@@ -20,10 +20,34 @@ use uuid::Uuid;
 
 use crate::auth::session::AuthContext;
 use crate::error::AppError;
+use crate::push::PushEvent;
+use crate::routes::notifications::MuteState;
 use crate::state::AppState;
 
 /// `peer.username` for a chat whose peer deleted their account (migration 021 clears it).
 const DELETED_ACCOUNT_NAME: &str = "Deleted account";
+
+/// Unread counts stop here: a badge reads "999+" long before anyone counts further, and the
+/// count walks the unread messages themselves.
+pub const UNREAD_COUNT_CAP: i64 = 999;
+
+/// The unread messages of chat `c` for user `$1` (with `cr` = their read marker and `cc` =
+/// their clear watermark joined in): the other participant's, after both, still visible.
+/// Human: Walks the chat's `(conversation_id, created_at)` index from the marker on, so it
+/// costs what is unread, not the chat's history.
+const UNREAD_MESSAGES_SQL: &str = r#"
+    SELECT 1
+    FROM messages m
+    WHERE m.conversation_id = c.id
+      AND m.sender_user_id <> $1
+      AND m.content_type <> 'annotation'
+      AND m.deleted_for_everyone_at IS NULL
+      AND m.created_at > COALESCE(GREATEST(cr.read_at, cc.cleared_at), '-infinity'::timestamptz)
+      AND NOT EXISTS (
+          SELECT 1 FROM message_hides h WHERE h.message_id = m.id AND h.user_id = $1
+      )
+    LIMIT 999
+"#;
 
 #[derive(Debug, Serialize)]
 pub struct ConversationsResponse {
@@ -44,6 +68,11 @@ pub struct ConversationItem {
     /// since the caller last marked them seen (`POST /conversations/{peer}/reactions/seen`):
     /// the heart badge.
     pub unseen_reactions: i64,
+    /// The other participant's messages after the caller's read marker (at most
+    /// [`UNREAD_COUNT_CAP`]). Reading on any device clears it on all of them.
+    pub unread_count: i64,
+    /// Present while the caller has this chat muted.
+    pub mute: Option<MuteState>,
 }
 
 #[derive(Debug, Serialize)]
@@ -84,17 +113,22 @@ pub async fn list_conversations(
         last_message_at: Option<DateTime<Utc>>,
         reaction_seq: i64,
         unseen_reactions: i64,
+        unread_count: i64,
+        muted: bool,
+        muted_until: Option<DateTime<Utc>>,
     }
 
     // Human: Join peer username; use denormalized last_message_at (no correlated subquery).
     // The unseen-reaction count is one range of the partial unseen index per chat: the other
     // person's live reactions to the caller's messages with `added_seq > seen_seq`, so it only
-    // walks what the caller has not seen (a clear marks everything seen).
+    // walks what the caller has not seen (a clear marks everything seen). The unread count is
+    // the same kind of range, from the caller's read marker on.
     // A chat the caller cleared stays hidden until something newer than their watermark
     // arrives, which is what makes the next message read as a brand-new chat. A deleted
     // account has no username left; both apps require one, so it is named here.
-    // Agent: SELECT conversations JOIN users LEFT JOIN conversation_clears; RETURNS ConversationItem list.
-    let rows = sqlx::query_as::<_, Row>(
+    // Agent: SELECT conversations JOIN users LEFT JOIN conversation_clears, conversation_reads,
+    // chat_mutes; RETURNS ConversationItem list.
+    let sql = format!(
         r#"
         SELECT
             c.id,
@@ -121,14 +155,23 @@ pub async fn list_conversations(
                       SELECT 1 FROM message_hides h
                       WHERE h.message_id = m.id AND h.user_id = $1
                   )
-            ) AS unseen_reactions
+            ) AS unseen_reactions,
+            (SELECT COUNT(*) FROM ({UNREAD_MESSAGES_SQL}) unread) AS unread_count,
+            mu.user_id IS NOT NULL AS muted,
+            mu.muted_until
         FROM conversations c
         INNER JOIN users ua ON ua.id = c.user_a_id
         INNER JOIN users ub ON ub.id = c.user_b_id
         LEFT JOIN conversation_clears cc
             ON cc.conversation_id = c.id AND cc.user_id = $1
+        LEFT JOIN conversation_reads cr
+            ON cr.conversation_id = c.id AND cr.user_id = $1
         LEFT JOIN conversation_reaction_seqs rs ON rs.conversation_id = c.id
         LEFT JOIN reaction_reads rr ON rr.conversation_id = c.id AND rr.user_id = $1
+        LEFT JOIN chat_mutes mu
+            ON mu.user_id = $1
+           AND mu.peer_user_id = CASE WHEN c.user_a_id = $1 THEN c.user_b_id ELSE c.user_a_id END
+           AND (mu.muted_until IS NULL OR mu.muted_until > now())
         WHERE (c.user_a_id = $1 OR c.user_b_id = $1)
           AND c.user_a_id <> c.user_b_id
           AND (
@@ -136,13 +179,14 @@ pub async fn list_conversations(
             OR COALESCE(c.last_message_at, c.created_at) > cc.cleared_at
           )
         ORDER BY c.last_message_at DESC NULLS LAST, c.created_at DESC
-        "#,
-    )
-    .bind(auth.user_id)
-    .bind(DELETED_ACCOUNT_NAME)
-    .fetch_all(&state.pool)
-    .await
-    .map_err(|err| AppError::Internal(format!("list conversations failed: {err}")))?;
+        "#
+    );
+    let rows = sqlx::query_as::<_, Row>(&sql)
+        .bind(auth.user_id)
+        .bind(DELETED_ACCOUNT_NAME)
+        .fetch_all(&state.pool)
+        .await
+        .map_err(|err| AppError::Internal(format!("list conversations failed: {err}")))?;
 
     let conversations = rows
         .into_iter()
@@ -156,10 +200,272 @@ pub async fn list_conversations(
             last_message_at: row.last_message_at,
             reaction_seq: row.reaction_seq,
             unseen_reactions: row.unseen_reactions,
+            unread_count: row.unread_count,
+            mute: row.muted.then_some(MuteState {
+                until: row.muted_until,
+            }),
         })
         .collect();
 
     Ok(Json(ConversationsResponse { conversations }))
+}
+
+/// Unread messages across `user_id`'s chats (the app icon badge). Muted chats count only
+/// with `include_muted`.
+pub async fn unread_total(
+    pool: &sqlx::PgPool,
+    user_id: Uuid,
+    include_muted: bool,
+) -> Result<i64, sqlx::Error> {
+    let sql = format!(
+        r#"
+        SELECT COALESCE(SUM(per_chat.unread), 0)::bigint
+        FROM (
+            SELECT (SELECT COUNT(*) FROM ({UNREAD_MESSAGES_SQL}) unread) AS unread
+            FROM conversations c
+            LEFT JOIN conversation_clears cc
+                ON cc.conversation_id = c.id AND cc.user_id = $1
+            LEFT JOIN conversation_reads cr
+                ON cr.conversation_id = c.id AND cr.user_id = $1
+            WHERE (c.user_a_id = $1 OR c.user_b_id = $1)
+              AND c.user_a_id <> c.user_b_id
+              AND (
+                $2
+                OR NOT EXISTS (
+                    SELECT 1 FROM chat_mutes mu
+                    WHERE mu.user_id = $1
+                      AND mu.peer_user_id =
+                          CASE WHEN c.user_a_id = $1 THEN c.user_b_id ELSE c.user_a_id END
+                      AND (mu.muted_until IS NULL OR mu.muted_until > now())
+                )
+              )
+        ) per_chat
+        "#
+    );
+    sqlx::query_scalar(&sql)
+        .bind(user_id)
+        .bind(include_muted)
+        .fetch_one(pool)
+        .await
+}
+
+/// Unread messages in one chat for `user_id`.
+pub(crate) async fn unread_in<'e, E>(
+    executor: E,
+    user_id: Uuid,
+    conversation_id: Uuid,
+) -> Result<i64, AppError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    let sql = format!(
+        r#"
+        SELECT (SELECT COUNT(*) FROM ({UNREAD_MESSAGES_SQL}) unread)
+        FROM conversations c
+        LEFT JOIN conversation_clears cc ON cc.conversation_id = c.id AND cc.user_id = $1
+        LEFT JOIN conversation_reads cr ON cr.conversation_id = c.id AND cr.user_id = $1
+        WHERE c.id = $2
+        "#
+    );
+    let count: Option<i64> = sqlx::query_scalar(&sql)
+        .bind(user_id)
+        .bind(conversation_id)
+        .fetch_optional(executor)
+        .await
+        .map_err(|err| AppError::Internal(format!("count unread failed: {err}")))?;
+    Ok(count.unwrap_or(0))
+}
+
+/// Moves `user_id`'s read marker in a chat forward to `read_at` — never back. True when it
+/// moved (a first marker counts).
+pub(crate) async fn advance_read_marker<'e, E>(
+    executor: E,
+    user_id: Uuid,
+    conversation_id: Uuid,
+    read_at: DateTime<Utc>,
+) -> Result<bool, AppError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    let moved: Option<DateTime<Utc>> = sqlx::query_scalar(
+        r#"
+        INSERT INTO conversation_reads (user_id, conversation_id, read_at)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (user_id, conversation_id) DO UPDATE SET read_at = EXCLUDED.read_at
+        WHERE conversation_reads.read_at < EXCLUDED.read_at
+        RETURNING read_at
+        "#,
+    )
+    .bind(user_id)
+    .bind(conversation_id)
+    .bind(read_at)
+    .fetch_optional(executor)
+    .await
+    .map_err(|err| AppError::Internal(format!("advance read marker failed: {err}")))?;
+    Ok(moved.is_some())
+}
+
+/// After `reader` read a chat on `device`: their other devices drop its unread count and its
+/// delivered notifications, and their offline iPhones' icon badges come down.
+pub(crate) async fn announce_chat_read(
+    state: &AppState,
+    reader: Uuid,
+    device: Uuid,
+    conversation_id: Uuid,
+    peer_user_id: Uuid,
+    read_at: DateTime<Utc>,
+) {
+    // Not guessed: a wrong 0 would clear a chat the other devices still count.
+    let unread_count = match unread_in(&state.pool, reader, conversation_id).await {
+        Ok(count) => count,
+        Err(err) => {
+            tracing::warn!(error = %err, %reader, "conversation.read not sent");
+            return;
+        }
+    };
+    let event = serde_json::json!({
+        "type": "conversation.read",
+        "conversation_id": conversation_id,
+        "peer_user_id": peer_user_id,
+        "read_at": read_at,
+        "unread_count": unread_count,
+    });
+    if let Ok(payload) = serde_json::to_string(&event) {
+        state
+            .realtime
+            .publish_to_users([reader], Some(device), &payload)
+            .await;
+    }
+    state
+        .push
+        .dispatch(PushEvent::BadgeSync {
+            recipient: reader,
+            reader_device: device,
+        })
+        .await;
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct MarkChatReadRequest {
+    /// Read up to this message (inclusive). Omitted: everything in the chat.
+    pub up_to_message_id: Option<Uuid>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MarkChatReadResponse {
+    /// The caller's read marker after the call; null when the chat has no messages yet.
+    pub read_at: Option<DateTime<Utc>>,
+    pub unread_count: i64,
+    /// How many of the peer's messages got a read receipt with this call.
+    pub receipts: u64,
+}
+
+/// `POST /conversations/{peer_user_id}/read` — the caller looked at the chat.
+///
+/// Human: Moves the read marker (the unread badge on every device), and sends the peer read
+/// receipts for what it covers when they are still a contact — the same receipts as
+/// `POST /messages/read`, which the iPhone app sends as it reads.
+/// Agent: WRITES conversation_reads, message_reads; PUBLISHES message.read (peer) and
+/// conversation.read (own devices); DISPATCHES BadgeSync.
+pub async fn mark_chat_read(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path(peer_user_id): Path<Uuid>,
+    body: Option<Json<MarkChatReadRequest>>,
+) -> Result<Json<MarkChatReadResponse>, AppError> {
+    let Json(body) = body.unwrap_or_default();
+    if peer_user_id == auth.user_id {
+        return Err(AppError::validation("Saved Messages have nothing unread."));
+    }
+    let Some(conversation_id) =
+        crate::routes::messages::find_conversation(&state.pool, auth.user_id, peer_user_id).await?
+    else {
+        return Ok(Json(MarkChatReadResponse {
+            read_at: None,
+            unread_count: 0,
+            receipts: 0,
+        }));
+    };
+
+    #[derive(FromRow)]
+    struct Anchor {
+        id: Uuid,
+        created_at: DateTime<Utc>,
+    }
+    let anchor = match body.up_to_message_id {
+        Some(message_id) => sqlx::query_as::<_, Anchor>(
+            r#"SELECT id, created_at FROM messages WHERE id = $1 AND conversation_id = $2"#,
+        )
+        .bind(message_id)
+        .bind(conversation_id)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|err| AppError::Internal(format!("load read anchor failed: {err}")))?
+        .ok_or_else(|| AppError::not_found("Message not found."))
+        .map(Some)?,
+        None => sqlx::query_as::<_, Anchor>(
+            r#"
+            SELECT id, created_at FROM messages
+            WHERE conversation_id = $1
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(conversation_id)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|err| AppError::Internal(format!("load newest message failed: {err}")))?,
+    };
+    let Some(anchor) = anchor else {
+        return Ok(Json(MarkChatReadResponse {
+            read_at: None,
+            unread_count: 0,
+            receipts: 0,
+        }));
+    };
+
+    let moved = advance_read_marker(
+        &state.pool,
+        auth.user_id,
+        conversation_id,
+        anchor.created_at,
+    )
+    .await?;
+    let receipts = crate::routes::messages::send_read_receipts(
+        &state,
+        &auth,
+        conversation_id,
+        peer_user_id,
+        anchor.created_at,
+        anchor.id,
+    )
+    .await?;
+    if moved {
+        announce_chat_read(
+            &state,
+            auth.user_id,
+            auth.device_id,
+            conversation_id,
+            peer_user_id,
+            anchor.created_at,
+        )
+        .await;
+    }
+
+    let read_at: Option<DateTime<Utc>> = sqlx::query_scalar(
+        r#"SELECT read_at FROM conversation_reads WHERE user_id = $1 AND conversation_id = $2"#,
+    )
+    .bind(auth.user_id)
+    .bind(conversation_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("load read marker failed: {err}")))?;
+    let unread_count = unread_in(&state.pool, auth.user_id, conversation_id).await?;
+    Ok(Json(MarkChatReadResponse {
+        read_at,
+        unread_count,
+        receipts,
+    }))
 }
 
 /// `DELETE /conversations/{peer_user_id}?scope=me|everyone`
@@ -646,4 +952,14 @@ async fn drop_connection(
     .map_err(|err| AppError::Internal(format!("cancel requests on chat delete failed: {err}")))?;
 
     Ok(removed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_unread_count_stops_at_the_cap() {
+        assert!(UNREAD_MESSAGES_SQL.contains(&format!("LIMIT {UNREAD_COUNT_CAP}")));
+    }
 }

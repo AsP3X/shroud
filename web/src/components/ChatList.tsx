@@ -1,4 +1,5 @@
-import { Heart, QrCode, Search, SquarePen, X } from "lucide-react";
+import type { MouseEvent, ReactNode } from "react";
+import { BellOff, Heart, QrCode, Search, SquarePen, X } from "lucide-react";
 import type { PeerActivity } from "../typing";
 import { Avatar } from "./Avatar";
 import { TypingLabel } from "./Typing";
@@ -13,6 +14,10 @@ export type ListEntry = {
   activity?: PeerActivity;
   /** The other side reacted to our messages since we last looked (Telegram's heart badge). */
   newReactions?: boolean;
+  /** Their messages we have not read (on any device). */
+  unread?: number;
+  /** Notifications for the chat are off: a bell in the row, and a grey count. */
+  muted?: boolean;
 };
 
 export type RequestEntry = { id: string; username: string };
@@ -32,6 +37,8 @@ export function ChatList({
   selectedId,
   onSelect,
   empty,
+  banner,
+  onEntryMenu,
   className,
 }: {
   title: string;
@@ -49,6 +56,10 @@ export function ChatList({
   selectedId: string | null;
   onSelect: (entry: ListEntry) => void;
   empty: { title: string; body: string };
+  /** Above the rows: the "turn on notifications" offer. */
+  banner?: ReactNode;
+  /** Right-click on a row (or Shift+F10 / the context-menu key on a focused one). */
+  onEntryMenu?: (entry: ListEntry, event: MouseEvent<HTMLButtonElement>) => void;
   className?: string;
 }) {
   const searching = query.trim().length > 0;
@@ -92,6 +103,7 @@ export function ChatList({
       </header>
 
       <div className="rows">
+        {banner}
         {error ? (
           <p className="pane-error" role="status">
             {error}
@@ -145,6 +157,7 @@ export function ChatList({
 
         {entries.map((entry) => {
           const active = selectedId?.toLowerCase() === entry.id.toLowerCase();
+          const unread = entry.unread ?? 0;
           return (
             <button
               type="button"
@@ -152,19 +165,47 @@ export function ChatList({
               className={active ? "row row-button active" : "row row-button"}
               aria-current={active ? "true" : undefined}
               onClick={() => onSelect(entry)}
+              onContextMenu={
+                onEntryMenu
+                  ? (event) => {
+                      event.preventDefault();
+                      onEntryMenu(entry, event);
+                    }
+                  : undefined
+              }
             >
               <Avatar name={entry.username} seed={entry.id} online={entry.online} />
               <span className="row-copy">
-                <strong>{entry.username}</strong>
+                {entry.muted ? (
+                  <strong className="row-title-muted">
+                    <span>{entry.username}</span>
+                    <BellOff size={13} className="row-muted-icon" aria-label="Muted" />
+                  </strong>
+                ) : (
+                  <strong>{entry.username}</strong>
+                )}
                 {entry.activity ? <TypingLabel word={entry.activity} /> : <span>{entry.subtitle}</span>}
               </span>
-              {entry.timestamp || entry.newReactions ? (
+              {entry.timestamp || entry.newReactions || unread > 0 ? (
                 <span className="row-side">
                   {entry.timestamp ? <time className="row-time">{entry.timestamp}</time> : null}
-                  {entry.newReactions ? (
-                    <span className="row-reaction-badge" title="New reactions">
-                      <Heart size={11} fill="currentColor" aria-hidden="true" />
-                      <span className="sr-only">New reactions</span>
+                  {entry.newReactions || unread > 0 ? (
+                    <span className="row-badges">
+                      {entry.newReactions ? (
+                        <span className="row-reaction-badge" title="New reactions">
+                          <Heart size={11} fill="currentColor" aria-hidden="true" />
+                          <span className="sr-only">New reactions</span>
+                        </span>
+                      ) : null}
+                      {unread > 0 ? (
+                        <span
+                          key={unread}
+                          className={entry.muted ? "row-unread muted" : "row-unread"}
+                          aria-label={`${unread} unread`}
+                        >
+                          {unread > 99 ? "99+" : unread}
+                        </span>
+                      ) : null}
                     </span>
                   ) : null}
                 </span>

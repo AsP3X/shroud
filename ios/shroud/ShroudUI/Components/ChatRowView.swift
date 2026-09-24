@@ -8,6 +8,8 @@ struct ChatRowView: View {
     var unreadCount: Int? = nil
     /// The other side reacted to our messages since we last looked (Telegram's heart badge).
     var hasUnseenReactions: Bool = false
+    /// Notifications are off for the chat: a bell after the name, and a grey count.
+    var isMuted: Bool = false
     var subtitleAccent: Bool = false
     /// "typing" / "recording" with the live dots replaces the subtitle.
     var activity: ChatPeerActivity? = nil
@@ -38,10 +40,20 @@ struct ChatRowView: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(title)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text(title)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                            .lineLimit(1)
+                        if isMuted {
+                            Image(systemName: "bell.slash.fill")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Theme.textSecondary.opacity(0.8))
+                                .transition(Motion.iconSwap)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                    .animation(Motion.snappy, value: isMuted)
                     Spacer(minLength: 8)
                     if let time {
                         Text(time)
@@ -89,8 +101,9 @@ struct ChatRowView: View {
                             .monospacedDigit()
                             .padding(.horizontal, 7)
                             .padding(.vertical, 3)
-                            .background(Theme.accent)
+                            .background(isMuted ? Theme.textSecondary.opacity(0.55) : Theme.accent)
                             .clipShape(Capsule())
+                            .animation(Motion.fade, value: isMuted)
                             .transition(Motion.iconSwap)
                     }
                 }
@@ -120,6 +133,9 @@ struct ChatRowView: View {
         if hasUnseenReactions {
             parts.append("new reactions")
         }
+        if isMuted {
+            parts.append("muted")
+        }
         return parts.joined(separator: ", ")
     }
 }
@@ -137,6 +153,13 @@ struct ChatRowView: View {
             subtitle: "online",
             subtitleAccent: true,
             activity: .recording
+        )
+        ChatRowView(
+            title: "Family",
+            subtitle: "Photo",
+            time: "11:02",
+            unreadCount: 12,
+            isMuted: true
         )
     }
     .background(Theme.background)

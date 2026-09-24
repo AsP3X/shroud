@@ -6,7 +6,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-        true
+        // Before launch finishes: a tap on a notification that launched the app is delivered
+        // to the delegate right after this returns.
+        PushNotificationService.shared.install()
+        return true
     }
 
     func application(

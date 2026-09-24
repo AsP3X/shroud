@@ -38,6 +38,7 @@ High-level structure for the E2E encrypted messenger.
 | iOS UI | `ios/shroud/ShroudUI/` | Reusable SwiftUI components + `Theme` |
 | iOS features | `ios/shroud/Features/` | Screens (MVVM), 1:1 with design |
 | iOS services | `ios/shroud/Services/` | API client, crypto, persistence |
+| iOS extension | `ios/ShroudNotificationService/`, `ios/ShroudShared/` | Notification service extension (names the sender of a push); code it shares with the app |
 | Web | `web/` | Vite + React SPA; nginx same-origin `/api/v1` |
 | API | `server/crates/shroud-server/` | HTTP `/api/v1`, WebSocket, auth, relay |
 | Schema | `server/migrations/postgres/` | Forward-only sqlx migrations |
@@ -184,6 +185,47 @@ What the tag does not cover:
 - **Key substitution.** The tag proves the key the directory returned. Safety numbers are what
   catch the server handing out the wrong identity key.
 
+## Notifications
+
+A device with a live WebSocket notifies its user itself: it can read the message, so the open app
+shows the sender and, if the user wants, the text (an in-app banner on iOS; a page notification
+from an unlocked but unwatched web tab). The server pushes only to the account's **other** devices
+(`push/mod.rs`), and only ids and a kind — it has no content to send.
+
+- **Who gets a push.** Each of the recipient's signed-in devices with an APNs token or a Web
+  Push subscription and no live socket. The server pings every 30 s and closes a socket 75 s
+  after the last frame it heard, so a phone the OS suspended counts as offline instead of
+  swallowing its pushes; the iPhone app also closes its socket when it goes to the background
+  (unless a call needs it). A device signed out by a password change gets none until it signs
+  in again. Per-device settings (`device_notification_settings`: on/off, sender name, reactions,
+  contact requests, sound, badge, whether muted chats count) decide the rest. A muted chat
+  (`chat_mutes`, per account, for a while or until unmuted) pushes nothing — only a silent badge
+  to an iPhone that counts muted chats; contact requests and calls ignore mutes. Saved
+  Messages, annotations and taking an emoji back never push.
+- **What a push says.** APNs: a fixed line per kind ("New message") as the body, the conversation
+  as `thread-id`, `mutable-content`, and a `shroud` object with the kind and ids. The sender's
+  name is `e`, AES-256-GCM sealed under a 32-byte key the iPhone generated and registered with its
+  token (AAD `shroud-push-v1|kind|thread|peer`), so Apple sees ids and no names and cannot
+  move a name onto another push. The notification
+  service extension opens it with the key from the app group's Keychain
+  (`AfterFirstUnlockThisDeviceOnly`) and makes it the title; without the key (before the first
+  unlock) the push shows no name, never a readable one. The key keeps names from Apple, not from
+  the server, which chose them. Web Push is RFC 8291 (`aes128gcm`) with VAPID (RFC 8292); the push
+  service cannot read the payload, so the name travels inside it and the service worker
+  (`web/public/sw.js`) writes the text.
+- **Calls** ring locked iPhones with an ordinary alert (`call` / `video_call`, expires after
+  90 s), not PushKit: a PushKit ring must be ended when the caller hangs up, and the app learns
+  that only over its socket. The server keeps the ring while the call rings, and hands it to a
+  device that connects meanwhile, so tapping the alert opens the app on the ringing call.
+- **Unread counts are server metadata** (`conversation_reads`, one read marker per user and chat,
+  moved by reading and by replying). `GET /conversations` returns `unread_count` (capped at 999)
+  and `mute`; pushes carry the total as the icon badge; reading on one device clears the others
+  (`conversation.read`, plus badge-only pushes to iPhones without a socket). Like read receipts,
+  the markers tell the server when a chat was read, never what it says.
+- **Web Push endpoints** must be https on a known push service (`WEB_PUSH_ALLOWED_HOSTS` adds
+  more), so a subscription cannot aim the server's requests at an arbitrary address.
+- **Sounds** are generated (`scripts/gen_notification_sounds.py`) and shared by both apps.
+
 ## Security invariants
 
 1. Message plaintext exists **only on devices**, and **only in memory** while messaging is unlocked.
@@ -193,8 +235,8 @@ What the tag does not cover:
 5. **History key vault:** raw `historyKey` is **never** stored in the identity Keychain. It is AES-GCM wrapped under a device wrap key gated by **userPresence** (Face ID / Touch ID / passcode) via `HistoryKeyVault`. Phrase unlock re-derives and re-vaults the key. Backgrounding clears history key + decrypted threads from RAM.
 6. Voice transcription is **on-device** for v1 (no server transcript APIs yet).
 7. Contact requests and blocks are enforced on the server before full messaging.
-8. Push payloads are **opaque references only** (no content or keys).
-9. Sessions are **device-bound opaque tokens** with no time-based logout (revoke on logout / device remove / password change of other devices). Logout also forgets the device's push token, so a logged-out phone stops receiving the account's pushes.
+8. Push payloads carry **ids and a kind only** — no content or keys. A sender's name goes only to a device that asks for it, sealed so the relay (Apple, or the browser's push service) cannot read it.
+9. Sessions are **device-bound opaque tokens** with no time-based logout (revoke on logout / device remove / password change of other devices). Logout also forgets the device's push tokens, Web Push subscription and notification settings, so a logged-out device stops receiving the account's pushes.
 10. Presence is visible only to **accepted contacts**.
 11. Identity Keychain items use `WhenUnlockedThisDeviceOnly` (no backup restore; unavailable while device locked).
 12. A message reads as coming from a contact only if its ratchet body decrypts or its identity box carries a verified **sender tag**; untagged boxes are read only under the watermark policy above.
@@ -229,7 +271,8 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 6. **Presence / receipts** — **done** (typing / recording WS; online/last-seen contacts-only; read receipts)  
 7. **Deletes** — **done** (for me / for everyone; account deletion deletes each chat for both and keeps a scrubbed placeholder user row)  
 8. **Push** — **done** (token register; offline gate; live HTTP/2 APNs with .p8 JWT when configured)  
-9. **Calls** — **done** (1:1 signaling ring/accept/reject/hangup/signal; ICE servers; coturn compose profile)
+9. **Calls** — **done** (1:1 signaling ring/accept/reject/hangup/signal; ICE servers; coturn compose profile)  
+11. **Notifications** — **done** (APNs alerts with a sealed sender name, Web Push with VAPID; per-device settings; chat mutes; server unread counts and badges; socket liveness by ping)
 
 ### iOS client
 
@@ -257,7 +300,7 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 | Replies | **done** — swipe left (or the context menu) to quote; the quote is sealed **inside** the plaintext, never server metadata |
 | Links & link previews | **done** — links are tappable (in-app browser), Telegram-style preview block; the sender builds the preview (the iPhone directly, the browser through the link relay) and seals it, recipients never contact the site; toggle in Privacy & Security |
 | Calls UI / WebRTC | **done** — signaling + WKWebView WebRTC + CallKit; voice & video |
-| APNs / VoIP push register | **done** — data token + PushKit VoIP token → `PUT /push/token` |
+| Notifications | **done** — alert pushes named by the notification service extension; in-app banner, sound and haptic while open; Settings → Notifications and Sounds (per-device toggles, sound picker, badge, muted chats, test notification); mute from the chat list or contact info; icon badge from server unread counts; a tap opens the chat. PushKit VoIP token registered (`kind: voip`), but calls ring by alert |
 | Sealed messaging v2 | **done** — dual-seal (peer + self) so sender devices can decrypt history |
 | Sealed messaging (live) | **v3 Double Ratchet** (default) + self dual-seal; first message from non-initiator uses **v2** |
 | Dual-initiator prevention | **done** — only lower `user_id` starts a new DR session; higher UUID sends v2 until session exists |

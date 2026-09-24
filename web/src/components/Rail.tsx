@@ -17,16 +17,24 @@ type NavProps = {
   tab: Tab;
   onSelect: (tab: Tab) => void;
   requestCount: number;
+  /** Unread messages across chats (muted ones only when the badge setting counts them). */
+  unreadCount: number;
 };
 
-function Badge({ count }: { count: number }) {
+function Badge({ count, what }: { count: number; what: string }) {
   if (count <= 0) return null;
   return (
     <span className="rail-badge">
-      {count}
-      <span className="sr-only"> pending requests</span>
+      {count > 99 ? "99+" : count}
+      <span className="sr-only"> {what}</span>
     </span>
   );
+}
+
+function TabBadge({ id, requestCount, unreadCount }: { id: Tab } & Omit<NavProps, "tab" | "onSelect">) {
+  if (id === "contacts") return <Badge count={requestCount} what="pending requests" />;
+  if (id === "chats") return <Badge count={unreadCount} what="unread messages" />;
+  return null;
 }
 
 type AccountAction = "profile" | "settings" | "logout";
@@ -41,6 +49,7 @@ export function Rail({
   tab,
   onSelect,
   requestCount,
+  unreadCount,
   user,
   onProfile,
   onLogout,
@@ -90,7 +99,7 @@ export function Rail({
             title={label}
           >
             <Icon size={20} />
-            {id === "contacts" ? <Badge count={requestCount} /> : null}
+            <TabBadge id={id} requestCount={requestCount} unreadCount={unreadCount} />
           </button>
         ))}
       </div>
@@ -129,7 +138,7 @@ export function Rail({
   );
 }
 
-export function TabBar({ tab, onSelect, requestCount }: NavProps) {
+export function TabBar({ tab, onSelect, requestCount, unreadCount }: NavProps) {
   return (
     <nav className="tab-bar" aria-label="Sections">
       {TABS.map(({ id, label, Icon }) => (
@@ -142,7 +151,7 @@ export function TabBar({ tab, onSelect, requestCount }: NavProps) {
         >
           <span className="tab-icon">
             <Icon size={21} />
-            {id === "contacts" ? <Badge count={requestCount} /> : null}
+            <TabBadge id={id} requestCount={requestCount} unreadCount={unreadCount} />
           </span>
           {label}
         </button>

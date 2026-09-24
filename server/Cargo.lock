@@ -1816,6 +1816,7 @@ dependencies = [
  "rand 0.8.7",
  "redis",
  "reqwest",
+ "ring",
  "serde",
  "serde_json",
  "sha2",

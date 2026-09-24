@@ -8,7 +8,7 @@
 use sqlx::postgres::PgPoolOptions;
 
 /// Expected number of forward migration files under `server/migrations/postgres/`.
-const EXPECTED_MIGRATION_COUNT: i64 = 21;
+const EXPECTED_MIGRATION_COUNT: i64 = 22;
 
 #[tokio::test]
 async fn all_migrations_apply_and_core_tables_exist() {
@@ -53,6 +53,10 @@ async fn all_migrations_apply_and_core_tables_exist() {
         "media_objects",
         "push_tokens",
         "calls",
+        "web_push_subscriptions",
+        "device_notification_settings",
+        "chat_mutes",
+        "conversation_reads",
     ] {
         let exists: bool = sqlx::query_scalar(
             r#"

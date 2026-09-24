@@ -137,10 +137,24 @@ struct ContactProfileView: View {
                     }
                 }
             }
-            profileAction(title: "Mute", icon: "bell.slash.fill") {
-                toast = "Mute coming soon"
-                scheduleClear()
+            muteMenu {
+                VStack(spacing: 5) {
+                    Image(systemName: isMuted ? "bell.fill" : "bell.slash.fill")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(Theme.accent)
+                        .contentTransition(.symbolEffect(.replace))
+                    Text(isMuted ? "Unmute" : "Mute")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.accent)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(Theme.background)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .contentShape(Rectangle())
             }
+            .pressable(scale: 0.93)
+            .accessibilityLabel(isMuted ? "Unmute" : "Mute")
             profileAction(title: "Search", icon: "magnifyingglass") {
                 toast = "Search coming soon"
                 scheduleClear()
@@ -222,9 +236,66 @@ struct ContactProfileView: View {
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
+    private var isMuted: Bool { messaging.isMuted(peerUserID) }
+
+    /// Mute for a while or until turned back on — Telegram's choices — or unmute. The mute
+    /// follows the account to every device.
+    @ViewBuilder
+    private func muteMenu<Label: View>(@ViewBuilder label: () -> Label) -> some View {
+        if isMuted {
+            Button {
+                changeMute(to: nil)
+            } label: {
+                label()
+            }
+        } else if !messaging.canMute(peerUserID) {
+            // No chat yet: a mute shows in the chat list, and there is none to show it in.
+            Button {
+                toast = "A chat can be muted once it has messages."
+                scheduleClear()
+            } label: {
+                label()
+            }
+        } else {
+            Menu {
+                ForEach(MuteDuration.allCases) { duration in
+                    Button(duration.title) { changeMute(to: duration) }
+                }
+            } label: {
+                label()
+            }
+        }
+    }
+
+    private func changeMute(to duration: MuteDuration?) {
+        Task {
+            let error = if let duration {
+                await messaging.muteChat(peerUserID: peerUserID, duration: duration)
+            } else {
+                await messaging.unmuteChat(peerUserID: peerUserID)
+            }
+            if let error {
+                toast = error
+                Haptics.notification(.error)
+            } else {
+                toast = duration == nil ? "Notifications on" : "Muted"
+                Haptics.impact(.light)
+            }
+            scheduleClear()
+        }
+    }
+
     private var optionsCard: some View {
         VStack(spacing: 0) {
-            optionsRow(icon: "bell.fill", title: "Notifications", value: "Enabled")
+            muteMenu {
+                optionsRow(
+                    icon: isMuted ? "bell.slash.fill" : "bell.fill",
+                    title: "Notifications",
+                    value: MuteDuration.label(for: messaging.mute(for: peerUserID)) ?? "On"
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
             Rectangle()
                 .fill(Theme.separator)
                 .frame(height: 1)

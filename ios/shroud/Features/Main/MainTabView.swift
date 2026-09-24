@@ -11,6 +11,7 @@ struct MainTabView: View {
     let router: AppRouter
 
     @Environment(MessagingController.self) private var messaging
+    @Environment(NotificationsController.self) private var notifications
 
     @State private var selection: MainTab = .chats
     @State private var chatsPath: [ChatRoute] = []
@@ -83,8 +84,9 @@ struct MainTabView: View {
         return max(0, barBase + barBottomGap + barHeight - homeIndicatorInset)
     }
 
+    /// Muted chats count only when the badge setting says so, as on the app icon.
     private var chatsUnreadCount: Int {
-        messaging.unreadCountByPeer.values.reduce(0, +)
+        messaging.unreadTotal(includeMuted: notifications.preferences.badgeIncludesMuted)
     }
 
     var body: some View {
@@ -164,8 +166,45 @@ struct MainTabView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
             updateKeyboardHeight(from: note)
         }
+        // A notification (or in-app banner) tap: open what it is about — also one tapped
+        // before the unlock.
+        .onAppear { openPendingNotification() }
+        .onChange(of: notifications.pendingOpen) { _, _ in openPendingNotification() }
+        .onChange(of: messaging.hasLoadedServerChats) { _, _ in openPendingNotification() }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { note in
             updateKeyboardHeight(from: note, hiding: true)
+        }
+    }
+
+    private func openPendingNotification() {
+        guard let open = notifications.pendingOpen else { return }
+        switch open.kind {
+        case .contactRequest:
+            notifications.pendingOpen = nil
+            contactsPath = []
+            select(.contacts)
+        case .test:
+            notifications.pendingOpen = nil
+        default:
+            guard let peerID = open.peerUserID else {
+                notifications.pendingOpen = nil
+                select(.chats)
+                return
+            }
+            let known = messaging.conversations.first(where: { $0.peer.id == peerID })?.peer.username
+                ?? messaging.contacts.first(where: { $0.userId == peerID })?.username
+            // The chat's header shows the name: wait for the server's first list (the cached one
+            // may predate the chat) rather than guess it.
+            if known == nil, !messaging.hasLoadedServerChats { return }
+            notifications.pendingOpen = nil
+            guard let username = known ?? open.username else {
+                // Not a chat of ours (any more): the list it would be in is open anyway.
+                select(.chats)
+                return
+            }
+            let route = ChatRoute.conversation(peerID: peerID, username: username)
+            if chatsPath.last != route { chatsPath = [route] }
+            select(.chats)
         }
     }
 
@@ -260,4 +299,5 @@ struct MainTabView: View {
         .environment(MessagingController())
         .environment(CryptoController())
         .environment(CallController())
+        .environment(NotificationsController.shared)
 }

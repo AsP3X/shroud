@@ -3253,3 +3253,56 @@ button.reply-quote { cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   .reaction-emoji.is-new, .row-reaction-badge { animation: none; }
 }
+
+/* ---------------------------------------------------------- notifications -- */
+/* Unread counts and mutes in the chat list (the iOS row's accent capsule, grey when muted),
+   the offer to turn notifications on, and Settings → Notifications and Sounds. */
+.row-badges { display: flex; align-items: center; gap: 4px; }
+.row-unread {
+  min-width: 20px; height: 20px; padding: 0 6px;
+  display: grid; place-items: center;
+  border-radius: var(--r-full);
+  background: var(--accent); color: var(--on-accent);
+  font-size: var(--fs-2xs); font-weight: 700; font-variant-numeric: tabular-nums;
+  animation: reaction-pop 0.3s var(--ease);
+}
+.row-unread.muted { background: var(--text-tertiary); color: var(--bg); }
+.row-copy strong.row-title-muted { display: flex; align-items: center; gap: 5px; }
+.row-copy strong.row-title-muted > span {
+  display: block; margin: 0; min-width: 0;
+  font-size: inherit; color: inherit;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.row-muted-icon { flex-shrink: 0; color: var(--text-tertiary); }
+@media (prefers-reduced-motion: reduce) {
+  .row-unread { animation: none; }
+}
+
+.notify-offer {
+  display: flex; align-items: center; gap: 12px;
+  margin: 2px 2px 10px; padding: 12px;
+  border-radius: var(--r-md);
+  background: var(--accent-soft);
+}
+.notify-offer-icon {
+  width: 34px; height: 34px; border-radius: var(--r-full);
+  display: grid; place-items: center; flex-shrink: 0;
+  background: var(--accent); color: var(--on-accent);
+}
+.notify-offer-copy { flex: 1; min-width: 0; }
+.notify-offer-copy strong { display: block; font-size: var(--fs-md); font-weight: 600; }
+.notify-offer-copy p { margin: 2px 0 0; font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.4; }
+.notify-offer-copy button {
+  margin-top: 6px; padding: 0; border: 0; background: none;
+  color: var(--accent-text); font-size: var(--fs-sm); font-weight: 600; cursor: pointer;
+}
+.notify-offer-copy button:hover { text-decoration: underline; }
+.notify-offer .icon-btn { align-self: flex-start; width: 28px; height: 28px; }
+
+.set-row-button:disabled:active { background: transparent; }
+.set-sounds > .set-row:first-child { border-top: 0; }
+.set-check { flex-shrink: 0; color: var(--accent); }
+/* A chat's menu can open from the contact info dialog (z-index 80): it stacks above it. */
+.chat-menu-layer { position: relative; z-index: 85; }
+/* The phone tab bar's icons are small: counts sit on the icon's corner, not over it. */
+.tab-icon .rail-badge { top: -6px; right: -12px; }

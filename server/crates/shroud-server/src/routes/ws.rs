@@ -23,6 +23,14 @@ use crate::state::AppState;
 const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
 /// Time allowed to tell a revoked socket why it is being closed.
 const REVOKED_CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
+/// How often the server pings; browsers and URLSession answer pings on their own.
+const PING_INTERVAL: Duration = Duration::from_secs(30);
+/// A socket that sent nothing (not even a pong) this long belongs to a device that slept or
+/// lost its network. It is closed, so the device counts as offline and gets pushes again.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(75);
+/// A write the peer does not take within this is a dead socket: a full send buffer would
+/// otherwise block the loop, idle close included, until TCP gave up many minutes later.
+const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Deserialize)]
 struct ClientMessage {
@@ -153,6 +161,13 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         notify_presence_to_contacts(&state, user_id, true, Some(last_seen)).await;
     }
 
+    // Human: A call still ringing for this user reaches a device that connects now — its user
+    // tapped "Incoming call" — so the app opens on the ringing call. A device that was
+    // connected already has it; the apps ignore a ring they know.
+    if let Some(ring) = crate::routes::calls::ring_to_replay(&state, user_id).await {
+        let _ = timeout(SEND_TIMEOUT, sink.send(Message::Text(ring.into()))).await;
+    }
+
     // Human: Refresh Redis online TTL while the socket is alive so crashes expire cleanly, and
     // re-check the session: a revocation this replica never heard about still closes it. The
     // first tick fires at once, because a revocation that committed between the token lookup
@@ -160,6 +175,14 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     // Agent: CALLS session_is_live + refresh_online now, then every 30s; TTL is ONLINE_TTL_SECS.
     let mut online_heartbeat = tokio::time::interval(Duration::from_secs(30));
     online_heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // Human: A phone the OS suspended keeps its TCP connection open for a long time, and the
+    // server saw it online all that while — no push. Liveness is now what the device answers.
+    // Agent: Ping every PING_INTERVAL; close IDLE_TIMEOUT after the last frame that arrived.
+    let mut ping = tokio::time::interval(PING_INTERVAL);
+    ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    ping.tick().await;
+    let idle = tokio::time::sleep(IDLE_TIMEOUT);
+    tokio::pin!(idle);
 
     let mut revoked = false;
     loop {
@@ -167,7 +190,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             outbound = rx.recv() => {
                 match outbound {
                     Some(payload) => {
-                        if sink.send(Message::Text(payload.into())).await.is_err() {
+                        let sent = timeout(SEND_TIMEOUT, sink.send(Message::Text(payload.into()))).await;
+                        if !matches!(sent, Ok(Ok(()))) {
                             break;
                         }
                     }
@@ -189,13 +213,29 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     }
                     Err(err) => tracing::warn!(error = %err, %device_id, "ws.session check failed"),
                 }
-                state.realtime.refresh_online(user_id, device_id).await;
+                state
+                    .realtime
+                    .refresh_online(user_id, device_id, connection_id)
+                    .await;
+            }
+            _ = ping.tick() => {
+                let sent = timeout(SEND_TIMEOUT, sink.send(Message::Ping(Vec::new().into()))).await;
+                if !matches!(sent, Ok(Ok(()))) {
+                    break;
+                }
+            }
+            _ = &mut idle => {
+                tracing::info!(%user_id, %device_id, "ws.idle_timeout");
+                break;
             }
             inbound = stream.next() => {
+                idle.as_mut().reset(tokio::time::Instant::now() + IDLE_TIMEOUT);
                 match inbound {
                     Some(Ok(Message::Close(_))) | None => break,
                     Some(Ok(Message::Ping(data))) => {
-                        let _ = sink.send(Message::Pong(data)).await;
+                        if timeout(SEND_TIMEOUT, sink.send(Message::Pong(data))).await.is_err() {
+                            break;
+                        }
                     }
                     Some(Ok(Message::Text(text))) => {
                         handle_client_text(&state, user_id, device_id, &text).await;

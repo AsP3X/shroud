@@ -15,9 +15,12 @@ use uuid::Uuid;
 
 use crate::auth::session::AuthContext;
 use crate::error::AppError;
+use crate::push::PushEvent;
 use crate::rate_limit::budgets;
 use crate::routes::contacts::{are_contacts, is_blocked_either_way};
-use crate::routes::conversations::clear_watermark;
+use crate::routes::conversations::{
+    advance_read_marker, announce_chat_read, clear_watermark, unread_in,
+};
 use crate::routes::reactions::{self, ReactionEntry};
 use crate::state::AppState;
 
@@ -315,6 +318,16 @@ pub async fn send_message(
         .map_err(|err| AppError::Internal(format!("insert delivery failed: {err}")))?;
     }
 
+    // A reply means the chat was read: nothing before it stays unread for the sender. When
+    // something was, the sender's other devices hear so, as after any read.
+    let read_unread = if !is_annotation && !is_notes {
+        let unread = unread_in(&mut *tx, auth.user_id, conversation_id).await?;
+        advance_read_marker(&mut *tx, auth.user_id, conversation_id, now).await?;
+        unread > 0
+    } else {
+        false
+    };
+
     // Human: Keep conversation list sort cheap — denormalized last_message_at (migration 014).
     // Agent: UPDATE conversations.last_message_at = now in same transaction as insert.
     // Annotations are skipped so a shared transcript never moves the chat to the top.
@@ -371,17 +384,29 @@ pub async fn send_message(
             .await;
     }
 
-    // Opaque APNs data push when the peer has no online WebSocket device. Annotations wait
-    // for the next sync instead; they are not worth waking a phone for.
-    if !is_annotation {
+    if read_unread {
+        announce_chat_read(
+            &state,
+            auth.user_id,
+            auth.device_id,
+            conversation_id,
+            body.peer_user_id,
+            now,
+        )
+        .await;
+    }
+
+    // A push for the peer's devices without a live socket. Annotations wait for the next sync
+    // instead — they are not worth waking a phone for — and Saved Messages never notify.
+    if !is_annotation && !is_notes {
         state
             .push
-            .notify_new_message_if_offline(
-                body.peer_user_id,
-                message_id,
+            .dispatch(PushEvent::Message {
+                recipient: body.peer_user_id,
+                sender: auth.user_id,
                 conversation_id,
-                auth.user_id,
-            )
+                message_id,
+            })
             .await;
     }
 
@@ -565,6 +590,24 @@ pub async fn mark_read(
         read_at,
     )
     .await;
+    if advance_read_marker(
+        &state.pool,
+        auth.user_id,
+        meta.conversation_id,
+        meta.created_at,
+    )
+    .await?
+    {
+        announce_chat_read(
+            &state,
+            auth.user_id,
+            auth.device_id,
+            meta.conversation_id,
+            meta.sender_user_id,
+            meta.created_at,
+        )
+        .await;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -593,51 +636,45 @@ pub async fn mark_read_bulk(
     }
 
     let now = Utc::now();
-    // Mark all peer→me messages in this conversation up to the cursor (inclusive).
-    let result = sqlx::query(
-        r#"
-        INSERT INTO message_reads (message_id, user_id, read_at)
-        SELECT m.id, $1, $2
-        FROM messages m
-        WHERE m.conversation_id = $3
-          AND m.sender_user_id = $4
-          AND m.sender_user_id <> $1
-          AND (m.created_at, m.id) <= ($5, $6)
-        ON CONFLICT (message_id, user_id) DO NOTHING
-        "#,
+    let marked = insert_reads_up_to(
+        &state,
+        &auth,
+        meta.conversation_id,
+        body.peer_user_id,
+        meta.created_at,
+        body.up_to_message_id,
+        now,
     )
-    .bind(auth.user_id)
-    .bind(now)
-    .bind(meta.conversation_id)
-    .bind(body.peer_user_id)
-    .bind(meta.created_at)
-    .bind(body.up_to_message_id)
-    .execute(&state.pool)
-    .await
-    .map_err(|err| AppError::Internal(format!("bulk read insert failed: {err}")))?;
-
-    let marked = result.rows_affected();
+    .await?;
     if marked > 0 {
-        let event = serde_json::json!({
-            "type": "message.read",
-            "message_id": body.up_to_message_id,
-            "conversation_id": meta.conversation_id,
-            "user_id": auth.user_id,
-            "device_id": auth.device_id,
-            "read_at": now,
-            "up_to_message_id": body.up_to_message_id,
-            "marked": marked,
-        });
-        if let Ok(payload) = serde_json::to_string(&event) {
-            state
-                .realtime
-                .publish_to_users(
-                    [meta.user_a_id, meta.user_b_id],
-                    Some(auth.device_id),
-                    &payload,
-                )
-                .await;
-        }
+        publish_bulk_read(
+            &state,
+            &auth,
+            meta.conversation_id,
+            body.peer_user_id,
+            body.up_to_message_id,
+            now,
+            marked,
+        )
+        .await;
+    }
+    if advance_read_marker(
+        &state.pool,
+        auth.user_id,
+        meta.conversation_id,
+        meta.created_at,
+    )
+    .await?
+    {
+        announce_chat_read(
+            &state,
+            auth.user_id,
+            auth.device_id,
+            meta.conversation_id,
+            body.peer_user_id,
+            meta.created_at,
+        )
+        .await;
     }
 
     tracing::info!(
@@ -651,6 +688,140 @@ pub async fn mark_read_bulk(
         marked,
         read_at: now,
     }))
+}
+
+/// Read receipts for the peer's messages in a chat up to `(created_at, id)`, when the peer is
+/// still a contact nobody blocked. Returns how many messages got one.
+pub(crate) async fn send_read_receipts(
+    state: &AppState,
+    auth: &AuthContext,
+    conversation_id: Uuid,
+    peer_user_id: Uuid,
+    up_to_created_at: DateTime<Utc>,
+    up_to_id: Uuid,
+) -> Result<u64, AppError> {
+    if !are_contacts(&state.pool, auth.user_id, peer_user_id).await?
+        || is_blocked_either_way(&state.pool, auth.user_id, peer_user_id).await?
+    {
+        return Ok(0);
+    }
+    // The peer's newest message the receipt covers: their app finds it in the thread.
+    let newest_theirs: Option<Uuid> = sqlx::query_scalar(
+        r#"
+        SELECT id FROM messages
+        WHERE conversation_id = $1 AND sender_user_id = $2 AND (created_at, id) <= ($3, $4)
+          AND content_type <> 'annotation'
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(conversation_id)
+    .bind(peer_user_id)
+    .bind(up_to_created_at)
+    .bind(up_to_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("load receipt anchor failed: {err}")))?;
+    let Some(newest_theirs) = newest_theirs else {
+        return Ok(0);
+    };
+    let now = Utc::now();
+    let marked = insert_reads_up_to(
+        state,
+        auth,
+        conversation_id,
+        peer_user_id,
+        up_to_created_at,
+        up_to_id,
+        now,
+    )
+    .await?;
+    if marked > 0 {
+        publish_bulk_read(
+            state,
+            auth,
+            conversation_id,
+            peer_user_id,
+            newest_theirs,
+            now,
+            marked,
+        )
+        .await;
+    }
+    Ok(marked)
+}
+
+/// Marks every message of the peer's in the chat up to the cursor (inclusive) read by the
+/// caller — annotations aside, which no one reads as a message. Returns the number newly marked.
+async fn insert_reads_up_to(
+    state: &AppState,
+    auth: &AuthContext,
+    conversation_id: Uuid,
+    peer_user_id: Uuid,
+    up_to_created_at: DateTime<Utc>,
+    up_to_id: Uuid,
+    now: DateTime<Utc>,
+) -> Result<u64, AppError> {
+    let result = sqlx::query(
+        r#"
+        INSERT INTO message_reads (message_id, user_id, read_at)
+        SELECT m.id, $1, $2
+        FROM messages m
+        WHERE m.conversation_id = $3
+          AND m.sender_user_id = $4
+          AND m.sender_user_id <> $1
+          AND m.content_type <> 'annotation'
+          AND (m.created_at, m.id) <= ($5, $6)
+          -- Receipts go out oldest first, so the peer's messages up to the newest one with a
+          -- receipt have one: only what came after it is looked at, not the whole history.
+          AND m.created_at >= COALESCE((
+              SELECT newest.created_at
+              FROM messages newest
+              JOIN message_reads r ON r.message_id = newest.id AND r.user_id = $1
+              WHERE newest.conversation_id = $3 AND newest.sender_user_id = $4
+              ORDER BY newest.created_at DESC, newest.id DESC
+              LIMIT 1
+          ), '-infinity'::timestamptz)
+        ON CONFLICT (message_id, user_id) DO NOTHING
+        "#,
+    )
+    .bind(auth.user_id)
+    .bind(now)
+    .bind(conversation_id)
+    .bind(peer_user_id)
+    .bind(up_to_created_at)
+    .bind(up_to_id)
+    .execute(&state.pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("bulk read insert failed: {err}")))?;
+    Ok(result.rows_affected())
+}
+
+async fn publish_bulk_read(
+    state: &AppState,
+    auth: &AuthContext,
+    conversation_id: Uuid,
+    peer_user_id: Uuid,
+    up_to_message_id: Uuid,
+    read_at: DateTime<Utc>,
+    marked: u64,
+) {
+    let event = serde_json::json!({
+        "type": "message.read",
+        "message_id": up_to_message_id,
+        "conversation_id": conversation_id,
+        "user_id": auth.user_id,
+        "device_id": auth.device_id,
+        "read_at": read_at,
+        "up_to_message_id": up_to_message_id,
+        "marked": marked,
+    });
+    if let Ok(payload) = serde_json::to_string(&event) {
+        state
+            .realtime
+            .publish_to_users([auth.user_id, peer_user_id], Some(auth.device_id), &payload)
+            .await;
+    }
 }
 
 #[derive(Debug, FromRow)]

@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use redis::AsyncCommands;
 use redis::aio::ConnectionManager;
@@ -18,6 +18,8 @@ type DeviceTx = mpsc::Sender<String>;
 const USER_CHANNEL_PREFIX: &str = "shroud:user:";
 /// Sessions revoked on one replica, so every replica closes the sockets they opened.
 const REVOKED_SESSIONS_CHANNEL: &str = "shroud:sessions:revoked";
+/// A ringing call's `call.ring` event, per callee (see [`RealtimeHub::remember_ring`]).
+const RING_KEY_PREFIX: &str = "shroud:ring:";
 const ONLINE_KEY_PREFIX: &str = "shroud:online:";
 /// Redis online hash entries older than this are treated as stale (crash without unsubscribe).
 pub const ONLINE_TTL_SECS: i64 = 90;
@@ -44,7 +46,19 @@ struct Connection {
     /// The session the socket authenticated with.
     session_id: Uuid,
     tx: DeviceTx,
+    /// What this socket last wrote to the Redis online hash. Its cleanup deletes the entry
+    /// only while it still holds that: a newer socket of the device, on another replica, may
+    /// have written its own since.
+    online_ts: Option<i64>,
 }
+
+/// HDEL the field only while it holds the value the caller wrote.
+const DELETE_IF_UNCHANGED: &str = r#"
+if redis.call('HGET', KEYS[1], ARGV[1]) == ARGV[2] then
+    return redis.call('HDEL', KEYS[1], ARGV[1])
+end
+return 0
+"#;
 
 /// This replica's sockets, keyed by device and indexed by user.
 ///
@@ -81,6 +95,14 @@ pub struct RealtimeHub {
     next_connection_id: AtomicU64,
     /// When set, cross-instance fan-out uses Redis pub/sub.
     redis: RwLock<Option<ConnectionManager>>,
+    /// Rings kept while their calls ring, by callee — in Redis instead when it is set.
+    rings: RwLock<HashMap<Uuid, PendingRing>>,
+}
+
+/// A `call.ring` event kept for the callee's devices that connect while it rings.
+struct PendingRing {
+    payload: String,
+    until: Instant,
 }
 
 impl std::fmt::Debug for RealtimeHub {
@@ -156,16 +178,22 @@ impl RealtimeHub {
             {
                 return Err("too many websocket connections for this user");
             }
-            connections
-                .by_device
-                .insert(device_id, Connection { id, session_id, tx });
+            connections.by_device.insert(
+                device_id,
+                Connection {
+                    id,
+                    session_id,
+                    tx,
+                    online_ts: None,
+                },
+            );
             connections
                 .devices_by_user
                 .entry(user_id)
                 .or_default()
                 .insert(device_id);
         }
-        self.mark_online(user_id, device_id).await;
+        self.mark_online(user_id, device_id, id).await;
         Ok(Subscription { id, events: rx })
     }
 
@@ -176,18 +204,20 @@ impl RealtimeHub {
     /// it unconditionally cut the newer socket off.
     /// Agent: NO-OP unless the device's entry is `connection_id`.
     pub async fn unsubscribe(&self, user_id: Uuid, device_id: Uuid, connection_id: u64) {
-        {
+        let online_ts = {
             let mut connections = self.connections.write().await;
-            let current = connections
+            let Some(connection) = connections
                 .by_device
                 .get(&device_id)
-                .is_some_and(|connection| connection.id == connection_id);
-            if !current {
+                .filter(|connection| connection.id == connection_id)
+            else {
                 return;
-            }
+            };
+            let online_ts = connection.online_ts;
             connections.remove(user_id, device_id);
-        }
-        self.mark_offline(user_id, device_id).await;
+            online_ts
+        };
+        self.mark_offline(user_id, device_id, online_ts).await;
     }
 
     /// Closes the sockets opened with any of `session_ids`, here and on every other replica.
@@ -229,7 +259,7 @@ impl RealtimeHub {
 
     /// Drops this replica's sockets for `session_ids`.
     async fn close_local_sessions(&self, user_id: Uuid, session_ids: &[Uuid]) {
-        let closed: Vec<Uuid> = {
+        let closed: Vec<(Uuid, Option<i64>)> = {
             let mut connections = self.connections.write().await;
             let devices: Vec<Uuid> = connections
                 .devices_by_user
@@ -244,14 +274,21 @@ impl RealtimeHub {
                         .is_some_and(|connection| session_ids.contains(&connection.session_id))
                 })
                 .collect();
-            for device_id in &devices {
-                connections.remove(user_id, *device_id);
-            }
             devices
+                .into_iter()
+                .map(|device_id| {
+                    let online_ts = connections
+                        .by_device
+                        .get(&device_id)
+                        .and_then(|connection| connection.online_ts);
+                    connections.remove(user_id, device_id);
+                    (device_id, online_ts)
+                })
+                .collect()
         };
-        for device_id in closed {
+        for (device_id, online_ts) in closed {
             tracing::info!(%user_id, %device_id, "realtime.session_closed");
-            self.mark_offline(user_id, device_id).await;
+            self.mark_offline(user_id, device_id, online_ts).await;
         }
     }
 
@@ -271,36 +308,126 @@ impl RealtimeHub {
             .is_some_and(|devices| !devices.is_empty())
     }
 
-    /// Refreshes this device's Redis online heartbeat (call from WS loop).
-    pub async fn refresh_online(&self, user_id: Uuid, device_id: Uuid) {
-        self.mark_online(user_id, device_id).await;
-    }
-
-    async fn mark_online(&self, user_id: Uuid, device_id: Uuid) {
+    /// True if this device has a live WebSocket here or (with Redis) on another replica.
+    ///
+    /// Human: Push decisions are per device: an open app shows its own notifications, while the
+    /// same account's closed apps still need a push.
+    pub async fn is_device_online(&self, user_id: Uuid, device_id: Uuid) -> bool {
+        {
+            let connections = self.connections.read().await;
+            if connections
+                .devices_by_user
+                .get(&user_id)
+                .is_some_and(|devices| devices.contains(&device_id))
+            {
+                return true;
+            }
+        }
         if let Some(mut conn) = self.redis.read().await.clone() {
-            let key = online_key(user_id);
-            let now = unix_now_secs();
-            // Human: HASH field = device_id, value = unix ts; EXPIRE bounds crash orphans.
-            // Agent: HSET + EXPIRE ONLINE_TTL_SECS; pruned on is_user_online read.
-            if let Err(err) = conn
-                .hset::<_, _, _, ()>(&key, device_id.to_string(), now)
+            match conn
+                .hget::<_, _, Option<i64>>(online_key(user_id), device_id.to_string())
                 .await
             {
-                tracing::warn!(error = %err, "redis online hset failed");
-                return;
+                Ok(Some(ts)) => return ts >= unix_now_secs() - ONLINE_TTL_SECS,
+                Ok(None) => {}
+                Err(err) => tracing::warn!(error = %err, "redis device online check failed"),
             }
-            if let Err(err) = conn.expire::<_, ()>(&key, ONLINE_TTL_SECS).await {
-                tracing::warn!(error = %err, "redis online expire failed");
+        }
+        false
+    }
+
+    /// Keeps a ringing call's `call.ring` event for `ttl_secs`.
+    ///
+    /// Human: The event goes out once, to the callee's connected devices. A phone that was
+    /// asleep shows "Incoming call"; when its user taps it the app connects, and gets the ring
+    /// then (`routes::ws`), so it opens on the ringing call instead of a chat.
+    /// Agent: Redis `shroud:ring:{callee}` SET EX when configured (any replica may see the
+    /// device connect), else in memory. The reader checks the call still rings.
+    pub async fn remember_ring(&self, callee: Uuid, payload: &str, ttl_secs: u64) {
+        if let Some(mut conn) = self.redis.read().await.clone() {
+            match conn
+                .set_ex::<_, _, ()>(format!("{RING_KEY_PREFIX}{callee}"), payload, ttl_secs)
+                .await
+            {
+                Ok(()) => return,
+                Err(err) => tracing::warn!(error = %err, "redis ring set failed"),
             }
+        }
+        let now = Instant::now();
+        let mut rings = self.rings.write().await;
+        rings.retain(|_, ring| ring.until > now);
+        rings.insert(
+            callee,
+            PendingRing {
+                payload: payload.to_string(),
+                until: now + Duration::from_secs(ttl_secs),
+            },
+        );
+    }
+
+    /// The `call.ring` kept for `callee`, if one is (its call may have stopped ringing since).
+    pub async fn pending_ring(&self, callee: Uuid) -> Option<String> {
+        if let Some(mut conn) = self.redis.read().await.clone() {
+            match conn
+                .get::<_, Option<String>>(format!("{RING_KEY_PREFIX}{callee}"))
+                .await
+            {
+                Ok(Some(payload)) => return Some(payload),
+                Ok(None) => {}
+                Err(err) => tracing::warn!(error = %err, "redis ring get failed"),
+            }
+        }
+        let rings = self.rings.read().await;
+        rings
+            .get(&callee)
+            .filter(|ring| ring.until > Instant::now())
+            .map(|ring| ring.payload.clone())
+    }
+
+    /// Refreshes this socket's Redis online heartbeat (call from WS loop).
+    pub async fn refresh_online(&self, user_id: Uuid, device_id: Uuid, connection_id: u64) {
+        self.mark_online(user_id, device_id, connection_id).await;
+    }
+
+    async fn mark_online(&self, user_id: Uuid, device_id: Uuid, connection_id: u64) {
+        let Some(mut conn) = self.redis.read().await.clone() else {
+            return;
+        };
+        let key = online_key(user_id);
+        let now = unix_now_secs();
+        // Human: HASH field = device_id, value = unix ts; EXPIRE bounds crash orphans.
+        // Agent: HSET + EXPIRE ONLINE_TTL_SECS; pruned on is_user_online read.
+        if let Err(err) = conn
+            .hset::<_, _, _, ()>(&key, device_id.to_string(), now)
+            .await
+        {
+            tracing::warn!(error = %err, "redis online hset failed");
+            return;
+        }
+        if let Err(err) = conn.expire::<_, ()>(&key, ONLINE_TTL_SECS).await {
+            tracing::warn!(error = %err, "redis online expire failed");
+        }
+        if let Some(connection) = self.connections.write().await.by_device.get_mut(&device_id)
+            && connection.id == connection_id
+        {
+            connection.online_ts = Some(now);
         }
     }
 
-    async fn mark_offline(&self, user_id: Uuid, device_id: Uuid) {
-        if let Some(mut conn) = self.redis.read().await.clone() {
-            let key = online_key(user_id);
-            if let Err(err) = conn.hdel::<_, _, ()>(&key, device_id.to_string()).await {
-                tracing::warn!(error = %err, "redis online hdel failed");
-            }
+    /// Clears the device's Redis online entry, unless a newer socket of it wrote one since.
+    async fn mark_offline(&self, user_id: Uuid, device_id: Uuid, online_ts: Option<i64>) {
+        let Some(online_ts) = online_ts else {
+            return;
+        };
+        if let Some(mut conn) = self.redis.read().await.clone()
+            && let Err(err) = redis::Script::new(DELETE_IF_UNCHANGED)
+                .key(online_key(user_id))
+                .arg(device_id.to_string())
+                .arg(online_ts)
+                .invoke_async::<i64>(&mut conn)
+                .await
+        {
+            tracing::warn!(error = %err, "redis online hdel failed");
         }
     }
 

@@ -26,6 +26,8 @@ final class MessagingController {
     /// and so a failing server shows the empty state instead of shimmering forever.
     private(set) var hasLoadedContacts = false
     private(set) var hasLoadedChats = false
+    /// A list from the server arrived this session (`hasLoadedChats` is also set by the disk cache).
+    private(set) var hasLoadedServerChats = false
     /// Why the last list load failed, per list — nil once one succeeds. Separate from
     /// `lastError` (which any action can overwrite) because the lists render these directly:
     /// an unreachable server has to say so instead of claiming the account is empty.
@@ -53,10 +55,31 @@ final class MessagingController {
     private var recordingSentAt: Date?
     private var recordingKeepaliveTask: Task<Void, Never>?
     private(set) var presenceByUser: [UUID: PresenceDTO] = [:]
-    /// Unread inbound counts by peer (local; cleared when the thread is opened).
+    /// Unread inbound counts by peer: the server's (`unread_count`, the same on every device),
+    /// raised by messages that arrive between two lists, cleared when the chat is read.
     private(set) var unreadCountByPeer: [UUID: Int] = [:]
     /// Peer whose conversation is currently on screen (suppresses unread increments).
-    private(set) var activePeerID: UUID?
+    private(set) var activePeerID: UUID? {
+        didSet { NotificationsController.shared.activePeerID = activePeerID }
+    }
+    /// Chats read here or on our other device, up to their `lastMessageAt` at the time. A list
+    /// that raced the read still counts those messages; this keeps them read until something
+    /// newer arrives.
+    private var readThrough: [UUID: Date] = [:]
+    /// Mutes being saved, by peer, so a racing list does not undo them meanwhile.
+    private var pendingMutes: [UUID: ChatMuteDTO?] = [:]
+    /// One read-marker request per chat at a time; a newer message queues another.
+    private var chatReadTasks: [UUID: Task<Void, Never>] = [:]
+    /// Chats read again while their request was out: one more request follows it.
+    private var chatReadsQueued: Set<UUID> = []
+    /// Reads the server did not get (offline, an error): sent again after the next list.
+    private var chatReadRetries: Set<UUID> = []
+    /// Whether the server keeps read markers (its list carries `unread_count`). An older one
+    /// takes per-message receipts only.
+    private var serverKeepsReadMarkers = true
+    /// Which hold on a pending mute is current, so an earlier change's timer leaves a newer
+    /// change's hold alone.
+    private var pendingMuteHolds: [UUID: UUID] = [:]
 
     /// Server-side consent: when true, a contact's "delete for both" also wipes this
     /// account's copy of the chat. Off until the account opts in — see `PrivacySettingsDTO`.
@@ -73,6 +96,7 @@ final class MessagingController {
     private let messagesService = MessagesService()
     private let privacyService = PrivacyService()
     private let blocksService = BlocksService()
+    private let notificationsService = NotificationsService()
     private let mediaService = MediaService()
     private let keyBundleService = KeyBundleService()
     private let peerKeys = PeerIdentityStore()
@@ -493,6 +517,7 @@ final class MessagingController {
         // Next sign-in is a genuine first load again, so the skeleton is allowed back.
         hasLoadedContacts = false
         hasLoadedChats = false
+        hasLoadedServerChats = false
         hasLoadedPrivacySettings = false
         allowsPeerChatDelete = false
         blockedUsers = []
@@ -525,6 +550,14 @@ final class MessagingController {
         clearAllTyping()
         presenceByUser = [:]
         unreadCountByPeer = [:]
+        readThrough = [:]
+        pendingMutes = [:]
+        chatReadTasks.values.forEach { $0.cancel() }
+        chatReadTasks = [:]
+        chatReadsQueued = []
+        chatReadRetries = []
+        serverKeepsReadMarkers = true
+        pendingMuteHolds = [:]
         reactionCursorCache = nil
         reactionsSeenLocally = [:]
         reactionRevisions = [:]
@@ -544,6 +577,8 @@ final class MessagingController {
         }
         isOffline = !connectivity.isOnline
         realtime.connect(token: token)
+        if pollTask == nil { startPollingFallback() }
+        if contactsPollTask == nil { startContactsPolling() }
         Task {
             await refreshContacts()
             await refreshConversations()
@@ -554,6 +589,21 @@ final class MessagingController {
             }
             await flushPendingSends()
         }
+    }
+
+    /// The app went to the background: the socket closes and the polls stop.
+    ///
+    /// Human: A suspended app keeps its TCP connection open for a long time, and the server
+    /// counted it online all that while — so it sent no push, and messages arrived unnoticed.
+    /// Closed, the server pushes at once. `handleAppBecameActive` reconnects.
+    /// Agent: KEEPS threads, caches and the history key (that is `lockSensitiveMemory`'s job).
+    func suspendForBackground() {
+        pollTask?.cancel()
+        pollTask = nil
+        contactsPollTask?.cancel()
+        contactsPollTask = nil
+        realtime.disconnect(reconnect: false)
+        updateBadge()
     }
 
     /// Clears decrypted threads and history key from RAM (sealed files stay on disk).
@@ -594,11 +644,14 @@ final class MessagingController {
 
     func setActivePeer(_ peerID: UUID?) {
         if activePeerID != peerID { activePeerID = peerID }
-        if let peerID, unreadCountByPeer[peerID] != 0 {
-            unreadCountByPeer[peerID] = 0
-            // Saved here: refreshes only save what they changed, so a restart would bring
-            // the badge back.
-            persistThread(peerID)
+        if let peerID {
+            if unreadCountByPeer[peerID] != 0 {
+                unreadCountByPeer[peerID] = 0
+                // Saved here: refreshes only save what they changed, so a restart would bring
+                // the badge back.
+                persistThread(peerID)
+            }
+            didReadChat(peerID)
         }
     }
 
@@ -862,10 +915,18 @@ final class MessagingController {
             if !hasLoadedChats { hasLoadedChats = true }
         }
         do {
-            let list = applyingLocalReactionSeen(try await messagesService.listConversations(token: token))
+            let list = applyingLocalChatState(
+                applyingLocalReactionSeen(try await messagesService.listConversations(token: token))
+            )
             // Same-value writes still invalidate observers — only publish real changes.
             let changed = conversations != list
             if changed { conversations = list }
+            if let first = list.first { serverKeepsReadMarkers = first.unreadCount != nil }
+            adoptServerUnreadCounts(list)
+            if !hasLoadedServerChats { hasLoadedServerChats = true }
+            for peer in chatReadRetries where chatReadTasks[peer] == nil {
+                sendChatRead(peer)
+            }
             if chatsError != nil { chatsError = nil }
             if lastError != nil { lastError = nil }
             isOffline = false
@@ -912,6 +973,7 @@ final class MessagingController {
             if !isNotesChat(peerUserID), unreadCountByPeer[peerUserID] != 0 {
                 unreadCountByPeer[peerUserID] = 0
             }
+            if !isNotesChat(peerUserID) { didReadChat(peerUserID) }
         }
 
         // Notes UI peer is a sentinel; API peer is the signed-in user (Saved Messages).
@@ -1187,16 +1249,10 @@ final class MessagingController {
                 for id in pendingDeliveryIDs {
                     try? await messagesService.markDelivered(messageID: id, token: token)
                 }
-                let finalThread = threads[storePeerID] ?? []
-                // Read receipts only for the chat on screen, not for a reload of another one.
-                if activePeerID == storePeerID,
-                   let lastFromPeer = finalThread.last(where: { !$0.isMine })
-                {
-                    _ = try? await messagesService.markReadBulk(
-                        peerUserID: apiPeerID,
-                        upToMessageID: lastFromPeer.id,
-                        token: token
-                    )
+                // Read receipts only for the chat on screen, not for a reload of another one:
+                // the read marker sends them, and clears the chat on our other devices.
+                if activePeerID == storePeerID {
+                    didReadChat(storePeerID)
                 }
                 if let presence = try? await contactsService.presence(
                     userID: apiPeerID,
@@ -3862,6 +3918,10 @@ final class MessagingController {
                 handleReactionsSeenEvent(json)
             } else if type == "conversation.deleted" {
                 handleConversationDeletedEvent(json)
+            } else if type == "conversation.read" {
+                handleConversationReadEvent(json)
+            } else if type == "conversation.mute" {
+                handleConversationMuteEvent(json)
             } else if type == "typing" {
                 handleTyping(json)
             } else if type == "recording" {
@@ -3889,6 +3949,14 @@ final class MessagingController {
             // Optimistic insert so Pending shows before the network round-trip.
             if !incomingRequests.contains(where: { $0.id == request.id }) {
                 incomingRequests.insert(request, at: 0)
+                NotificationsController.shared.announce(
+                    kind: .contactRequest,
+                    peerUserID: request.fromUserId,
+                    username: request.user?.username,
+                    conversationID: nil,
+                    text: nil,
+                    muted: false
+                )
             }
         }
         Task { await refreshContacts() }
@@ -4096,14 +4164,24 @@ final class MessagingController {
                 setPeerRecording(dto.senderUserId, false)
             }
             threads[threadPeer] = thread
-            if !chat.isMine, activePeerID != threadPeer {
+            if !chat.isMine, !isReading(threadPeer) {
                 unreadCountByPeer[threadPeer, default: 0] += 1
+                updateBadge()
             }
-            if !chat.isMine, activePeerID == threadPeer {
-                _ = try? await messagesService.markReadBulk(
+            if !chat.isMine, isReading(threadPeer) {
+                didReadChat(threadPeer)
+            }
+            if chat.isMine {
+                // Written on our other device: the chat has been read there.
+                markReadLocally(threadPeer, conversationID: dto.conversationId, through: dto.createdAt)
+            } else {
+                NotificationsController.shared.announce(
+                    kind: .message,
                     peerUserID: threadPeer,
-                    upToMessageID: chat.id,
-                    token: token
+                    username: username(for: threadPeer),
+                    conversationID: dto.conversationId,
+                    text: chat.deleted ? nil : chat.text,
+                    muted: isMuted(threadPeer)
                 )
             }
         }
@@ -5114,6 +5192,16 @@ extension MessagingController {
               messageSenderID == nil || messageSenderID == me,
               added || dto.ciphertext == nil
         else { return }
+        if added, dto.ciphertext != nil, let storePeerID, !isNotesChat(storePeerID) {
+            NotificationsController.shared.announce(
+                kind: .reaction,
+                peerUserID: storePeerID,
+                username: username(for: storePeerID),
+                conversationID: conversations.first(where: { $0.peer.id == storePeerID })?.id,
+                text: nil,
+                muted: isMuted(storePeerID)
+            )
+        }
         if let storePeerID, storePeerID == activePeerID {
             guard added else { return }
             if let index = conversations.firstIndex(where: { $0.peer.id == storePeerID }),
@@ -5187,6 +5275,248 @@ extension MessagingController {
             copy.unseenReactions = 0
             return copy
         }
+    }
+
+    // MARK: - Unread counts, read markers, mutes
+
+    /// Reads and mutes this device did that a racing list may not show yet.
+    private func applyingLocalChatState(_ list: [ConversationItemDTO]) -> [ConversationItemDTO] {
+        guard !readThrough.isEmpty || !pendingMutes.isEmpty else { return list }
+        return list.map { item in
+            var copy = item
+            if let readTo = readThrough[item.peer.id],
+               (item.unreadCount ?? 0) > 0,
+               (item.lastMessageAt ?? item.createdAt) <= readTo
+            {
+                copy.unreadCount = 0
+            }
+            if let pending = pendingMutes[item.peer.id] {
+                copy.mute = pending
+            }
+            return copy
+        }
+    }
+
+    /// The chat is on screen and the app in front: what arrives in it is read. A chat left open
+    /// while the app is in the background (a call keeps it running) is not being read.
+    private func isReading(_ peerUserID: UUID) -> Bool {
+        peerUserID == activePeerID && UIApplication.shared.applicationState == .active
+    }
+
+    /// The server's counts win (they include reads on our other devices); the chat being read
+    /// has none, and one the server still counts is read now. A chat the list no longer has
+    /// (deleted or cleared elsewhere) counts nothing.
+    private func adoptServerUnreadCounts(_ list: [ConversationItemDTO]) {
+        // An older server sends no counts: the local ones stay.
+        guard list.isEmpty || list.contains(where: { $0.unreadCount != nil }) else { return }
+        var next = unreadCountByPeer.filter { isNotesChat($0.key) }
+        for item in list {
+            let count = item.unreadCount ?? 0
+            if isReading(item.peer.id) {
+                next[item.peer.id] = 0
+                if count > 0 { didReadChat(item.peer.id) }
+            } else {
+                next[item.peer.id] = count
+            }
+        }
+        if next != unreadCountByPeer { unreadCountByPeer = next }
+        updateBadge()
+    }
+
+    /// The chat was read on this device: its notifications close, and the server moves the read
+    /// marker (clearing it on our other devices and sending the peer receipts).
+    private func didReadChat(_ peerUserID: UUID) {
+        guard !isNotesChat(peerUserID) else { return }
+        let conversation = conversations.first(where: { $0.peer.id == peerUserID })
+        markReadLocally(peerUserID, conversationID: conversation?.id, through: conversation?.lastMessageAt)
+        if chatReadTasks[peerUserID] != nil {
+            chatReadsQueued.insert(peerUserID)
+            return
+        }
+        sendChatRead(peerUserID)
+    }
+
+    private func sendChatRead(_ peerUserID: UUID) {
+        guard let token = sessionController?.bearerToken else { return }
+        chatReadTasks[peerUserID] = Task { [weak self] in
+            // Coalesces the burst of calls a chat opening makes (list, thread load, arrivals).
+            try? await Task.sleep(for: .milliseconds(400))
+            guard let self, !Task.isCancelled else { return }
+            // This request covers everything up to now; only a read while it is out needs another.
+            self.chatReadsQueued.remove(peerUserID)
+            let delivered = await self.postChatRead(peerUserID, token: token)
+            guard !Task.isCancelled else { return }
+            self.chatReadTasks[peerUserID] = nil
+            // Kept read here meanwhile (`readThrough`): the next list sends it again.
+            if delivered {
+                self.chatReadRetries.remove(peerUserID)
+            } else {
+                self.chatReadRetries.insert(peerUserID)
+            }
+            if self.chatReadsQueued.remove(peerUserID) != nil {
+                self.sendChatRead(peerUserID)
+            }
+        }
+    }
+
+    /// Tells the server a chat was read. False when the request did not get through.
+    private func postChatRead(_ peerUserID: UUID, token: String) async -> Bool {
+        guard serverKeepsReadMarkers else {
+            // An older server: receipts up to the peer's newest message here.
+            guard let last = threads[peerUserID]?.last(where: { !$0.isMine }) else { return true }
+            return (try? await messagesService.markReadBulk(
+                peerUserID: peerUserID,
+                upToMessageID: last.id,
+                token: token
+            )) != nil
+        }
+        return (try? await notificationsService.markChatRead(peerUserID: peerUserID, token: token)) != nil
+    }
+
+    /// Zeroes a chat's count and closes its notifications, without asking the server (it knows:
+    /// the read or the reply happened there, or is on its way).
+    private func markReadLocally(_ peerUserID: UUID, conversationID: UUID?, through: Date?) {
+        readThrough[peerUserID] = max(readThrough[peerUserID] ?? .distantPast, through ?? Date())
+        if unreadCountByPeer[peerUserID] != 0 { unreadCountByPeer[peerUserID] = 0 }
+        if let index = conversations.firstIndex(where: { $0.peer.id == peerUserID }),
+           conversations[index].unreadCount != 0,
+           conversations[index].unreadCount != nil
+        {
+            conversations[index].unreadCount = 0
+        }
+        if let conversationID {
+            NotificationsController.shared.clearDelivered(conversationID: conversationID)
+        }
+        updateBadge()
+    }
+
+    /// Our other device read a chat.
+    private func handleConversationReadEvent(_ json: [String: Any]) {
+        guard let peerString = json["peer_user_id"] as? String,
+              let peer = UUID(uuidString: peerString)
+        else { return }
+        let conversationID = (json["conversation_id"] as? String).flatMap(UUID.init(uuidString:))
+        let readAt = (json["read_at"] as? String).flatMap { ISO8601DateFormatter.apiFlexible.date(from: $0) }
+        let left = (json["unread_count"] as? NSNumber)?.intValue ?? 0
+        markReadLocally(peer, conversationID: conversationID, through: readAt)
+        if left > 0, peer != activePeerID {
+            unreadCountByPeer[peer] = left
+            updateBadge()
+        }
+    }
+
+    /// Our other device muted or unmuted a chat.
+    private func handleConversationMuteEvent(_ json: [String: Any]) {
+        guard let peerString = json["peer_user_id"] as? String,
+              let peer = UUID(uuidString: peerString),
+              let index = conversations.firstIndex(where: { $0.peer.id == peer })
+        else { return }
+        var mute: ChatMuteDTO?
+        if let body = json["mute"] as? [String: Any] {
+            let until = (body["until"] as? String).flatMap { ISO8601DateFormatter.apiFlexible.date(from: $0) }
+            mute = ChatMuteDTO(until: until)
+        }
+        conversations[index].mute = mute
+        updateBadge()
+    }
+
+    /// The chat's mute, while it lasts.
+    func mute(for peerUserID: UUID) -> ChatMuteDTO? {
+        let mute = pendingMutes[peerUserID] ?? conversations.first(where: { $0.peer.id == peerUserID })?.mute
+        guard let mute, mute.isActive() else { return nil }
+        return mute
+    }
+
+    func isMuted(_ peerUserID: UUID) -> Bool {
+        mute(for: peerUserID) != nil
+    }
+
+    /// Mutes a chat on every device of ours. Returns an error message, or nil.
+    func muteChat(peerUserID: UUID, duration: MuteDuration) async -> String? {
+        await changeMute(peerUserID: peerUserID, to: duration)
+    }
+
+    func unmuteChat(peerUserID: UUID) async -> String? {
+        await changeMute(peerUserID: peerUserID, to: nil)
+    }
+
+    /// Whether a chat can be muted: it has to exist (the lists are where mutes show).
+    func canMute(_ peerUserID: UUID) -> Bool {
+        !isNotesChat(peerUserID) && conversations.contains(where: { $0.peer.id == peerUserID })
+    }
+
+    private func changeMute(peerUserID: UUID, to duration: MuteDuration?) async -> String? {
+        guard let token = sessionController?.bearerToken else { return "Not signed in." }
+        guard canMute(peerUserID) else { return "A chat can be muted once it has messages." }
+        let previous = conversations.first(where: { $0.peer.id == peerUserID })?.mute
+        let optimistic: ChatMuteDTO? = duration.map { choice in
+            ChatMuteDTO(until: choice.seconds.map { Date().addingTimeInterval(TimeInterval($0)) })
+        }
+        setPendingMute(peerUserID, optimistic)
+        do {
+            if let duration {
+                let saved = try await notificationsService.mute(peerUserID: peerUserID, seconds: duration.seconds, token: token)
+                setPendingMute(peerUserID, saved.mute)
+            } else {
+                try await notificationsService.unmute(peerUserID: peerUserID, token: token)
+            }
+        } catch {
+            // Back to what it was: offline, the refresh below cannot say.
+            pendingMutes[peerUserID] = nil
+            if let index = conversations.firstIndex(where: { $0.peer.id == peerUserID }) {
+                conversations[index].mute = previous
+            }
+            updateBadge()
+            await refreshConversations(force: true)
+            return SessionController.userMessage(for: error)
+        }
+        // Held until a list that includes it has surely landed — unless a newer change took over.
+        let hold = UUID()
+        pendingMuteHolds[peerUserID] = hold
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(6))
+            guard let self, self.pendingMuteHolds[peerUserID] == hold else { return }
+            self.pendingMutes[peerUserID] = nil
+            self.pendingMuteHolds[peerUserID] = nil
+        }
+        return nil
+    }
+
+    private func setPendingMute(_ peerUserID: UUID, _ mute: ChatMuteDTO?) {
+        pendingMutes[peerUserID] = .some(mute)
+        if let index = conversations.firstIndex(where: { $0.peer.id == peerUserID }),
+           conversations[index].mute != mute
+        {
+            conversations[index].mute = mute
+        }
+        updateBadge()
+    }
+
+    /// Marks a chat read from its row's menu, without opening it.
+    func markChatRead(peerUserID: UUID) {
+        didReadChat(peerUserID)
+    }
+
+    /// Unread messages across chats (the tab bar and the app icon); muted chats only with
+    /// `includeMuted`.
+    func unreadTotal(includeMuted: Bool) -> Int {
+        unreadCountByPeer.reduce(0) { sum, entry in
+            guard !isNotesChat(entry.key), includeMuted || !isMuted(entry.key) else { return sum }
+            return sum + max(0, entry.value)
+        }
+    }
+
+    /// The app icon's count, once the chats are loaded (a locked or empty state says nothing).
+    func updateBadge() {
+        guard hasLoadedChats else { return }
+        let preferences = NotificationsController.shared.preferences
+        NotificationsController.shared.setBadge(unreadTotal(includeMuted: preferences.badgeIncludesMuted))
+    }
+
+    /// Who a peer is, for a banner: the chat list, then contacts.
+    private func username(for peerUserID: UUID) -> String? {
+        conversations.first(where: { $0.peer.id == peerUserID })?.peer.username
+            ?? contacts.first(where: { $0.userId == peerUserID })?.username
     }
 
     /// One conversations refresh for a burst of reaction events.

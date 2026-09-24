@@ -4,6 +4,8 @@ import SwiftUI
 enum SettingsRoute: Hashable {
     case server
     case transcription
+    case notifications
+    case notificationSound
     case privacySecurity
     case devices
 }
@@ -17,6 +19,7 @@ struct SettingsView: View {
 
     @Environment(SessionController.self) private var sessionController
     @Environment(ServerConfigurationController.self) private var serverConfig
+    @Environment(NotificationsController.self) private var notifications
     @Environment(\.tabBarClearance) private var tabBarClearance
 
     @State private var scrollOffsetY: CGFloat = 0
@@ -152,6 +155,11 @@ struct SettingsView: View {
         AvatarView.initials(for: displayName)
     }
 
+    /// "Off" when iOS or the switch keeps notifications away, else "On".
+    private var notificationsSummary: String {
+        notifications.authorization == .denied || !notifications.preferences.enabled ? "Off" : "On"
+    }
+
     private var serverSubtitle: String {
         switch serverConfig.configuration.mode {
         case .official:
@@ -172,6 +180,10 @@ struct SettingsView: View {
                         ServerSettingsView(router: router)
                     case .transcription:
                         TranscriptionLanguageView()
+                    case .notifications:
+                        NotificationsSettingsView(navigationPath: $navigationPath)
+                    case .notificationSound:
+                        NotificationSoundPicker()
                     case .privacySecurity:
                         PrivacySecurityView(router: router)
                     case .devices:
@@ -423,8 +435,11 @@ struct SettingsView: View {
             SettingsRowView(
                 title: "Notifications and Sounds",
                 systemImage: "bell.fill",
-                iconBackground: Color(red: 230 / 255, green: 74 / 255, blue: 114 / 255)
-            )
+                iconBackground: Color(red: 230 / 255, green: 74 / 255, blue: 114 / 255),
+                value: notificationsSummary
+            ) {
+                navigationPath.append(.notifications)
+            }
             groupDivider()
             SettingsRowView(
                 title: "Privacy and Security",
@@ -548,4 +563,5 @@ struct SettingsView: View {
     SettingsView(router: AppRouter())
         .environment(SessionController())
         .environment(ServerConfigurationController())
+        .environment(NotificationsController.shared)
 }

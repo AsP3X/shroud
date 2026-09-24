@@ -199,6 +199,8 @@ final class DeviceWipeController {
         messaging?.stop(wipeDisk: true)
         calls?.clearLocalState()
         PushNotificationService.shared.stop()
+        PushNotificationService.shared.forgetRegistration()
+        NotificationsController.shared.forgetAccount()
         router?.postAuthToast = nil
         router?.hasUnlockedMessaging = false
         router?.path = []
@@ -266,6 +268,7 @@ final class DeviceWipeController {
             _ = await endServerSession(token: token)
         }
         await wipe.wipeEverything()
+        NotificationsController.shared.forgetAccount()
         if await wipe.leftovers().isEmpty { wipe.clearPending() }
         guard pending else { return false }
         if session?.isSignedIn == true { await session?.logout() }

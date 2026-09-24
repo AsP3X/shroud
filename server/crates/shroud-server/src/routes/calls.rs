@@ -180,11 +180,28 @@ pub async fn create_call(
                 &payload,
             )
             .await;
+        // For the callee's devices that connect while it rings: their user tapped the
+        // notification below.
+        state
+            .realtime
+            .remember_ring(
+                body.peer_user_id,
+                &payload,
+                RINGING_TIMEOUT_SECS.unsigned_abs(),
+            )
+            .await;
     }
 
+    // "Incoming call" on the callee's iPhones that are not connected: an alert, not PushKit
+    // (see `PushService::notify_call`).
     state
         .push
-        .notify_incoming_call_if_offline(body.peer_user_id, call_id, auth.user_id, modality)
+        .dispatch(crate::push::PushEvent::IncomingCall {
+            recipient: body.peer_user_id,
+            caller: auth.user_id,
+            call_id,
+            modality: modality.to_string(),
+        })
         .await;
 
     state
@@ -201,6 +218,35 @@ pub async fn create_call(
     );
 
     Ok((StatusCode::CREATED, Json(response)))
+}
+
+/// The ring a device of `user_id` that just connected should get: a call to them that still
+/// rings. `None` when there is none, or it was answered, declined or given up meanwhile.
+pub async fn ring_to_replay(state: &AppState, user_id: Uuid) -> Option<String> {
+    let payload = state.realtime.pending_ring(user_id).await?;
+    let call_id = serde_json::from_str::<serde_json::Value>(&payload)
+        .ok()?
+        .pointer("/call/id")?
+        .as_str()?
+        .parse::<Uuid>()
+        .ok()?;
+    let ringing: bool = sqlx::query_scalar(
+        r#"
+        SELECT EXISTS(
+            SELECT 1 FROM calls
+            WHERE id = $1 AND callee_user_id = $2 AND status = 'ringing'
+              AND created_at > now() - make_interval(secs => $3)
+        )
+        "#,
+    )
+    .bind(call_id)
+    .bind(user_id)
+    .bind(RINGING_TIMEOUT_SECS)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|err| tracing::warn!(error = %err, %call_id, "ring replay check failed"))
+    .ok()?;
+    ringing.then_some(payload)
 }
 
 /// `GET /calls/:id`

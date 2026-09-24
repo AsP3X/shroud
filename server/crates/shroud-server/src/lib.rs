@@ -168,7 +168,32 @@ pub async fn run() -> Result<(), AppError> {
             }
         },
     };
-    let push = PushService::new(pool.clone(), realtime.clone(), apns);
+    // Human: Browsers subscribe with this key; it is generated once and kept in the database
+    // (or set with WEB_PUSH_VAPID_*), since a new key orphans every subscription.
+    let web_push = match load_web_push(&pool).await {
+        Ok(client) => Some(client),
+        Err(err) => {
+            // Before migrations ran (RUN_MIGRATIONS=false on a fresh database) there is no
+            // table yet; the server serves everything else and keeps trying.
+            tracing::error!(error = %err, "web push unavailable: VAPID key could not be loaded");
+            None
+        }
+    };
+    let web_push_pending = web_push.is_none();
+    let push = PushService::new(pool.clone(), realtime.clone(), apns, web_push);
+    if web_push_pending {
+        let (pool, push) = (pool.clone(), push.clone());
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                if let Ok(client) = load_web_push(&pool).await {
+                    push.set_web(client);
+                    tracing::info!("web push: VAPID key loaded");
+                    break;
+                }
+            }
+        });
+    }
 
     tracing::info!(
         ice_server_count = config.ice_servers.len(),
@@ -333,4 +358,13 @@ async fn shutdown_signal() {
             tracing::info!("shutdown signal: sigterm");
         }
     }
+}
+
+/// The Web Push client, with the VAPID key from the environment or the database.
+async fn load_web_push(pool: &sqlx::PgPool) -> Result<crate::push::WebPushClient, String> {
+    let key = crate::push::web_push::load_vapid_key(pool).await?;
+    let subject = crate::push::web_push::subject_from_env();
+    let hosts = crate::push::web_push::allowed_hosts_from_env();
+    tracing::info!(public_key = %key.public_key_b64url(), %subject, "web push: VAPID key ready");
+    crate::push::WebPushClient::new(key, subject, hosts)
 }

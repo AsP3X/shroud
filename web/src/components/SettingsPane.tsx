@@ -4,6 +4,7 @@ import { api, ApiError, type Session } from "../api/client";
 import type { IdentityMaterial } from "../crypto/identity";
 import { LogoutDialog } from "./LogoutDialog";
 import { DevicesView } from "./settings/DevicesView";
+import { NotificationsView, type MutedChat } from "./settings/NotificationsView";
 import { AppearanceView, DataStorageView, ServerView } from "./settings/PreferencesViews";
 import { PrivacyView } from "./settings/PrivacyView";
 import { SettingsHome } from "./settings/SettingsHome";
@@ -18,6 +19,8 @@ export function SettingsPane({
   onLockNow,
   onShowQr,
   onCacheCleared,
+  mutedChats,
+  onUnmute,
 }: {
   session: Session;
   identity: IdentityMaterial | null;
@@ -29,6 +32,9 @@ export function SettingsPane({
   onLockNow: () => void;
   onShowQr: () => void;
   onCacheCleared: () => void;
+  /** For Notifications and Sounds: the chats muted now, and a way to unmute one. */
+  mutedChats: MutedChat[];
+  onUnmute: (peerId: string) => Promise<void>;
 }) {
   const [route, setRoute] = useState<SettingsRoute | null>(null);
   const [deviceCount, setDeviceCount] = useState<number | null>(null);
@@ -79,6 +85,14 @@ export function SettingsPane({
             <h1>{SETTINGS_TITLES[route]}</h1>
           </header>
           <div className="set-body">
+            {route === "notifications" ? (
+              <NotificationsView
+                session={session}
+                mutedChats={mutedChats}
+                onUnmute={onUnmute}
+                onUnauthorized={forceLogout}
+              />
+            ) : null}
             {route === "devices" ? (
               <DevicesView
                 session={session}

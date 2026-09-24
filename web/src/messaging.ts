@@ -319,7 +319,8 @@ function messageFromMediaPayload(
   };
 }
 
-function previewCopy(msg: ChatMessage): string {
+/** What a chat row (and a notification that may show text) says about a message. */
+export function previewCopy(msg: ChatMessage): string {
   if (msg.deleted) return "Message deleted";
   if (msg.failed) return "Encrypted message";
   if (msg.kind === "voice") return msg.transcript?.trim() || VOICE_LABEL;

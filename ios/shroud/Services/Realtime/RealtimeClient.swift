@@ -24,6 +24,10 @@ final class RealtimeClient {
     private var session: URLSession?
     private var receiveLoop: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
+    /// Pings while connected. URLSession answers the server's pings (a socket silent for 75 s is
+    /// closed and its device gets pushes), but only a ping of our own notices a dead socket.
+    private var keepaliveTask: Task<Void, Never>?
+    private static let keepaliveInterval: Duration = .seconds(25)
     private var token: String?
     private var onEvent: ((RealtimeEvent) -> Void)?
     private var reconnectAttempt = 0
@@ -38,6 +42,8 @@ final class RealtimeClient {
         if self.token == token, case .connected = state { return }
         if self.token == token, case .connecting = state { return }
         disconnect(reconnect: false)
+        // `disconnect(reconnect: false)` marks the close as wanted; this socket's drops are not.
+        intentionalDisconnect = false
         self.token = token
         openSocket()
     }
@@ -52,6 +58,8 @@ final class RealtimeClient {
         }
         receiveLoop?.cancel()
         receiveLoop = nil
+        keepaliveTask?.cancel()
+        keepaliveTask = nil
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
         session?.invalidateAndCancel()
@@ -172,8 +180,9 @@ final class RealtimeClient {
                 break
             }
         }
-        // Socket dropped — reconnect unless we logged out.
-        if !intentionalDisconnect, token != nil {
+        // Socket dropped — reconnect unless we logged out. A loop cancelled by `disconnect`
+        // leaves reconnecting to whoever closed the socket.
+        if !Task.isCancelled, !intentionalDisconnect, token != nil {
             scheduleReconnect()
         }
     }
@@ -192,6 +201,24 @@ final class RealtimeClient {
         }
     }
 
+    private func startKeepalive() {
+        keepaliveTask?.cancel()
+        keepaliveTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.keepaliveInterval)
+                guard let self, !Task.isCancelled, let task = self.task else { return }
+                task.sendPing { [weak self] error in
+                    guard error != nil, let client = self else { return }
+                    Task { @MainActor in
+                        guard client.task === task, !client.intentionalDisconnect else { return }
+                        client.disconnect(reconnect: true)
+                        client.scheduleReconnect()
+                    }
+                }
+            }
+        }
+    }
+
     private func handleText(_ text: String) {
         guard let data = text.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -202,6 +229,7 @@ final class RealtimeClient {
         case "auth.ok":
             state = .connected
             reconnectAttempt = 0
+            startKeepalive()
         case "auth.error":
             state = .failed("WebSocket authentication failed")
             // Bad token — do not hammer reconnect with same token.
@@ -216,7 +244,7 @@ final class RealtimeClient {
             }
         case "message.delivered", "message.read", "message.deleted", "message.reaction",
              "reactions.seen",
-             "conversation.deleted",
+             "conversation.deleted", "conversation.read", "conversation.mute",
              "typing", "recording", "presence.update", "call.ring", "call.accepted",
              "call.ended", "call.signal",
              "contact.request", "contact.accepted", "contact.rejected",

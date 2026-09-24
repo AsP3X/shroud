@@ -19,9 +19,11 @@ import {
 import type { Session } from "../../api/client";
 import { bytesToB64 } from "../../crypto/bytes";
 import type { IdentityMaterial } from "../../crypto/identity";
+import { useNotificationPrefs } from "../../notifications/prefs";
 import { useThemePref } from "../../theme";
 import { Avatar } from "../Avatar";
 import { CopyButton } from "../CopyButton";
+import { notificationsSummary } from "./NotificationsView";
 import { themeLabel } from "./PreferencesViews";
 import { SettingsCard, SettingsGroup, SettingsNote, SettingsRow } from "./SettingsRow";
 import type { SettingsRoute } from "./routes";
@@ -55,6 +57,8 @@ export function SettingsHome({
   onShowQr: () => void;
 }) {
   const pref = useThemePref();
+  // Re-renders the Notifications row's On/Off when it changes.
+  useNotificationPrefs();
   const handle = `@${session.user.username}`;
 
   return (
@@ -115,7 +119,13 @@ export function SettingsHome({
       </SettingsCard>
 
       <SettingsCard>
-        <SettingsRow title="Notifications and Sounds" Icon={Bell} tint="#e64a72" soon />
+        <SettingsRow
+          title="Notifications and Sounds"
+          value={notificationsSummary()}
+          Icon={Bell}
+          tint="#e64a72"
+          onClick={() => onNavigate("notifications")}
+        />
         <SettingsRow
           title="Privacy and Security"
           Icon={Lock}

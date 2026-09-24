@@ -16,6 +16,7 @@ struct RootView: View {
     @State private var serverConfig = ServerConfigurationController()
     @State private var router = AppRouter()
     @State private var deviceWipe = DeviceWipeController()
+    @State private var notifications = NotificationsController.shared
     /// Set when the scene leaves `.active` with the chats open. See `showsPrivacyCover`.
     @State private var privacyCoverArmed = false
     @Namespace private var onboardingNamespace
@@ -47,6 +48,14 @@ struct RootView: View {
             }
             .animation(Motion.respecting(reduceMotion, Motion.gentle), value: router.isUnlocked)
 
+            // Telegram's in-app banner for arrivals in other chats (unlocked only). Under the
+            // call screen: a tap there would open a chat hidden behind the call.
+            if router.isUnlocked {
+                InAppNotificationHost()
+                    .zIndex(90)
+                    .allowsHitTesting(notifications.banner != nil)
+            }
+
             InCallOverlay()
                 .zIndex(100)
                 .allowsHitTesting(callController.active != nil)
@@ -72,6 +81,7 @@ struct RootView: View {
         .environment(callController)
         .environment(serverConfig)
         .environment(deviceWipe)
+        .environment(notifications)
         .task {
             SensitiveTempFiles.prepareAtLaunch()
             SecurityPreferences.removeRetiredKeys()
@@ -109,6 +119,10 @@ struct RootView: View {
             } else {
                 router.hasUnlockedMessaging = false
             }
+            notifications.isUnlocked = router.isUnlocked
+            notifications.isSignedIn = sessionController.isSignedIn
+            // A tap that launched a signed-out app belongs to no one here.
+            if !sessionController.isSignedIn { notifications.pendingOpen = nil }
             if router.isUnlocked {
                 messagingController.start()
                 PushNotificationService.shared.start()
@@ -129,6 +143,7 @@ struct RootView: View {
             deviceWipe.start(reason: .sessionEnded)
         }
         .onChange(of: sessionController.isSignedIn) { _, signedIn in
+            notifications.isSignedIn = signedIn
             if !signedIn {
                 // Repeated HTTP 401s: the server no longer accepts this session, so the iPhone is
                 // cleared exactly like Log Out does it — overlay, every store, verified.
@@ -146,6 +161,8 @@ struct RootView: View {
             }
         }
         .onChange(of: router.isUnlocked) { _, unlocked in
+            notifications.isUnlocked = unlocked
+            if !unlocked { notifications.dismissBanner() }
             if unlocked {
                 // Drop any leftover onboarding path before the main shell appears.
                 router.path = []
@@ -160,10 +177,22 @@ struct RootView: View {
                 PushNotificationService.shared.stop()
             }
         }
+        // A call that ends while the app is in the background: nothing needs the socket now,
+        // and closing it lets the server push again (see `.background` below).
+        .onChange(of: callController.active == nil) { _, ended in
+            guard ended, scenePhase == .background, router.isUnlocked else { return }
+            messagingController.suspendForBackground()
+        }
         .onChange(of: scenePhase) { _, phase in
             privacyCoverArmed = phase != .active && router.isUnlocked
             switch phase {
             case .background:
+                // The socket closes so the server pushes to this iPhone while it is away (a
+                // suspended app kept counting as online). A call needs its socket for signaling.
+                if router.isUnlocked, callController.active == nil {
+                    messagingController.suspendForBackground()
+                }
+                notifications.dismissBanner()
                 // Drop plaintext history from RAM; sealed files stay on disk.
                 // Vault remains; re-open via biometry/passcode when returning.
                 if SecurityPreferences.lockChatsOnBackground,
@@ -174,6 +203,7 @@ struct RootView: View {
                     SensitiveTempFiles.sweep(olderThan: Self.staleTempFileAge)
                 }
             case .active:
+                Task { await notifications.refreshAuthorization() }
                 guard sessionController.isSignedIn else { return }
                 // Face ID is opt-in via the lock screen's unlock button — never auto-prompt here
                 // (auto-prompt raced with Welcome and left the system sheet stuck).

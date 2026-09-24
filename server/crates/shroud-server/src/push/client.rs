@@ -52,6 +52,40 @@ pub struct ApnsConfig {
     pub topic: String,
 }
 
+/// `apns-push-type`: what the device does with the push.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApnsPushType {
+    /// Shown to the user (alert, sound, badge); may pass through the notification extension.
+    Alert,
+    /// Wakes the app silently (`content-available`).
+    Background,
+    /// PushKit incoming call; sent to `<topic>.voip`.
+    Voip,
+}
+
+impl ApnsPushType {
+    fn header(self) -> &'static str {
+        match self {
+            Self::Alert => "alert",
+            Self::Background => "background",
+            Self::Voip => "voip",
+        }
+    }
+}
+
+/// One APNs request: the payload plus the headers that steer delivery.
+#[derive(Debug, Clone)]
+pub struct ApnsRequest<'a> {
+    pub push_type: ApnsPushType,
+    /// 10 = now; 5 = when convenient for the device's battery.
+    pub priority: u8,
+    /// Unix time after which APNs stops trying; `None` lets APNs pick.
+    pub expiration: Option<u64>,
+    /// Replaces an earlier notification with the same id on the device.
+    pub collapse_id: Option<&'a str>,
+    pub payload: &'a Value,
+}
+
 /// Result of a single device push attempt.
 #[derive(Debug)]
 pub enum ApnsSendOutcome {
@@ -124,12 +158,12 @@ impl ApnsClient {
         &self.inner.key_id
     }
 
-    /// Sends a silent data notification (content-available) with opaque custom fields.
-    pub async fn send_data_push(
+    /// Sends one push to one device token.
+    pub async fn send(
         &self,
         device_token: &str,
         environment: ApnsEnvironment,
-        payload: &Value,
+        request: ApnsRequest<'_>,
     ) -> ApnsSendOutcome {
         let token = device_token.trim();
         if token.is_empty() {
@@ -150,24 +184,33 @@ impl ApnsClient {
         };
 
         let url = format!("{}/3/device/{}", environment.host(), token);
-        let response = self
+        let topic = match request.push_type {
+            ApnsPushType::Voip => format!("{}.voip", self.inner.topic),
+            _ => self.inner.topic.clone(),
+        };
+        let mut builder = self
             .inner
             .http
             .post(&url)
             .header("authorization", format!("bearer {bearer}"))
-            .header("apns-topic", &self.inner.topic)
-            .header("apns-push-type", "background")
-            .header("apns-priority", "5")
-            .header("content-type", "application/json")
-            .json(payload)
-            .send()
-            .await;
+            .header("apns-topic", topic)
+            .header("apns-push-type", request.push_type.header())
+            .header("apns-priority", request.priority.to_string())
+            .header("content-type", "application/json");
+        if let Some(expiration) = request.expiration {
+            builder = builder.header("apns-expiration", expiration.to_string());
+        }
+        if let Some(collapse_id) = request.collapse_id {
+            builder = builder.header("apns-collapse-id", collapse_id);
+        }
+        let response = builder.json(request.payload).send().await;
 
         let response = match response {
             Ok(r) => r,
             Err(err) => {
+                // Without the URL: its path is the device token.
                 return ApnsSendOutcome::Failed {
-                    reason: format!("transport: {err}"),
+                    reason: format!("transport: {}", err.without_url()),
                     status: 0,
                 };
             }

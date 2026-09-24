@@ -1,11 +1,15 @@
+import CryptoKit
 import Foundation
 import PushKit
 import UIKit
 import UserNotifications
 
-/// Registers data APNs + VoIP PushKit tokens with `PUT /push/token`.
-/// Human: Server only gets opaque tokens; push payloads stay content-free.
-/// Agent: sandbox vs production from build config; VoIP uses same register path with voip prefix.
+/// APNs registration, the notification-centre delegate, and PushKit.
+///
+/// Human: The server only gets opaque tokens, plus a random key it seals sender names with so
+/// Apple cannot read them (`NotificationPayload`). Pushes never carry message content.
+/// Agent: `PUT /push/token` with kind `alert` (+ payload key) and `voip`; sandbox vs production
+/// from the embedded provisioning profile. Taps and foreground pushes go to NotificationsController.
 @MainActor
 final class PushNotificationService: NSObject {
     static let shared = PushNotificationService()
@@ -13,7 +17,7 @@ final class PushNotificationService: NSObject {
     private var voipRegistry: PKPushRegistry?
     private weak var sessionController: SessionController?
     private weak var callController: CallController?
-    private var lastDataTokenHex: String?
+    private var lastAlertTokenHex: String?
     private var lastVoipTokenHex: String?
 
     private override init() {
@@ -25,7 +29,14 @@ final class PushNotificationService: NSObject {
         callController = calls
     }
 
-    /// Call once after unlock — requests notification permission and registers for remote notifications.
+    /// Becomes the notification centre's delegate. Called at launch, before a tap that launched
+    /// the app is delivered.
+    func install() {
+        UNUserNotificationCenter.current().delegate = self
+    }
+
+    /// After unlock: asks for permission the first time, registers with APNs, and tells the
+    /// server this iPhone's settings.
     func start() {
         #if !targetEnvironment(simulator)
         // PushKit is unreliable / entitlement-gated on Simulator; skip to keep tests stable.
@@ -37,15 +48,23 @@ final class PushNotificationService: NSObject {
         }
         #endif
 
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
-            guard granted else { return }
-            DispatchQueue.main.async {
-                UIApplication.shared.registerForRemoteNotifications()
+        Task {
+            let notifications = NotificationsController.shared
+            if notifications.preferences.enabled {
+                await notifications.requestAuthorizationIfNeeded()
+            } else {
+                await notifications.refreshAuthorization()
+            }
+            // Registering is harmless without permission (no alerts show), and the token lets
+            // "Send a test notification" report what is wrong.
+            UIApplication.shared.registerForRemoteNotifications()
+            if let token = sessionController?.bearerToken {
+                try? await notifications.pushSettings(token: token)
             }
         }
         // Re-register tokens if we already have them (e.g. relaunch while signed in).
-        if let hex = lastDataTokenHex {
-            Task { await uploadToken(hex: hex, kind: .data) }
+        if let hex = lastAlertTokenHex {
+            Task { await uploadToken(hex: hex, kind: .alert) }
         }
         if let hex = lastVoipTokenHex {
             Task { await uploadToken(hex: hex, kind: .voip) }
@@ -56,10 +75,21 @@ final class PushNotificationService: NSObject {
         // Keep system registrations; tokens remain valid until logout clears session.
     }
 
+    /// Logout: this iPhone stops being reachable for the account at Apple too. The server drops
+    /// its tokens on logout, but it may not have heard it (offline); a push to an unregistered
+    /// app never arrives. `start()` registers again after the next sign-in.
+    func forgetRegistration() {
+        UIApplication.shared.unregisterForRemoteNotifications()
+        lastAlertTokenHex = nil
+        lastVoipTokenHex = nil
+        voipRegistry?.desiredPushTypes = []
+        voipRegistry = nil
+    }
+
     func didRegisterForRemoteNotifications(deviceToken: Data) {
         let hex = deviceTokenHex(deviceToken)
-        lastDataTokenHex = hex
-        Task { await uploadToken(hex: hex, kind: .data) }
+        lastAlertTokenHex = hex
+        Task { await uploadToken(hex: hex, kind: .alert) }
     }
 
     func didFailToRegisterForRemoteNotifications(error: Error) {
@@ -69,21 +99,22 @@ final class PushNotificationService: NSObject {
         #endif
     }
 
-    private enum TokenKind {
-        case data
+    private enum TokenKind: String {
+        case alert
         case voip
     }
 
     private func uploadToken(hex: String, kind: TokenKind) async {
         guard let token = sessionController?.bearerToken else { return }
-        // Distinguish VoIP tokens server-side via a short prefix (opaque to APNs delivery path).
-        let stored = kind == .voip ? "voip:\(hex)" : hex
-        let environment = Self.apnsEnvironment
+        // The key the server seals sender names with; without one (Keychain unavailable) the
+        // server leaves names out rather than send them readable.
+        let payloadKey: String? = kind == .alert
+            ? NotificationPayload.makeKey().map { key in key.withUnsafeBytes { Data($0) }.base64EncodedString() }
+            : nil
         do {
-            try await APIClient.makeConfiguredClient().putNoContent(
-                path: "push/token",
-                body: PushTokenBody(token: stored, environment: environment),
-                bearerToken: token
+            try await NotificationsService().registerToken(
+                PushTokenBody(token: hex, environment: Self.apnsEnvironment, kind: kind.rawValue, payloadKey: payloadKey),
+                token: token
             )
         } catch {
             #if DEBUG
@@ -96,18 +127,57 @@ final class PushNotificationService: NSObject {
         data.map { String(format: "%02x", $0) }.joined()
     }
 
-    private static var apnsEnvironment: String {
+    /// `sandbox` for development-signed builds, `production` otherwise. Read from the embedded
+    /// provisioning profile: a Release build run from Xcode still has development tokens.
+    private static let apnsEnvironment: String = {
+        if let environment = embeddedProfileAPNsEnvironment() {
+            return environment == "production" ? "production" : "sandbox"
+        }
         #if DEBUG
-        "sandbox"
+        return "sandbox"
         #else
-        "production"
+        // App Store and TestFlight builds carry no profile, and always use production.
+        return "production"
         #endif
+    }()
+
+    private static func embeddedProfileAPNsEnvironment() -> String? {
+        guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
+              let data = try? Data(contentsOf: url),
+              let start = data.range(of: Data("<?xml".utf8)),
+              let end = data.range(of: Data("</plist>".utf8), in: start.lowerBound..<data.endIndex),
+              let plist = try? PropertyListSerialization.propertyList(
+                  from: data.subdata(in: start.lowerBound..<end.upperBound),
+                  format: nil
+              ) as? [String: Any],
+              let entitlements = plist["Entitlements"] as? [String: Any]
+        else { return nil }
+        return entitlements["aps-environment"] as? String
     }
 }
 
-private struct PushTokenBody: Encodable {
-    let token: String
-    let environment: String
+extension PushNotificationService: UNUserNotificationCenterDelegate {
+    /// A push (or the app's own notification) while the app is in front.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        await MainActor.run { NotificationsController.shared.presentation(for: notification) }
+    }
+
+    /// A tap on a notification: open its chat.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        let content = response.notification.request.content
+        // Parsed here: the payload dictionary cannot cross to the main actor, its contents can.
+        let contents = NotificationPayload.parse(content.userInfo)
+        let title = content.title
+        await MainActor.run {
+            NotificationsController.shared.handleTap(contents, title: title)
+        }
+    }
 }
 
 extension PushNotificationService: PKPushRegistryDelegate {
