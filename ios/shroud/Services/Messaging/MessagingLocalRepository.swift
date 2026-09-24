@@ -133,18 +133,36 @@ final class MessagingLocalRepository {
         state.incomingRequests = snapshot.incomingRequests.map { $0.toDTO() }
         state.conversations = snapshot.conversations.map { $0.toDTO() }
 
+        var scrubbed: [UUID] = []
         for (mapKey, stored) in snapshot.threads {
             guard let peerID = UUID(uuidString: mapKey) else { continue }
+            let scrubbedBefore = scrubbed.count
             let messages = stored.map { row -> MessagingController.ChatMessage in
                 var message = row.toChatMessage(media: mediaCache, historyKey: key)
                 // Offline open: restore envelope preview/size without downloading full media.
                 attachEnvelopePreview(to: &message)
+                // Older builds merged a missed delete in with the old content still attached.
+                if message.deleted {
+                    let tombstone = ThreadMessageMerge.tombstone(of: message)
+                    if message != tombstone {
+                        scrubbed.append(message.id)
+                        message = tombstone
+                    }
+                }
                 return message
+            }
+            if scrubbed.count > scrubbedBefore {
+                let rows = messages.map(LocalMessageStore.StoredMessage.from)
+                messageStore.saveThread(peerID: peerID, messages: rows, userID: userID, historyKey: key)
+                snapshot.threads[mapKey] = rows
             }
             state.threads[peerID] = messages
             recachePlaintext(of: messages)
         }
-        // What was just read (or re-saved after the prune) is what the files hold.
+        if !scrubbed.isEmpty {
+            removeCaches(messageIDs: scrubbed)
+        }
+        // What was just read (or re-saved after the prune or the scrub) is what the files hold.
         var loaded = Written(userID: userID)
         loaded.roster = Self.comparable(LocalMessageStore.Roster(
             conversations: snapshot.conversations,

@@ -19,6 +19,15 @@ enum ThreadMessageMerge {
         _ decoded: MessagingController.ChatMessage,
         prior: MessagingController.ChatMessage?
     ) -> MessagingController.ChatMessage {
+        if decoded.deleted {
+            // Deleted for everyone. If this device missed the `message.deleted` event, the old copy
+            // is still here, and nothing it said may carry over. It only knows the kind of bubble
+            // it was, which a history page can't tell (the server keeps no more than "media").
+            guard let prior else { return tombstone(of: decoded) }
+            var replacement = tombstone(of: prior)
+            if decoded.receipt.rank > replacement.receipt.rank { replacement.receipt = decoded.receipt }
+            return replacement
+        }
         guard let prior else { return decoded }
         let decodedFailed = isFailedDecryptText(decoded.text)
         let priorFailed = isFailedDecryptText(prior.text)
@@ -89,6 +98,42 @@ enum ThreadMessageMerge {
         }
         result.sort { $0.createdAt < $1.createdAt }
         return result
+    }
+
+    /// What a message deleted for everyone leaves in its thread: who sent it, when, and the kind
+    /// of bubble it was. Its text, media, transcript, quote and link preview are all gone.
+    static func tombstone(
+        of message: MessagingController.ChatMessage
+    ) -> MessagingController.ChatMessage {
+        MessagingController.ChatMessage(
+            id: message.id,
+            peerUserID: message.peerUserID,
+            senderUserID: message.senderUserID,
+            text: "Message deleted",
+            createdAt: message.createdAt,
+            isMine: message.isMine,
+            deleted: true,
+            receipt: message.receipt,
+            kind: (message.kind == .image || message.kind == .video || message.kind == .voice)
+                ? message.kind
+                : .text
+        )
+    }
+
+    /// Tombstones in a decoded page whose content this device may still hold: the thread has
+    /// the message live, or as a tombstone that kept content (older builds merged it in), or
+    /// not at all. Their cached plaintext and media must be purged. A bare tombstone was purged
+    /// when it became one, so a reload doesn't purge it again.
+    static func tombstonesToPurge(
+        decoded: [MessagingController.ChatMessage],
+        previous: [MessagingController.ChatMessage]
+    ) -> [UUID] {
+        let previousByID = Dictionary(previous.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return decoded.compactMap { message in
+            guard message.deleted else { return nil }
+            if let prior = previousByID[message.id], prior == tombstone(of: prior) { return nil }
+            return message.id
+        }
     }
 
     /// Folds transcripts shared as annotations into the voice messages they point at.

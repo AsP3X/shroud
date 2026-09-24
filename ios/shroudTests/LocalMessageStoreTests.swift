@@ -274,6 +274,7 @@ final class OutboundPendingTests: XCTestCase {
     }
 }
 
+@MainActor
 final class ThreadMessageMergeTests: XCTestCase {
     func testPreferReadableKeepsPriorOnDecryptFailure() {
         let id = UUID()
@@ -329,5 +330,183 @@ final class ThreadMessageMergeTests: XCTestCase {
             pendingLocal: [pending]
         )
         XCTAssertEqual(merged.map(\.id), [server.id, pending.id])
+    }
+
+    // MARK: - Tombstones from a history page (the `message.deleted` event was missed)
+
+    func testTombstoneDropsTheQuoteAndLinkPreview() {
+        var prior = chatMessage(text: "see https://example.com")
+        prior.replyTo = MessageReplyReference(messageID: UUID(), senderUserID: UUID(), kind: .text, snippet: "where?")
+        prior.linkPreview = LinkPreview(url: "https://example.com", title: "Example")
+        prior.mediaObjectId = UUID()
+        prior.imageData = Data("link image".utf8)
+        prior.previewData = Data("blurred".utf8)
+        prior.imageWidth = 1200
+        prior.imageHeight = 630
+
+        let merged = ThreadMessageMerge.preferReadable(serverTombstone(of: prior, isMedia: true), prior: prior)
+
+        XCTAssertEqual(merged, ThreadMessageMerge.tombstone(of: prior))
+        XCTAssertEqual(merged.text, "Message deleted")
+        XCTAssertTrue(merged.deleted)
+        // A link message is a text bubble, even though its picture made it "media" on the wire.
+        XCTAssertEqual(merged.kind, .text)
+        XCTAssertNil(merged.replyTo)
+        XCTAssertNil(merged.linkPreview)
+        XCTAssertNil(merged.mediaObjectId)
+        XCTAssertNil(merged.imageData)
+        XCTAssertNil(merged.previewData)
+        XCTAssertNil(merged.imageWidth)
+        let stored = LocalMessageStore.StoredMessage.from(merged)
+        XCTAssertNil(stored.replyTo)
+        XCTAssertNil(stored.linkPreview)
+        XCTAssertNil(stored.mediaObjectId)
+    }
+
+    func testVoiceTombstoneDropsTheTranscriptAndAudio() {
+        var prior = chatMessage(text: "meet at noon")
+        prior.kind = .voice
+        prior.mediaObjectId = UUID()
+        prior.voiceData = Data("m4a".utf8)
+        prior.voiceDurationMs = 4200
+        prior.voiceWaveform = [10, 200, 30]
+        prior.transcript = "meet at noon"
+        prior.replyTo = MessageReplyReference(messageID: UUID(), senderUserID: UUID(), kind: .text, snippet: "when?")
+
+        let merged = ThreadMessageMerge.preferReadable(serverTombstone(of: prior, isMedia: true), prior: prior)
+
+        XCTAssertEqual(merged, ThreadMessageMerge.tombstone(of: prior))
+        // Still drawn as a voice bubble: the server only knows it was "media".
+        XCTAssertEqual(merged.kind, .voice)
+        XCTAssertNil(merged.transcript)
+        XCTAssertNil(merged.voiceData)
+        XCTAssertNil(merged.voiceDurationMs)
+        XCTAssertNil(merged.voiceWaveform)
+        XCTAssertNil(merged.replyTo)
+        XCTAssertNil(LocalMessageStore.StoredMessage.from(merged).transcript)
+    }
+
+    /// The merge keeps a hydrated video from being downgraded by a decode without bytes; a
+    /// tombstone must not get the video back that way.
+    func testVideoTombstoneKeepsNoVideo() {
+        var prior = chatMessage(text: "Video")
+        prior.kind = .video
+        prior.mediaObjectId = UUID()
+        prior.videoData = Data("mp4".utf8)
+        prior.previewData = Data("poster".utf8)
+        prior.imageData = Data("poster".utf8)
+        prior.voiceDurationMs = 9000
+
+        let merged = ThreadMessageMerge.preferReadable(serverTombstone(of: prior, isMedia: true), prior: prior)
+
+        XCTAssertEqual(merged, ThreadMessageMerge.tombstone(of: prior))
+        XCTAssertEqual(merged.kind, .video)
+        XCTAssertNil(merged.videoData)
+        XCTAssertNil(merged.imageData)
+        XCTAssertNil(merged.previewData)
+        XCTAssertNil(merged.voiceDurationMs)
+    }
+
+    func testTombstoneKeepsTheHigherReceipt() {
+        var mine = chatMessage(text: "hi", isMine: true)
+        mine.receipt = .read
+        let fromServer = serverTombstone(of: mine, isMedia: false, receipt: .delivered)
+        XCTAssertEqual(ThreadMessageMerge.preferReadable(fromServer, prior: mine).receipt, .read)
+
+        mine.receipt = .delivered
+        let readOnServer = serverTombstone(of: mine, isMedia: false, receipt: .read)
+        XCTAssertEqual(ThreadMessageMerge.preferReadable(readOnServer, prior: mine).receipt, .read)
+    }
+
+    func testMergeThreadReplacesTheLiveMessageAndPurgesItOnce() {
+        var deleted = chatMessage(text: "gone")
+        deleted.replyTo = MessageReplyReference(messageID: UUID(), senderUserID: UUID(), kind: .text, snippet: "q")
+        let kept = chatMessage(text: "still here", createdAt: deleted.createdAt.addingTimeInterval(1))
+        let page = [serverTombstone(of: deleted, isMedia: false), kept]
+
+        let merged = ThreadMessageMerge.mergeThread(decoded: page, previous: [deleted, kept], pendingLocal: [])
+
+        XCTAssertEqual(merged, [ThreadMessageMerge.tombstone(of: deleted), kept])
+        XCTAssertEqual(ThreadMessageMerge.tombstonesToPurge(decoded: page, previous: [deleted, kept]), [deleted.id])
+
+        // The next poll brings the same page: nothing changes, and nothing is purged again.
+        XCTAssertEqual(ThreadMessageMerge.mergeThread(decoded: page, previous: merged, pendingLocal: []), merged)
+        XCTAssertEqual(ThreadMessageMerge.tombstonesToPurge(decoded: page, previous: merged), [])
+    }
+
+    func testTombstonesToPurge() {
+        let live = chatMessage(text: "live")
+        let bare = ThreadMessageMerge.tombstone(of: chatMessage(text: "bare"))
+        // What an older build merged in: marked deleted, content still attached.
+        var kept = ThreadMessageMerge.tombstone(of: chatMessage(text: "kept"))
+        kept.transcript = "kept"
+        let unseen = chatMessage(text: "unseen")
+        let stillLive = chatMessage(text: "not deleted")
+
+        let page = [live, bare, kept, unseen].map { serverTombstone(of: $0, isMedia: false) } + [stillLive]
+        let purge = ThreadMessageMerge.tombstonesToPurge(decoded: page, previous: [live, bare, kept, stillLive])
+
+        XCTAssertEqual(purge, [live.id, kept.id, unseen.id])
+    }
+
+    /// A tombstone this thread never held comes in bare, even from a row deleted before the
+    /// server started clearing `media_object_id`.
+    func testUnseenTombstoneIsBare() {
+        var decoded = serverTombstone(of: chatMessage(text: "x"), isMedia: true)
+        decoded.mediaObjectId = UUID()
+
+        let merged = ThreadMessageMerge.preferReadable(decoded, prior: nil)
+
+        XCTAssertEqual(merged, ThreadMessageMerge.tombstone(of: merged))
+        XCTAssertNil(merged.mediaObjectId)
+        XCTAssertEqual(merged.kind, .image)
+    }
+
+    func testTombstoneKinds() {
+        for (kind, expected) in [
+            (MessagingController.ChatMessageKind.text, MessagingController.ChatMessageKind.text),
+            (.image, .image), (.video, .video), (.voice, .voice), (.todo, .text),
+        ] {
+            var message = chatMessage(text: "x")
+            message.kind = kind
+            XCTAssertEqual(ThreadMessageMerge.tombstone(of: message).kind, expected, "\(kind)")
+        }
+    }
+
+    private func chatMessage(
+        text: String,
+        isMine: Bool = false,
+        createdAt: Date = Date(timeIntervalSince1970: 1_800_000_000)
+    ) -> MessagingController.ChatMessage {
+        let peer = UUID()
+        return MessagingController.ChatMessage(
+            id: UUID(),
+            peerUserID: peer,
+            senderUserID: isMine ? UUID() : peer,
+            text: text,
+            createdAt: createdAt,
+            isMine: isMine,
+            deleted: false
+        )
+    }
+
+    /// What `MessageDecoder` makes of a `deleted_for_everyone` message (the server nulls the
+    /// ciphertext and the media id; `content_type` still says "media").
+    private func serverTombstone(
+        of message: MessagingController.ChatMessage,
+        isMedia: Bool,
+        receipt: MessageReceiptStatus = .sent
+    ) -> MessagingController.ChatMessage {
+        MessagingController.ChatMessage(
+            id: message.id,
+            peerUserID: message.peerUserID,
+            senderUserID: message.senderUserID,
+            text: "Message deleted",
+            createdAt: message.createdAt,
+            isMine: message.isMine,
+            deleted: true,
+            receipt: receipt,
+            kind: isMedia ? .image : .text
+        )
     }
 }

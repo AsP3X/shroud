@@ -100,6 +100,53 @@ final class MessagingLocalPersistTests: XCTestCase {
         XCTAssertEqual(repository.sealedPlaintextText(for: reply.id), wire)
     }
 
+    /// Older builds merged a missed delete in with the message's content still on the tombstone,
+    /// and never purged its caches. Reading the store scrubs both and rewrites the thread file.
+    func testHydrateScrubsATombstoneThatKeptContent() throws {
+        let repository = unlockedRepository()
+        var tombstone = ThreadMessageMerge.tombstone(of: message(peer: peerA, text: "the secret"))
+        tombstone.kind = .voice
+        tombstone.transcript = "the secret"
+        tombstone.replyTo = MessageReplyReference(messageID: UUID(), senderUserID: peerA, kind: .text, snippet: "?")
+        let live = message(peer: peerA, text: "still here")
+        repository.saveSealedPlaintext(messageID: tombstone.id, text: #"{"t":"voice","c":"the secret"}"#)
+        repository.saveSealedMedia(messageID: tombstone.id, data: Data("m4a".utf8))
+        persistThread(repository, peer: peerA, messages: [tombstone, live])
+
+        let hydrated = unlockedRepository().hydrate(userID: userID)
+
+        let thread = try XCTUnwrap(hydrated.threads[peerA])
+        XCTAssertEqual(thread.map(\.id), [tombstone.id, live.id])
+        // Bare: nothing on it beyond what a tombstone keeps.
+        XCTAssertEqual(thread[0], ThreadMessageMerge.tombstone(of: thread[0]))
+        XCTAssertEqual(thread[0].kind, .voice)
+        XCTAssertNil(thread[0].transcript)
+        XCTAssertNil(thread[0].voiceData)
+        XCTAssertEqual(thread[1].text, "still here")
+        let fresh = unlockedRepository()
+        XCTAssertNil(fresh.sealedPlaintext(for: tombstone.id))
+        XCTAssertNil(fresh.sealedMedia(for: tombstone.id))
+        let rows = try XCTUnwrap(LocalMessageStore().loadThread(peerID: peerA, userID: userID, historyKey: key))
+        XCTAssertNil(rows[0].transcript)
+        XCTAssertNil(rows[0].replyTo)
+        XCTAssertEqual(rows[1].text, "still here")
+    }
+
+    /// A bare tombstone has nothing to scrub: reading the store leaves its thread file alone.
+    func testHydrateLeavesABareTombstoneAlone() throws {
+        let repository = unlockedRepository()
+        let tombstone = ThreadMessageMerge.tombstone(of: message(peer: peerA, text: "gone"))
+        persistThread(repository, peer: peerA, messages: [tombstone])
+        try backdate([threadURL(peerA)])
+
+        let hydrated = unlockedRepository().hydrate(userID: userID)
+
+        let thread = try XCTUnwrap(hydrated.threads[peerA])
+        XCTAssertEqual(thread.map(\.id), [tombstone.id])
+        XCTAssertEqual(thread[0], ThreadMessageMerge.tombstone(of: thread[0]))
+        XCTAssertEqual(try modified(threadURL(peerA)), old)
+    }
+
     // MARK: - Helpers
 
     private func unlockedRepository() -> MessagingLocalRepository {

@@ -845,7 +845,10 @@ final class MessagingController {
     /// single in-flight load per peer — duplicate fetches decrypt the same page twice and
     /// rewrite `threads`, which redraws every bubble. Callers still await real data.
     /// Loads a peer thread (or Notes): the newest page, then whatever is newer than what we hold.
-    func loadThread(peerUserID: UUID) async {
+    ///
+    /// - Parameter activate: The chat is on screen: it becomes the active chat and its unread
+    ///   badge clears. Pass false to reload a chat the user may not be in (an event about it).
+    func loadThread(peerUserID: UUID, activate: Bool = true) async {
         guard sessionController?.bearerToken != nil,
               sessionController?.userID != nil,
               cryptoController?.material != nil
@@ -856,9 +859,11 @@ final class MessagingController {
             return
         }
 
-        if activePeerID != peerUserID { activePeerID = peerUserID }
-        if !isNotesChat(peerUserID), unreadCountByPeer[peerUserID] != 0 {
-            unreadCountByPeer[peerUserID] = 0
+        if activate {
+            if activePeerID != peerUserID { activePeerID = peerUserID }
+            if !isNotesChat(peerUserID), unreadCountByPeer[peerUserID] != 0 {
+                unreadCountByPeer[peerUserID] = 0
+            }
         }
 
         // Notes UI peer is a sentinel; API peer is the signed-in user (Saved Messages).
@@ -994,6 +999,13 @@ final class MessagingController {
         if threads[storePeerID] != merged {
             threads[storePeerID] = merged
         }
+        // A delete whose event this device missed (one message, a chat deleted for both, a
+        // deleted account) arrives here as a tombstone: purge and save as `tombstoneMessage` does.
+        let deleted = ThreadMessageMerge.tombstonesToPurge(decoded: page.messages, previous: currentThread)
+        if !deleted.isEmpty {
+            purgeLocalMessageArtifacts(messageIDs: deleted)
+            persistThread(storePeerID)
+        }
     }
 
     /// - Parameters:
@@ -1057,7 +1069,10 @@ final class MessagingController {
                     try? await messagesService.markDelivered(messageID: id, token: token)
                 }
                 let finalThread = threads[storePeerID] ?? []
-                if let lastFromPeer = finalThread.last(where: { !$0.isMine }) {
+                // Read receipts only for the chat on screen, not for a reload of another one.
+                if activePeerID == storePeerID,
+                   let lastFromPeer = finalThread.last(where: { !$0.isMine })
+                {
                     _ = try? await messagesService.markReadBulk(
                         peerUserID: apiPeerID,
                         upToMessageID: lastFromPeer.id,
@@ -1628,24 +1643,13 @@ final class MessagingController {
         }
     }
 
-    /// Replaces a message with the same tombstone a history page would decode for it.
+    /// Replaces a message with the same tombstone a history page would merge in for it.
     private func tombstoneMessage(messageID: UUID, peerUserID: UUID) {
         guard var list = threads[peerUserID],
               let idx = list.firstIndex(where: { $0.id == messageID }),
               !list[idx].deleted
         else { return }
-        let old = list[idx]
-        list[idx] = ChatMessage(
-            id: old.id,
-            peerUserID: old.peerUserID,
-            senderUserID: old.senderUserID,
-            text: "Message deleted",
-            createdAt: old.createdAt,
-            isMine: old.isMine,
-            deleted: true,
-            receipt: old.receipt,
-            kind: (old.kind == .image || old.kind == .video || old.kind == .voice) ? old.kind : .text
-        )
+        list[idx] = ThreadMessageMerge.tombstone(of: list[idx])
         threads[peerUserID] = list
         // Media + payload keys must not survive an unsend.
         purgeLocalMessageArtifacts(messageIDs: [messageID])
@@ -3817,8 +3821,9 @@ final class MessagingController {
         if initiatedHere || clearedForPeer {
             clearChatLocally(peerUserID: threadPeer)
         } else {
-            // We keep our own history; refetch so their messages come back as tombstones.
-            Task { await loadThread(peerUserID: threadPeer) }
+            // We keep our own history; refetch so their messages come back as tombstones. The
+            // user may be in another chat: that one stays active, and this one keeps counting unread.
+            Task { await loadThread(peerUserID: threadPeer, activate: false) }
         }
 
         Task {
