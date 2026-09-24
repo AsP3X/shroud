@@ -222,9 +222,16 @@ pub async fn delete_conversation(
             if cleared_for_peer {
                 upsert_clear(&mut tx, peer_user_id, conversation_id, now).await?;
             } else {
-                // Peer keeps their own history, but nothing of ours stays readable there.
+                // Peer keeps their own history, but nothing of ours stays readable there: our
+                // messages become tombstones and our reactions on theirs are taken back.
                 tombstoned =
                     tombstone_own_messages(&mut tx, conversation_id, auth.user_id, now).await?;
+                crate::routes::reactions::clear_reactions_by(
+                    &mut tx,
+                    auth.user_id,
+                    &[conversation_id],
+                )
+                .await?;
             }
         }
 

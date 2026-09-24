@@ -514,10 +514,12 @@ pub(crate) async fn clear_reactions_on(
 }
 
 /// Clears every live reaction `user_id` left in `conversation_ids`, each with its own new `seq`
-/// so the other person's devices drop them too. For account deletion: the users row outlives
-/// the account (migration 021), so its reactions no longer cascade away with it.
-/// Agent: CALLED by conversations::delete_chats_for_both, which holds every one of
-/// `conversation_ids` `FOR UPDATE`; finds the rows by message_reactions_user_idx.
+/// so the other person's devices drop them too. For account deletion (the users row outlives
+/// the account, migration 021, so its reactions no longer cascade away with it) and for
+/// "delete chat for both" where the peer keeps the chat (nothing of ours stays readable).
+/// Agent: CALLED by conversations::delete_chats_for_both and conversations::delete_conversation,
+/// which hold every one of `conversation_ids` `FOR UPDATE`; finds the rows by
+/// message_reactions_user_idx.
 pub(crate) async fn clear_reactions_by(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     user_id: Uuid,

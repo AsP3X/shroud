@@ -1146,3 +1146,43 @@ async fn deleting_an_account_while_its_chats_are_busy_never_errors() {
         }
     }
 }
+
+#[tokio::test]
+async fn deleting_the_chat_for_both_takes_back_our_reactions_on_their_messages() {
+    let Some(app) = test_app().await else {
+        eprintln!(
+            "skipping deleting_the_chat_for_both_takes_back_our_reactions_on_their_messages: no DATABASE_URL"
+        );
+        return;
+    };
+    let a = register(&app).await;
+    let b = register(&app).await;
+    become_contacts(&app, &a, &b).await;
+    let theirs = send(&app, &b, &a.1, "text").await;
+    let (status, set) = react_on(&app, &a, &theirs, b"heart", Some(0), None).await;
+    assert_eq!(status, StatusCode::OK, "{set}");
+    let (status, own) = react_on(&app, &b, &theirs, b"star", Some(0), None).await;
+    assert_eq!(status, StatusCode::OK, "{own}");
+
+    // B keeps the chat (no consent given): A's messages become tombstones, and A's reaction on
+    // B's message must not stay readable there either. B's own reaction stays.
+    let body = clear_chat(&app, &a, &b.1, "everyone").await;
+    assert_eq!(body["cleared_for_peer"], false);
+
+    let page = history(&app, &b, &a.1).await;
+    let reactions = find_message(&page, &theirs)["reactions"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(reactions.len(), 1, "{reactions:?}");
+    assert_eq!(reactions[0]["user_id"], b.1.as_str());
+
+    let caught_up = changes(&app, &b, &a.1, seq_of(&own)).await;
+    let rows = caught_up["reactions"].as_array().unwrap();
+    assert!(
+        rows.iter().any(|row| row["message_id"] == theirs.as_str()
+            && row["user_id"] == a.1.as_str()
+            && row["ciphertext"].is_null()),
+        "B's devices learn A's reaction went: {rows:?}"
+    );
+}

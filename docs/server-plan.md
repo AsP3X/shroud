@@ -1339,7 +1339,8 @@ row (`FOR SHARE`) before all of that, as a send does. So a reaction can't land o
 deleted a moment earlier (the lock waits for the delete and re-reads the row), and none of these
 deadlock with each other. Both deletes clear the deleted messages' reactions (a new `seq` each),
 so no sealed reaction outlives its message; deleting an account also clears every reaction the
-account left.
+account left, and deleting a chat for both where the peer keeps it clears the deleter's
+reactions on the peer's messages (nothing of theirs stays readable there).
 
 #### `PUT /messages/:id/reaction` `{ "ciphertext": "<base64>", "base_seq": 41, "added": true }` → `200` reaction
 
