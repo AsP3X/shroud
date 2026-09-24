@@ -247,9 +247,13 @@ export function ContextMenu<Id extends string>({
         if (!node) return;
         const width = node.offsetWidth;
         const height = node.offsetHeight;
+        /* The box the menu was last placed at decides which way it grows — its settled size, not
+           the mid-animation one a quick second change starts from, or an upward-opening menu's
+           bottom edge would drift with every retarget. */
+        const settled = placedSize.current;
         placedSize.current = { width, height };
         const at = placedAt.current;
-        const after = at ? refit(at, before, width, height) : place(anchor, width, height);
+        const after = at ? refit(at, before ? settled : null, width, height) : place(anchor, width, height);
         placedAt.current = after;
         // Straight onto the node: React's own update comes a render later.
         node.style.left = `${after.left}px`;
@@ -334,8 +338,11 @@ export function ContextMenu<Id extends string>({
     };
     const onResize = () => {
       /* Typing in the menu (the reaction search) on a phone brings the keyboard up, which some
-         browsers report as a resize: keep the menu and fit it into what is left. */
-      if (document.activeElement && menu.current?.contains(document.activeElement)) {
+         browsers report as a resize: keep the menu and fit it into what is left. Only for a text
+         field: the first action is focused as soon as the menu opens, so "focus is inside" alone
+         would keep every menu through a window resize that reflows the thread under it. */
+      const focused = document.activeElement;
+      if (focused instanceof HTMLInputElement && menu.current?.contains(focused)) {
         setGrown((n) => n + 1);
         return;
       }
