@@ -36,6 +36,7 @@
   --surface-3: #22222a;
   --canvas: #0e0e14;
   --hover: rgba(255, 255, 255, 0.055);
+  --scrollbar: rgba(255, 255, 255, 0.22);
   --pressed: rgba(255, 255, 255, 0.09);
   --separator: #2a2a31;
   --text-primary: #ffffff;
@@ -71,6 +72,7 @@
     --surface-3: #ffffff;
     --canvas: #f1f1f6;
     --hover: rgba(10, 10, 25, 0.045);
+  --scrollbar: rgba(10, 10, 25, 0.22);
     --pressed: rgba(10, 10, 25, 0.08);
     --separator: #e2e2e8;
     --text-primary: #0b0b12;
@@ -106,6 +108,7 @@
   --surface-3: #ffffff;
   --canvas: #f1f1f6;
   --hover: rgba(10, 10, 25, 0.045);
+  --scrollbar: rgba(10, 10, 25, 0.22);
   --pressed: rgba(10, 10, 25, 0.08);
   --separator: #e2e2e8;
   --text-primary: #0b0b12;
@@ -3137,6 +3140,9 @@ button.reply-quote { cursor: pointer; }
 .reaction-picker.is-expanded {
   display: grid; grid-template-columns: minmax(0, 1fr) auto;
   column-gap: 4px; row-gap: 6px; align-items: center;
+  /* Eight columns plus room for a thin classic scrollbar (up to 12px), so the grid never has
+     to scroll sideways or clip its last column, whatever scrollbar the platform draws. */
+  width: calc(8 * 30px + 7 * 2px + 12px);
 }
 .reaction-picker-list { display: flex; flex-wrap: nowrap; align-items: center; gap: 2px; }
 .reaction-picker.is-expanded .reaction-picker-list { grid-column: 1 / -1; }
@@ -3145,8 +3151,21 @@ button.reply-quote { cursor: pointer; }
    the picker animates every change of that height together with the menu. */
 .reaction-picker-list.is-grid {
   display: grid; grid-template-columns: repeat(8, 30px); gap: 4px 2px;
-  align-content: start; justify-content: start;
-  min-height: 30px; max-height: 184px; overflow-y: auto; overscroll-behavior: contain;
+  align-content: start; justify-content: center;
+  min-height: 30px; max-height: 184px; overscroll-behavior: contain;
+  /* Its own thin scrollbar in a gutter that is always reserved: a classic scrollbar appearing
+     when the rows outgrow the box must not squeeze the eight columns into a sideways scroll. */
+  overflow: hidden auto; scrollbar-gutter: stable;
+}
+.reaction-picker-list.is-grid, .ctx-menu { scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; }
+.reaction-picker-list.is-grid::-webkit-scrollbar, .ctx-menu::-webkit-scrollbar { width: 8px; }
+.reaction-picker-list.is-grid::-webkit-scrollbar-track, .ctx-menu::-webkit-scrollbar-track { background: transparent; }
+.reaction-picker-list.is-grid::-webkit-scrollbar-thumb, .ctx-menu::-webkit-scrollbar-thumb {
+  background: var(--scrollbar); border-radius: var(--r-full);
+  border: 2px solid transparent; background-clip: padding-box;
+}
+.reaction-picker-list.is-grid::-webkit-scrollbar-thumb:hover, .ctx-menu::-webkit-scrollbar-thumb:hover {
+  background-color: var(--text-tertiary);
 }
 .reaction-picker-list.is-grid .reaction-pick:nth-child(n + 8) {
   animation: reaction-grid-in 0.32s var(--ease) both;
