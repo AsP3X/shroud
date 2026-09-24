@@ -2,93 +2,20 @@ import Foundation
 
 /// Fuzzy search over the reaction set: what the expanded reaction panel's search field runs.
 ///
-/// Human: Every emoji answers to its Unicode name and the words people actually type for it
-/// ("lol", "thanks", "wow"). A word of the query matches a keyword by prefix, by the start of one
-/// of its words, as a substring, as an abbreviation ("hndrd" → hundred) or with a typo or two
-/// ("thnaks" → thanks); when the query has several words, all of them have to match. Best match
-/// first; ties keep the set's order.
-/// Agent: Pure functions, the same table and rules as `web/src/reactionSearch.ts`;
-/// `ReactionSearchTests` and the web selftest check the same vectors, so a query finds the same
-/// emoji in the same order on both clients. Keep them in step.
+/// Human: Every emoji answers to its name and the words people actually type for it ("lol",
+/// "thanks", "wow"), from `ReactionSet`. A word of the query matches a keyword by prefix, by the
+/// start of one of its words, as a substring, as an abbreviation ("hndrd" → hundred) or with a
+/// typo or two ("thnaks" → thanks); when the query has several words, all of them have to match.
+/// Best match first; ties keep the set's order.
+/// Agent: Pure functions, the same rules as `web/src/reactionSearch.ts` over the same generated
+/// table; `ReactionSearchTests` and the web selftest check the same vectors, so a query finds the
+/// same emoji in the same order on both clients. Keep them in step.
 nonisolated enum ReactionSearch {
-    /// The words each emoji answers to: its Unicode name first, then what people type for it.
-    static let keywords: [String: [String]] = [
-        "❤️": ["red heart", "heart", "love", "like"],
-        "🔥": ["fire", "lit", "hot", "flame"],
-        "👍": ["thumbs up", "like", "yes", "ok", "approve", "agree", "good"],
-        "😢": ["crying face", "sad", "tear", "cry"],
-        "🙏": ["folded hands", "please", "thanks", "thank you", "pray", "high five"],
-        "😮": ["face with open mouth", "wow", "surprised", "shocked", "omg"],
-        "👎": ["thumbs down", "dislike", "no", "disagree", "bad"],
-        "🥰": ["smiling face with hearts", "adore", "love", "in love", "crush"],
-        "👏": ["clapping hands", "applause", "bravo", "clap", "well done"],
-        "😁": ["beaming face with smiling eyes", "grin", "happy", "smile", "teeth"],
-        "🤔": ["thinking face", "hmm", "think", "wonder"],
-        "🤯": ["exploding head", "mind blown", "wow"],
-        "😱": ["face screaming in fear", "scream", "shocked", "horror"],
-        "🤬": ["face with symbols on mouth", "cursing", "swearing", "angry", "rage"],
-        "🎉": ["party popper", "celebrate", "congratulations", "tada", "party"],
-        "🤩": ["star-struck", "starstruck", "excited", "amazing", "wow"],
-        "🤮": ["face vomiting", "vomit", "puke", "sick", "gross"],
-        "💩": ["pile of poo", "poop", "shit", "crap"],
-        "👌": ["ok hand", "okay", "perfect", "nice"],
-        "🕊️": ["dove", "peace", "bird"],
-        "🤡": ["clown face", "clown", "joke", "fool"],
-        "🥱": ["yawning face", "yawn", "bored", "tired", "sleepy"],
-        "🥴": ["woozy face", "drunk", "dizzy", "tipsy"],
-        "😍": ["smiling face with heart-eyes", "heart eyes", "love", "adore"],
-        "🐳": ["spouting whale", "whale", "sea"],
-        "❤️‍🔥": ["heart on fire", "burning heart", "passion", "love"],
-        "🌚": ["new moon face", "moon", "dark", "creepy"],
-        "🌭": ["hot dog", "sausage", "food"],
-        "💯": ["hundred points", "100", "perfect score", "keep it 100"],
-        "🤣": ["rolling on the floor laughing", "rofl", "lol", "laugh", "haha", "hilarious"],
-        "⚡": ["high voltage", "lightning", "zap", "electric", "thunder"],
-        "🍌": ["banana", "fruit"],
-        "🏆": ["trophy", "winner", "champion", "award", "cup"],
-        "💔": ["broken heart", "heartbreak", "sad"],
-        "🤨": ["face with raised eyebrow", "suspicious", "skeptical", "doubt", "hmm"],
-        "😐": ["neutral face", "meh", "blank", "straight face"],
-        "🍓": ["strawberry", "fruit", "berry"],
-        "🍾": ["bottle with popping cork", "champagne", "celebrate", "cheers"],
-        "💋": ["kiss mark", "kiss", "lips"],
-        "🖕": ["middle finger", "fuck you", "flip off", "rude"],
-        "😈": ["smiling face with horns", "devil", "evil", "naughty"],
-        "😴": ["sleeping face", "sleep", "zzz", "tired", "snore"],
-        "😭": ["loudly crying face", "sob", "cry", "bawling", "sad", "tears"],
-        "🤓": ["nerd face", "nerd", "geek", "glasses"],
-        "👻": ["ghost", "boo", "spooky", "halloween"],
-        "👨‍💻": ["man technologist", "coder", "developer", "programmer", "hacker", "computer"],
-        "👀": ["eyes", "look", "watching", "see", "side eye"],
-        "🎃": ["jack-o-lantern", "pumpkin", "halloween"],
-        "🙈": ["see-no-evil monkey", "monkey", "hide", "embarrassed", "cover eyes"],
-        "😇": ["smiling face with halo", "angel", "innocent", "holy"],
-        "😨": ["fearful face", "scared", "afraid", "fear", "anxious"],
-        "🤝": ["handshake", "deal", "agreement", "thanks", "partners"],
-        "✍️": ["writing hand", "write", "note", "pen"],
-        "🤗": ["smiling face with open hands", "hug", "warm"],
-        "🫡": ["saluting face", "salute", "yes sir", "respect", "aye"],
-        "🎅": ["santa claus", "christmas", "xmas"],
-        "🎄": ["christmas tree", "xmas", "holiday"],
-        "☃️": ["snowman", "winter", "snow", "cold"],
-        "💅": ["nail polish", "nails", "sassy", "slay", "manicure"],
-        "🤪": ["zany face", "crazy", "goofy", "silly", "wild"],
-        "🗿": ["moai", "stone face", "statue", "deadpan", "easter island"],
-        "🆒": ["cool button", "cool"],
-        "💘": ["heart with arrow", "cupid", "love", "crush"],
-        "🙉": ["hear-no-evil monkey", "monkey", "ears", "not listening"],
-        "🦄": ["unicorn", "magic", "fantasy"],
-        "😘": ["face blowing a kiss", "kiss", "love", "xoxo"],
-        "💊": ["pill", "medicine", "drug", "capsule"],
-        "🙊": ["speak-no-evil monkey", "monkey", "oops", "secret", "quiet"],
-        "😎": ["smiling face with sunglasses", "cool", "sunglasses", "chill"],
-        "👾": ["alien monster", "space invader", "game", "retro"],
-        "🤷": ["person shrugging", "shrug", "dunno", "whatever", "idk"],
-        "😡": ["enraged face", "angry", "mad", "furious", "red"],
-    ]
+    /// The words each emoji answers to: its name first, then what people type for it.
+    static var keywords: [String: [String]] { ReactionSet.keywords }
 
     /// The table with each keyword in query form, so "star-struck" and "star struck" both match.
-    private static let normalizedKeywords: [String: [String]] = keywords.mapValues { $0.map(normalize) }
+    private static let normalizedKeywords: [String: [String]] = ReactionSet.keywords.mapValues { $0.map(normalize) }
 
     /// Lower case, hyphens as spaces, one space between words.
     static func normalize(_ query: String) -> String {
@@ -152,7 +79,8 @@ nonisolated enum ReactionSearch {
         if parts.contains(where: { $0.hasPrefix(word) }) { return 80 }
         let letters = Array(word)
         if letters.count >= 2, keyword.contains(word) { return 70 }
-        if letters.count >= 3, parts.contains(where: { abbreviates(letters, $0) }) { return 50 }
+        // From four letters: "cat" abbreviating "celebrate" and "caution" was noise, "hndrd" is not.
+        if letters.count >= 4, parts.contains(where: { abbreviates(letters, $0) }) { return 50 }
         let budget = typoBudget(letters.count)
         if budget == 0 { return 0 }
         var best = Double(budget + 1)

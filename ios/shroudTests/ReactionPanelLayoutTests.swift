@@ -46,8 +46,10 @@ struct ReactionPanelLayoutTests {
         #expect(MessageReactionGrid.rows(for: 0) == 0)
         #expect(MessageReactionGrid.rows(for: 8) == 1)
         #expect(MessageReactionGrid.rows(for: 9) == 2)
-        // 72 emoji: nine full rows, so the panel scrolls three and a half of them.
-        #expect(MessageReactionGrid.rows(for: MessageReactionBar.expanded.count) == 9)
+        // The whole set is dozens of rows: the panel shows five and a half and scrolls the rest.
+        let count = MessageReactionBar.expanded.count
+        #expect(MessageReactionGrid.rows(for: count) == (count + 7) / 8)
+        #expect(MessageReactionGrid.rows(for: count) > 40)
 
         let short = frame(expanded: true).size.height
         let oneRow = MessageReactionPanel.frame(expanded: true, bar: bar, container: screen, safeArea: safeArea, height: one)

@@ -833,9 +833,14 @@ struct ConversationView: View {
                                         }
                                         : nil
                                 ) { rowGlobalFrame in
-                                    // Prefer the true bubble frame; fall back to the press row.
-                                    let source = bubbleFrames.frames[message.id] ?? rowGlobalFrame
-                                    openMessageMenu(for: message, sourceGlobalFrame: source)
+                                    openMessageMenu(
+                                        for: message,
+                                        sourceGlobalFrame: Self.menuSourceFrame(
+                                            bubble: bubbleFrames.frames[message.id],
+                                            row: rowGlobalFrame,
+                                            isMine: message.isMine
+                                        )
+                                    )
                                 }
                         }
                     }
@@ -1804,6 +1809,24 @@ struct ConversationView: View {
 
     /// How long after opening the backdrop ignores taps (see `MessageMenuBackdrop` above).
     private static let menuTapGrace: TimeInterval = 0.4
+
+    /// Where the long-press menu's bubble lifts from: the drawn bubble's frame when it is a
+    /// frame of this row, otherwise the bubble's size at the row's place.
+    ///
+    /// Human: The bubble reports its global frame through a preference, and the last report can
+    /// be one made mid-way through the chat's opening transition — half a screen off, and never
+    /// corrected, because nothing lays the thread out again once the transition ends. Opening a
+    /// menu then lifted the message half out of view. The row's frame comes fresh from the press
+    /// itself, so it is the judge: a stored bubble frame that does not sit inside the row is
+    /// stale, and the bubble is placed at the row's leading (theirs) or trailing (ours) edge.
+    /// Agent: Pure; `MessageMenuSourceFrameTests` covers it.
+    static func menuSourceFrame(bubble: CGRect?, row: CGRect, isMine: Bool) -> CGRect {
+        guard let bubble else { return row }
+        if row.insetBy(dx: -2, dy: -2).contains(bubble) { return bubble }
+        let width = min(bubble.width, row.width)
+        let height = min(bubble.height, row.height)
+        return CGRect(x: isMine ? row.maxX - width : row.minX, y: row.minY, width: width, height: height)
+    }
 
     private struct FocusedMessageMenu: Identifiable {
         var id: UUID { message.id }

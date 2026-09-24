@@ -1,89 +1,15 @@
-import { ALL_REACTIONS } from "./reactions";
+import { ALL_REACTIONS, REACTION_KEYWORDS } from "./reactionSet";
+
+export { REACTION_KEYWORDS };
 
 /*
  * Fuzzy search over the reaction set: what the expanded picker's search box runs. Every emoji
- * has its Unicode name and the words people actually type for it ("lol", "thanks", "wow"). A
- * query matches a keyword by prefix, word prefix, substring, subsequence ("hndrd" → hundred) or
- * a typo or two ("thnaks" → thanks); several words all have to match. The same table and rules
- * live in `ios/shroud/Services/Messaging/ReactionSearch.swift`, and `reactionSearch.selftest.ts`
- * holds the vectors both are checked against.
+ * has its name and the words people actually type for it ("lol", "thanks", "wow") in
+ * `reactionSet.ts`. A query matches a keyword by prefix, word prefix, substring, abbreviation
+ * ("hndrd" → hundred) or a typo or two ("thnaks" → thanks); several words all have to match.
+ * The same rules live in `ios/shroud/Services/Messaging/ReactionSearch.swift`, and
+ * `reactionSearch.selftest.ts` holds the vectors both are checked against.
  */
-
-/** The words each emoji answers to: its Unicode name first, then what people type for it. */
-export const REACTION_KEYWORDS: Record<string, string[]> = {
-  "❤️": ["red heart", "heart", "love", "like"],
-  "🔥": ["fire", "lit", "hot", "flame"],
-  "👍": ["thumbs up", "like", "yes", "ok", "approve", "agree", "good"],
-  "😢": ["crying face", "sad", "tear", "cry"],
-  "🙏": ["folded hands", "please", "thanks", "thank you", "pray", "high five"],
-  "😮": ["face with open mouth", "wow", "surprised", "shocked", "omg"],
-  "👎": ["thumbs down", "dislike", "no", "disagree", "bad"],
-  "🥰": ["smiling face with hearts", "adore", "love", "in love", "crush"],
-  "👏": ["clapping hands", "applause", "bravo", "clap", "well done"],
-  "😁": ["beaming face with smiling eyes", "grin", "happy", "smile", "teeth"],
-  "🤔": ["thinking face", "hmm", "think", "wonder"],
-  "🤯": ["exploding head", "mind blown", "wow"],
-  "😱": ["face screaming in fear", "scream", "shocked", "horror"],
-  "🤬": ["face with symbols on mouth", "cursing", "swearing", "angry", "rage"],
-  "🎉": ["party popper", "celebrate", "congratulations", "tada", "party"],
-  "🤩": ["star-struck", "starstruck", "excited", "amazing", "wow"],
-  "🤮": ["face vomiting", "vomit", "puke", "sick", "gross"],
-  "💩": ["pile of poo", "poop", "shit", "crap"],
-  "👌": ["ok hand", "okay", "perfect", "nice"],
-  "🕊️": ["dove", "peace", "bird"],
-  "🤡": ["clown face", "clown", "joke", "fool"],
-  "🥱": ["yawning face", "yawn", "bored", "tired", "sleepy"],
-  "🥴": ["woozy face", "drunk", "dizzy", "tipsy"],
-  "😍": ["smiling face with heart-eyes", "heart eyes", "love", "adore"],
-  "🐳": ["spouting whale", "whale", "sea"],
-  "❤️‍🔥": ["heart on fire", "burning heart", "passion", "love"],
-  "🌚": ["new moon face", "moon", "dark", "creepy"],
-  "🌭": ["hot dog", "sausage", "food"],
-  "💯": ["hundred points", "100", "perfect score", "keep it 100"],
-  "🤣": ["rolling on the floor laughing", "rofl", "lol", "laugh", "haha", "hilarious"],
-  "⚡": ["high voltage", "lightning", "zap", "electric", "thunder"],
-  "🍌": ["banana", "fruit"],
-  "🏆": ["trophy", "winner", "champion", "award", "cup"],
-  "💔": ["broken heart", "heartbreak", "sad"],
-  "🤨": ["face with raised eyebrow", "suspicious", "skeptical", "doubt", "hmm"],
-  "😐": ["neutral face", "meh", "blank", "straight face"],
-  "🍓": ["strawberry", "fruit", "berry"],
-  "🍾": ["bottle with popping cork", "champagne", "celebrate", "cheers"],
-  "💋": ["kiss mark", "kiss", "lips"],
-  "🖕": ["middle finger", "fuck you", "flip off", "rude"],
-  "😈": ["smiling face with horns", "devil", "evil", "naughty"],
-  "😴": ["sleeping face", "sleep", "zzz", "tired", "snore"],
-  "😭": ["loudly crying face", "sob", "cry", "bawling", "sad", "tears"],
-  "🤓": ["nerd face", "nerd", "geek", "glasses"],
-  "👻": ["ghost", "boo", "spooky", "halloween"],
-  "👨‍💻": ["man technologist", "coder", "developer", "programmer", "hacker", "computer"],
-  "👀": ["eyes", "look", "watching", "see", "side eye"],
-  "🎃": ["jack-o-lantern", "pumpkin", "halloween"],
-  "🙈": ["see-no-evil monkey", "monkey", "hide", "embarrassed", "cover eyes"],
-  "😇": ["smiling face with halo", "angel", "innocent", "holy"],
-  "😨": ["fearful face", "scared", "afraid", "fear", "anxious"],
-  "🤝": ["handshake", "deal", "agreement", "thanks", "partners"],
-  "✍️": ["writing hand", "write", "note", "pen"],
-  "🤗": ["smiling face with open hands", "hug", "warm"],
-  "🫡": ["saluting face", "salute", "yes sir", "respect", "aye"],
-  "🎅": ["santa claus", "christmas", "xmas"],
-  "🎄": ["christmas tree", "xmas", "holiday"],
-  "☃️": ["snowman", "winter", "snow", "cold"],
-  "💅": ["nail polish", "nails", "sassy", "slay", "manicure"],
-  "🤪": ["zany face", "crazy", "goofy", "silly", "wild"],
-  "🗿": ["moai", "stone face", "statue", "deadpan", "easter island"],
-  "🆒": ["cool button", "cool"],
-  "💘": ["heart with arrow", "cupid", "love", "crush"],
-  "🙉": ["hear-no-evil monkey", "monkey", "ears", "not listening"],
-  "🦄": ["unicorn", "magic", "fantasy"],
-  "😘": ["face blowing a kiss", "kiss", "love", "xoxo"],
-  "💊": ["pill", "medicine", "drug", "capsule"],
-  "🙊": ["speak-no-evil monkey", "monkey", "oops", "secret", "quiet"],
-  "😎": ["smiling face with sunglasses", "cool", "sunglasses", "chill"],
-  "👾": ["alien monster", "space invader", "game", "retro"],
-  "🤷": ["person shrugging", "shrug", "dunno", "whatever", "idk"],
-  "😡": ["enraged face", "angry", "mad", "furious", "red"],
-};
 
 /** Lower case, hyphens as spaces, one space between words. */
 export function normalizeQuery(query: string): string {
@@ -149,7 +75,8 @@ export function keywordScore(word: string, keyword: string): number {
   const parts = keyword.split(" ");
   if (parts.some((part) => part.startsWith(word))) return 80;
   if (word.length >= 2 && keyword.includes(word)) return 70;
-  if (word.length >= 3 && parts.some((part) => abbreviates(word, part))) return 50;
+  // From four letters: "cat" abbreviating "celebrate" and "caution" was noise, "hndrd" is not.
+  if (word.length >= 4 && parts.some((part) => abbreviates(word, part))) return 50;
   const budget = typoBudget(word.length);
   if (budget === 0) return 0;
   let best = budget + 1;

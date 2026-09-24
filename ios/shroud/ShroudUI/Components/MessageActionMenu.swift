@@ -39,18 +39,13 @@ struct MessageReactionBar: View {
 
     @State private var pickFrames = ReactionPickFrames()
 
-    static let reactions = ["❤️", "🔥", "👍", "😢", "🙏", "😮", "👎"]
+    /// The quick row: Telegram's seven (`ReactionSet.quick`).
+    static let reactions = ReactionSet.quick
     /// Telegram's double tap (and the VoiceOver action standing in for it).
     static let quickReaction = "❤️"
-    /// Telegram's standard reaction set, shown when the bar expands ("More"). The quick seven
-    /// come first so they keep their places.
-    static let expanded: [String] = reactions + [
-        "🥰", "👏", "😁", "🤔", "🤯", "😱", "🤬", "🎉", "🤩", "🤮", "💩", "👌", "🕊️", "🤡",
-        "🥱", "🥴", "😍", "🐳", "❤️‍🔥", "🌚", "🌭", "💯", "🤣", "⚡", "🍌", "🏆", "💔", "🤨",
-        "😐", "🍓", "🍾", "💋", "🖕", "😈", "😴", "😭", "🤓", "👻", "👨‍💻", "👀", "🎃", "🙈",
-        "😇", "😨", "🤝", "✍️", "🤗", "🫡", "🎅", "🎄", "☃️", "💅", "🤪", "🗿", "🆒", "💘",
-        "🙉", "🦄", "😘", "💊", "🙊", "😎", "👾", "🤷", "😡",
-    ]
+    /// Everything the bar grows into ("More"): Telegram's standard set and a wide curated set
+    /// after it, the quick seven first so they keep their places (`ReactionSet.all`).
+    static let expanded: [String] = ReactionSet.all
     private static let emojiSize: CGFloat = 34
     private static let moreSize: CGFloat = 30
     private static let itemSpacing: CGFloat = 6
@@ -115,7 +110,7 @@ struct MessageReactionBar: View {
         .background {
             if glide == nil {
                 Capsule()
-                    .fill(MessageReactionPanel.surface)
+                    .fill(MessageReactionPanel.surface.opacity(0.94))
             }
         }
         .overlay {
@@ -313,7 +308,7 @@ struct MessageReactionPanel: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The dark surface both states share (not the theme: the menu floats over a dimmed thread).
-    static let surface = Color(red: 0.14, green: 0.14, blue: 0.16).opacity(0.94)
+    static let surface = Color(red: 0.14, green: 0.14, blue: 0.16)
     static let expandedCornerRadius: CGFloat = 22
 
     /// Where the panel sits: on the bar's frame collapsed; expanded, `height` tall — as tall as
@@ -366,9 +361,14 @@ struct MessageReactionPanel: View {
             }
         }
         .frame(width: frame.width, height: frame.height, alignment: .top)
-        .background { shape.fill(Self.surface) }
-        .overlay { shape.stroke(Color.white.opacity(0.08), lineWidth: 0.5) }
         .clipShape(shape)
+        // Its own layer over the card: solid once grown (the card must not show through), and
+        // a shadow that deepens as it lifts, so the two never read as one surface.
+        .background {
+            shape.fill(Self.surface.opacity(expanded ? 1 : 0.94))
+                .shadow(color: .black.opacity(expanded ? 0.5 : 0.3), radius: expanded ? 26 : 12, y: expanded ? 12 : 5)
+        }
+        .overlay { shape.stroke(Color.white.opacity(expanded ? 0.12 : 0.08), lineWidth: 0.5) }
         .position(x: frame.midX, y: frame.midY)
         // A search that leaves fewer rows shrinks the panel around them, and back. Keyed on the
         // wanted height, not the frame: the bar has to ride the hero flight with no lag.
@@ -750,7 +750,12 @@ struct MessageMenuOverlay<Hero: View, Card: View>: View {
             card()
                 .frame(width: cardFrame.width, height: cardFrame.height, alignment: .top)
                 .position(x: cardFrame.midX, y: cardFrame.midY)
+                // Under the grown reaction panel the actions are out of reach: a tap there is
+                // a tap outside the panel, which the backdrop turns into a dismiss.
+                .allowsHitTesting(!showsAllReactions)
         }
+        // Behind the grown panel the message and its actions step back into the dimmed thread.
+        .opacity(showsAllReactions ? 0.35 : 1)
     }
 
     private static func lerp(_ a: CGRect, _ b: CGRect, _ t: CGFloat) -> CGRect {

@@ -41,16 +41,9 @@ export const DEFAULT_REACTION_LIMIT = 5;
 export const READER_CAP = 20;
 
 /** The bar under a message's menu: Telegram's quick seven. */
-export const QUICK_REACTIONS = ["❤️", "🔥", "👍", "😢", "🙏", "😮", "👎"];
-/** Telegram's standard set, behind the bar's "more" (quick seven first). */
-export const ALL_REACTIONS = [
-  ...QUICK_REACTIONS,
-  "🥰", "👏", "😁", "🤔", "🤯", "😱", "🤬", "🎉", "🤩", "🤮", "💩", "👌", "🕊️", "🤡",
-  "🥱", "🥴", "😍", "🐳", "❤️‍🔥", "🌚", "🌭", "💯", "🤣", "⚡", "🍌", "🏆", "💔", "🤨",
-  "😐", "🍓", "🍾", "💋", "🖕", "😈", "😴", "😭", "🤓", "👻", "👨‍💻", "👀", "🎃", "🙈",
-  "😇", "😨", "🤝", "✍️", "🤗", "🫡", "🎅", "🎄", "☃️", "💅", "🤪", "🗿", "🆒", "💘",
-  "🙉", "🦄", "😘", "💊", "🙊", "😎", "👾", "🤷", "😡",
-];
+/* The quick row and the expanded picker's whole set (with the words each emoji answers to) are
+   generated into reactionSet.ts, the same list as iOS's ReactionSet.swift. */
+export { ALL_REACTIONS, QUICK_REACTIONS } from "./reactionSet";
 
 const MAX_EMOJI_BYTES = 32;
 /* Made on first use: `Intl.Segmenter` is missing from older browsers (Firefox before 125), and
