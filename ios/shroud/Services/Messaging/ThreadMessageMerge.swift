@@ -25,6 +25,7 @@ enum ThreadMessageMerge {
             // it was, which a history page can't tell (the server keeps no more than "media").
             guard let prior else { return tombstone(of: decoded) }
             var replacement = tombstone(of: prior)
+            if replacement.createdAtWire == nil { replacement.createdAtWire = decoded.createdAtWire }
             if decoded.receipt.rank > replacement.receipt.rank { replacement.receipt = decoded.receipt }
             return replacement
         }
@@ -34,6 +35,7 @@ enum ThreadMessageMerge {
 
         if decodedFailed, !priorFailed, !prior.deleted {
             var kept = prior
+            if kept.createdAtWire == nil { kept.createdAtWire = decoded.createdAtWire }
             if decoded.isMine, decoded.receipt.rank > prior.receipt.rank {
                 kept.receipt = decoded.receipt
             }
@@ -78,7 +80,9 @@ enum ThreadMessageMerge {
             if merged.voiceDurationMs == nil { merged.voiceDurationMs = prior.voiceDurationMs }
         }
         if !priorFailed, decodedFailed {
-            return prior
+            var kept = prior
+            if kept.createdAtWire == nil { kept.createdAtWire = decoded.createdAtWire }
+            return kept
         }
         return merged
     }
@@ -97,7 +101,10 @@ enum ThreadMessageMerge {
         for pending in pendingLocal where seen.insert(pending.id).inserted {
             result.append(pending)
         }
-        for prior in previous where !isFailedDecryptText(prior.text) && seen.insert(prior.id).inserted {
+        // Anything this page did not replace stays. A partial page is not the whole thread:
+        // dropping a row whose text is "Media" (a photo not decrypted yet, or a message that
+        // says that) would delete it, and a later refresh would not fetch it again.
+        for prior in previous where seen.insert(prior.id).inserted {
             result.append(prior)
         }
         result.sort { $0.createdAt < $1.createdAt }
@@ -115,6 +122,7 @@ enum ThreadMessageMerge {
             senderUserID: message.senderUserID,
             text: "Message deleted",
             createdAt: message.createdAt,
+            createdAtWire: message.createdAtWire,
             isMine: message.isMine,
             deleted: true,
             receipt: message.receipt,

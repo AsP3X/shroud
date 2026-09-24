@@ -105,6 +105,8 @@ struct LocalMessageStore: Sendable {
         var linkPreview: LinkPreview?
         /// Reactions, removals included. Optional like `replyTo`.
         var reactions: [MessageReaction]?
+        /// Server `created_at`. Optional so threads saved before history cursors kept it still decode.
+        var createdAtWire: String? = nil
 
         static func from(_ message: MessagingController.ChatMessage) -> StoredMessage {
             StoredMessage(
@@ -128,7 +130,8 @@ struct LocalMessageStore: Sendable {
                 pendingSync: message.pendingSync ? true : nil,
                 replyTo: message.replyTo,
                 linkPreview: message.linkPreview,
-                reactions: message.reactions.isEmpty ? nil : message.reactions
+                reactions: message.reactions.isEmpty ? nil : message.reactions,
+                createdAtWire: message.createdAtWire
             )
         }
 
@@ -159,6 +162,7 @@ struct LocalMessageStore: Sendable {
                 senderUserID: senderUserID,
                 text: text,
                 createdAt: createdAt,
+                createdAtWire: createdAtWire,
                 isMine: isMine,
                 deleted: deleted,
                 receipt: MessageReceiptStatus(storageKey: receipt) ?? .sent,

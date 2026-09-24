@@ -13,12 +13,13 @@ struct MessagesService: Sendable {
         return response.conversations
     }
 
-    /// History page. Pass both `beforeCreatedAt` and `beforeID` (oldest of previous page) to walk older.
+    /// History page. Pass both `beforeCreatedAt` (the server's `created_at` text, not a
+    /// re-formatted `Date`) and `beforeID` from the oldest item of the previous page.
     func listMessages(
         peerUserID: UUID,
         token: String,
         limit: Int = 50,
-        beforeCreatedAt: Date? = nil,
+        beforeCreatedAt: String? = nil,
         beforeID: UUID? = nil
     ) async throws -> ListMessagesResponse {
         var query: [String: String] = [
@@ -26,7 +27,7 @@ struct MessagesService: Sendable {
             "limit": String(limit),
         ]
         if let beforeCreatedAt, let beforeID {
-            query["before_created_at"] = ISO8601DateFormatter.string(fromAPI: beforeCreatedAt)
+            query["before_created_at"] = beforeCreatedAt
             query["before_id"] = beforeID.uuidString.lowercased()
         }
         return try await client.get(

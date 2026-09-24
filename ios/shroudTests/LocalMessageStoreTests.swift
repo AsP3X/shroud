@@ -301,6 +301,46 @@ final class ThreadMessageMergeTests: XCTestCase {
         XCTAssertEqual(merged.text, "hello from cache")
     }
 
+    /// An older page is not the whole thread. A newer bubble whose text is the undecrypted
+    /// placeholder must stay; the next refresh will not fetch it again.
+    func testMergeThreadKeepsMessagesThePageDidNotInclude() {
+        let peer = UUID()
+        let older = MessagingController.ChatMessage(
+            id: UUID(),
+            peerUserID: peer,
+            senderUserID: peer,
+            text: "from the older page",
+            createdAt: Date(timeIntervalSince1970: 1_800_000_000),
+            isMine: false,
+            deleted: false
+        )
+        let placeholder = MessagingController.ChatMessage(
+            id: UUID(),
+            peerUserID: peer,
+            senderUserID: peer,
+            text: "Media",
+            createdAt: Date(timeIntervalSince1970: 1_800_000_100),
+            isMine: false,
+            deleted: false
+        )
+        let saidMedia = MessagingController.ChatMessage(
+            id: UUID(),
+            peerUserID: peer,
+            senderUserID: peer,
+            text: "Media",
+            createdAt: Date(timeIntervalSince1970: 1_800_000_200),
+            isMine: false,
+            deleted: false,
+            kind: .text
+        )
+        let merged = ThreadMessageMerge.mergeThread(
+            decoded: [older],
+            previous: [older, placeholder, saidMedia],
+            pendingLocal: []
+        )
+        XCTAssertEqual(merged.map(\.id), [older.id, placeholder.id, saidMedia.id])
+    }
+
     func testMergeThreadKeepsPendingAndLocalOnly() {
         let peer = UUID()
         let me = UUID()

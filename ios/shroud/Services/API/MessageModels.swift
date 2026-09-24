@@ -41,6 +41,10 @@ struct MessageDTO: Decodable, Equatable, Sendable, Identifiable {
     let mediaObjectId: UUID?
     let deletedForEveryone: Bool
     let createdAt: Date
+    /// `created_at` exactly as the server sent it. `createdAt` only keeps milliseconds
+    /// (`ISO8601DateFormatter`), and a history cursor built from it skips every message in
+    /// the rest of that millisecond.
+    let createdAtWire: String
     /// Outbound only — peer device(s) delivered.
     let delivered: Bool?
     /// Outbound only — peer user read.
@@ -134,6 +138,34 @@ struct ListMessagesResponse: Decodable, Equatable, Sendable {
         case messages
         case hasMore = "has_more"
         case reactionSeq = "reaction_seq"
+    }
+}
+
+extension MessageDTO {
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        conversationId = try container.decode(UUID.self, forKey: .conversationId)
+        senderUserId = try container.decode(UUID.self, forKey: .senderUserId)
+        senderDeviceId = try container.decode(UUID.self, forKey: .senderDeviceId)
+        clientMessageId = try container.decode(UUID.self, forKey: .clientMessageId)
+        contentType = try container.decode(String.self, forKey: .contentType)
+        ciphertext = try container.decodeIfPresent(String.self, forKey: .ciphertext)
+        mediaObjectId = try container.decodeIfPresent(UUID.self, forKey: .mediaObjectId)
+        deletedForEveryone = try container.decode(Bool.self, forKey: .deletedForEveryone)
+        let wire = try container.decode(String.self, forKey: .createdAt)
+        guard let date = ISO8601DateFormatter.date(fromAPI: wire) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .createdAt,
+                in: container,
+                debugDescription: "Invalid ISO-8601 date: \(wire)"
+            )
+        }
+        createdAtWire = wire
+        createdAt = date
+        delivered = try container.decodeIfPresent(Bool.self, forKey: .delivered)
+        read = try container.decodeIfPresent(Bool.self, forKey: .read)
+        reactions = try container.decodeIfPresent([ReactionDTO].self, forKey: .reactions)
     }
 }
 

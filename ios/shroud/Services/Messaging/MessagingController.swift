@@ -115,6 +115,8 @@ final class MessagingController {
     private var conversationsRefreshTask: Task<Void, Never>?
     /// One in-flight thread load per peer.
     private var threadLoadTasks: [UUID: Task<Void, Never>] = [:]
+    /// Whether the in-flight load walks back through messages this device already holds.
+    private var threadLoadReconciles: [UUID: Bool] = [:]
     /// One in-flight older-page load per peer, and the background walk that drives it.
     private var olderLoadTasks: [UUID: Task<Void, Never>] = [:]
     private var olderPrefetchTasks: [UUID: Task<Void, Never>] = [:]
@@ -233,6 +235,9 @@ final class MessagingController {
         /// Everyone's reactions, oldest change first; removals stay as entries without an emoji
         /// (`MessageReaction`). Chips come from `ReactionMerge.chips`.
         var reactions: [MessageReaction]
+        /// Server `created_at` for this row. Nil for a message that has not come from the
+        /// server yet, and for threads saved before the cursor kept it.
+        var createdAtWire: String?
 
         init(
             id: UUID,
@@ -240,6 +245,7 @@ final class MessagingController {
             senderUserID: UUID,
             text: String,
             createdAt: Date,
+            createdAtWire: String? = nil,
             isMine: Bool,
             deleted: Bool,
             receipt: MessageReceiptStatus = .sent,
@@ -288,6 +294,7 @@ final class MessagingController {
             self.replyTo = replyTo
             self.linkPreview = linkPreview
             self.reactions = reactions
+            self.createdAtWire = createdAtWire
         }
 
         /// A text message whose link preview carries a large image (Telegram's big layout).
@@ -513,6 +520,7 @@ final class MessagingController {
         conversationsRefreshTask = nil
         threadLoadTasks.values.forEach { $0.cancel() }
         threadLoadTasks.removeAll()
+        threadLoadReconciles.removeAll()
         cancelHistoryPaging()
         // Next sign-in is a genuine first load again, so the skeleton is allowed back.
         hasLoadedContacts = false
@@ -585,7 +593,7 @@ final class MessagingController {
             await refreshPrivacySettings()
             await refreshServerConfig()
             if let peer = activePeerID, !isNotesChat(peer) {
-                await loadThread(peerUserID: peer)
+                await loadThread(peerUserID: peer, reconcile: true)
             }
             await flushPendingSends()
         }
@@ -621,6 +629,7 @@ final class MessagingController {
         activePeerID = nil
         threadLoadTasks.values.forEach { $0.cancel() }
         threadLoadTasks.removeAll()
+        threadLoadReconciles.removeAll()
         cancelHistoryPaging()
         DecodedImageCache.removeAll()
         LinkPreviewImageCache.removeAll()
@@ -636,7 +645,7 @@ final class MessagingController {
             await refreshContacts(force: true)
             await refreshConversations(force: true)
             if let peer = activePeerID, !isNotesChat(peer) {
-                await loadThread(peerUserID: peer)
+                await loadThread(peerUserID: peer, reconcile: true)
             }
             await flushPendingSends()
         }
@@ -678,7 +687,7 @@ final class MessagingController {
                 if !wsUp {
                     await self.refreshConversations()
                     if let peer = self.activePeerID, !self.isNotesChat(peer) {
-                        await self.loadThread(peerUserID: peer)
+                        await self.loadThread(peerUserID: peer, reconcile: true)
                     }
                     await self.flushPendingSends()
                 } else if tick % 5 == 0 {
@@ -957,7 +966,10 @@ final class MessagingController {
     ///
     /// - Parameter activate: The chat is on screen: it becomes the active chat and its unread
     ///   badge clears. Pass false to reload a chat the user may not be in (an event about it).
-    func loadThread(peerUserID: UUID, activate: Bool = true) async {
+    /// - Parameter reconcile: Walk back through messages this device already holds, so a delete
+    ///   it missed (the socket was down) turns into "Message deleted". The safety poll while
+    ///   the socket is up does not: that event already arrived.
+    func loadThread(peerUserID: UUID, activate: Bool = true, reconcile: Bool = false) async {
         guard sessionController?.bearerToken != nil,
               sessionController?.userID != nil,
               cryptoController?.material != nil
@@ -984,16 +996,21 @@ final class MessagingController {
         let taskKey = storePeer
 
         if let existing = threadLoadTasks[taskKey] {
+            let existingReconcile = threadLoadReconciles[taskKey] == true
             await existing.value
-            return
+            if !reconcile || existingReconcile { return }
         }
         let task = Task { [weak self] in
             guard let self else { return }
-            await self.performThreadLoad(apiPeerID: apiPeer, storePeerID: storePeer)
+            await self.performThreadLoad(apiPeerID: apiPeer, storePeerID: storePeer, reconcile: reconcile)
         }
         threadLoadTasks[taskKey] = task
+        threadLoadReconciles[taskKey] = reconcile
         await task.value
-        if threadLoadTasks[taskKey] == task { threadLoadTasks[taskKey] = nil }
+        if threadLoadTasks[taskKey] == task {
+            threadLoadTasks[taskKey] = nil
+            threadLoadReconciles[taskKey] = nil
+        }
         if activePeerID == storePeer { startOlderPrefetch(storePeer) }
     }
 
@@ -1030,6 +1047,8 @@ final class MessagingController {
 
     private struct HistoryCursor {
         let createdAt: Date
+        /// Server `created_at`. Paging with `createdAt` skips messages in the same millisecond.
+        let createdAtWire: String
         let id: UUID
     }
 
@@ -1057,7 +1076,7 @@ final class MessagingController {
             peerUserID: apiPeerID,
             token: token,
             limit: limit,
-            beforeCreatedAt: before?.createdAt,
+            beforeCreatedAt: before?.createdAtWire,
             beforeID: before?.id
         )
 
@@ -1127,7 +1146,11 @@ final class MessagingController {
         let oldest = response.messages.last // newest-first from server → oldest of page
         let mayHaveMore = response.hasMore == true || response.messages.count >= limit
         if mayHaveMore, let oldest, oldest.createdAt >= cutoff {
-            page.older = HistoryCursor(createdAt: oldest.createdAt, id: oldest.id)
+            page.older = HistoryCursor(
+                createdAt: oldest.createdAt,
+                createdAtWire: oldest.createdAtWire,
+                id: oldest.id
+            )
         }
         return page
     }
@@ -1196,14 +1219,17 @@ final class MessagingController {
     /// page only until it meets a message already held, so a poll costs one small page.
     /// Media bytes are **not** fetched here — bubbles call `ensureImageLoaded` /
     /// `ensureVoiceLoaded` when they appear.
-    private func performThreadLoad(apiPeerID: UUID, storePeerID: UUID) async {
+    private func performThreadLoad(apiPeerID: UUID, storePeerID: UUID, reconcile: Bool) async {
         guard let token = sessionController?.bearerToken,
               let me = sessionController?.userID,
               let material = cryptoController?.material
         else { return }
 
         let isNotes = isNotesChat(storePeerID)
-        let known = Set((threads[storePeerID] ?? []).lazy.filter { !$0.pendingSync }.map(\.id))
+        let held = (threads[storePeerID] ?? []).filter { !$0.pendingSync }
+        let known = Set(held.map(\.id))
+        // Oldest message already on this device. A reconcile walks until a page covers it.
+        let heldTail = held.min { $0.createdAt < $1.createdAt }
 
         do {
             var before: HistoryCursor?
@@ -1232,13 +1258,19 @@ final class MessagingController {
                     olderHistoryExhausted.insert(storePeerID)
                     break
                 }
-                // A first open (or one after a clear) stops at the newest page and leaves the
-                // rest to older paging; a refresh stops where it meets what we already hold
-                // (a long absence may take a few pages).
+                // A first open stops at the newest page and leaves the rest to older paging.
+                // A refresh stops where it meets what we already hold. A reconcile keeps going
+                // until that walk has covered the oldest message we hold, so a delete missed
+                // while the socket was down is applied there too.
                 if known.isEmpty { olderHistoryExhausted.remove(storePeerID) }
-                if known.isEmpty || !page.serverIDs.isDisjoint(with: known)
-                    || fetched >= Self.historyMaxMessages
-                {
+                let coveredHeldTail: Bool = {
+                    guard let heldTail else { return true }
+                    if page.serverIDs.contains(heldTail.id) { return true }
+                    if let older = page.older, older.createdAt < heldTail.createdAt { return true }
+                    return false
+                }()
+                let caughtUp = reconcile ? coveredHeldTail : !page.serverIDs.isDisjoint(with: known)
+                if known.isEmpty || caughtUp || fetched >= Self.historyMaxMessages {
                     break
                 }
                 before = older
@@ -1335,7 +1367,12 @@ final class MessagingController {
             let page = try await fetchHistoryPage(
                 apiPeerID: apiPeer,
                 storePeerID: storePeerID,
-                before: HistoryCursor(createdAt: oldest.createdAt, id: oldest.id),
+                before: HistoryCursor(
+                    createdAt: oldest.createdAt,
+                    createdAtWire: oldest.createdAtWire
+                        ?? ISO8601DateFormatter.string(fromAPI: oldest.createdAt),
+                    id: oldest.id
+                ),
                 limit: Self.historyPageSize,
                 token: token,
                 me: me,
@@ -1398,6 +1435,7 @@ final class MessagingController {
                 senderUserID: message.senderUserID,
                 text: parsed.text,
                 createdAt: message.createdAt,
+                createdAtWire: message.createdAtWire,
                 isMine: true,
                 deleted: message.deleted,
                 receipt: .sent,
@@ -1415,6 +1453,7 @@ final class MessagingController {
                 senderUserID: message.senderUserID,
                 text: message.text,
                 createdAt: message.createdAt,
+                createdAtWire: message.createdAtWire,
                 isMine: true,
                 deleted: message.deleted,
                 receipt: .sent,
@@ -1627,6 +1666,7 @@ final class MessagingController {
             senderUserID: me,
             text: text,
             createdAt: dto.createdAt,
+            createdAtWire: dto.createdAtWire,
             isMine: true,
             deleted: false,
             receipt: receiptStatus(from: dto),
@@ -1929,6 +1969,7 @@ final class MessagingController {
     private func clearChatLocally(peerUserID: UUID) {
         threadLoadTasks[peerUserID]?.cancel()
         threadLoadTasks[peerUserID] = nil
+        threadLoadReconciles[peerUserID] = nil
 
         let messageIDs = (threads[peerUserID] ?? []).map(\.id)
         threads[peerUserID] = []
@@ -2272,6 +2313,7 @@ final class MessagingController {
                                 senderUserID: realMe,
                                 text: sent.text,
                                 createdAt: sent.createdAt,
+                                createdAtWire: sent.createdAtWire,
                                 isMine: true,
                                 deleted: false,
                                 receipt: .sent,
@@ -2467,6 +2509,7 @@ final class MessagingController {
                                 senderUserID: realMe,
                                 text: sent.text,
                                 createdAt: sent.createdAt,
+                                createdAtWire: sent.createdAtWire,
                                 isMine: true,
                                 deleted: false,
                                 receipt: .sent,
@@ -2689,6 +2732,7 @@ final class MessagingController {
             senderUserID: me,
             text: displayText,
             createdAt: dto.createdAt,
+            createdAtWire: dto.createdAtWire,
             isMine: true,
             deleted: false,
             receipt: receiptStatus(from: dto),
@@ -3040,6 +3084,7 @@ final class MessagingController {
             senderUserID: me,
             text: displayText,
             createdAt: dto.createdAt,
+            createdAtWire: dto.createdAtWire,
             isMine: true,
             deleted: false,
             receipt: receiptStatus(from: dto),
@@ -3224,6 +3269,7 @@ final class MessagingController {
                     senderUserID: me,
                     text: displayText,
                     createdAt: optimistic.createdAt,
+                    createdAtWire: optimistic.createdAtWire,
                     isMine: true,
                     deleted: false,
                     receipt: .sent,
@@ -3263,6 +3309,7 @@ final class MessagingController {
                     senderUserID: updated.senderUserID,
                     text: displayText,
                     createdAt: updated.createdAt,
+                    createdAtWire: updated.createdAtWire,
                     isMine: true,
                     deleted: false,
                     receipt: .failed,
@@ -3310,6 +3357,7 @@ final class MessagingController {
                     senderUserID: existing.senderUserID,
                     text: displayText,
                     createdAt: existing.createdAt,
+                    createdAtWire: existing.createdAtWire,
                     isMine: true,
                     deleted: false,
                     receipt: .failed,
@@ -3528,6 +3576,7 @@ final class MessagingController {
             senderUserID: me,
             text: displayText,
             createdAt: dto.createdAt,
+            createdAtWire: dto.createdAtWire,
             isMine: true,
             deleted: false,
             receipt: receiptStatus(from: dto),
@@ -4007,7 +4056,7 @@ final class MessagingController {
         } else {
             // We keep our own history; refetch so their messages come back as tombstones. The
             // user may be in another chat: that one stays active, and this one keeps counting unread.
-            Task { await loadThread(peerUserID: threadPeer, activate: false) }
+            Task { await loadThread(peerUserID: threadPeer, activate: false, reconcile: true) }
         }
 
         Task {
@@ -4185,7 +4234,7 @@ final class MessagingController {
                 )
             }
         }
-        await refreshConversations()
+        await refreshConversations(force: true)
         persistSnapshot()
     }
 
@@ -4223,6 +4272,7 @@ final class MessagingController {
                 senderUserID: message.senderUserID,
                 text: message.text,
                 createdAt: message.createdAt,
+                createdAtWire: message.createdAtWire,
                 isMine: message.isMine,
                 deleted: message.deleted,
                 receipt: message.receipt,
@@ -4454,6 +4504,7 @@ final class MessagingController {
                     senderUserID: sent.senderUserID,
                     text: message.text,
                     createdAt: sent.createdAt,
+                    createdAtWire: sent.createdAtWire,
                     isMine: true,
                     deleted: false,
                     receipt: .sent,
@@ -4526,6 +4577,7 @@ final class MessagingController {
             senderUserID: me,
             text: text,
             createdAt: dto.createdAt,
+            createdAtWire: dto.createdAtWire,
             isMine: true,
             deleted: false,
             receipt: receiptStatus(from: dto),

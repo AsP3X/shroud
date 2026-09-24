@@ -297,7 +297,7 @@ struct ConversationView: View {
             .task {
                 // Pin immediately if the thread is already in memory, then again after network load.
                 pinToBottomToken &+= 1
-                await messaging.loadThread(peerUserID: peerUserID)
+                await messaging.loadThread(peerUserID: peerUserID, reconcile: true)
                 pinToBottomToken &+= 1
             }
             .onAppear {

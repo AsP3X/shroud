@@ -430,7 +430,6 @@ pub async fn delete_account(
     }
 
     let user_id = auth.user_id;
-    let now = Utc::now();
     let mut tx = state
         .pool
         .begin()
@@ -469,6 +468,10 @@ pub async fn delete_account(
         .await
         .map_err(|err| AppError::Internal(format!("scrub device names failed: {err}")))?;
 
+    // After the device locks: a send that was already inserting has committed, and its
+    // `created_at` is earlier than this. A watermark taken before those locks misses it, and
+    // the peer who allowed the clear still sees the chat.
+    let now = Utc::now();
     // Locks each chat's row before touching its messages, the order `DELETE /conversations` uses.
     let chats = crate::routes::conversations::delete_chats_for_both(&mut tx, user_id, now).await?;
 

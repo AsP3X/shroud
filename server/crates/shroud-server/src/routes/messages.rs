@@ -772,16 +772,13 @@ async fn insert_reads_up_to(
           AND m.sender_user_id <> $1
           AND m.content_type <> 'annotation'
           AND (m.created_at, m.id) <= ($5, $6)
-          -- Receipts go out oldest first, so the peer's messages up to the newest one with a
-          -- receipt have one: only what came after it is looked at, not the whole history.
-          AND m.created_at >= COALESCE((
-              SELECT newest.created_at
-              FROM messages newest
-              JOIN message_reads r ON r.message_id = newest.id AND r.user_id = $1
-              WHERE newest.conversation_id = $3 AND newest.sender_user_id = $4
-              ORDER BY newest.created_at DESC, newest.id DESC
-              LIMIT 1
-          ), '-infinity'::timestamptz)
+          -- A single-message read can receipt the newest one first. A lower bound of "after
+          -- the newest receipt" would then skip every earlier message forever. Already-read
+          -- rows are left as they are.
+          AND NOT EXISTS (
+              SELECT 1 FROM message_reads r
+              WHERE r.message_id = m.id AND r.user_id = $1
+          )
         ON CONFLICT (message_id, user_id) DO NOTHING
         "#,
     )
