@@ -77,7 +77,8 @@ pub async fn list_devices(
 /// marked `revoked_at`: it leaves the device list, delivery fan-out, key bundles and the cap,
 /// and a login presenting its id gets a fresh device instead.
 /// Agent: UPDATE sessions + devices SET revoked_at; DELETE keys/push/PIN guard and undelivered
-/// delivery rows for the device; 404 for foreign or already-removed ids.
+/// delivery rows for the device; CLOSES its open WebSocket after commit; 404 for foreign or
+/// already-removed ids.
 pub async fn delete_device(
     State(state): State<AppState>,
     auth: AuthContext,
@@ -105,32 +106,41 @@ pub async fn delete_device(
         return Err(AppError::not_found("Device not found."));
     }
 
-    revoke_device(&mut tx, device_id).await?;
+    let revoked_sessions = revoke_device(&mut tx, device_id).await?;
 
     tx.commit()
         .await
         .map_err(|err| AppError::Internal(format!("commit delete device failed: {err}")))?;
 
+    // A removed (say, stolen) device must stop receiving the account's messages now, not
+    // whenever its socket happens to drop.
+    state
+        .realtime
+        .close_sessions(auth.user_id, &revoked_sessions)
+        .await;
+
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// Signs a device out for good: sessions, keys, push token, PIN guard and undelivered delivery
-/// rows go, and the row is marked `revoked_at`. Also used by `DELETE /auth/account`.
+/// rows go, and the row is marked `revoked_at`. Also used by `DELETE /auth/account`. Returns
+/// the revoked sessions, whose sockets the caller closes once it commits.
 ///
 /// Agent: UPDATE sessions/devices SET revoked_at; DELETE key tables, push_tokens,
-/// device_pin_guards and undelivered message_deliveries for the device.
+/// device_pin_guards and undelivered message_deliveries for the device; RETURNS session ids.
 pub(crate) async fn revoke_device(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     device_id: Uuid,
-) -> Result<(), AppError> {
-    sqlx::query(
+) -> Result<Vec<Uuid>, AppError> {
+    let revoked_sessions: Vec<Uuid> = sqlx::query_scalar(
         r#"
         UPDATE sessions SET revoked_at = now()
         WHERE device_id = $1 AND revoked_at IS NULL
+        RETURNING id
         "#,
     )
     .bind(device_id)
-    .execute(&mut **tx)
+    .fetch_all(&mut **tx)
     .await
     .map_err(|err| AppError::Internal(format!("revoke device sessions failed: {err}")))?;
 
@@ -153,5 +163,5 @@ pub(crate) async fn revoke_device(
         .await
         .map_err(|err| AppError::Internal(format!("revoke device failed: {err}")))?;
 
-    Ok(())
+    Ok(revoked_sessions)
 }

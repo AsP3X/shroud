@@ -248,15 +248,16 @@ pub async fn login(
         resolve_login_device(&mut tx, user.id, body.device_id, device_name.as_deref()).await?;
 
     // Human: One live token per device — revoke any prior active sessions on this device.
-    sqlx::query(
+    let revoked_sessions: Vec<Uuid> = sqlx::query_scalar(
         r#"
         UPDATE sessions
         SET revoked_at = now()
         WHERE device_id = $1 AND revoked_at IS NULL
+        RETURNING id
         "#,
     )
     .bind(device_id)
-    .execute(&mut *tx)
+    .fetch_all(&mut *tx)
     .await
     .map_err(|err| AppError::Internal(format!("revoke prior sessions failed: {err}")))?;
 
@@ -266,6 +267,12 @@ pub async fn login(
     tx.commit()
         .await
         .map_err(|err| AppError::Internal(format!("commit login failed: {err}")))?;
+
+    // The old token's socket goes with it; the client reconnects with the new one.
+    state
+        .realtime
+        .close_sessions(user.id, &revoked_sessions)
+        .await;
 
     let name: Option<String> = sqlx::query_scalar(r#"SELECT name FROM devices WHERE id = $1"#)
         .bind(device_id)
@@ -337,6 +344,11 @@ pub async fn logout(
         .await
         .map_err(|err| AppError::Internal(format!("commit logout failed: {err}")))?;
 
+    state
+        .realtime
+        .close_sessions(auth.user_id, &[auth.session_id])
+        .await;
+
     tracing::info!(
         user_id = %auth.user_id,
         device_id = %auth.device_id,
@@ -377,8 +389,8 @@ pub struct DeleteAccountRequest {
 /// Username and share code are released, the devices are revoked, and Saved Messages, uploads,
 /// contacts, requests, blocks and calls go.
 /// Agent: one transaction: lock users row, revoke devices, tombstone messages, clear chats,
-/// scrub users; then purge media blobs and PUBLISH conversation.deleted / contact.removed /
-/// call.ended to the peers.
+/// scrub users; then close the account's sockets, purge media blobs and PUBLISH
+/// conversation.deleted / contact.removed / call.ended to the peers.
 pub async fn delete_account(
     State(state): State<AppState>,
     auth: AuthContext,
@@ -439,8 +451,9 @@ pub async fn delete_account(
     .fetch_all(&mut *tx)
     .await
     .map_err(|err| AppError::Internal(format!("list devices for delete failed: {err}")))?;
+    let mut revoked_sessions: Vec<Uuid> = Vec::new();
     for device_id in &device_ids {
-        crate::routes::devices::revoke_device(&mut tx, *device_id).await?;
+        revoked_sessions.extend(crate::routes::devices::revoke_device(&mut tx, *device_id).await?);
     }
     sqlx::query(r#"UPDATE devices SET name = NULL WHERE user_id = $1"#)
         .bind(user_id)
@@ -516,6 +529,12 @@ pub async fn delete_account(
         .await
         .map_err(|err| AppError::Internal(format!("commit account delete failed: {err}")))?;
 
+    // Every device of the account is signed out, so none keeps listening on an open socket.
+    state
+        .realtime
+        .close_sessions(user_id, &revoked_sessions)
+        .await;
+
     // The account is gone either way; blobs a failed purge leaves are unlinked, so the orphan
     // GC takes them.
     let media_purged = match crate::routes::media::purge_media_ids(&state, &media_ids).await {
@@ -570,7 +589,7 @@ pub async fn delete_account(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// `POST /auth/password` — change password; revoke other sessions.
+/// `POST /auth/password` — change password; revoke other sessions and close their sockets.
 pub async fn change_password(
     State(state): State<AppState>,
     auth: AuthContext,
@@ -612,7 +631,7 @@ pub async fn change_password(
         .map_err(|err| AppError::Internal(format!("password update failed: {err}")))?;
 
     // Human: Keep the session that performed the change; kill every other device session.
-    sqlx::query(
+    let revoked_sessions: Vec<Uuid> = sqlx::query_scalar(
         r#"
         UPDATE sessions s
         SET revoked_at = now()
@@ -621,17 +640,23 @@ pub async fn change_password(
           AND d.user_id = $1
           AND s.id <> $2
           AND s.revoked_at IS NULL
+        RETURNING s.id
         "#,
     )
     .bind(auth.user_id)
     .bind(auth.session_id)
-    .execute(&mut *tx)
+    .fetch_all(&mut *tx)
     .await
     .map_err(|err| AppError::Internal(format!("revoke other sessions failed: {err}")))?;
 
     tx.commit()
         .await
         .map_err(|err| AppError::Internal(format!("commit password change failed: {err}")))?;
+
+    state
+        .realtime
+        .close_sessions(auth.user_id, &revoked_sessions)
+        .await;
 
     Ok(StatusCode::NO_CONTENT)
 }

@@ -97,7 +97,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Multi-device store | **One message row** + `message_deliveries` per device |
 | Real-time m4 | HTTP send + history (done) |
 | Real-time 4b | **WebSocket** in-process fan-out (**done**) |
-| Redis fan-out | **Optional** when `REDIS_URL` set: local hub + pub/sub on `shroud:user:{user_id}` |
+| Redis fan-out | **Optional** when `REDIS_URL` set: local hub + pub/sub on `shroud:user:{user_id}`; revoked sessions on `shroud:sessions:revoked` |
 | WS events | `message.new`, `message.delivered`, `message.read`, `message.deleted`, `typing`, `recording`, `presence.update` |
 | WS recipients | Peer devices + sender’s **other** devices (not the sending device for new) |
 | Delivery receipts | `POST /messages/:id/delivered` for current device (m4); read later |
@@ -639,11 +639,11 @@ Success:
 | `device_name` | no | Refresh name when reusing device |
 | `device_id` | no | Reuse if owned by user; else new device |
 
-Success body: same as register.
+Success body: same as register. Reusing a device revokes its previous session (one live session per device) and closes that session's WebSocket.
 
 #### `POST /auth/logout` → `204`
 
-`Authorization: Bearer <token>` — empty body; revokes current session only, forgets the device's push token and deletes its PIN guard.
+`Authorization: Bearer <token>` — empty body; revokes current session only, closes its WebSocket, forgets the device's push token and deletes its PIN guard.
 
 #### `GET /auth/me` → `200`
 
@@ -663,7 +663,7 @@ Success body: same as register.
 }
 ```
 
-Revokes all **other** sessions.
+Revokes all **other** sessions and closes their WebSockets.
 
 #### `GET /devices` → `200`
 
@@ -685,7 +685,7 @@ Revokes all **other** sessions.
 
 #### `DELETE /devices/:id` → `204`
 
-Revokes sessions for that device, deletes its keys, push token, PIN guard and undelivered delivery rows, and sets `devices.revoked_at`. The row is **not** deleted: messages, uploads and calls reference their sending device with `ON DELETE CASCADE`, so history the device sent stays for both participants. `404` for a foreign or already-removed id. Deleting the current device invalidates the caller’s token.
+Revokes sessions for that device, deletes its keys, push token, PIN guard and undelivered delivery rows, and sets `devices.revoked_at`. The row is **not** deleted: messages, uploads and calls reference their sending device with `ON DELETE CASCADE`, so history the device sent stays for both participants. Its open WebSocket is closed at once. `404` for a foreign or already-removed id. Deleting the current device invalidates the caller’s token.
 
 #### PIN guard (web vault)
 
@@ -1070,11 +1070,16 @@ Optional field: `"media_object_id": "<uuid>"` required when `content_type` is `m
    ```json
    { "type": "auth", "token": "<session token>" }
    ```
-3. Server validates token (same as Bearer), binds socket to `(user_id, device_id)`, replies:
+3. Server validates token (same as Bearer), binds socket to `(user_id, device_id)` and the session, replies:
    ```json
    { "type": "auth.ok", "user_id": "<uuid>", "device_id": "<uuid>" }
    ```
 4. On failure or timeout: close connection.
+5. The socket lives only as long as its session. When the session is revoked (logout, a password change for the other sessions, device removal, account deletion, a new login on the same device), the server sends
+   ```json
+   { "type": "auth.error", "error": { "code": "UNAUTHORIZED", "message": "This session was signed out." } }
+   ```
+   and closes the socket, on every replica (Redis `shroud:sessions:revoked`). The socket also re-checks its session right after `auth.ok` and every 30 s, so a revocation its replica missed still closes it. Clients treat `auth.error` as final and do not reconnect with that token. A newer socket from the same device replaces the older one, which closes without a frame.
 
 #### Server → client events
 
@@ -1295,7 +1300,7 @@ Add optional:
   as a placeholder (migration 021): `username`, `share_code` and `password_hash` NULL, `deleted_at` set.
   The name and code can be registered again; `GET /users/*` and contact requests answer `404`.
 - Devices are revoked as by `DELETE /devices/:id` (sessions, keys, push tokens, PIN guards, undelivered
-  deliveries) and their names cleared. Saved Messages, my uploads (rows and blobs), contacts, contact
+  deliveries) and their names cleared; their open WebSockets close. Saved Messages, my uploads (rows and blobs), contacts, contact
   requests, blocks and hides are deleted. Ringing or active calls end as if I hung up, then all my call
   rows are deleted.
 - WS to peers after commit: `conversation.deleted` per chat (`user_id` me, `scope: "everyone"`,

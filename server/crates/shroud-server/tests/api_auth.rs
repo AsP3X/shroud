@@ -1111,14 +1111,16 @@ async fn deleting_an_account_deletes_each_chat_for_both() {
     let parse = |id: &str| Uuid::parse_str(id).unwrap();
     let mut bob_events = state
         .realtime
-        .subscribe(parse(&bob_id), parse(&bob_device))
+        .subscribe(parse(&bob_id), parse(&bob_device), Uuid::new_v4())
         .await
-        .expect("subscribe bob");
+        .expect("subscribe bob")
+        .events;
     let mut carol_events = state
         .realtime
-        .subscribe(parse(&carol_id), parse(&carol_device))
+        .subscribe(parse(&carol_id), parse(&carol_device), Uuid::new_v4())
         .await
-        .expect("subscribe carol");
+        .expect("subscribe carol")
+        .events;
 
     let deleted = authed(
         &app,

@@ -12,14 +12,17 @@ use serde_json::json;
 use tokio::time::timeout;
 use uuid::Uuid;
 
-use crate::auth::session::ids_for_token;
+use crate::auth::session::{AuthIds, ids_for_token, session_is_live};
 use crate::error::AppError;
 use crate::rate_limit::budgets;
+use crate::realtime::Subscription;
 use crate::routes::contacts::are_contacts;
 use crate::routes::presence::{max_last_seen, notify_presence_to_contacts, touch_device_last_seen};
 use crate::state::AppState;
 
 const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
+/// Time allowed to tell a revoked socket why it is being closed.
+const REVOKED_CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Deserialize)]
 struct ClientMessage {
@@ -62,7 +65,11 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     })
     .await;
 
-    let (user_id, device_id) = match auth {
+    let AuthIds {
+        user_id,
+        device_id,
+        session_id,
+    } = match auth {
         Ok(Ok(ids)) => ids,
         Ok(Err(err)) => {
             tracing::warn!(error = %err, "ws.auth failed");
@@ -112,8 +119,15 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         return;
     }
 
-    let mut rx = match state.realtime.subscribe(user_id, device_id).await {
-        Ok(rx) => rx,
+    let Subscription {
+        id: connection_id,
+        events: mut rx,
+    } = match state
+        .realtime
+        .subscribe(user_id, device_id, session_id)
+        .await
+    {
+        Ok(subscription) => subscription,
         Err(reason) => {
             tracing::warn!(%user_id, %device_id, %reason, "ws.subscribe rejected");
             let _ = sink
@@ -139,12 +153,15 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         notify_presence_to_contacts(&state, user_id, true, Some(last_seen)).await;
     }
 
-    // Human: Refresh Redis online TTL while the socket is alive so crashes expire cleanly.
-    // Agent: CALLS realtime.refresh_online every 30s; TTL is ONLINE_TTL_SECS (90).
+    // Human: Refresh Redis online TTL while the socket is alive so crashes expire cleanly, and
+    // re-check the session: a revocation this replica never heard about still closes it. The
+    // first tick fires at once, because a revocation that committed between the token lookup
+    // and subscribe found no socket to close.
+    // Agent: CALLS session_is_live + refresh_online now, then every 30s; TTL is ONLINE_TTL_SECS.
     let mut online_heartbeat = tokio::time::interval(Duration::from_secs(30));
     online_heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    online_heartbeat.tick().await;
 
+    let mut revoked = false;
     loop {
         tokio::select! {
             outbound = rx.recv() => {
@@ -154,10 +171,24 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                             break;
                         }
                     }
-                    None => break,
+                    // The hub let go of this socket: its session was revoked, or the device
+                    // opened a newer socket.
+                    None => {
+                        let live = session_is_live(&state.pool, session_id).await;
+                        revoked = matches!(live, Ok(false));
+                        break;
+                    }
                 }
             }
             _ = online_heartbeat.tick() => {
+                match session_is_live(&state.pool, session_id).await {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        revoked = true;
+                        break;
+                    }
+                    Err(err) => tracing::warn!(error = %err, %device_id, "ws.session check failed"),
+                }
                 state.realtime.refresh_online(user_id, device_id).await;
             }
             inbound = stream.next() => {
@@ -176,7 +207,33 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         }
     }
 
-    state.realtime.unsubscribe(user_id, device_id).await;
+    if revoked {
+        tracing::info!(%user_id, %device_id, "ws.session_revoked");
+        // Clients take auth.error as final: they stop reconnecting with the dead token, and
+        // the web client signs out.
+        let _ = timeout(REVOKED_CLOSE_TIMEOUT, async {
+            let _ = sink
+                .send(Message::Text(
+                    json!({
+                        "type": "auth.error",
+                        "error": {
+                            "code": "UNAUTHORIZED",
+                            "message": "This session was signed out."
+                        }
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await;
+            let _ = sink.close().await;
+        })
+        .await;
+    }
+
+    state
+        .realtime
+        .unsubscribe(user_id, device_id, connection_id)
+        .await;
 
     // Update last_seen; only announce offline if no remaining sessions for this user.
     let last_seen = touch_device_last_seen(&state.pool, device_id).await.ok();
@@ -285,10 +342,7 @@ async fn relay_contact_activity(
     }
 }
 
-async fn authenticate_text(
-    state: &AppState,
-    text: &str,
-) -> Result<(uuid::Uuid, uuid::Uuid), AppError> {
+async fn authenticate_text(state: &AppState, text: &str) -> Result<AuthIds, AppError> {
     let parsed: ClientMessage = serde_json::from_str(text)
         .map_err(|_| AppError::validation("Invalid WebSocket auth message."))?;
     if parsed.r#type != "auth" {

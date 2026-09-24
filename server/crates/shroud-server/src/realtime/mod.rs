@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use redis::AsyncCommands;
@@ -15,6 +16,8 @@ use uuid::Uuid;
 type DeviceTx = mpsc::Sender<String>;
 
 const USER_CHANNEL_PREFIX: &str = "shroud:user:";
+/// Sessions revoked on one replica, so every replica closes the sockets they opened.
+const REVOKED_SESSIONS_CHANNEL: &str = "shroud:sessions:revoked";
 const ONLINE_KEY_PREFIX: &str = "shroud:online:";
 /// Redis online hash entries older than this are treated as stale (crash without unsubscribe).
 pub const ONLINE_TTL_SECS: i64 = 90;
@@ -34,11 +37,48 @@ fn unix_now_secs() -> i64 {
         .unwrap_or(0)
 }
 
+/// A device's live socket on this replica.
+struct Connection {
+    /// Tells this socket apart from a later one from the same device.
+    id: u64,
+    /// The session the socket authenticated with.
+    session_id: Uuid,
+    tx: DeviceTx,
+}
+
+/// This replica's sockets, keyed by device and indexed by user.
+///
+/// Human: One lock guards both maps, so a socket's entry and its user index change together.
+#[derive(Default)]
+struct Connections {
+    by_device: HashMap<Uuid, Connection>,
+    devices_by_user: HashMap<Uuid, HashSet<Uuid>>,
+}
+
+impl Connections {
+    fn remove(&mut self, user_id: Uuid, device_id: Uuid) {
+        self.by_device.remove(&device_id);
+        if let Some(set) = self.devices_by_user.get_mut(&user_id) {
+            set.remove(&device_id);
+            if set.is_empty() {
+                self.devices_by_user.remove(&user_id);
+            }
+        }
+    }
+}
+
+/// A registered socket: its events, and the id to hand back to [`RealtimeHub::unsubscribe`].
+#[derive(Debug)]
+pub struct Subscription {
+    pub id: u64,
+    pub events: mpsc::Receiver<String>,
+}
+
 /// Shared connection hub keyed by device (and indexed by user).
 #[derive(Default)]
 pub struct RealtimeHub {
-    by_device: RwLock<HashMap<Uuid, DeviceTx>>,
-    devices_by_user: RwLock<HashMap<Uuid, HashSet<Uuid>>>,
+    connections: RwLock<Connections>,
+    next_connection_id: AtomicU64,
     /// When set, cross-instance fan-out uses Redis pub/sub.
     redis: RwLock<Option<ConnectionManager>>,
 }
@@ -56,6 +96,12 @@ struct RedisFanout {
     user_id: Uuid,
     except_device_id: Option<Uuid>,
     event: Value,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct RedisRevokedSessions {
+    user_id: Uuid,
+    session_ids: Vec<Uuid>,
 }
 
 impl RealtimeHub {
@@ -91,50 +137,122 @@ impl RealtimeHub {
     /// Registers a device connection; returns the receiver for WS write loop.
     ///
     /// Human: Caps concurrent sockets per user and uses a bounded queue so slow clients
-    /// cannot grow memory without bound.
+    /// cannot grow memory without bound. A device's new socket replaces its old one, whose
+    /// loop ends when its sender drops.
     /// Agent: RETURNS Err when local connections for user >= MAX_WS_PER_USER (unless reconnect).
     pub async fn subscribe(
         self: &Arc<Self>,
         user_id: Uuid,
         device_id: Uuid,
-    ) -> Result<mpsc::Receiver<String>, &'static str> {
+        session_id: Uuid,
+    ) -> Result<Subscription, &'static str> {
+        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAP);
+        let id = self.next_connection_id.fetch_add(1, Ordering::Relaxed);
         {
-            let by_user = self.devices_by_user.read().await;
-            if let Some(set) = by_user.get(&user_id)
+            let mut connections = self.connections.write().await;
+            if let Some(set) = connections.devices_by_user.get(&user_id)
                 && set.len() >= MAX_WS_PER_USER
                 && !set.contains(&device_id)
             {
                 return Err("too many websocket connections for this user");
             }
-        }
-
-        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAP);
-        {
-            let mut by_device = self.by_device.write().await;
-            by_device.insert(device_id, tx);
-        }
-        {
-            let mut by_user = self.devices_by_user.write().await;
-            by_user.entry(user_id).or_default().insert(device_id);
+            connections
+                .by_device
+                .insert(device_id, Connection { id, session_id, tx });
+            connections
+                .devices_by_user
+                .entry(user_id)
+                .or_default()
+                .insert(device_id);
         }
         self.mark_online(user_id, device_id).await;
-        Ok(rx)
+        Ok(Subscription { id, events: rx })
     }
 
-    /// Removes a device connection (on disconnect or replace).
-    pub async fn unsubscribe(&self, user_id: Uuid, device_id: Uuid) {
+    /// Removes a device connection on disconnect.
+    ///
+    /// Human: Only a socket that still holds its device's entry clears it. After a reconnect
+    /// the entry is the newer socket's, and after a revocation it is already gone; clearing
+    /// it unconditionally cut the newer socket off.
+    /// Agent: NO-OP unless the device's entry is `connection_id`.
+    pub async fn unsubscribe(&self, user_id: Uuid, device_id: Uuid, connection_id: u64) {
         {
-            let mut by_device = self.by_device.write().await;
-            by_device.remove(&device_id);
-        }
-        let mut by_user = self.devices_by_user.write().await;
-        if let Some(set) = by_user.get_mut(&user_id) {
-            set.remove(&device_id);
-            if set.is_empty() {
-                by_user.remove(&user_id);
+            let mut connections = self.connections.write().await;
+            let current = connections
+                .by_device
+                .get(&device_id)
+                .is_some_and(|connection| connection.id == connection_id);
+            if !current {
+                return;
             }
+            connections.remove(user_id, device_id);
         }
         self.mark_offline(user_id, device_id).await;
+    }
+
+    /// Closes the sockets opened with any of `session_ids`, here and on every other replica.
+    /// Call it once the revocation has committed.
+    ///
+    /// Human: A socket authenticates only once, so without this a revoked session's socket
+    /// kept receiving the account's messages, typing and call signaling until the device
+    /// disconnected by itself. Dropping a socket's sender ends its loop in `routes::ws`,
+    /// which then tells the client and closes.
+    /// Agent: CALLS close_local_sessions; PUBLISHES shroud:sessions:revoked when Redis is set.
+    pub async fn close_sessions(&self, user_id: Uuid, session_ids: &[Uuid]) {
+        if session_ids.is_empty() {
+            return;
+        }
+        self.close_local_sessions(user_id, session_ids).await;
+
+        let redis = self.redis.read().await.clone();
+        let Some(mut conn) = redis else {
+            return;
+        };
+        let message = RedisRevokedSessions {
+            user_id,
+            session_ids: session_ids.to_vec(),
+        };
+        let body = match serde_json::to_string(&message) {
+            Ok(s) => s,
+            Err(err) => {
+                tracing::warn!(error = %err, "redis revoked sessions serialize failed");
+                return;
+            }
+        };
+        if let Err(err) = conn
+            .publish::<_, _, ()>(REVOKED_SESSIONS_CHANNEL, body)
+            .await
+        {
+            tracing::warn!(error = %err, %user_id, "redis revoked sessions publish failed");
+        }
+    }
+
+    /// Drops this replica's sockets for `session_ids`.
+    async fn close_local_sessions(&self, user_id: Uuid, session_ids: &[Uuid]) {
+        let closed: Vec<Uuid> = {
+            let mut connections = self.connections.write().await;
+            let devices: Vec<Uuid> = connections
+                .devices_by_user
+                .get(&user_id)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|device_id| {
+                    connections
+                        .by_device
+                        .get(device_id)
+                        .is_some_and(|connection| session_ids.contains(&connection.session_id))
+                })
+                .collect();
+            for device_id in &devices {
+                connections.remove(user_id, *device_id);
+            }
+            devices
+        };
+        for device_id in closed {
+            tracing::info!(%user_id, %device_id, "realtime.session_closed");
+            self.mark_offline(user_id, device_id).await;
+        }
     }
 
     /// True if the user has at least one online WebSocket (local or Redis online hash).
@@ -146,8 +264,9 @@ impl RealtimeHub {
                 Err(err) => tracing::warn!(error = %err, "redis online check failed"),
             }
         }
-        let by_user = self.devices_by_user.read().await;
-        by_user
+        let connections = self.connections.read().await;
+        connections
+            .devices_by_user
             .get(&user_id)
             .is_some_and(|devices| !devices.is_empty())
     }
@@ -192,18 +311,17 @@ impl RealtimeHub {
         except_device: Option<Uuid>,
         payload: &str,
     ) {
-        let by_user = self.devices_by_user.read().await;
-        let by_device = self.by_device.read().await;
+        let connections = self.connections.read().await;
         for user_id in user_ids {
-            if let Some(devices) = by_user.get(&user_id) {
+            if let Some(devices) = connections.devices_by_user.get(&user_id) {
                 for device_id in devices {
                     if except_device == Some(*device_id) {
                         continue;
                     }
-                    if let Some(tx) = by_device.get(device_id) {
+                    if let Some(connection) = connections.by_device.get(device_id) {
                         // Human: Never block HTTP handlers on slow WS consumers — drop when full.
                         // Agent: try_send; Full → warn+drop; Closed → ignore.
-                        match tx.try_send(payload.to_string()) {
+                        match connection.tx.try_send(payload.to_string()) {
                             Ok(()) => {}
                             Err(mpsc::error::TrySendError::Full(_)) => {
                                 tracing::warn!(
@@ -236,10 +354,10 @@ impl RealtimeHub {
 
         // Count local targets for diagnostics (helps spot "send ok but nobody online").
         let local_targets = {
-            let by_user = self.devices_by_user.read().await;
+            let connections = self.connections.read().await;
             users
                 .iter()
-                .filter_map(|uid| by_user.get(uid).map(|set| set.len()))
+                .filter_map(|uid| connections.devices_by_user.get(uid).map(|set| set.len()))
                 .sum::<usize>()
         };
         if local_targets == 0 {
@@ -309,7 +427,8 @@ async fn redis_online_count(
 
 /// Spawns a background task that pattern-subscribes and fans out to the local hub.
 ///
-/// Agent: CALLS redis PSUBSCRIBE shroud:user:*; delivers via publish_local_to_users.
+/// Agent: CALLS redis PSUBSCRIBE shroud:user:*, delivered via publish_local_to_users, and
+/// SUBSCRIBE shroud:sessions:revoked, applied via close_local_sessions.
 pub fn spawn_redis_subscriber(hub: Arc<RealtimeHub>, redis_url: String) {
     tokio::spawn(async move {
         loop {
@@ -325,7 +444,10 @@ async fn run_subscriber(hub: Arc<RealtimeHub>, redis_url: &str) -> Result<(), re
     let client = redis::Client::open(redis_url)?;
     let mut pubsub = client.get_async_pubsub().await?;
     pubsub.psubscribe(format!("{USER_CHANNEL_PREFIX}*")).await?;
-    tracing::info!("redis realtime subscriber listening on shroud:user:*");
+    pubsub.subscribe(REVOKED_SESSIONS_CHANNEL).await?;
+    tracing::info!(
+        "redis realtime subscriber listening on shroud:user:* and {REVOKED_SESSIONS_CHANNEL}"
+    );
 
     let mut stream = pubsub.on_message();
     use futures_util::StreamExt;
@@ -337,6 +459,16 @@ async fn run_subscriber(hub: Arc<RealtimeHub>, redis_url: &str) -> Result<(), re
                 continue;
             }
         };
+        if msg.get_channel_name() == REVOKED_SESSIONS_CHANNEL {
+            match serde_json::from_str::<RedisRevokedSessions>(&payload) {
+                Ok(revoked) => {
+                    hub.close_local_sessions(revoked.user_id, &revoked.session_ids)
+                        .await;
+                }
+                Err(err) => tracing::warn!(error = %err, "redis revoked sessions invalid"),
+            }
+            continue;
+        }
         let envelope: RedisFanout = match serde_json::from_str(&payload) {
             Ok(e) => e,
             Err(err) => {
@@ -359,4 +491,54 @@ async fn run_subscriber(hub: Arc<RealtimeHub>, redis_url: &str) -> Result<(), re
         redis::ErrorKind::IoError,
         "redis pubsub stream ended",
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::mpsc::error::TryRecvError;
+
+    #[tokio::test]
+    async fn closing_a_session_ends_only_its_socket() {
+        let hub = Arc::new(RealtimeHub::new());
+        let user = Uuid::new_v4();
+        let (phone, phone_session) = (Uuid::new_v4(), Uuid::new_v4());
+        let (laptop, laptop_session) = (Uuid::new_v4(), Uuid::new_v4());
+        let mut phone_socket = hub
+            .subscribe(user, phone, phone_session)
+            .await
+            .expect("phone");
+        let mut laptop_socket = hub
+            .subscribe(user, laptop, laptop_session)
+            .await
+            .expect("laptop");
+
+        hub.close_sessions(user, &[laptop_session]).await;
+        hub.publish_to_users([user], None, "event").await;
+
+        assert_eq!(
+            laptop_socket.events.try_recv(),
+            Err(TryRecvError::Disconnected)
+        );
+        assert_eq!(phone_socket.events.try_recv().as_deref(), Ok("event"));
+        // The closed socket's own cleanup comes later and changes nothing.
+        hub.unsubscribe(user, laptop, laptop_socket.id).await;
+        assert!(hub.is_user_online(user).await);
+    }
+
+    #[tokio::test]
+    async fn a_replaced_socket_leaves_its_successor_registered() {
+        let hub = Arc::new(RealtimeHub::new());
+        let (user, device, session) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let mut old = hub.subscribe(user, device, session).await.expect("old");
+        let mut new = hub.subscribe(user, device, session).await.expect("new");
+
+        assert_eq!(old.events.try_recv(), Err(TryRecvError::Disconnected));
+        hub.unsubscribe(user, device, old.id).await;
+        hub.publish_to_users([user], None, "event").await;
+
+        assert_eq!(new.events.try_recv().as_deref(), Ok("event"));
+        hub.unsubscribe(user, device, new.id).await;
+        assert!(!hub.is_user_online(user).await);
+    }
 }

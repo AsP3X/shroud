@@ -166,7 +166,7 @@ async fn open_target(
         return Err(AppError::validation("First message must be type connect."));
     }
     let token = frame.token.ok_or_else(AppError::unauthorized)?;
-    let (user_id, _device_id) = ids_for_token(&state.pool, &token).await?;
+    let user_id = ids_for_token(&state.pool, &token).await?.user_id;
     state
         .rate_limiter
         .check_budget(

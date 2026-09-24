@@ -127,27 +127,29 @@ impl FromRequestParts<AppState> for AuthContext {
     }
 }
 
-/// Resolves a raw session token to its user and device, for WebSocket endpoints.
+/// The account, device and session a WebSocket's token belongs to.
+#[derive(Debug, Clone, Copy, FromRow)]
+pub struct AuthIds {
+    pub user_id: Uuid,
+    pub device_id: Uuid,
+    pub session_id: Uuid,
+}
+
+/// Resolves a raw session token to its user, device and session, for WebSocket endpoints.
 ///
 /// Human: WebSockets authenticate with their first frame instead of a header, so the token
 /// never lands in a URL, a proxy log, or browser history. `/ws` and the link-preview relay
 /// share this lookup.
-/// Agent: DB SELECT by token_hash WHERE revoked_at IS NULL; RETURNS (user_id, device_id) or
+/// Agent: DB SELECT by token_hash WHERE revoked_at IS NULL; RETURNS [`AuthIds`] or
 /// `AppError::unauthorized` for an empty, unknown, or revoked token.
-pub async fn ids_for_token(pool: &sqlx::PgPool, token: &str) -> Result<(Uuid, Uuid), AppError> {
-    #[derive(FromRow)]
-    struct AuthIds {
-        user_id: Uuid,
-        device_id: Uuid,
-    }
-
+pub async fn ids_for_token(pool: &sqlx::PgPool, token: &str) -> Result<AuthIds, AppError> {
     if token.is_empty() {
         return Err(AppError::unauthorized());
     }
     let token_hash = hash_token(token);
-    let row = sqlx::query_as::<_, AuthIds>(
+    sqlx::query_as::<_, AuthIds>(
         r#"
-        SELECT u.id AS user_id, d.id AS device_id
+        SELECT u.id AS user_id, d.id AS device_id, s.id AS session_id
         FROM sessions s
         INNER JOIN devices d ON d.id = s.device_id
         INNER JOIN users u ON u.id = d.user_id
@@ -158,10 +160,34 @@ pub async fn ids_for_token(pool: &sqlx::PgPool, token: &str) -> Result<(Uuid, Uu
     .bind(token_hash.as_slice())
     .fetch_optional(pool)
     .await
-    .map_err(|err| AppError::Internal(format!("ws auth lookup failed: {err}")))?;
+    .map_err(|err| AppError::Internal(format!("ws auth lookup failed: {err}")))?
+    .ok_or_else(AppError::unauthorized)
+}
 
-    row.map(|ids| (ids.user_id, ids.device_id))
-        .ok_or_else(AppError::unauthorized)
+/// True while a session may keep its WebSocket open: not revoked, its device not removed, its
+/// account not deleted.
+///
+/// Human: A socket authenticates once, so `/ws` re-checks on its heartbeat. A revocation the
+/// socket's replica never heard about (its Redis subscriber was reconnecting) still closes
+/// the socket within one tick.
+/// Agent: DB SELECT EXISTS by session id with the same filters as [`ids_for_token`].
+pub async fn session_is_live(pool: &sqlx::PgPool, session_id: Uuid) -> Result<bool, AppError> {
+    sqlx::query_scalar(
+        r#"
+        SELECT EXISTS (
+            SELECT 1
+            FROM sessions s
+            INNER JOIN devices d ON d.id = s.device_id
+            INNER JOIN users u ON u.id = d.user_id
+            WHERE s.id = $1 AND s.revoked_at IS NULL AND d.revoked_at IS NULL
+              AND u.deleted_at IS NULL
+        )
+        "#,
+    )
+    .bind(session_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("session check failed: {err}")))
 }
 
 /// Hard-delete revoked sessions older than [`REVOKED_SESSION_RETENTION_DAYS`].
