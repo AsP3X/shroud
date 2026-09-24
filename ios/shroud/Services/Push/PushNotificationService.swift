@@ -156,26 +156,50 @@ final class PushNotificationService: NSObject {
     }
 }
 
+/// Human: The completion-handler forms, finished on the main thread. The `async` forms finish on
+/// a background thread, and so does UIKit's completion block behind them: for a tap it updates
+/// the app snapshot, asserts it is on the main thread, and aborts (the simulator crashed; the
+/// iPhone came up on a lock screen that took no touches).
+/// Agent: UIKit calls these on the main thread; the `Thread.isMainThread` branch is a guard.
 extension PushNotificationService: UNUserNotificationCenterDelegate {
     /// A push (or the app's own notification) while the app is in front.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
-        willPresent notification: UNNotification
-    ) async -> UNNotificationPresentationOptions {
-        await MainActor.run { NotificationsController.shared.presentation(for: notification) }
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        let present = {
+            MainActor.assumeIsolated {
+                completionHandler(NotificationsController.shared.presentation(for: notification))
+            }
+        }
+        if Thread.isMainThread {
+            present()
+        } else {
+            DispatchQueue.main.sync(execute: present)
+        }
     }
 
     /// A tap on a notification: open its chat.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
-        didReceive response: UNNotificationResponse
-    ) async {
-        let content = response.notification.request.content
-        // Parsed here: the payload dictionary cannot cross to the main actor, its contents can.
-        let contents = NotificationPayload.parse(content.userInfo)
-        let title = content.title
-        await MainActor.run {
-            NotificationsController.shared.handleTap(contents, title: title)
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let open = {
+            MainActor.assumeIsolated {
+                let content = response.notification.request.content
+                NotificationsController.shared.handleTap(
+                    NotificationPayload.parse(content.userInfo),
+                    title: content.title
+                )
+                completionHandler()
+            }
+        }
+        if Thread.isMainThread {
+            open()
+        } else {
+            DispatchQueue.main.sync(execute: open)
         }
     }
 }

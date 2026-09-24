@@ -265,6 +265,10 @@ final class NotificationsController {
                 UIApplication.shared.registerForRemoteNotifications()
                 return "This iPhone was not registered for notifications. Shroud registered it now — try again in a moment."
             case "not_configured": return "This server is not set up to send iPhone notifications."
+            case "misconfigured":
+                // Apple answered, and refused the server's own key or topic: not this iPhone.
+                let reason = outcome.detail.map { " (\($0))" } ?? ""
+                return "Apple refused this server's push setup\(reason). Whoever runs the server needs to check its APNs key, team and topic."
             case "rejected":
                 UIApplication.shared.registerForRemoteNotifications()
                 return "Apple refused this iPhone's notification token. Shroud registered again — try again in a moment."

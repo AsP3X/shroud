@@ -56,7 +56,7 @@ export type NotificationSettings = {
 
 export type TestPushOutcome = {
   channel: "apns" | "web" | null;
-  status: "sent" | "not_registered" | "not_configured" | "rejected" | "failed";
+  status: "sent" | "not_registered" | "not_configured" | "misconfigured" | "rejected" | "failed";
   detail?: string;
 };
 

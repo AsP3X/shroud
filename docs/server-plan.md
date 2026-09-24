@@ -1601,8 +1601,10 @@ Web Push is unavailable. One per device; an endpoint another device held moves h
 
 A "Notifications are working" push to the calling device, socket or not. `channel`: `apns`, `web`,
 or null when it registered for neither. `status`: `sent`, `not_registered`, `not_configured` (this
-server cannot reach that relay), `rejected` (the relay refused the token or subscription; it was
-removed), `failed`; `detail` says why for the last two. Budget: 6 per minute per device.
+server cannot reach that relay), `misconfigured` (the relay refused this server's key or topic —
+`BadEnvironmentKeyInToken`, `InvalidProviderToken`, a VAPID 401/403, …; nothing on the device can
+fix it), `rejected` (the relay refused the token or subscription; it was removed), `failed`;
+`detail` says why for the last three. Budget: 6 per minute per device.
 
 #### Sign-out and deletion
 

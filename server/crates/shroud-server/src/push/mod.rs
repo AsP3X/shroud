@@ -118,7 +118,8 @@ pub struct TestPushOutcome {
     /// `apns` or `web`; null when this device registered for neither.
     pub channel: Option<PushChannel>,
     /// `sent`, `not_registered`, `not_configured` (this server cannot send to that relay),
-    /// `rejected` (the relay refused the token; it was removed) or `failed`.
+    /// `misconfigured` (the relay refused this server's key or topic), `rejected` (the relay
+    /// refused the token; it was removed) or `failed`.
     pub status: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
@@ -127,6 +128,8 @@ pub struct TestPushOutcome {
 enum Delivery {
     Sent,
     NotConfigured,
+    /// The relay refused this server's credentials or topic: nothing on the device can fix it.
+    Misconfigured(String),
     Rejected(String),
     Failed(String),
 }
@@ -558,6 +561,7 @@ impl PushService {
         let (status, detail) = match delivery {
             Delivery::Sent => ("sent", None),
             Delivery::NotConfigured => ("not_configured", None),
+            Delivery::Misconfigured(reason) => ("misconfigured", Some(reason)),
             Delivery::Rejected(reason) => ("rejected", Some(reason)),
             Delivery::Failed(reason) => ("failed", Some(reason)),
         };
@@ -677,6 +681,18 @@ impl PushService {
                 }
                 Delivery::Rejected(reason)
             }
+            ApnsSendOutcome::Failed { reason, status }
+                if client::is_provider_config_reason(&reason) =>
+            {
+                tracing::error!(
+                    %device_id,
+                    %reason,
+                    status,
+                    "apns refused this server's key or topic: check APNS_KEY_ID / APNS_TEAM_ID / \
+                     APNS_TOPIC and the key's environment (Sandbox & Production)"
+                );
+                Delivery::Misconfigured(reason)
+            }
             ApnsSendOutcome::Failed { reason, status } => {
                 tracing::warn!(%device_id, %reason, status, "apns push failed");
                 Delivery::Failed(reason)
@@ -726,6 +742,14 @@ impl PushService {
                     tracing::warn!(error = %err, %device_id, "delete web push subscription failed");
                 }
                 Delivery::Rejected(format!("subscription gone ({status})"))
+            }
+            // The push service refused the VAPID signature or key: the server's, not the browser's.
+            WebPushOutcome::Failed {
+                status: status @ (401 | 403),
+                reason,
+            } => {
+                tracing::error!(%device_id, status, %reason, "web push refused this server's VAPID key");
+                Delivery::Misconfigured(format!("{status} {reason}").trim().to_string())
             }
             WebPushOutcome::Failed { status, reason } => {
                 tracing::warn!(%device_id, status, %reason, "web push failed");

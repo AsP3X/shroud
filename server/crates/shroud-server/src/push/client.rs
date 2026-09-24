@@ -319,6 +319,28 @@ fn is_invalid_token_reason(reason: &str) -> bool {
     )
 }
 
+/// Apple refused the *server's* setup, not the device: its key (or the key's environment or
+/// team), or the topic. Every push fails the same way until `APNS_*` is fixed, so it is
+/// reported as that rather than as Apple being unreachable. A key that cannot be read or
+/// signed with fails before sending (`jwt: …`).
+pub(super) fn is_provider_config_reason(reason: &str) -> bool {
+    reason.starts_with("jwt: ")
+        || matches!(
+            reason,
+            "InvalidProviderToken"
+                | "ExpiredProviderToken"
+                | "MissingProviderToken"
+                | "BadEnvironmentKeyInToken"
+                | "UnrelatedKeyIdInToken"
+                | "BadCertificate"
+                | "BadCertificateEnvironment"
+                | "BadTopic"
+                | "MissingTopic"
+                | "TopicDisallowed"
+                | "Forbidden"
+        )
+}
+
 /// Loads APNs config from env when complete; otherwise `None` (registration still works).
 ///
 /// Accepts either `APNS_KEY_PATH` or `APNS_KEY_PEM` plus KEY_ID, TEAM_ID, TOPIC.
@@ -387,6 +409,13 @@ z5A6B7C8D9E0F1G2H3I4J5K6L7M8N9O0P1Q2R3S4T5U6V7W8X9Y0Z1
     fn invalid_token_reasons() {
         assert!(is_invalid_token_reason("BadDeviceToken"));
         assert!(is_invalid_token_reason("Unregistered"));
+        // The server's own setup is never the device token's fault, and the other way round.
+        assert!(is_provider_config_reason("BadEnvironmentKeyInToken"));
+        assert!(is_provider_config_reason("InvalidProviderToken"));
+        assert!(is_provider_config_reason("jwt: invalid key"));
+        assert!(!is_provider_config_reason("BadDeviceToken"));
+        assert!(!is_provider_config_reason("ServiceUnavailable"));
+        assert!(!is_invalid_token_reason("BadEnvironmentKeyInToken"));
         assert!(!is_invalid_token_reason("InternalServerError"));
         assert!(!is_invalid_token_reason("TooManyRequests"));
     }

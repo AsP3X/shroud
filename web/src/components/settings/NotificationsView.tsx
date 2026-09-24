@@ -44,6 +44,8 @@ const TEST_RESULTS: Record<string, string> = {
   sent: "Sent through your browser's push service — it should appear in a moment.",
   not_registered: "This browser is not registered for pushes yet. Turn notifications off and on again.",
   not_configured: "This server cannot send Web Push right now.",
+  misconfigured:
+    "The push service refused this server's key. Whoever runs the server needs to check its Web Push settings.",
   rejected: "The push service no longer accepts this browser's subscription. Turn notifications off and on again.",
   failed: "The push service could not be reached. Try again in a moment.",
 };
@@ -168,7 +170,9 @@ export function NotificationsView({
     setError(null);
     try {
       const outcome = await api.testPush(session.token);
-      setTestResult(TEST_RESULTS[outcome.status] ?? TEST_RESULTS.failed);
+      const text = TEST_RESULTS[outcome.status] ?? TEST_RESULTS.failed;
+      // The push service's own words help whoever fixes the server.
+      setTestResult(outcome.status === "misconfigured" && outcome.detail ? `${text} (${outcome.detail})` : text);
     } catch (err) {
       failed(err, "Could not send a test notification.");
     } finally {
