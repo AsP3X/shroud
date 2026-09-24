@@ -1030,6 +1030,45 @@ fn drain_events(events: &mut tokio::sync::mpsc::Receiver<String>) -> Vec<Value> 
     drained
 }
 
+/// Sets a sealed reaction that must be accepted.
+async fn react(app: &axum::Router, token: &str, message_id: &str, sealed: &[u8]) {
+    let response = authed(
+        app,
+        "PUT",
+        &format!("/api/v1/messages/{message_id}/reaction"),
+        token,
+        Some(json!({ "ciphertext": BASE64.encode(sealed) })),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+/// Reaction catch-up: every change in the chat with `peer` after `after_seq`.
+async fn reaction_changes(app: &axum::Router, token: &str, peer: &str, after_seq: i64) -> Value {
+    let response = authed(
+        app,
+        "GET",
+        &format!("/api/v1/conversations/{peer}/reactions?after_seq={after_seq}"),
+        token,
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    json_body(response).await
+}
+
+/// The caller's `GET /conversations` entry for the chat with `peer`.
+async fn chat_entry(app: &axum::Router, token: &str, peer: &str) -> Value {
+    let chats = json_body(authed(app, "GET", "/api/v1/conversations", token, None).await).await;
+    chats["conversations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|chat| chat["peer"]["id"] == peer)
+        .cloned()
+        .expect("chat listed")
+}
+
 #[tokio::test]
 async fn deleting_an_account_deletes_each_chat_for_both() {
     let Some((app, state)) = test_app_and_state().await else {
@@ -1094,9 +1133,9 @@ async fn deleting_an_account_deletes_each_chat_for_both() {
     let bob_reply = send_text(&app, &bob, &alice_id, b"sealed-from-bob").await;
 
     // Carol's chat, a note in Alice's Saved Messages, and Alice ringing Bob.
-    send_text(&app, &alice, &carol_id, b"sealed-to-carol").await;
-    send_text(&app, &carol, &alice_id, b"sealed-from-carol").await;
-    send_text(&app, &alice, &alice_id, b"sealed-note").await;
+    let to_carol = send_text(&app, &alice, &carol_id, b"sealed-to-carol").await;
+    let from_carol = send_text(&app, &carol, &alice_id, b"sealed-from-carol").await;
+    let note = send_text(&app, &alice, &alice_id, b"sealed-note").await;
     let call = authed(
         &app,
         "POST",
@@ -1107,6 +1146,25 @@ async fn deleting_an_account_deletes_each_chat_for_both() {
     .await;
     assert_eq!(call.status(), StatusCode::CREATED);
     let call_id = json_body(call).await["id"].as_str().unwrap().to_string();
+
+    // Reactions both ways in both chats, Bob's on his own reply, and Alice's on her note. Each
+    // peer's devices have caught up to here.
+    react(&app, &bob, &alice_text, b"sealed-bob-on-alice").await;
+    react(&app, &bob, &bob_reply, b"sealed-bob-on-bob").await;
+    react(&app, &alice, &bob_reply, b"sealed-alice-on-bob").await;
+    react(&app, &carol, &to_carol, b"sealed-carol-on-alice").await;
+    react(&app, &alice, &from_carol, b"sealed-alice-on-carol").await;
+    react(&app, &alice, &note, b"sealed-alice-on-note").await;
+    let bob_cursor = reaction_changes(&app, &bob, &alice_id, 0).await["next_seq"]
+        .as_i64()
+        .unwrap();
+    let carol_cursor = reaction_changes(&app, &carol, &alice_id, 0).await["next_seq"]
+        .as_i64()
+        .unwrap();
+    assert_eq!(
+        chat_entry(&app, &bob, &alice_id).await["unseen_reactions"],
+        1
+    );
 
     let parse = |id: &str| Uuid::parse_str(id).unwrap();
     let mut bob_events = state
@@ -1130,8 +1188,9 @@ async fn deleting_an_account_deletes_each_chat_for_both() {
     .await;
     assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
 
-    // Bob keeps his side: his reply as sent, and Alice's messages as tombstones that still name
-    // her account and device (both apps require those ids).
+    // Bob keeps his side: his reply as sent with only his own reaction left, and Alice's
+    // messages as tombstones without reactions that still name her account and device (both
+    // apps require those ids).
     let history = authed(
         &app,
         "GET",
@@ -1150,6 +1209,13 @@ async fn deleting_an_account_deletes_each_chat_for_both() {
         if id == bob_reply {
             assert_eq!(message["deleted_for_everyone"], false);
             assert_eq!(message["ciphertext"], BASE64.encode(b"sealed-from-bob"));
+            let reactions = message["reactions"].as_array().unwrap();
+            assert_eq!(reactions.len(), 1);
+            assert_eq!(reactions[0]["user_id"], bob_id.as_str());
+            assert_eq!(
+                reactions[0]["ciphertext"],
+                BASE64.encode(b"sealed-bob-on-bob")
+            );
             continue;
         }
         assert!(
@@ -1159,9 +1225,40 @@ async fn deleting_an_account_deletes_each_chat_for_both() {
         assert_eq!(message["deleted_for_everyone"], true);
         assert_eq!(message["ciphertext"], Value::Null);
         assert!(message.get("media_object_id").is_none());
+        assert!(message.get("reactions").is_none());
         assert_eq!(message["sender_user_id"], alice_id.as_str());
         assert_eq!(message["sender_device_id"], alice_device.as_str());
     }
+
+    // His catch-up reports the reactions the deletion cleared, each with a new seq and no
+    // ciphertext: his own on Alice's text, now a tombstone, and hers on his reply. His reaction
+    // on his reply did not change.
+    let caught_up = reaction_changes(&app, &bob, &alice_id, bob_cursor).await;
+    let changes = caught_up["reactions"].as_array().unwrap();
+    let mut cleared: Vec<(&str, &str)> = changes
+        .iter()
+        .map(|change| {
+            assert_eq!(change["ciphertext"], Value::Null, "still sealed: {change}");
+            (
+                change["message_id"].as_str().unwrap(),
+                change["user_id"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    cleared.sort_unstable();
+    let mut expected = vec![
+        (alice_text.as_str(), bob_id.as_str()),
+        (bob_reply.as_str(), alice_id.as_str()),
+    ];
+    expected.sort_unstable();
+    assert_eq!(cleared, expected);
+    let seqs: Vec<i64> = changes
+        .iter()
+        .map(|change| change["seq"].as_i64().unwrap())
+        .collect();
+    assert!(seqs.windows(2).all(|pair| pair[0] < pair[1]), "{seqs:?}");
+    assert_eq!(caught_up["next_seq"], seqs[seqs.len() - 1]);
+    assert_eq!(caught_up["has_more"], false);
 
     let chats = authed(&app, "GET", "/api/v1/conversations", &bob, None).await;
     assert_eq!(chats.status(), StatusCode::OK);
@@ -1174,6 +1271,9 @@ async fn deleting_an_account_deletes_each_chat_for_both() {
         .expect("Bob still lists the chat");
     assert_eq!(chat["peer"]["id"], alice_id.as_str());
     assert_eq!(chat["peer"]["username"], "Deleted account");
+    // Her reaction left his heart badge, and the chat says catch-up has something new.
+    assert_eq!(chat["unseen_reactions"], 0);
+    assert_eq!(chat["reaction_seq"], caught_up["next_seq"]);
 
     let events = drain_events(&mut bob_events);
     let chat_event = events
@@ -1239,9 +1339,14 @@ async fn deleting_an_account_deletes_each_chat_for_both() {
         .expect("conversation.deleted for Carol");
     assert_eq!(chat_event["user_id"], alice_id.as_str());
     assert_eq!(chat_event["cleared_for_peer"], true);
+    // The reactions went with the purged messages, so her catch-up has nothing to report, not
+    // even a removal.
+    let carol_caught_up = reaction_changes(&app, &carol, &alice_id, carol_cursor).await;
+    assert!(carol_caught_up["reactions"].as_array().unwrap().is_empty());
+    assert_eq!(carol_caught_up["next_seq"], carol_cursor);
 
-    // On the server: no ciphertext of Alice's left, Carol's chat and Alice's notes are empty,
-    // and her upload and call are gone.
+    // On the server: no ciphertext of Alice's left, no sealed reaction of hers or on anything
+    // she sent, Carol's chat and Alice's notes are empty, and her upload and call are gone.
     let alice_uuid = parse(&alice_id);
     let count = |sql: &'static str, id: Uuid| {
         let pool = state.pool.clone();
@@ -1261,10 +1366,44 @@ async fn deleting_an_account_deletes_each_chat_for_both() {
         .await,
         0
     );
+    assert_eq!(
+        count(
+            "SELECT COUNT(*)::bigint FROM message_reactions WHERE user_id = $1 AND ciphertext IS NOT NULL",
+            alice_uuid,
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        count(
+            "SELECT COUNT(*)::bigint FROM message_reactions r
+             INNER JOIN messages m ON m.id = r.message_id
+             WHERE m.sender_user_id = $1 AND r.ciphertext IS NOT NULL",
+            alice_uuid,
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        count(
+            "SELECT COUNT(*)::bigint FROM reaction_reads WHERE user_id = $1",
+            alice_uuid,
+        )
+        .await,
+        0
+    );
     let carol_conversation = carol_history["conversation_id"].as_str().unwrap();
     assert_eq!(
         count(
             "SELECT COUNT(*)::bigint FROM messages WHERE conversation_id = $1",
+            parse(carol_conversation),
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        count(
+            "SELECT COUNT(*)::bigint FROM message_reactions WHERE conversation_id = $1",
             parse(carol_conversation),
         )
         .await,
@@ -1313,9 +1452,6 @@ async fn deleting_an_account_deletes_each_chat_for_both() {
         .await,
         0
     );
-
-    // Reaction catch-up (`GET /conversations/:peer/reactions`) lives on feature/reactions; its
-    // account-deletion case belongs with that branch.
 }
 
 #[tokio::test]
@@ -1355,22 +1491,7 @@ async fn a_send_racing_its_device_revocation_is_refused() {
                 .status()
         }
     });
-    let mut polls = 0;
-    loop {
-        let waiting: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*)::bigint FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))",
-        )
-        .bind(revoke_pid)
-        .fetch_one(&state.pool)
-        .await
-        .expect("blocked sessions");
-        if waiting > 0 {
-            break;
-        }
-        polls += 1;
-        assert!(polls < 300, "the send never waited for the device row");
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
+    wait_until_blocked_by(&state.pool, revoke_pid, "the send").await;
     revoke.commit().await.expect("commit revoke");
 
     assert_eq!(send.await.expect("send task"), StatusCode::UNAUTHORIZED);
@@ -1381,4 +1502,83 @@ async fn a_send_racing_its_device_revocation_is_refused() {
             .await
             .expect("messages");
     assert_eq!(sent, 0);
+}
+
+#[tokio::test]
+async fn a_reaction_racing_its_device_revocation_is_refused() {
+    let Some((app, state)) = test_app_and_state().await else {
+        eprintln!(
+            "skipping a_reaction_racing_its_device_revocation_is_refused: DATABASE_URL unavailable"
+        );
+        return;
+    };
+
+    let (alice_name, password) = unique_user();
+    let (alice, alice_id, alice_device) = register_user(&app, &alice_name, &password).await;
+    let (bob_name, _) = unique_user();
+    let (bob, bob_id, _) = register_user(&app, &bob_name, &password).await;
+    become_contacts(&app, (&alice, &alice_id), (&bob, &bob_id)).await;
+    let message = send_text(&app, &bob, &alice_id, b"sealed-from-bob").await;
+
+    // As for a send: account deletion revokes the device before it clears the account's
+    // reactions, and nothing else stops one that lands after the clear.
+    let mut revoke = state.pool.begin().await.expect("begin");
+    let revoke_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *revoke)
+        .await
+        .expect("pid");
+    sqlx::query("UPDATE devices SET revoked_at = now() WHERE id = $1")
+        .bind(Uuid::parse_str(&alice_device).unwrap())
+        .execute(&mut *revoke)
+        .await
+        .expect("revoke");
+
+    let reaction = tokio::spawn({
+        let app = app.clone();
+        async move {
+            authed(
+                &app,
+                "PUT",
+                &format!("/api/v1/messages/{message}/reaction"),
+                &alice,
+                Some(json!({ "ciphertext": BASE64.encode(b"sealed-in-flight") })),
+            )
+            .await
+            .status()
+        }
+    });
+    wait_until_blocked_by(&state.pool, revoke_pid, "the reaction").await;
+    revoke.commit().await.expect("commit revoke");
+
+    assert_eq!(
+        reaction.await.expect("reaction task"),
+        StatusCode::UNAUTHORIZED
+    );
+    let reactions: i64 =
+        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM message_reactions WHERE user_id = $1")
+            .bind(Uuid::parse_str(&alice_id).unwrap())
+            .fetch_one(&state.pool)
+            .await
+            .expect("reactions");
+    assert_eq!(reactions, 0);
+}
+
+/// Waits until a request queues behind the locks of the transaction on backend `pid`.
+async fn wait_until_blocked_by(pool: &sqlx::PgPool, pid: i32, what: &str) {
+    let mut polls = 0;
+    loop {
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))",
+        )
+        .bind(pid)
+        .fetch_one(pool)
+        .await
+        .expect("blocked sessions");
+        if waiting > 0 {
+            return;
+        }
+        polls += 1;
+        assert!(polls < 300, "{what} never waited for the device row");
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
 }

@@ -15,7 +15,9 @@
 //! `FOR KEY SHARE` (then its seen row); deleting a chat `FOR UPDATE`; deleting an account every
 //! chat of it `FOR UPDATE`, in id order, before its messages. So chat and account deletes run
 //! alone, the rest meet at the message row or the counter in that order, and a reaction never
-//! lands on a message deleted a moment earlier.
+//! lands on a message deleted a moment earlier. A new reaction holds its device row before all
+//! of that, as a send does, so one racing its account's deletion is either cleared with the
+//! rest or refused.
 //! Agent: WRITES message_reactions, conversation_reaction_seqs, reaction_reads (migration 020);
 //! READS messages, conversations, conversation_clears, message_hides; PUBLISHES WS
 //! `message.reaction` (the reactor's other devices, and the other participant while they can
@@ -208,6 +210,7 @@ pub async fn put_reaction(
     let target = load_target(&state, &auth, message_id).await?;
 
     let mut tx = begin(&state).await?;
+    lock_device(&mut tx, auth.device_id).await?;
     lock_conversation(&mut tx, target.conversation_id).await?;
     // Re-checked under the lock: a message deleted after `load_target` looked is not found.
     if !lock_message(&mut tx, message_id, true).await? {
@@ -461,9 +464,11 @@ pub(crate) async fn latest_reaction_seq<'e>(
 
 /// Clears every live reaction on messages deleted for everyone, each with its own new `seq` so
 /// devices catching up drop them too — and so no sealed reaction outlives its message.
-/// Agent: CALLED inside messages::delete_for_everyone (message row held `FOR UPDATE`) and
-/// conversations::tombstone_own_messages (conversation row held `FOR UPDATE`): a reaction write
-/// waits on either lock, so the rows counted here can't change before they are updated.
+/// Agent: CALLED inside messages::delete_for_everyone (message row held `FOR UPDATE`),
+/// conversations::tombstone_own_messages (conversation row held `FOR UPDATE`) and
+/// conversations::delete_chats_for_both (every chat of the account held `FOR UPDATE`): a
+/// reaction write waits on any of those locks, so the rows counted here can't change before
+/// they are updated.
 pub(crate) async fn clear_reactions_on(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     conversation_id: Uuid,
@@ -485,21 +490,7 @@ pub(crate) async fn clear_reactions_on(
     if live == 0 {
         return Ok(());
     }
-    // All the numbers in one step; catch-up pages by seq, so two rows must never share one.
-    let end: i64 = sqlx::query_scalar(
-        r#"
-        INSERT INTO conversation_reaction_seqs (conversation_id, seq)
-        VALUES ($1, $2)
-        ON CONFLICT (conversation_id)
-        DO UPDATE SET seq = conversation_reaction_seqs.seq + EXCLUDED.seq
-        RETURNING seq
-        "#,
-    )
-    .bind(conversation_id)
-    .bind(live)
-    .fetch_one(&mut **tx)
-    .await
-    .map_err(|err| AppError::Internal(format!("reserve reaction seqs failed: {err}")))?;
+    let base = reserve_seqs(tx, conversation_id, live).await?;
     sqlx::query(
         r#"
         WITH live AS (
@@ -515,10 +506,64 @@ pub(crate) async fn clear_reactions_on(
         "#,
     )
     .bind(message_ids)
-    .bind(end - live)
+    .bind(base)
     .execute(&mut **tx)
     .await
     .map_err(|err| AppError::Internal(format!("clear reactions on delete failed: {err}")))?;
+    Ok(())
+}
+
+/// Clears every live reaction `user_id` left in `conversation_ids`, each with its own new `seq`
+/// so the other person's devices drop them too. For account deletion: the users row outlives
+/// the account (migration 021), so its reactions no longer cascade away with it.
+/// Agent: CALLED by conversations::delete_chats_for_both, which holds every one of
+/// `conversation_ids` `FOR UPDATE`; finds the rows by message_reactions_user_idx.
+pub(crate) async fn clear_reactions_by(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: Uuid,
+    conversation_ids: &[Uuid],
+) -> Result<(), AppError> {
+    #[derive(FromRow)]
+    struct Live {
+        conversation_id: Uuid,
+        count: i64,
+    }
+    let chats = sqlx::query_as::<_, Live>(
+        r#"
+        SELECT conversation_id, COUNT(*) AS count
+        FROM message_reactions
+        WHERE user_id = $1 AND conversation_id = ANY($2) AND ciphertext IS NOT NULL
+        GROUP BY conversation_id
+        ORDER BY conversation_id
+        "#,
+    )
+    .bind(user_id)
+    .bind(conversation_ids)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("count account reactions failed: {err}")))?;
+    for chat in chats {
+        let base = reserve_seqs(tx, chat.conversation_id, chat.count).await?;
+        sqlx::query(
+            r#"
+            WITH live AS (
+                SELECT message_id, row_number() OVER (ORDER BY message_id) AS n
+                FROM message_reactions
+                WHERE conversation_id = $1 AND user_id = $2 AND ciphertext IS NOT NULL
+            )
+            UPDATE message_reactions r
+            SET ciphertext = NULL, seq = $3 + live.n, updated_at = now()
+            FROM live
+            WHERE r.message_id = live.message_id AND r.user_id = $2
+            "#,
+        )
+        .bind(chat.conversation_id)
+        .bind(user_id)
+        .bind(base)
+        .execute(&mut **tx)
+        .await
+        .map_err(|err| AppError::Internal(format!("clear account reactions failed: {err}")))?;
+    }
     Ok(())
 }
 
@@ -600,9 +645,29 @@ pub async fn mark_reactions_seen(
     }))
 }
 
-/// First lock of every reaction write and of deleting a message for everyone: waits out a
-/// whole-chat delete in flight (it holds the row `FOR UPDATE`) without blocking sends, which
-/// only take `FOR NO KEY UPDATE`.
+/// First lock of a new reaction, as of a send (`messages::send_message`): account deletion
+/// revokes the account's devices before it clears the reactions in each chat, and the users row
+/// outlives it (migration 021), so no foreign key stops a late write any more. Holding the
+/// device row until commit does: a racing reaction either commits first and is cleared with the
+/// rest, or finds the device revoked (`401`).
+/// Agent: SELECT devices FOR SHARE; waits behind devices::revoke_device's UPDATE.
+async fn lock_device(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    device_id: Uuid,
+) -> Result<(), AppError> {
+    let live: Option<Uuid> = sqlx::query_scalar(
+        r#"SELECT id FROM devices WHERE id = $1 AND revoked_at IS NULL FOR SHARE"#,
+    )
+    .bind(device_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("lock reaction device failed: {err}")))?;
+    live.map(|_| ()).ok_or_else(AppError::unauthorized)
+}
+
+/// First lock in the chat of every reaction write and of deleting a message for everyone: waits
+/// out a whole-chat delete in flight (it holds the row `FOR UPDATE`) without blocking sends,
+/// which only take `FOR NO KEY UPDATE`.
 pub(crate) async fn lock_conversation(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     conversation_id: Uuid,
@@ -740,6 +805,31 @@ async fn next_seq(
     .fetch_one(&mut **tx)
     .await
     .map_err(|err| AppError::Internal(format!("next reaction seq failed: {err}")))
+}
+
+/// Takes `count` numbers from the conversation's counter in one step and returns the one just
+/// before them: rows cleared together get `base + 1 ..= base + count`, since catch-up pages by
+/// seq and two rows must never share one.
+async fn reserve_seqs(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    conversation_id: Uuid,
+    count: i64,
+) -> Result<i64, AppError> {
+    let end: i64 = sqlx::query_scalar(
+        r#"
+        INSERT INTO conversation_reaction_seqs (conversation_id, seq)
+        VALUES ($1, $2)
+        ON CONFLICT (conversation_id)
+        DO UPDATE SET seq = conversation_reaction_seqs.seq + EXCLUDED.seq
+        RETURNING seq
+        "#,
+    )
+    .bind(conversation_id)
+    .bind(count)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("reserve reaction seqs failed: {err}")))?;
+    Ok(end - count)
 }
 
 async fn check_budget(state: &AppState, auth: &AuthContext) -> Result<(), AppError> {

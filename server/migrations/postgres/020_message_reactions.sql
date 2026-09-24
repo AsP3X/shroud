@@ -31,7 +31,8 @@ CREATE INDEX message_reactions_unseen_idx
     ON message_reactions (conversation_id, message_sender_id, added_seq)
     WHERE ciphertext IS NOT NULL AND user_id <> message_sender_id;
 
--- Account deletion cascades on user_id; removals keep their rows, so the table only grows.
+-- Account deletion finds a user's reactions here to clear them: the users row stays (migration
+-- 021), so they no longer cascade. Removals keep their rows, so the table only grows.
 CREATE INDEX message_reactions_user_idx ON message_reactions (user_id);
 
 -- Each conversation's reaction change counter.

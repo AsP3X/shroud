@@ -7,6 +7,8 @@
 //! Agent: DB conversations/conversation_clears/messages/contacts/contact_requests;
 //! READS users.allow_peer_chat_delete; PUBLISHES `conversation.deleted` over realtime.
 
+use std::collections::BTreeMap;
+
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -314,11 +316,13 @@ pub(crate) struct DeletedChat {
 ///
 /// Human: The same promise as `DELETE /conversations/{peer}?scope=everyone`: what the account
 /// sent becomes "Message deleted", a peer who allowed `allow_peer_chat_delete` loses the chat,
-/// and everyone else keeps their own messages. The caller revokes the account's devices first
-/// and drops its contacts itself.
+/// and everyone else keeps their own messages. No reaction of the account's, or on what it
+/// sent, stays sealed. The caller revokes the account's devices first and drops its contacts
+/// itself.
 /// Agent: SELECT conversations FOR UPDATE (id order) JOIN users; UPDATE messages/media_objects
-/// (tombstones); upsert conversation_clears; purge fully cleared messages; RETURNS one
-/// DeletedChat per conversation.
+/// (tombstones); upsert conversation_clears; purge fully cleared messages; clear reactions on
+/// the tombstones and the account's own (a new seq each); RETURNS one DeletedChat per
+/// conversation.
 pub(crate) async fn delete_chats_for_both(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     user_id: Uuid,
@@ -366,7 +370,7 @@ pub(crate) async fn delete_chats_for_both(
     .execute(&mut **tx)
     .await
     .map_err(|err| AppError::Internal(format!("unlink media on account delete failed: {err}")))?;
-    sqlx::query(
+    let tombstoned: Vec<(Uuid, Uuid)> = sqlx::query_as(
         r#"
         UPDATE messages
         SET ciphertext = NULL,
@@ -375,14 +379,22 @@ pub(crate) async fn delete_chats_for_both(
         WHERE conversation_id = ANY($1)
           AND sender_user_id = $2
           AND deleted_for_everyone_at IS NULL
+        RETURNING conversation_id, id
         "#,
     )
     .bind(&ids)
     .bind(user_id)
     .bind(at)
-    .execute(&mut **tx)
+    .fetch_all(&mut **tx)
     .await
     .map_err(|err| AppError::Internal(format!("tombstone sent messages failed: {err}")))?;
+    let mut tombstoned_by_chat: BTreeMap<Uuid, Vec<Uuid>> = BTreeMap::new();
+    for (conversation_id, message_id) in tombstoned {
+        tombstoned_by_chat
+            .entry(conversation_id)
+            .or_default()
+            .push(message_id);
+    }
 
     let mut chats = Vec::with_capacity(rows.len());
     for row in rows {
@@ -397,6 +409,15 @@ pub(crate) async fn delete_chats_for_both(
             cleared_for_peer: row.allow_peer_chat_delete,
         });
     }
+
+    // Human: The users row outlives the account (migration 021), so its reactions no longer
+    // cascade away. A tombstone carries none, as in `tombstone_own_messages`, and none the
+    // account left stays sealed; each clear takes a new seq, so the other person's devices catch
+    // up with it. After the purges, which took the reactions on what they deleted with them.
+    for (conversation_id, message_ids) in &tombstoned_by_chat {
+        crate::routes::reactions::clear_reactions_on(tx, *conversation_id, message_ids).await?;
+    }
+    crate::routes::reactions::clear_reactions_by(tx, user_id, &ids).await?;
     Ok(chats)
 }
 

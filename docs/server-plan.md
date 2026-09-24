@@ -1290,24 +1290,29 @@ Add optional:
   set), my clear watermark moves to now, and a peer with `allow_peer_chat_delete` gets theirs moved too
   (their copy is gone; messages both have cleared past are deleted). Every other peer keeps the chat
   with their own messages; `GET /conversations` names me `"Deleted account"`.
+- Reactions on my tombstoned messages and every reaction I left lose their ciphertext, each with a new
+  `seq`, so a peer who keeps the chat catches up with the removals (`GET /conversations/:peer/reactions`);
+  in a cleared copy they go with the purged messages. They no longer cascade away with the `users` row.
 - The `users` row is **not** deleted: conversations, messages, media and calls reference it (and my
   devices) with `ON DELETE CASCADE`, so deleting it wiped each peer's side of the chat as well. It stays
   as a placeholder (migration 021): `username`, `share_code` and `password_hash` NULL, `deleted_at` set.
   The name and code can be registered again; `GET /users/*` and contact requests answer `404`.
 - Devices are revoked as by `DELETE /devices/:id` (sessions, keys, push tokens, PIN guards, undelivered
   deliveries) and their names cleared. Saved Messages, my uploads (rows and blobs), contacts, contact
-  requests, blocks and hides are deleted. Ringing or active calls end as if I hung up, then all my call
-  rows are deleted.
+  requests, blocks, hides and reaction seen marks are deleted. Ringing or active calls end as if I hung
+  up, then all my call rows are deleted.
 - WS to peers after commit: `conversation.deleted` per chat (`user_id` me, `scope: "everyone"`,
   `cleared_for_peer`), `contact.removed` per contact, `call.ended` per call that was still live.
-- `POST /messages` holds the sender's device row (`FOR SHARE`) until commit, so a send racing the
-  deletion is either tombstoned with the rest or refused with `401`.
+- `POST /messages` and `PUT /messages/:id/reaction` hold the caller's device row (`FOR SHARE`) until
+  commit, so a send or reaction racing the deletion is either tombstoned or cleared with the rest, or
+  refused with `401`.
 
 ### Milestone 10 — Reactions
 
 Migration 020: `message_reactions(message_id, user_id, conversation_id, message_sender_id,
 ciphertext NULL, seq, added_seq, updated_at)`, primary key `(message_id, user_id)`, indexes
-`(conversation_id, seq)` (catch-up), `(user_id)` (account deletion) and the partial unseen index
+`(conversation_id, seq)` (catch-up), `(user_id)` (account deletion finds the reactions to clear;
+the users row stays, so they don't cascade) and the partial unseen index
 `(conversation_id, message_sender_id, added_seq) WHERE ciphertext IS NOT NULL AND user_id <>
 message_sender_id`; `conversation_reaction_seqs` (one change counter per conversation);
 `reaction_reads(user_id, conversation_id, seen_seq)`. `message_sender_id` copies the message's
@@ -1329,10 +1334,12 @@ row (`FOR KEY SHARE`), the message row (`FOR UPDATE`), the counter, reaction row
 reactions seen: the conversation row (`FOR KEY SHARE`), then its `reaction_reads` row. Deleting a
 chat: the conversation row `FOR UPDATE`, which waits for all of the above and keeps them out while
 it runs its own order (seen marks, counter, then the messages it purges). Deleting an account:
-every chat of it `FOR UPDATE`, in id order, before its messages and the cascade. So a reaction
-can't land on a message deleted a moment earlier (the lock waits for the delete and re-reads the
-row), and none of these deadlock with each other. Both deletes clear the deleted messages'
-reactions (a new `seq` each), so no sealed reaction outlives its message.
+every chat of it `FOR UPDATE`, in id order, before its messages. A new reaction holds its device
+row (`FOR SHARE`) before all of that, as a send does. So a reaction can't land on a message
+deleted a moment earlier (the lock waits for the delete and re-reads the row), and none of these
+deadlock with each other. Both deletes clear the deleted messages' reactions (a new `seq` each),
+so no sealed reaction outlives its message; deleting an account also clears every reaction the
+account left.
 
 #### `PUT /messages/:id/reaction` `{ "ciphertext": "<base64>", "base_seq": 41, "added": true }` → `200` reaction
 

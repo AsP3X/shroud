@@ -375,10 +375,11 @@ pub struct DeleteAccountRequest {
 /// users row stays as a placeholder (migration 021) because conversations, messages, uploads
 /// and calls reference it with `ON DELETE CASCADE`; deleting it wiped the peer's side too.
 /// Username and share code are released, the devices are revoked, and Saved Messages, uploads,
-/// contacts, requests, blocks and calls go.
-/// Agent: one transaction: lock users row, revoke devices, tombstone messages, clear chats,
-/// scrub users; then purge media blobs and PUBLISH conversation.deleted / contact.removed /
-/// call.ended to the peers.
+/// contacts, requests, blocks and calls go. No reaction of the account's, or on what it sent,
+/// stays sealed.
+/// Agent: one transaction: lock users row, revoke devices, tombstone messages, clear chats and
+/// reactions, scrub users; then purge media blobs and PUBLISH conversation.deleted /
+/// contact.removed / call.ended to the peers.
 pub async fn delete_account(
     State(state): State<AppState>,
     auth: AuthContext,
@@ -478,6 +479,7 @@ pub async fn delete_account(
         ("contact_requests", "from_user_id = $1 OR to_user_id = $1"),
         ("blocks", "blocker_id = $1 OR blocked_id = $1"),
         ("message_hides", "user_id = $1"),
+        ("reaction_reads", "user_id = $1"),
     ] {
         sqlx::query(&format!("DELETE FROM {table} WHERE {filter}"))
             .bind(user_id)
