@@ -36,7 +36,9 @@ import {
   forgetDecryptedState,
   forgetMessageLocally,
   isUnsent,
+  OLDER_PAGE_SIZE,
   previewLine,
+  releaseVoice,
   replyRefFor,
   rewritePreview,
   tombstone,
@@ -50,7 +52,7 @@ import {
   type HistoryCursor,
 } from "../messaging";
 import { saveMediaBlob } from "../crypto/mediaCache";
-import { redactPreviewsFor } from "../crypto/plaintextCache";
+import { loadPreview, redactPreviewsFor, replacePreview } from "../crypto/plaintextCache";
 import { adoptImage, ensureImage, forgetImages, rekeyImage, releaseImage } from "../media/images";
 import type { PreparedImage } from "../media/prepareImage";
 import { encodeVideo, resetVideoWorker, VideoCanceledError, type VideoSendDraft } from "../media/prepareVideo";
@@ -159,6 +161,7 @@ export function AppShell({ session }: { session: Session }) {
   function discardMessage(messageId: string) {
     releaseImage(messageId);
     releaseVideo(messageId);
+    releaseVoice(messageId);
     forgetMessageLocally(messageId);
   }
 
@@ -437,6 +440,7 @@ export function AppShell({ session }: { session: Session }) {
     let cancelled = false;
     let prefetchTimer = 0;
     historyEpoch.current += 1;
+    const epoch = historyEpoch.current;
     olderCursor.current = null;
     olderLoad.current = null;
     setHasOlder(false);
@@ -455,7 +459,8 @@ export function AppShell({ session }: { session: Session }) {
     };
     loadHistoryPage(session.token, session.user.id, peerId, material)
       .then((page) => {
-        if (cancelled) return;
+        // A page read before the chat was deleted must not bring it back (`forgetChat`).
+        if (cancelled || epoch !== historyEpoch.current) return;
         if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
         olderCursor.current = page.older;
         setHasOlder(page.older !== null);
@@ -476,6 +481,68 @@ export function AppShell({ session }: { session: Session }) {
       window.clearTimeout(prefetchTimer);
     };
   }, [selected?.id, session.token, session.user.id, loadOlder]);
+
+  /** The chat is gone for us: the open thread empties, and nothing this tab kept of it stays. */
+  function forgetChat(peerId: string) {
+    // Its chat-list line quotes the newest message.
+    replacePreview(session.user.id, peerId, null);
+    setPreviewRev((n) => n + 1);
+    if (selectedRef.current?.id.toLowerCase() !== peerId) return;
+    // Pages still on their way were read before the delete; they are dropped when they land.
+    historyEpoch.current += 1;
+    olderCursor.current = null;
+    setHasOlder(false);
+    setLoadingOlder(false);
+    // Bubbles still sending are newer than the delete, so they stay.
+    for (const m of threadRef.current) if (!isUnsent(m)) discardMessage(m.id);
+    setThread((prev) => prev.filter(isUnsent));
+    setReplyTo((current) => (current && !isUnsent(current) ? null : current));
+  }
+
+  /**
+   * What the peer sent reads "Message deleted" now; the rest of the chat stays. The poll only
+   * adds new ids, so every page the open chat holds is fetched again and the server's copy wins
+   * (`loadHistoryPage` forgets what this tab kept of each tombstone).
+   */
+  async function reloadChat(peerId: string) {
+    // Every message of theirs is a tombstone, so a list line quoting one is stale.
+    const preview = loadPreview(session.user.id, peerId);
+    if (preview && !preview.isMine) {
+      replacePreview(session.user.id, peerId, { ...preview, text: "Message deleted", failed: false });
+      setPreviewRev((n) => n + 1);
+    }
+    const material = loadIdentity(session.user.id);
+    if (!material || selectedRef.current?.id.toLowerCase() !== peerId) return;
+    const epoch = historyEpoch.current;
+    const fetched = new Set<string>();
+    let before: HistoryCursor | null = null;
+    try {
+      for (;;) {
+        const page = await loadHistoryPage(
+          session.token,
+          session.user.id,
+          peerId,
+          material,
+          before,
+          OLDER_PAGE_SIZE,
+        );
+        // Another chat was opened, or this one was cleared, while the page was on its way.
+        if (!alive.current || epoch !== historyEpoch.current) return;
+        const gone = new Set(page.messages.filter((m) => m.deleted).map((m) => m.id.toLowerCase()));
+        setThread((prev) => mergeMessages(page.messages, prev));
+        setReplyTo((current) => (current && gone.has(current.id.toLowerCase()) ? null : current));
+        setPreviewRev((n) => n + 1);
+        for (const m of page.messages) fetched.add(m.id.toLowerCase());
+        // Done once the pages reach back to the oldest message the chat had loaded.
+        const oldest = threadRef.current.find((m) => !isUnsent(m));
+        if (!page.older || !oldest || fetched.has(oldest.id.toLowerCase())) return;
+        if (Date.parse(page.older.createdAt) < Date.parse(oldest.createdAt)) return;
+        before = page.older;
+      }
+    } catch {
+      /* the pages that landed stay; reopening the chat loads the rest */
+    }
+  }
 
   useEffect(() => {
     const connection = connectRealtime({
@@ -543,11 +610,20 @@ export function AppShell({ session }: { session: Session }) {
           })();
           return;
         }
-        if (
-          event.type.startsWith("contact.") ||
-          event.type === "conversation.deleted" ||
-          event.type === "message.deleted"
-        ) {
+        if (event.type === "conversation.deleted") {
+          void refresh();
+          // From the peer, or from one of our other devices (never the one that deleted it).
+          const initiator = String(event.raw.user_id ?? "").toLowerCase();
+          const other = String(event.raw.peer_user_id ?? "").toLowerCase();
+          if (!initiator || !other) return;
+          const ours = initiator === session.user.id.toLowerCase();
+          // As on iOS: our copy went when we deleted it (either scope), or when the peer deleted
+          // it for both and we let contacts do that. Otherwise only what the peer sent is gone.
+          if (ours || event.raw.cleared_for_peer === true) forgetChat(ours ? other : initiator);
+          else void reloadChat(initiator);
+          return;
+        }
+        if (event.type.startsWith("contact.") || event.type === "message.deleted") {
           void refresh();
           const open = selectedRef.current;
           if (event.type === "message.deleted") {

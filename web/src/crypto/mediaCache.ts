@@ -107,14 +107,16 @@ export async function saveMediaBlob(messageId: string, data: Uint8Array): Promis
 }
 
 /**
- * Drops everything cached for one message: voice bytes (`<id>`), the sealed photo or clip
- * (`sealed:<id>`) and a video's poster (`poster:<id>`). Used when a message is deleted, so
- * nothing of it stays on this device.
+ * Drops everything cached for these messages: voice bytes (`<id>`), the sealed photo or clip
+ * (`sealed:<id>`) and a video's poster (`poster:<id>`). Used when messages are deleted, so
+ * nothing of them stays on this device. One transaction however many there are.
  */
-export async function deleteMediaBlobs(messageId: string): Promise<void> {
-  const key = messageId.toLowerCase();
-  const names = [key, `sealed:${key}`, `poster:${key}`].map(id);
-  if (names.some((name) => name === null)) return;
+export async function deleteMediaBlobs(...messageIds: string[]): Promise<void> {
+  const names = messageIds.flatMap((messageId) => {
+    const key = messageId.toLowerCase();
+    return [key, `sealed:${key}`, `poster:${key}`].map(id);
+  });
+  if (names.length === 0 || names.some((name) => name === null)) return;
   try {
     const db = await openDb();
     await new Promise<void>((resolve, reject) => {

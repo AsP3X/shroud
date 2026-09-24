@@ -94,6 +94,11 @@ export function savePlaintext(messageId: string, text: string): void {
   if (name) vaultSet(name, text);
 }
 
+/** Whether this tab already forgot the message (`forgetPlaintext`), so nothing of it may be stored again. */
+export function isWithdrawn(messageId: string): boolean {
+  return withdrawn.has(messageId.toLowerCase());
+}
+
 /** Forgets one decrypted body — a deleted message must not linger in the cache. */
 export function forgetPlaintext(messageId: string): void {
   const key = messageId.toLowerCase();

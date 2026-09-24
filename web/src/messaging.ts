@@ -22,6 +22,7 @@ import { linkPreviewWire, type LinkPreview } from "./links";
 import { envelopeToWireB64, openMessage, sealMessage, wireB64ToEnvelope } from "./crypto/messageCrypto";
 import {
   forgetPlaintext,
+  isWithdrawn,
   loadPlaintext,
   loadPreview,
   replacePreview,
@@ -29,10 +30,11 @@ import {
   savePreview,
 } from "./crypto/plaintextCache";
 import { MAX_THUMB_BYTES } from "./media/envelopePreview";
-import { cacheSealedImage } from "./media/images";
+import { cacheSealedImage, releaseImage } from "./media/images";
 import type { PreparedImage } from "./media/prepareImage";
 import type { EncodedVideo } from "./media/prepareVideo";
-import { cacheSealedPoster, cacheSealedVideo } from "./media/videos";
+import { cacheSealedPoster, cacheSealedVideo, releaseVideo } from "./media/videos";
+import { getVoicePlayback, stopVoice } from "./voice/playback";
 
 /** `annotation` never reaches the thread: `applyAnnotations` folds it into its target. */
 export type ChatKind = "text" | "image" | "voice" | "video" | "annotation";
@@ -196,12 +198,12 @@ export async function fetchLatest(
   const peer = peerUserId.toLowerCase();
   return withPeerLock(peer, async () => {
     const res = await api.listMessages(token, peer);
-    const chronological = [...res.messages].reverse();
+    const fresh = [...res.messages]
+      .reverse()
+      .filter((dto) => !knownIds.has(dto.id) && !seenAnnotations.has(dto.id.toLowerCase()));
     const out: ChatMessage[] = [];
-    for (const dto of chronological) {
-      if (knownIds.has(dto.id) || seenAnnotations.has(dto.id.toLowerCase())) continue;
-      out.push(await decodeIncoming(dto, me, peer, token, material));
-    }
+    for (const dto of fresh) out.push(await decodeIncoming(dto, me, peer, token, material));
+    forgetTombstones(fresh);
     return out;
   });
 }
@@ -470,6 +472,8 @@ export function ensureVoiceLoaded(message: ChatMessage, token: string): Promise<
     if (!message.mediaObjectId || !message.mediaKey) return null;
     const sealed = await api.getMediaContent(token, message.mediaObjectId);
     const audio = await aesGcmOpen(b64ToBytes(message.mediaKey), sealed);
+    // Deleted while it downloaded: nothing of it may be stored.
+    if (isWithdrawn(message.id)) return null;
     await saveMediaBlob(message.id, audio);
     return audio;
   })().catch(() => null);
@@ -478,6 +482,13 @@ export function ensureVoiceLoaded(message: ChatMessage, token: string): Promise<
     if (voiceLoads.get(key) === task) voiceLoads.delete(key);
   });
   return task;
+}
+
+/** Stops a deleted voice note if it is the one playing: its bubble, pause button included, is gone. */
+export function releaseVoice(messageId: string): void {
+  const key = messageId.toLowerCase();
+  voiceLoads.delete(key);
+  if (getVoicePlayback().activeId?.toLowerCase() === key) stopVoice();
 }
 
 export function previewLine(me: string, peerUserId: string): string {
@@ -604,6 +615,7 @@ export async function loadHistoryPage(
     for (const dto of [...res.messages].reverse()) {
       out.push(await decodeIncoming(dto, me, peer, token, material));
     }
+    forgetTombstones(res.messages);
     const oldest = res.messages[res.messages.length - 1];
     const more = (res.has_more || res.messages.length >= limit) && oldest;
     return {
@@ -1061,6 +1073,23 @@ export function tombstone(message: ChatMessage): ChatMessage {
 export function forgetMessageLocally(messageId: string): void {
   forgetPlaintext(messageId);
   void deleteMediaBlobs(messageId);
+}
+
+/**
+ * Tombstones a page brought back. A message deleted without this tab being told (a chat
+ * deleted for both, a deleted account, an event missed while offline) still has its body and
+ * media cached here, never shown again but kept; they go now, once per tab.
+ */
+function forgetTombstones(dtos: WireMessage[]): void {
+  const ids = dtos.filter((dto) => dto.deleted_for_everyone && !isWithdrawn(dto.id)).map((dto) => dto.id);
+  if (ids.length === 0) return;
+  for (const id of ids) {
+    releaseImage(id);
+    releaseVideo(id);
+    releaseVoice(id);
+    forgetPlaintext(id);
+  }
+  void deleteMediaBlobs(...ids);
 }
 
 /**
