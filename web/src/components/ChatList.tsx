@@ -1,4 +1,4 @@
-import { QrCode, Search, SquarePen, X } from "lucide-react";
+import { Heart, QrCode, Search, SquarePen, X } from "lucide-react";
 import type { PeerActivity } from "../typing";
 import { Avatar } from "./Avatar";
 import { TypingLabel } from "./Typing";
@@ -11,6 +11,8 @@ export type ListEntry = {
   online: boolean;
   /** "typing" / "recording" replaces the preview, as on iOS. */
   activity?: PeerActivity;
+  /** The other side reacted to our messages since we last looked (Telegram's heart badge). */
+  newReactions?: boolean;
 };
 
 export type RequestEntry = { id: string; username: string };
@@ -156,7 +158,17 @@ export function ChatList({
                 <strong>{entry.username}</strong>
                 {entry.activity ? <TypingLabel word={entry.activity} /> : <span>{entry.subtitle}</span>}
               </span>
-              {entry.timestamp ? <time className="row-time">{entry.timestamp}</time> : null}
+              {entry.timestamp || entry.newReactions ? (
+                <span className="row-side">
+                  {entry.timestamp ? <time className="row-time">{entry.timestamp}</time> : null}
+                  {entry.newReactions ? (
+                    <span className="row-reaction-badge" title="New reactions">
+                      <Heart size={11} fill="currentColor" aria-hidden="true" />
+                      <span className="sr-only">New reactions</span>
+                    </span>
+                  ) : null}
+                </span>
+              ) : null}
             </button>
           );
         })}

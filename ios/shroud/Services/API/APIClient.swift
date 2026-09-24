@@ -172,6 +172,39 @@ nonisolated final class APIClient: Sendable {
         try Self.throwIfNeeded(data: data, status: http.statusCode)
     }
 
+    /// Performs a DELETE and returns the body as is — empty for `204` (e.g. removing a reaction
+    /// that was already gone).
+    func deleteRaw(path: String, bearerToken: String? = nil) async throws -> Data {
+        let (data, http) = try await perform(
+            path,
+            method: "DELETE",
+            bodyData: nil,
+            bearerToken: bearerToken
+        )
+        try Self.throwIfNeeded(data: data, status: http.statusCode)
+        return http.statusCode == 204 ? Data() : data
+    }
+
+    /// Performs a request and hands back the status and body as they are, for routes whose
+    /// error answers carry data (a reaction's `409` holds the current record). Throws only when
+    /// no answer came.
+    func response(
+        _ method: String,
+        path: String,
+        jsonBody: Data? = nil,
+        query: [String: String]? = nil,
+        bearerToken: String? = nil
+    ) async throws -> (status: Int, data: Data) {
+        let (data, http) = try await perform(
+            path,
+            method: method,
+            bodyData: jsonBody,
+            bearerToken: bearerToken,
+            query: query
+        )
+        return (http.statusCode, data)
+    }
+
     /// Performs a DELETE and decodes a JSON result body (e.g. chat delete outcome).
     func delete<T: Decodable>(
         path: String,

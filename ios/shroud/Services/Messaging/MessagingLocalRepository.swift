@@ -359,6 +359,30 @@ final class MessagingLocalRepository {
         written = state
     }
 
+    // MARK: - Reaction catch-up cursors
+
+    /// Peer → highest reaction `seq` already applied. Nil while locked or when the file does not
+    /// open — never an empty map a later save would write over every chat's cursor with.
+    func reactionCursors(userID: UUID?) -> [UUID: Int64]? {
+        guard let userID, let key = historyKey,
+              let stored = messageStore.loadReactionCursors(userID: userID, historyKey: key)
+        else { return nil }
+        var cursors: [UUID: Int64] = [:]
+        for (peer, seq) in stored.byPeer {
+            if let peerID = UUID(uuidString: peer) { cursors[peerID] = seq }
+        }
+        return cursors
+    }
+
+    func saveReactionCursors(_ cursors: [UUID: Int64], userID: UUID?) {
+        guard let userID, let key = historyKey else { return }
+        var stored = LocalMessageStore.ReactionCursors()
+        for (peerID, seq) in cursors {
+            stored.byPeer[peerID.uuidString.lowercased()] = seq
+        }
+        messageStore.saveReactionCursors(stored, userID: userID, historyKey: key)
+    }
+
     func clearAll() {
         historyKey = nil
         written = nil

@@ -30,6 +30,7 @@ import {
   savePreview,
 } from "./crypto/plaintextCache";
 import { MAX_THUMB_BYTES } from "./media/envelopePreview";
+import { openReaction, pageReactionsFor, type Reaction } from "./reactions";
 import { cacheSealedImage, releaseImage } from "./media/images";
 import type { PreparedImage } from "./media/prepareImage";
 import type { EncodedVideo } from "./media/prepareVideo";
@@ -105,6 +106,8 @@ export type ChatMessage = {
   localLinkImage?: boolean;
   delivered?: boolean;
   read?: boolean;
+  /** Everyone's reactions, oldest change first; removals stay as entries with no emoji. */
+  reactions?: Reaction[];
 };
 
 const peerKeyCache = new Map<string, Uint8Array>();
@@ -188,13 +191,41 @@ export async function ingestIncoming(
   return withPeerLock(peerUserId, () => decodeIncoming(dto, me, peerUserId, token, material));
 }
 
+/** The lowest seq of a page's reactions left unopened: the sender's key was out of reach. */
+type Unopened = { seq: number | null };
+
+/**
+ * A decoded message with the reactions its history page carried. A record whose sender's key
+ * can't be fetched right now is left out and noted in `unopened`: catch-up goes back for it.
+ */
+async function decodeWithReactions(
+  dto: WireMessage,
+  me: string,
+  peer: string,
+  token: string,
+  material: IdentityMaterial,
+  unopened: Unopened,
+): Promise<ChatMessage> {
+  const msg = await decodeIncoming(dto, me, peer, token, material);
+  if (!dto.reactions?.length || msg.deleted || msg.kind === "annotation") return msg;
+  const reactions: Reaction[] = [];
+  for (const wire of pageReactionsFor(dto.id, dto.reactions, new Set([me.toLowerCase(), peer]))) {
+    try {
+      reactions.push(await openReaction(wire, me, material, (id) => peerIdentityPublic(token, id)));
+    } catch {
+      unopened.seq = Math.min(unopened.seq ?? wire.seq, wire.seq);
+    }
+  }
+  return { ...msg, reactions };
+}
+
 export async function fetchLatest(
   token: string,
   me: string,
   peerUserId: string,
   material: IdentityMaterial,
   knownIds: Set<string>,
-): Promise<ChatMessage[]> {
+): Promise<{ messages: ChatMessage[]; reactionSeq: number | null; reactionUnopened: number | null }> {
   const peer = peerUserId.toLowerCase();
   return withPeerLock(peer, async () => {
     const res = await api.listMessages(token, peer);
@@ -202,9 +233,10 @@ export async function fetchLatest(
       .reverse()
       .filter((dto) => !knownIds.has(dto.id) && !seenAnnotations.has(dto.id.toLowerCase()));
     const out: ChatMessage[] = [];
-    for (const dto of fresh) out.push(await decodeIncoming(dto, me, peer, token, material));
+    const unopened: Unopened = { seq: null };
+    for (const dto of fresh) out.push(await decodeWithReactions(dto, me, peer, token, material, unopened));
     forgetTombstones(fresh);
-    return out;
+    return { messages: out, reactionSeq: res.reaction_seq ?? null, reactionUnopened: unopened.seq };
   });
 }
 
@@ -583,6 +615,10 @@ export type HistoryPage = {
   messages: ChatMessage[];
   /** Pass back to `loadHistoryPage` for the page before this one; null once the start is reached. */
   older: HistoryCursor | null;
+  /** The chat's highest reaction seq as the page was read; null from servers without reactions. */
+  reactionSeq: number | null;
+  /** The lowest seq of a reaction on the page left unopened (see `decodeWithReactions`). */
+  reactionUnopened: number | null;
 };
 
 /** Newest page on open: small, so a chat shows up after one short decrypt. */
@@ -612,8 +648,9 @@ export async function loadHistoryPage(
     }
     const res = await api.listMessages(token, peer, extra);
     const out: ChatMessage[] = [];
+    const unopened: Unopened = { seq: null };
     for (const dto of [...res.messages].reverse()) {
-      out.push(await decodeIncoming(dto, me, peer, token, material));
+      out.push(await decodeWithReactions(dto, me, peer, token, material, unopened));
     }
     forgetTombstones(res.messages);
     const oldest = res.messages[res.messages.length - 1];
@@ -621,6 +658,8 @@ export async function loadHistoryPage(
     return {
       messages: applyAnnotations(out),
       older: more ? { createdAt: oldest.created_at, id: oldest.id } : null,
+      reactionSeq: res.reaction_seq ?? null,
+      reactionUnopened: unopened.seq,
     };
   });
 }
@@ -1066,6 +1105,7 @@ export function tombstone(message: ChatMessage): ChatMessage {
     mediaObjectId: null,
     replyTo: null,
     linkPreview: null,
+    reactions: [],
   };
 }
 

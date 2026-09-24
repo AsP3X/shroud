@@ -203,6 +203,7 @@ pub async fn run() -> Result<(), AppError> {
         link_relay: Arc::new(crate::routes::link_relay::LinkRelay::new(
             crate::link_relay::RelayPolicy::production(),
         )),
+        reactions_max_per_user: config.reactions_max_per_user,
     };
 
     // Human: Last `.layer` is outermost — request-id runs first, then metrics, then TraceLayer.

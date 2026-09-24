@@ -7,6 +7,8 @@
 //! Agent: DB conversations/conversation_clears/messages/contacts/contact_requests;
 //! READS users.allow_peer_chat_delete; PUBLISHES `conversation.deleted` over realtime.
 
+use std::collections::BTreeMap;
+
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -35,6 +37,13 @@ pub struct ConversationItem {
     pub created_at: DateTime<Utc>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_message_at: Option<DateTime<Utc>>,
+    /// The chat's latest reaction change (0 when none): a client whose catch-up cursor is
+    /// behind knows without opening the chat.
+    pub reaction_seq: i64,
+    /// Live reactions by the other participant to the caller's messages with an emoji added
+    /// since the caller last marked them seen (`POST /conversations/{peer}/reactions/seen`):
+    /// the heart badge.
+    pub unseen_reactions: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -73,9 +82,14 @@ pub async fn list_conversations(
         peer_username: String,
         created_at: DateTime<Utc>,
         last_message_at: Option<DateTime<Utc>>,
+        reaction_seq: i64,
+        unseen_reactions: i64,
     }
 
     // Human: Join peer username; use denormalized last_message_at (no correlated subquery).
+    // The unseen-reaction count is one range of the partial unseen index per chat: the other
+    // person's live reactions to the caller's messages with `added_seq > seen_seq`, so it only
+    // walks what the caller has not seen (a clear marks everything seen).
     // A chat the caller cleared stays hidden until something newer than their watermark
     // arrives, which is what makes the next message read as a brand-new chat. A deleted
     // account has no username left; both apps require one, so it is named here.
@@ -90,12 +104,31 @@ pub async fn list_conversations(
                 $2
             ) AS peer_username,
             c.created_at,
-            c.last_message_at
+            c.last_message_at,
+            COALESCE(rs.seq, 0) AS reaction_seq,
+            (
+                SELECT COUNT(*)
+                FROM message_reactions r
+                INNER JOIN messages m ON m.id = r.message_id
+                WHERE r.conversation_id = c.id
+                  AND r.message_sender_id = $1
+                  AND r.user_id <> r.message_sender_id
+                  AND r.ciphertext IS NOT NULL
+                  AND r.added_seq > COALESCE(rr.seen_seq, 0)
+                  AND m.deleted_for_everyone_at IS NULL
+                  AND (cc.cleared_at IS NULL OR m.created_at > cc.cleared_at)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM message_hides h
+                      WHERE h.message_id = m.id AND h.user_id = $1
+                  )
+            ) AS unseen_reactions
         FROM conversations c
         INNER JOIN users ua ON ua.id = c.user_a_id
         INNER JOIN users ub ON ub.id = c.user_b_id
         LEFT JOIN conversation_clears cc
             ON cc.conversation_id = c.id AND cc.user_id = $1
+        LEFT JOIN conversation_reaction_seqs rs ON rs.conversation_id = c.id
+        LEFT JOIN reaction_reads rr ON rr.conversation_id = c.id AND rr.user_id = $1
         WHERE (c.user_a_id = $1 OR c.user_b_id = $1)
           AND c.user_a_id <> c.user_b_id
           AND (
@@ -121,6 +154,8 @@ pub async fn list_conversations(
             },
             created_at: row.created_at,
             last_message_at: row.last_message_at,
+            reaction_seq: row.reaction_seq,
+            unseen_reactions: row.unseen_reactions,
         })
         .collect();
 
@@ -187,9 +222,16 @@ pub async fn delete_conversation(
             if cleared_for_peer {
                 upsert_clear(&mut tx, peer_user_id, conversation_id, now).await?;
             } else {
-                // Peer keeps their own history, but nothing of ours stays readable there.
+                // Peer keeps their own history, but nothing of ours stays readable there: our
+                // messages become tombstones and our reactions on theirs are taken back.
                 tombstoned =
                     tombstone_own_messages(&mut tx, conversation_id, auth.user_id, now).await?;
+                crate::routes::reactions::clear_reactions_by(
+                    &mut tx,
+                    auth.user_id,
+                    &[conversation_id],
+                )
+                .await?;
             }
         }
 
@@ -281,11 +323,13 @@ pub(crate) struct DeletedChat {
 ///
 /// Human: The same promise as `DELETE /conversations/{peer}?scope=everyone`: what the account
 /// sent becomes "Message deleted", a peer who allowed `allow_peer_chat_delete` loses the chat,
-/// and everyone else keeps their own messages. The caller revokes the account's devices first
-/// and drops its contacts itself.
+/// and everyone else keeps their own messages. No reaction of the account's, or on what it
+/// sent, stays sealed. The caller revokes the account's devices first and drops its contacts
+/// itself.
 /// Agent: SELECT conversations FOR UPDATE (id order) JOIN users; UPDATE messages/media_objects
-/// (tombstones); upsert conversation_clears; purge fully cleared messages; RETURNS one
-/// DeletedChat per conversation.
+/// (tombstones); upsert conversation_clears; purge fully cleared messages; clear reactions on
+/// the tombstones and the account's own (a new seq each); RETURNS one DeletedChat per
+/// conversation.
 pub(crate) async fn delete_chats_for_both(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     user_id: Uuid,
@@ -333,7 +377,7 @@ pub(crate) async fn delete_chats_for_both(
     .execute(&mut **tx)
     .await
     .map_err(|err| AppError::Internal(format!("unlink media on account delete failed: {err}")))?;
-    sqlx::query(
+    let tombstoned: Vec<(Uuid, Uuid)> = sqlx::query_as(
         r#"
         UPDATE messages
         SET ciphertext = NULL,
@@ -342,14 +386,22 @@ pub(crate) async fn delete_chats_for_both(
         WHERE conversation_id = ANY($1)
           AND sender_user_id = $2
           AND deleted_for_everyone_at IS NULL
+        RETURNING conversation_id, id
         "#,
     )
     .bind(&ids)
     .bind(user_id)
     .bind(at)
-    .execute(&mut **tx)
+    .fetch_all(&mut **tx)
     .await
     .map_err(|err| AppError::Internal(format!("tombstone sent messages failed: {err}")))?;
+    let mut tombstoned_by_chat: BTreeMap<Uuid, Vec<Uuid>> = BTreeMap::new();
+    for (conversation_id, message_id) in tombstoned {
+        tombstoned_by_chat
+            .entry(conversation_id)
+            .or_default()
+            .push(message_id);
+    }
 
     let mut chats = Vec::with_capacity(rows.len());
     for row in rows {
@@ -364,6 +416,15 @@ pub(crate) async fn delete_chats_for_both(
             cleared_for_peer: row.allow_peer_chat_delete,
         });
     }
+
+    // Human: The users row outlives the account (migration 021), so its reactions no longer
+    // cascade away. A tombstone carries none, as in `tombstone_own_messages`, and none the
+    // account left stays sealed; each clear takes a new seq, so the other person's devices catch
+    // up with it. After the purges, which took the reactions on what they deleted with them.
+    for (conversation_id, message_ids) in &tombstoned_by_chat {
+        crate::routes::reactions::clear_reactions_on(tx, *conversation_id, message_ids).await?;
+    }
+    crate::routes::reactions::clear_reactions_by(tx, user_id, &ids).await?;
     Ok(chats)
 }
 
@@ -414,7 +475,8 @@ async fn find_conversation_tx(
 }
 
 /// Moves a participant's watermark forward. Never backwards: a replayed or out-of-order
-/// request must not un-hide messages the user already deleted.
+/// request must not un-hide messages the user already deleted. Reactions up to now count as
+/// seen too — they sit on messages the participant can no longer see.
 async fn upsert_clear(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     user_id: Uuid,
@@ -435,7 +497,7 @@ async fn upsert_clear(
     .execute(&mut **tx)
     .await
     .map_err(|err| AppError::Internal(format!("upsert conversation clear failed: {err}")))?;
-    Ok(())
+    crate::routes::reactions::mark_all_seen(tx, user_id, conversation_id).await
 }
 
 async fn peer_allows_chat_delete(
@@ -479,7 +541,7 @@ async fn tombstone_own_messages(
     .await
     .map_err(|err| AppError::Internal(format!("unlink media on chat delete failed: {err}")))?;
 
-    let result = sqlx::query(
+    let tombstoned: Vec<Uuid> = sqlx::query_scalar(
         r#"
         UPDATE messages
         SET ciphertext = NULL,
@@ -489,16 +551,20 @@ async fn tombstone_own_messages(
           AND sender_user_id = $2
           AND created_at <= $3
           AND deleted_for_everyone_at IS NULL
+        RETURNING id
         "#,
     )
     .bind(conversation_id)
     .bind(sender_user_id)
     .bind(at)
-    .execute(&mut **tx)
+    .fetch_all(&mut **tx)
     .await
     .map_err(|err| AppError::Internal(format!("tombstone chat messages failed: {err}")))?;
 
-    Ok(result.rows_affected())
+    // A tombstone carries no reactions, sealed ones included.
+    crate::routes::reactions::clear_reactions_on(tx, conversation_id, &tombstoned).await?;
+
+    Ok(tombstoned.len() as u64)
 }
 
 /// Deletes messages both participants have cleared past. `LEAST` alone would be wrong here

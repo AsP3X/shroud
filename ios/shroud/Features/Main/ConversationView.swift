@@ -25,6 +25,8 @@ struct ConversationView: View {
     /// Owns the mic session for this thread. The composer only reads its live state.
     @State private var voiceRecorder = VoiceRecorder()
     @State private var toast: String?
+    /// A reaction on its way from the bar or a double tap to its chip (`ReactionFlight`).
+    @State private var reactionFlight: ReactionFlight?
     /// Active long-press focus session.
     @State private var focusedMenu: FocusedMessageMenu?
     /// 0 = list slot, 1 = focus stack. Single source of truth for open+close motion.
@@ -172,6 +174,8 @@ struct ConversationView: View {
                     messageMenuOverlay(session: focusedMenu)
                 }
             }
+            // Above the menu: a pick leaves the bar while the menu is still fading out.
+            .overlay { ReactionFlightLayer(flight: reactionFlight) }
             .overlay { mediaViewerLayer }
             .overlay { photoComposeLayer }
             .overlay { videoComposeLayer }
@@ -352,6 +356,12 @@ struct ConversationView: View {
             .onChange(of: photoPickerItems) { _, items in
                 guard !items.isEmpty else { return }
                 Task { await loadPickedMedia(items) }
+            }
+            .onChange(of: messaging.reactionFailure) { _, failure in
+                guard let failure else { return }
+                toast = failure.message
+                Haptics.notification(.error)
+                scheduleToastClear()
             }
             .fullScreenCover(isPresented: $showCamera) {
                 CameraPicker { capture in
@@ -767,7 +777,12 @@ struct ConversationView: View {
                                 .id(id)
                                 .padding(.vertical, 8)
                         case let .message(message):
-                            messageRow(message, quoted: quoted)
+                            // Redraws only when this bubble's own content changes.
+                            let key = rowKey(for: message, quoted: quoted)
+                            EquatableMessageRow(key: key) {
+                                messageRow(message, key: key)
+                            }
+                                .equatable()
                                 .id(message.id)
                                 // Flashes after a jump from a reply header, full-bleed so the
                                 // eye catches the row rather than the bubble alone.
@@ -809,6 +824,13 @@ struct ConversationView: View {
                                         ? {
                                             handleMediaTap(message)
                                         }
+                                        : nil,
+                                    // Quick reaction on text only: other bubbles have controls
+                                    // of their own that would take both taps too.
+                                    onDoubleTap: message.kind == .text && messaging.canReact(to: message)
+                                        ? { point in
+                                            quickReact(message, at: point)
+                                        }
                                         : nil
                                 ) { rowGlobalFrame in
                                     // Prefer the true bubble frame; fall back to the press row.
@@ -837,6 +859,16 @@ struct ConversationView: View {
                 .animation(renderFrom == nil ? nil : Motion.bouncy, value: newestMessageID)
                 // Springy, so the ink bubble pops out of its tail corner like a message landing.
                 .animation(Motion.bouncy, value: peerActivity)
+                // Chips spring in and out and bubbles grow instead of jumping — for our taps and
+                // for the other side's reactions arriving over the socket alike.
+                .animation(
+                    Motion.respecting(reduceMotion, Motion.bouncy),
+                    value: messaging.reactionRevision(for: peerUserID)
+                )
+                .environment(\.reactionFlightTarget, reactionFlight?.target)
+                .onPreferenceChange(ReactionFlightFrameKey.self) { frame in
+                    landReactionFlight(at: frame)
+                }
                 .onPreferenceChange(MessageBubbleFrameKey.self) { frames in
                     bubbleFrames.frames.merge(frames, uniquingKeysWith: { $1 })
                 }
@@ -1173,6 +1205,8 @@ struct ConversationView: View {
     @discardableResult
     private func openLink(_ url: URL) -> Bool {
         guard !isShowingMessageMenu else { return false }
+        // The row's double tap (quick reaction) sees a link's taps too.
+        MessageTapClaim.claim()
         return InAppBrowser.open(url)
     }
 
@@ -1320,12 +1354,19 @@ struct ConversationView: View {
         }
     }
 
+    /// One thread row. Reads per-message state from `key` only: an observable read in here (a
+    /// transfer, the thread) would redraw the row on every change of it, whatever
+    /// `EquatableMessageRow` says.
     @ViewBuilder
     private func messageRow(
         _ message: MessagingController.ChatMessage,
-        quoted: [UUID: MessagingController.ChatMessage]
+        key: MessageRowKey
     ) -> some View {
-        let reply = replyContent(for: message, quoted: quoted)
+        let reply = key.reply
+        // Reacting where it can't happen (sending, failed, Saved Messages) offers nothing.
+        let onReactionTap: ((String) -> Void)? = messaging.canReact(to: message)
+            ? { emoji in react(emoji, to: message) }
+            : nil
         switch message.kind {
         case .image:
             ImageMessageBubble(
@@ -1334,7 +1375,7 @@ struct ConversationView: View {
                 onDownload: {
                     downloadMedia(message)
                 },
-                transfer: messaging.mediaTransfers[message.id],
+                transfer: key.transfer,
                 onCancelDownload: {
                     messaging.cancelMediaDownload(messageID: message.id)
                 },
@@ -1362,7 +1403,9 @@ struct ConversationView: View {
                 reply: reply,
                 onReplyTap: message.replyTo.map { reference in
                     { jumpToQuoted(reference.messageID) }
-                }
+                },
+                reactions: reactionChips(for: message),
+                onReactionTap: onReactionTap
             )
         case .video:
             VideoMessageBubble(
@@ -1371,7 +1414,7 @@ struct ConversationView: View {
                 onDownload: {
                     downloadMedia(message)
                 },
-                transfer: messaging.mediaTransfers[message.id],
+                transfer: key.transfer,
                 onCancelDownload: {
                     messaging.cancelMediaDownload(messageID: message.id)
                 },
@@ -1398,7 +1441,9 @@ struct ConversationView: View {
                 reply: reply,
                 onReplyTap: message.replyTo.map { reference in
                     { jumpToQuoted(reference.messageID) }
-                }
+                },
+                reactions: reactionChips(for: message),
+                onReactionTap: onReactionTap
             )
         case .voice:
             VoiceMessageBubble(
@@ -1434,11 +1479,13 @@ struct ConversationView: View {
                         return nil
                     }
                 },
-                inTranscriptTail: transcriptTail.contains(message.id),
+                inTranscriptTail: key.inTranscriptTail,
                 reply: reply,
                 onReplyTap: message.replyTo.map { reference in
                     { jumpToQuoted(reference.messageID) }
-                }
+                },
+                reactions: reactionChips(for: message),
+                onReactionTap: onReactionTap
             )
         case .text:
             MessageBubbleView(
@@ -1456,7 +1503,9 @@ struct ConversationView: View {
                 linkPreviewImage: linkPreviewImage(for: message),
                 onOpenLinkPreview: message.linkPreview?.openURL.map { url in
                     { _ = openLink(url) }
-                }
+                },
+                reactions: reactionChips(for: message),
+                onReactionTap: onReactionTap
             )
             .onAppear {
                 // Preview pictures are small and load on their own (photos wait for a tap).
@@ -1837,15 +1886,12 @@ struct ConversationView: View {
             isMine: message.isMine,
             cardHeight: MessageContextMenuCard.height(isMine: message.isMine, hasLink: hasLink),
             progress: menuProgress,
-            onReaction: { emoji in
+            onReaction: { emoji, source in
                 dismissMessageMenu()
-                toast = "Reacted \(emoji)"
-                scheduleToastClear()
+                reactAfterMenu(emoji, to: message, from: source)
             },
-            onMoreReactions: {
-                dismissMessageMenu()
-                showComingSoon("More reactions")
-            },
+            selectedReactions: Set(messaging.myReactions(on: liveMessage(message))),
+            showsReactions: messaging.canReact(to: liveMessage(message)),
             onBackdropTap: {
                 // The finger that opened the menu is usually still down; its release lands on
                 // the backdrop and would close what the hold just opened.
@@ -1861,7 +1907,9 @@ struct ConversationView: View {
                 heroImage: session.heroImage,
                 inTranscriptTail: transcriptTail.contains(message.id),
                 reply: replyContent(for: message, quoted: quotedMessagesByID),
-                linkPreviewImage: linkPreviewImage(for: message)
+                linkPreviewImage: linkPreviewImage(for: message),
+                // No flight lands in the preview; it is gone by the time the chip changes.
+                reactions: reactionChips(for: message, anchored: false)
             )
         } card: {
             MessageContextMenuCard(
@@ -1876,6 +1924,123 @@ struct ConversationView: View {
         }
         // A new message is a new menu: no scroll position carries over from the last one.
         .id(message.id)
+    }
+
+    /// Telegram's double-tap reaction.
+    private static let quickReaction = MessageReactionBar.quickReaction
+
+    /// Chips for a bubble, with the names this chat knows (ours and the peer's). `anchored`
+    /// chips carry the message id, so a flying reaction can find its landing spot.
+    private func reactionChips(
+        for message: MessagingController.ChatMessage,
+        anchored: Bool = true
+    ) -> [ReactionChipContent] {
+        guard !message.reactions.isEmpty, !message.deleted else { return [] }
+        let me = messaging.myUserID
+        let mine = messaging.myReactions(on: message)
+        return ReactionMerge.chips(message.reactions, me: me).map { chip in
+            ReactionChipContent(
+                emojis: chip.emojis,
+                reactors: chip.userIDs.map { id in
+                    id == me
+                        ? ReactionChipContent.Reactor(id: id, name: messaging.myUsername ?? "You", isMe: true)
+                        : ReactionChipContent.Reactor(id: id, name: peerUsername)
+                },
+                includesMe: chip.includesMe,
+                myEmojis: mine,
+                messageID: anchored ? message.id : nil
+            )
+        }
+    }
+
+    /// The thread's current copy: a menu's snapshot may predate a reaction that just landed.
+    private func liveMessage(_ message: MessagingController.ChatMessage) -> MessagingController.ChatMessage {
+        messages.first(where: { $0.id == message.id }) ?? message
+    }
+
+    /// A pick from the long-press menu. The emoji leaves the bar at once; the chip changes only
+    /// once the bubble is back in its slot, so the lifted copy never lands on a bubble that has
+    /// already grown underneath it.
+    private func reactAfterMenu(
+        _ emoji: String,
+        to message: MessagingController.ChatMessage,
+        from source: CGRect?
+    ) {
+        let live = liveMessage(message)
+        if let source, messaging.canReact(to: live), !messaging.myReactions(on: live).contains(emoji) {
+            beginReactionFlight(emoji, messageID: message.id, from: source)
+        }
+        let settle = reduceMotion ? Motion.reducedDuration : Motion.menuDropDuration
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(settle + 0.03))
+            react(emoji, to: liveMessage(message))
+        }
+    }
+
+    /// Double tap on a text bubble: Telegram's quick reaction, flying out from under the finger.
+    private func quickReact(_ message: MessagingController.ChatMessage, at point: CGPoint) {
+        guard focusedMenu == nil else { return }
+        if !messaging.myReactions(on: message).contains(Self.quickReaction) {
+            let start = CGRect(x: point.x - 22, y: point.y - 22, width: 44, height: 44)
+            beginReactionFlight(Self.quickReaction, messageID: message.id, from: start, scale: 1.6)
+        }
+        react(Self.quickReaction, to: message)
+    }
+
+    /// Starts a flight (see `ReactionFlight`). Reduce Motion: the chip just appears.
+    private func beginReactionFlight(_ emoji: String, messageID: UUID, from source: CGRect, scale: CGFloat = 1) {
+        guard !reduceMotion else { return }
+        let flight = ReactionFlight(emoji: emoji, messageID: messageID, from: source, fromScale: scale)
+        reactionFlight = flight
+        // The chip never showed up (scrolled away, the save refused at once): let it go.
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.2))
+            guard reactionFlight?.id == flight.id, reactionFlight?.to == nil else { return }
+            withAnimation(Motion.fade) { reactionFlight = nil }
+        }
+    }
+
+    /// The landing chip reported where its emoji sits: fly there, then hand over to the chip.
+    private func landReactionFlight(at frame: CGRect?) {
+        guard let frame, let flight = reactionFlight else { return }
+        guard flight.to == nil else {
+            // The thread moved under the flight (the bottom follows a growing bubble): re-aim.
+            if flight.to != frame { reactionFlight?.to = frame }
+            return
+        }
+        reactionFlight?.to = frame
+        withAnimation(Motion.reactionFlight) {
+            reactionFlight?.landed = true
+        } completion: {
+            guard reactionFlight?.id == flight.id else { return }
+            reactionFlight = nil
+        }
+    }
+
+    /// Everything a row's bubble is drawn from (see `EquatableMessageRow`).
+    private func rowKey(
+        for message: MessagingController.ChatMessage,
+        quoted: [UUID: MessagingController.ChatMessage]
+    ) -> MessageRowKey {
+        MessageRowKey(
+            message: message,
+            reply: replyContent(for: message, quoted: quoted),
+            transfer: messaging.mediaTransfers[message.id],
+            inTranscriptTail: transcriptTail.contains(message.id),
+            linkImage: LinkImageIdentity(linkPreviewImage(for: message))
+        )
+    }
+
+    /// Picking `emoji` (bar, grid, chip or double tap): sets it, or takes it back when it is
+    /// already ours.
+    private func react(_ emoji: String, to message: MessagingController.ChatMessage) {
+        guard messaging.canReact(to: message) else {
+            toast = "You can react once the message is sent."
+            scheduleToastClear()
+            return
+        }
+        Haptics.impact(.light)
+        messaging.toggleReaction(emoji, on: message.id, peerUserID: peerUserID)
     }
 
     private func handleMenu(_ action: MessageMenuAction, message: MessagingController.ChatMessage) {
@@ -2127,4 +2292,51 @@ private final class ThreadScrollState {
     var pinning = 0
     /// The opening pin has landed; before that the offset says nothing about the reader.
     var settled = false
+}
+
+/// Everything a thread row's bubble is drawn from.
+///
+/// Agent: Compares the whole message — cheap for an unchanged one, since `Data` equality
+/// short-circuits on shared storage — so a field added to `ChatMessage` is covered without
+/// touching this. Anything else `messageRow` reads per message belongs here too.
+private struct MessageRowKey: Equatable {
+    let message: MessagingController.ChatMessage
+    let reply: ReplyQuoteContent?
+    let transfer: MessagingController.MediaTransfer?
+    let inTranscriptTail: Bool
+    let linkImage: LinkImageIdentity
+}
+
+/// A link preview's pictures by identity (`LinkPreviewImageCache` hands out one instance per
+/// message and variant until the bytes change).
+private struct LinkImageIdentity: Equatable {
+    private let kind: Int
+    private let first: ObjectIdentifier?
+    private let second: ObjectIdentifier?
+    private let aspect: CGFloat
+
+    init(_ image: LinkPreviewImage) {
+        switch image {
+        case .none:
+            (kind, first, second, aspect) = (0, nil, nil, 0)
+        case let .thumbnail(thumbnail):
+            (kind, first, second, aspect) = (1, ObjectIdentifier(thumbnail), nil, 0)
+        case let .large(full, placeholder, ratio):
+            (kind, first, second, aspect) = (2, full.map(ObjectIdentifier.init), placeholder.map(ObjectIdentifier.init), ratio)
+        }
+    }
+}
+
+/// A thread row that redraws only when what it shows changes.
+///
+/// Human: Bubbles take closures, and closures never compare equal, so any change to the thread
+/// — one reaction, one receipt — redrew every loaded bubble (hundreds after scrolling up). The
+/// key holds everything the bubble is drawn from; its closures act on the message by id.
+private struct EquatableMessageRow<Content: View>: View, Equatable {
+    let key: MessageRowKey
+    @ViewBuilder let content: () -> Content
+
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.key == rhs.key }
+
+    var body: some View { content() }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Copy, ExternalLink, Link, Reply, Trash2 } from "lucide-react";
 import { isUnsent, type ChatMessage } from "../messaging";
 import { ContextMenu, type MenuAnchor, type MenuItem } from "./ContextMenu";
@@ -18,10 +18,20 @@ export function MessageMenu({
   actions,
   copyLabel,
   settle = false,
+  header,
+  trigger,
+  returnFocus,
   onAction,
   onClose,
 }: {
   anchor: MessageMenuAnchor;
+  /** The button that opened the menu (the hover React button): pressing it again closes the
+   * menu, and focus goes back there. */
+  trigger?: HTMLElement | null;
+  /** Opened from the keyboard: the control that was focused, where focus goes back. */
+  returnFocus?: HTMLElement | null;
+  /** Above the actions: the reaction row. */
+  header?: ReactNode;
   actions: MessageMenuAction[];
   /** "Copy text", or "Copy selection" when part of the bubble is selected. */
   copyLabel?: string;
@@ -52,7 +62,10 @@ export function MessageMenu({
       anchor={anchor}
       items={actions.map((action) => all[action])}
       label="Message actions"
+      header={header}
       settle={settle}
+      trigger={trigger}
+      returnFocus={returnFocus}
       onSelect={onAction}
       onClose={onClose}
     />

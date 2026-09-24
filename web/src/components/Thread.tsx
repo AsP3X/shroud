@@ -11,10 +11,12 @@ import {
   type DragEvent,
   type FormEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 import {
   ArrowDown,
   ChevronLeft,
+  SmilePlus,
   Image,
   ImagePlus,
   Info,
@@ -28,7 +30,13 @@ import {
   X,
 } from "lucide-react";
 import { clockTime, dayLabel, fullTimestamp, sameDay, MINUTE } from "../format";
-import type { ChatMessage } from "../messaging";
+import { isUnsent, type ChatMessage } from "../messaging";
+import { ReactionPicker, ReactionStrip } from "./Reactions";
+
+/** A message that reached the server and still exists can carry reactions. */
+function canReact(message: ChatMessage): boolean {
+  return !message.pending && !message.failed && !message.deleted && message.kind !== "annotation" && !isUnsent(message);
+}
 import { peekImage, type LoadedImage } from "../media/images";
 import {
   clipboardImages,
@@ -134,9 +142,11 @@ function MessageRow({
   inTail,
   peerName,
   myId,
+  myName,
   quoted,
   flashing,
   onReply,
+  onReact,
   onMenu,
   onJump,
   onOpenPhoto,
@@ -150,9 +160,11 @@ function MessageRow({
   inTail: boolean;
   peerName: string;
   myId: string;
+  myName: string;
   quoted: Map<string, ChatMessage>;
   flashing: boolean;
   onReply: (message: ChatMessage) => void;
+  onReact: (message: ChatMessage, emoji: string) => void;
   /**
    * Right-click, Shift+F10 / the Menu key, or a touch held still. `settle` is a held finger;
    * `link` is the link the pointer was on, if any.
@@ -163,6 +175,8 @@ function MessageRow({
     row: HTMLElement | null,
     settle?: boolean,
     link?: string | null,
+    trigger?: HTMLElement | null,
+    returnFocus?: HTMLElement | null,
   ) => void;
   onJump: (id: string) => void;
   onOpenPhoto: (message: ChatMessage) => void;
@@ -186,6 +200,25 @@ function MessageRow({
   const voice = message.kind === "voice" && !message.deleted;
   const photo = isPhoto(message);
   const video = isVideo(message);
+  const reacted = !message.deleted && (message.reactions ?? []).some((r) => r.emojis.length > 0);
+  /* What the message already wore when its row appeared (opening a chat isn't news); chips
+     added after that pop in. */
+  const settledReactions = useRef<ReadonlySet<string> | null>(null);
+  settledReactions.current ??= new Set(
+    (message.reactions ?? []).flatMap((r) => r.emojis.map((emoji) => `${r.userId}:${emoji}`)),
+  );
+  const strip = (meta: ReactNode = null) =>
+    reacted ? (
+      <ReactionStrip
+        reactions={message.reactions}
+        myId={myId}
+        myName={myName}
+        peerName={peerName}
+        onToggle={(emoji) => onReact(message, emoji)}
+        meta={meta}
+        settled={settledReactions.current ?? undefined}
+      />
+    ) : null;
   const bubbleClass = [
     "bubble",
     message.isMine ? "out" : "in",
@@ -196,6 +229,7 @@ function MessageRow({
     message.pending ? "pending" : "",
     voice ? "voice-msg" : "",
     message.replyTo ? "has-reply" : "",
+    reacted ? "has-reactions" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -222,6 +256,7 @@ function MessageRow({
         loadImage={onLoadImage}
         onOpen={onOpenPhoto}
         quote={quote}
+        footer={strip()}
       />
     );
   } else if (video) {
@@ -234,6 +269,7 @@ function MessageRow({
         onDownload={(opened) => void onLoadVideo(opened)}
         onCancelDownload={cancelVideoDownload}
         quote={quote}
+        footer={strip()}
       />
     );
   } else if (voice) {
@@ -241,6 +277,7 @@ function MessageRow({
     bubble = (
       <div className={bubbleClass}>
         <VoiceBubble message={message} loadVoice={onLoadVoice} query={query} inTail={inTail} quote={quote} />
+        {strip()}
       </div>
     );
   } else {
@@ -272,10 +309,12 @@ function MessageRow({
               <LinkedText text={message.text} query={query} />
             )}
           </p>
-          {preview && !above ? null : meta}
+          {(preview && !above) || reacted ? null : meta}
         </div>
         {preview && !above ? card : null}
-        {preview && !above ? <div className="bubble-meta-row">{meta}</div> : null}
+        {preview && !above && !reacted ? <div className="bubble-meta-row">{meta}</div> : null}
+        {/* Reacted: the time moves to the end of the chip row (Telegram). */}
+        {strip(meta)}
       </div>
     );
   }
@@ -308,20 +347,48 @@ function MessageRow({
         event.preventDefault();
         const bubbleNode = event.currentTarget.querySelector(".bubble") ?? event.currentTarget;
         const rect = bubbleNode.getBoundingClientRect();
-        onMenu(message, { x: rect.left + 12, y: rect.bottom - 4 }, event.currentTarget);
+        const focused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        onMenu(message, { x: rect.left + 12, y: rect.bottom - 4 }, event.currentTarget, false, null, null, focused);
       }}
     >
       {bubble}
-      {canReply ? (
-        <button
-          className="bubble-reply-btn"
-          type="button"
-          aria-label="Reply to this message"
-          title="Reply"
-          onClick={() => onReply(message)}
-        >
-          <Reply size={15} aria-hidden="true" />
-        </button>
+      {canReply || canReact(message) ? (
+        <span className="bubble-hover-actions">
+          {canReact(message) ? (
+            <button
+              className="bubble-reply-btn"
+              type="button"
+              aria-label="React to this message"
+              title="React"
+              onClick={(event) => {
+                // The message menu, opened at the button: its first row is the reactions. A
+                // second press closes it; focus comes back here either way.
+                const rect = event.currentTarget.getBoundingClientRect();
+                onMenu(
+                  message,
+                  { x: rect.left, y: rect.bottom + 4 },
+                  event.currentTarget.closest(".msg-row"),
+                  false,
+                  null,
+                  event.currentTarget,
+                );
+              }}
+            >
+              <SmilePlus size={15} aria-hidden="true" />
+            </button>
+          ) : null}
+          {canReply ? (
+            <button
+              className="bubble-reply-btn"
+              type="button"
+              aria-label="Reply to this message"
+              title="Reply"
+              onClick={() => onReply(message)}
+            >
+              <Reply size={15} aria-hidden="true" />
+            </button>
+          ) : null}
+        </span>
       ) : null}
       {swipe.swiping ? (
         <span className="swipe-reply" aria-hidden="true">
@@ -451,6 +518,9 @@ export function Thread({
   onCancelReply,
   onDelete,
   myId,
+  myName,
+  onReact,
+  reactionNotice = null,
   linkPreview = null,
 }: {
   peer: { id: string; username: string };
@@ -490,6 +560,12 @@ export function Thread({
   onDelete: (message: ChatMessage, scope: "me" | "everyone") => void;
   /** Signed-in account, to tell "You" from the peer in a quote. */
   myId: string;
+  /** Signed-in account's name, for its face on reaction chips. */
+  myName: string;
+  /** Picking an emoji on a message: sets it, or takes it back when it already is ours. */
+  onReact: (message: ChatMessage, emoji: string) => void;
+  /** A reaction that could not be saved (shown like the other notices). */
+  reactionNotice?: { id: number; text: string } | null;
   /** The draft's link preview; its strip takes the reply bar's place while it is up. */
   linkPreview?: LinkPreviewComposerApi | null;
 }) {
@@ -533,6 +609,10 @@ export function Thread({
     settle: boolean;
     /** The link the menu acts on: the one under the pointer, else the message's first. */
     link: string | null;
+    /** The button that opened it (a second press closes it); focus returns there. */
+    trigger: HTMLElement | null;
+    /** Opened from the keyboard: the control focused then, where focus returns. */
+    returnFocus: HTMLElement | null;
   } | null>(null);
   /** Message waiting on the delete confirmation (scope is picked there). */
   const [confirmDelete, setConfirmDelete] = useState<ChatMessage | null>(null);
@@ -895,6 +975,16 @@ export function Thread({
   }, [messages]);
 
   /* A short, neutral status line under the thread; the newest notice replaces the last. */
+  /* A reaction that could not be saved. The thread remounts per chat: a notice from before
+     this chat opened is not shown again. */
+  const shownNotice = useRef(reactionNotice?.id);
+  useEffect(() => {
+    if (!reactionNotice || reactionNotice.id === shownNotice.current) return;
+    shownNotice.current = reactionNotice.id;
+    showNotice(reactionNotice.text, 2400);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per notice
+  }, [reactionNotice?.id]);
+
   const showNotice = useCallback((text: string, ms = 1800) => {
     setNotice(text);
     window.clearTimeout(noticeTimer.current);
@@ -943,6 +1033,8 @@ export function Thread({
       row: HTMLElement | null,
       settle = false,
       link: string | null = null,
+      trigger: HTMLElement | null = null,
+      returnFocus: HTMLElement | null = null,
     ) => {
       const selected = window.getSelection();
       let selection = "";
@@ -950,7 +1042,12 @@ export function Thread({
         const node = selected.getRangeAt(0).commonAncestorContainer;
         if (row.contains(node)) selection = selected.toString().trim();
       }
-      setMenu({ message, anchor, selection, settle, link: link ?? primaryLink(message) });
+      setMenu((open) =>
+        // The button that opened this menu, pressed again, closes it.
+        trigger && open?.trigger === trigger && open.message.id === message.id
+          ? null
+          : { message, anchor, selection, settle, link: link ?? primaryLink(message), trigger, returnFocus },
+      );
     },
     [],
   );
@@ -1128,9 +1225,11 @@ export function Thread({
                     inTail={tail.has(row.message.id)}
                     peerName={peer.username}
                     myId={myId}
+                    myName={myName}
                     quoted={quoted}
                     flashing={flashing === row.message.id.toLowerCase()}
                     onReply={onReply}
+                    onReact={onReact}
                     onMenu={openMenu}
                     onJump={jumpTo}
                     onOpenPhoto={(opened) => setViewing(opened.id)}
@@ -1307,6 +1406,26 @@ export function Thread({
           actions={menuActions(menu.message, menu.selection, menu.link)}
           copyLabel={menu.selection ? "Copy selection" : undefined}
           settle={menu.settle}
+          trigger={menu.trigger}
+          returnFocus={menu.returnFocus}
+          header={
+            canReact(menu.message) ? (
+              <ReactionPicker
+                selected={
+                  (messages.find((m) => m.id === menu.message.id) ?? menu.message).reactions?.find(
+                    (r) => r.userId === myId.toLowerCase(),
+                  )?.emojis ?? []
+                }
+                onPick={(emoji) => {
+                  const target = messages.find((m) => m.id === menu.message.id) ?? menu.message;
+                  // Out of the menu that is about to go: back to whatever opened it.
+                  (menu.trigger ?? menu.returnFocus)?.focus({ preventScroll: true });
+                  closeMenu();
+                  onReact(target, emoji);
+                }}
+              />
+            ) : undefined
+          }
           onAction={runMenuAction}
           onClose={closeMenu}
         />

@@ -7,10 +7,13 @@ const UUID_RE =
 export class ApiError extends Error {
   readonly code: string;
   readonly status: number;
-  constructor(code: string, message: string, status: number) {
+  /** The error response's JSON, for answers that carry data (a reaction's `409`). */
+  readonly body: unknown;
+  constructor(code: string, message: string, status: number, body?: unknown) {
     super(message);
     this.code = code;
     this.status = status;
+    this.body = body;
   }
   get isAuthFailure(): boolean {
     return this.status === 401;
@@ -28,6 +31,10 @@ export type Conversation = {
   peer: { id: string; username: string };
   created_at: string;
   last_message_at: string | null;
+  /** The chat's latest reaction change (see `reactions.ts`); absent from older servers. */
+  reaction_seq?: number;
+  /** The other side's reactions to our messages we have not marked seen (the heart badge). */
+  unseen_reactions?: number;
 };
 
 export type Contact = {
@@ -91,14 +98,16 @@ async function request<T>(
   if (!res.ok) {
     let code = "http";
     let message = res.statusText || `HTTP ${res.status}`;
+    let body: unknown;
     try {
-      const body = (await res.json()) as { error?: { code?: string; message?: string } };
-      if (body.error?.code) code = body.error.code;
-      if (body.error?.message) message = body.error.message;
+      body = await res.json();
+      const envelope = body as { error?: { code?: string; message?: string } };
+      if (envelope.error?.code) code = envelope.error.code;
+      if (envelope.error?.message) message = envelope.error.message;
     } catch {
       /* envelope optional */
     }
-    throw new ApiError(code, message, res.status);
+    throw new ApiError(code, message, res.status, body);
   }
   if (res.status === 204) return undefined as T;
   const text = await res.text();
@@ -366,8 +375,40 @@ export const api = {
       conversation_id: string | null;
       messages: WireMessage[];
       has_more: boolean;
+      /** Highest reaction seq in the chat as the page was read (see `reactions.ts`). */
+      reaction_seq?: number | null;
     }>(`/messages?${q.toString()}`, { token });
   },
+  /**
+   * Our whole set, built on our record at `baseSeq` (0: none). `409 REACTION_CHANGED` (its
+   * `current` on the ApiError's body) when our other device wrote it first.
+   */
+  putReaction: (token: string, messageId: string, ciphertext: string, baseSeq: number, added: boolean) =>
+    request<WireReaction>(`/messages/${encodeURIComponent(messageId.toLowerCase())}/reaction`, {
+      method: "PUT",
+      token,
+      body: JSON.stringify({ ciphertext, base_seq: baseSeq, added }),
+    }),
+  /** Undefined (`204`) when there was no reaction to remove; `409` as for `putReaction`. */
+  deleteReaction: (token: string, messageId: string, baseSeq: number) =>
+    request<WireReaction | undefined>(
+      `/messages/${encodeURIComponent(messageId.toLowerCase())}/reaction?base_seq=${baseSeq}`,
+      { method: "DELETE", token },
+    ),
+  /** Settings the server operator sets for clients (the reaction limit). */
+  clientConfig: (token: string) =>
+    request<{ reactions: { max_per_user: number } }>("/config", { token }),
+  /** Reactions to our messages in this chat are seen up to `upToSeq` (clamped by the server). */
+  markReactionsSeen: (token: string, peerUserId: string, upToSeq: number) =>
+    request<{ seen_seq: number }>(
+      `/conversations/${encodeURIComponent(peerUserId.toLowerCase())}/reactions/seen`,
+      { method: "POST", token, body: JSON.stringify({ up_to_seq: upToSeq }) },
+    ),
+  reactionChanges: (token: string, peerUserId: string, afterSeq: number) =>
+    request<{ reactions: WireReaction[]; next_seq: number; has_more: boolean }>(
+      `/conversations/${encodeURIComponent(peerUserId.toLowerCase())}/reactions?after_seq=${afterSeq}`,
+      { token },
+    ),
   sendMessage: (
     token: string,
     body: {
@@ -413,4 +454,15 @@ export type WireMessage = {
   created_at: string;
   delivered?: boolean | null;
   read?: boolean | null;
+  /** History pages only: live sealed reactions (omitted when there are none). */
+  reactions?: WireReaction[];
+};
+
+/** One user's sealed reaction on one message; `ciphertext` null once taken back. */
+export type WireReaction = {
+  message_id: string;
+  user_id: string;
+  ciphertext: string | null;
+  seq: number;
+  updated_at: string;
 };

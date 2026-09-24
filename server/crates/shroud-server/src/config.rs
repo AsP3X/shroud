@@ -8,6 +8,9 @@ use crate::error::AppError;
 
 /// Default Postgres pool size when `DATABASE_POOL_MAX` is unset.
 pub const DEFAULT_DATABASE_POOL_MAX: u32 = 10;
+/// Telegram Premium allows 3; Shroud starts at 5 (see `docs/server-plan.md`).
+const DEFAULT_REACTIONS_MAX_PER_USER: u32 = 5;
+const MAX_REACTIONS_PER_USER: u32 = 20;
 
 /// WebRTC ICE server entry advertised to clients.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,6 +45,8 @@ pub struct Config {
     pub cors_allowed_origins: Vec<String>,
     /// STUN/TURN servers for WebRTC clients.
     pub ice_servers: Vec<IceServer>,
+    /// Most emoji one person may leave on one message (`REACTIONS_MAX_PER_USER`, 1–20).
+    pub reactions_max_per_user: u32,
 }
 
 impl Config {
@@ -103,6 +108,11 @@ impl Config {
         let ice_servers = ice_servers_from_env();
         let cors_allowed_origins = cors_origins_from_env();
 
+        // Human: Handed to clients by `GET /config`; the server can't count sealed emoji, so the
+        // clients enforce it (and show at most 20 from anyone, whatever this says).
+        let reactions_max_per_user =
+            parse_reactions_max_per_user(std::env::var("REACTIONS_MAX_PER_USER").ok().as_deref())?;
+
         Ok(Self {
             database_url,
             database_pool_max,
@@ -115,6 +125,7 @@ impl Config {
             trust_forwarded_headers,
             cors_allowed_origins,
             ice_servers,
+            reactions_max_per_user,
         })
     }
 
@@ -227,6 +238,22 @@ fn parse_u32_env(name: &str, raw: Option<&str>, default: u32) -> Result<u32, App
         .map_err(|_| AppError::Internal(format!("{name} must be a positive integer, got {raw:?}")))
 }
 
+/// `REACTIONS_MAX_PER_USER`: 1–20, default 5. Out of range stops startup rather than being
+/// clamped quietly, so clients get the value the operator set.
+fn parse_reactions_max_per_user(raw: Option<&str>) -> Result<u32, AppError> {
+    let value = parse_u32_env(
+        "REACTIONS_MAX_PER_USER",
+        raw,
+        DEFAULT_REACTIONS_MAX_PER_USER,
+    )?;
+    if !(1..=MAX_REACTIONS_PER_USER).contains(&value) {
+        return Err(AppError::Internal(format!(
+            "REACTIONS_MAX_PER_USER must be between 1 and {MAX_REACTIONS_PER_USER}, got {value}"
+        )));
+    }
+    Ok(value)
+}
+
 fn parse_bool_env(name: &str, raw: Option<&str>, default: bool) -> Result<bool, AppError> {
     let Some(raw) = raw else {
         return Ok(default);
@@ -264,6 +291,17 @@ mod tests {
         );
         assert_eq!(parse_u32_env("DATABASE_POOL_MAX", None, 10).unwrap(), 10);
         assert!(parse_u32_env("DATABASE_POOL_MAX", Some("nope"), 10).is_err());
+    }
+
+    #[test]
+    fn reactions_max_per_user_is_one_to_twenty() {
+        assert_eq!(parse_reactions_max_per_user(None).unwrap(), 5);
+        assert_eq!(parse_reactions_max_per_user(Some(" ")).unwrap(), 5);
+        assert_eq!(parse_reactions_max_per_user(Some("1")).unwrap(), 1);
+        assert_eq!(parse_reactions_max_per_user(Some("20")).unwrap(), 20);
+        assert!(parse_reactions_max_per_user(Some("0")).is_err());
+        assert!(parse_reactions_max_per_user(Some("21")).is_err());
+        assert!(parse_reactions_max_per_user(Some("-3")).is_err());
     }
 
     #[test]

@@ -10,7 +10,7 @@ struct MessageActionMenu: View {
 
     var body: some View {
         VStack(spacing: 9) {
-            MessageReactionBar(onReaction: onReaction, onMore: { onAction(.moreReactions) })
+            MessageReactionBar(onReaction: { emoji, _ in onReaction(emoji) }, onMore: { onAction(.moreReactions) })
             MessageContextMenuCard(isMine: isMine, onAction: onAction)
         }
         .frame(width: 250)
@@ -19,13 +19,35 @@ struct MessageActionMenu: View {
 
 // MARK: - Reaction bar (above the focused bubble)
 
+/// Where each emoji of the bar (or grid) is on screen, so a pick can fly from it.
+/// A reference type in `@State`: writing a frame never redraws the bar.
+final class ReactionPickFrames {
+    var frames: [String: CGRect] = [:]
+}
+
 struct MessageReactionBar: View {
-    var onReaction: (String) -> Void
+    /// The emoji, and where it was on screen (the start of its flight to the chip).
+    var onReaction: (String, CGRect?) -> Void
     var onMore: () -> Void
     /// 0…1 continuous progress (drives opacity + offset; avoid Bool for smooth close).
     var progress: CGFloat = 1
+    /// Our reactions on the message: ringed, and tapping one takes it back.
+    var selected: Set<String> = []
+
+    @State private var pickFrames = ReactionPickFrames()
 
     static let reactions = ["❤️", "🔥", "👍", "😢", "🙏", "😮", "👎"]
+    /// Telegram's double tap (and the VoiceOver action standing in for it).
+    static let quickReaction = "❤️"
+    /// Telegram's standard reaction set, shown when the bar expands ("More"). The quick seven
+    /// come first so they keep their places.
+    static let expanded: [String] = reactions + [
+        "🥰", "👏", "😁", "🤔", "🤯", "😱", "🤬", "🎉", "🤩", "🤮", "💩", "👌", "🕊️", "🤡",
+        "🥱", "🥴", "😍", "🐳", "❤️‍🔥", "🌚", "🌭", "💯", "🤣", "⚡", "🍌", "🏆", "💔", "🤨",
+        "😐", "🍓", "🍾", "💋", "🖕", "😈", "😴", "😭", "🤓", "👻", "👨‍💻", "👀", "🎃", "🙈",
+        "😇", "😨", "🤝", "✍️", "🤗", "🫡", "🎅", "🎄", "☃️", "💅", "🤪", "🗿", "🆒", "💘",
+        "🙉", "🦄", "😘", "💊", "🙊", "😎", "👾", "🤷", "😡",
+    ]
     private static let emojiSize: CGFloat = 34
     private static let moreSize: CGFloat = 30
     private static let itemSpacing: CGFloat = 6
@@ -51,15 +73,26 @@ struct MessageReactionBar: View {
         HStack(spacing: Self.itemSpacing) {
             ForEach(Self.reactions, id: \.self) { emoji in
                 Button {
-                    onReaction(emoji)
+                    onReaction(emoji, pickFrames.frames[emoji])
                 } label: {
                     Text(emoji)
                         .font(.system(size: 26))
                         .frame(width: Self.emojiSize, height: Self.emojiSize)
+                        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { frame in
+                            pickFrames.frames[emoji] = frame
+                        }
+                        .background {
+                            if selected.contains(emoji) {
+                                Circle().fill(Color.white.opacity(0.18))
+                                    .frame(width: Self.emojiSize + 4, height: Self.emojiSize + 4)
+                            }
+                        }
                         .contentShape(Rectangle())
                 }
                 // Emoji squash hard on press — the most playful control in the app.
                 .pressable(scale: 0.78, dimming: 0)
+                .accessibilityLabel(emoji)
+                .accessibilityAddTraits(selected.contains(emoji) ? .isSelected : [])
             }
             Button(action: onMore) {
                 Image(systemName: "chevron.down")
@@ -86,6 +119,66 @@ struct MessageReactionBar: View {
         // Fade with the hero flight (no extra slide — hero owns the travel).
         .opacity(progress)
         .allowsHitTesting(progress > 0.5)
+    }
+}
+
+// MARK: - Expanded reactions (the bar's "More")
+
+/// The reaction bar grown in place into Telegram's full standard set, over the bubble.
+struct MessageReactionGrid: View {
+    var onReaction: (String, CGRect?) -> Void
+    var selected: Set<String> = []
+
+    @State private var pickFrames = ReactionPickFrames()
+
+    static let columns = 7
+    private static let cell: CGFloat = 40
+    private static let padding: CGFloat = 10
+    /// Rows shown before the grid scrolls.
+    private static let visibleRows: CGFloat = 5.5
+
+    static var height: CGFloat { cell * visibleRows + padding * 2 }
+
+    var body: some View {
+        ScrollView {
+            LazyVGrid(
+                columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: Self.columns),
+                spacing: 0
+            ) {
+                ForEach(MessageReactionBar.expanded, id: \.self) { emoji in
+                    Button {
+                        onReaction(emoji, pickFrames.frames[emoji])
+                    } label: {
+                        Text(emoji)
+                            .font(.system(size: 26))
+                            .frame(width: Self.cell, height: Self.cell)
+                            .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { frame in
+                                pickFrames.frames[emoji] = frame
+                            }
+                            .background {
+                                if selected.contains(emoji) {
+                                    Circle().fill(Color.white.opacity(0.18))
+                                }
+                            }
+                            .contentShape(Rectangle())
+                    }
+                    .pressable(scale: 0.78, dimming: 0)
+                    .accessibilityLabel(emoji)
+                    .accessibilityAddTraits(selected.contains(emoji) ? .isSelected : [])
+                }
+            }
+            .padding(Self.padding)
+        }
+        .scrollIndicators(.hidden)
+        .background {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color(red: 0.14, green: 0.14, blue: 0.16).opacity(0.97))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 }
 
@@ -325,8 +418,12 @@ struct MessageMenuOverlay<Hero: View, Card: View>: View {
     let cardHeight: CGFloat
     /// 0 = bubble in its list slot, 1 = menu open.
     let progress: CGFloat
-    var onReaction: (String) -> Void
-    var onMoreReactions: () -> Void
+    var onReaction: (String, CGRect?) -> Void
+    /// Our reactions on the message, ringed in the bar and the grid.
+    var selectedReactions: Set<String> = []
+    /// False for a message that can't take reactions (still sending, failed, a todo): no bar,
+    /// and the bubble no longer makes room for one.
+    var showsReactions: Bool = true
     /// A tap outside the stack.
     var onBackdropTap: () -> Void
     @ViewBuilder var hero: () -> Hero
@@ -334,6 +431,9 @@ struct MessageMenuOverlay<Hero: View, Card: View>: View {
 
     /// Content offset of a scrolling stack; nil until the scroll view reports it.
     @State private var scrollOffset: CGFloat?
+    /// "More" grows the bar in place into the full grid (Telegram), over bubble and card.
+    @State private var showsAllReactions = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { outer in
@@ -355,7 +455,9 @@ struct MessageMenuOverlay<Hero: View, Card: View>: View {
             height: max(1, sourceGlobalFrame.height)
         )
         let metrics = MessageMenuLayout.Metrics(
-            reactionSize: CGSize(width: MessageReactionBar.barWidth, height: MessageReactionBar.barHeight),
+            reactionSize: showsReactions
+                ? CGSize(width: MessageReactionBar.barWidth, height: MessageReactionBar.barHeight)
+                : .zero,
             cardSize: CGSize(width: MessageContextMenuCard.width, height: cardHeight)
         )
         let plan = MessageMenuLayout.plan(source: source, container: proxy.size, safeArea: safeArea, metrics: metrics)
@@ -391,9 +493,31 @@ struct MessageMenuOverlay<Hero: View, Card: View>: View {
             }
 
             // Over the bubble: on a scrolled tall message the bar stays pinned at the top.
-            MessageReactionBar(onReaction: onReaction, onMore: onMoreReactions, progress: progress)
+            if !showsReactions {
+                EmptyView()
+            } else if showsAllReactions {
+                let grid = gridFrame(bar: chrome.reactions, container: proxy.size, safeArea: safeArea)
+                MessageReactionGrid(onReaction: onReaction, selected: selectedReactions)
+                    .frame(width: grid.width, height: grid.height)
+                    .position(x: grid.midX, y: grid.midY)
+                    .opacity(progress)
+                    .allowsHitTesting(progress > 0.5)
+                    .transition(.scale(scale: 0.9, anchor: .top).combined(with: .opacity))
+            } else {
+                MessageReactionBar(
+                    onReaction: onReaction,
+                    onMore: {
+                        Haptics.impact(.light)
+                        withAnimation(Motion.respecting(reduceMotion, Motion.snappy)) {
+                            showsAllReactions = true
+                        }
+                    },
+                    progress: progress,
+                    selected: selectedReactions
+                )
                 .frame(width: chrome.reactions.width, height: chrome.reactions.height)
                 .position(x: chrome.reactions.midX, y: chrome.reactions.midY)
+            }
         }
         .frame(width: proxy.size.width, height: proxy.size.height)
     }
@@ -422,6 +546,13 @@ struct MessageMenuOverlay<Hero: View, Card: View>: View {
                 .frame(width: cardFrame.width, height: cardFrame.height, alignment: .top)
                 .position(x: cardFrame.midX, y: cardFrame.midY)
         }
+    }
+
+    /// The grid grows down from where the bar was, kept on screen above the home indicator.
+    private func gridFrame(bar: CGRect, container: CGSize, safeArea: EdgeInsets) -> CGRect {
+        let height = min(MessageReactionGrid.height, container.height - safeArea.top - safeArea.bottom - 16)
+        let lowest = container.height - safeArea.bottom - 10 - height
+        return CGRect(x: bar.minX, y: max(safeArea.top + 8, min(bar.minY, lowest)), width: bar.width, height: height)
     }
 
     private static func lerp(_ a: CGRect, _ b: CGRect, _ t: CGFloat) -> CGRect {
@@ -549,6 +680,8 @@ struct MessageMenuHeroContent: View {
     var reply: ReplyQuoteContent? = nil
     /// The link preview's picture, resolved by the host exactly as for the list bubble.
     var linkPreviewImage: LinkPreviewImage = .none
+    /// The list bubble's reaction chips (not tappable here: the hero ignores touches).
+    var reactions: [ReactionChipContent] = []
 
     var body: some View {
         switch message.kind {
@@ -557,14 +690,16 @@ struct MessageMenuHeroContent: View {
                 message: message,
                 time: timeLabel,
                 isRowEmbedded: false,
-                reply: reply
+                reply: reply,
+                reactions: reactions
             )
         case .video:
             VideoMessageBubble(
                 message: message,
                 time: timeLabel,
                 isRowEmbedded: false,
-                reply: reply
+                reply: reply,
+                reactions: reactions
             )
         case .voice:
             VoiceMessageBubble(
@@ -572,7 +707,8 @@ struct MessageMenuHeroContent: View {
                 time: timeLabel,
                 inTranscriptTail: inTranscriptTail,
                 revealsArrival: false,
-                reply: reply
+                reply: reply,
+                reactions: reactions
             )
         case .text:
             MessageBubbleView(
@@ -584,7 +720,8 @@ struct MessageMenuHeroContent: View {
                 isRowEmbedded: false,
                 reply: reply,
                 linkPreview: message.linkPreview,
-                linkPreviewImage: linkPreviewImage
+                linkPreviewImage: linkPreviewImage,
+                reactions: reactions
             )
         case .todo:
             TodoMessageBubble(
@@ -601,7 +738,7 @@ struct MessageMenuHeroContent: View {
     ZStack {
         MessageMenuBackdrop(onTap: {}, progress: 1)
         VStack(spacing: 10) {
-            MessageReactionBar(onReaction: { _ in }, onMore: {}, progress: 1)
+            MessageReactionBar(onReaction: { _, _ in }, onMore: {}, progress: 1)
             MessageBubbleView(
                 text: "Hey! How are you?",
                 time: "14:22",

@@ -30,6 +30,9 @@ pub mod budgets {
     pub const WS_CONNECT_IP: (u64, Duration) = (30, Duration::from_secs(60));
     /// Message send / delivery hot path.
     pub const MESSAGE_SEND_USER: (u64, Duration) = (120, Duration::from_secs(60));
+    /// Reaction set / replace / remove. Separate from sends so tapping through reactions
+    /// never eats the message budget.
+    pub const REACTION_USER: (u64, Duration) = (120, Duration::from_secs(60));
     /// Call create / signal abuse budget.
     pub const CALL_USER: (u64, Duration) = (30, Duration::from_secs(60));
     /// Password change and account delete (expensive / sensitive).

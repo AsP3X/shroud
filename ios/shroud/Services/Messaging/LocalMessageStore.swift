@@ -56,6 +56,9 @@ struct LocalMessageStore: Sendable {
         let peerUsername: String
         let createdAt: Date
         let lastMessageAt: Date?
+        /// Optional so rosters written before reactions still decode.
+        var reactionSeq: Int64?
+        var unseenReactions: Int?
     }
 
     struct CachedContact: Codable, Equatable, Sendable {
@@ -100,6 +103,8 @@ struct LocalMessageStore: Sendable {
         /// Link preview (thumbnail included). Optional for the same reason as `replyTo`; its
         /// large image, if any, lives in `LocalMediaCache` like a photo.
         var linkPreview: LinkPreview?
+        /// Reactions, removals included. Optional like `replyTo`.
+        var reactions: [MessageReaction]?
 
         static func from(_ message: MessagingController.ChatMessage) -> StoredMessage {
             StoredMessage(
@@ -122,7 +127,8 @@ struct LocalMessageStore: Sendable {
                 todoDone: message.todoDone,
                 pendingSync: message.pendingSync ? true : nil,
                 replyTo: message.replyTo,
-                linkPreview: message.linkPreview
+                linkPreview: message.linkPreview,
+                reactions: message.reactions.isEmpty ? nil : message.reactions
             )
         }
 
@@ -170,7 +176,8 @@ struct LocalMessageStore: Sendable {
                 todoDone: todoDone,
                 pendingSync: pendingSync == true,
                 replyTo: replyTo,
-                linkPreview: linkPreview
+                linkPreview: linkPreview,
+                reactions: reactions ?? []
             )
         }
     }
@@ -192,6 +199,10 @@ struct LocalMessageStore: Sendable {
         let dir = directoryURL(for: userID).appendingPathComponent("threads", isDirectory: true)
         LocalDataProtection.prepareDirectory(dir)
         return dir
+    }
+
+    private func reactionCursorsURL(for userID: UUID) -> URL {
+        directoryURL(for: userID).appendingPathComponent("reactions.sealed")
     }
 
     private func rosterURL(for userID: UUID) -> URL {
@@ -246,6 +257,26 @@ struct LocalMessageStore: Sendable {
             snapshot.threads[peerID.uuidString.lowercased()] = messages
         }
         return snapshot
+    }
+
+    /// Reaction catch-up cursors: peer id (lowercased) → highest `seq` already applied.
+    ///
+    /// Human: Its own small file, so moving a cursor never rewrites the roster; it lives in the
+    /// user's directory and goes with it on sign-out.
+    struct ReactionCursors: Codable, Equatable, Sendable {
+        var version: Int = 1
+        var byPeer: [String: Int64] = [:]
+    }
+
+    /// Nil when the file exists but does not open; an empty set when there is none yet.
+    func loadReactionCursors(userID: UUID, historyKey: SymmetricKey) -> ReactionCursors? {
+        let url = reactionCursorsURL(for: userID)
+        guard fileManager.fileExists(atPath: url.path) else { return ReactionCursors() }
+        return decodeSealed(url, as: ReactionCursors.self, historyKey: historyKey)
+    }
+
+    func saveReactionCursors(_ cursors: ReactionCursors, userID: UUID, historyKey: SymmetricKey) {
+        encodeSealed(cursors, to: reactionCursorsURL(for: userID), historyKey: historyKey)
     }
 
     func loadRoster(userID: UUID, historyKey: SymmetricKey) -> Roster? {
@@ -451,6 +482,8 @@ extension LocalMessageStore.CachedConversation {
         peerUsername = dto.peer.username
         createdAt = dto.createdAt
         lastMessageAt = dto.lastMessageAt
+        reactionSeq = dto.reactionSeq
+        unseenReactions = dto.unseenReactions
     }
 
     func toDTO() -> ConversationItemDTO {
@@ -458,7 +491,9 @@ extension LocalMessageStore.CachedConversation {
             id: id,
             peer: ConversationPeerDTO(id: peerID, username: peerUsername),
             createdAt: createdAt,
-            lastMessageAt: lastMessageAt
+            lastMessageAt: lastMessageAt,
+            reactionSeq: reactionSeq,
+            unseenReactions: unseenReactions
         )
     }
 }

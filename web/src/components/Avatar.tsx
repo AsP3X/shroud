@@ -37,7 +37,7 @@ export function Avatar({
 }: {
   name: string;
   seed?: string;
-  size?: "sm" | "md" | "lg";
+  size?: "xs" | "sm" | "md" | "lg";
   online?: boolean;
 }) {
   const [top, bottom] = paletteFor(seed ?? name);

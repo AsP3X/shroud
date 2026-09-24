@@ -67,6 +67,92 @@ struct MessagesService: Sendable {
         )
     }
 
+    /// Server settings for clients (the reaction limit).
+    func clientConfig(token: String) async throws -> ClientConfigDTO {
+        try await client.get("config", as: ClientConfigDTO.self, bearerToken: token)
+    }
+
+    /// What a reaction write did.
+    enum ReactionWriteResult: Equatable, Sendable {
+        /// Written. Nil for a removal that found nothing to remove (`204`).
+        case saved(ReactionDTO?)
+        /// Our record moved past `baseSeq` (another device of ours): nothing was written; this
+        /// is the record now, a removal included.
+        case changedElsewhere(ReactionDTO)
+    }
+
+    /// Sets or replaces our reactions on a message (the whole set), built on our record at
+    /// `baseSeq` (0: we had none).
+    func putReaction(
+        messageID: UUID,
+        ciphertext: Data,
+        baseSeq: Int64,
+        added: Bool,
+        token: String
+    ) async throws -> ReactionWriteResult {
+        let body = try JSONEncoder.api.encode(PutReactionBody(
+            ciphertext: ciphertext.base64EncodedString(),
+            baseSeq: baseSeq,
+            added: added
+        ))
+        let (status, data) = try await client.response(
+            "PUT",
+            path: "messages/\(messageID.uuidString.lowercased())/reaction",
+            jsonBody: body,
+            bearerToken: token
+        )
+        return try Self.reactionWrite(status: status, data: data)
+    }
+
+    /// Removes our reaction, the one at `baseSeq`.
+    func deleteReaction(messageID: UUID, baseSeq: Int64, token: String) async throws -> ReactionWriteResult {
+        let (status, data) = try await client.response(
+            "DELETE",
+            path: "messages/\(messageID.uuidString.lowercased())/reaction",
+            query: ["base_seq": String(baseSeq)],
+            bearerToken: token
+        )
+        return try Self.reactionWrite(status: status, data: data)
+    }
+
+    /// A reaction write's answer: `409 REACTION_CHANGED` carries our record as it is now.
+    static func reactionWrite(status: Int, data: Data) throws -> ReactionWriteResult {
+        if status == 409, let conflict = try? JSONDecoder.api.decode(ReactionConflictDTO.self, from: data) {
+            return .changedElsewhere(conflict.current)
+        }
+        guard (200 ..< 300).contains(status) else {
+            throw APIError.from(data: data, statusCode: status)
+        }
+        guard status != 204, !data.isEmpty else { return .saved(nil) }
+        return .saved(try JSONDecoder.api.decode(ReactionDTO.self, from: data))
+    }
+
+    /// Reaction changes in the chat with `peerUserID` after `afterSeq`, oldest first.
+    func reactionChanges(
+        peerUserID: UUID,
+        afterSeq: Int64,
+        token: String,
+        limit: Int = 200
+    ) async throws -> ReactionChangesResponse {
+        try await client.get(
+            "conversations/\(peerUserID.uuidString.lowercased())/reactions",
+            query: ["after_seq": String(afterSeq), "limit": String(limit)],
+            as: ReactionChangesResponse.self,
+            bearerToken: token
+        )
+    }
+
+    /// Reactions to our messages in the chat with `peerUserID` are seen up to `upToSeq`.
+    @discardableResult
+    func markReactionsSeen(peerUserID: UUID, upToSeq: Int64, token: String) async throws -> MarkReactionsSeenResponse {
+        try await client.post(
+            "conversations/\(peerUserID.uuidString.lowercased())/reactions/seen",
+            body: MarkReactionsSeenBody(upToSeq: upToSeq),
+            as: MarkReactionsSeenResponse.self,
+            bearerToken: token
+        )
+    }
+
     func markDelivered(messageID: UUID, token: String) async throws {
         try await client.postNoContent(
             path: "messages/\(messageID.uuidString.lowercased())/delivered",

@@ -45,6 +45,8 @@ struct MessageDTO: Decodable, Equatable, Sendable, Identifiable {
     let delivered: Bool?
     /// Outbound only — peer user read.
     let read: Bool?
+    /// History only — live sealed reactions (omitted when there are none).
+    let reactions: [ReactionDTO]?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -59,6 +61,7 @@ struct MessageDTO: Decodable, Equatable, Sendable, Identifiable {
         case createdAt = "created_at"
         case delivered
         case read
+        case reactions
     }
 }
 
@@ -122,11 +125,15 @@ struct ListMessagesResponse: Decodable, Equatable, Sendable {
     let messages: [MessageDTO]
     /// When false, no older page exists (or server omitted the field — treat as false).
     let hasMore: Bool?
+    /// The conversation's highest reaction `seq` as the page was read: the page's `reactions`
+    /// are the whole live set as of this value. Nil from servers without reactions.
+    let reactionSeq: Int64?
 
     enum CodingKeys: String, CodingKey {
         case conversationId = "conversation_id"
         case messages
         case hasMore = "has_more"
+        case reactionSeq = "reaction_seq"
     }
 }
 
@@ -140,12 +147,34 @@ struct ConversationItemDTO: Codable, Equatable, Sendable, Identifiable {
     let peer: ConversationPeerDTO
     let createdAt: Date
     let lastMessageAt: Date?
+    /// The chat's latest reaction change; nil from servers without reactions.
+    var reactionSeq: Int64?
+    /// The other side's reactions to our messages we have not marked seen (the heart badge).
+    var unseenReactions: Int?
 
     enum CodingKeys: String, CodingKey {
         case id
         case peer
         case createdAt = "created_at"
         case lastMessageAt = "last_message_at"
+        case reactionSeq = "reaction_seq"
+        case unseenReactions = "unseen_reactions"
+    }
+}
+
+struct MarkReactionsSeenBody: Encodable, Equatable, Sendable {
+    let upToSeq: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case upToSeq = "up_to_seq"
+    }
+}
+
+struct MarkReactionsSeenResponse: Decodable, Equatable, Sendable {
+    let seenSeq: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case seenSeq = "seen_seq"
     }
 }
 

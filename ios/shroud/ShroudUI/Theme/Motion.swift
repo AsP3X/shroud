@@ -25,6 +25,8 @@ enum Motion {
     static let standard = Animation.spring(response: 0.38, dampingFraction: 0.9)
     static let gentle = Animation.spring(response: 0.5, dampingFraction: 0.92)
     static let bouncy = Animation.spring(response: 0.32, dampingFraction: 0.66)
+    /// A reaction flying from the bar (or a double tap) into its chip.
+    static let reactionFlight = Animation.spring(response: 0.46, dampingFraction: 0.82)
 
     static let fade = Animation.easeOut(duration: 0.18)
     static let scrim = Animation.easeOut(duration: 0.22)

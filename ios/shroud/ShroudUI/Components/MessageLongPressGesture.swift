@@ -78,6 +78,9 @@ enum MessageTapClaim {
 private struct MessageContextLongPress: ViewModifier {
     let minimumDuration: TimeInterval
     let onTap: (() -> Void)?
+    /// Quick reaction (Telegram's double tap), with where the finger was in global coordinates.
+    /// Simultaneous like the tap, so only bubbles without controls of their own should set it.
+    let onDoubleTap: ((CGPoint) -> Void)?
     let perform: (CGRect) -> Void
 
     /// Live global frame of the row — the menu hero flies from and back to it.
@@ -110,13 +113,37 @@ private struct MessageContextLongPress: ViewModifier {
                         didLongPress = false
                         return
                     }
-                    // A control inside the bubble (the reply header) may have handled it.
-                    guard !MessageTapClaim.isClaimed() else { return }
-                    onTap?()
+                    afterInnerControls {
+                        // A control inside the bubble (the reply header, a reaction chip) may
+                        // have handled it.
+                        guard !MessageTapClaim.isClaimed() else { return }
+                        onTap?()
+                    }
                 },
                 isEnabled: onTap != nil
             )
+            .simultaneousGesture(
+                SpatialTapGesture(count: 2).onEnded { value in
+                    let point = CGPoint(x: rowFrame.minX + value.location.x, y: rowFrame.minY + value.location.y)
+                    afterInnerControls {
+                        guard !MessageTapClaim.isClaimed() else { return }
+                        onDoubleTap?(point)
+                    }
+                },
+                isEnabled: onDoubleTap != nil
+            )
     }
+}
+
+/// Runs `action` after the controls inside the bubble have had this touch.
+///
+/// Human: The row's tap ends before a button, or a tap gesture, inside the bubble gets the same
+/// touch (measured in the harness for a Button, `onTapGesture` and a high-priority gesture
+/// alike), so a claim made there always came too late and a tap on a photo's reaction chip also
+/// opened the photo. One main-queue turn later the claim is in.
+@MainActor
+private func afterInnerControls(_ action: @escaping @MainActor () -> Void) {
+    DispatchQueue.main.async { action() }
 }
 
 extension View {
@@ -125,12 +152,14 @@ extension View {
     func messageContextLongPress(
         minimumDuration: TimeInterval = 0.25,
         onTap: (() -> Void)? = nil,
+        onDoubleTap: ((CGPoint) -> Void)? = nil,
         perform: @escaping (_ globalFrame: CGRect) -> Void
     ) -> some View {
         modifier(
             MessageContextLongPress(
                 minimumDuration: minimumDuration,
                 onTap: onTap,
+                onDoubleTap: onDoubleTap,
                 perform: perform
             )
         )

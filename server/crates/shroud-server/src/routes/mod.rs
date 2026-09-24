@@ -8,6 +8,7 @@ use axum::{
 
 use crate::state::AppState;
 
+pub mod app_config;
 pub mod auth;
 pub mod blocks;
 pub mod calls;
@@ -23,6 +24,7 @@ pub mod pin_guard;
 pub mod presence;
 pub mod privacy;
 pub mod push;
+pub mod reactions;
 pub mod users;
 pub mod ws;
 
@@ -35,6 +37,7 @@ pub fn router() -> Router<AppState> {
             .route("/health/live", get(health::live))
             .route("/health/ready", get(health::ready))
             .route("/metrics", get(health::metrics))
+            .route("/config", get(app_config::get_config))
             .route("/auth/register", post(auth::register))
             .route("/auth/login", post(auth::login))
             .route("/auth/logout", post(auth::logout))
@@ -85,10 +88,22 @@ pub fn router() -> Router<AppState> {
             .route("/messages/{id}/delivered", post(messages::mark_delivered))
             .route("/messages/{id}/read", post(messages::mark_read))
             .route("/messages/{id}", delete(messages::delete_message))
+            .route(
+                "/messages/{id}/reaction",
+                put(reactions::put_reaction).delete(reactions::delete_reaction),
+            )
             .route("/conversations", get(conversations::list_conversations))
             .route(
                 "/conversations/{peer_user_id}",
                 delete(conversations::delete_conversation),
+            )
+            .route(
+                "/conversations/{peer_user_id}/reactions",
+                get(reactions::list_reaction_changes),
+            )
+            .route(
+                "/conversations/{peer_user_id}/reactions/seen",
+                post(reactions::mark_reactions_seen),
             )
             .route("/privacy/settings", get(privacy::get_settings))
             .route("/privacy/settings", put(privacy::put_settings))

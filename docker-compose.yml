@@ -111,6 +111,7 @@ services:
       TURN_USERNAME: ${TURN_USERNAME:-}
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
       ICE_SERVERS_JSON: ${ICE_SERVERS_JSON:-}
+      REACTIONS_MAX_PER_USER: ${REACTIONS_MAX_PER_USER:-5}
     volumes:
       - shroud_media_data:/data/shroud-media
     networks:
