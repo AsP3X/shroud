@@ -12,6 +12,7 @@ import {
   callErrorText,
   cameraOnlyFailure,
   endedText,
+  incomingStaysInBanner,
   isLive,
   linkState,
   mediaErrorText,
@@ -102,6 +103,14 @@ check(statusLine({ ...base, phase: "connecting" }, 0) === "Connecting…", "conn
 check(statusLine({ ...base, phase: "active", connectedAt: 1_000 }, 66_000) === "01:05", "the timer");
 check(statusLine({ ...base, phase: "active", connectedAt: 1_000, reconnecting: true }, 66_000) === "Reconnecting…", "recovering");
 check(statusLine({ ...base, phase: "ended", endedText: "Declined" }, 0) === "Declined", "ended");
+
+/* --- an incoming ring stays a banner until it is opened or connects --- */
+check(incomingStaysInBanner({ key: 1, phase: "incoming", role: "callee" }, null), "a new ring is a banner");
+check(!incomingStaysInBanner({ key: 1, phase: "incoming", role: "callee" }, 1), "opening the ring takes the screen");
+check(incomingStaysInBanner({ key: 1, phase: "ended", role: "callee" }, null), "a ring that ends unseen stays a banner");
+check(!incomingStaysInBanner({ key: 1, phase: "ended", role: "callee" }, 1), "a call that connected ends on the full screen");
+check(!incomingStaysInBanner({ key: 1, phase: "connecting", role: "callee" }, null), "answering opens the screen");
+check(!incomingStaysInBanner({ key: 1, phase: "ended", role: "caller" }, null), "the caller already has the full screen");
 
 /* --- signals --- */
 check(signalTypeOf("offer") === "sdp_offer" && signalTypeOf("restart") === "renegotiate", "signal types");

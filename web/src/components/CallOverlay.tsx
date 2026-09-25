@@ -14,7 +14,7 @@ import {
   Volume2,
   X,
 } from "lucide-react";
-import { statusLine, type CallView } from "../calls/logic";
+import { incomingStaysInBanner, statusLine, type CallView } from "../calls/logic";
 import {
   acceptCall,
   declineCall,
@@ -30,9 +30,10 @@ import { useCallView } from "../calls/store";
 import { Avatar, avatarPalette } from "./Avatar";
 
 /**
- * The call screen: full-screen and always dark (like the media viewers) while a call rings, is
+ * The call screen: full-screen and always dark (like the media viewers) while a call rings out, is
  * connected, runs, or has just ended; a pill (a bar on phones) once minimized, so the chats stay
- * usable during a call. Escape minimizes and never hangs up.
+ * usable during a call. A ring coming in is a banner at the top first, as on the phone, and opens
+ * the full screen from there. Escape minimizes and never hangs up.
  *
  * Both variants share one layout, as on iOS: the top bar, the person in the middle (their picture
  * behind everything once a video call shows one), and a floating dock of controls centred at the
@@ -40,7 +41,19 @@ import { Avatar, avatarPalette } from "./Avatar";
  */
 export function CallOverlay() {
   const view = useCallView();
+  /* Set once the call is on the full screen: the callee opened the banner, or it connected.
+     A later ending then stays on that screen. A ring that never got there ends on the banner. */
+  const [openedKey, setOpenedKey] = useState<number | null>(null);
+  useEffect(() => {
+    if (!view) return;
+    if (view.phase === "outgoing" || view.phase === "connecting" || view.phase === "active") {
+      setOpenedKey(view.key);
+    }
+  }, [view]);
   if (!view) return null;
+  if (incomingStaysInBanner(view, openedKey)) {
+    return createPortal(<CallBanner view={view} onExpand={() => setOpenedKey(view.key)} />, document.body);
+  }
   if (view.minimized && view.phase !== "incoming") return <CallPill view={view} />;
   return createPortal(<CallScreen view={view} />, document.body);
 }
@@ -357,6 +370,82 @@ function CallScreen({ view }: { view: CallView }) {
           </div>
         ) : null}
       </footer>
+    </div>
+  );
+}
+
+/**
+ * An incoming call as a banner at the top of the window: who is calling, decline and accept,
+ * with the chats still usable underneath. The rest of it opens the full screen.
+ */
+function CallBanner({ view, onExpand }: { view: CallView; onExpand: () => void }) {
+  const root = useRef<HTMLDivElement>(null);
+  const name = view.peer.username;
+  const video = view.modality === "video";
+  const ended = view.phase === "ended";
+  const [tintTop, tintBottom] = avatarPalette(view.peer.id);
+  const tint = { "--call-tint": tintTop, "--call-tint-deep": tintBottom } as CSSProperties;
+  const kind = ended ? (view.endedText ?? "Call ended") : video ? "Shroud video call" : "Shroud voice call";
+  const who = (
+    <>
+      <span className="call-banner-avatar" aria-hidden="true">
+        <Avatar name={name} seed={view.peer.id} size="md" />
+      </span>
+      <span className="call-banner-copy">
+        <strong className="call-banner-name">{name}</strong>
+        <span className="call-banner-kind" aria-live="polite">
+          {ended ? null : video ? <Video size={13} aria-hidden="true" /> : <Phone size={13} aria-hidden="true" />}
+          {kind}
+        </span>
+      </span>
+    </>
+  );
+
+  /* Focus lands on the banner itself, not on Accept: a stray Enter must not answer.
+     It does not move again when the ring ends, so typing in the chat is left alone. */
+  useEffect(() => {
+    const before = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    root.current?.focus({ preventScroll: true });
+    return () => {
+      if (document.activeElement === document.body || document.activeElement === null) {
+        before?.focus?.({ preventScroll: true });
+      }
+    };
+  }, [view.key]);
+
+  return (
+    <div
+      ref={root}
+      className={`call-banner${ended ? " is-ended" : ""}`}
+      style={tint}
+      role="dialog"
+      aria-modal="false"
+      aria-label={ended ? `${kind} from ${name}` : `Incoming ${video ? "video" : "voice"} call from ${name}`}
+      tabIndex={-1}
+    >
+      {ended ? (
+        <div className="call-banner-main">{who}</div>
+      ) : (
+        <button type="button" className="call-banner-main" onClick={onExpand} title="Show call">
+          {who}
+        </button>
+      )}
+      {ended ? null : (
+        <div className="call-banner-actions">
+          <button
+            type="button"
+            className="call-banner-btn decline"
+            aria-label="Decline"
+            title="Decline"
+            onClick={declineCall}
+          >
+            <PhoneOff size={20} />
+          </button>
+          <button type="button" className="call-banner-btn accept" aria-label="Accept" title="Accept" onClick={acceptCall}>
+            {video ? <Video size={20} /> : <Phone size={20} />}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -3700,6 +3700,93 @@ button.reply-quote { cursor: pointer; }
   .call-self { width: 140px; }
 }
 
+/* Ringing in: a banner at the top of the window, like the phone's, over whatever is open. The
+   same glass as the dock, with the caller's colour glowing through it. */
+.call-banner {
+  --call-tint: #6464f2;
+  --call-tint-deep: #5e5ce6;
+  --call-red: #e0352b;
+  --call-green: #1f9d4c;
+  position: fixed; z-index: 92;
+  top: calc(14px + env(safe-area-inset-top)); left: 50%;
+  transform: translateX(-50%);
+  width: min(440px, calc(100% - 24px));
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 10px 10px 12px;
+  border-radius: var(--r-xl);
+  color: #fff; color-scheme: dark;
+  background:
+    radial-gradient(120% 140% at 0% 50%, color-mix(in srgb, var(--call-tint) 30%, transparent), transparent 60%),
+    rgba(24, 24, 34, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  outline: none;
+  animation: call-banner-in 0.5s var(--ease);
+}
+@keyframes call-banner-in {
+  from { opacity: 0; transform: translate(-50%, calc(-100% - 20px)) scale(0.96); }
+  to { opacity: 1; transform: translateX(-50%); }
+}
+.call-banner-main {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 12px;
+  padding: 4px 8px 4px 4px; margin: -4px 0 -4px -4px;
+  border: 0; border-radius: var(--r-lg);
+  background: none; color: inherit; text-align: left;
+  transition: background 0.15s ease;
+}
+.call-banner-main:hover { background: rgba(255, 255, 255, 0.07); }
+/* The ring pulses out of the caller's face, as on the full screen. */
+.call-banner-avatar { position: relative; flex-shrink: 0; border-radius: 50%; display: block; }
+.call-banner-avatar::before,
+.call-banner-avatar::after {
+  content: "";
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.5);
+  animation: call-pulse 2.4s var(--ease) infinite;
+  pointer-events: none;
+}
+.call-banner-avatar::after { animation-delay: 1.2s; }
+.call-banner-copy { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.call-banner-name {
+  font-size: var(--fs-base); font-weight: 650; letter-spacing: -0.01em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.call-banner-kind {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: var(--fs-xs); font-weight: 500;
+  color: rgba(255, 255, 255, 0.7);
+  white-space: nowrap;
+}
+.call-banner-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.call-banner-btn {
+  width: 44px; height: 44px;
+  border: 0; border-radius: 50%;
+  color: #fff;
+  display: grid; place-items: center;
+  transition: transform 0.15s var(--ease), filter 0.15s ease;
+}
+.call-banner-btn:hover { filter: brightness(1.1); }
+.call-banner-btn:active { transform: scale(0.9); }
+.call-banner-btn.decline { background: var(--call-red); box-shadow: 0 6px 16px rgba(224, 53, 43, 0.35); }
+.call-banner-btn.accept { background: var(--call-green); animation: call-answer-sm 1.6s ease-in-out infinite; }
+.call-banner.is-ended .call-banner-avatar::before,
+.call-banner.is-ended .call-banner-avatar::after { animation: none; opacity: 0; }
+.call-banner.is-ended .call-banner-main { cursor: default; }
+.call-banner.is-ended .call-banner-main:hover { background: none; }
+@keyframes call-answer-sm {
+  0%, 100% { box-shadow: 0 6px 16px rgba(31, 157, 76, 0.4), 0 0 0 0 rgba(31, 157, 76, 0.55); }
+  60% { box-shadow: 0 6px 16px rgba(31, 157, 76, 0.4), 0 0 0 9px rgba(31, 157, 76, 0); }
+}
+.call-banner :focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.call-banner-main:focus-visible { outline-offset: 0; }
+@media (max-width: 900px) {
+  .call-banner { top: calc(10px + env(safe-area-inset-top)); }
+}
+
 /* Minimized: over the foot of the chat list on desktop… */
 .call-pill {
   position: fixed; z-index: 88;
@@ -3765,7 +3852,10 @@ button.reply-quote { cursor: pointer; }
   .call-chip, .call-notice, .call-ctl-glyph, .call-remote, .call-captions, .call-captions p { animation: none; }
   .call.is-ringing .call-avatar { animation: none; }
   .call-incoming .call-ctl-accept .call-ctl-disc { animation: none; }
-  .call-avatar.ringing::before, .call-avatar.ringing::after { animation: none; opacity: 0; }
+  .call-banner { animation: none; }
+  .call-banner-btn.accept { animation: none; }
+  .call-avatar.ringing::before, .call-avatar.ringing::after,
+  .call-banner-avatar::before, .call-banner-avatar::after { animation: none; opacity: 0; }
   .call-avatar.ringing .avatar { box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.22); }
   .call-pill-dot { animation: none; }
   .call-self, .call-avatar, .call-shade { transition: none; }

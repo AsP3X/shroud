@@ -9,6 +9,19 @@ import type { CallRole } from "./crypto";
 /** A call ringing out, ringing in, being connected, running, or just over (idle is no call). */
 export type CallPhase = "outgoing" | "incoming" | "connecting" | "active" | "ended";
 
+/**
+ * An incoming call stays a banner until it is opened or connects. The line that says it ended
+ * stays there too: a ring the callee never opened must not take over the screen.
+ * Once it connects, `openedKey` is that call's key, so the ending uses the full screen.
+ */
+export function incomingStaysInBanner(
+  view: { key: number; phase: CallPhase; role: CallRole },
+  openedKey: number | null,
+): boolean {
+  if (view.role !== "callee" || openedKey === view.key) return false;
+  return view.phase === "incoming" || view.phase === "ended";
+}
+
 export type CallPeer = { id: string; username: string };
 
 /** What the call screen shows; one object per change (the store hands it to React). */
