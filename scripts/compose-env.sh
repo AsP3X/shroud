@@ -110,6 +110,17 @@ shroud_ensure_nebular_secrets() {
   fi
 }
 
+# The secret coturn and the API share (docs/calls.md), for an .env from before calls had one.
+# Generated once and kept: a new one only ends the TURN logins handed out so far.
+shroud_ensure_turn_secret() {
+  local file="${SHROUD_REPO_ROOT}/.env" value
+  [[ -f "$file" ]] || return 0
+  value="$(shroud_env_value TURN_SECRET)"
+  [[ -n "$value" && "$value" != "GENERATE_ME" ]] && return 0
+  shroud_set_env_value TURN_SECRET "$(shroud_random_hex 32)"
+  echo "Added the TURN relay secret to .env: TURN_SECRET"
+}
+
 shroud_assert_env() {
   local file="${SHROUD_REPO_ROOT}/.env"
   [[ -f "$file" ]] || return 0
@@ -154,6 +165,7 @@ shroud_diagnose_up() {
 
 shroud_up() {
   shroud_ensure_nebular_secrets
+  shroud_ensure_turn_secret
   shroud_assert_env
   shroud_ensure_proxy_network
   if ! shroud_compose up -d --build --remove-orphans; then
@@ -183,6 +195,15 @@ shroud_info() {
   echo "  Proxy mode:  ${PROXY_MODE}"
   echo "  Web client:  ${web}"
   echo "  API (iOS):   ${api}/api/v1"
+  if [[ ",$(shroud_env_value COMPOSE_PROFILES)," == *",calls,"* ]]; then
+    local min max
+    min="$(shroud_env_value TURN_MIN_PORT)"
+    max="$(shroud_env_value TURN_MAX_PORT)"
+    echo "  TURN relay:  $(shroud_env_value TURN_URLS)"
+    echo "               open UDP/TCP 3478 and UDP ${min:-49160}-${max:-49259}"
+  else
+    echo "  TURN relay:  off (calls use STUN only; ./deploy.sh --init to turn it on)"
+  fi
   if [[ "$PROXY_MODE" == "npm" ]]; then
     echo ""
     echo "  Nginx Proxy Manager hosts:"

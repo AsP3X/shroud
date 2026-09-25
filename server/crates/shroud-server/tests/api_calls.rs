@@ -1,390 +1,727 @@
-//! Integration tests for call signaling (milestone 9).
+//! Integration tests for call signaling (docs/calls.md): ringing, answering on one of several
+//! devices, signals between the two devices in the call, heartbeats and the stale-call sweep,
+//! history, and minted TURN logins.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use shroud_server::routes;
+use shroud_server::state::AppState;
 use sqlx::postgres::PgPoolOptions;
+use tokio::sync::mpsc::Receiver;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-fn test_state(pool: sqlx::PgPool) -> shroud_server::state::AppState {
-    shroud_server::state::AppState::for_integration_tests(pool)
-}
-
-async fn test_app() -> Option<axum::Router> {
+/// None without `DATABASE_URL` (the tests skip). Set but unusable fails loudly instead.
+async fn test_state() -> Option<(axum::Router, AppState)> {
     let database_url = std::env::var("DATABASE_URL").ok()?;
     let pool = PgPoolOptions::new()
         .max_connections(5)
         .connect(&database_url)
         .await
-        .ok()?;
+        .expect("connect to DATABASE_URL");
     sqlx::migrate!("../../migrations/postgres")
         .run(&pool)
         .await
-        .ok()?;
-    Some(
-        axum::Router::new()
-            .merge(routes::router())
-            .with_state(test_state(pool)),
-    )
+        .expect("apply migrations (recreate a throwaway database whose migrations changed)");
+    let state = AppState::for_integration_tests(pool);
+    Some((app_for(&state), state))
 }
 
-async fn json_body(response: axum::response::Response) -> Value {
-    let body = response
+fn app_for(state: &AppState) -> axum::Router {
+    axum::Router::new()
+        .merge(routes::router())
+        .with_state(state.clone())
+}
+
+#[derive(Clone, Debug)]
+struct Account {
+    token: String,
+    user_id: String,
+    device_id: Uuid,
+    username: String,
+}
+
+impl Account {
+    fn uid(&self) -> Uuid {
+        self.user_id.parse().unwrap()
+    }
+}
+
+async fn call(
+    app: &axum::Router,
+    method: &str,
+    uri: &str,
+    token: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::AUTHORIZATION, format!("Bearer {token}"));
+    let body = match body {
+        Some(value) => {
+            builder = builder.header(header::CONTENT_TYPE, "application/json");
+            Body::from(value.to_string())
+        }
+        None => Body::empty(),
+    };
+    let response = app
+        .clone()
+        .oneshot(builder.body(body).expect("request"))
+        .await
+        .expect("response");
+    let status = response.status();
+    let bytes = response
         .into_body()
         .collect()
         .await
         .expect("body")
         .to_bytes();
-    serde_json::from_slice(&body).expect("json")
+    let value = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes).expect("json")
+    };
+    (status, value)
 }
 
-fn unique_user() -> (String, String) {
-    let id = &Uuid::new_v4().simple().to_string()[..12];
-    (format!("c_{id}"), "correct-horse-battery".into())
-}
-
-async fn register(app: &axum::Router) -> (String, String) {
-    let (username, password) = unique_user();
+async fn auth(app: &axum::Router, path: &str, body: Value) -> Account {
     let response = app
         .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/v1/auth/register")
+                .uri(path)
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(
-                    json!({ "username": username, "password": password }).to_string(),
-                ))
+                .body(Body::from(body.to_string()))
                 .expect("request"),
         )
         .await
         .expect("response");
-    assert_eq!(response.status(), StatusCode::CREATED);
-    let body = json_body(response).await;
-    (
-        body["token"].as_str().unwrap().to_string(),
-        body["user"]["id"].as_str().unwrap().to_string(),
-    )
-}
-
-async fn become_contacts(
-    app: &axum::Router,
-    token_a: &str,
-    user_a: &str,
-    token_b: &str,
-    user_b: &str,
-) {
-    app.clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/contacts/requests")
-                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(json!({ "user_id": user_b }).to_string()))
-                .expect("request"),
-        )
+    assert!(
+        response.status().is_success(),
+        "{path}: {}",
+        response.status()
+    );
+    let bytes = response
+        .into_body()
+        .collect()
         .await
-        .expect("response");
-    let r2 = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/contacts/requests")
-                .header(header::AUTHORIZATION, format!("Bearer {token_b}"))
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(json!({ "user_id": user_a }).to_string()))
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(r2.status(), StatusCode::OK);
-}
-
-#[tokio::test]
-async fn ice_servers_requires_auth() {
-    let Some(app) = test_app().await else {
-        eprintln!("skipping ice_servers_requires_auth: no DATABASE_URL");
-        return;
-    };
-
-    let (token, _) = register(&app).await;
-    let ok = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("GET")
-                .uri("/api/v1/calls/ice-servers")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::empty())
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(ok.status(), StatusCode::OK);
-    let body = json_body(ok).await;
-    assert!(body["ice_servers"].is_array());
-}
-
-#[tokio::test]
-async fn call_ring_accept_hangup_flow() {
-    let Some(app) = test_app().await else {
-        eprintln!("skipping call_ring_accept_hangup_flow: no DATABASE_URL");
-        return;
-    };
-
-    let (token_a, user_a) = register(&app).await;
-    let (token_b, user_b) = register(&app).await;
-    become_contacts(&app, &token_a, &user_a, &token_b, &user_b).await;
-
-    let create = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/calls")
-                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(
-                    json!({
-                        "peer_user_id": user_b,
-                        "modality": "voice",
-                        "sdp_offer": "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\n"
-                    })
-                    .to_string(),
-                ))
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(create.status(), StatusCode::CREATED);
-    let created = json_body(create).await;
-    assert_eq!(created["status"], "ringing");
-    let call_id = created["id"].as_str().unwrap();
-
-    // Second call while ringing → busy.
-    let busy = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/calls")
-                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(
-                    json!({ "peer_user_id": user_b, "modality": "voice" }).to_string(),
-                ))
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(busy.status(), StatusCode::CONFLICT);
-
-    let accept = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/api/v1/calls/{call_id}/accept"))
-                .header(header::AUTHORIZATION, format!("Bearer {token_b}"))
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(
-                    json!({ "sdp_answer": "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\n" }).to_string(),
-                ))
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(accept.status(), StatusCode::OK);
-    let accepted = json_body(accept).await;
-    assert_eq!(accepted["status"], "active");
-
-    // Signal ICE from A → B.
-    let signal = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/api/v1/calls/{call_id}/signal"))
-                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(
-                    json!({
-                        "signal_type": "ice_candidate",
-                        "payload": "{\"candidate\":\"candidate:1 1 UDP 1 127.0.0.1 9 typ host\"}"
-                    })
-                    .to_string(),
-                ))
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(signal.status(), StatusCode::NO_CONTENT);
-
-    let hangup = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/api/v1/calls/{call_id}/hangup"))
-                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
-                .body(Body::empty())
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(hangup.status(), StatusCode::OK);
-    let ended = json_body(hangup).await;
-    assert_eq!(ended["status"], "ended");
-}
-
-#[tokio::test]
-async fn reject_and_non_contact() {
-    let Some(app) = test_app().await else {
-        eprintln!("skipping reject_and_non_contact: no DATABASE_URL");
-        return;
-    };
-
-    let (token_a, user_a) = register(&app).await;
-    let (token_b, user_b) = register(&app).await;
-    let (token_c, user_c) = register(&app).await;
-
-    // Non-contact.
-    let denied = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/calls")
-                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(json!({ "peer_user_id": user_c }).to_string()))
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
-
-    become_contacts(&app, &token_a, &user_a, &token_b, &user_b).await;
-
-    let create = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/calls")
-                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(json!({ "peer_user_id": user_b }).to_string()))
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(create.status(), StatusCode::CREATED);
-    let call_id = json_body(create).await["id"].as_str().unwrap().to_string();
-
-    let reject = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/api/v1/calls/{call_id}/reject"))
-                .header(header::AUTHORIZATION, format!("Bearer {token_b}"))
-                .body(Body::empty())
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(reject.status(), StatusCode::OK);
-    assert_eq!(json_body(reject).await["status"], "rejected");
-
-    let _ = token_c;
-}
-
-#[tokio::test]
-async fn expire_stale_ringing_calls_marks_missed() {
-    let database_url = match std::env::var("DATABASE_URL") {
-        Ok(url) => url,
-        Err(_) => {
-            eprintln!("skipping expire_stale_ringing_calls_marks_missed: DATABASE_URL unavailable");
-            return;
-        }
-    };
-    let pool = PgPoolOptions::new()
-        .max_connections(5)
-        .connect(&database_url)
-        .await
-        .expect("pool");
-    sqlx::migrate!("../../migrations/postgres")
-        .run(&pool)
-        .await
-        .expect("migrate");
-
-    // Insert a synthetic stale ringing call with two throwaway users/devices.
-    let user_a = Uuid::new_v4();
-    let user_b = Uuid::new_v4();
-    let device_a = Uuid::new_v4();
-    let call_id = Uuid::new_v4();
-    let password_hash = "$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHQ$placeholder";
-
-    for (uid, uname) in [(user_a, "gca"), (user_b, "gcb")] {
-        let id = &Uuid::new_v4().simple().to_string()[..8];
-        sqlx::query(
-            r#"
-            INSERT INTO users (id, username, password_hash, share_code)
-            VALUES ($1, $2, $3, $4)
-            "#,
-        )
-        .bind(uid)
-        .bind(format!("{uname}_{id}"))
-        .bind(password_hash)
-        .bind(format!("SC{}XX", id.to_ascii_uppercase()))
-        .execute(&pool)
-        .await
-        .expect("user");
+        .expect("body")
+        .to_bytes();
+    let body: Value = serde_json::from_slice(&bytes).expect("json");
+    Account {
+        token: body["token"].as_str().unwrap().to_string(),
+        user_id: body["user"]["id"].as_str().unwrap().to_string(),
+        device_id: body["device"]["id"].as_str().unwrap().parse().unwrap(),
+        username: body["user"]["username"].as_str().unwrap().to_string(),
     }
-    sqlx::query(
-        r#"
-        INSERT INTO devices (id, user_id, name)
-        VALUES ($1, $2, 'gc')
-        "#,
-    )
-    .bind(device_a)
-    .bind(user_a)
-    .execute(&pool)
-    .await
-    .expect("device");
+}
 
-    sqlx::query(
-        r#"
-        INSERT INTO calls (
-            id, caller_user_id, caller_device_id, callee_user_id,
-            modality, status, created_at
+async fn register(app: &axum::Router) -> Account {
+    let id = &Uuid::new_v4().simple().to_string()[..12];
+    auth(
+        app,
+        "/api/v1/auth/register",
+        json!({ "username": format!("c_{id}"), "password": "correct-horse-battery" }),
+    )
+    .await
+}
+
+/// The same account on another device.
+async fn login_again(app: &axum::Router, who: &Account) -> Account {
+    auth(
+        app,
+        "/api/v1/auth/login",
+        json!({ "username": who.username, "password": "correct-horse-battery" }),
+    )
+    .await
+}
+
+async fn become_contacts(app: &axum::Router, a: &Account, b: &Account) {
+    let (status, _) = call(
+        app,
+        "POST",
+        "/api/v1/contacts/requests",
+        &a.token,
+        Some(json!({ "user_id": b.user_id })),
+    )
+    .await;
+    assert!(status.is_success());
+    let (status, _) = call(
+        app,
+        "POST",
+        "/api/v1/contacts/requests",
+        &b.token,
+        Some(json!({ "user_id": a.user_id })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+async fn place_call(app: &axum::Router, from: &Account, to: &Account, modality: &str) -> Value {
+    let (status, body) = call(
+        app,
+        "POST",
+        "/api/v1/calls",
+        &from.token,
+        Some(json!({ "peer_user_id": to.user_id, "modality": modality, "protocol": 2 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    body
+}
+
+async fn socket(state: &AppState, who: &Account) -> Receiver<String> {
+    state
+        .realtime
+        .subscribe(who.uid(), who.device_id, Uuid::new_v4())
+        .await
+        .expect("subscribe")
+        .events
+}
+
+/// The next event of `kind` (others are skipped); panics after 2 s.
+async fn next_event(events: &mut Receiver<String>, kind: &str) -> Value {
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let text = events.recv().await.expect("hub still open");
+            let event: Value = serde_json::from_str(&text).expect("json event");
+            if event["type"] == kind {
+                return event;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("no {kind} event"))
+}
+
+/// Everything queued for a socket right now.
+fn drain(events: &mut Receiver<String>) -> Vec<Value> {
+    let mut out = Vec::new();
+    while let Ok(text) = events.try_recv() {
+        out.push(serde_json::from_str(&text).expect("json event"));
+    }
+    out
+}
+
+async fn signal(
+    app: &axum::Router,
+    who: &Account,
+    call_id: &str,
+    signal_type: &str,
+    payload: &str,
+) -> (StatusCode, Value) {
+    call(
+        app,
+        "POST",
+        &format!("/api/v1/calls/{call_id}/signal"),
+        &who.token,
+        Some(json!({ "signal_type": signal_type, "payload": payload })),
+    )
+    .await
+}
+
+async fn status_of(state: &AppState, call_id: &str) -> (String, Option<String>) {
+    sqlx::query_as(r#"SELECT status, ended_reason FROM calls WHERE id = $1"#)
+        .bind(call_id.parse::<Uuid>().unwrap())
+        .fetch_one(&state.pool)
+        .await
+        .expect("call row")
+}
+
+#[tokio::test]
+async fn ice_servers_require_auth_and_mint_turn_logins() {
+    let Some((_, mut state)) = test_state().await else {
+        eprintln!("skipping ice_servers_require_auth_and_mint_turn_logins: no DATABASE_URL");
+        return;
+    };
+    state.turn = Some(shroud_server::turn::TurnConfig::new(
+        vec!["turn:turn.example.com:3478?transport=udp".into()],
+        "integration-turn-secret-0123".into(),
+        3600,
+    ));
+    let app = app_for(&state);
+    let a = register(&app).await;
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/calls/ice-servers")
+                .body(Body::empty())
+                .expect("request"),
         )
-        VALUES ($1, $2, $3, $4, 'voice', 'ringing', now() - interval '10 minutes')
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let (status, body) = call(&app, "GET", "/api/v1/calls/ice-servers", &a.token, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let turn = body["ice_servers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["urls"][0].as_str().unwrap().starts_with("turn:"))
+        .expect("a TURN server")
+        .clone();
+    let username = turn["username"].as_str().unwrap();
+    let (expiry, user) = username.split_once(':').expect("<expiry>:<user>");
+    assert_eq!(user, a.user_id);
+    let expiry: i64 = expiry.parse().unwrap();
+    let now = chrono::Utc::now().timestamp();
+    assert!(
+        (now + 3500..=now + 3700).contains(&expiry),
+        "{expiry} vs {now}"
+    );
+    let key = ring::hmac::Key::new(
+        ring::hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY,
+        b"integration-turn-secret-0123",
+    );
+    let expected = BASE64.encode(ring::hmac::sign(&key, username.as_bytes()).as_ref());
+    assert_eq!(turn["credential"], expected);
+}
+
+#[tokio::test]
+async fn builds_without_protocol_2_cannot_place_calls() {
+    let Some((app, _)) = test_state().await else {
+        eprintln!("skipping builds_without_protocol_2_cannot_place_calls: no DATABASE_URL");
+        return;
+    };
+    let a = register(&app).await;
+    let b = register(&app).await;
+    become_contacts(&app, &a, &b).await;
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/api/v1/calls",
+        &a.token,
+        Some(json!({ "peer_user_id": b.user_id, "sdp_offer": "v=0\r\n" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("Update the app"),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn contacts_only_and_busy_codes() {
+    let Some((app, _)) = test_state().await else {
+        eprintln!("skipping contacts_only_and_busy_codes: no DATABASE_URL");
+        return;
+    };
+    let a = register(&app).await;
+    let b = register(&app).await;
+    let c = register(&app).await;
+
+    let (status, _) = call(
+        &app,
+        "POST",
+        "/api/v1/calls",
+        &a.token,
+        Some(json!({ "peer_user_id": c.user_id, "protocol": 2 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "strangers cannot call");
+
+    become_contacts(&app, &a, &b).await;
+    become_contacts(&app, &a, &c).await;
+    become_contacts(&app, &b, &c).await;
+    let ringing = place_call(&app, &a, &b, "voice").await;
+    assert_eq!(ringing["status"], "ringing");
+    assert_eq!(ringing["protocol"], 2);
+    assert_eq!(ringing["caller_username"], a.username);
+    assert_eq!(ringing["callee_username"], b.username);
+
+    // B is ringing: C gets "busy".
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/api/v1/calls",
+        &c.token,
+        Some(json!({ "peer_user_id": b.user_id, "protocol": 2 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["error"]["code"], "CALL_BUSY");
+
+    // A is calling already: A cannot place a second call.
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/api/v1/calls",
+        &a.token,
+        Some(json!({ "peer_user_id": c.user_id, "protocol": 2 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["error"]["code"], "CALL_IN_PROGRESS");
+
+    // Declined: both are free again.
+    let id = ringing["id"].as_str().unwrap();
+    let (status, body) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/calls/{id}/reject"),
+        &b.token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "rejected");
+    place_call(&app, &c, &b, "video").await;
+}
+
+#[tokio::test]
+async fn answering_on_one_device_and_signals_between_the_two_in_the_call() {
+    let Some((app, state)) = test_state().await else {
+        eprintln!("skipping answering_on_one_device_and_signals_between_the_two_in_the_call");
+        return;
+    };
+    let a = register(&app).await;
+    let a_laptop = login_again(&app, &a).await;
+    let b = register(&app).await;
+    let b_laptop = login_again(&app, &b).await;
+    become_contacts(&app, &a, &b).await;
+
+    let mut a_phone_events = socket(&state, &a).await;
+    let mut a_laptop_events = socket(&state, &a_laptop).await;
+    let mut b_phone_events = socket(&state, &b).await;
+    let mut b_laptop_events = socket(&state, &b_laptop).await;
+
+    let placed = place_call(&app, &a, &b, "video").await;
+    let id = placed["id"].as_str().unwrap().to_string();
+
+    // Both of B's devices ring; A's other device hears of it too; the caller's own does not.
+    for events in [
+        &mut b_phone_events,
+        &mut b_laptop_events,
+        &mut a_laptop_events,
+    ] {
+        let ring = next_event(events, "call.ring").await;
+        assert_eq!(ring["call"]["id"], id.as_str());
+        assert_eq!(ring["call"]["caller_username"], a.username);
+        assert!(ring.get("sdp_offer").is_none());
+    }
+    assert!(
+        drain(&mut a_phone_events)
+            .iter()
+            .all(|e| e["type"] != "call.ring")
+    );
+
+    // Nobody signals before the answer.
+    let (status, body) = signal(&app, &a, &id, "sdp_offer", "c1.AAAA").await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["error"]["code"], "CALL_NOT_ANSWERED");
+
+    // B answers on the laptop: the phone stops ringing, A hears which device answered.
+    let (status, accepted) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/calls/{id}/accept"),
+        &b_laptop.token,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
+    assert_eq!(accepted["status"], "active");
+    assert_eq!(accepted["callee_device_id"], b_laptop.device_id.to_string());
+    let on_phone = next_event(&mut b_phone_events, "call.accepted").await;
+    assert_eq!(
+        on_phone["call"]["callee_device_id"],
+        b_laptop.device_id.to_string()
+    );
+    next_event(&mut a_phone_events, "call.accepted").await;
+
+    // A second answer is refused.
+    let (status, _) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/calls/{id}/accept"),
+        &b.token,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // Signals go from the caller's device to the answering one, and back — nowhere else.
+    let (status, _) = signal(&app, &a, &id, "sdp_offer", "c1.offer").await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let got = next_event(&mut b_laptop_events, "call.signal").await;
+    assert_eq!(got["payload"], "c1.offer");
+    assert_eq!(got["signal_type"], "sdp_offer");
+    assert_eq!(got["from_device_id"], a.device_id.to_string());
+
+    let (status, _) = signal(&app, &b_laptop, &id, "sdp_answer", "c1.answer").await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let got = next_event(&mut a_phone_events, "call.signal").await;
+    assert_eq!(got["payload"], "c1.answer");
+
+    let (status, _) = signal(&app, &b_laptop, &id, "media_state", "c1.media").await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    next_event(&mut a_phone_events, "call.signal").await;
+
+    for events in [&mut b_phone_events, &mut a_laptop_events] {
+        assert!(
+            drain(events).iter().all(|e| e["type"] != "call.signal"),
+            "signals reached a device outside the call"
+        );
+    }
+
+    // The other devices of the two people cannot join in.
+    let (status, _) = signal(&app, &b, &id, "ice_candidate", "c1.x").await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = signal(&app, &a_laptop, &id, "ice_candidate", "c1.x").await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = signal(&app, &a, &id, "sdp_rumor", "c1.x").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // Hang up: every other device of both hears it, and signalling stops.
+    let (status, ended) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/calls/{id}/hangup"),
+        &a.token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(ended["status"], "ended");
+    assert_eq!(ended["ended_reason"], "hangup");
+    for events in [
+        &mut b_laptop_events,
+        &mut b_phone_events,
+        &mut a_laptop_events,
+    ] {
+        next_event(events, "call.ended").await;
+    }
+    let (status, body) = signal(&app, &b_laptop, &id, "ice_candidate", "c1.x").await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["error"]["code"], "CALL_ENDED");
+    // Hanging up twice is harmless.
+    let (status, again) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/calls/{id}/hangup"),
+        &b_laptop.token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(again["status"], "ended");
+}
+
+#[tokio::test]
+async fn a_quiet_device_ends_its_call_and_nobody_stays_busy() {
+    let Some((app, state)) = test_state().await else {
+        eprintln!("skipping a_quiet_device_ends_its_call_and_nobody_stays_busy: no DATABASE_URL");
+        return;
+    };
+    let a = register(&app).await;
+    let b = register(&app).await;
+    become_contacts(&app, &a, &b).await;
+    let mut a_events = socket(&state, &a).await;
+
+    let placed = place_call(&app, &a, &b, "voice").await;
+    let id = placed["id"].as_str().unwrap().to_string();
+    let (status, _) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/calls/{id}/accept"),
+        &b.token,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Heartbeats answer with the call.
+    let (status, beat) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/calls/{id}/heartbeat"),
+        &a.token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(beat["status"], "active");
+    let outsider = register(&app).await;
+    let (status, _) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/calls/{id}/heartbeat"),
+        &outsider.token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // B's app dies: nothing from it for longer than the limit.
+    sqlx::query(r#"UPDATE calls SET callee_seen_at = now() - interval '2 minutes' WHERE id = $1"#)
+        .bind(id.parse::<Uuid>().unwrap())
+        .execute(&state.pool)
+        .await
+        .unwrap();
+
+    // Calling again ends the dead call first instead of answering "busy".
+    let again = place_call(&app, &a, &b, "voice").await;
+    assert_eq!(
+        status_of(&state, &id).await,
+        ("ended".into(), Some("connection_lost".into()))
+    );
+    let ended = next_event(&mut a_events, "call.ended").await;
+    assert_eq!(ended["call"]["id"], id.as_str());
+    assert_eq!(ended["call"]["ended_reason"], "connection_lost");
+
+    // A heartbeat on an ended call says so.
+    let (status, beat) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/calls/{id}/heartbeat"),
+        &a.token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(beat["status"], "ended");
+
+    // The sweep: the new call's caller goes quiet while it rings.
+    let again_id = again["id"].as_str().unwrap().to_string();
+    sqlx::query(r#"UPDATE calls SET caller_seen_at = now() - interval '2 minutes' WHERE id = $1"#)
+        .bind(again_id.parse::<Uuid>().unwrap())
+        .execute(&state.pool)
+        .await
+        .unwrap();
+    let ended = routes::calls::end_stale_calls(&state, Some(&[a.uid()]))
+        .await
+        .expect("sweep");
+    assert!(ended >= 1);
+    assert_eq!(
+        status_of(&state, &again_id).await,
+        ("cancelled".into(), Some("connection_lost".into()))
+    );
+}
+
+#[tokio::test]
+async fn unanswered_calls_stop_ringing() {
+    let Some((app, state)) = test_state().await else {
+        eprintln!("skipping unanswered_calls_stop_ringing: no DATABASE_URL");
+        return;
+    };
+    let a = register(&app).await;
+    let b = register(&app).await;
+    become_contacts(&app, &a, &b).await;
+    let mut b_events = socket(&state, &b).await;
+    let placed = place_call(&app, &a, &b, "voice").await;
+    let id = placed["id"].as_str().unwrap().to_string();
+    next_event(&mut b_events, "call.ring").await;
+
+    sqlx::query(
+        r#"
+        UPDATE calls
+        SET created_at = now() - interval '2 minutes', caller_seen_at = now()
+        WHERE id = $1
         "#,
     )
-    .bind(call_id)
-    .bind(user_a)
-    .bind(device_a)
-    .bind(user_b)
-    .execute(&pool)
+    .bind(id.parse::<Uuid>().unwrap())
+    .execute(&state.pool)
     .await
-    .expect("call");
+    .unwrap();
 
-    let expired = shroud_server::routes::calls::expire_stale_ringing_calls(&pool)
-        .await
-        .expect("expire");
-    assert!(expired >= 1);
+    // Too late to answer, even before the sweep ran.
+    let (status, _) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/calls/{id}/accept"),
+        &b.token,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 
-    let status: String = sqlx::query_scalar(r#"SELECT status FROM calls WHERE id = $1"#)
-        .bind(call_id)
-        .fetch_one(&pool)
+    routes::calls::end_stale_calls(&state, Some(&[b.uid()]))
         .await
-        .expect("status");
-    assert_eq!(status, "missed");
+        .expect("sweep");
+    assert_eq!(
+        status_of(&state, &id).await,
+        ("missed".into(), Some("timeout".into()))
+    );
+    let ended = next_event(&mut b_events, "call.ended").await;
+    assert_eq!(ended["call"]["status"], "missed");
+    assert!(
+        routes::calls::ring_to_replay(&state, b.uid())
+            .await
+            .is_none(),
+        "a call that stopped ringing is not replayed"
+    );
+}
+
+#[tokio::test]
+async fn history_lists_both_directions_newest_first() {
+    let Some((app, _)) = test_state().await else {
+        eprintln!("skipping history_lists_both_directions_newest_first: no DATABASE_URL");
+        return;
+    };
+    let a = register(&app).await;
+    let b = register(&app).await;
+    become_contacts(&app, &a, &b).await;
+
+    let first = place_call(&app, &a, &b, "voice").await;
+    let first_id = first["id"].as_str().unwrap();
+    call(
+        &app,
+        "POST",
+        &format!("/api/v1/calls/{first_id}/reject"),
+        &b.token,
+        None,
+    )
+    .await;
+    let second = place_call(&app, &b, &a, "video").await;
+    let second_id = second["id"].as_str().unwrap();
+    call(
+        &app,
+        "POST",
+        &format!("/api/v1/calls/{second_id}/hangup"),
+        &b.token,
+        None,
+    )
+    .await;
+
+    let (status, body) = call(&app, "GET", "/api/v1/calls", &a.token, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let calls = body["calls"].as_array().unwrap();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0]["id"], second_id);
+    assert_eq!(calls[0]["status"], "cancelled");
+    assert_eq!(calls[0]["caller_username"], b.username);
+    assert_eq!(calls[1]["id"], first_id);
+    assert_eq!(calls[1]["status"], "rejected");
+
+    let before = calls[0]["created_at"].as_str().unwrap();
+    let (status, body) = call(
+        &app,
+        "GET",
+        &format!(
+            "/api/v1/calls?limit=5&before={}",
+            before.replace(':', "%3A").replace('+', "%2B")
+        ),
+        &a.token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let older = body["calls"].as_array().unwrap();
+    assert_eq!(older.len(), 1);
+    assert_eq!(older[0]["id"], first_id);
+
+    let (_, body) = call(&app, "GET", "/api/v1/calls?limit=1", &b.token, None).await;
+    assert_eq!(body["calls"].as_array().unwrap().len(), 1);
 }

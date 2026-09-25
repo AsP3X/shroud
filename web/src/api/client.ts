@@ -99,6 +99,40 @@ export type UserCard = {
   share_code?: string;
 };
 
+export type CallModality = "voice" | "video";
+
+/** `ringing`, `active`, then how it ended (see docs/calls.md for what each side shows). */
+export type CallStatus = "ringing" | "active" | "rejected" | "missed" | "cancelled" | "ended";
+
+/** A call as the server tells it (docs/calls.md). Usernames are null for a deleted account. */
+export type CallInfo = {
+  id: string;
+  caller_user_id: string;
+  caller_device_id: string;
+  caller_username: string | null;
+  callee_user_id: string;
+  /** The callee device that answered; absent until then. */
+  callee_device_id?: string | null;
+  callee_username: string | null;
+  modality: CallModality;
+  status: CallStatus;
+  ended_reason?: string | null;
+  /** 2: nothing about the media is negotiated before the answer. */
+  protocol: number;
+  created_at: string;
+  answered_at?: string | null;
+  ended_at?: string | null;
+};
+
+/** One STUN or TURN server; TURN logins are minted per user and expire (12 h). */
+export type IceServer = {
+  urls: string | string[];
+  username?: string;
+  credential?: string;
+};
+
+export type CallSignalType = "sdp_offer" | "sdp_answer" | "ice_candidate" | "renegotiate" | "media_state";
+
 async function request<T>(
   path: string,
   init: RequestInit & { token?: string | null } = {},
@@ -510,6 +544,51 @@ export const api = {
     onProgress
       ? putBytesWithProgress(`/media/${mediaId.toLowerCase()}/content`, token, data, onProgress)
       : putBytes(`/media/${mediaId.toLowerCase()}/content`, token, data),
+  /** STUN/TURN for one call; TURN logins expire, so each call asks again. */
+  iceServers: (token: string) => request<{ ice_servers: IceServer[] }>("/calls/ice-servers", { token }),
+  /** Rings the peer. `409 CALL_BUSY`: they are in a call; `409 CALL_IN_PROGRESS`: we are. */
+  createCall: (token: string, peerUserId: string, modality: CallModality) =>
+    request<CallInfo>("/calls", {
+      method: "POST",
+      token,
+      body: JSON.stringify({ peer_user_id: peerUserId, modality, protocol: 2 }),
+    }),
+  /** Newest first; `before` is a call's `created_at`. */
+  listCalls: (token: string, opts: { limit?: number; before?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (opts.limit) q.set("limit", String(opts.limit));
+    if (opts.before) q.set("before", opts.before);
+    const query = q.toString();
+    return request<{ calls: CallInfo[] }>(`/calls${query ? `?${query}` : ""}`, { token });
+  },
+  getCall: (token: string, callId: string) =>
+    request<CallInfo>(`/calls/${encodeURIComponent(callId.toLowerCase())}`, { token }),
+  /** This device answers; `VALIDATION_ERROR` once the call stopped ringing. */
+  acceptCall: (token: string, callId: string) =>
+    request<CallInfo>(`/calls/${encodeURIComponent(callId.toLowerCase())}/accept`, {
+      method: "POST",
+      token,
+      body: "{}",
+    }),
+  rejectCall: (token: string, callId: string) =>
+    request<CallInfo>(`/calls/${encodeURIComponent(callId.toLowerCase())}/reject`, { method: "POST", token }),
+  /** `keepalive` lets it leave with a closing page. */
+  hangupCall: (token: string, callId: string, opts: { keepalive?: boolean } = {}) =>
+    request<CallInfo>(`/calls/${encodeURIComponent(callId.toLowerCase())}/hangup`, {
+      method: "POST",
+      token,
+      keepalive: opts.keepalive,
+    }),
+  /** A sealed signal (see calls/crypto.ts), relayed to the other device in the call only. */
+  sendCallSignal: (token: string, callId: string, signalType: CallSignalType, payload: string) =>
+    request<void>(`/calls/${encodeURIComponent(callId.toLowerCase())}/signal`, {
+      method: "POST",
+      token,
+      body: JSON.stringify({ signal_type: signalType, payload }),
+    }),
+  /** Every 10 s while in a call; the answer's status may say it ended. */
+  callHeartbeat: (token: string, callId: string) =>
+    request<CallInfo>(`/calls/${encodeURIComponent(callId.toLowerCase())}/heartbeat`, { method: "POST", token }),
 };
 
 export type WireMessage = {

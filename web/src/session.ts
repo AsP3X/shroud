@@ -241,16 +241,41 @@ export function setLocked(locked: boolean): void {
   else sessionStorage.removeItem(LOCKED_KEY);
 }
 
+/** Holds that keep the auto-lock off while a call rings or runs (see `holdAutoLock`). */
+let autoLockHolds = 0;
+const onHoldsReleased = new Set<() => void>();
+
+/**
+ * Keeps the idle and hidden-tab locks from firing until the returned release runs: a call must
+ * not be cut because nobody touched the keyboard, or because the tab went to the background.
+ * When the last hold goes the usual rules apply again, to the time already passed: a tab hidden
+ * longer than the limit, or idle longer than it, locks at once. Locking by hand is not held.
+ */
+export function holdAutoLock(): () => void {
+  autoLockHolds += 1;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    autoLockHolds -= 1;
+    if (autoLockHolds === 0) for (const recheck of [...onHoldsReleased]) recheck();
+  };
+}
+
 /** Idle + hidden-tab lock. Returns a disposer. */
 export function installAutoLock(onLock: () => void): () => void {
   let timer = window.setTimeout(lock, IDLE_MS);
   let hideTimer = 0;
   let unloading = false;
+  let lastInput = Date.now();
+  let hiddenAt = document.hidden ? Date.now() : 0;
 
   function lock() {
     // A wipe already dropped the token and is clearing the tab. Navigating to unlock here
     // would unmount it before it finishes.
     if (storageSealed()) return;
+    // A call holds the lock off; `recheck` runs the rules again once it is over.
+    if (autoLockHolds > 0) return;
     const wasLocked = isLocked();
     // Idempotent, and first: whatever else happens, the keys leave memory.
     lockNow();
@@ -264,6 +289,7 @@ export function installAutoLock(onLock: () => void): () => void {
 
   function bump() {
     if (isLocked()) return;
+    lastInput = Date.now();
     touchLastActive();
     window.clearTimeout(timer);
     window.clearTimeout(hideTimer);
@@ -272,12 +298,36 @@ export function installAutoLock(onLock: () => void): () => void {
 
   function onVisibility() {
     if (document.hidden) {
+      hiddenAt = Date.now();
       if (unloading || !lockOnHidden()) return;
       window.clearTimeout(hideTimer);
       hideTimer = window.setTimeout(lock, HIDE_LOCK_MS);
     } else {
+      hiddenAt = 0;
       bump();
     }
+  }
+
+  /** The last hold went: whatever came due meanwhile applies now, the rest keeps counting. */
+  function recheck() {
+    if (isLocked()) return;
+    const now = Date.now();
+    if (document.hidden && hiddenAt && !unloading && lockOnHidden()) {
+      const left = HIDE_LOCK_MS - (now - hiddenAt);
+      if (left <= 0) {
+        lock();
+        return;
+      }
+      window.clearTimeout(hideTimer);
+      hideTimer = window.setTimeout(lock, left);
+    }
+    const idleLeft = IDLE_MS - (now - lastInput);
+    if (idleLeft <= 0) {
+      lock();
+      return;
+    }
+    window.clearTimeout(timer);
+    timer = window.setTimeout(lock, idleLeft);
   }
 
   function onPageHide() {
@@ -299,6 +349,7 @@ export function installAutoLock(onLock: () => void): () => void {
   document.addEventListener("visibilitychange", onVisibility);
   window.addEventListener("pagehide", onPageHide);
   window.addEventListener("pageshow", onPageShow);
+  onHoldsReleased.add(recheck);
   return () => {
     window.clearTimeout(timer);
     window.clearTimeout(hideTimer);
@@ -306,5 +357,6 @@ export function installAutoLock(onLock: () => void): () => void {
     document.removeEventListener("visibilitychange", onVisibility);
     window.removeEventListener("pagehide", onPageHide);
     window.removeEventListener("pageshow", onPageShow);
+    onHoldsReleased.delete(recheck);
   };
 }

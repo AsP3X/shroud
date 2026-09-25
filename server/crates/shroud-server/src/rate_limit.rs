@@ -33,8 +33,11 @@ pub mod budgets {
     /// Reaction set / replace / remove. Separate from sends so tapping through reactions
     /// never eats the message budget.
     pub const REACTION_USER: (u64, Duration) = (120, Duration::from_secs(60));
-    /// Call create / signal abuse budget.
+    /// Placing calls.
     pub const CALL_USER: (u64, Duration) = (30, Duration::from_secs(60));
+    /// A call's signals and heartbeats: an offer, an answer, batches of ICE candidates, and a
+    /// heartbeat every 10 s from each device, with room for ICE restarts.
+    pub const CALL_SIGNAL_USER: (u64, Duration) = (600, Duration::from_secs(60));
     /// Password change and account delete (expensive / sensitive).
     pub const AUTH_SENSITIVE_USER: (u64, Duration) = (5, Duration::from_secs(3600));
     /// Link-preview relay upgrades per client IP (a preview is a page plus its image,

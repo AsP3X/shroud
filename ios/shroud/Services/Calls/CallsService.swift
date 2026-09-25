@@ -1,10 +1,14 @@
 import Foundation
 
-/// REST client for 1:1 call signaling (`/calls/*`).
-/// Human: Server relays opaque SDP/ICE only — never media or E2E call keys.
-/// Agent: Contacts-only ring/accept/reject/hangup/signal; ICE from env.
-struct CallsService: Sendable {
+/// REST client for 1:1 call signaling (`/calls/*`, docs/calls.md).
+/// Human: The server rings devices and relays sealed signals — never media or keys.
+/// Agent: Nonisolated so a PushKit wake can use it before any UI exists.
+nonisolated struct CallsService: Sendable {
     private var client: APIClient { .makeConfiguredClient() }
+
+    private func path(_ id: UUID, _ suffix: String = "") -> String {
+        "calls/\(id.uuidString.lowercased())\(suffix)"
+    }
 
     func iceServers(token: String) async throws -> [IceServerDTO] {
         let response: IceServersResponse = try await client.get(
@@ -15,65 +19,48 @@ struct CallsService: Sendable {
         return response.iceServers
     }
 
-    func createCall(
-        peerUserID: UUID,
-        modality: CallModality,
-        sdpOffer: String? = nil,
-        token: String
-    ) async throws -> CallDTO {
+    func createCall(peerUserID: UUID, modality: CallModality, token: String) async throws -> CallDTO {
         try await client.post(
             "calls",
-            body: CreateCallRequest(
-                peerUserId: peerUserID,
-                modality: modality,
-                sdpOffer: sdpOffer
-            ),
+            body: CreateCallRequest(peerUserId: peerUserID, modality: modality),
             as: CallDTO.self,
             bearerToken: token
         )
     }
 
     func getCall(id: UUID, token: String) async throws -> CallDTO {
-        try await client.get(
-            "calls/\(id.uuidString.lowercased())",
-            as: CallDTO.self,
-            bearerToken: token
-        )
+        try await client.get(path(id), as: CallDTO.self, bearerToken: token)
     }
 
-    func acceptCall(id: UUID, sdpAnswer: String? = nil, token: String) async throws -> CallDTO {
-        try await client.post(
-            "calls/\(id.uuidString.lowercased())/accept",
-            body: AcceptCallRequest(sdpAnswer: sdpAnswer),
-            as: CallDTO.self,
+    func history(limit: Int = 50, token: String) async throws -> [CallDTO] {
+        let response: CallListResponse = try await client.get(
+            "calls",
+            query: ["limit": String(limit)],
+            as: CallListResponse.self,
             bearerToken: token
         )
+        return response.calls
+    }
+
+    func acceptCall(id: UUID, token: String) async throws -> CallDTO {
+        try await client.post(path(id, "/accept"), body: AcceptCallRequest(), as: CallDTO.self, bearerToken: token)
     }
 
     func rejectCall(id: UUID, token: String) async throws -> CallDTO {
-        try await client.postEmpty(
-            "calls/\(id.uuidString.lowercased())/reject",
-            as: CallDTO.self,
-            bearerToken: token
-        )
+        try await client.postEmpty(path(id, "/reject"), as: CallDTO.self, bearerToken: token)
     }
 
     func hangupCall(id: UUID, token: String) async throws -> CallDTO {
-        try await client.postEmpty(
-            "calls/\(id.uuidString.lowercased())/hangup",
-            as: CallDTO.self,
-            bearerToken: token
-        )
+        try await client.postEmpty(path(id, "/hangup"), as: CallDTO.self, bearerToken: token)
     }
 
-    func signal(
-        callID: UUID,
-        signalType: String,
-        payload: String,
-        token: String
-    ) async throws {
+    func heartbeat(id: UUID, token: String) async throws -> CallDTO {
+        try await client.postEmpty(path(id, "/heartbeat"), as: CallDTO.self, bearerToken: token)
+    }
+
+    func signal(callID: UUID, signalType: String, payload: String, token: String) async throws {
         try await client.postNoContent(
-            path: "calls/\(callID.uuidString.lowercased())/signal",
+            path: path(callID, "/signal"),
             body: CallSignalRequest(signalType: signalType, payload: payload),
             bearerToken: token
         )

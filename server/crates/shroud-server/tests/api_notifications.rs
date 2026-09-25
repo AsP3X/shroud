@@ -11,7 +11,7 @@ use http_body_util::BodyExt;
 use ring::agreement::{ECDH_P256, EphemeralPrivateKey};
 use ring::rand::SystemRandom;
 use serde_json::{Value, json};
-use shroud_server::push::PushChannel;
+use shroud_server::push::{ApnsPushType, PushChannel};
 use shroud_server::routes;
 use shroud_server::state::AppState;
 use sqlx::postgres::PgPoolOptions;
@@ -1036,15 +1036,17 @@ async fn account_deletion_clears_mutes_and_markers() {
 }
 
 #[tokio::test]
-async fn a_call_notifies_the_callees_closed_iphone_only() {
+async fn a_call_rings_by_pushkit_and_notifies_closed_devices() {
     let Some((app, state)) = test_state().await else {
-        eprintln!("skipping a_call_notifies_the_callees_closed_iphone_only: no DATABASE_URL");
+        eprintln!("skipping a_call_rings_by_pushkit_and_notifies_closed_devices: no DATABASE_URL");
         return;
     };
     let a = register(&app).await;
     let b = register(&app).await;
     become_contacts(&app, &a, &b).await;
+    // An older iPhone build: alerts only.
     register_apns(&app, &b, &format!("{:064x}", Uuid::new_v4().as_u128())).await;
+    // A browser.
     let b_web = login_again(&app, &b).await;
     register_web(
         &app,
@@ -1052,6 +1054,36 @@ async fn a_call_notifies_the_callees_closed_iphone_only() {
         "https://fcm.googleapis.com/fcm/send/call-test",
     )
     .await;
+    // A current iPhone: alerts and PushKit, and its app is open right now.
+    let b_phone = login_again(&app, &b).await;
+    let key = register_apns(
+        &app,
+        &b_phone,
+        &format!("{:064x}", Uuid::new_v4().as_u128()),
+    )
+    .await;
+    let (status, _) = call(
+        &app,
+        "PUT",
+        "/api/v1/push/token",
+        &b_phone.token,
+        Some(json!({
+            "token": format!("{:064x}", Uuid::new_v4().as_u128()),
+            "environment": "sandbox",
+            "kind": "voip",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let _open_app = state
+        .realtime
+        .subscribe(
+            b.user_id.parse().unwrap(),
+            b_phone.device_id,
+            Uuid::new_v4(),
+        )
+        .await
+        .expect("subscribe");
     // A muted chat still rings.
     call(
         &app,
@@ -1067,25 +1099,47 @@ async fn a_call_notifies_the_callees_closed_iphone_only() {
         "POST",
         "/api/v1/calls",
         &a.token,
-        Some(json!({ "peer_user_id": b.user_id, "modality": "video" })),
+        Some(json!({ "peer_user_id": b.user_id, "modality": "video", "protocol": 2 })),
     )
     .await;
     assert!(status.is_success(), "{status} {body}");
 
-    let phone: Vec<_> = pushes_to(&state, b.device_id)
-        .into_iter()
-        .filter(|(_, p)| p["shroud"]["k"] == "video_call")
-        .collect();
-    assert_eq!(phone.len(), 1, "{phone:?}");
-    let payload = &phone[0].1;
+    // The older iPhone: an "Incoming video call" alert.
+    let old_phone = pushes_to(&state, b.device_id);
+    assert_eq!(old_phone.len(), 1, "{old_phone:?}");
+    let payload = &old_phone[0].1;
     assert_eq!(payload["aps"]["alert"]["body"], "Incoming video call");
     assert_eq!(payload["aps"]["thread-id"], "calls");
     assert_eq!(payload["shroud"]["call"], body["id"]);
     assert!(payload["shroud"]["e"].is_string());
-    // No calls in the web client: its browser hears nothing.
-    assert!(pushes_to(&state, b_web.device_id).is_empty());
 
-    // Tapping the notification opens the app, which connects: it gets the ring then.
+    // The browser: a Web Push.
+    let browser = pushes_to(&state, b_web.device_id);
+    assert_eq!(browser.len(), 1, "{browser:?}");
+    assert_eq!(browser[0].0, PushChannel::Web);
+    assert_eq!(browser[0].1["kind"], "video_call");
+    assert_eq!(browser[0].1["tag"], "calls");
+    assert_eq!(browser[0].1["call_id"], body["id"]);
+
+    // The current iPhone rings by PushKit although its app is open, with its name sealed.
+    let rings: Vec<_> = state
+        .push
+        .recorded()
+        .into_iter()
+        .filter(|p| p.device_id == b_phone.device_id)
+        .collect();
+    assert_eq!(rings.len(), 1, "{rings:?}");
+    assert_eq!(rings[0].apns_push_type, Some(ApnsPushType::Voip));
+    let voip = &rings[0].payload;
+    assert!(voip["aps"]["alert"].is_null());
+    assert_eq!(voip["shroud"]["k"], "video_call");
+    assert_eq!(voip["shroud"]["call"], body["id"]);
+    assert_eq!(voip["shroud"]["p"], a.user_id);
+    assert!(!voip.to_string().contains(&a.username));
+    assert!(voip["shroud"]["e"].is_string());
+    let _ = key;
+
+    // Tapping a notification opens the app, which connects: it gets the ring then.
     let b_id: Uuid = b.user_id.parse().unwrap();
     let ring = routes::calls::ring_to_replay(&state, b_id)
         .await
@@ -1099,18 +1153,55 @@ async fn a_call_notifies_the_callees_closed_iphone_only() {
             .is_none(),
         "only for the callee"
     );
+
+    // The caller gives up: "Missed call" replaces the notifications; PushKit phones say it
+    // themselves.
     let (status, _) = call(
         &app,
         "POST",
-        &format!("/api/v1/calls/{}/reject", body["id"].as_str().unwrap()),
-        &b.token,
-        Some(json!({})),
+        &format!("/api/v1/calls/{}/hangup", body["id"].as_str().unwrap()),
+        &a.token,
+        None,
+    )
+    .await;
+    assert!(status.is_success());
+    let old_phone = pushes_to(&state, b.device_id);
+    assert_eq!(old_phone.len(), 2, "{old_phone:?}");
+    assert_eq!(old_phone[1].1["aps"]["alert"]["body"], "Missed call");
+    assert_eq!(old_phone[1].1["shroud"]["k"], "missed_call");
+    let browser = pushes_to(&state, b_web.device_id);
+    assert_eq!(browser.len(), 2, "{browser:?}");
+    assert_eq!(browser[1].1["kind"], "missed_call");
+    assert_eq!(browser[1].1["tag"], "calls");
+    assert_eq!(pushes_to(&state, b_phone.device_id).len(), 1);
+    assert!(
+        routes::calls::ring_to_replay(&state, b_id).await.is_none(),
+        "a call given up no longer rings"
+    );
+
+    // A declined call is not "missed".
+    let (_, second) = call(
+        &app,
+        "POST",
+        "/api/v1/calls",
+        &a.token,
+        Some(json!({ "peer_user_id": b.user_id, "modality": "voice", "protocol": 2 })),
+    )
+    .await;
+    let (status, _) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/calls/{}/reject", second["id"].as_str().unwrap()),
+        &b_web.token,
+        None,
     )
     .await;
     assert!(status.is_success());
     assert!(
-        routes::calls::ring_to_replay(&state, b_id).await.is_none(),
-        "a declined call no longer rings"
+        pushes_to(&state, b.device_id)
+            .iter()
+            .all(|(_, p)| p["shroud"]["call"] != second["id"] || p["shroud"]["k"] == "call"),
+        "no missed-call push for a declined call"
     );
 }
 

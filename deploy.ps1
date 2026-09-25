@@ -80,6 +80,22 @@ function Add-NebularSecrets {
     }
 }
 
+# The secret coturn and the API share (docs/calls.md), for an .env from before calls had one.
+# Generated once and kept: a new one only ends the TURN logins handed out so far.
+function Add-TurnSecret {
+    $path = Join-Path $repoRoot ".env"
+    if (-not (Test-Path -LiteralPath $path)) { return }
+    $current = Get-EnvValue "TURN_SECRET"
+    if ($current -and $current -ne "GENERATE_ME") { return }
+    $lines = [System.Collections.Generic.List[string]]@(Get-Content -LiteralPath $path)
+    $value = New-HexSecret
+    $index = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match "^TURN_SECRET=") { $index = $i } }
+    if ($index -ge 0) { $lines[$index] = "TURN_SECRET=$value" } else { $lines.Add("TURN_SECRET=$value") }
+    $lines | Set-Content -LiteralPath $path -Encoding ascii
+    Write-Line "Added the TURN relay secret to .env: TURN_SECRET" "Green"
+}
+
 function Get-ProxyMode {
     $mode = $env:PROXY_MODE
     if (-not $mode) { $mode = Get-EnvValue "PROXY_MODE" }
@@ -222,6 +238,7 @@ try {
     }
 
     Add-NebularSecrets
+    Add-TurnSecret
     $envFile = Join-Path $repoRoot ".env"
     if (Select-String -LiteralPath $envFile -Pattern '=(GENERATE_ME)\s*$' -Quiet) {
         Write-Die ".env still contains GENERATE_ME placeholders. Run .\deploy.ps1 -Init."

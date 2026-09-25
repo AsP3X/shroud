@@ -1,11 +1,22 @@
 import Foundation
 
 /// WebSocket client for `/api/v1/ws` — auth then event fan-in.
-/// Human: Real-time message/presence delivery; never sends plaintext message content.
-/// Agent: Connects with session token; auto-reconnects; publishes events on MainActor.
+/// Human: Real-time message/presence delivery; never sends plaintext message content. The
+/// server keeps one socket per device (a newer one replaces the older), so the chats and a
+/// call share this one: it stays open while either holds it — a call keeps it after the chats
+/// lock, and a call answered on a locked phone opens it without the chats.
+/// Agent: `hold`/`release` per holder; every listener gets every event; auto-reconnects.
 @MainActor
 @Observable
 final class RealtimeClient {
+    static let shared = RealtimeClient()
+
+    /// Who needs the socket open.
+    enum Holder: Hashable {
+        case messaging
+        case call
+    }
+
     enum ConnectionState: Equatable {
         case disconnected
         case connecting
@@ -29,15 +40,41 @@ final class RealtimeClient {
     private var keepaliveTask: Task<Void, Never>?
     private static let keepaliveInterval: Duration = .seconds(25)
     private var token: String?
-    private var onEvent: ((RealtimeEvent) -> Void)?
+    private var listeners: [Holder: (RealtimeEvent) -> Void] = [:]
+    private var holders: Set<Holder> = []
     private var reconnectAttempt = 0
     private var intentionalDisconnect = false
 
-    func configure(onEvent: @escaping (RealtimeEvent) -> Void) {
-        self.onEvent = onEvent
+    /// `holder`'s handler for every event (replaces an earlier one of the same holder).
+    func setListener(_ holder: Holder, _ handler: @escaping (RealtimeEvent) -> Void) {
+        listeners[holder] = handler
     }
 
-    func connect(token: String) {
+    /// Opens the socket (if needed) for `holder`.
+    func hold(_ holder: Holder, token: String) {
+        holders.insert(holder)
+        connect(token: token)
+    }
+
+    /// `holder` is done with the socket; it closes once nobody holds it.
+    func release(_ holder: Holder) {
+        holders.remove(holder)
+        if holders.isEmpty {
+            disconnect(reconnect: false)
+        }
+    }
+
+    func isHeld(by holder: Holder) -> Bool {
+        holders.contains(holder)
+    }
+
+    private func emit(_ event: RealtimeEvent) {
+        for handler in listeners.values {
+            handler(event)
+        }
+    }
+
+    private func connect(token: String) {
         intentionalDisconnect = false
         if self.token == token, case .connected = state { return }
         if self.token == token, case .connecting = state { return }
@@ -49,7 +86,7 @@ final class RealtimeClient {
     }
 
     /// Closes the socket. When `reconnect` is false, stops the reconnect loop (logout).
-    func disconnect(reconnect: Bool = false) {
+    private func disconnect(reconnect: Bool = false) {
         if !reconnect {
             intentionalDisconnect = true
             reconnectTask?.cancel()
@@ -230,6 +267,8 @@ final class RealtimeClient {
             state = .connected
             reconnectAttempt = 0
             startKeepalive()
+            // A reconnect: a call checks what it may have missed meanwhile.
+            emit(.raw(type: type, json: json))
         case "auth.error":
             state = .failed("WebSocket authentication failed")
             // Bad token — do not hammer reconnect with same token.
@@ -237,10 +276,10 @@ final class RealtimeClient {
             disconnect(reconnect: false)
         case "message.new":
             if let event = RealtimeEvent.parseMessageNew(from: data) {
-                onEvent?(event)
+                emit(event)
             } else {
                 // Log-friendly: decoding failed (schema/date) — fall back to poll via handler?
-                onEvent?(.raw(type: type, json: json))
+                emit(.raw(type: type, json: json))
             }
         case "message.delivered", "message.read", "message.deleted", "message.reaction",
              "reactions.seen",
@@ -249,7 +288,7 @@ final class RealtimeClient {
              "call.ended", "call.signal",
              "contact.request", "contact.accepted", "contact.rejected",
              "contact.cancelled", "contact.removed", "contact.updated":
-            onEvent?(.raw(type: type, json: json))
+            emit(.raw(type: type, json: json))
         default:
             break
         }

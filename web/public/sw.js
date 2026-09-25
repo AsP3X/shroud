@@ -6,15 +6,22 @@
  * ids, a kind and — when this browser's settings ask for it — the sender's name; never message
  * text, which the server does not have. The page itself shows richer notifications while it is
  * unlocked (src/notifications/), with the same tags, so one chat never stacks up: its messages
- * share the conversation id, its reactions `<id>:reaction`.
+ * share the conversation id, its reactions `<id>:reaction`. Calls share the tag `calls`, so the
+ * "Missed call" that follows an unanswered ring replaces it.
  */
 
 const LINES = {
   message: "New message",
   reaction: "Reacted to your message",
   contact_request: "Wants to add you as a contact",
+  call: "Incoming call",
+  video_call: "Incoming video call",
+  missed_call: "Missed call",
   test: "Notifications are working",
 };
+
+/** A ringing call stays up until it is answered to; clicking it only brings Shroud forward. */
+const RINGS = ["call", "video_call"];
 
 /** A notification click that had to open a new window: handed over when that window asks. */
 let pendingOpen = null;
@@ -60,6 +67,7 @@ async function show(data) {
     tag,
     renotify: true,
     silent: data.silent === true,
+    requireInteraction: RINGS.includes(kind),
     icon: "/icon-192.png",
     timestamp: Date.now(),
     data: {
@@ -83,9 +91,12 @@ async function setBadge(badge) {
 self.addEventListener("notificationclick", (event) => {
   const data = event.notification.data || {};
   event.notification.close();
-  // A test notification opens Shroud and nothing in it.
+  // A test notification opens Shroud and nothing in it. So does a ringing call: once unlocked,
+  // the socket hands the page the ring if it still rings.
   const open =
-    data.kind === "test" ? null : { type: "shroud.open-chat", kind: data.kind || "message", peer: data.peer || null };
+    data.kind === "test" || RINGS.includes(data.kind)
+      ? null
+      : { type: "shroud.open-chat", kind: data.kind || "message", peer: data.peer || null };
   event.waitUntil(openApp(open));
 });
 

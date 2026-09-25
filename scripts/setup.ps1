@@ -70,6 +70,30 @@ $NEBULAR_ACCESS_KEY_ID = "SHRD" + (New-Secret -Bytes 8).ToUpperInvariant()
 $NEBULAR_SECRET_ACCESS_KEY = New-Secret
 $NOS_METRICS_TOKEN = New-Secret
 Write-Host "  Nebular OS secret and the API's access key: generated" -ForegroundColor Green
+# Reused like the Postgres password: a new one only ends the TURN logins already handed out.
+$existingTurn = $null
+if (Test-Path -LiteralPath ".env") {
+    $line = Get-Content -LiteralPath ".env" | Where-Object { $_ -match "^TURN_SECRET=" } | Select-Object -Last 1
+    if ($line) { $existingTurn = $line.Substring("TURN_SECRET=".Length).Trim() }
+}
+$TURN_SECRET = if ($existingTurn -and $existingTurn -ne "GENERATE_ME") { $existingTurn } else { New-Secret }
+
+Write-Host ""
+Write-Host "  Calls between networks that block direct connections (many mobile carriers) need the"
+Write-Host "  TURN relay (coturn) on this server. It needs UDP/TCP 3478 and UDP 49160-49259 open,"
+Write-Host "  reachable at a public hostname or IP. Leave it blank to go without."
+$turnDefault = ""
+if ($PROXY_MODE -eq "npm") { $turnDefault = ([Uri]$API_PUBLIC_URL).Host }
+$TURN_HOST = Read-Prompt "Relay hostname or IP" $turnDefault
+if ($TURN_HOST) {
+    $TURN_URLS = "turn:${TURN_HOST}:3478?transport=udp,turn:${TURN_HOST}:3478?transport=tcp"
+    $COMPOSE_PROFILES = "calls"
+    Write-Host "  TURN relay: on at $TURN_HOST" -ForegroundColor Green
+} else {
+    $TURN_URLS = ""
+    $COMPOSE_PROFILES = ""
+    Write-Host "  TURN relay: off"
+}
 
 @(
     "PROXY_MODE=$PROXY_MODE"
@@ -85,6 +109,9 @@ Write-Host "  Nebular OS secret and the API's access key: generated" -Foreground
     "NEBULAR_ACCESS_KEY_ID=$NEBULAR_ACCESS_KEY_ID"
     "NEBULAR_SECRET_ACCESS_KEY=$NEBULAR_SECRET_ACCESS_KEY"
     "NOS_METRICS_TOKEN=$NOS_METRICS_TOKEN"
+    "COMPOSE_PROFILES=$COMPOSE_PROFILES"
+    "TURN_URLS=$TURN_URLS"
+    "TURN_SECRET=$TURN_SECRET"
     "RUST_LOG=info"
     "RUST_LOG_FORMAT=text"
 ) | Set-Content -LiteralPath ".env" -Encoding ascii

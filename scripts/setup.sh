@@ -109,6 +109,38 @@ NEBULAR_ACCESS_KEY_ID="SHRD$(generate_hex 8 | tr '[:lower:]' '[:upper:]')"
 NEBULAR_SECRET_ACCESS_KEY="$(generate_secret)"
 NOS_METRICS_TOKEN="$(generate_secret)"
 echo "  Nebular OS secret and the API's access key: ${GREEN}generated${NC}"
+# Reused like the Postgres password: a new one only ends the TURN logins already handed out,
+# but there is no reason to.
+EXISTING_TURN=""
+if [[ -f .env ]]; then
+  EXISTING_TURN="$(grep -E '^TURN_SECRET=' .env 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '\r')"
+fi
+if [[ -n "$EXISTING_TURN" && "$EXISTING_TURN" != "GENERATE_ME" ]]; then
+  TURN_SECRET="$EXISTING_TURN"
+else
+  TURN_SECRET="$(generate_secret)"
+fi
+
+echo ""
+echo "${BOLD}── Calls ──${NC}"
+echo "  Calls between networks that block direct connections (many mobile carriers) need the"
+echo "  TURN relay (coturn) on this server. It needs UDP/TCP ${BOLD}3478${NC} and UDP ${BOLD}49160-49259${NC} open,"
+echo "  reachable at a public hostname or IP. Leave it blank to go without."
+if [[ "$PROXY_MODE" == "npm" ]]; then
+  TURN_HOST_DEFAULT="$(printf '%s' "$API_PUBLIC_URL" | sed -E 's#^[A-Za-z]+://##; s#[:/].*$##')"
+else
+  TURN_HOST_DEFAULT=""
+fi
+TURN_HOST="$(prompt "Relay hostname or IP" "$TURN_HOST_DEFAULT")"
+if [[ -n "$TURN_HOST" ]]; then
+  TURN_URLS="turn:${TURN_HOST}:3478?transport=udp,turn:${TURN_HOST}:3478?transport=tcp"
+  COMPOSE_PROFILES="calls"
+  echo "  TURN relay: ${GREEN}on${NC} at ${TURN_HOST}"
+else
+  TURN_URLS=""
+  COMPOSE_PROFILES=""
+  echo "  TURN relay: ${DIM}off${NC}"
+fi
 
 CORS_ALLOWED_ORIGINS="$WEB_PUBLIC_URL"
 
@@ -127,6 +159,9 @@ NOS_JWT_SECRET=${NOS_JWT_SECRET}
 NEBULAR_ACCESS_KEY_ID=${NEBULAR_ACCESS_KEY_ID}
 NEBULAR_SECRET_ACCESS_KEY=${NEBULAR_SECRET_ACCESS_KEY}
 NOS_METRICS_TOKEN=${NOS_METRICS_TOKEN}
+COMPOSE_PROFILES=${COMPOSE_PROFILES}
+TURN_URLS=${TURN_URLS}
+TURN_SECRET=${TURN_SECRET}
 RUST_LOG=info
 RUST_LOG_FORMAT=text
 EOF

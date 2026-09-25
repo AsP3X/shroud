@@ -3,26 +3,32 @@ import CallKit
 import Foundation
 import UIKit
 
-/// Bridges Shroud call state to the system CallKit UI (lock screen, Bluetooth, CarPlay).
-/// Human: Users answer/end from the native call UI; media stays in WebRTC.
-/// Agent: CXProvider reports outgoing/incoming; actions call back into CallController.
+/// What CallKit asks the app to do (the user acted on the system call UI, or iOS did).
+@MainActor
+protocol CallKitManagerDelegate: AnyObject {
+    func callKitStartCall(_ id: UUID)
+    func callKitAnswerCall(_ id: UUID)
+    func callKitEndCall(_ id: UUID)
+    func callKitSetMuted(_ id: UUID, muted: Bool)
+    func callKitAudioActivated(_ session: AVAudioSession)
+    func callKitAudioDeactivated(_ session: AVAudioSession)
+    func callKitReset()
+}
+
+/// The system call UI: lock screen, Dynamic Island, Bluetooth and CarPlay buttons.
+///
+/// Human: Calls are not added to the iPhone's Recents (they would sync names to iCloud) and
+/// cannot be held. Ids are the call's CallKit UUID: the server's call id for incoming calls, a
+/// local one for outgoing calls (the server id comes later).
+/// Agent: provider delegate queue = main; every action is forwarded, then fulfilled.
 @MainActor
 final class CallKitManager: NSObject {
-    /// One provider for the process so a VoIP push and CallController share call UUIDs.
     static let shared = CallKitManager()
 
-    private let provider: CXProvider
-    private let controller = CXCallController()
-    private var callUUIDByCallID: [UUID: UUID] = [:]
-    private var callIDByUUID: [UUID: UUID] = [:]
-    private var pendingAnswerCallID: UUID?
-    private var pendingEndCallID: UUID?
+    weak var delegate: CallKitManagerDelegate?
 
-    weak var delegate: CallKitManagerDelegate? {
-        didSet {
-            flushPendingDelegateActions()
-        }
-    }
+    private let provider: CXProvider
+    private let callController = CXCallController()
 
     private override init() {
         let config = CXProviderConfiguration()
@@ -30,7 +36,7 @@ final class CallKitManager: NSObject {
         config.maximumCallsPerCallGroup = 1
         config.maximumCallGroups = 1
         config.supportedHandleTypes = [.generic]
-        config.includesCallsInRecents = true
+        config.includesCallsInRecents = false
         if let mark = UIImage(named: "BrandMark") {
             // The vector asset's natural size is 680 pt; CallKit wants a ~40 pt template.
             let size = CGSize(width: 40, height: 40)
@@ -43,144 +49,125 @@ final class CallKitManager: NSObject {
         provider.setDelegate(self, queue: nil)
     }
 
-    func startOutgoing(
-        callID: UUID,
-        peerUsername: String,
-        hasVideo: Bool
-    ) {
-        let uuid = mappedUUID(for: callID)
-        let handle = CXHandle(type: .generic, value: peerUsername)
-        let start = CXStartCallAction(call: uuid, handle: handle)
-        start.isVideo = hasVideo
-        let tx = CXTransaction(action: start)
-        controller.request(tx) { [weak self] error in
-            guard let self else { return }
-            Task { @MainActor in
-                if let error {
-                    self.delegate?.callKit(didFail: error.localizedDescription)
-                    return
-                }
-                self.provider.reportOutgoingCall(with: uuid, startedConnectingAt: Date())
-            }
-        }
-    }
-
-    func reportOutgoingConnected(callID: UUID) {
-        guard let uuid = callUUIDByCallID[callID] else { return }
-        provider.reportOutgoingCall(with: uuid, connectedAt: Date())
-    }
-
+    /// An incoming call. Must run before a PushKit handler returns.
     func reportIncoming(
-        callID: UUID,
-        peerUsername: String,
-        hasVideo: Bool,
-        onReported: (@Sendable () -> Void)? = nil
+        _ id: UUID,
+        callerName: String,
+        video: Bool,
+        completion: @escaping @Sendable (Error?) -> Void = { _ in }
     ) {
-        let uuid = mappedUUID(for: callID)
+        provider.reportNewIncomingCall(with: id, update: update(name: callerName, video: video)) { error in
+            completion(error)
+        }
+    }
+
+    /// New details for a call CallKit shows (the caller's name arrived).
+    func update(_ id: UUID, callerName: String, video: Bool) {
+        provider.reportCall(with: id, updated: update(name: callerName, video: video))
+    }
+
+    func requestStart(_ id: UUID, handle: String, video: Bool) async throws {
+        let action = CXStartCallAction(call: id, handle: CXHandle(type: .generic, value: handle))
+        action.isVideo = video
+        action.contactIdentifier = handle
+        try await callController.request(CXTransaction(action: action))
+    }
+
+    func requestAnswer(_ id: UUID) async throws {
+        try await callController.request(CXTransaction(action: CXAnswerCallAction(call: id)))
+    }
+
+    func requestEnd(_ id: UUID) async throws {
+        try await callController.request(CXTransaction(action: CXEndCallAction(call: id)))
+    }
+
+    func requestMute(_ id: UUID, muted: Bool) async throws {
+        try await callController.request(CXTransaction(action: CXSetMutedCallAction(call: id, muted: muted)))
+    }
+
+    func reportConnecting(_ id: UUID) {
+        provider.reportOutgoingCall(with: id, startedConnectingAt: Date())
+    }
+
+    func reportConnected(_ id: UUID) {
+        provider.reportOutgoingCall(with: id, connectedAt: Date())
+    }
+
+    /// The call ended without the user ending it here.
+    func reportEnded(_ id: UUID, reason: CXCallEndedReason) {
+        provider.reportCall(with: id, endedAt: Date(), reason: reason)
+    }
+
+    /// True when CallKit shows a call with this id.
+    func isTracking(_ id: UUID) -> Bool {
+        callController.callObserver.calls.contains { $0.uuid == id && !$0.hasEnded }
+    }
+
+    private func update(name: String, video: Bool) -> CXCallUpdate {
         let update = CXCallUpdate()
-        update.remoteHandle = CXHandle(type: .generic, value: peerUsername)
-        update.hasVideo = hasVideo
-        update.localizedCallerName = peerUsername
-        let notify = onReported
-        provider.reportNewIncomingCall(with: uuid, update: update) { error in
-            if let message = error?.localizedDescription {
-                Task { @MainActor in
-                    CallKitManager.shared.delegate?.callKit(didFail: message)
-                }
-            }
-            notify?()
-        }
+        update.remoteHandle = CXHandle(type: .generic, value: name)
+        update.localizedCallerName = name
+        update.hasVideo = video
+        update.supportsHolding = false
+        update.supportsGrouping = false
+        update.supportsUngrouping = false
+        update.supportsDTMF = false
+        return update
     }
-
-    func end(callID: UUID, reason: CXCallEndedReason = .remoteEnded) {
-        guard let uuid = callUUIDByCallID[callID] else { return }
-        provider.reportCall(with: uuid, endedAt: Date(), reason: reason)
-        callUUIDByCallID.removeValue(forKey: callID)
-        callIDByUUID.removeValue(forKey: uuid)
-    }
-
-    private func mappedUUID(for callID: UUID) -> UUID {
-        if let existing = callUUIDByCallID[callID] { return existing }
-        let uuid = UUID()
-        callUUIDByCallID[callID] = uuid
-        callIDByUUID[uuid] = callID
-        return uuid
-    }
-
-    private func flushPendingDelegateActions() {
-        if let id = pendingAnswerCallID {
-            pendingAnswerCallID = nil
-            delegate?.callKit(answer: id)
-        }
-        if let id = pendingEndCallID {
-            pendingEndCallID = nil
-            delegate?.callKit(end: id)
-        }
-    }
-}
-
-@MainActor
-protocol CallKitManagerDelegate: AnyObject {
-    func callKit(answer callID: UUID)
-    func callKit(end callID: UUID)
-    func callKit(mute callID: UUID, muted: Bool)
-    func callKit(didFail message: String)
 }
 
 extension CallKitManager: CXProviderDelegate {
     nonisolated func providerDidReset(_ provider: CXProvider) {
-        Task { @MainActor in
-            callUUIDByCallID.removeAll()
-            callIDByUUID.removeAll()
+        MainActor.assumeIsolated {
+            delegate?.callKitReset()
+        }
+    }
+
+    nonisolated func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
+        MainActor.assumeIsolated {
+            delegate?.callKitStartCall(action.callUUID)
+            action.fulfill()
         }
     }
 
     nonisolated func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
-        Task { @MainActor in
-            if let callID = callIDByUUID[action.callUUID] {
-                if let delegate {
-                    delegate.callKit(answer: callID)
-                } else {
-                    pendingAnswerCallID = callID
-                }
-            }
+        MainActor.assumeIsolated {
+            delegate?.callKitAnswerCall(action.callUUID)
             action.fulfill()
         }
     }
 
     nonisolated func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
-        Task { @MainActor in
-            if let callID = callIDByUUID[action.callUUID] {
-                if let delegate {
-                    delegate.callKit(end: callID)
-                } else {
-                    pendingEndCallID = callID
-                }
-            }
+        MainActor.assumeIsolated {
+            delegate?.callKitEndCall(action.callUUID)
             action.fulfill()
         }
     }
 
     nonisolated func provider(_ provider: CXProvider, perform action: CXSetMutedCallAction) {
-        Task { @MainActor in
-            if let callID = callIDByUUID[action.callUUID] {
-                delegate?.callKit(mute: callID, muted: action.isMuted)
-            }
+        MainActor.assumeIsolated {
+            delegate?.callKitSetMuted(action.callUUID, muted: action.isMuted)
             action.fulfill()
         }
     }
 
-    nonisolated func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
-        action.fulfill()
+    nonisolated func provider(_ provider: CXProvider, perform action: CXSetHeldCallAction) {
+        action.fail()
+    }
+
+    nonisolated func provider(_ provider: CXProvider, timedOutPerforming action: CXAction) {
+        action.fail()
     }
 
     nonisolated func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
-        // CallKit has already activated this session. `setActive` on the main thread
-        // while live is the hitch iOS 27 logs. Category may still be the default on an
-        // incoming answer (configureAudioSession runs after this), so apply it off-thread
-        // and leave the session active.
-        Task {
-            await ChatAudioSession.shared.applyCategory(.voiceCall)
+        MainActor.assumeIsolated {
+            delegate?.callKitAudioActivated(audioSession)
+        }
+    }
+
+    nonisolated func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
+        MainActor.assumeIsolated {
+            delegate?.callKitAudioDeactivated(audioSession)
         }
     }
 }

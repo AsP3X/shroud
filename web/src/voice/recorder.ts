@@ -338,6 +338,22 @@ export function cancelVoiceRecord(): void {
   emit();
 }
 
+const interruptListeners = new Set<Listener>();
+
+/** The composer folds its strip away when something else takes the microphone. */
+export function onVoiceInterrupt(listener: Listener): () => void {
+  interruptListeners.add(listener);
+  return () => {
+    interruptListeners.delete(listener);
+  };
+}
+
+/** A call takes the microphone: a take in progress (or starting) is discarded. */
+export function interruptVoiceRecord(): void {
+  for (const fn of [...interruptListeners]) fn();
+  cancelVoiceRecord();
+}
+
 export async function finishVoiceRecord(opts?: { conversationId?: string }): Promise<VoiceTake | null> {
   /* Timers are throttled in background tabs, so the last tick can be stale. */
   const duration = startedAt ? (performance.now() - startedAt) / 1000 : snapshot.elapsed;

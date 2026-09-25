@@ -321,6 +321,10 @@ struct ConversationView: View {
                     messaging.setActivePeer(nil)
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: .shroudCallMediaStarting)) { _ in
+                if voiceRecorder.isRecording { cancelRecording() }
+                VoicePlaybackCoordinator.shared.stop()
+            }
             .onChange(of: voiceRecorder.isRecording) { _, recording in
                 if !isNotes {
                     messaging.setRecording(peerUserID: peerUserID, isRecording: recording)

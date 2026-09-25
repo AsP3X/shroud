@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Bell, BellOff, QrCode, X } from "lucide-react";
+import { Bell, BellOff, Phone, QrCode, Video, X } from "lucide-react";
 import {
   api,
   ApiError,
+  type CallModality,
   type ChatMute,
   type Contact,
   type ContactRequest,
@@ -12,8 +13,11 @@ import {
   type WireMessage,
   type WireReaction,
 } from "../api/client";
+import { configureCalls, endCallForLock, handleCallEvent, startCall } from "../calls/service";
+import { useCallBusy } from "../calls/store";
 import { Avatar } from "../components/Avatar";
 import { BrandMark } from "../components/BrandMark";
+import { CallOverlay } from "../components/CallOverlay";
 import { ChatList, type ListEntry } from "../components/ChatList";
 import { ChatMenu, muteSeconds, type ChatMenuAction } from "../components/ChatMenu";
 import type { MenuAnchor } from "../components/ContextMenu";
@@ -203,6 +207,10 @@ export function AppShell({ session }: { session: Session }) {
   selectedRef.current = selected;
   const conversationsRef = useRef(conversations);
   conversationsRef.current = conversations;
+  const contactsRef = useRef(contacts);
+  contactsRef.current = contacts;
+  /** A call rings or runs on this device: new ones wait (calls/, components/CallOverlay.tsx). */
+  const callBusy = useCallBusy();
   const threadRef = useRef(thread);
   threadRef.current = thread;
   /** Start of the next older page for the open chat; null once its history is all here. */
@@ -752,6 +760,8 @@ export function AppShell({ session }: { session: Session }) {
   useEffect(
     () =>
       onNotificationOpen((open) => {
+        // A ringing call's notification only brings Shroud forward: the call screen is up.
+        if (open.kind === "call" || open.kind === "video_call") return;
         if (open.kind === "contact_request") {
           setTab("contacts");
           setSelected(null);
@@ -1167,12 +1177,52 @@ export function AppShell({ session }: { session: Session }) {
     }
   }
 
+  /* Calls while unlocked. Unmounting (a lock, a sign-out) hangs up a call this device is in. */
+  useEffect(
+    () =>
+      configureCalls({
+        token: session.token,
+        userId: session.user.id,
+        deviceId: session.device.id,
+        // A copy: the controller wipes it once the call's secret is derived.
+        identity: () => {
+          const material = loadIdentity(session.user.id);
+          return material
+            ? { privateKey: material.agreementPrivate.slice(), publicKey: material.agreementPublic.slice() }
+            : null;
+        },
+        peerKey: (userId) => peerIdentityPublic(session.token, userId),
+        peerName: (userId) => {
+          const key = userId.toLowerCase();
+          return (
+            contactsRef.current.find((c) => c.user_id.toLowerCase() === key)?.username ??
+            conversationsRef.current.find((c) => c.peer.id.toLowerCase() === key)?.peer.username ??
+            null
+          );
+        },
+      }),
+    [session.token, session.user.id, session.device.id],
+  );
+
+  /* Signing out (or a session the server ended) hangs up before the browser is cleared. */
+  useEffect(() => {
+    if (wipe) endCallForLock();
+  }, [wipe]);
+
+  const callPeer = useCallback((peer: PeerRef, modality: CallModality) => {
+    startCall({ id: peer.id, username: peer.username }, modality);
+  }, []);
+
   useEffect(() => {
     const connection = connectRealtime({
       token: session.token,
       onFatalAuth: endSession,
       onEvent: (event) => {
-        if (event.type === "auth.ok") return;
+        if (event.type === "auth.ok" || event.type.startsWith("call.")) {
+          // A reconnect may have missed a call's events; the calls read them back.
+          handleCallEvent(event);
+          return;
+        }
         if (event.type === "typing") {
           markTyping(String(event.raw.user_id ?? ""), event.raw.is_typing !== false);
           return;
@@ -1491,6 +1541,8 @@ export function AppShell({ session }: { session: Session }) {
   }, [contacts, presenceByUser, query, typingPeers, recordingPeers]);
 
   const lockNow = useCallback(() => {
+    // Locking by hand ends a call first (the automatic lock waits for it instead).
+    endCallForLock();
     lockSession();
     navigate("/unlock", { replace: true });
   }, [navigate]);
@@ -2231,6 +2283,8 @@ export function AppShell({ session }: { session: Session }) {
                 onReact={react}
                 reactionNotice={reactionNotice}
                 linkPreview={linkPreview}
+                onCall={(modality) => callPeer(selected, modality)}
+                callsDisabled={callBusy || !identity}
               />
             ) : (
               <section className="thread thread-placeholder hidden-mobile">
@@ -2336,6 +2390,9 @@ export function AppShell({ session }: { session: Session }) {
 
       {wipe ? <DeviceWipeDialog session={session} reason={wipe} continued={wipe === "logout"} /> : null}
 
+      {/* Full screen in a portal; minimized, a pill here (a bar at the top on phones). */}
+      <CallOverlay />
+
       {showInfo && selected ? (
         <Modal title="Contact info" onClose={() => setShowInfo(false)}>
           <div className="info-sheet">
@@ -2353,6 +2410,22 @@ export function AppShell({ session }: { session: Session }) {
                 {presenceLabel(selectedPresence) || "presence unknown"}
               </span>
             )}
+            <div className="call-start">
+              {(["voice", "video"] as const).map((modality) => (
+                <button
+                  key={modality}
+                  type="button"
+                  disabled={callBusy || !identity}
+                  onClick={() => {
+                    setShowInfo(false);
+                    callPeer(selected, modality);
+                  }}
+                >
+                  {modality === "voice" ? <Phone size={18} aria-hidden="true" /> : <Video size={19} aria-hidden="true" />}
+                  {modality === "voice" ? "Call" : "Video"}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="set-card">
             {/* A mute shows in the chat list: without a chat yet there is none to show it in. */}

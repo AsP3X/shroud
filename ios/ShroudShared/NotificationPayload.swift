@@ -25,6 +25,7 @@ nonisolated enum NotificationPayload {
         case contactRequest = "contact_request"
         case call
         case videoCall = "video_call"
+        case missedCall = "missed_call"
         case test
     }
 
@@ -94,6 +95,7 @@ nonisolated enum NotificationPayload {
         case .contactRequest: "Wants to add you as a contact"
         case .call: "Incoming call"
         case .videoCall: "Incoming video call"
+        case .missedCall: "Missed call"
         case .test: "Notifications are working"
         }
     }

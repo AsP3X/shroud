@@ -205,6 +205,8 @@ type PageNotification = {
   silent: boolean;
   /** Several messages of one chat collapse into one notification that counts them. */
   countLine?: (count: number) => string;
+  /** Stays up until it is clicked or closed (a ringing call). */
+  requireInteraction?: boolean;
 };
 
 /** A notification from the open page, through the worker when there is one (clicks route). */
@@ -228,6 +230,7 @@ export async function showPageNotification(notification: PageNotification): Prom
     tag: notification.tag,
     renotify: true,
     silent: notification.silent,
+    requireInteraction: notification.requireInteraction ?? false,
     icon: "/icon-192.png",
     timestamp: Date.now(),
     data: { kind: notification.kind, peer: notification.peer, count },
@@ -259,12 +262,14 @@ export async function closeChatNotifications(conversationId: string): Promise<vo
   await Promise.all([closeNotifications(id), closeNotifications(reactionTag(id))]);
 }
 
-/** Closes this browser's notifications — those with `tag`, or all of them. */
-export async function closeNotifications(tag?: string): Promise<void> {
+/** Closes this browser's notifications — those with `tag`, or all of them; only `kinds` if given. */
+export async function closeNotifications(tag?: string, kinds?: readonly string[]): Promise<void> {
   const registration = await workerRegistration(false);
   if (!registration) return;
   try {
     for (const shown of await registration.getNotifications(tag ? { tag } : undefined)) {
+      const kind = (shown.data as { kind?: unknown } | null)?.kind;
+      if (kinds && !(typeof kind === "string" && kinds.includes(kind))) continue;
       shown.close();
     }
   } catch {

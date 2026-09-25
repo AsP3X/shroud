@@ -105,7 +105,10 @@ final class MessagingController {
     /// `prepareCachedState()` already loaded the sealed cache; the next `start()` skips it.
     private var hydratedAheadOfStart = false
     private let connectivity = ConnectivityMonitor()
-    private let realtime = RealtimeClient()
+    private let realtime = RealtimeClient.shared
+    /// True while the chats use the socket; a call may keep it open after that, and then only
+    /// its `call.*` events matter (the call controller listens for those itself).
+    private var realtimeActive = false
     /// Polling fallback when the WebSocket is down (common behind some reverse proxies).
     private var pollTask: Task<Void, Never>?
     /// Separate poll so contact invites still appear if WS is down.
@@ -427,8 +430,9 @@ final class MessagingController {
         sessionController = session
         cryptoController = crypto
         callController = calls
-        realtime.configure { [weak self] event in
-            self?.handleRealtime(event)
+        realtime.setListener(.messaging) { [weak self] event in
+            guard let self, self.realtimeActive else { return }
+            self.handleRealtime(event)
         }
     }
 
@@ -462,7 +466,8 @@ final class MessagingController {
         } else {
             hydrateFromDisk()
         }
-        realtime.connect(token: token)
+        realtimeActive = true
+        realtime.hold(.messaging, token: token)
         startPollingFallback()
         startContactsPolling()
         Task {
@@ -471,6 +476,7 @@ final class MessagingController {
             await refreshPrivacySettings()
             await refreshServerConfig()
             await flushPendingSends()
+            await refreshCallSecrets()
         }
     }
 
@@ -512,7 +518,8 @@ final class MessagingController {
         contactsPollTask = nil
         outboundQueue.cancel()
         connectivity.stop()
-        realtime.disconnect(reconnect: false)
+        realtimeActive = false
+        realtime.release(.messaging)
         activePeerID = nil
         // Drop (don't cancel) in-flight refreshes: without a token they no-op anyway, and
         // cancelling would surface a spurious network error on sign-out.
@@ -584,7 +591,8 @@ final class MessagingController {
             hydrateFromDisk()
         }
         isOffline = !connectivity.isOnline
-        realtime.connect(token: token)
+        realtimeActive = true
+        realtime.hold(.messaging, token: token)
         if pollTask == nil { startPollingFallback() }
         if contactsPollTask == nil { startContactsPolling() }
         Task {
@@ -610,7 +618,8 @@ final class MessagingController {
         pollTask = nil
         contactsPollTask?.cancel()
         contactsPollTask = nil
-        realtime.disconnect(reconnect: false)
+        realtimeActive = false
+        realtime.release(.messaging)
         updateBadge()
     }
 
@@ -783,6 +792,10 @@ final class MessagingController {
             if changed { persistSnapshot() }
             // A new contact needs presence right away; otherwise stay on the slow sweep.
             await sweepPresenceIfNeeded(token: token, force: rosterChanged)
+            // Their call secret has to exist before a locked phone can answer them.
+            if rosterChanged {
+                Task { await self.refreshCallSecrets() }
+            }
         } catch {
             // Keep showing the last good local roster when the network is gone.
             if !contacts.isEmpty || !incomingRequests.isEmpty {
@@ -3977,8 +3990,6 @@ final class MessagingController {
                 handleRecording(json)
             } else if type == "presence.update" {
                 handlePresence(json)
-            } else if type.hasPrefix("call.") {
-                callController?.handleRealtime(type: type, json: json)
             } else if type.hasPrefix("contact.") {
                 handleContactRealtime(type: type, json: json)
             }
@@ -4347,6 +4358,49 @@ final class MessagingController {
         RatchetSessionStore.delete(peerUserID: peerUserID)
         identityChanges[peerUserID] = nil
         verifiedPeerIDs.insert(peerUserID)
+        Task { _ = try? await callSecret(for: peerUserID) }
+    }
+
+    // MARK: - Calls
+
+    /// `peerUserID`'s call secret (docs/calls.md), from the pinned identity key; kept for the
+    /// lock screen too. Throws `PeerIdentityError.changed` while their key change is unverified.
+    func callSecret(for peerUserID: UUID) async throws -> SymmetricKey {
+        guard let token = sessionController?.bearerToken,
+              let material = cryptoController?.material
+        else { throw CallSecretError.chatsLocked }
+        let peerKey = try await peerIdentityForSending(peerUserID: peerUserID, token: token)
+        let secret = try CallCrypto.callSecret(
+            ourPrivateKey: material.agreementPrivateKey,
+            ourPublicKey: material.identityPublicKeyData,
+            peerPublicKey: peerKey
+        )
+        CallSecretStore.save(secret, for: peerUserID)
+        return secret
+    }
+
+    /// Derives each contact's call secret while the chats are unlocked, so a call from any of
+    /// them can be answered on a locked phone. A contact whose key changed gets none until the
+    /// new key is accepted.
+    func refreshCallSecrets() async {
+        guard let token = sessionController?.bearerToken,
+              let material = cryptoController?.material
+        else { return }
+        for peer in contacts.map(\.userId) {
+            guard identityChanges[peer] == nil,
+                  let peerKey = try? await resolvePeerIdentityPublicKey(peerUserID: peer, token: token),
+                  identityChanges[peer] == nil,
+                  let secret = try? CallCrypto.callSecret(
+                      ourPrivateKey: material.agreementPrivateKey,
+                      ourPublicKey: material.identityPublicKeyData,
+                      peerPublicKey: peerKey
+                  )
+            else {
+                if identityChanges[peer] != nil { CallSecretStore.delete(for: peer) }
+                continue
+            }
+            CallSecretStore.save(secret, for: peer)
+        }
     }
 
     private func verifyPeerIdentity(_ peerUserID: UUID, token: String) async {
@@ -4355,6 +4409,8 @@ final class MessagingController {
             verifiedPeerIDs.insert(peerUserID)
             if let cached = peerKeys.publicKeyData(for: peerUserID), cached != fetched {
                 identityChanges[peerUserID] = PeerIdentityChange(previousKey: cached, currentKey: fetched)
+                // Calls wait for the safety number, like messages.
+                CallSecretStore.delete(for: peerUserID)
             }
         } catch {
             // Unreachable server: keep the cached key; do not invent a change.

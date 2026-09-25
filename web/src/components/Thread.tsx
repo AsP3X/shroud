@@ -22,13 +22,16 @@ import {
   Info,
   Mic,
   Paperclip,
+  Phone,
   Plus,
   Reply,
   Search,
   Send,
   ShieldCheck,
+  Video,
   X,
 } from "lucide-react";
+import type { CallModality } from "../api/client";
 import { clockTime, dayLabel, fullTimestamp, sameDay, MINUTE } from "../format";
 import { isUnsent, type ChatMessage } from "../messaging";
 import { ReactionPicker, ReactionStrip } from "./Reactions";
@@ -522,6 +525,8 @@ export function Thread({
   onReact,
   reactionNotice = null,
   linkPreview = null,
+  onCall,
+  callsDisabled = false,
 }: {
   peer: { id: string; username: string };
   presence: string;
@@ -568,6 +573,10 @@ export function Thread({
   reactionNotice?: { id: number; text: string } | null;
   /** The draft's link preview; its strip takes the reply bar's place while it is up. */
   linkPreview?: LinkPreviewComposerApi | null;
+  /** Calls the peer (the header's phone and camera buttons). */
+  onCall?: (modality: CallModality) => void;
+  /** A call already rings or runs, or this browser cannot seal one. */
+  callsDisabled?: boolean;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const foot = useRef<HTMLDivElement>(null);
@@ -1151,6 +1160,30 @@ export function Thread({
         >
           <Search size={18} />
         </button>
+        {onCall ? (
+          <>
+            <button
+              className="icon-btn"
+              type="button"
+              aria-label="Voice call"
+              title="Voice call"
+              disabled={callsDisabled}
+              onClick={() => onCall("voice")}
+            >
+              <Phone size={18} />
+            </button>
+            <button
+              className="icon-btn"
+              type="button"
+              aria-label="Video call"
+              title="Video call"
+              disabled={callsDisabled}
+              onClick={() => onCall("video")}
+            >
+              <Video size={19} />
+            </button>
+          </>
+        ) : null}
         <button className="icon-btn" type="button" aria-label="Contact info" title="Contact info" onClick={onShowInfo}>
           <Info size={18} />
         </button>

@@ -3306,3 +3306,304 @@ button.reply-quote { cursor: pointer; }
 .chat-menu-layer { position: relative; z-index: 85; }
 /* The phone tab bar's icons are small: counts sit on the icon's corner, not over it. */
 .tab-icon .rail-badge { top: -6px; right: -12px; }
+
+/* ----------------------------------------------------------------- calls --
+   The call screen is always dark, like the media viewers. It covers every
+   sheet and menu (80–85) and stays under the wipe dialog (90). Minimized it
+   becomes a pill over the chat list on desktop, and a bar above the app on
+   phones, so the chats stay usable while the call runs.
+   -------------------------------------------------------------------------- */
+.call-start {
+  display: flex; justify-content: center; gap: 10px;
+  margin-top: 8px;
+}
+.call-start button {
+  min-width: 92px; height: 56px; padding: 0 14px;
+  border: 0; border-radius: var(--r-md);
+  background: var(--accent-soft); color: var(--accent-text);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  font-size: var(--fs-xs); font-weight: 600;
+  transition: filter 0.15s ease, opacity 0.15s ease;
+}
+.call-start button:hover:not(:disabled) { filter: brightness(1.1); }
+.call-start button:disabled { opacity: 0.45; cursor: default; }
+
+.call {
+  --call-red: #e0352b;
+  --call-green: #1f9d4c;
+  position: fixed; inset: 0; z-index: 88;
+  display: flex; flex-direction: column; align-items: center;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  overflow: hidden;
+  color: #fff; color-scheme: dark;
+  background: #09090d;
+  outline: none;
+  animation: fade-in 0.18s ease;
+}
+.call-backdrop {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(110% 70% at 50% 0%, rgba(100, 100, 242, 0.34), transparent 62%),
+    linear-gradient(180deg, #15152a 0%, #0b0b13 58%, #060609 100%);
+}
+.call-remote {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover;
+  background: #000;
+}
+.call-remote[hidden] { display: none; }
+@media (min-width: 901px) {
+  /* A wide window shows all of their picture; a phone fills its screen with it. */
+  .call-remote { object-fit: contain; }
+}
+
+.call-top {
+  position: relative; z-index: 3;
+  align-self: stretch;
+  min-height: 60px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 14px 0 20px;
+}
+.call-e2e {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: var(--fs-xs); font-weight: 600;
+  color: rgba(255, 255, 255, 0.72);
+}
+.call-icon-btn {
+  width: 40px; height: 40px; flex-shrink: 0;
+  border: 0; border-radius: var(--r-full);
+  background: rgba(255, 255, 255, 0.12); color: #fff;
+  display: grid; place-items: center;
+  transition: background 0.15s ease;
+}
+.call-icon-btn:hover { background: rgba(255, 255, 255, 0.22); }
+
+.call-who {
+  position: relative; z-index: 2;
+  flex: 1; min-height: 0; max-width: 100%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  padding: 0 24px 12px;
+  text-align: center;
+}
+.call-avatar { position: relative; margin-bottom: 18px; border-radius: 50%; }
+.call-avatar .avatar { width: 124px; height: 124px; font-size: 44px; }
+/* A ring coming in pulses outwards from the caller's face. */
+.call-avatar.ringing::before,
+.call-avatar.ringing::after {
+  content: "";
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  animation: call-pulse 2.4s var(--ease) infinite;
+  pointer-events: none;
+}
+.call-avatar.ringing::after { animation-delay: 1.2s; }
+@keyframes call-pulse {
+  from { transform: scale(1); opacity: 0.85; }
+  to { transform: scale(1.65); opacity: 0; }
+}
+.call-name {
+  margin: 0; max-width: 100%;
+  font-size: 28px; font-weight: 650; letter-spacing: -0.02em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.call-status {
+  margin: 0; min-height: 1.4em;
+  font-size: var(--fs-base);
+  color: rgba(255, 255, 255, 0.74);
+  font-variant-numeric: tabular-nums;
+}
+.call-ended .call-status { color: #fff; font-weight: 600; }
+.call-chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 6px; }
+.call-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 11px; border-radius: var(--r-full);
+  background: rgba(0, 0, 0, 0.38);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  font-size: var(--fs-xs); font-weight: 600;
+}
+.call-notice {
+  margin: 8px 0 0; max-width: 340px;
+  font-size: var(--fs-sm); line-height: 1.45;
+  color: #ffd9a8;
+}
+
+/* Their picture on screen: name and status move up, over a shade, like the viewers' bar. */
+.call.has-video::before,
+.call.self-full::before {
+  content: "";
+  position: absolute; left: 0; right: 0; top: 0; z-index: 1;
+  height: calc(150px + env(safe-area-inset-top));
+  background: linear-gradient(rgba(0, 0, 0, 0.55), transparent);
+  pointer-events: none;
+}
+.call.has-video .call-who {
+  position: absolute; left: 0; right: 0;
+  top: calc(58px + env(safe-area-inset-top));
+  flex: none;
+  align-items: flex-start;
+  padding: 0 20px;
+  text-align: left; gap: 2px;
+}
+.call.has-video .call-avatar { display: none; }
+.call.has-video .call-name { font-size: var(--fs-xl); }
+.call.has-video .call-name,
+.call.has-video .call-status,
+.call.self-full .call-name,
+.call.self-full .call-status { text-shadow: 0 1px 10px rgba(0, 0, 0, 0.55); }
+.call.has-video .call-chips { justify-content: flex-start; }
+
+/* Our own camera: the corner once theirs shows, the whole screen before. */
+.call-self {
+  position: absolute; z-index: 2;
+  right: 16px; bottom: calc(136px + env(safe-area-inset-bottom));
+  width: 208px; aspect-ratio: 16 / 10;
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  background: #1b1b22;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  display: grid; place-items: center;
+  transition: width 0.3s var(--ease), height 0.3s var(--ease), right 0.3s var(--ease),
+    bottom 0.3s var(--ease), border-radius 0.3s var(--ease);
+}
+.call-self[hidden], .call-self video[hidden] { display: none; }
+.call-self video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.call-self video.mirrored { transform: scaleX(-1); }
+.call-self.full {
+  z-index: 0;
+  right: 0; bottom: 0;
+  width: 100%; height: 100%; aspect-ratio: auto;
+  border-radius: 0; box-shadow: none;
+}
+.call-self-off { color: rgba(255, 255, 255, 0.72); }
+
+.call-sound {
+  position: relative; z-index: 3;
+  margin-bottom: 4px;
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 9px 16px; border-radius: var(--r-full);
+  border: 0; background: #fff; color: #111;
+  font-size: var(--fs-sm); font-weight: 600;
+}
+
+.call-controls {
+  position: relative; z-index: 3;
+  align-self: stretch;
+  display: flex; justify-content: center; align-items: flex-start;
+  gap: clamp(14px, 4vw, 30px);
+  padding: 18px 16px 30px;
+}
+.call.has-video .call-controls,
+.call.self-full .call-controls {
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.55));
+}
+.call-incoming .call-controls { gap: clamp(64px, 24vw, 132px); padding-bottom: 44px; }
+.call-ctl {
+  min-width: 64px; padding: 0;
+  border: 0; background: none; color: #fff;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+}
+.call-ctl-disc {
+  width: 64px; height: 64px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease;
+}
+.call-incoming .call-ctl-disc { width: 72px; height: 72px; }
+.call-ctl:hover:not(:disabled) .call-ctl-disc { background: rgba(255, 255, 255, 0.26); }
+.call-ctl:active:not(:disabled) .call-ctl-disc { transform: scale(0.94); }
+.call-ctl.is-on .call-ctl-disc,
+.call-ctl.is-on:hover:not(:disabled) .call-ctl-disc { background: #fff; color: #111; }
+.call-ctl-end .call-ctl-disc,
+.call-ctl-end:hover:not(:disabled) .call-ctl-disc { background: var(--call-red); }
+.call-ctl-accept .call-ctl-disc,
+.call-ctl-accept:hover:not(:disabled) .call-ctl-disc { background: var(--call-green); }
+.call-ctl-end:hover:not(:disabled) .call-ctl-disc,
+.call-ctl-accept:hover:not(:disabled) .call-ctl-disc { filter: brightness(1.1); }
+.call-ctl-label { font-size: var(--fs-xs); font-weight: 600; color: rgba(255, 255, 255, 0.86); }
+.call-ctl:disabled { opacity: 0.4; cursor: default; }
+/* The ring shows on the disc, where the eye is, not around the label. */
+.call-ctl:focus-visible { outline: none; }
+.call-ctl:focus-visible .call-ctl-disc { outline: 3px solid #fff; outline-offset: 3px; }
+.call :focus-visible { outline-color: #fff; }
+.call:focus-visible { outline: none; }
+
+@media (max-width: 900px) {
+  /* Four buttons in a phone's chat header: closer together, so the name keeps some room. */
+  .thread-head .icon-btn:not(.back-mobile) + .icon-btn { margin-left: -6px; }
+  .call-self { width: 104px; aspect-ratio: 3 / 4; right: 12px; bottom: calc(128px + env(safe-area-inset-bottom)); }
+  .call-avatar .avatar { width: 112px; height: 112px; font-size: 40px; }
+  .call-ctl-disc { width: 58px; height: 58px; }
+  .call-incoming .call-ctl-disc { width: 68px; height: 68px; }
+}
+
+/* Minimized: over the foot of the chat list on desktop… */
+.call-pill {
+  position: fixed; z-index: 88;
+  left: calc(var(--rail-w) + 12px); bottom: 14px;
+  width: calc(var(--pane-w) - 24px);
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px;
+  border-radius: var(--r-full);
+  background: #187a3c; color: #fff;
+  box-shadow: var(--shadow-md);
+  animation: modal-in 0.2s var(--ease);
+}
+.call-pill.is-ended { background: #3b3b45; }
+.call-pill-main {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 10px;
+  padding: 4px 8px 4px 10px;
+  border: 0; border-radius: var(--r-full);
+  background: none; color: inherit; text-align: left;
+}
+.call-pill-main:hover { background: rgba(255, 255, 255, 0.1); }
+.call-pill-dot {
+  width: 8px; height: 8px; flex-shrink: 0;
+  border-radius: 50%;
+  background: #8dffb4;
+  animation: call-live 1.6s ease-in-out infinite;
+}
+.call-pill.is-ended .call-pill-dot { display: none; }
+@keyframes call-live { 50% { opacity: 0.35; } }
+.call-pill-copy { min-width: 0; display: flex; flex-direction: column; }
+.call-pill-copy strong {
+  font-size: var(--fs-sm); font-weight: 650;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.call-pill-status { font-size: var(--fs-xs); opacity: 0.88; font-variant-numeric: tabular-nums; }
+.call-pill-expand { margin-left: auto; flex-shrink: 0; opacity: 0.8; }
+.call-pill-btn {
+  width: 36px; height: 36px; flex-shrink: 0;
+  border: 0; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18); color: #fff;
+  display: grid; place-items: center;
+  transition: background 0.15s ease;
+}
+.call-pill-btn:hover { background: rgba(255, 255, 255, 0.28); }
+.call-pill-btn.is-on, .call-pill-btn.is-on:hover { background: #fff; color: #187a3c; }
+.call-pill-btn.end, .call-pill-btn.end:hover { background: #e0352b; }
+.call-pill :focus-visible { outline: 2px solid #fff; outline-offset: 2px; border-radius: var(--r-full); }
+/* …and a bar across the top of the app on phones, pushing it down rather than covering it. */
+@media (max-width: 900px) {
+  .call-pill {
+    position: static; order: -1; flex-shrink: 0;
+    width: auto;
+    padding: calc(4px + env(safe-area-inset-top)) 10px 4px 4px;
+    border-radius: 0;
+    box-shadow: none;
+    animation: none;
+  }
+  .call-pill-btn { width: 34px; height: 34px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .call, .call-pill { animation: none; }
+  .call-avatar.ringing::before, .call-avatar.ringing::after { animation: none; opacity: 0; }
+  .call-avatar.ringing .avatar { box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.22); }
+  .call-pill-dot { animation: none; }
+  .call-self { transition: none; }
+}

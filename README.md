@@ -60,8 +60,8 @@ curl http://127.0.0.1:8080/api/v1/health/live
 | `web` | `8081` | SPA + reverse-proxy `/api/v1` (incl. WebSocket) |
 | `api` | `8080` | Axum `/api/v1`; iOS talks here; migrations on startup |
 | `nebular` | `127.0.0.1:9000` | Media store (this machine only); clients use API `/media/{id}/content` |
-| `postgres` | `5432` | User/db from `.env` |
-| `redis` | `6379` | Multi-replica WS fan-out |
+| `postgres` | `127.0.0.1:5432` | Database (this machine only); user/db from `.env` |
+| `redis` | `127.0.0.1:6379` | Multi-replica WS fan-out (this machine only; no password) |
 
 Logging: set `RUST_LOG` in `.env` (wizard default `info`).
 
@@ -110,7 +110,7 @@ Debug API base URL: `http://127.0.0.1:8080/api/v1` (requires the Compose `api` s
 
 ```bash
 # Server (requires Postgres — start compose infra or full stack)
-docker compose up -d postgres
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d postgres
 cd server && cargo test --workspace
 cd server && cargo clippy --all-targets -- -D warnings
 cd server && cargo fmt --check

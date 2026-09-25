@@ -11,6 +11,10 @@ struct InCallOverlay: View {
         }
     }
 
+    private var showsRemoteVideo: Bool {
+        calls.remoteVideoTrack != nil && calls.active?.remoteCameraOff != true
+    }
+
     @ViewBuilder
     private func content(for call: CallController.ActiveCall) -> some View {
         ZStack {
@@ -24,64 +28,125 @@ struct InCallOverlay: View {
             )
             .ignoresSafeArea()
 
+            if showsRemoteVideo, let track = calls.remoteVideoTrack {
+                CallVideoView(track: track)
+                    .ignoresSafeArea()
+            }
+
             VStack(spacing: 28) {
                 Spacer(minLength: 48)
 
-                avatar(for: call)
+                if !showsRemoteVideo {
+                    avatar(for: call)
+                        .overlay(alignment: .bottomTrailing) {
+                            if call.remoteMicMuted {
+                                Image(systemName: "mic.slash.fill")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .padding(6)
+                                    .background(Theme.danger)
+                                    .clipShape(Circle())
+                                    .offset(x: 4, y: 4)
+                            }
+                        }
+                }
 
                 VStack(spacing: 6) {
                     Text(call.peerUsername)
                         .font(.system(size: 26, weight: .semibold))
                         .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(showsRemoteVideo ? 0.45 : 0), radius: 8, y: 2)
                     statusLabel(for: call)
-                    if call.modality == .video {
-                        Text("Video")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(Theme.accent)
-                            .transition(Motion.iconSwap)
+                    if let notice = call.notice, call.phase != .ending {
+                        Text(notice)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.white.opacity(0.8))
+                            .multilineTextAlignment(.center)
                     }
                 }
-                .animation(Motion.snappy, value: call.modality)
+                .animation(Motion.snappy, value: call.phase)
 
                 Spacer()
 
-                HStack(spacing: 28) {
-                    callButton(
-                        icon: call.isMuted ? "mic.slash.fill" : "mic.fill",
-                        label: call.isMuted ? "Unmute" : "Mute",
-                        color: call.isMuted ? Theme.danger : .white.opacity(0.18)
-                    ) {
-                        Task { await calls.toggleMute() }
-                    }
-
-                    if call.modality == .video {
-                        callButton(
-                            icon: call.isVideoEnabled ? "video.fill" : "video.slash.fill",
-                            label: "Video",
-                            color: call.isVideoEnabled ? .white.opacity(0.18) : Theme.danger
-                        ) {
-                            Task { await calls.toggleVideo() }
-                        }
-                    }
-
-                    if call.phase == .incomingRinging {
-                        callButton(icon: "phone.down.fill", label: "Decline", color: Theme.danger) {
-                            Task { await calls.rejectIncoming() }
-                        }
-                        callButton(icon: "phone.fill", label: "Accept", color: Theme.online) {
-                            Task { await calls.acceptIncoming() }
-                        }
-                    } else {
-                        callButton(icon: "phone.down.fill", label: "End", color: Theme.danger) {
-                            Task { await calls.hangup() }
-                        }
-                    }
+                if call.phase != .ending {
+                    controls(for: call)
+                        .padding(.bottom, 48)
+                        .animation(Motion.standard, value: call.phase)
                 }
-                .padding(.bottom, 48)
-                // Accept/Decline collapse into a single End button on answer — animate the swap.
-                .animation(Motion.standard, value: call.phase)
             }
             .padding(.horizontal, 24)
+
+            if call.modality == .video, call.isVideoEnabled, let local = calls.localVideoTrack, call.phase != .ending {
+                CallVideoView(track: local, mirror: calls.usesFrontCamera)
+                    .frame(width: 108, height: 164)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(alignment: .bottom) {
+                        if calls.canSwitchCamera {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(6)
+                                .background(.black.opacity(0.45))
+                                .clipShape(Circle())
+                                .padding(.bottom, 8)
+                        }
+                    }
+                    .onTapGesture { calls.switchCamera() }
+                    .accessibilityLabel("Switch camera")
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .strokeBorder(.white.opacity(0.35), lineWidth: 1)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    .padding(.top, 12)
+                    .padding(.trailing, 16)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func controls(for call: CallController.ActiveCall) -> some View {
+        HStack(spacing: 22) {
+            if call.phase != .incomingRinging {
+                callButton(
+                    icon: call.isMuted ? "mic.slash.fill" : "mic.fill",
+                    label: call.isMuted ? "Unmute" : "Mute",
+                    color: call.isMuted ? Theme.danger : .white.opacity(0.18)
+                ) {
+                    Task { await calls.toggleMute() }
+                }
+
+                if call.modality == .video {
+                    callButton(
+                        icon: call.isVideoEnabled ? "video.fill" : "video.slash.fill",
+                        label: "Video",
+                        color: call.isVideoEnabled ? .white.opacity(0.18) : Theme.danger
+                    ) {
+                        Task { await calls.toggleVideo() }
+                    }
+                }
+
+                callButton(
+                    icon: call.speakerOn ? "speaker.wave.2.fill" : "speaker.fill",
+                    label: "Speaker",
+                    color: call.speakerOn ? Theme.accent : .white.opacity(0.18)
+                ) {
+                    calls.toggleSpeaker()
+                }
+            }
+
+            if call.phase == .incomingRinging {
+                callButton(icon: "phone.down.fill", label: "Decline", color: Theme.danger) {
+                    Task { await calls.rejectIncoming() }
+                }
+                callButton(icon: "phone.fill", label: "Accept", color: Theme.online) {
+                    Task { await calls.acceptIncoming() }
+                }
+            } else {
+                callButton(icon: "phone.down.fill", label: "End", color: Theme.danger) {
+                    Task { await calls.hangup() }
+                }
+            }
         }
     }
 
@@ -116,7 +181,9 @@ struct InCallOverlay: View {
     @ViewBuilder
     private func statusLabel(for call: CallController.ActiveCall) -> some View {
         Group {
-            if call.phase == .active, let start = call.startedAt {
+            if call.phase == .active, call.reconnecting {
+                Text("Reconnecting…")
+            } else if call.phase == .active, let start = call.startedAt {
                 TimelineView(.periodic(from: start, by: 1)) { context in
                     Text(elapsed(from: start, now: context.date))
                         .monospacedDigit()
@@ -145,7 +212,7 @@ struct InCallOverlay: View {
         case .active:
             return "Connected"
         case .ending:
-            return "Ending…"
+            return call.endedText ?? "Call ended"
         }
     }
 

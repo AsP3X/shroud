@@ -1,3 +1,4 @@
+import CallKit
 import CryptoKit
 import Foundation
 import PushKit
@@ -249,21 +250,37 @@ extension PushNotificationService: PKPushRegistryDelegate {
             return
         }
         let dict = payload.dictionaryPayload
-        let callID = (dict["call_id"] as? String).flatMap(UUID.init(uuidString:)) ?? UUID()
-        let modality = (dict["modality"] as? String).flatMap(CallModality.init(rawValue:)) ?? .voice
-        let fromName = dict["from_username"] as? String ?? "Incoming call"
-        let peerUserID = (dict["from_user_id"] as? String).flatMap(UUID.init(uuidString:))
+        let contents = NotificationPayload.parse(dict)
+        let isCall = contents?.kind == .call || contents?.kind == .videoCall
+        guard isCall, let contents, let callID = contents.callID else {
+            // PushKit still requires a CallKit report, even when the payload is not a call.
+            let unused = UUID()
+            CallKitManager.shared.reportIncoming(unused, callerName: "Shroud", video: false)
+            CallKitManager.shared.reportEnded(unused, reason: .failed)
+            completion()
+            return
+        }
+        let modality: CallModality = contents.kind == .videoCall ? .video : .voice
+        var fromName = "Incoming call"
+        if let sealed = contents.sealedName,
+           let key = NotificationPayload.storedKey(),
+           let name = NotificationPayload.openName(
+               sealed,
+               key: key,
+               kind: contents.kind,
+               thread: "calls",
+               peer: contents.rawPeer ?? ""
+           )
+        {
+            fromName = name
+        }
 
-        // reportNewIncomingCall is invoked synchronously; that satisfies PushKit. The system
-        // completion can run now — waiting on CXProvider's async result delayed the report.
-        CallKitManager.shared.reportIncoming(
-            callID: callID,
-            peerUsername: fromName,
-            hasVideo: modality == .video
-        )
+        // reportNewIncomingCall runs before we return; that satisfies PushKit. Waiting on
+        // CallKit's completion delayed the report.
+        CallKitManager.shared.reportIncoming(callID, callerName: fromName, video: modality == .video)
         callController?.handleVoipPush(
             callID: callID,
-            peerUserID: peerUserID,
+            peerUserID: contents.peerUserID,
             peerUsername: fromName,
             modality: modality,
             alreadyReported: true

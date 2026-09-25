@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		739D7554305DCFD500302FD6 /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = 73WK0002305C000000000002 /* WhisperKit */; };
 		73A0B0020000000000000002 /* ShroudNotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 73A0B0010000000000000001 /* ShroudNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		73WR0003305C000000000003 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = 73WR0002305C000000000002 /* WebRTC */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -113,6 +114,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				739D7554305DCFD500302FD6 /* WhisperKit in Frameworks */,
+				73WR0003305C000000000003 /* WebRTC in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -187,6 +189,7 @@
 			name = shroud;
 			packageProductDependencies = (
 				73WK0002305C000000000002 /* WhisperKit */,
+				73WR0002305C000000000002 /* WebRTC */,
 			);
 			productName = shroud;
 			productReference = 736BA35D3007DFB8005F6B14 /* shroud.app */;
@@ -298,6 +301,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				73WK0001305C000000000001 /* XCRemoteSwiftPackageReference "WhisperKit" */,
+				73WR0001305C000000000001 /* XCRemoteSwiftPackageReference "WebRTC" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 736BA35E3007DFB8005F6B14 /* Products */;
@@ -803,6 +807,14 @@
 				minimumVersion = 0.13.0;
 			};
 		};
+		73WR0001305C000000000001 /* XCRemoteSwiftPackageReference "WebRTC" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/stasel/WebRTC.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 153.0.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -810,6 +822,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 73WK0001305C000000000001 /* XCRemoteSwiftPackageReference "WhisperKit" */;
 			productName = WhisperKit;
+		};
+		73WR0002305C000000000002 /* WebRTC */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 73WR0001305C000000000001 /* XCRemoteSwiftPackageReference "WebRTC" */;
+			productName = WebRTC;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

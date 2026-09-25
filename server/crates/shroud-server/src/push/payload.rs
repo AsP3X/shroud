@@ -18,9 +18,12 @@ pub enum NotificationKind {
     Message,
     Reaction,
     ContactRequest,
-    /// Someone is ringing: an alert, not a PushKit ring (see `PushService::notify_call`).
+    /// Someone is ringing: a PushKit push to iPhones that registered for one, an alert to
+    /// older builds, a Web Push to browsers (see `PushService::notify_call`).
     Call,
     VideoCall,
+    /// A call rang out, or its caller hung up, before anyone answered.
+    MissedCall,
     Test,
 }
 
@@ -32,6 +35,7 @@ impl NotificationKind {
             Self::ContactRequest => "contact_request",
             Self::Call => "call",
             Self::VideoCall => "video_call",
+            Self::MissedCall => "missed_call",
             Self::Test => "test",
         }
     }
@@ -46,6 +50,7 @@ impl NotificationKind {
             Self::ContactRequest => "Wants to add you as a contact",
             Self::Call => "Incoming call",
             Self::VideoCall => "Incoming video call",
+            Self::MissedCall => "Missed call",
             Self::Test => "Notifications are working",
         }
     }
@@ -71,7 +76,10 @@ impl Notification {
     pub fn thread(&self) -> String {
         match (self.kind, self.conversation_id) {
             (NotificationKind::ContactRequest, _) => "contacts".into(),
-            (NotificationKind::Call | NotificationKind::VideoCall, _) => "calls".into(),
+            (
+                NotificationKind::Call | NotificationKind::VideoCall | NotificationKind::MissedCall,
+                _,
+            ) => "calls".into(),
             (NotificationKind::Test, _) => "test".into(),
             (_, Some(conversation_id)) => conversation_id.to_string(),
             (_, None) => "shroud".into(),
@@ -124,7 +132,17 @@ pub fn apns_alert(
     if let Some(badge) = notification.badge {
         aps["badge"] = json!(badge);
     }
+    json!({ "aps": aps, "shroud": shroud_object(notification, payload_key) })
+}
 
+/// A PushKit push for a ringing call. The app reads the same `shroud` object as from an
+/// alert, and must report the call to CallKit before its handler returns.
+pub fn apns_voip(notification: &Notification, payload_key: Option<&[u8]>) -> Value {
+    json!({ "aps": {}, "shroud": shroud_object(notification, payload_key) })
+}
+
+/// The app's part of an APNs payload: kind, ids, and the sender's name sealed for the device.
+fn shroud_object(notification: &Notification, payload_key: Option<&[u8]>) -> Value {
     let mut app = json!({ "v": 1, "k": notification.kind.as_str() });
     if let Some(conversation_id) = notification.conversation_id {
         app["c"] = json!(conversation_id);
@@ -142,14 +160,14 @@ pub fn apns_alert(
         && let Some(sealed) = seal_name(
             key,
             notification.kind.as_str(),
-            &thread,
+            &notification.thread(),
             &notification.peer(),
             name,
         )
     {
         app["e"] = json!(sealed);
     }
-    json!({ "aps": aps, "shroud": app })
+    app
 }
 
 /// `{"n": name}` sealed for the device, bound to the kind, thread and person it belongs to.
@@ -308,6 +326,35 @@ mod tests {
         assert_eq!(
             serde_json::from_slice::<Value>(&opened).unwrap()["n"],
             "carol"
+        );
+    }
+
+    #[test]
+    fn a_voip_push_carries_the_same_app_object_and_no_alert() {
+        let key = [5u8; 32];
+        let call = Notification {
+            kind: NotificationKind::Call,
+            conversation_id: None,
+            peer_user_id: Some(Uuid::from_u128(22)),
+            message_id: None,
+            call_id: Some(Uuid::from_u128(21)),
+            sender_name: Some("dave".into()),
+            badge: None,
+        };
+        let payload = apns_voip(&call, Some(&key));
+        assert_eq!(payload["aps"], json!({}));
+        assert_eq!(payload["shroud"]["k"], "call");
+        assert_eq!(payload["shroud"]["call"], Uuid::from_u128(21).to_string());
+        assert_eq!(payload["shroud"]["p"], Uuid::from_u128(22).to_string());
+        assert!(!payload.to_string().contains("dave"));
+        let opened = open(
+            &key,
+            &extension_aad("call", "calls", &Uuid::from_u128(22).to_string()),
+            payload["shroud"]["e"].as_str().unwrap(),
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&opened).unwrap()["n"],
+            "dave"
         );
     }
 

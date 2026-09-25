@@ -33,8 +33,8 @@ use web_push::{Urgency, WebPushOptions, WebPushOutcome};
 
 /// How long an undelivered notification stays worth delivering (device off, no signal).
 const PUSH_LIFETIME_SECS: u64 = 24 * 60 * 60;
-/// A ringing call is missed after 90 s (`routes::calls`); a later "incoming call" is noise.
-const CALL_PUSH_LIFETIME_SECS: u64 = 90;
+/// A call stops ringing after this long (`routes::calls`); a later "incoming call" is noise.
+const CALL_PUSH_LIFETIME_SECS: u64 = crate::routes::calls::RINGING_TIMEOUT_SECS.unsigned_abs();
 
 /// Something that may deserve a notification.
 #[derive(Debug, Clone)]
@@ -60,12 +60,19 @@ pub enum PushEvent {
         recipient: Uuid,
         reader_device: Uuid,
     },
-    /// `caller` is ringing `recipient`: a notification on their iPhones that are not open.
+    /// `caller` is ringing `recipient`: every iPhone with a VoIP token rings through PushKit;
+    /// older iPhones and browsers that are not connected get a notification.
     IncomingCall {
         recipient: Uuid,
         caller: Uuid,
         call_id: Uuid,
         modality: String,
+    },
+    /// `caller`'s call to `recipient` ended before anyone answered.
+    MissedCall {
+        recipient: Uuid,
+        caller: Uuid,
+        call_id: Uuid,
     },
 }
 
@@ -82,6 +89,8 @@ pub enum PushChannel {
 pub struct SentPush {
     pub device_id: Uuid,
     pub channel: PushChannel,
+    /// `apns-push-type` for APNs (a PushKit ring is `Voip`); `None` for Web Push.
+    pub apns_push_type: Option<ApnsPushType>,
     /// APNs JSON, or the Web Push JSON before encryption.
     pub payload: Value,
 }
@@ -164,6 +173,9 @@ struct Target {
     apns_token: Option<String>,
     apns_environment: Option<String>,
     payload_key: Option<Vec<u8>>,
+    /// PushKit token: only loaded for calls (`targets(.., with_voip: true)`).
+    voip_token: Option<String>,
+    voip_environment: Option<String>,
     endpoint: Option<String>,
     p256dh: Option<Vec<u8>>,
     auth: Option<Vec<u8>>,
@@ -334,6 +346,11 @@ impl PushService {
                 self.notify_call(recipient, caller, call_id, &modality)
                     .await
             }
+            PushEvent::MissedCall {
+                recipient,
+                caller,
+                call_id,
+            } => self.notify_missed_call(recipient, caller, call_id).await,
         }
     }
 
@@ -351,7 +368,7 @@ impl PushService {
         }
         let muted = matches!(kind, NotificationKind::Message | NotificationKind::Reaction)
             && self.is_muted(recipient, from).await;
-        let targets = self.targets(recipient, None).await;
+        let targets = self.targets(recipient, None, false).await;
         let mut sender_name: Option<Option<String>> = None;
         let mut badges = BadgeCache::default();
         for target in targets {
@@ -385,6 +402,7 @@ impl PushService {
                     NotificationKind::Message
                     | NotificationKind::Call
                     | NotificationKind::VideoCall
+                    | NotificationKind::MissedCall
                     | NotificationKind::Test => true,
                 };
             if !wanted {
@@ -423,7 +441,7 @@ impl PushService {
     /// The icon badge on the recipient's offline iPhones after they read on `reader_device`.
     async fn sync_badges(&self, recipient: Uuid, reader_device: Uuid) {
         let mut badges = BadgeCache::default();
-        for target in self.targets(recipient, None).await {
+        for target in self.targets(recipient, None, false).await {
             if target.device_id == reader_device {
                 continue;
             }
@@ -476,12 +494,14 @@ impl PushService {
         .await;
     }
 
-    /// "Incoming call" on the callee's iPhones that are not open (those hear `call.ring`).
+    /// Rings the callee's devices that the socket's `call.ring` may not reach.
     ///
-    /// Human: An alert, not a PushKit ring. A ring must be reported to CallKit and ended when
-    /// the caller hangs up, which the app only learns over its socket — a locked phone would ring
-    /// on after the call was gone. VoIP tokens are kept for when the call flow can do that.
-    /// Browsers get nothing: the web client has no calls. Mutes do not silence a call.
+    /// Human: An iPhone with a PushKit token always gets a VoIP push, connected or not: a
+    /// phone the OS just suspended still looks connected for a while, and would miss the ring.
+    /// The app reports it to CallKit (which shows a call it already shows only once), then
+    /// connects and checks the call still rings. Older iPhones get an "Incoming call" alert
+    /// and browsers a Web Push, each only while not connected. Mutes do not silence a call;
+    /// a device with notifications off gets nothing.
     async fn notify_call(&self, recipient: Uuid, caller: Uuid, call_id: Uuid, modality: &str) {
         if recipient == caller {
             return;
@@ -492,18 +512,7 @@ impl PushService {
             NotificationKind::Call
         };
         let mut caller_name: Option<Option<String>> = None;
-        for target in self.targets(recipient, None).await {
-            if target.apns_token.is_none() {
-                continue;
-            }
-            if self
-                .inner
-                .realtime
-                .is_device_online(recipient, target.device_id)
-                .await
-            {
-                continue;
-            }
+        for target in self.targets(recipient, None, true).await {
             let settings = target.settings();
             if !settings.enabled {
                 continue;
@@ -525,6 +534,82 @@ impl PushService {
                 sender_name: name,
                 badge: None,
             };
+            if let (Some(token), Some(environment)) = (&target.voip_token, &target.voip_environment)
+            {
+                let payload = payload::apns_voip(&notification, target.payload_key.as_deref());
+                self.send_apns(
+                    target.device_id,
+                    token,
+                    ApnsEnvironment::parse(environment),
+                    PushChannel::Apns,
+                    ApnsRequest {
+                        push_type: ApnsPushType::Voip,
+                        priority: 10,
+                        expiration: Some(unix_now() + CALL_PUSH_LIFETIME_SECS),
+                        collapse_id: None,
+                        payload: &payload,
+                    },
+                )
+                .await;
+                continue;
+            }
+            if target.apns_token.is_none() && target.web_subscription().is_none() {
+                continue;
+            }
+            if self
+                .inner
+                .realtime
+                .is_device_online(recipient, target.device_id)
+                .await
+            {
+                continue;
+            }
+            self.send_notification(&target, &settings, &notification)
+                .await;
+        }
+    }
+
+    /// "Missed call" where an "Incoming call" notification may still show: it replaces that
+    /// one (same APNs collapse id, same Web Push tag). iPhones that rang through PushKit
+    /// learn the call ended from the server and say so themselves.
+    async fn notify_missed_call(&self, recipient: Uuid, caller: Uuid, call_id: Uuid) {
+        let mut caller_name: Option<Option<String>> = None;
+        for target in self.targets(recipient, None, true).await {
+            if target.voip_token.is_some() {
+                continue;
+            }
+            if target.apns_token.is_none() && target.web_subscription().is_none() {
+                continue;
+            }
+            let settings = target.settings();
+            if !settings.enabled {
+                continue;
+            }
+            if self
+                .inner
+                .realtime
+                .is_device_online(recipient, target.device_id)
+                .await
+            {
+                continue;
+            }
+            let name = if settings.show_sender {
+                if caller_name.is_none() {
+                    caller_name = Some(self.username(caller).await);
+                }
+                caller_name.clone().flatten()
+            } else {
+                None
+            };
+            let notification = Notification {
+                kind: NotificationKind::MissedCall,
+                conversation_id: None,
+                peer_user_id: Some(caller),
+                message_id: None,
+                call_id: Some(call_id),
+                sender_name: name,
+                badge: None,
+            };
             self.send_notification(&target, &settings, &notification)
                 .await;
         }
@@ -534,7 +619,7 @@ impl PushService {
     /// "Send a test notification".
     pub async fn send_test(&self, user_id: Uuid, device_id: Uuid) -> TestPushOutcome {
         let Some(target) = self
-            .targets(user_id, Some(device_id))
+            .targets(user_id, Some(device_id), false)
             .await
             .into_iter()
             .next()
@@ -578,6 +663,10 @@ impl PushService {
         settings: &NotificationSettings,
         notification: &Notification,
     ) -> (PushChannel, Delivery) {
+        let ringing = matches!(
+            notification.kind,
+            NotificationKind::Call | NotificationKind::VideoCall
+        );
         if let (Some(token), Some(environment)) = (&target.apns_token, &target.apns_environment) {
             let sound = payload::apns_sound(&settings.sound);
             let payload = payload::apns_alert(
@@ -585,6 +674,8 @@ impl PushService {
                 sound.as_deref(),
                 target.payload_key.as_deref(),
             );
+            // "Missed call" takes the place of the call's "Incoming call".
+            let collapse_id = notification.call_id.map(|id| id.to_string());
             let delivery = self
                 .send_apns(
                     target.device_id,
@@ -596,13 +687,13 @@ impl PushService {
                         priority: 10,
                         expiration: Some(
                             unix_now()
-                                + if notification.call_id.is_some() {
+                                + if ringing {
                                     CALL_PUSH_LIFETIME_SECS
                                 } else {
                                     PUSH_LIFETIME_SECS
                                 },
                         ),
-                        collapse_id: None,
+                        collapse_id: collapse_id.as_deref(),
                         payload: &payload,
                     },
                 )
@@ -616,6 +707,8 @@ impl PushService {
         let options = WebPushOptions {
             ttl_secs: if notification.kind == NotificationKind::Test {
                 60
+            } else if ringing {
+                u32::try_from(CALL_PUSH_LIFETIME_SECS).unwrap_or(u32::MAX)
             } else {
                 u32::try_from(PUSH_LIFETIME_SECS).unwrap_or(u32::MAX)
             },
@@ -648,11 +741,17 @@ impl PushService {
                 list.push(SentPush {
                     device_id,
                     channel,
+                    apns_push_type: Some(request.push_type),
                     payload: request.payload.clone(),
                 });
             }
             return Delivery::Sent;
         }
+        let token_kind = if request.push_type == ApnsPushType::Voip {
+            "voip"
+        } else {
+            "alert"
+        };
         let Some(client) = &self.inner.apns else {
             tracing::info!(
                 %device_id,
@@ -672,7 +771,7 @@ impl PushService {
                     r#"DELETE FROM push_tokens WHERE device_id = $1 AND kind = $2 AND apns_token = $3"#,
                 )
                 .bind(device_id)
-                .bind("alert")
+                .bind(token_kind)
                 .bind(token)
                 .execute(&self.inner.pool)
                 .await;
@@ -712,6 +811,7 @@ impl PushService {
                 list.push(SentPush {
                     device_id,
                     channel: PushChannel::Web,
+                    apns_push_type: None,
                     payload: payload.clone(),
                 });
             }
@@ -758,8 +858,14 @@ impl PushService {
         }
     }
 
-    /// The user's signed-in devices that registered for alerts, with their settings.
-    async fn targets(&self, user_id: Uuid, only_device: Option<Uuid>) -> Vec<Target> {
+    /// The user's signed-in devices that registered for alerts, with their settings; with
+    /// `with_voip`, also those that registered only for PushKit, and their PushKit tokens.
+    async fn targets(
+        &self,
+        user_id: Uuid,
+        only_device: Option<Uuid>,
+        with_voip: bool,
+    ) -> Vec<Target> {
         let rows = sqlx::query_as::<_, Target>(
             r#"
             SELECT
@@ -767,10 +873,13 @@ impl PushService {
                 s.enabled, s.show_sender, s.reactions, s.contact_requests, s.sound, s.badge,
                 s.badge_includes_muted,
                 pt.apns_token, pt.environment AS apns_environment, pt.payload_key,
+                CASE WHEN $3 THEN vt.apns_token END AS voip_token,
+                CASE WHEN $3 THEN vt.environment END AS voip_environment,
                 w.endpoint, w.p256dh, w.auth
             FROM devices d
             LEFT JOIN device_notification_settings s ON s.device_id = d.id
             LEFT JOIN push_tokens pt ON pt.device_id = d.id AND pt.kind = 'alert'
+            LEFT JOIN push_tokens vt ON vt.device_id = d.id AND vt.kind = 'voip'
             LEFT JOIN web_push_subscriptions w ON w.device_id = d.id
             WHERE d.user_id = $1
               AND d.revoked_at IS NULL
@@ -780,11 +889,16 @@ impl PushService {
                   SELECT 1 FROM sessions s WHERE s.device_id = d.id AND s.revoked_at IS NULL
               )
               AND ($2::uuid IS NULL OR d.id = $2)
-              AND (pt.device_id IS NOT NULL OR w.device_id IS NOT NULL)
+              AND (
+                  pt.device_id IS NOT NULL
+                  OR w.device_id IS NOT NULL
+                  OR ($3 AND vt.device_id IS NOT NULL)
+              )
             "#,
         )
         .bind(user_id)
         .bind(only_device)
+        .bind(with_voip)
         .fetch_all(&self.inner.pool)
         .await;
         match rows {

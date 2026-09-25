@@ -117,6 +117,10 @@ impl std::fmt::Debug for RealtimeHub {
 struct RedisFanout {
     user_id: Uuid,
     except_device_id: Option<Uuid>,
+    /// Set for an event meant for one device (a call's signals). Replicas from before it
+    /// ignore the field and deliver to all the user's devices, which the apps filter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    only_device_id: Option<Uuid>,
     event: Value,
 }
 
@@ -464,6 +468,62 @@ impl RealtimeHub {
         }
     }
 
+    /// Delivers a JSON text event to one device's local socket, if it has one here.
+    fn publish_local_to_device(connections: &Connections, device_id: Uuid, payload: &str) {
+        let Some(connection) = connections.by_device.get(&device_id) else {
+            return;
+        };
+        match connection.tx.try_send(payload.to_string()) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                tracing::warn!(%device_id, "realtime outbound queue full; dropping event");
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {}
+        }
+    }
+
+    /// Sends an event to one device of `user_id` only, on whichever replica holds its socket.
+    ///
+    /// Human: A call's signals are for the one device in the call; the user's other devices
+    /// have no business with them.
+    pub async fn publish_to_device(&self, user_id: Uuid, device_id: Uuid, payload: &str) {
+        {
+            let connections = self.connections.read().await;
+            if connections
+                .devices_by_user
+                .get(&user_id)
+                .is_some_and(|devices| devices.contains(&device_id))
+            {
+                Self::publish_local_to_device(&connections, device_id, payload);
+            }
+        }
+
+        let Some(mut conn) = self.redis.read().await.clone() else {
+            return;
+        };
+        let event: Value = match serde_json::from_str(payload) {
+            Ok(value) => value,
+            Err(_) => Value::String(payload.to_string()),
+        };
+        let envelope = RedisFanout {
+            user_id,
+            except_device_id: None,
+            only_device_id: Some(device_id),
+            event,
+        };
+        let body = match serde_json::to_string(&envelope) {
+            Ok(s) => s,
+            Err(err) => {
+                tracing::warn!(error = %err, "redis fanout serialize failed");
+                return;
+            }
+        };
+        let channel = format!("{USER_CHANNEL_PREFIX}{user_id}");
+        if let Err(err) = conn.publish::<_, _, ()>(&channel, body).await {
+            tracing::warn!(error = %err, %user_id, "redis publish failed");
+        }
+    }
+
     /// Fan-out entry point used by HTTP handlers.
     ///
     /// Always delivers to local sockets first (this process). When Redis is configured,
@@ -512,6 +572,7 @@ impl RealtimeHub {
             let envelope = RedisFanout {
                 user_id,
                 except_device_id: except_device,
+                only_device_id: None,
                 event: event.clone(),
             };
             let body = match serde_json::to_string(&envelope) {
@@ -610,8 +671,26 @@ async fn run_subscriber(hub: Arc<RealtimeHub>, redis_url: &str) -> Result<(), re
                 continue;
             }
         };
-        hub.publish_local_to_users([envelope.user_id], envelope.except_device_id, &event_text)
-            .await;
+        match envelope.only_device_id {
+            Some(device_id) => {
+                let connections = hub.connections.read().await;
+                if connections
+                    .devices_by_user
+                    .get(&envelope.user_id)
+                    .is_some_and(|devices| devices.contains(&device_id))
+                {
+                    RealtimeHub::publish_local_to_device(&connections, device_id, &event_text);
+                }
+            }
+            None => {
+                hub.publish_local_to_users(
+                    [envelope.user_id],
+                    envelope.except_device_id,
+                    &event_text,
+                )
+                .await;
+            }
+        }
     }
 
     Err(redis::RedisError::from((
@@ -667,5 +746,34 @@ mod tests {
         assert_eq!(new.events.try_recv().as_deref(), Ok("event"));
         hub.unsubscribe(user, device, new.id).await;
         assert!(!hub.is_user_online(user).await);
+    }
+
+    #[tokio::test]
+    async fn a_device_event_reaches_that_device_only() {
+        let hub = Arc::new(RealtimeHub::new());
+        let user = Uuid::new_v4();
+        let (phone, laptop) = (Uuid::new_v4(), Uuid::new_v4());
+        let mut phone_socket = hub
+            .subscribe(user, phone, Uuid::new_v4())
+            .await
+            .expect("phone");
+        let mut laptop_socket = hub
+            .subscribe(user, laptop, Uuid::new_v4())
+            .await
+            .expect("laptop");
+
+        hub.publish_to_device(user, laptop, "signal").await;
+        // Another user's device id never matches.
+        hub.publish_to_device(Uuid::new_v4(), phone, "stray").await;
+
+        assert_eq!(laptop_socket.events.try_recv().as_deref(), Ok("signal"));
+        assert_eq!(phone_socket.events.try_recv(), Err(TryRecvError::Empty));
+    }
+
+    #[test]
+    fn fanout_envelopes_without_a_device_still_parse() {
+        let old = r#"{"user_id":"0190a3b4-1c2d-7e8f-9a0b-1c2d3e4f5a6b","except_device_id":null,"event":{"type":"x"}}"#;
+        let envelope: RedisFanout = serde_json::from_str(old).expect("old envelope");
+        assert!(envelope.only_device_id.is_none());
     }
 }

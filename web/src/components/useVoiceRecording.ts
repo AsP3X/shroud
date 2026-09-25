@@ -13,6 +13,7 @@ import {
   cancelVoiceRecord,
   finishVoiceRecord,
   getVoiceRecorder,
+  onVoiceInterrupt,
   startVoiceRecord,
   type RecState,
   type VoiceTake,
@@ -308,6 +309,20 @@ export function useVoiceRecording({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [phase]);
+
+  /* A call takes the microphone: the take goes as if discarded (the recorder itself is
+     cancelled by `interruptVoiceRecord`). */
+  const interrupted = useRef<() => void>(() => undefined);
+  interrupted.current = () => {
+    const now = phaseRef.current;
+    if (now === "live" || now === "opening") {
+      close("discard");
+    } else if (now === "arming" || now === "holding") {
+      generation.current += 1;
+      abortStart(null);
+    }
+  };
+  useEffect(() => onVoiceInterrupt(() => interrupted.current()), []);
 
   return {
     phase,

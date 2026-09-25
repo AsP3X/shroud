@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
 use crate::media_store::NebularConfig;
+use crate::turn::TurnConfig;
 
 /// Default Postgres pool size when `DATABASE_POOL_MAX` is unset.
 pub const DEFAULT_DATABASE_POOL_MAX: u32 = 10;
@@ -50,8 +51,10 @@ pub struct Config {
     /// Browser origins allowed to call the API directly (empty = same-origin / no CORS).
     /// Set from `CORS_ALLOWED_ORIGINS` and/or `WEB_PUBLIC_URL` by the deploy wizard.
     pub cors_allowed_origins: Vec<String>,
-    /// STUN/TURN servers for WebRTC clients.
+    /// STUN/TURN servers every WebRTC client gets as they are.
     pub ice_servers: Vec<IceServer>,
+    /// TURN whose logins `GET /calls/ice-servers` mints per user (`TURN_SECRET`).
+    pub turn: Option<TurnConfig>,
     /// Most emoji one person may leave on one message (`REACTIONS_MAX_PER_USER`, 1–20).
     pub reactions_max_per_user: u32,
 }
@@ -123,7 +126,7 @@ impl Config {
             false,
         )?;
 
-        let ice_servers = ice_servers_from_env();
+        let ice = crate::turn::ice_config(&|name| std::env::var(name).ok())?;
         let cors_allowed_origins = cors_origins_from_env();
 
         // Human: Handed to clients by `GET /config`; the server can't count sealed emoji, so the
@@ -141,7 +144,8 @@ impl Config {
             redis_url,
             trust_forwarded_headers,
             cors_allowed_origins,
-            ice_servers,
+            ice_servers: ice.servers,
+            turn: ice.turn,
             reactions_max_per_user,
         })
     }
@@ -193,53 +197,6 @@ fn origin_from_url(raw: &str) -> Option<String> {
         return None;
     }
     Some(format!("{scheme}://{hostport}"))
-}
-
-/// Parse ICE servers from env.
-///
-/// - `ICE_SERVERS_JSON` — full JSON array of `{urls, username?, credential?}`
-/// - else default Google STUN + optional `TURN_URLS` / `TURN_USERNAME` / `TURN_CREDENTIAL`
-pub fn ice_servers_from_env() -> Vec<IceServer> {
-    if let Ok(raw) = std::env::var("ICE_SERVERS_JSON") {
-        let trimmed = raw.trim();
-        if !trimmed.is_empty() {
-            if let Ok(servers) = serde_json::from_str::<Vec<IceServer>>(trimmed) {
-                if !servers.is_empty() {
-                    return servers;
-                }
-            } else {
-                tracing::warn!("ICE_SERVERS_JSON invalid; falling back to defaults");
-            }
-        }
-    }
-
-    let mut servers = vec![IceServer {
-        urls: vec!["stun:stun.l.google.com:19302".into()],
-        username: None,
-        credential: None,
-    }];
-
-    if let Ok(turn_urls) = std::env::var("TURN_URLS") {
-        let urls: Vec<String> = turn_urls
-            .split(',')
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .collect();
-        if !urls.is_empty() {
-            servers.push(IceServer {
-                urls,
-                username: std::env::var("TURN_USERNAME")
-                    .ok()
-                    .filter(|s| !s.is_empty()),
-                credential: std::env::var("TURN_CREDENTIAL")
-                    .ok()
-                    .filter(|s| !s.is_empty()),
-            });
-        }
-    }
-
-    servers
 }
 
 fn parse_u32_env(name: &str, raw: Option<&str>, default: u32) -> Result<u32, AppError> {

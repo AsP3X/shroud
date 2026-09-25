@@ -150,7 +150,12 @@ services:
       WEB_PUSH_VAPID_PRIVATE_KEY: ${WEB_PUSH_VAPID_PRIVATE_KEY:-}
       WEB_PUSH_VAPID_PUBLIC_KEY: ${WEB_PUSH_VAPID_PUBLIC_KEY:-}
       WEB_PUSH_ALLOWED_HOSTS: ${WEB_PUSH_ALLOWED_HOSTS:-}
+      # Calls: TURN_URLS + TURN_SECRET make the API mint short-lived logins for the coturn
+      # below (docs/calls.md). TURN_USERNAME / TURN_CREDENTIAL are only for a hosted TURN
+      # service with one fixed login.
       TURN_URLS: ${TURN_URLS:-}
+      TURN_SECRET: ${TURN_SECRET:-}
+      TURN_CREDENTIAL_TTL_SECS: ${TURN_CREDENTIAL_TTL_SECS:-}
       TURN_USERNAME: ${TURN_USERNAME:-}
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
       ICE_SERVERS_JSON: ${ICE_SERVERS_JSON:-}
@@ -192,6 +197,10 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  # TURN relay for calls whose networks refuse a direct path. Host networking: it hands out
+  # relay ports from TURN_MIN_PORT–TURN_MAX_PORT (open those UDP ports and 3478 UDP/TCP).
+  # Only logins the API minted with TURN_SECRET work, and it relays to public addresses only
+  # (coturn's recommended private/reserved ranges are refused), UDP only.
   coturn:
     profiles: ["calls"]
     image: coturn/coturn:4.6
@@ -201,13 +210,40 @@ services:
       - -n
       - --log-file=stdout
       - --listening-port=3478
+      - --min-port=${TURN_MIN_PORT:-49160}
+      - --max-port=${TURN_MAX_PORT:-49259}
       - --fingerprint
-      - --lt-cred-mech
-      - --user=shroud:shroud
-      - --realm=shroud.local
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_SECRET:-}
+      - --realm=${TURN_REALM:-shroud}
       - --no-cli
       - --no-tls
       - --no-dtls
+      - --no-tcp-relay
+      - --no-multicast-peers
+      - --no-software-attribute
+      - --denied-peer-ip=0.0.0.0-0.255.255.255
+      - --denied-peer-ip=10.0.0.0-10.255.255.255
+      - --denied-peer-ip=100.64.0.0-100.127.255.255
+      - --denied-peer-ip=127.0.0.0-127.255.255.255
+      - --denied-peer-ip=169.254.0.0-169.254.255.255
+      - --denied-peer-ip=172.16.0.0-172.31.255.255
+      - --denied-peer-ip=192.0.0.0-192.0.0.255
+      - --denied-peer-ip=192.0.2.0-192.0.2.255
+      - --denied-peer-ip=192.88.99.0-192.88.99.255
+      - --denied-peer-ip=192.168.0.0-192.168.255.255
+      - --denied-peer-ip=198.18.0.0-198.19.255.255
+      - --denied-peer-ip=198.51.100.0-198.51.100.255
+      - --denied-peer-ip=203.0.113.0-203.0.113.255
+      - --denied-peer-ip=240.0.0.0-255.255.255.255
+      - --denied-peer-ip=::1
+      - --denied-peer-ip=64:ff9b::-64:ff9b::ffff:ffff
+      - --denied-peer-ip=::ffff:0.0.0.0-::ffff:255.255.255.255
+      - --denied-peer-ip=100::-100::ffff:ffff:ffff:ffff
+      - --denied-peer-ip=2001::-2001:1ff:ffff:ffff:ffff:ffff:ffff:ffff
+      - --denied-peer-ip=2002::-2002:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+      - --denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+      - --denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
     restart: unless-stopped
 
 networks:

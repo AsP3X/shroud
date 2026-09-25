@@ -17,35 +17,29 @@ enum CallStatus: String, Codable, Sendable {
     case cancelled
 }
 
-/// `POST /calls` body.
+/// `POST /calls` body. Protocol 2: media is negotiated after the answer (docs/calls.md).
 struct CreateCallRequest: Encodable, Equatable, Sendable {
     let peerUserId: UUID
     let modality: String
-    let sdpOffer: String?
+    let callProtocol: Int
 
     enum CodingKeys: String, CodingKey {
         case peerUserId = "peer_user_id"
         case modality
-        case sdpOffer = "sdp_offer"
+        case callProtocol = "protocol"
     }
 
-    init(peerUserId: UUID, modality: CallModality, sdpOffer: String? = nil) {
+    init(peerUserId: UUID, modality: CallModality) {
         self.peerUserId = peerUserId
         self.modality = modality.rawValue
-        self.sdpOffer = sdpOffer
+        callProtocol = 2
     }
 }
 
-/// `POST /calls/:id/accept` body.
-struct AcceptCallRequest: Encodable, Equatable, Sendable {
-    let sdpAnswer: String?
+/// `POST /calls/:id/accept` body: empty.
+struct AcceptCallRequest: Encodable, Equatable, Sendable {}
 
-    enum CodingKeys: String, CodingKey {
-        case sdpAnswer = "sdp_answer"
-    }
-}
-
-/// `POST /calls/:id/signal` body — opaque WebRTC SDP/ICE relay.
+/// `POST /calls/:id/signal` body — a sealed signal (`CallCrypto`).
 struct CallSignalRequest: Encodable, Equatable, Sendable {
     let signalType: String
     let payload: String
@@ -61,11 +55,14 @@ struct CallDTO: Decodable, Equatable, Sendable, Identifiable {
     let id: UUID
     let callerUserId: UUID
     let callerDeviceId: UUID
+    let callerUsername: String?
     let calleeUserId: UUID
     let calleeDeviceId: UUID?
+    let calleeUsername: String?
     let modality: String
     let status: String
     let endedReason: String?
+    let callProtocol: Int?
     let createdAt: Date
     let answeredAt: Date?
     let endedAt: Date?
@@ -74,11 +71,14 @@ struct CallDTO: Decodable, Equatable, Sendable, Identifiable {
         case id
         case callerUserId = "caller_user_id"
         case callerDeviceId = "caller_device_id"
+        case callerUsername = "caller_username"
         case calleeUserId = "callee_user_id"
         case calleeDeviceId = "callee_device_id"
+        case calleeUsername = "callee_username"
         case modality
         case status
         case endedReason = "ended_reason"
+        case callProtocol = "protocol"
         case createdAt = "created_at"
         case answeredAt = "answered_at"
         case endedAt = "ended_at"
@@ -91,6 +91,15 @@ struct CallDTO: Decodable, Equatable, Sendable, Identifiable {
     var callStatus: CallStatus {
         CallStatus(rawValue: status) ?? .ended
     }
+
+    var isLive: Bool {
+        status == "ringing" || status == "active"
+    }
+}
+
+/// `GET /calls` answer.
+struct CallListResponse: Decodable, Sendable {
+    let calls: [CallDTO]
 }
 
 /// ICE server advertised by `GET /calls/ice-servers`.

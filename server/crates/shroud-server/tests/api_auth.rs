@@ -1141,7 +1141,7 @@ async fn deleting_an_account_deletes_each_chat_for_both() {
         "POST",
         "/api/v1/calls",
         &alice,
-        Some(json!({ "peer_user_id": bob_id, "modality": "voice" })),
+        Some(json!({ "peer_user_id": bob_id, "modality": "voice", "protocol": 2 })),
     )
     .await;
     assert_eq!(call.status(), StatusCode::CREATED);

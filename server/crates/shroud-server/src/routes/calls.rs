@@ -1,12 +1,14 @@
-//! 1:1 call signaling (ring / accept / reject / hangup / WebRTC signal relay).
+//! 1:1 call signaling: ring, answer, relay sealed signals between the two devices, end.
 //!
-//! Human: Server never sees call media or E2E call keys — only opaque SDP/ICE blobs
-//! relayed between devices and minimal call metadata.
-//! Agent: Contacts-only; no media; fan-out via RealtimeHub + optional APNs data push.
+//! Human: The server never sees call media, nor what the signals say — `payload` is sealed
+//! between the two people (docs/calls.md). It rings devices, remembers which two devices are
+//! in a call, and ends calls whose devices went quiet, so nobody stays "busy" after a crash.
+//! Agent: Contacts-only; protocol 2 only; signals go to the other device in the call
+//! (RealtimeHub::publish_to_device); pushes via PushService; `spawn_call_gc` every 10 s.
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
 };
 use chrono::{DateTime, Utc};
@@ -17,35 +19,67 @@ use uuid::Uuid;
 use crate::auth::session::AuthContext;
 use crate::config::IceServer;
 use crate::error::AppError;
+use crate::push::PushEvent;
 use crate::rate_limit::budgets;
 use crate::routes::contacts::{are_contacts, is_blocked_either_way};
 use crate::state::AppState;
 
 const MAX_SIGNAL_BYTES: usize = 64 * 1024;
-/// Unanswered ringing calls become `missed` after this many seconds.
-pub const RINGING_TIMEOUT_SECS: i64 = 90;
-const RINGING_GC_INTERVAL_SECS: u64 = 30;
+/// A call nobody answers stops ringing after this long (`missed`, `timeout`).
+pub const RINGING_TIMEOUT_SECS: i64 = 60;
+/// A call ends when one of its devices has not been heard from for this long. Devices report
+/// in every 10 s (heartbeat or signal), so this is several missed reports.
+pub const PARTICIPANT_TIMEOUT_SECS: i64 = 45;
+const CALL_GC_INTERVAL_SECS: u64 = 10;
+/// Media is negotiated only after the answer, over sealed signals (docs/calls.md).
+pub const CALL_PROTOCOL: i16 = 2;
+const SIGNAL_TYPES: [&str; 5] = [
+    "sdp_offer",
+    "sdp_answer",
+    "ice_candidate",
+    "renegotiate",
+    "media_state",
+];
+const HISTORY_DEFAULT_LIMIT: i64 = 50;
+const HISTORY_MAX_LIMIT: i64 = 100;
+
+/// A call row joined with both people's usernames; `c` is `calls` or a CTE over it.
+const CALL_FIELDS: &str = r#"
+    c.id, c.caller_user_id, c.caller_device_id, c.callee_user_id, c.callee_device_id,
+    c.modality, c.status, c.ended_reason, c.created_at, c.answered_at, c.ended_at, c.protocol,
+    cu.username AS caller_username, ce.username AS callee_username
+"#;
+const CALL_JOINS: &str = r#"
+    LEFT JOIN users cu ON cu.id = c.caller_user_id
+    LEFT JOIN users ce ON ce.id = c.callee_user_id
+"#;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateCallRequest {
     pub peer_user_id: Uuid,
     /// `voice` (default) or `video`.
     pub modality: Option<String>,
-    /// Optional initial SDP offer (opaque string; not validated).
-    pub sdp_offer: Option<String>,
+    /// Must be [`CALL_PROTOCOL`]; builds that send none placed calls that could not connect.
+    pub protocol: Option<i16>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct AcceptCallRequest {
-    pub sdp_answer: Option<String>,
-}
+/// `POST /calls/:id/accept` takes `{}`; older builds sent an SDP answer, which is ignored.
+#[derive(Debug, Default, Deserialize)]
+pub struct AcceptCallRequest {}
 
 #[derive(Debug, Deserialize)]
 pub struct SignalRequest {
-    /// `sdp_offer` | `sdp_answer` | `ice_candidate` | `renegotiate`.
+    /// One of [`SIGNAL_TYPES`]; sealed into the payload's additional data by the clients.
     pub signal_type: String,
-    /// Opaque client payload (SDP text or ICE JSON string).
+    /// Sealed signal (`c1.` + base64); the server does not read it.
     pub payload: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CallHistoryQuery {
+    pub limit: Option<i64>,
+    /// Calls placed before this time (the `created_at` of the last one already shown).
+    pub before: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -53,13 +87,17 @@ pub struct CallResponse {
     pub id: Uuid,
     pub caller_user_id: Uuid,
     pub caller_device_id: Uuid,
+    /// `null` once the account is deleted.
+    pub caller_username: Option<String>,
     pub callee_user_id: Uuid,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub callee_device_id: Option<Uuid>,
+    pub callee_username: Option<String>,
     pub modality: String,
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ended_reason: Option<String>,
+    pub protocol: i16,
     pub created_at: DateTime<Utc>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub answered_at: Option<DateTime<Utc>>,
@@ -68,11 +106,16 @@ pub struct CallResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub struct CallListResponse {
+    pub calls: Vec<CallResponse>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct IceServersResponse {
     pub ice_servers: Vec<IceServer>,
 }
 
-#[derive(Debug, FromRow)]
+#[derive(Debug, Clone, FromRow)]
 struct CallRow {
     id: Uuid,
     caller_user_id: Uuid,
@@ -85,19 +128,30 @@ struct CallRow {
     created_at: DateTime<Utc>,
     answered_at: Option<DateTime<Utc>>,
     ended_at: Option<DateTime<Utc>>,
+    protocol: i16,
+    caller_username: Option<String>,
+    callee_username: Option<String>,
 }
 
-/// `GET /calls/ice-servers` — STUN/TURN config for WebRTC (from env).
+impl CallRow {
+    fn is_live(&self) -> bool {
+        self.status == "ringing" || self.status == "active"
+    }
+}
+
+/// `GET /calls/ice-servers` — STUN/TURN for WebRTC, with a TURN login minted for this user.
 pub async fn ice_servers(
     State(state): State<AppState>,
-    _auth: AuthContext,
+    auth: AuthContext,
 ) -> Result<Json<IceServersResponse>, AppError> {
-    Ok(Json(IceServersResponse {
-        ice_servers: state.ice_servers.clone(),
-    }))
+    let mut ice_servers = state.ice_servers.clone();
+    if let Some(turn) = &state.turn {
+        ice_servers.push(turn.credential_for(auth.user_id, Utc::now().timestamp().unsigned_abs()));
+    }
+    Ok(Json(IceServersResponse { ice_servers }))
 }
 
-/// `POST /calls` — place a 1:1 call (contacts only).
+/// `POST /calls` — ring a contact.
 pub async fn create_call(
     State(state): State<AppState>,
     auth: AuthContext,
@@ -108,16 +162,18 @@ pub async fn create_call(
         .check_budget("call_user", &auth.user_id.to_string(), budgets::CALL_USER)
         .await?;
 
+    if body.protocol != Some(CALL_PROTOCOL) {
+        // Human: What older builds say when they try; their calls never connected.
+        return Err(AppError::validation(
+            "This version of Shroud can't place calls. Update the app to call.",
+        ));
+    }
     if body.peer_user_id == auth.user_id {
         return Err(AppError::validation("Cannot call yourself."));
     }
-
     let modality = body.modality.as_deref().unwrap_or("voice");
     if modality != "voice" && modality != "video" {
         return Err(AppError::validation("modality must be 'voice' or 'video'."));
-    }
-    if let Some(ref offer) = body.sdp_offer {
-        validate_signal_payload(offer)?;
     }
 
     if !are_contacts(&state.pool, auth.user_id, body.peer_user_id).await? {
@@ -127,25 +183,45 @@ pub async fn create_call(
         return Err(AppError::forbidden("Cannot call this user."));
     }
 
-    if user_in_active_call(&state.pool, auth.user_id).await? {
-        return Err(AppError::conflict(
-            "CALL_BUSY",
-            "You already have an active or ringing call.",
-        ));
-    }
-    if user_in_active_call(&state.pool, body.peer_user_id).await? {
-        return Err(AppError::call_busy());
-    }
+    // A call whose app crashed or lost its network must not leave either person busy.
+    end_stale_calls(&state, Some(&[auth.user_id, body.peer_user_id])).await?;
 
     let call_id = Uuid::new_v4();
-    let now = Utc::now();
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|err| AppError::Internal(format!("begin call failed: {err}")))?;
+    // Human: Two people calling each other at the same moment would both pass the busy check;
+    // the second waits for the first here and then finds the other busy.
+    let mut keys = [
+        busy_lock_key(auth.user_id),
+        busy_lock_key(body.peer_user_id),
+    ];
+    keys.sort_unstable();
+    for key in keys {
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(key)
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| AppError::Internal(format!("call lock failed: {err}")))?;
+    }
+    if user_in_live_call(&mut tx, auth.user_id).await? {
+        return Err(AppError::conflict(
+            "CALL_IN_PROGRESS",
+            "You're already in a call.",
+        ));
+    }
+    if user_in_live_call(&mut tx, body.peer_user_id).await? {
+        return Err(AppError::call_busy());
+    }
     sqlx::query(
         r#"
         INSERT INTO calls (
             id, caller_user_id, caller_device_id, callee_user_id,
-            modality, status, created_at
+            modality, status, created_at, caller_seen_at, protocol
         )
-        VALUES ($1, $2, $3, $4, $5, 'ringing', $6)
+        VALUES ($1, $2, $3, $4, $5, 'ringing', now(), now(), $6)
         "#,
     )
     .bind(call_id)
@@ -153,24 +229,20 @@ pub async fn create_call(
     .bind(auth.device_id)
     .bind(body.peer_user_id)
     .bind(modality)
-    .bind(now)
-    .execute(&state.pool)
+    .bind(CALL_PROTOCOL)
+    .execute(&mut *tx)
     .await
     .map_err(|err| AppError::Internal(format!("insert call failed: {err}")))?;
+    tx.commit()
+        .await
+        .map_err(|err| AppError::Internal(format!("commit call failed: {err}")))?;
 
     let call = load_call(&state.pool, call_id)
         .await?
         .ok_or_else(|| AppError::Internal("call missing after insert".into()))?;
     let response = call_to_response(&call);
 
-    // Notify callee devices (and caller's other devices).
-    let mut ring_event = serde_json::json!({
-        "type": "call.ring",
-        "call": &response,
-    });
-    if let Some(offer) = body.sdp_offer.as_ref() {
-        ring_event["sdp_offer"] = serde_json::Value::String(offer.clone());
-    }
+    let ring_event = serde_json::json!({ "type": "call.ring", "call": &response });
     if let Ok(payload) = serde_json::to_string(&ring_event) {
         state
             .realtime
@@ -180,8 +252,8 @@ pub async fn create_call(
                 &payload,
             )
             .await;
-        // For the callee's devices that connect while it rings: their user tapped the
-        // notification below.
+        // For the callee's devices that connect while it rings: their user tapped a
+        // notification, or PushKit woke the app.
         state
             .realtime
             .remember_ring(
@@ -192,11 +264,9 @@ pub async fn create_call(
             .await;
     }
 
-    // "Incoming call" on the callee's iPhones that are not connected: an alert, not PushKit
-    // (see `PushService::notify_call`).
     state
         .push
-        .dispatch(crate::push::PushEvent::IncomingCall {
+        .dispatch(PushEvent::IncomingCall {
             recipient: body.peer_user_id,
             caller: auth.user_id,
             call_id,
@@ -249,6 +319,37 @@ pub async fn ring_to_replay(state: &AppState, user_id: Uuid) -> Option<String> {
     ringing.then_some(payload)
 }
 
+/// `GET /calls` — the user's calls, newest first.
+pub async fn list_calls(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Query(query): Query<CallHistoryQuery>,
+) -> Result<Json<CallListResponse>, AppError> {
+    let limit = query
+        .limit
+        .unwrap_or(HISTORY_DEFAULT_LIMIT)
+        .clamp(1, HISTORY_MAX_LIMIT);
+    let rows = sqlx::query_as::<_, CallRow>(&format!(
+        r#"
+        SELECT {CALL_FIELDS}
+        FROM calls c {CALL_JOINS}
+        WHERE (c.caller_user_id = $1 OR c.callee_user_id = $1)
+          AND ($2::timestamptz IS NULL OR c.created_at < $2)
+        ORDER BY c.created_at DESC, c.id DESC
+        LIMIT $3
+        "#
+    ))
+    .bind(auth.user_id)
+    .bind(query.before)
+    .bind(limit)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("list calls failed: {err}")))?;
+    Ok(Json(CallListResponse {
+        calls: rows.iter().map(call_to_response).collect(),
+    }))
+}
+
 /// `GET /calls/:id`
 pub async fn get_call(
     State(state): State<AppState>,
@@ -262,59 +363,46 @@ pub async fn get_call(
     Ok(Json(call_to_response(&call)))
 }
 
-/// `POST /calls/:id/accept`
+/// `POST /calls/:id/accept` — this device answers; the others stop ringing.
 pub async fn accept_call(
     State(state): State<AppState>,
     auth: AuthContext,
     Path(call_id): Path<Uuid>,
-    Json(body): Json<AcceptCallRequest>,
+    Json(_body): Json<AcceptCallRequest>,
 ) -> Result<Json<CallResponse>, AppError> {
-    if let Some(ref answer) = body.sdp_answer {
-        validate_signal_payload(answer)?;
-    }
-
     let call = load_call(&state.pool, call_id)
         .await?
         .ok_or_else(|| AppError::not_found("Call not found."))?;
-
     if call.callee_user_id != auth.user_id {
+        ensure_participant(&call, auth.user_id)?;
         return Err(AppError::forbidden("Only the callee can accept this call."));
     }
-    if call.status != "ringing" {
-        return Err(AppError::validation(format!(
-            "Call is not ringing (status={}).",
-            call.status
-        )));
-    }
 
-    let now = Utc::now();
-    let updated = sqlx::query_as::<_, CallRow>(
+    let updated = sqlx::query_as::<_, CallRow>(&format!(
         r#"
-        UPDATE calls
-        SET status = 'active',
-            callee_device_id = $1,
-            answered_at = $2
-        WHERE id = $3 AND status = 'ringing'
-        RETURNING id, caller_user_id, caller_device_id, callee_user_id, callee_device_id,
-                  modality, status, ended_reason, created_at, answered_at, ended_at
-        "#,
-    )
+        WITH c AS (
+            UPDATE calls
+            SET status = 'active',
+                callee_device_id = $1,
+                answered_at = now(),
+                callee_seen_at = now()
+            WHERE id = $2 AND status = 'ringing'
+              AND created_at > now() - make_interval(secs => $3)
+            RETURNING *
+        )
+        SELECT {CALL_FIELDS} FROM c {CALL_JOINS}
+        "#
+    ))
     .bind(auth.device_id)
-    .bind(now)
     .bind(call_id)
+    .bind(RINGING_TIMEOUT_SECS)
     .fetch_optional(&state.pool)
     .await
     .map_err(|err| AppError::Internal(format!("accept call failed: {err}")))?
-    .ok_or_else(|| AppError::validation("Call is no longer ringing."))?;
+    .ok_or_else(|| AppError::validation("The call is no longer ringing."))?;
 
     let response = call_to_response(&updated);
-    let mut event = serde_json::json!({
-        "type": "call.accepted",
-        "call": &response,
-    });
-    if let Some(answer) = body.sdp_answer.as_ref() {
-        event["sdp_answer"] = serde_json::Value::String(answer.clone());
-    }
+    let event = serde_json::json!({ "type": "call.accepted", "call": &response });
     publish_call_event(&state, &updated, Some(auth.device_id), &event).await;
 
     tracing::info!(call_id = %call_id, callee = %auth.user_id, "calls.accept ok");
@@ -337,7 +425,7 @@ pub async fn reject_call(
     .await
 }
 
-/// `POST /calls/:id/hangup` — cancel while ringing (caller) or end active (either).
+/// `POST /calls/:id/hangup` — cancel while ringing (caller), decline (callee), or end.
 pub async fn hangup_call(
     State(state): State<AppState>,
     auth: AuthContext,
@@ -353,7 +441,7 @@ pub async fn hangup_call(
     .await
 }
 
-/// `POST /calls/:id/signal` — relay opaque SDP/ICE to the peer (live calls).
+/// `POST /calls/:id/signal` — relay a sealed signal to the other device in the call.
 pub async fn signal_call(
     State(state): State<AppState>,
     auth: AuthContext,
@@ -362,34 +450,58 @@ pub async fn signal_call(
 ) -> Result<StatusCode, AppError> {
     state
         .rate_limiter
-        .check_budget("call_user", &auth.user_id.to_string(), budgets::CALL_USER)
+        .check_budget(
+            "call_signal_user",
+            &auth.user_id.to_string(),
+            budgets::CALL_SIGNAL_USER,
+        )
         .await?;
 
     let signal_type = body.signal_type.trim();
-    if !matches!(
-        signal_type,
-        "sdp_offer" | "sdp_answer" | "ice_candidate" | "renegotiate"
-    ) {
-        return Err(AppError::validation(
-            "signal_type must be sdp_offer, sdp_answer, ice_candidate, or renegotiate.",
-        ));
+    if !SIGNAL_TYPES.contains(&signal_type) {
+        return Err(AppError::validation(format!(
+            "signal_type must be one of {}.",
+            SIGNAL_TYPES.join(", ")
+        )));
     }
-    validate_signal_payload(&body.payload)?;
+    if body.payload.is_empty() || body.payload.len() > MAX_SIGNAL_BYTES {
+        return Err(AppError::validation(format!(
+            "signal payload must be 1–{MAX_SIGNAL_BYTES} bytes."
+        )));
+    }
 
     let call = load_call(&state.pool, call_id)
         .await?
         .ok_or_else(|| AppError::not_found("Call not found."))?;
     ensure_participant(&call, auth.user_id)?;
-
-    if call.status != "ringing" && call.status != "active" {
-        return Err(AppError::validation("Call is not live; cannot signal."));
+    if !call.is_live() {
+        return Err(AppError::conflict("CALL_ENDED", "The call has ended."));
     }
-
-    let peer_user_id = if call.caller_user_id == auth.user_id {
-        call.callee_user_id
-    } else {
-        call.caller_user_id
+    let Some(callee_device_id) = call.callee_device_id else {
+        return Err(AppError::conflict(
+            "CALL_NOT_ANSWERED",
+            "The call has not been answered yet.",
+        ));
     };
+
+    // The two devices in the call talk to each other; nothing else of either person does.
+    let (to_user, to_device) = if auth.user_id == call.caller_user_id {
+        if auth.device_id != call.caller_device_id {
+            return Err(AppError::forbidden(
+                "Only the device that placed the call can signal.",
+            ));
+        }
+        (call.callee_user_id, callee_device_id)
+    } else {
+        if auth.device_id != callee_device_id {
+            return Err(AppError::forbidden(
+                "Only the device that answered the call can signal.",
+            ));
+        }
+        (call.caller_user_id, call.caller_device_id)
+    };
+
+    touch_participant(&state.pool, call_id, auth.device_id).await?;
 
     let event = serde_json::json!({
         "type": "call.signal",
@@ -402,11 +514,63 @@ pub async fn signal_call(
     if let Ok(payload) = serde_json::to_string(&event) {
         state
             .realtime
-            .publish_to_users([peer_user_id], None, &payload)
+            .publish_to_device(to_user, to_device, &payload)
             .await;
     }
-
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /calls/:id/heartbeat` — "this device is still in the call". Answers with the call,
+/// so a device that missed `call.ended` learns it here.
+pub async fn heartbeat_call(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path(call_id): Path<Uuid>,
+) -> Result<Json<CallResponse>, AppError> {
+    state
+        .rate_limiter
+        .check_budget(
+            "call_signal_user",
+            &auth.user_id.to_string(),
+            budgets::CALL_SIGNAL_USER,
+        )
+        .await?;
+    let touched = sqlx::query_as::<_, CallRow>(&format!(
+        r#"
+        WITH c AS (
+            UPDATE calls
+            SET caller_seen_at = CASE
+                    WHEN caller_user_id = $2 AND caller_device_id = $3 THEN now()
+                    ELSE caller_seen_at
+                END,
+                callee_seen_at = CASE
+                    WHEN callee_user_id = $2 AND callee_device_id = $3 THEN now()
+                    ELSE callee_seen_at
+                END
+            WHERE id = $1 AND status IN ('ringing', 'active')
+              AND (caller_user_id = $2 OR callee_user_id = $2)
+            RETURNING *
+        )
+        SELECT {CALL_FIELDS} FROM c {CALL_JOINS}
+        "#
+    ))
+    .bind(call_id)
+    .bind(auth.user_id)
+    .bind(auth.device_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("call heartbeat failed: {err}")))?;
+    let call = match touched {
+        Some(call) => call,
+        None => {
+            let call = load_call(&state.pool, call_id)
+                .await?
+                .ok_or_else(|| AppError::not_found("Call not found."))?;
+            ensure_participant(&call, auth.user_id)?;
+            call
+        }
+    };
+    Ok(Json(call_to_response(&call)))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -427,24 +591,21 @@ async fn end_call_as(
         .ok_or_else(|| AppError::not_found("Call not found."))?;
     ensure_participant(&call, user_id)?;
 
-    if matches!(
-        call.status.as_str(),
-        "ended" | "rejected" | "busy" | "missed" | "cancelled"
-    ) {
+    if !call.is_live() {
         return Ok(Json(call_to_response(&call)));
     }
 
     let (new_status, reason) = match (action, call.status.as_str(), call.caller_user_id == user_id)
     {
-        (EndAction::Reject, "ringing", false) => ("rejected", Some("rejected")),
+        (EndAction::Reject, "ringing", false) => ("rejected", "rejected"),
         (EndAction::Reject, _, _) => {
             return Err(AppError::forbidden(
                 "Only the callee can reject a ringing call.",
             ));
         }
-        (EndAction::Hangup, "ringing", true) => ("cancelled", Some("cancelled")),
-        (EndAction::Hangup, "ringing", false) => ("missed", Some("declined")),
-        (EndAction::Hangup, "active", _) => ("ended", Some("hangup")),
+        (EndAction::Hangup, "ringing", true) => ("cancelled", "cancelled"),
+        (EndAction::Hangup, "ringing", false) => ("missed", "declined"),
+        (EndAction::Hangup, "active", _) => ("ended", "hangup"),
         (EndAction::Hangup, _, _) => {
             return Err(AppError::validation(
                 "Call cannot be hung up in this state.",
@@ -452,33 +613,34 @@ async fn end_call_as(
         }
     };
 
-    let now = Utc::now();
-    let updated = sqlx::query_as::<_, CallRow>(
+    let updated = sqlx::query_as::<_, CallRow>(&format!(
         r#"
-        UPDATE calls
-        SET status = $1,
-            ended_reason = $2,
-            ended_at = $3
-        WHERE id = $4 AND status IN ('ringing', 'active')
-        RETURNING id, caller_user_id, caller_device_id, callee_user_id, callee_device_id,
-                  modality, status, ended_reason, created_at, answered_at, ended_at
-        "#,
-    )
+        WITH c AS (
+            UPDATE calls
+            SET status = $1,
+                ended_reason = $2,
+                ended_at = now()
+            WHERE id = $3 AND status IN ('ringing', 'active')
+            RETURNING *
+        )
+        SELECT {CALL_FIELDS} FROM c {CALL_JOINS}
+        "#
+    ))
     .bind(new_status)
     .bind(reason)
-    .bind(now)
     .bind(call_id)
     .fetch_optional(&state.pool)
     .await
-    .map_err(|err| AppError::Internal(format!("end call failed: {err}")))?
-    .ok_or_else(|| AppError::validation("Call already ended."))?;
+    .map_err(|err| AppError::Internal(format!("end call failed: {err}")))?;
+    // Ended by the other side (or the sweep) since it was loaded: answer with how it ended.
+    let Some(updated) = updated else {
+        let call = load_call(&state.pool, call_id)
+            .await?
+            .ok_or_else(|| AppError::not_found("Call not found."))?;
+        return Ok(Json(call_to_response(&call)));
+    };
 
-    let response = call_to_response(&updated);
-    let event = serde_json::json!({
-        "type": "call.ended",
-        "call": &response,
-    });
-    publish_call_event(state, &updated, Some(device_id), &event).await;
+    announce_end(state, &updated, Some(device_id)).await;
 
     tracing::info!(
         call_id = %call_id,
@@ -486,7 +648,28 @@ async fn end_call_as(
         status = new_status,
         "calls.end ok"
     );
-    Ok(Json(response))
+    Ok(Json(call_to_response(&updated)))
+}
+
+/// Tells both people's devices a call ended (all but `except_device`, which ended it), and
+/// the callee's closed ones that they missed it when nobody answered.
+async fn announce_end(state: &AppState, call: &CallRow, except_device: Option<Uuid>) {
+    let response = call_to_response(call);
+    let event = serde_json::json!({ "type": "call.ended", "call": &response });
+    publish_call_event(state, call, except_device, &event).await;
+    if call.answered_at.is_none()
+        && (call.status == "missed" || call.status == "cancelled")
+        && call.ended_reason.as_deref() != Some("declined")
+    {
+        state
+            .push
+            .dispatch(PushEvent::MissedCall {
+                recipient: call.callee_user_id,
+                caller: call.caller_user_id,
+                call_id: call.id,
+            })
+            .await;
+    }
 }
 
 async fn publish_call_event(
@@ -515,16 +698,37 @@ fn ensure_participant(call: &CallRow, user_id: Uuid) -> Result<(), AppError> {
     }
 }
 
-fn validate_signal_payload(payload: &str) -> Result<(), AppError> {
-    if payload.is_empty() || payload.len() > MAX_SIGNAL_BYTES {
-        return Err(AppError::validation(format!(
-            "signal payload must be 1–{MAX_SIGNAL_BYTES} bytes."
-        )));
-    }
+/// Records that `device_id` was heard from in a live call it is part of.
+async fn touch_participant(
+    pool: &sqlx::PgPool,
+    call_id: Uuid,
+    device_id: Uuid,
+) -> Result<(), AppError> {
+    sqlx::query(
+        r#"
+        UPDATE calls
+        SET caller_seen_at = CASE WHEN caller_device_id = $2 THEN now() ELSE caller_seen_at END,
+            callee_seen_at = CASE WHEN callee_device_id = $2 THEN now() ELSE callee_seen_at END
+        WHERE id = $1 AND status IN ('ringing', 'active')
+        "#,
+    )
+    .bind(call_id)
+    .bind(device_id)
+    .execute(pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("touch call failed: {err}")))?;
     Ok(())
 }
 
-async fn user_in_active_call(pool: &sqlx::PgPool, user_id: Uuid) -> Result<bool, AppError> {
+/// Advisory-lock key for "is this person free to call": the user id's first 8 bytes.
+fn busy_lock_key(user_id: Uuid) -> i64 {
+    let bytes = user_id.as_bytes();
+    i64::from_be_bytes([
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+    ])
+}
+
+async fn user_in_live_call(conn: &mut sqlx::PgConnection, user_id: Uuid) -> Result<bool, AppError> {
     sqlx::query_scalar(
         r#"
         SELECT EXISTS(
@@ -535,20 +739,15 @@ async fn user_in_active_call(pool: &sqlx::PgPool, user_id: Uuid) -> Result<bool,
         "#,
     )
     .bind(user_id)
-    .fetch_one(pool)
+    .fetch_one(conn)
     .await
     .map_err(|err| AppError::Internal(format!("active call check failed: {err}")))
 }
 
 async fn load_call(pool: &sqlx::PgPool, call_id: Uuid) -> Result<Option<CallRow>, AppError> {
-    sqlx::query_as::<_, CallRow>(
-        r#"
-        SELECT id, caller_user_id, caller_device_id, callee_user_id, callee_device_id,
-               modality, status, ended_reason, created_at, answered_at, ended_at
-        FROM calls
-        WHERE id = $1
-        "#,
-    )
+    sqlx::query_as::<_, CallRow>(&format!(
+        "SELECT {CALL_FIELDS} FROM calls c {CALL_JOINS} WHERE c.id = $1"
+    ))
     .bind(call_id)
     .fetch_optional(pool)
     .await
@@ -560,11 +759,14 @@ fn call_to_response(row: &CallRow) -> CallResponse {
         id: row.id,
         caller_user_id: row.caller_user_id,
         caller_device_id: row.caller_device_id,
+        caller_username: row.caller_username.clone(),
         callee_user_id: row.callee_user_id,
         callee_device_id: row.callee_device_id,
+        callee_username: row.callee_username.clone(),
         modality: row.modality.clone(),
         status: row.status.clone(),
         ended_reason: row.ended_reason.clone(),
+        protocol: row.protocol,
         created_at: row.created_at,
         answered_at: row.answered_at,
         ended_at: row.ended_at,
@@ -583,14 +785,16 @@ pub(crate) async fn delete_calls_of_account(
     user_id: Uuid,
     at: DateTime<Utc>,
 ) -> Result<Vec<(Uuid, serde_json::Value)>, AppError> {
-    let rows = sqlx::query_as::<_, CallRow>(
+    let rows = sqlx::query_as::<_, CallRow>(&format!(
         r#"
-        DELETE FROM calls
-        WHERE caller_user_id = $1 OR callee_user_id = $1
-        RETURNING id, caller_user_id, caller_device_id, callee_user_id, callee_device_id,
-                  modality, status, ended_reason, created_at, answered_at, ended_at
-        "#,
-    )
+        WITH c AS (
+            DELETE FROM calls
+            WHERE caller_user_id = $1 OR callee_user_id = $1
+            RETURNING *
+        )
+        SELECT {CALL_FIELDS} FROM c {CALL_JOINS}
+        "#
+    ))
     .bind(user_id)
     .fetch_all(&mut **tx)
     .await
@@ -621,49 +825,102 @@ pub(crate) async fn delete_calls_of_account(
     Ok(ended)
 }
 
-/// Mark unanswered `ringing` calls as `missed` after [`RINGING_TIMEOUT_SECS`].
+/// Ends calls nobody answered in time, and calls whose devices went quiet; tells both
+/// people's devices. `only_users` limits it to calls of those people.
 ///
-/// Human: Prevents stuck busy state when the callee never answers and clients disconnect.
-/// Agent: UPDATE calls SET status=missed WHERE ringing AND created_at older than timeout.
-pub async fn expire_stale_ringing_calls(pool: &sqlx::PgPool) -> Result<u64, AppError> {
-    let result = sqlx::query(
-        r#"
-        UPDATE calls
-        SET status = 'missed',
-            ended_at = now(),
-            ended_reason = 'timeout'
-        WHERE status = 'ringing'
-          AND created_at < now() - make_interval(secs => $1)
-        "#,
-    )
-    .bind(RINGING_TIMEOUT_SECS)
-    .execute(pool)
-    .await
-    .map_err(|err| AppError::Internal(format!("expire ringing calls failed: {err}")))?;
+/// Human: Before this a call stayed `active` forever when an app crashed mid-call, and both
+/// people were "busy" from then on.
+/// Agent: three UPDATE … RETURNING (one replica wins each row); publishes `call.ended`, and a
+/// `MissedCall` push for unanswered ones.
+pub async fn end_stale_calls(
+    state: &AppState,
+    only_users: Option<&[Uuid]>,
+) -> Result<usize, AppError> {
+    let only_users: Option<Vec<Uuid>> = only_users.map(<[Uuid]>::to_vec);
+    let sweeps: [(&str, &str, &str, i64); 3] = [
+        (
+            "missed",
+            "timeout",
+            "status = 'ringing' AND created_at < now() - make_interval(secs => $1)",
+            RINGING_TIMEOUT_SECS,
+        ),
+        (
+            "cancelled",
+            "connection_lost",
+            "status = 'ringing' \
+             AND COALESCE(caller_seen_at, created_at) < now() - make_interval(secs => $1)",
+            PARTICIPANT_TIMEOUT_SECS,
+        ),
+        (
+            "ended",
+            "connection_lost",
+            "status = 'active' AND ( \
+                COALESCE(caller_seen_at, answered_at, created_at) \
+                    < now() - make_interval(secs => $1) \
+                OR COALESCE(callee_seen_at, answered_at, created_at) \
+                    < now() - make_interval(secs => $1))",
+            PARTICIPANT_TIMEOUT_SECS,
+        ),
+    ];
 
-    Ok(result.rows_affected())
+    let mut ended = 0;
+    for (status, reason, condition, secs) in sweeps {
+        let rows = sqlx::query_as::<_, CallRow>(&format!(
+            r#"
+            WITH c AS (
+                UPDATE calls
+                SET status = $3, ended_reason = $4, ended_at = now()
+                WHERE {condition}
+                  AND ($2::uuid[] IS NULL
+                       OR caller_user_id = ANY($2) OR callee_user_id = ANY($2))
+                RETURNING *
+            )
+            SELECT {CALL_FIELDS} FROM c {CALL_JOINS}
+            "#
+        ))
+        .bind(secs)
+        .bind(only_users.as_deref())
+        .bind(status)
+        .bind(reason)
+        .fetch_all(&state.pool)
+        .await
+        .map_err(|err| AppError::Internal(format!("end stale calls failed: {err}")))?;
+        for call in &rows {
+            tracing::info!(call_id = %call.id, status, reason, "calls.stale ended");
+            announce_end(state, call, None).await;
+        }
+        ended += rows.len();
+    }
+    Ok(ended)
 }
 
-/// Background loop: expire stale ringing calls.
-pub fn spawn_ringing_call_gc(pool: sqlx::PgPool) {
+/// Background loop: end stale calls (see [`end_stale_calls`]).
+pub fn spawn_call_gc(state: AppState) {
     tokio::spawn(async move {
         let mut interval =
-            tokio::time::interval(std::time::Duration::from_secs(RINGING_GC_INTERVAL_SECS));
+            tokio::time::interval(std::time::Duration::from_secs(CALL_GC_INTERVAL_SECS));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         interval.tick().await;
         loop {
             interval.tick().await;
-            match expire_stale_ringing_calls(&pool).await {
-                Ok(0) => {
-                    tracing::debug!("calls.ringing_gc: nothing to expire");
-                }
-                Ok(n) => {
-                    tracing::info!(expired = n, "calls.ringing_gc ok");
-                }
-                Err(err) => {
-                    tracing::warn!(error = %err, "calls.ringing_gc failed");
-                }
+            match end_stale_calls(&state, None).await {
+                Ok(0) => tracing::debug!("calls.gc: nothing to end"),
+                Ok(n) => tracing::info!(ended = n, "calls.gc ok"),
+                Err(err) => tracing::warn!(error = %err, "calls.gc failed"),
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn busy_lock_keys_differ_per_user_and_are_stable() {
+        let a = Uuid::parse_str("0190a3b4-1c2d-7e8f-9a0b-1c2d3e4f5a6b").unwrap();
+        let b = Uuid::parse_str("0290a3b4-1c2d-7e8f-9a0b-1c2d3e4f5a6b").unwrap();
+        assert_eq!(busy_lock_key(a), busy_lock_key(a));
+        assert_ne!(busy_lock_key(a), busy_lock_key(b));
+    }
 }

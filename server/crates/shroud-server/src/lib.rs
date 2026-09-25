@@ -17,6 +17,7 @@ pub mod realtime;
 pub mod request_tracking;
 pub mod routes;
 pub mod state;
+pub mod turn;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -215,6 +216,7 @@ pub async fn run() -> Result<(), AppError> {
 
     tracing::info!(
         ice_server_count = config.ice_servers.len(),
+        minted_turn = config.turn.is_some(),
         "webrtc ice servers loaded"
     );
 
@@ -225,8 +227,6 @@ pub async fn run() -> Result<(), AppError> {
     media.spawn_legacy_migration(pool.clone(), metrics.clone());
     // Human: Drop revoked session rows after the 30-day retention window.
     crate::auth::session::spawn_revoked_session_purge(pool.clone());
-    // Human: Mark unanswered ringing calls as missed so busy detection cannot stick.
-    crate::routes::calls::spawn_ringing_call_gc(pool.clone());
 
     let state = AppState {
         pool,
@@ -234,6 +234,7 @@ pub async fn run() -> Result<(), AppError> {
         realtime,
         push,
         ice_servers: config.ice_servers.clone(),
+        turn: config.turn.clone(),
         rate_limiter,
         redis_required,
         trust_forwarded_headers: config.trust_forwarded_headers,
@@ -243,6 +244,10 @@ pub async fn run() -> Result<(), AppError> {
         )),
         reactions_max_per_user: config.reactions_max_per_user,
     };
+
+    // Human: End calls nobody answered, and calls whose devices went quiet, so a crashed app
+    // never leaves anyone busy; both sides hear `call.ended`.
+    crate::routes::calls::spawn_call_gc(state.clone());
 
     // Human: Last `.layer` is outermost — request-id runs first, then metrics, then TraceLayer.
     // Agent: OUTER CORS (if any) → request_id → metrics → TraceLayer → routes.

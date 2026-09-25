@@ -13,6 +13,7 @@ use crate::push::PushService;
 use crate::rate_limit::{self, RateLimiter};
 use crate::realtime::RealtimeHub;
 use crate::routes::link_relay::LinkRelay;
+use crate::turn::TurnConfig;
 
 /// State injected into every API handler.
 #[derive(Clone)]
@@ -27,6 +28,8 @@ pub struct AppState {
     pub push: PushService,
     /// STUN/TURN servers advertised to clients for WebRTC.
     pub ice_servers: Vec<IceServer>,
+    /// TURN whose per-user logins `GET /calls/ice-servers` mints.
+    pub turn: Option<TurnConfig>,
     /// Abuse budgets (Redis when configured, else in-process).
     pub rate_limiter: RateLimiter,
     /// When true, readiness requires a live Redis connection (`REDIS_URL` was set).
@@ -66,6 +69,7 @@ impl AppState {
             realtime,
             push,
             ice_servers: vec![],
+            turn: None,
             reactions_max_per_user: 5,
             rate_limiter,
             redis_required: false,

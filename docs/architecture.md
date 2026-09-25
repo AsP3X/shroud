@@ -246,13 +246,13 @@ from an unlocked but unwatched web tab). The server pushes only to the account's
 Compose stack: **Postgres + Redis + Nebular OS + API + web**.
 
 ```bash
-docker compose up -d --build   # from repo root
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build   # from repo root
 curl http://127.0.0.1:8080/api/v1/health/live   # process up
 curl http://127.0.0.1:8080/api/v1/health/ready  # Postgres (+ Redis if configured)
 curl http://127.0.0.1:8080/api/v1/health        # same as ready (compat)
 ```
 
-Optional native API: `docker compose up -d postgres redis` then `cd server && cargo run -p shroud-server`.
+Optional native API: `docker compose -f docker-compose.yml -f docker-compose.local.yml up -d postgres redis nebular` then `cd server && cargo run -p shroud-server`.
 
 Open `ios/shroud.xcodeproj` — Debug API base URL `http://127.0.0.1:8080/api/v1`.
 
