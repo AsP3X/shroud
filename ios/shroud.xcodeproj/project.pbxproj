@@ -301,7 +301,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				73WK0001305C000000000001 /* XCRemoteSwiftPackageReference "WhisperKit" */,
-				73WR0001305C000000000001 /* XCRemoteSwiftPackageReference "WebRTC" */,
+				73WR0001305C000000000001 /* XCLocalSwiftPackageReference "Vendor/WebRTC" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 736BA35E3007DFB8005F6B14 /* Products */;
@@ -807,15 +807,14 @@
 				minimumVersion = 0.13.0;
 			};
 		};
-		73WR0001305C000000000001 /* XCRemoteSwiftPackageReference "WebRTC" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/stasel/WebRTC.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 153.0.0;
-			};
-		};
 /* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		73WR0001305C000000000001 /* XCLocalSwiftPackageReference "Vendor/WebRTC" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Vendor/WebRTC;
+		};
+/* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		73WK0002305C000000000002 /* WhisperKit */ = {
@@ -825,7 +824,7 @@
 		};
 		73WR0002305C000000000002 /* WebRTC */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 73WR0001305C000000000001 /* XCRemoteSwiftPackageReference "WebRTC" */;
+			package = 73WR0001305C000000000001 /* XCLocalSwiftPackageReference "Vendor/WebRTC" */;
 			productName = WebRTC;
 		};
 /* End XCSwiftPackageProductDependency section */
