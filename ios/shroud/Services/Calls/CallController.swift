@@ -236,6 +236,11 @@ final class CallController {
     // MARK: - Actions
 
     func startCall(peerUserID: UUID, peerUsername: String, modality: CallModality) async {
+        // A call this phone still has open, including one whose screen already closed, is
+        // ended first. Otherwise every later call is refused.
+        if machine != nil || (active != nil && active?.phase != .ending) {
+            await userEnd(fromKit: false)
+        }
         if active?.phase == .ending { active = nil }
         guard machine == nil, active == nil else {
             lastError = "Already in a call."

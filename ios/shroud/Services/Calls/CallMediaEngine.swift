@@ -209,8 +209,11 @@ final class CallMediaEngine: NSObject {
         testPattern?.stop()
         testPattern = nil
         #endif
-        peerConnection?.close()
+        // Drop the connection before closing it. WebRTC reports "closed" and late candidates
+        // after `close()` returns; those must not land on the next call.
+        let connection = peerConnection
         peerConnection = nil
+        connection?.close()
         peerLink = .closed
         iceLink = .closed
         audioTrack = nil
@@ -310,6 +313,7 @@ extension CallMediaEngine: RTCPeerConnectionDelegate {
 
     nonisolated func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
         Task { @MainActor in
+            guard self.peerConnection === peerConnection else { return }
             self.noteIce(newState)
         }
     }
@@ -323,6 +327,7 @@ extension CallMediaEngine: RTCPeerConnectionDelegate {
             sdpMLineIndex: candidate.sdpMLineIndex
         )
         Task { @MainActor in
+            guard self.peerConnection === peerConnection else { return }
             self.onLocalCandidate?(payload)
         }
     }
@@ -333,6 +338,7 @@ extension CallMediaEngine: RTCPeerConnectionDelegate {
 
     nonisolated func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCPeerConnectionState) {
         Task { @MainActor in
+            guard self.peerConnection === peerConnection else { return }
             self.notePeer(newState)
         }
     }
@@ -343,6 +349,7 @@ extension CallMediaEngine: RTCPeerConnectionDelegate {
         streams mediaStreams: [RTCMediaStream]
     ) {
         Task { @MainActor in
+            guard self.peerConnection === peerConnection else { return }
             self.refreshRemoteVideo()
         }
     }

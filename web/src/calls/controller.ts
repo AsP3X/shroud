@@ -250,7 +250,15 @@ export class CallController {
 
   start(peer: CallPeer, modality: CallModality): void {
     const account = this.account;
-    if (!account || this.busy()) return;
+    if (!account) return;
+    // A call this browser still has open is ended first, so a leftover one cannot
+    // swallow every later attempt.
+    const current = this.call;
+    if (current && current.phase !== "ended") {
+      const notify = current.phase === "incoming" ? "reject" : current.id ? "hangup" : null;
+      this.finish(current, null, notify);
+    }
+    if (this.busy()) return;
     const call = this.open({
       role: "caller",
       id: null,

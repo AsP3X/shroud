@@ -206,15 +206,12 @@ pub async fn create_call(
             .await
             .map_err(|err| AppError::Internal(format!("call lock failed: {err}")))?;
     }
-    if user_in_live_call(&mut tx, auth.user_id).await? {
-        return Err(AppError::conflict(
-            "CALL_IN_PROGRESS",
-            "You're already in a call.",
-        ));
-    }
-    if user_in_live_call(&mut tx, body.peer_user_id).await? {
+    // The other person is on a call with someone else. A call they are already on with
+    // the caller is replaced below, so a leftover ring cannot block every later attempt.
+    if peer_is_on_another_call(&mut tx, body.peer_user_id, auth.user_id).await? {
         return Err(AppError::call_busy());
     }
+    let replaced = end_live_calls_of(&mut tx, auth.user_id).await?;
     sqlx::query(
         r#"
         INSERT INTO calls (
@@ -236,6 +233,10 @@ pub async fn create_call(
     tx.commit()
         .await
         .map_err(|err| AppError::Internal(format!("commit call failed: {err}")))?;
+
+    for call in &replaced {
+        announce_end(&state, call, Some(auth.device_id)).await;
+    }
 
     let call = load_call(&state.pool, call_id)
         .await?
@@ -728,20 +729,62 @@ fn busy_lock_key(user_id: Uuid) -> i64 {
     ])
 }
 
-async fn user_in_live_call(conn: &mut sqlx::PgConnection, user_id: Uuid) -> Result<bool, AppError> {
+/// True when `peer` is ringing or talking with anybody except `caller`.
+async fn peer_is_on_another_call(
+    conn: &mut sqlx::PgConnection,
+    peer: Uuid,
+    caller: Uuid,
+) -> Result<bool, AppError> {
     sqlx::query_scalar(
         r#"
         SELECT EXISTS(
             SELECT 1 FROM calls
             WHERE status IN ('ringing', 'active')
               AND (caller_user_id = $1 OR callee_user_id = $1)
+              AND caller_user_id <> $2
+              AND callee_user_id <> $2
         )
         "#,
     )
-    .bind(user_id)
-    .fetch_one(conn)
+    .bind(peer)
+    .bind(caller)
+    .fetch_one(&mut *conn)
     .await
-    .map_err(|err| AppError::Internal(format!("active call check failed: {err}")))
+    .map_err(|err| AppError::Internal(format!("peer call check failed: {err}")))
+}
+
+/// Ends every live call `user_id` is in, so placing a new call cannot be stuck behind one
+/// that already finished on the devices. Returns the rows as they stand after the update.
+async fn end_live_calls_of(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: Uuid,
+) -> Result<Vec<CallRow>, AppError> {
+    sqlx::query_as::<_, CallRow>(&format!(
+        r#"
+        WITH c AS (
+            UPDATE calls
+            SET status = CASE
+                    WHEN status = 'ringing' AND caller_user_id = $1 THEN 'cancelled'
+                    WHEN status = 'ringing' THEN 'missed'
+                    ELSE 'ended'
+                END,
+                ended_reason = CASE
+                    WHEN status = 'ringing' AND caller_user_id = $1 THEN 'cancelled'
+                    WHEN status = 'ringing' THEN 'declined'
+                    ELSE 'hangup'
+                END,
+                ended_at = now()
+            WHERE status IN ('ringing', 'active')
+              AND (caller_user_id = $1 OR callee_user_id = $1)
+            RETURNING *
+        )
+        SELECT {CALL_FIELDS} FROM c {CALL_JOINS}
+        "#
+    ))
+    .bind(user_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("end live calls failed: {err}")))
 }
 
 async fn load_call(pool: &sqlx::PgPool, call_id: Uuid) -> Result<Option<CallRow>, AppError> {

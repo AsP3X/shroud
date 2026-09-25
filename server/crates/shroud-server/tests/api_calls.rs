@@ -353,30 +353,27 @@ async fn contacts_only_and_busy_codes() {
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(body["error"]["code"], "CALL_BUSY");
 
-    // A is calling already: A cannot place a second call.
-    let (status, body) = call(
-        &app,
-        "POST",
-        "/api/v1/calls",
-        &a.token,
-        Some(json!({ "peer_user_id": c.user_id, "protocol": 2 })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CONFLICT);
-    assert_eq!(body["error"]["code"], "CALL_IN_PROGRESS");
-
-    // Declined: both are free again.
+    // A calling someone else ends the ring with B, instead of staying busy forever.
+    let second = place_call(&app, &a, &c, "voice").await;
+    assert_eq!(second["status"], "ringing");
+    assert_eq!(second["callee_user_id"], c.user_id);
     let id = ringing["id"].as_str().unwrap();
+    let (status, body) = call(&app, "GET", &format!("/api/v1/calls/{id}"), &a.token, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "cancelled");
+
+    // A's new ring is still up, so C is busy. Hanging it up frees everyone.
+    let second_id = second["id"].as_str().unwrap();
     let (status, body) = call(
         &app,
         "POST",
-        &format!("/api/v1/calls/{id}/reject"),
-        &b.token,
+        &format!("/api/v1/calls/{second_id}/hangup"),
+        &a.token,
         None,
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["status"], "rejected");
+    assert_eq!(body["status"], "cancelled");
     place_call(&app, &c, &b, "video").await;
 }
 

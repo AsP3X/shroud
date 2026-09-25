@@ -54,7 +54,7 @@ callee_device_id?, callee_username, modality, status, ended_reason?, protocol, c
 answered_at?, ended_at?}`. Usernames are `null` for a deleted account.
 
 Errors (`{error: {code, message}}`): `CALL_BUSY` (409, the callee is in a call),
-`CALL_IN_PROGRESS` (409, you are), `FORBIDDEN` (not contacts, or blocked; or a device outside
+`FORBIDDEN` (not contacts, or blocked; or a device outside
 the call signalling), `CALL_NOT_ANSWERED` / `CALL_ENDED` (409, a signal before the answer or
 after the end), `VALIDATION_ERROR` (e.g. accepting a call that stopped ringing, or a build
 without `protocol: 2`, which is told to update), `RATE_LIMITED`.
