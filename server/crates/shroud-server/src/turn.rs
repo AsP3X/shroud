@@ -114,12 +114,16 @@ pub fn ice_config(lookup: &dyn Fn(&str) -> Option<String>) -> Result<IceConfig, 
 
     let secret = value("TURN_SECRET");
     let turn = match secret {
+        // Deploy writes a secret into an existing .env before anyone sets TURN_URLS. Refusing
+        // to start there takes the API down on upgrade; calls keep working on STUN until both
+        // are set.
+        Some(_) if turn_urls.is_empty() => {
+            tracing::warn!(
+                "TURN_SECRET is set but TURN_URLS is empty; calls will use STUN only until both are set"
+            );
+            None
+        }
         Some(secret) => {
-            if turn_urls.is_empty() {
-                return Err(AppError::Internal(
-                    "TURN_SECRET is set but TURN_URLS is empty; set both, or neither".into(),
-                ));
-            }
             if let Some(bad) = turn_urls
                 .iter()
                 .find(|url| !(url.starts_with("turn:") || url.starts_with("turns:")))
@@ -278,8 +282,14 @@ mod tests {
     }
 
     #[test]
+    fn a_secret_without_urls_leaves_turn_off() {
+        let ice = config(&[("TURN_SECRET", "test-turn-secret-0123456789")]).expect("config");
+        assert!(ice.turn.is_none());
+        assert_eq!(ice.servers[0].urls, vec![DEFAULT_STUN_URL.to_string()]);
+    }
+
+    #[test]
     fn misconfigured_turn_is_refused() {
-        assert!(config(&[("TURN_SECRET", "test-turn-secret-0123456789")]).is_err());
         assert!(
             config(&[
                 ("TURN_URLS", "turn:turn.example.com:3478"),
