@@ -180,9 +180,8 @@ function CallScreen({ view }: { view: CallView }) {
   const remote = useStream(theirVideo ? view.remoteStream : null, view.remoteVideo);
   const self = useStream(mine ? view.localStream : null, view.hasCamera);
   const name = view.peer.username;
-  /* The backdrop glows in the peer's avatar colour, so each call looks like its person. */
-  const [tintTop, tintBottom] = avatarPalette(view.peer.id);
-  const tint = { "--call-tint": tintTop, "--call-tint-deep": tintBottom } as CSSProperties;
+  /* The backdrop carries a faint wash of the peer's avatar colour, so each call looks like its person. */
+  const tint = { "--call-tint": avatarPalette(view.peer.id)[0] } as CSSProperties;
 
   /* Focus comes into the call (not onto a button: a stray Enter must not answer or hang up),
      and goes back where it was once the screen closes. */
@@ -383,8 +382,6 @@ function CallBanner({ view, onExpand }: { view: CallView; onExpand: () => void }
   const name = view.peer.username;
   const video = view.modality === "video";
   const ended = view.phase === "ended";
-  const [tintTop, tintBottom] = avatarPalette(view.peer.id);
-  const tint = { "--call-tint": tintTop, "--call-tint-deep": tintBottom } as CSSProperties;
   const kind = ended ? (view.endedText ?? "Call ended") : video ? "Shroud video call" : "Shroud voice call";
   const who = (
     <>
@@ -417,7 +414,6 @@ function CallBanner({ view, onExpand }: { view: CallView; onExpand: () => void }
     <div
       ref={root}
       className={`call-banner${ended ? " is-ended" : ""}`}
-      style={tint}
       role="dialog"
       aria-modal="false"
       aria-label={ended ? `${kind} from ${name}` : `Incoming ${video ? "video" : "voice"} call from ${name}`}

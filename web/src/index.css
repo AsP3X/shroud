@@ -3332,7 +3332,6 @@ button.reply-quote { cursor: pointer; }
   --call-red: #e0352b;
   --call-green: #1f9d4c;
   --call-tint: #6464f2;
-  --call-tint-deep: #5e5ce6;
   --call-glass: rgba(255, 255, 255, 0.14);
   --call-glass-hover: rgba(255, 255, 255, 0.24);
   --call-disc: 62px;
@@ -3350,18 +3349,12 @@ button.reply-quote { cursor: pointer; }
   from { opacity: 0; transform: scale(0.985); }
   to { opacity: 1; transform: none; }
 }
-/* The glow takes the peer's avatar colour, so a call looks like its person; it drifts slowly. */
+/* A quiet dark gradient with a faint wash of the peer's avatar colour behind the face. */
 .call-backdrop {
-  position: absolute; inset: -20%;
+  position: absolute; inset: 0;
   background:
-    radial-gradient(60% 45% at 50% 22%, color-mix(in srgb, var(--call-tint) 42%, transparent), transparent 70%),
-    radial-gradient(50% 40% at 78% 90%, color-mix(in srgb, var(--call-tint-deep) 22%, transparent), transparent 70%),
-    linear-gradient(180deg, #16162a 0%, #0c0c15 55%, #060609 100%);
-  animation: call-drift 14s ease-in-out infinite alternate;
-}
-@keyframes call-drift {
-  from { transform: translate(-2%, -1%) scale(1); }
-  to { transform: translate(2%, 1.5%) scale(1.04); }
+    radial-gradient(70% 50% at 50% 32%, color-mix(in srgb, var(--call-tint) 13%, transparent), transparent 70%),
+    linear-gradient(180deg, #141420 0%, #0c0c13 60%, #08080c 100%);
 }
 .call-ended .call-backdrop { filter: saturate(0.5) brightness(0.8); transition: filter 0.6s ease; }
 .call-remote {
@@ -3441,12 +3434,12 @@ button.reply-quote { cursor: pointer; }
   border-radius: 50%;
   transition: transform 0.4s var(--ease), opacity 0.4s ease;
 }
-.call-avatar .avatar { width: 128px; height: 128px; font-size: 46px; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45); }
+.call-avatar .avatar { width: 128px; height: 128px; font-size: 46px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); }
 /* Ringing out or connecting, the face breathes so the screen never looks frozen. */
 .call.is-ringing .call-avatar { animation: call-breathe 2.2s ease-in-out infinite; }
 @keyframes call-breathe {
-  0%, 100% { transform: scale(0.98); filter: drop-shadow(0 0 14px color-mix(in srgb, var(--call-tint) 25%, transparent)); }
-  50% { transform: scale(1.04); filter: drop-shadow(0 0 34px color-mix(in srgb, var(--call-tint) 55%, transparent)); }
+  0%, 100% { transform: scale(0.985); }
+  50% { transform: scale(1.02); }
 }
 /* A ring coming in pulses outwards from the caller's face. */
 .call-avatar.ringing::before,
@@ -3454,7 +3447,7 @@ button.reply-quote { cursor: pointer; }
   content: "";
   position: absolute; inset: 0;
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.45);
+  border: 1.5px solid rgba(255, 255, 255, 0.32);
   animation: call-pulse 2.4s var(--ease) infinite;
   pointer-events: none;
 }
@@ -3598,7 +3591,7 @@ button.reply-quote { cursor: pointer; }
   padding: 10px 18px; border-radius: var(--r-full);
   border: 0; background: #fff; color: #111;
   font-size: var(--fs-sm); font-weight: 600;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
   animation: call-bar-in 0.4s var(--ease);
 }
 .call-sound:hover { background: #f1f1f4; }
@@ -3610,7 +3603,7 @@ button.reply-quote { cursor: pointer; }
   border-radius: 34px;
   background: rgba(24, 24, 34, 0.55);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08);
   backdrop-filter: blur(24px) saturate(160%);
   -webkit-backdrop-filter: blur(24px) saturate(160%);
   animation: call-bar-in 0.45s var(--ease);
@@ -3633,7 +3626,7 @@ button.reply-quote { cursor: pointer; }
   width: var(--call-disc); height: var(--call-disc); border-radius: 50%;
   display: grid; place-items: center;
   background: var(--call-glass);
-  transition: background 0.2s ease, color 0.2s ease, transform 0.15s var(--ease), box-shadow 0.2s ease;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.15s var(--ease);
 }
 .call-ctl-glyph { display: grid; place-items: center; animation: call-glyph-in 0.25s var(--ease); }
 @keyframes call-glyph-in {
@@ -3643,18 +3636,13 @@ button.reply-quote { cursor: pointer; }
 .call-ctl:hover:not(:disabled) .call-ctl-disc { background: var(--call-glass-hover); }
 .call-ctl:active:not(:disabled) .call-ctl-disc { transform: scale(0.9); }
 .call-ctl.is-on .call-ctl-disc,
-.call-ctl.is-on:hover:not(:disabled) .call-ctl-disc { background: #fff; color: #111; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25); }
+.call-ctl.is-on:hover:not(:disabled) .call-ctl-disc { background: #fff; color: #111; }
 .call-ctl-end .call-ctl-disc,
-.call-ctl-end:hover:not(:disabled) .call-ctl-disc { background: var(--call-red); box-shadow: 0 8px 22px rgba(224, 53, 43, 0.4); }
+.call-ctl-end:hover:not(:disabled) .call-ctl-disc { background: var(--call-red); }
 .call-ctl-accept .call-ctl-disc,
-.call-ctl-accept:hover:not(:disabled) .call-ctl-disc { background: var(--call-green); box-shadow: 0 8px 22px rgba(31, 157, 76, 0.45); }
+.call-ctl-accept:hover:not(:disabled) .call-ctl-disc { background: var(--call-green); }
 .call-ctl-end:hover:not(:disabled) .call-ctl-disc,
 .call-ctl-accept:hover:not(:disabled) .call-ctl-disc { filter: brightness(1.1); }
-.call-incoming .call-ctl-accept .call-ctl-disc { animation: call-answer 1.6s ease-in-out infinite; }
-@keyframes call-answer {
-  0%, 100% { box-shadow: 0 8px 22px rgba(31, 157, 76, 0.45), 0 0 0 0 rgba(31, 157, 76, 0.55); }
-  60% { box-shadow: 0 8px 22px rgba(31, 157, 76, 0.45), 0 0 0 14px rgba(31, 157, 76, 0); }
-}
 .call-ctl-label { font-size: var(--fs-xs); font-weight: 600; color: rgba(255, 255, 255, 0.86); white-space: nowrap; }
 .call-ctl:disabled { opacity: 0.4; cursor: default; }
 /* The ring shows on the disc, where the eye is, not around the label. */
@@ -3701,10 +3689,8 @@ button.reply-quote { cursor: pointer; }
 }
 
 /* Ringing in: a banner at the top of the window, like the phone's, over whatever is open. The
-   same glass as the dock, with the caller's colour glowing through it. */
+   same glass as the dock. */
 .call-banner {
-  --call-tint: #6464f2;
-  --call-tint-deep: #5e5ce6;
   --call-red: #e0352b;
   --call-green: #1f9d4c;
   position: fixed; z-index: 92;
@@ -3715,11 +3701,9 @@ button.reply-quote { cursor: pointer; }
   padding: 10px 10px 10px 12px;
   border-radius: var(--r-xl);
   color: #fff; color-scheme: dark;
-  background:
-    radial-gradient(120% 140% at 0% 50%, color-mix(in srgb, var(--call-tint) 30%, transparent), transparent 60%),
-    rgba(24, 24, 34, 0.78);
+  background: rgba(24, 24, 34, 0.72);
   border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08);
   backdrop-filter: blur(24px) saturate(160%);
   -webkit-backdrop-filter: blur(24px) saturate(160%);
   outline: none;
@@ -3745,7 +3729,7 @@ button.reply-quote { cursor: pointer; }
   content: "";
   position: absolute; inset: 0;
   border-radius: 50%;
-  border: 1.5px solid rgba(255, 255, 255, 0.5);
+  border: 1.5px solid rgba(255, 255, 255, 0.32);
   animation: call-pulse 2.4s var(--ease) infinite;
   pointer-events: none;
 }
@@ -3771,16 +3755,12 @@ button.reply-quote { cursor: pointer; }
 }
 .call-banner-btn:hover { filter: brightness(1.1); }
 .call-banner-btn:active { transform: scale(0.9); }
-.call-banner-btn.decline { background: var(--call-red); box-shadow: 0 6px 16px rgba(224, 53, 43, 0.35); }
-.call-banner-btn.accept { background: var(--call-green); animation: call-answer-sm 1.6s ease-in-out infinite; }
+.call-banner-btn.decline { background: var(--call-red); }
+.call-banner-btn.accept { background: var(--call-green); }
 .call-banner.is-ended .call-banner-avatar::before,
 .call-banner.is-ended .call-banner-avatar::after { animation: none; opacity: 0; }
 .call-banner.is-ended .call-banner-main { cursor: default; }
 .call-banner.is-ended .call-banner-main:hover { background: none; }
-@keyframes call-answer-sm {
-  0%, 100% { box-shadow: 0 6px 16px rgba(31, 157, 76, 0.4), 0 0 0 0 rgba(31, 157, 76, 0.55); }
-  60% { box-shadow: 0 6px 16px rgba(31, 157, 76, 0.4), 0 0 0 9px rgba(31, 157, 76, 0); }
-}
 .call-banner :focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 .call-banner-main:focus-visible { outline-offset: 0; }
 @media (max-width: 900px) {
@@ -3851,9 +3831,7 @@ button.reply-quote { cursor: pointer; }
   .call, .call-pill, .call-backdrop, .call-who, .call-bar, .call-sound, .call-status-text,
   .call-chip, .call-notice, .call-ctl-glyph, .call-remote, .call-captions, .call-captions p { animation: none; }
   .call.is-ringing .call-avatar { animation: none; }
-  .call-incoming .call-ctl-accept .call-ctl-disc { animation: none; }
   .call-banner { animation: none; }
-  .call-banner-btn.accept { animation: none; }
   .call-avatar.ringing::before, .call-avatar.ringing::after,
   .call-banner-avatar::before, .call-banner-avatar::after { animation: none; opacity: 0; }
   .call-avatar.ringing .avatar { box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.22); }
