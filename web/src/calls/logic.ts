@@ -219,6 +219,62 @@ export function signalTypeOf(t: Signal["t"]): CallSignalType {
   return SIGNAL_TYPE[t];
 }
 
+const VOICE_FMTP = ["useinbandfec=1", "usedtx=1", "stereo=0", "sprop-stereo=0", "maxaveragebitrate=32000"];
+
+/**
+ * Opus for a voice call: error correction and silence suppression, mono, about 32 kbps.
+ * An SDP with no Opus line is unchanged. Line endings are kept. A parameter is replaced
+ * only when it is its own key, so `stereo` does not rewrite `sprop-stereo`.
+ */
+export function voiceSdp(sdp: string): string {
+  const eol = sdp.includes("\r\n") ? "\r\n" : "\n";
+  const lines = sdp.split(/\r\n|\n/);
+  const map = lines.map(opusPayload).find((pt) => pt);
+  if (!map) return lines.join(eol);
+  const index = lines.findIndex((line) => isFmtp(line, map));
+  if (index < 0) {
+    const at = lines.findIndex((line) => isRtpmap(line, map));
+    if (at < 0) return lines.join(eol);
+    lines.splice(at + 1, 0, `a=fmtp:${map} ${VOICE_FMTP.join(";")}`);
+    return lines.join(eol);
+  }
+  lines[index] = VOICE_FMTP.reduce(applyParam, lines[index]);
+  return lines.join(eol);
+}
+
+function opusPayload(line: string): string | undefined {
+  return /^a=rtpmap:(\d+) opus\/48000/i.exec(line)?.[1];
+}
+
+function isRtpmap(line: string, pt: string): boolean {
+  return new RegExp(`^a=rtpmap:${pt}[ \\t]`, "i").test(line);
+}
+
+function isFmtp(line: string, pt: string): boolean {
+  const match = new RegExp(`^a=fmtp:${pt}(?=$|[ \\t;])`, "i").exec(line);
+  return Boolean(match);
+}
+
+/** Sets `key=value` from an `extra` of that shape, or appends it. */
+function applyParam(line: string, extra: string): string {
+  const eq = extra.indexOf("=");
+  const key = extra.slice(0, eq);
+  const token = `${key}=`;
+  let from = 0;
+  while (from <= line.length) {
+    const at = line.indexOf(token, from);
+    if (at < 0) break;
+    const prev = at === 0 ? "" : line[at - 1];
+    if (at === 0 || prev === ";" || prev === " " || prev === "\t") {
+      let end = at + token.length;
+      while (end < line.length && line[end] !== ";" && line[end] !== " " && line[end] !== "\t") end += 1;
+      return line.slice(0, at) + extra + line.slice(end);
+    }
+    from = at + token.length;
+  }
+  return `${line};${extra}`;
+}
+
 /** More candidates than any real batch holds: the rest are dropped. */
 const MAX_CANDIDATES = 64;
 

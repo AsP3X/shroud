@@ -169,11 +169,18 @@ its content.
 
 ## Media
 
-- Voice calls carry audio only; video calls audio and video (720p at most). Turning the camera or
-  microphone off disables the track and sends `media_state`, so the other side shows the avatar
-  or a muted mark instead of black.
+- Voice calls carry audio only; video calls audio and video. Turning the camera or microphone
+  off disables the track and sends `media_state`, so the other side shows the avatar or a muted
+  mark instead of black.
+- Voice is Opus, mono, about 32 kbps, with in-band error correction and silence suppression.
+  Video stays at most 720p30 and about 1.2 Mbps, and gives up frame rate and detail together
+  when the link is tight. Speech is sent ahead of video. The microphone is captured as speech
+  (echo cancellation, noise suppression, and gain control on both clients).
 - **ICE restart**: when the connection is `failed`, or `disconnected` for 4 s, the caller sends a
   new offer with `restart: true` (at most one every 10 s); the callee asks with `restart`.
+  A `failed` link switches that device to the TURN relay for this restart and every later one,
+  when the server offered a TURN server. Until that happens, a short disconnect restarts on
+  every path, direct ones included.
 - If no media connects within 30 s of the answer, the device hangs up ("Couldn't connect").
 
 ## Pushes

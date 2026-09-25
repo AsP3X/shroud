@@ -34,6 +34,9 @@ final class CallMediaEngine: NSObject {
     private(set) var remoteVideoTrack: RTCVideoTrack?
 
     private var peerConnection: RTCPeerConnection?
+    private var iceServers: [RTCIceServer] = []
+    private var hasTurn = false
+    private var triedRelay = false
     private var audioTrack: RTCAudioTrack?
     private var camera: CallCamera?
     #if DEBUG && targetEnvironment(simulator)
@@ -58,54 +61,95 @@ final class CallMediaEngine: NSObject {
         peerLink = .new
         iceLink = .new
 
-        let config = RTCConfiguration()
-        config.iceServers = iceServers.compactMap { server in
+        let built: [RTCIceServer] = iceServers.compactMap { server in
             let urls = server.urls.filter { !$0.isEmpty }
             guard !urls.isEmpty else { return nil }
             return RTCIceServer(urlStrings: urls, username: server.username, credential: server.credential)
         }
-        config.sdpSemantics = .unifiedPlan
-        config.bundlePolicy = .maxBundle
-        config.rtcpMuxPolicy = .require
-        config.continualGatheringPolicy = .gatherContinually
+        self.iceServers = built
+        hasTurn = built.contains { server in
+            server.urlStrings.contains { url in
+                let lower = url.lowercased()
+                return lower.hasPrefix("turn:") || lower.hasPrefix("turns:")
+            }
+        }
 
-        let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
+        let peerConstraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
         guard let connection = Self.factory.peerConnection(
-            with: config,
-            constraints: constraints,
+            with: makeConfig(),
+            constraints: peerConstraints,
             delegate: self
         ) else { return }
         peerConnection = connection
 
-        let audioSource = Self.factory.audioSource(with: constraints)
+        let audioConstraints = RTCMediaConstraints(
+            mandatoryConstraints: nil,
+            optionalConstraints: [
+                "googEchoCancellation": kRTCMediaConstraintsValueTrue,
+                "googNoiseSuppression": kRTCMediaConstraintsValueTrue,
+                "googAutoGainControl": kRTCMediaConstraintsValueTrue,
+                "googHighpassFilter": kRTCMediaConstraintsValueTrue,
+            ]
+        )
+        let audioSource = Self.factory.audioSource(with: audioConstraints)
         let audio = Self.factory.audioTrack(with: audioSource, trackId: "shroud-audio")
         connection.add(audio, streamIds: ["shroud"])
         audioTrack = audio
 
-        guard video else { return }
-        if CallCamera.isAvailable || Self.simulatorPattern {
-            let source = Self.factory.videoSource()
-            source.adaptOutputFormat(toWidth: 1280, height: 720, fps: 30)
-            let track = Self.factory.videoTrack(with: source, trackId: "shroud-video")
-            connection.add(track, streamIds: ["shroud"])
-            localVideoTrack = track
-            if CallCamera.isAvailable {
-                let camera = CallCamera(source: source)
-                camera.start()
-                self.camera = camera
+        if video {
+            if CallCamera.isAvailable || Self.simulatorPattern {
+                let source = Self.factory.videoSource()
+                source.adaptOutputFormat(toWidth: 1280, height: 720, fps: 30)
+                let track = Self.factory.videoTrack(with: source, trackId: "shroud-video")
+                connection.add(track, streamIds: ["shroud"])
+                localVideoTrack = track
+                if CallCamera.isAvailable {
+                    let camera = CallCamera(source: source)
+                    camera.start()
+                    self.camera = camera
+                } else {
+                    #if DEBUG && targetEnvironment(simulator)
+                    let pattern = TestPatternCapturer(delegate: source)
+                    pattern.start()
+                    testPattern = pattern
+                    #endif
+                }
             } else {
-                #if DEBUG && targetEnvironment(simulator)
-                let pattern = TestPatternCapturer(delegate: source)
-                pattern.start()
-                testPattern = pattern
-                #endif
+                // No camera: still receive the other side's video.
+                let parameters = RTCRtpTransceiverInit()
+                parameters.direction = .recvOnly
+                connection.addTransceiver(of: .video, init: parameters)
             }
-        } else {
-            // No camera: still receive the other side's video.
-            let parameters = RTCRtpTransceiverInit()
-            parameters.direction = .recvOnly
-            connection.addTransceiver(of: .video, init: parameters)
         }
+        tuneSenders()
+    }
+
+    /// Direct paths first. After `failed`, the next gathering uses only the TURN relay.
+    ///
+    /// The live configuration is kept and only the transport policy changes. A freshly built
+    /// configuration has no certificate, and WebRTC then refuses the update.
+    func preferRelay() {
+        guard !triedRelay, hasTurn, let connection = peerConnection else { return }
+        let config = connection.configuration
+        guard config.iceTransportPolicy != .relay else {
+            triedRelay = true
+            return
+        }
+        config.iceTransportPolicy = .relay
+        guard connection.setConfiguration(config) else { return }
+        triedRelay = true
+    }
+
+    private func makeConfig() -> RTCConfiguration {
+        let config = RTCConfiguration()
+        config.iceServers = iceServers
+        config.sdpSemantics = .unifiedPlan
+        config.bundlePolicy = .maxBundle
+        config.rtcpMuxPolicy = .require
+        config.continualGatheringPolicy = .gatherContinually
+        config.iceCandidatePoolSize = 1
+        config.iceTransportPolicy = .all
+        return config
     }
 
     private static var simulatorPattern: Bool {
@@ -137,8 +181,10 @@ final class CallMediaEngine: NSObject {
                 }
             }
         }
-        try await setLocal(RTCSessionDescription(type: .offer, sdp: sdp), on: connection)
-        return sdp
+        let tuned = CallSdp.withVoiceResilience(sdp)
+        try await setLocal(RTCSessionDescription(type: .offer, sdp: tuned), on: connection)
+        tuneSenders()
+        return tuned
     }
 
     /// Callee: applies the caller's offer and returns the answer, set as the local description.
@@ -155,9 +201,11 @@ final class CallMediaEngine: NSObject {
                 }
             }
         }
-        try await setLocal(RTCSessionDescription(type: .answer, sdp: sdp), on: connection)
+        let tuned = CallSdp.withVoiceResilience(sdp)
+        try await setLocal(RTCSessionDescription(type: .answer, sdp: tuned), on: connection)
+        tuneSenders()
         refreshRemoteVideo()
-        return sdp
+        return tuned
     }
 
     /// Caller: applies the callee's answer. False when no offer is waiting for one.
@@ -165,6 +213,7 @@ final class CallMediaEngine: NSObject {
         guard let connection = peerConnection else { throw EngineError.notStarted }
         guard connection.signalingState == .haveLocalOffer else { return false }
         try await setRemote(RTCSessionDescription(type: .answer, sdp: sdp), on: connection)
+        tuneSenders()
         refreshRemoteVideo()
         return true
     }
@@ -214,6 +263,9 @@ final class CallMediaEngine: NSObject {
         let connection = peerConnection
         peerConnection = nil
         connection?.close()
+        iceServers = []
+        hasTurn = false
+        triedRelay = false
         peerLink = .closed
         iceLink = .closed
         audioTrack = nil
@@ -245,6 +297,31 @@ final class CallMediaEngine: NSObject {
                     cont.resume()
                 }
             }
+        }
+    }
+
+    /// Speech near 32 kbps; video near 1.2 Mbps at 30 fps, shedding rate and detail together.
+    private func tuneSenders() {
+        guard let connection = peerConnection else { return }
+        for sender in connection.senders {
+            guard let track = sender.track else { continue }
+            let parameters = sender.parameters
+            guard let encoding = parameters.encodings.first else { continue }
+            if track.kind == kRTCMediaStreamTrackKindAudio {
+                encoding.maxBitrateBps = NSNumber(value: 32_000)
+                encoding.networkPriority = .high
+                encoding.bitratePriority = 4
+            } else if track.kind == kRTCMediaStreamTrackKindVideo {
+                encoding.maxBitrateBps = NSNumber(value: 1_200_000)
+                encoding.maxFramerate = NSNumber(value: 30)
+                // Below speech, so a tight link fills the microphone before the camera.
+                encoding.networkPriority = .low
+                encoding.bitratePriority = 1
+                parameters.degradationPreference = NSNumber(value: RTCDegradationPreference.balanced.rawValue)
+            } else {
+                continue
+            }
+            sender.parameters = parameters
         }
     }
 

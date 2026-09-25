@@ -26,6 +26,7 @@ import {
   readSignal,
   sameId,
   signalTypeOf,
+  voiceSdp,
   type CallPeer,
   type CallPhase,
   type CallView,
@@ -111,7 +112,14 @@ const VIDEO: MediaTrackConstraints = {
   height: { ideal: 720 },
   frameRate: { ideal: 30, max: 30 },
 };
-const AUDIO: MediaTrackConstraints = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+const AUDIO: MediaTrackConstraints = {
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+  channelCount: { ideal: 1 },
+};
+const AUDIO_MAX_BPS = 32_000;
+const VIDEO_MAX_BPS = 1_200_000;
 
 type TimerKey =
   | "ringTimer"
@@ -141,6 +149,11 @@ type Call = {
   sent: number;
   seen: SeenSignals;
   pc: RTCPeerConnection | null;
+  /** The servers handed to the peer connection, kept so a relay fallback can set them again. */
+  iceServers: RTCIceServer[];
+  /** A failed link has asked for the TURN relay. Later restarts, including a delayed one, keep it. */
+  wantRelay: boolean;
+  triedRelay: boolean;
   local: MediaStream | null;
   remote: MediaStream | null;
   /** Caller: the offer made while it rang; true once it is the local description. */
@@ -199,6 +212,61 @@ function toRtcServer(server: IceServer): RTCIceServer {
   return server.username || server.credential
     ? { urls: server.urls, username: server.username, credential: server.credential }
     : { urls: server.urls };
+}
+
+function hasTurnServer(servers: RTCIceServer[]): boolean {
+  for (const server of servers) {
+    const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
+    for (const url of urls) {
+      if (/^turns?:/i.test(url)) return true;
+    }
+  }
+  return false;
+}
+
+function peerConfig(servers: RTCIceServer[], relay: boolean): RTCConfiguration {
+  return {
+    iceServers: servers,
+    bundlePolicy: "max-bundle",
+    rtcpMuxPolicy: "require",
+    iceCandidatePoolSize: 1,
+    iceTransportPolicy: relay ? "relay" : "all",
+  };
+}
+
+function withVoice(description: RTCSessionDescriptionInit): RTCSessionDescriptionInit {
+  return { type: description.type, sdp: voiceSdp(description.sdp ?? "") };
+}
+
+/** Speech at about 32 kbps; video at about 1.2 Mbps, 30 fps, shedding rate and detail together. */
+function tuneSenders(pc: RTCPeerConnection): void {
+  if (typeof pc.getSenders !== "function") return;
+  for (const sender of pc.getSenders()) {
+    const track = sender.track;
+    if (!track || typeof sender.getParameters !== "function" || typeof sender.setParameters !== "function") continue;
+    try {
+      const params = sender.getParameters();
+      const encoding = params.encodings?.[0];
+      if (!encoding) continue;
+      if (track.kind === "audio") {
+        encoding.maxBitrate = AUDIO_MAX_BPS;
+        encoding.priority = "high";
+        encoding.networkPriority = "high";
+      } else if (track.kind === "video") {
+        encoding.maxBitrate = VIDEO_MAX_BPS;
+        encoding.maxFramerate = 30;
+        // Below speech, so a tight link fills the microphone before the camera.
+        encoding.priority = "low";
+        encoding.networkPriority = "low";
+        params.degradationPreference = "balanced";
+      } else {
+        continue;
+      }
+      void Promise.resolve(sender.setParameters(params)).catch(() => undefined);
+    } catch {
+      /* a sender that cannot be tuned still sends */
+    }
+  }
 }
 
 export class CallController {
@@ -535,6 +603,9 @@ export class CallController {
       sent: 0,
       seen: new SeenSignals(),
       pc: null,
+      iceServers: [],
+      wantRelay: false,
+      triedRelay: false,
       local: null,
       remote: null,
       offerReady: null,
@@ -708,7 +779,10 @@ export class CallController {
       return false;
     }
     call.local = stream;
-    for (const track of stream.getAudioTracks()) track.enabled = call.micOn;
+    for (const track of stream.getAudioTracks()) {
+      track.enabled = call.micOn;
+      track.contentHint = "speech";
+    }
     const video = stream.getVideoTracks()[0];
     call.hasCamera = Boolean(video);
     call.cameraOn = Boolean(video);
@@ -746,11 +820,9 @@ export class CallController {
   }
 
   private buildPeer(call: Call, servers: IceServer[]): void {
-    const pc = this.env.createPeer({
-      iceServers: servers.map(toRtcServer),
-      bundlePolicy: "max-bundle",
-      rtcpMuxPolicy: "require",
-    });
+    const rtcServers = servers.map(toRtcServer);
+    call.iceServers = rtcServers;
+    const pc = this.env.createPeer(peerConfig(rtcServers, false));
     call.pc = pc;
     const local = call.local;
     if (local) for (const track of local.getTracks()) pc.addTrack(track, local);
@@ -758,6 +830,7 @@ export class CallController {
     if (call.role === "caller" && call.modality === "video" && !call.hasCamera) {
       pc.addTransceiver("video", { direction: "recvonly" });
     }
+    tuneSenders(pc);
     pc.onicecandidate = (event) => this.gatheredCandidate(call, event.candidate);
     pc.ontrack = (event) => this.remoteTrack(call, event.track);
     pc.onconnectionstatechange = () => this.linkChanged(call);
@@ -769,9 +842,10 @@ export class CallController {
     const pc = call.pc;
     if (!pc) return false;
     try {
-      const offer = await pc.createOffer();
+      const offer = withVoice(await pc.createOffer());
       if (this.gone(call)) return false;
       await pc.setLocalDescription(offer);
+      tuneSenders(pc);
       return !this.gone(call);
     } catch {
       if (!this.gone(call)) this.finish(call, "Couldn’t start the call.", "hangup", ERROR_VISIBLE_MS);
@@ -892,8 +966,9 @@ export class CallController {
       await pc.setRemoteDescription({ type: "offer", sdp });
       if (this.gone(call)) return;
       await this.flushRemoteCandidates(call);
-      const answer = await pc.createAnswer();
+      const answer = withVoice(await pc.createAnswer());
       await pc.setLocalDescription(answer);
+      tuneSenders(pc);
       if (this.gone(call)) return;
       this.send(call, { t: "answer", sdp: pc.localDescription?.sdp ?? answer.sdp ?? "" });
       if (!call.negotiated) this.negotiated(call);
@@ -907,6 +982,7 @@ export class CallController {
     // An answer to an offer that was taken back (a restart overtook it).
     if (!pc || pc.signalingState !== "have-local-offer") return;
     await pc.setRemoteDescription({ type: "answer", sdp });
+    tuneSenders(pc);
     await this.flushRemoteCandidates(call);
   }
 
@@ -1000,6 +1076,7 @@ export class CallController {
         }
         return;
       case "failed":
+        call.wantRelay = true;
         this.troubled(call);
         this.restartIce(call);
         return;
@@ -1025,10 +1102,12 @@ export class CallController {
     }
   }
 
-  /** An ICE restart: the caller offers one, the callee asks for one; at most one per 10 s. */
+  /** An ICE restart: the caller offers one, the callee asks for one; at most one per 10 s.
+   *  A failed link switches to the TURN relay before the wait, and stays there. */
   private restartIce(call: Call): void {
     if (this.gone(call) || !call.pc || !call.negotiated) return;
     if (call.phase !== "active" && call.phase !== "connecting") return;
+    if (call.wantRelay) this.preferRelay(call);
     const wait = call.restartGate.waitMs(this.env.now());
     if (wait > 0) {
       if (call.restartTimer === null) {
@@ -1050,12 +1129,30 @@ export class CallController {
     try {
       // An offer still waiting for its answer (10 s at least, by the gate) is taken back first.
       if (pc.signalingState === "have-local-offer") await pc.setLocalDescription({ type: "rollback" });
-      const offer = await pc.createOffer({ iceRestart: true });
+      const offer = withVoice(await pc.createOffer({ iceRestart: true }));
       await pc.setLocalDescription(offer);
+      tuneSenders(pc);
       if (this.gone(call)) return;
       this.send(call, { t: "offer", sdp: pc.localDescription?.sdp ?? offer.sdp ?? "", restart: true });
     } catch {
       /* the next state change, or the gate's timer, tries again */
+    }
+  }
+
+  /** Once, after the direct path has failed and the server offered a TURN server.
+   *  Starts from the peer connection's own configuration so the certificate and the candidate
+   *  pool stay as they are; replacing them makes the browser reject the update. */
+  private preferRelay(call: Call): void {
+    const pc = call.pc;
+    if (!pc || call.triedRelay || !hasTurnServer(call.iceServers)) return;
+    if (typeof pc.setConfiguration !== "function") return;
+    try {
+      const current =
+        typeof pc.getConfiguration === "function" ? pc.getConfiguration() : peerConfig(call.iceServers, false);
+      pc.setConfiguration({ ...current, iceTransportPolicy: "relay" });
+      call.triedRelay = true;
+    } catch {
+      /* the restart still tries every path */
     }
   }
 

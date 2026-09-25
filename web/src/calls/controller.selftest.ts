@@ -109,11 +109,17 @@ class FakePeer {
   ontrack: ((event: { track: FakeTrack; streams: FakeStream[] }) => void) | null = null;
   onconnectionstatechange: (() => void) | null = null;
   oniceconnectionstatechange: (() => void) | null = null;
-  readonly senders: { track: FakeTrack | null; replaceTrack: (track: FakeTrack | null) => Promise<void> }[] = [];
+  readonly senders: {
+    track: FakeTrack | null;
+    replaceTrack: (track: FakeTrack | null) => Promise<void>;
+    getParameters: () => { encodings: { maxBitrate?: number; priority?: string }[] };
+    setParameters: (params: { encodings?: { maxBitrate?: number; priority?: string }[] }) => Promise<void>;
+  }[] = [];
   readonly transceivers: string[] = [];
   readonly remoteCandidates: unknown[] = [];
   readonly remoteTracks: FakeTrack[] = [];
   readonly descriptionsSet: string[] = [];
+  readonly tuned: { kind: string; maxBitrate?: number; priority?: string }[] = [];
   closed = false;
   /** The network refuses every path (for timeouts). */
   blocked = false;
@@ -121,14 +127,26 @@ class FakePeer {
 
   constructor(
     readonly name: string,
-    readonly config: RTCConfiguration,
+    public config: RTCConfiguration,
   ) {}
+
+  setConfiguration(config: RTCConfiguration): void {
+    this.config = config;
+  }
+  getConfiguration(): RTCConfiguration {
+    return { ...this.config };
+  }
 
   addTrack(track: FakeTrack): unknown {
     const sender = {
       track: track as FakeTrack | null,
       replaceTrack: async (next: FakeTrack | null) => {
         sender.track = next;
+      },
+      getParameters: () => ({ encodings: [{}] }),
+      setParameters: async (params: { encodings?: { maxBitrate?: number; priority?: string }[] }) => {
+        const encoding = params.encodings?.[0];
+        this.tuned.push({ kind: sender.track?.kind ?? "", maxBitrate: encoding?.maxBitrate, priority: encoding?.priority });
       },
     };
     this.senders.push(sender);
@@ -564,7 +582,17 @@ const ICE = 150;
   check(a1.view?.phase === "outgoing" && !a1.view.dialing && a1.tone === "ringback", "ringing, with the ringback");
   check(server.requests.filter((r) => r === "a1 create").length === 1, "one ring placed");
   check(a1.peer.config.bundlePolicy === "max-bundle", "max-bundle");
+  check(a1.peer.config.iceCandidatePoolSize === 1, "one ICE candidate is gathered ahead of the answer");
+  check(a1.peer.config.iceTransportPolicy === "all", "the call tries a direct path first");
   check(a1.peer.config.iceServers?.[0]?.username === "1:u", "the TURN login is passed on");
+  check(
+    a1.peer.tuned.some((t) => t.kind === "audio" && t.maxBitrate === 32_000 && t.priority === "high"),
+    "speech stays near 32 kbps and keeps priority",
+  );
+  check(
+    (a1.streams[0].getAudioTracks()[0] as { contentHint?: string }).contentHint === "speech",
+    "the microphone is marked as speech",
+  );
   check(a1.peer.descriptionsSet.join() === "local:offer", "the offer is ready while it rings");
   await clock.advance(ICE);
   check(server.attempts.length === 0, "nothing is signalled before the answer, candidates included");
@@ -659,6 +687,10 @@ const ICE = 150;
   check(a1.peer.descriptionsSet.join() === "local:offer,remote:answer", "the answer was taken once");
   check(a1.view?.remoteVideo === true && a1.view.remoteCamera === true, "alice sees bob's camera");
   check(a1.view?.hasCamera === true && a1.view.mirrorSelf === true && a1.view.canSwitchCamera, "a mirrored front camera, and a second one");
+  check(
+    a1.peer.tuned.some((t) => t.kind === "video" && t.maxBitrate === 1_200_000 && t.priority === "low"),
+    "video stays near 1.2 Mbps and yields to speech",
+  );
   b1.controller.hangup();
   await clock.advance(0);
   check(a1.view?.endedText === "Call ended", "ended once");
@@ -869,6 +901,8 @@ const ICE = 150;
   check(a1.view?.reconnecting === false && phase(a1) === "active", "recovered");
   let offers = (await plaintexts(server, a1, b1, "caller")).filter((s) => s.t === "offer");
   check(offers.length === 2 && offers[1].restart === true, "a restart offer with restart: true");
+  check(a1.peer.config.iceTransportPolicy === "relay", "a failed link falls back to the relay");
+  check(b1.peer.config.iceTransportPolicy === "all", "bob has not failed, so he still tries every path");
 
   // Bob's side breaks: he asks, alice waits out the 10 s since her last restart, then offers.
   b1.peer.setState("disconnected");
@@ -876,6 +910,7 @@ const ICE = 150;
   await clock.advance(4_000);
   const asked = (await plaintexts(server, b1, a1, "callee")).filter((s) => s.t === "restart");
   check(asked.length === 1, "after 4 s disconnected the callee asks for a restart");
+  check(b1.peer.config.iceTransportPolicy === "all", "a short disconnect does not force the relay");
   a1.peer.setState("disconnected");
   await clock.advance(ICE);
   offers = (await plaintexts(server, a1, b1, "caller")).filter((s) => s.t === "offer");
@@ -892,6 +927,7 @@ const ICE = 150;
   b1.peer.blocked = true;
   a1.peer.setState("failed");
   b1.peer.setState("failed");
+  check(b1.peer.config.iceTransportPolicy === "relay", "a failed link on bob falls back to the relay too");
   await clock.advance(30_000);
   check(a1.view?.endedText === "Connection lost" || b1.view?.endedText === "Connection lost", "gave up: Connection lost");
   await clock.advance(4_000);

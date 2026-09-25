@@ -108,6 +108,8 @@ final class CallController {
         var dialing = false
         var ended = false
         var linkBroken = false
+        /// Set when the link has failed. A restart delayed by the 10 s gate still uses the relay.
+        var wantRelay = false
         var reportedConnected = false
 
         init(generation: Int, role: CallCrypto.Role) {
@@ -847,6 +849,7 @@ final class CallController {
             }
         case .failed:
             machine.linkBroken = true
+            machine.wantRelay = true
             troubled(machine)
             restartIce(machine)
         case .new, .connecting:
@@ -879,6 +882,8 @@ final class CallController {
     private func restartIce(_ machine: Machine) {
         guard current(machine), machine.negotiated else { return }
         guard active?.phase == .connecting || active?.phase == .active else { return }
+        // Before the 10 s gate, so the offer that follows the wait gathers only relay candidates.
+        if machine.wantRelay { engine.preferRelay() }
         let wait = machine.lastRestart.addingTimeInterval(10).timeIntervalSinceNow
         if wait > 0 {
             guard machine.restartTimer == nil else { return }

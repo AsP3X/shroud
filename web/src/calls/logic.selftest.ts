@@ -19,6 +19,7 @@ import {
   sameId,
   signalTypeOf,
   statusLine,
+  voiceSdp,
   type CallView,
 } from "./logic";
 
@@ -104,6 +105,30 @@ check(statusLine({ ...base, phase: "ended", endedText: "Declined" }, 0) === "Dec
 
 /* --- signals --- */
 check(signalTypeOf("offer") === "sdp_offer" && signalTypeOf("restart") === "renegotiate", "signal types");
+{
+  const plain =
+    "v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111 0\r\na=rtpmap:111 opus/48000/2\r\n" +
+    "a=fmtp:111 minptime=10;sprop-stereo=1;useinbandfec=0\r\na=rtpmap:0 PCMU/8000\r\na=fmtp:0 comfort=1\r\n";
+  const tuned = voiceSdp(plain);
+  check(
+    tuned.includes("a=fmtp:111 minptime=10;sprop-stereo=0;useinbandfec=1;usedtx=1;stereo=0;maxaveragebitrate=32000"),
+    "opus gains error correction, silence suppression, and a speech bitrate",
+  );
+  check(!tuned.includes("useinbandfec=0") && !tuned.includes("sprop-stereo=1"), "the old opus values are replaced");
+  check(tuned.includes("a=fmtp:0 comfort=1"), "another codec's fmtp is left alone");
+  check(tuned.startsWith("v=0\r\n") && tuned === voiceSdp(tuned), "line endings stay, and a second pass changes nothing");
+  const inserted = voiceSdp("v=0\nm=audio 9 UDP/TLS/RTP/SAVPF 111\na=rtpmap:111 opus/48000/2\n");
+  check(
+    inserted ===
+      "v=0\nm=audio 9 UDP/TLS/RTP/SAVPF 111\na=rtpmap:111 opus/48000/2\n" +
+        "a=fmtp:111 useinbandfec=1;usedtx=1;stereo=0;sprop-stereo=0;maxaveragebitrate=32000\n",
+    "a missing fmtp line is added after the opus map",
+  );
+  check(voiceSdp("v=0\r\n") === "v=0\r\n", "an sdp without opus is unchanged");
+  const neighbor = voiceSdp("v=0\r\na=rtpmap:111 opus/48000/2\r\na=fmtp:1110 useinbandfec=0\r\n");
+  check(neighbor.includes("a=fmtp:1110 useinbandfec=0"), "payload 111 does not rewrite 1110");
+  check(neighbor.includes("a=fmtp:111 useinbandfec=1"), "opus still gets its own fmtp line");
+}
 const offer = readSignal("sdp_offer", { t: "offer", sdp: "v=0", restart: true, n: 1 });
 check(offer?.t === "offer" && offer.restart && offer.n === 1, "an offer");
 check(readSignal("sdp_offer", { t: "offer", sdp: "v=0", n: 1 })?.t === "offer", "restart defaults to false");
