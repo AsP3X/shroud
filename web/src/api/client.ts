@@ -305,6 +305,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ guard_id: guardId, auth_key: authKey }),
     }),
+  /**
+   * No session: the lock screen cannot read the token. Deletes the pepper so a copied
+   * profile cannot keep guessing this PIN. 204 when the guard is already gone.
+   */
+  abandonPinGuard: (guardId: string) =>
+    request<void>("/pin-guard/abandon", {
+      method: "POST",
+      body: JSON.stringify({ guard_id: guardId }),
+    }),
   conversations: (token: string) =>
     request<{ conversations: Conversation[] }>("/conversations", { token }),
   contacts: (token: string) => request<{ contacts: Contact[] }>("/contacts", { token }),

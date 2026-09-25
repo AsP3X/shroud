@@ -30,7 +30,13 @@ async fn test_app() -> Option<axum::Router> {
     )
 }
 
-async fn call(app: &axum::Router, method: &str, uri: &str, token: Option<&str>, body: Value) -> (StatusCode, Value) {
+async fn call(
+    app: &axum::Router,
+    method: &str,
+    uri: &str,
+    token: Option<&str>,
+    body: Value,
+) -> (StatusCode, Value) {
     let mut request = Request::builder()
         .method(method)
         .uri(uri)
@@ -44,7 +50,12 @@ async fn call(app: &axum::Router, method: &str, uri: &str, token: Option<&str>, 
         .await
         .expect("response");
     let status = response.status();
-    let bytes = response.into_body().collect().await.expect("body").to_bytes();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
     let json = if bytes.is_empty() {
         Value::Null
     } else {
@@ -69,7 +80,14 @@ async fn register(app: &axum::Router) -> String {
 
 async fn create_guard(app: &axum::Router, token: &str, auth_key: &[u8; 32]) -> (String, String) {
     let verifier = STANDARD.encode(Sha256::digest(auth_key));
-    let (status, body) = call(app, "POST", "/api/v1/pin-guard", Some(token), json!({ "verifier": verifier })).await;
+    let (status, body) = call(
+        app,
+        "POST",
+        "/api/v1/pin-guard",
+        Some(token),
+        json!({ "verifier": verifier }),
+    )
+    .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
     (
         body["guard_id"].as_str().unwrap().to_owned(),
@@ -108,11 +126,19 @@ async fn pepper_only_for_the_right_key_and_gone_after_ten_wrong_ones() {
         let (status, body) = unlock(&app, &guard_id, &wrong).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
         assert_eq!(body["error"]["code"], "PIN_INCORRECT");
-        assert!(body["error"]["message"].as_str().unwrap().contains(&left.to_string()));
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains(&left.to_string())
+        );
     }
     assert_eq!(unlock(&app, &guard_id, &right).await.0, StatusCode::OK);
     for _ in 0..9 {
-        assert_eq!(unlock(&app, &guard_id, &wrong).await.0, StatusCode::FORBIDDEN);
+        assert_eq!(
+            unlock(&app, &guard_id, &wrong).await.0,
+            StatusCode::FORBIDDEN
+        );
     }
 
     // The tenth miss in a row deletes the pepper; the right key cannot bring it back.
@@ -138,9 +164,58 @@ async fn new_pin_replaces_the_guard_and_logout_deletes_it() {
     assert_eq!(unlock(&app, &old_id, &first).await.0, StatusCode::GONE);
     assert_eq!(unlock(&app, &new_id, &second).await.0, StatusCode::OK);
 
-    let (status, _) = call(&app, "POST", "/api/v1/auth/logout", Some(&token), Value::Null).await;
+    let (status, _) = call(
+        &app,
+        "POST",
+        "/api/v1/auth/logout",
+        Some(&token),
+        Value::Null,
+    )
+    .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     assert_eq!(unlock(&app, &new_id, &second).await.0, StatusCode::GONE);
+}
+
+#[tokio::test]
+async fn abandoning_a_guard_needs_no_session_and_the_pin_stops_working() {
+    let Some(app) = test_app().await else {
+        eprintln!("skipping pin guard test: no DATABASE_URL");
+        return;
+    };
+    let token = register(&app).await;
+    let key = [4_u8; 32];
+    let (guard_id, _) = create_guard(&app, &token, &key).await;
+
+    let (status, _) = call(
+        &app,
+        "POST",
+        "/api/v1/pin-guard/abandon",
+        None,
+        json!({ "guard_id": guard_id }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(unlock(&app, &guard_id, &key).await.0, StatusCode::GONE);
+
+    // Already gone, and an id that was never a guard: both are the same answer.
+    let (again, _) = call(
+        &app,
+        "POST",
+        "/api/v1/pin-guard/abandon",
+        None,
+        json!({ "guard_id": guard_id }),
+    )
+    .await;
+    assert_eq!(again, StatusCode::NO_CONTENT);
+    let (missing, _) = call(
+        &app,
+        "POST",
+        "/api/v1/pin-guard/abandon",
+        None,
+        json!({ "guard_id": Uuid::new_v4() }),
+    )
+    .await;
+    assert_eq!(missing, StatusCode::NO_CONTENT);
 }
 
 #[tokio::test]
@@ -150,6 +225,13 @@ async fn creating_a_guard_needs_a_session() {
         return;
     };
     let verifier = STANDARD.encode([0_u8; 32]);
-    let (status, _) = call(&app, "POST", "/api/v1/pin-guard", None, json!({ "verifier": verifier })).await;
+    let (status, _) = call(
+        &app,
+        "POST",
+        "/api/v1/pin-guard",
+        None,
+        json!({ "verifier": verifier }),
+    )
+    .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }

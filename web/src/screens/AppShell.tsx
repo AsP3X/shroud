@@ -192,8 +192,8 @@ export function AppShell({ session }: { session: Session }) {
   /** The tab is on screen (a background tab still polls and hears the socket). */
   const [pageVisible, setPageVisible] = useState(() => !document.hidden);
   /**
-   * The chat someone is actually reading: selected, not behind Settings, the browser unlocked
-   * and the tab on screen. Only there does a heart badge clear.
+   * The open chat while this tab is on screen. Banners use it. The unread count and the heart
+   * badge wait until the window is focused as well (`readingNow`).
    */
   const lookingAt = selected && tab !== "settings" && identity && pageVisible ? selected.id.toLowerCase() : null;
   const lookingAtRef = useRef(lookingAt);
@@ -211,6 +211,11 @@ export function AppShell({ session }: { session: Session }) {
   const olderLoad = useRef<Promise<void> | null>(null);
   /** Bumped per opened chat, so a page for the previous one is dropped on arrival. */
   const historyEpoch = useRef(0);
+  /**
+   * Bumped per peer when that chat is cleared for us. A fetch that started earlier must not
+   * restore it; one that starts afterwards may, because the server hides the old history.
+   */
+  const chatEpoch = useRef(new Map<string, number>());
   /** Optimistic ids the reader deleted while the send was still in flight. */
   const droppedSends = useRef(new Set<string>());
   /** Server id for an optimistic bubble, once the send has been accepted. */
@@ -435,6 +440,10 @@ export function AppShell({ session }: { session: Session }) {
   }, []);
 
   const refresh = useCallback(async (): Promise<Conversation[]> => {
+    // A clear during this refresh must not let its preview fetch put the old line back.
+    const clearedAt = new Map(chatEpoch.current);
+    const stillCurrent = (peerId: string) =>
+      chatEpochOf(peerId) === (clearedAt.get(peerId.toLowerCase()) ?? 0);
     const [conv, roster, requests] = await Promise.allSettled([
       api.conversations(session.token),
       api.contacts(session.token),
@@ -491,6 +500,7 @@ export function AppShell({ session }: { session: Session }) {
         session.user.id,
         convs.map((c) => ({ id: c.peer.id, lastMessageAt: c.last_message_at })),
         material,
+        stillCurrent,
       ).then(() => {
         if (alive.current) setPreviewRev((n) => n + 1);
       });
@@ -579,14 +589,6 @@ export function AppShell({ session }: { session: Session }) {
     },
     [session.token, withLocalState],
   );
-
-  /* The chat on screen is being read: whatever reacted to our messages there is seen. Not
-     while the tab is hidden or Settings covers it — nobody sees it then, here or on the phone. */
-  useEffect(() => {
-    if (!lookingAt) return;
-    const conv = conversations.find((c) => c.peer.id.toLowerCase() === lookingAt);
-    if ((conv?.unseen_reactions ?? 0) > 0) markReactionsSeen(lookingAt);
-  }, [conversations, lookingAt, markReactionsSeen]);
 
   /**
    * The chat was read here: its count clears at once, its notifications close, and the server
@@ -683,11 +685,19 @@ export function AppShell({ session }: { session: Session }) {
   /* The chat on screen, in a focused window, is being read: its unread count goes, here and on
      every other device of ours. */
   const readingNow = lookingAt && windowFocused ? lookingAt : null;
+  const readingNowRef = useRef(readingNow);
+  readingNowRef.current = readingNow;
   useEffect(() => {
     if (!readingNow) return;
     const conv = conversations.find((c) => c.peer.id.toLowerCase() === readingNow);
     if ((conv?.unread_count ?? 0) > 0) markChatRead(readingNow);
   }, [conversations, readingNow, markChatRead]);
+  /* A background window keeps the heart, the same way it keeps the unread count. */
+  useEffect(() => {
+    if (!readingNow) return;
+    const conv = conversations.find((c) => c.peer.id.toLowerCase() === readingNow);
+    if ((conv?.unseen_reactions ?? 0) > 0) markReactionsSeen(readingNow);
+  }, [conversations, readingNow, markReactionsSeen]);
   /* Whatever this browser shows about the chat being read goes, whatever its count: reactions,
      and pushes from while it was locked for messages read elsewhere since. */
   const readingConversationId = readingNow
@@ -977,10 +987,13 @@ export function AppShell({ session }: { session: Session }) {
     const open = selectedRef.current;
     const material = loadIdentity(session.user.id);
     if (!cursor || !open || !material) return Promise.resolve();
+    const started = chatEpochOf(open.id);
     const epoch = historyEpoch.current;
     setLoadingOlder(true);
     const run: Promise<void> = loadHistoryPage(session.token, session.user.id, open.id, material, cursor)
       .then((page) => {
+        // Decoded across a clear: the page's bodies and the preview it wrote have to go.
+        if (dropClearedPage(open.id, started, page.messages)) return;
         if (epoch !== historyEpoch.current) return;
         olderCursor.current = page.older;
         setHasOlder(page.older !== null);
@@ -1012,6 +1025,7 @@ export function AppShell({ session }: { session: Session }) {
     const peerId = selected.id;
     let cancelled = false;
     let prefetchTimer = 0;
+    const started = chatEpochOf(peerId);
     historyEpoch.current += 1;
     const epoch = historyEpoch.current;
     olderCursor.current = null;
@@ -1034,6 +1048,7 @@ export function AppShell({ session }: { session: Session }) {
     loadHistoryPage(session.token, session.user.id, peerId, material)
       .then((page) => {
         // A page read before the chat was deleted must not bring it back (`forgetChat`).
+        if (dropClearedPage(peerId, started, page.messages)) return;
         if (cancelled || epoch !== historyEpoch.current) return;
         if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
         olderCursor.current = page.older;
@@ -1061,12 +1076,33 @@ export function AppShell({ session }: { session: Session }) {
     };
   }, [selected?.id, session.token, session.user.id, loadOlder]);
 
-  /** The chat is gone for us: the open thread empties, and nothing this tab kept of it stays. */
-  function forgetChat(peerId: string) {
-    // Its chat-list line quotes the newest message.
+  function chatEpochOf(peerId: string): number {
+    return chatEpoch.current.get(peerId.toLowerCase()) ?? 0;
+  }
+
+  function bumpChat(peerId: string) {
+    const key = peerId.toLowerCase();
+    chatEpoch.current.set(key, chatEpochOf(key) + 1);
+  }
+
+  /** True when this chat was cleared after `started`. Drops the page's bodies and its preview. */
+  function dropClearedPage(peerId: string, started: number, messages: { id: string }[]): boolean {
+    if (chatEpochOf(peerId) === started) return false;
+    for (const message of messages) discardMessage(message.id);
     replacePreview(session.user.id, peerId, null);
     setPreviewRev((n) => n + 1);
-    if (selectedRef.current?.id.toLowerCase() !== peerId) return;
+    return true;
+  }
+
+  /** The chat is gone for us: the open thread empties, and nothing this tab kept of it stays. */
+  function forgetChat(peerId: string) {
+    const key = peerId.toLowerCase();
+    // A fetch already running still has the old bodies. A later one can show a new chat.
+    bumpChat(key);
+    // Its chat-list line quotes the newest message.
+    replacePreview(session.user.id, key, null);
+    setPreviewRev((n) => n + 1);
+    if (selectedRef.current?.id.toLowerCase() !== key) return;
     // Pages still on their way were read before the delete; they are dropped when they land.
     historyEpoch.current += 1;
     olderCursor.current = null;
@@ -1092,6 +1128,7 @@ export function AppShell({ session }: { session: Session }) {
     }
     const material = loadIdentity(session.user.id);
     if (!material || selectedRef.current?.id.toLowerCase() !== peerId) return;
+    const started = chatEpochOf(peerId);
     const epoch = historyEpoch.current;
     const fetched = new Set<string>();
     let before: HistoryCursor | null = null;
@@ -1105,7 +1142,9 @@ export function AppShell({ session }: { session: Session }) {
           before,
           OLDER_PAGE_SIZE,
         );
-        // Another chat was opened, or this one was cleared, while the page was on its way.
+        // Cleared while the page was on its way: its bodies must not stay cached.
+        if (dropClearedPage(peerId, started, page.messages)) return;
+        // Another chat was opened while the page was on its way.
         if (!alive.current || epoch !== historyEpoch.current) return;
         const gone = new Set(page.messages.filter((m) => m.deleted).map((m) => m.id.toLowerCase()));
         setThread((prev) => mergeMessages(page.messages, prev));
@@ -1165,11 +1204,16 @@ export function AppShell({ session }: { session: Session }) {
             return;
           }
           void (async () => {
+            // Taken before any await, so a clear that lands while this is loading still counts.
+            const clearedAt = new Map(chatEpoch.current);
             try {
               const convs = await refresh();
               const material = loadIdentity(session.user.id);
               if (!material || !alive.current) return;
               const peer = peerIdForMessage(dto, session.user.id, convs);
+              const started = clearedAt.get(peer.toLowerCase()) ?? 0;
+              // Cleared while the roster was loading. Decoding would cache the body.
+              if (chatEpochOf(peer) !== started) return;
               const msg = await ingestIncoming(
                 dto,
                 session.user.id,
@@ -1177,6 +1221,7 @@ export function AppShell({ session }: { session: Session }) {
                 session.token,
                 material,
               );
+              if (dropClearedPage(peer, started, [msg])) return;
               // Their message is what the typing/recording was for: cleared in the same
               // update that adds it, so it lands where the activity bubble was.
               markTyping(dto.sender_user_id, false);
@@ -1240,7 +1285,7 @@ export function AppShell({ session }: { session: Session }) {
           if (!added && wire.ciphertext) return;
           const conversationId = String(event.raw.conversation_id ?? "").toLowerCase();
           const conv = conversationsRef.current.find((c) => c.id.toLowerCase() === conversationId);
-          const looking = lookingAtRef.current;
+          const looking = readingNowRef.current;
           if (looking && conv && conv.peer.id.toLowerCase() === looking) {
             if (added) markReactionsSeen(looking, wire.seq);
           } else {
@@ -1367,9 +1412,16 @@ export function AppShell({ session }: { session: Session }) {
       if (!material || !open) return;
       const known = new Set(threadRef.current.map((m) => m.id));
       const peerId = open.id;
+      // Captured before the request. Clearing this chat moves its epoch; switching chats does not.
+      const started = chatEpochOf(peerId);
+      const epoch = historyEpoch.current;
       fetchLatest(session.token, session.user.id, peerId, material, known)
         .then(({ messages: extra, reactionSeq, reactionUnopened }) => {
           if (cancelled) return;
+          // Started before the clear. Drop the bodies this request just cached, including its preview.
+          if (dropClearedPage(peerId, started, extra)) return;
+          // Switched chats, or this one was reloaded: leave what the request cached.
+          if (epoch !== historyEpoch.current) return;
           if (selectedRef.current?.id.toLowerCase() !== peerId.toLowerCase()) return;
           // A reaction on a new message whose sender's key was out of reach: catch-up retries.
           // With no cursor yet (the first page failed), it starts below that one.

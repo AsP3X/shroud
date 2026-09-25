@@ -161,6 +161,18 @@ export async function unlockWithPin(userId: string, pin: string): Promise<Unlock
   return { ok: true };
 }
 
+/**
+ * "Forgot PIN", before the local wrap is dropped: delete the server's pepper. A copy of this
+ * browser still has the wrap, and without this it can still unlock. There is no session on
+ * the lock screen — the token is sealed — so this is the unauthenticated abandon call.
+ * Throws when the server cannot be reached; the caller keeps the PIN in that case.
+ */
+export async function abandonPin(userId: string): Promise<void> {
+  const guard = vaultPinGuard(userId);
+  if (!guard) return;
+  await api.abandonPinGuard(guard.guardId);
+}
+
 /** "Forgot PIN": only the phrase can open the vault until a new PIN is chosen. */
 export function clearPin(userId: string): void {
   forgetVaultPin(userId);

@@ -50,6 +50,7 @@ pub fn router() -> Router<AppState> {
                 post(pin_guard::create_guard).delete(pin_guard::delete_guard),
             )
             .route("/pin-guard/unlock", post(pin_guard::unlock))
+            .route("/pin-guard/abandon", post(pin_guard::abandon))
             .route("/devices", get(devices::list_devices))
             .route("/devices/{id}", delete(devices::delete_device))
             .route("/keys/bundle", axum::routing::put(keys::put_bundle))

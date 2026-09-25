@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { Avatar } from "../components/Avatar";
 import { BrandMark } from "../components/BrandMark";
-import { clearPin, hasPin, pinLength, setPin, unlockWithPin } from "../crypto/vaultAccess";
+import { abandonPin, clearPin, hasPin, pinLength, setPin, unlockWithPin } from "../crypto/vaultAccess";
 import { clearSession, loadSession, setLocked, touchLastActive } from "../session";
 
 const PIN_LEN = 6;
@@ -34,6 +34,10 @@ export function Unlock() {
   const inflight = useRef(false);
   const busyRef = useRef(false);
   busyRef.current = busy;
+  /** Phrase reset is underway. A PIN try still in flight must not open the app or sign out again. */
+  const leaving = useRef(false);
+  /** Bumped when phrase reset starts, so that in-flight PIN try ignores its own result. */
+  const pinAttempt = useRef(0);
   /* False once the screen is gone, so a choreography that outlives it does not navigate. */
   const mounted = useRef(true);
   useEffect(() => {
@@ -58,13 +62,14 @@ export function Unlock() {
   /* Plays Verified → Release, then hands over to the shell. Under Reduce Motion the CSS
      collapses both steps to instant, so the timers only delay a plain route change. */
   const enterApp = useCallback(async () => {
+    if (leaving.current || !mounted.current) return;
     setBusy(true);
     setChoreography("verified");
     await new Promise((resolve) => window.setTimeout(resolve, VERIFIED_MS));
-    if (!mounted.current) return;
+    if (!mounted.current || leaving.current) return;
     setChoreography("releasing");
     await new Promise((resolve) => window.setTimeout(resolve, RELEASE_MS));
-    if (!mounted.current) return;
+    if (!mounted.current || leaving.current) return;
     setLocked(false);
     touchLastActive(true);
     navigate("/app", { replace: true });
@@ -72,7 +77,7 @@ export function Unlock() {
 
   useEffect(() => {
     const userId = session?.user.id;
-    if (!userId || inflight.current) return;
+    if (!userId || leaving.current || inflight.current) return;
 
     if (creating && pin.length === PIN_LEN && phase === "enter") {
       const timer = window.setTimeout(() => {
@@ -118,10 +123,13 @@ export function Unlock() {
     const wait = pin.length === PIN_LEN ? 40 : 320;
     const timer = window.setTimeout(() => {
       void (async () => {
-        if (inflight.current) return;
+        if (inflight.current || leaving.current) return;
+        const attempt = pinAttempt.current;
         inflight.current = true;
         try {
           const result = await unlockWithPin(userId, pin);
+          // Phrase reset may have started while this PIN was still being checked.
+          if (attempt !== pinAttempt.current || !mounted.current || leaving.current) return;
           if (result.ok) {
             await enterApp();
             return;
@@ -136,7 +144,7 @@ export function Unlock() {
           }
           if (result.kind === "offline" || pin.length >= PIN_LEN) fail(result.message);
         } finally {
-          inflight.current = false;
+          if (attempt === pinAttempt.current) inflight.current = false;
         }
       })();
     }, wait);
@@ -175,12 +183,29 @@ export function Unlock() {
     setError(null);
   }
 
-  /* "Forgot PIN": drop the PIN wrap and the session, keep the vault and the identity inside it.
-     The phrase step opens the vault with its history key, and a fresh PIN is chosen on the way back. */
-  function resetWithPhrase() {
-    if (!session) return;
-    // Locked, the token is sealed in the vault and unreadable. The next login on this device
-    // revokes it on the server anyway (one live session per device).
+  /* "Forgot PIN": delete the server's pepper, then drop the PIN wrap and the session. The
+     phrase step opens the vault with its history key, and a fresh PIN is chosen on the way back.
+     The pepper has to go first: a copy of this browser could still unlock until it does, and
+     the token is sealed, so this screen cannot call logout. The next login revokes that session. */
+  async function resetWithPhrase() {
+    if (!session || leaving.current) return;
+    // A PIN check may already be in flight. It keeps running, and its result is ignored.
+    pinAttempt.current += 1;
+    leaving.current = true;
+    inflight.current = true;
+    setBusy(true);
+    setError(null);
+    try {
+      await abandonPin(session.user.id);
+    } catch {
+      inflight.current = false;
+      leaving.current = false;
+      setBusy(false);
+      setError("Can’t reach Shroud to turn off the PIN. Try again.");
+      return;
+    }
+    if (!mounted.current) return;
+    // Unlocked (no vault yet) the token is still here. Locked, it is sealed and this is a no-op.
     if (session.token) {
       void api.logout(session.token).catch(() => {
         /* still drop the local token, as Auth does */

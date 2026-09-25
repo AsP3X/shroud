@@ -2,6 +2,17 @@ import { wsUrl } from "./config";
 
 export type RealtimeEvent = { type: string; raw: Record<string, unknown> };
 
+/**
+ * `auth.error` ends the session except when this account already has as many sockets as the
+ * server allows. That one is "try again later", not "this browser was signed out".
+ */
+export function sessionEndedByAuthError(raw: Record<string, unknown>): boolean {
+  const error = raw.error;
+  if (!error || typeof error !== "object") return true;
+  const code = (error as { code?: unknown }).code;
+  return code !== "RATE_LIMITED";
+}
+
 export type Realtime = {
   /** Best effort: dropped unless the socket is open and authenticated (typing and the like). */
   send: (message: Record<string, unknown>) => void;
@@ -48,6 +59,8 @@ export function connectRealtime(opts: {
         return;
       }
       if (type === "auth.error") {
+        // Too many sockets: the session is still good. The server closes; onclose reconnects.
+        if (!sessionEndedByAuthError(raw)) return;
         closed = true;
         ws.close();
         opts.onFatalAuth?.();

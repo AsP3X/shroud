@@ -536,8 +536,11 @@ export async function hydratePreviews(
   me: string,
   peers: { id: string; lastMessageAt: string | null }[],
   material: IdentityMaterial,
+  /** False once that chat was cleared after this refresh started. Skip writing its preview. */
+  stillCurrent?: (peerId: string) => boolean,
 ): Promise<void> {
   const pending = peers.filter((p) => {
+    if (stillCurrent && !stillCurrent(p.id)) return false;
     if (!p.lastMessageAt) return false;
     const have = loadPreview(me, p.id);
     if (!have) return true;
@@ -547,8 +550,11 @@ export async function hydratePreviews(
   });
   for (const peer of pending) {
     try {
+      if (stillCurrent && !stillCurrent(peer.id)) continue;
       // A few, so a transcript shared after the newest message can't stand in for it.
       const res = await api.listMessages(token, peer.id, { limit: "5" });
+      // Cleared while the page was in flight: do not put the old line back.
+      if (stillCurrent && !stillCurrent(peer.id)) continue;
       const dto = res.messages.find((m) => m.content_type !== "annotation");
       if (!dto) continue;
       const mine = dto.sender_user_id.toLowerCase() === me.toLowerCase();
@@ -590,6 +596,10 @@ export async function hydratePreviews(
       }
       if (mine || dto.deleted_for_everyone) {
         await decodeIncoming(dto, me, peer.id, token, material);
+        if (stillCurrent && !stillCurrent(peer.id)) {
+          forgetMessageLocally(dto.id);
+          replacePreview(me, peer.id, null);
+        }
       } else {
         rememberPreview(me, peer.id, {
           id: dto.id,

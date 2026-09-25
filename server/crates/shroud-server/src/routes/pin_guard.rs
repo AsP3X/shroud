@@ -9,6 +9,8 @@
 //! Agent: `POST /pin-guard` (session) creates or replaces this device's guard.
 //! `POST /pin-guard/unlock` takes no session — the web client seals its token inside the vault,
 //! so it has none before unlock. The guard id plus the auth key are the credential.
+//! `POST /pin-guard/abandon` takes no session either: "Forgot PIN" on the lock screen cannot
+//! read the token, and it has to delete the guard so a copied profile cannot still unlock.
 //! `DELETE /pin-guard` (session) drops it. Never log auth keys, verifiers or peppers.
 
 use axum::{
@@ -62,7 +64,9 @@ fn decode_key(value: &str, field: &str) -> Result<Vec<u8>, AppError> {
         .decode(value.trim())
         .map_err(|_| AppError::validation(format!("{field} must be base64.")))?;
     if bytes.len() != KEY_BYTES {
-        return Err(AppError::validation(format!("{field} must be {KEY_BYTES} bytes.")));
+        return Err(AppError::validation(format!(
+            "{field} must be {KEY_BYTES} bytes."
+        )));
     }
     Ok(bytes)
 }
@@ -79,7 +83,11 @@ pub async fn create_guard(
 ) -> Result<(StatusCode, Json<CreateGuardResponse>), AppError> {
     state
         .rate_limiter
-        .check_budget("pin_guard_user", &auth.user_id.to_string(), budgets::PIN_GUARD_USER)
+        .check_budget(
+            "pin_guard_user",
+            &auth.user_id.to_string(),
+            budgets::PIN_GUARD_USER,
+        )
         .await?;
     let verifier = decode_key(&body.verifier, "verifier")?;
 
@@ -201,6 +209,37 @@ pub async fn unlock(
         return Err(AppError::pin_guard_gone());
     }
     Err(AppError::pin_incorrect(MAX_FAILED_ATTEMPTS - failed))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AbandonRequest {
+    pub guard_id: Uuid,
+}
+
+/// `POST /pin-guard/abandon` — delete one guard without a session.
+///
+/// Human: The lock screen no longer has the session token (it is sealed in the vault). Choosing
+/// the encryption phrase has to make this PIN stop working everywhere a copy of this browser
+/// exists, which means deleting the pepper. Knowing the guard id is enough: it is a random
+/// UUID already sitting in that profile, and ten wrong guesses delete the guard anyway.
+/// Agent: RATE LIMITS per IP; DELETES device_pin_guards by id; 204 when it is already gone.
+pub async fn abandon(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<AbandonRequest>,
+) -> Result<StatusCode, AppError> {
+    let ip = state.client_ip(&headers);
+    state
+        .rate_limiter
+        .check_budget("pin_guard_abandon_ip", &ip, budgets::PIN_GUARD_IP)
+        .await?;
+    sqlx::query(r#"DELETE FROM device_pin_guards WHERE id = $1"#)
+        .bind(body.guard_id)
+        .execute(&state.pool)
+        .await
+        .map_err(|err| AppError::Internal(format!("abandon pin guard failed: {err}")))?;
+    tracing::info!("pin_guard.abandon");
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// `DELETE /pin-guard` — forget this device's guard.
