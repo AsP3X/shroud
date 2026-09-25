@@ -9,6 +9,7 @@ pub mod error;
 pub mod keys;
 pub mod link_relay;
 pub mod logging;
+pub mod media_store;
 pub mod metrics;
 pub mod push;
 pub mod rate_limit;
@@ -30,8 +31,9 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::{DefaultOnResponse, TraceLayer};
 use tracing::{Level, Span};
 
-use crate::config::Config;
+use crate::config::{Config, MediaConfig};
 use crate::error::AppError;
+use crate::media_store::MediaStore;
 use crate::push::{ApnsClient, PushService, apns_config_from_env};
 use crate::rate_limit::RateLimiter;
 use crate::realtime::RealtimeHub;
@@ -84,8 +86,8 @@ pub async fn run() -> Result<(), AppError> {
         run_migrations = config.run_migrations,
         redis = config.redis_url.is_some(),
         trust_forwarded_headers = config.trust_forwarded_headers,
-        nebular = config.nebular_url.is_some(),
-        media_bucket = %config.nebular_media_bucket,
+        media_store = if config.media.nebular.is_some() { "nebular" } else { "local" },
+        media_bucket = %config.media.bucket,
         "configuration loaded"
     );
 
@@ -113,7 +115,23 @@ pub async fn run() -> Result<(), AppError> {
         tracing::info!("skipping database migrations (RUN_MIGRATIONS=false)");
     }
 
-    let http_client = reqwest::Client::new();
+    let media = Arc::new(build_media_store(&config.media)?);
+    media.prepare().await;
+    // Compose starts the API only once Nebular is healthy; elsewhere a store that is still
+    // starting is only worth a warning — uploads and downloads answer 503 until it is up.
+    match media.check().await {
+        Ok(()) => tracing::info!(
+            backend = media.backend_name(),
+            location = %media.location(),
+            "media store ready"
+        ),
+        Err(err) => tracing::warn!(
+            backend = media.backend_name(),
+            location = %media.location(),
+            error = %err,
+            "media store not reachable yet"
+        ),
+    }
 
     let realtime = Arc::new(RealtimeHub::new());
     let rate_limiter = RateLimiter::new();
@@ -200,31 +218,26 @@ pub async fn run() -> Result<(), AppError> {
         "webrtc ice servers loaded"
     );
 
-    // Human: Drop abandoned uploads that never linked to a message.
-    crate::routes::media::spawn_orphan_gc(pool.clone());
+    let metrics = Arc::new(crate::metrics::Metrics::new());
+    // Human: Drop abandoned uploads that never linked to a message, and media deletes unlinked.
+    crate::routes::media::spawn_orphan_gc(pool.clone(), media.clone(), metrics.clone());
+    // Human: Blobs earlier releases kept on the local volume move into Nebular.
+    media.spawn_legacy_migration(pool.clone(), metrics.clone());
     // Human: Drop revoked session rows after the 30-day retention window.
     crate::auth::session::spawn_revoked_session_purge(pool.clone());
     // Human: Mark unanswered ringing calls as missed so busy detection cannot stick.
     crate::routes::calls::spawn_ringing_call_gc(pool.clone());
 
-    let media_prefer_nebular = config.nebular_url.is_some()
-        && std::env::var("MEDIA_PREFER_NEBULAR")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(true);
-
     let state = AppState {
         pool,
-        nebular_url: config.nebular_url.clone(),
-        media_bucket: config.nebular_media_bucket.clone(),
-        media_prefer_nebular,
+        media,
         realtime,
         push,
         ice_servers: config.ice_servers.clone(),
         rate_limiter,
         redis_required,
-        http_client,
         trust_forwarded_headers: config.trust_forwarded_headers,
-        metrics: Arc::new(crate::metrics::Metrics::new()),
+        metrics,
         link_relay: Arc::new(crate::routes::link_relay::LinkRelay::new(
             crate::link_relay::RelayPolicy::production(),
         )),
@@ -271,15 +284,6 @@ pub async fn run() -> Result<(), AppError> {
     }
 
     let addr: SocketAddr = config.socket_addr()?;
-    if let Some(ref url) = config.nebular_url {
-        tracing::info!(
-            nebular_url = %url,
-            bucket = %config.nebular_media_bucket,
-            "media: local volume + Nebular mirror"
-        );
-    } else {
-        tracing::info!("media: local volume only (set NEBULAR_URL to mirror ciphertext blobs)");
-    }
     tracing::info!(%addr, "shroud-server listening");
     let listener = tokio::net::TcpListener::bind(addr)
         .await
@@ -294,6 +298,23 @@ pub async fn run() -> Result<(), AppError> {
 
     tracing::info!("shroud-server shut down");
     Ok(())
+}
+
+/// Nebular when `NEBULAR_URL` is set, with the local volume kept readable while its blobs move
+/// over; otherwise the local volume.
+fn build_media_store(config: &MediaConfig) -> Result<MediaStore, AppError> {
+    match &config.nebular {
+        Some(nebular) => MediaStore::nebular(
+            nebular.clone(),
+            config.bucket.clone(),
+            Some(config.data_dir.clone()),
+        )
+        .map_err(|err| AppError::Internal(format!("media store: {err}"))),
+        None => Ok(MediaStore::local(
+            config.data_dir.clone(),
+            config.bucket.clone(),
+        )),
+    }
 }
 
 /// Browser web client talking to a split API host (web.shroud.app → api.shroud.app).

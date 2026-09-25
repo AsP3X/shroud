@@ -39,7 +39,7 @@ Same shape as Ownly / pzserver: a wizard writes `.env`, then Compose builds the 
 
 The wizard asks for the **public web URL** (and API URL for iOS). The browser always talks same-origin (`/api/v1` proxied by web nginx). `WEB_PUBLIC_URL` is also sent to the API as CORS for split-origin setups.
 
-Nebular is built from `../ownly/nebular-os` (override with `NEBULAR_CONTEXT`).
+Media blobs (always ciphertext) live in [Nebular OS](https://github.com/AsP3X/nebular-os), run from its published 0.2.0 image pinned by digest. The API is its only client. It signs every request with an access key Nebular limits to the `shroud-media` bucket, and clients only ever reach `/api/v1/media/{id}/content`. The wizard generates that key and Nebular's secrets. `./deploy.sh` adds any that an older `.env` lacks, and on first start the API moves blobs from the old local media volume into Nebular.
 
 ### Manual Compose
 
@@ -59,7 +59,7 @@ curl http://127.0.0.1:8080/api/v1/health/live
 | --- | --- | --- |
 | `web` | `8081` | SPA + reverse-proxy `/api/v1` (incl. WebSocket) |
 | `api` | `8080` | Axum `/api/v1`; iOS talks here; migrations on startup |
-| `nebular` | `9000` | Object storage; clients still use API `/media/{id}/content` |
+| `nebular` | `127.0.0.1:9000` | Media store (this machine only); clients use API `/media/{id}/content` |
 | `postgres` | `5432` | User/db from `.env` |
 | `redis` | `6379` | Multi-replica WS fan-out |
 
@@ -88,8 +88,16 @@ cp server/.env.example server/.env
 # DATABASE_URL=postgres://shroud:shroud@127.0.0.1:5432/shroud
 # REDIS_URL=redis://127.0.0.1:6379
 # NEBULAR_URL=http://127.0.0.1:9000
+# Nebular's access key: copy NEBULAR_ACCESS_KEY_ID / NEBULAR_SECRET_ACCESS_KEY from the
+# repository's .env into server/.env. Without NEBULAR_URL, media goes to MEDIA_DATA_DIR.
 
 cd server && cargo run -p shroud-server
+```
+
+Server tests need Postgres (`DATABASE_URL`, and they pass as skipped without it). Media tests use a temp directory. Set `SHROUD_TEST_NEBULAR_URL`, `SHROUD_TEST_NEBULAR_ACCESS_KEY_ID` and `SHROUD_TEST_NEBULAR_SECRET_ACCESS_KEY` to run them, and `tests/media_store_nebular.rs`, against a Nebular set up like `docker-compose.yml`:
+
+```bash
+cd server && DATABASE_URL=postgres://… cargo test -p shroud-server
 ```
 
 ## iOS

@@ -1,7 +1,9 @@
 //! Liveness and readiness probes for load balancers and local dev.
 //!
 //! - `GET /health/live` — process is up (no dependency checks).
-//! - `GET /health/ready` — Postgres required; Redis required when `REDIS_URL` was set.
+//! - `GET /health/ready` — Postgres required; Redis required when `REDIS_URL` was set. The
+//!   media store is reported but not required: without it only media fails (with 503), so the
+//!   replica keeps serving chats.
 //! - `GET /health` — same as readiness (backward compatible).
 
 use axum::{
@@ -28,6 +30,8 @@ pub struct ReadyResponse {
     pub database: &'static str,
     /// `"ok"` | `"error"` | `"skipped"` (Redis not configured).
     pub redis: &'static str,
+    /// `"ok"` | `"error"`: the media store answers (Nebular) or takes writes (local).
+    pub media: &'static str,
 }
 
 /// `GET /health/live` — always 200 while the process can serve HTTP.
@@ -57,11 +61,24 @@ pub async fn ready(state: axum::extract::State<AppState>) -> Response {
         "skipped"
     };
 
+    let media = match state.media.check().await {
+        Ok(()) => "ok",
+        Err(err) => {
+            tracing::warn!(
+                backend = state.media.backend_name(),
+                error = %err,
+                "readiness: media store check failed"
+            );
+            "error"
+        }
+    };
+
     let ready = database == "ok" && (redis == "ok" || redis == "skipped");
     let body = ReadyResponse {
         status: if ready { "ok" } else { "not_ready" },
         database,
         redis,
+        media,
     };
 
     if ready {

@@ -1,25 +1,28 @@
 //! Encrypted media: metadata registration + API-proxied blob put/get.
 //!
-//! Clients always upload/download via the Shroud API (`/media/{id}/content`) so
-//! phones never need to reach internal Docker hostnames like `nebular:9000`.
+//! Clients always upload/download via the Shroud API (`/media/{id}/content`): phones never
+//! reach the media store, and the store never sees a client's address or token. Blobs live in
+//! [`crate::media_store`].
 
-use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use axum::{
     Json,
     body::{Body, Bytes},
     extract::{Path as AxumPath, State},
-    http::{StatusCode, header},
-    response::{IntoResponse, Response},
+    http::{HeaderValue, StatusCode, header},
+    response::Response,
 };
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
-use tokio_util::io::ReaderStream;
+use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
 use crate::auth::session::AuthContext;
 use crate::error::AppError;
+use crate::media_store::{BlobSource, MediaStore, MediaStoreError};
+use crate::metrics::Metrics;
 use crate::rate_limit::budgets;
 use crate::state::AppState;
 
@@ -86,8 +89,8 @@ pub async fn create_upload(
     }
 
     let media_id = Uuid::new_v4();
-    let object_key = format!("{}/{}", auth.user_id, media_id);
-    let bucket = state.media_bucket.clone();
+    let object_key = MediaStore::object_key(media_id);
+    let bucket = state.media.bucket().to_string();
     let expires_at = Utc::now() + Duration::minutes(PRESIGN_TTL_MINUTES);
     let content_type = body
         .content_type
@@ -171,11 +174,15 @@ pub async fn put_content(
         }
     }
 
-    write_blob(&state, &media, body.as_ref()).await?;
+    state
+        .media
+        .put(&media.bucket, &media.object_key, body)
+        .await
+        .map_err(|err| store_error(&state.metrics, media_id, "put", err))?;
     state
         .metrics
         .media_puts_total
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        .fetch_add(1, Ordering::Relaxed);
 
     tracing::info!(
         user_id = %auth.user_id,
@@ -195,87 +202,47 @@ pub async fn get_content(
     let media = load_media(&state, media_id).await?;
     authorize_download(&state, auth.user_id, &media).await?;
 
-    // Multi-replica: when Nebular is primary, try shared object store first so any
-    // API replica can serve blobs uploaded on another node.
-    if state.media_prefer_nebular
-        && state.nebular_url.is_some()
-        && let Ok(bytes) = read_blob_nebular(&state, &media).await
-    {
+    let (blob, source) = state
+        .media
+        .get(&media.bucket, &media.object_key)
+        .await
+        .map_err(|err| store_error(&state.metrics, media_id, "get", err))?;
+    if source == BlobSource::Legacy {
         state
             .metrics
-            .media_nebular_hits_total
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        state
-            .metrics
-            .media_gets_total
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        tracing::info!(
-            user_id = %auth.user_id,
-            media_object_id = %media_id,
-            bytes = bytes.len(),
-            "media.content_get ok (nebular primary)"
-        );
-        return Ok((
-            StatusCode::OK,
-            [(header::CONTENT_TYPE, "application/octet-stream")],
-            bytes,
-        )
-            .into_response());
+            .media_legacy_reads_total
+            .fetch_add(1, Ordering::Relaxed);
     }
-
-    let path = blob_path(&media);
-    if Path::new(&path).exists() {
-        // Human: Stream from disk so large ciphertext never fills process RAM.
-        // Agent: READS local file via ReaderStream; never logs plaintext.
-        let file = tokio::fs::File::open(&path)
-            .await
-            .map_err(|err| AppError::Internal(format!("open media blob failed: {err}")))?;
-        let stream = ReaderStream::new(file);
-        let body = Body::from_stream(stream);
-        state
-            .metrics
-            .media_local_hits_total
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        state
-            .metrics
-            .media_gets_total
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        tracing::info!(
-            user_id = %auth.user_id,
-            media_object_id = %media_id,
-            "media.content_get ok (stream)"
-        );
-        return Ok((
-            StatusCode::OK,
-            [(header::CONTENT_TYPE, "application/octet-stream")],
-            body,
-        )
-            .into_response());
-    }
-
-    // Local miss — fall back to Nebular (may buffer into memory).
-    let bytes = read_blob(&state, &media).await?;
-    state
-        .metrics
-        .media_nebular_hits_total
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     state
         .metrics
         .media_gets_total
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        .fetch_add(1, Ordering::Relaxed);
     tracing::info!(
         user_id = %auth.user_id,
         media_object_id = %media_id,
-        bytes = bytes.len(),
-        "media.content_get ok (buffered fallback)"
+        bytes = blob.size,
+        source = ?source,
+        "media.content_get ok"
     );
 
-    Ok((
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "application/octet-stream")],
-        bytes,
-    )
-        .into_response())
+    // Streamed at the client's pace: a 25 MiB blob never sits in memory whole.
+    let mut response = Response::new(Body::from_stream(blob.body));
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    headers.insert(header::CONTENT_LENGTH, HeaderValue::from(blob.size));
+    // Ciphertext is private to this user; no shared cache or proxy should keep a copy.
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, no-store"),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    Ok(response)
 }
 
 /// `POST /media/:id/download` — returns API-relative download path (Bearer required).
@@ -377,10 +344,11 @@ async fn authorize_download(
     Ok(())
 }
 
-/// Immediately delete media rows + on-disk blobs (Saved Messages hard-delete, etc.).
+/// Deletes media rows and their blobs now (Saved Messages hard-delete, account deletion).
 ///
 /// Caller must already have unlinked `messages.media_object_id` / `media_objects.message_id`
-/// so FK order does not block the DELETE. Safe to call with an empty slice.
+/// so FK order does not block the DELETE. Safe to call with an empty slice. A blob the store
+/// can't delete right now keeps its (unlinked) row, and the orphan GC tries again.
 pub async fn purge_media_ids(state: &AppState, media_ids: &[Uuid]) -> Result<u64, AppError> {
     if media_ids.is_empty() {
         return Ok(0);
@@ -400,31 +368,9 @@ pub async fn purge_media_ids(state: &AppState, media_ids: &[Uuid]) -> Result<u64
 
     let mut purged = 0_u64;
     for media in rows {
-        let path = blob_path(&media);
-        if Path::new(&path).exists()
-            && let Err(err) = tokio::fs::remove_file(&path).await
-        {
-            tracing::warn!(
-                error = %err,
-                path = %path.display(),
-                media_object_id = %media.id,
-                "media purge blob delete failed"
-            );
+        if !delete_blob(&state.media, &state.metrics, &media).await {
+            continue;
         }
-        // Best-effort Nebular delete when mirrored.
-        if let Some(base) = &state.nebular_url {
-            let base = base.trim_end_matches('/');
-            let url = format!("{base}/{}/{}", media.bucket, media.object_key);
-            if let Err(err) = state.http_client.delete(&url).send().await {
-                tracing::warn!(
-                    error = %err,
-                    %url,
-                    media_object_id = %media.id,
-                    "media purge nebular delete failed"
-                );
-            }
-        }
-
         let result = sqlx::query(r#"DELETE FROM media_objects WHERE id = $1"#)
             .bind(media.id)
             .execute(&state.pool)
@@ -437,11 +383,16 @@ pub async fn purge_media_ids(state: &AppState, media_ids: &[Uuid]) -> Result<u64
     Ok(purged)
 }
 
-/// Delete unlinked media older than [`ORPHAN_TTL_MINUTES`] (DB row + local blob).
+/// Deletes unlinked media older than [`ORPHAN_TTL_MINUTES`]: abandoned uploads, and media whose
+/// message was deleted for everyone, a chat deletion, or an account deletion unlinked.
 ///
-/// Human: Stops abandoned uploads from filling disk indefinitely.
-/// Agent: SELECT orphans; remove_file; DELETE WHERE message_id IS NULL.
-pub async fn purge_orphan_media(pool: &sqlx::PgPool) -> Result<u64, AppError> {
+/// The blob goes first and the row only once it is gone, so a store outage leaves the row for
+/// the next pass rather than a blob nothing points at.
+pub async fn purge_orphan_media(
+    pool: &PgPool,
+    media: &MediaStore,
+    metrics: &Metrics,
+) -> Result<u64, AppError> {
     let cutoff = Utc::now() - Duration::minutes(ORPHAN_TTL_MINUTES);
     let orphans = sqlx::query_as::<_, MediaRow>(
         r#"
@@ -457,26 +408,17 @@ pub async fn purge_orphan_media(pool: &sqlx::PgPool) -> Result<u64, AppError> {
     .map_err(|err| AppError::Internal(format!("list orphan media failed: {err}")))?;
 
     let mut purged = 0_u64;
-    for media in orphans {
-        let path = blob_path(&media);
-        if Path::new(&path).exists()
-            && let Err(err) = tokio::fs::remove_file(&path).await
-        {
-            tracing::warn!(
-                error = %err,
-                path = %path.display(),
-                media_object_id = %media.id,
-                "orphan media blob delete failed"
-            );
+    for orphan in orphans {
+        if !delete_blob(media, metrics, &orphan).await {
+            continue;
         }
-
         let result = sqlx::query(
             r#"
             DELETE FROM media_objects
             WHERE id = $1 AND message_id IS NULL
             "#,
         )
-        .bind(media.id)
+        .bind(orphan.id)
         .execute(pool)
         .await
         .map_err(|err| AppError::Internal(format!("delete orphan media row failed: {err}")))?;
@@ -490,7 +432,7 @@ pub async fn purge_orphan_media(pool: &sqlx::PgPool) -> Result<u64, AppError> {
 }
 
 /// Background loop: purge abandoned unlinked media on a fixed interval.
-pub fn spawn_orphan_gc(pool: sqlx::PgPool) {
+pub fn spawn_orphan_gc(pool: PgPool, media: Arc<MediaStore>, metrics: Arc<Metrics>) {
     tokio::spawn(async move {
         let mut interval =
             tokio::time::interval(std::time::Duration::from_secs(ORPHAN_GC_INTERVAL_SECS));
@@ -499,7 +441,7 @@ pub fn spawn_orphan_gc(pool: sqlx::PgPool) {
         interval.tick().await;
         loop {
             interval.tick().await;
-            match purge_orphan_media(&pool).await {
+            match purge_orphan_media(&pool, &media, &metrics).await {
                 Ok(0) => {
                     tracing::debug!("media.orphan_gc: nothing to purge");
                 }
@@ -514,103 +456,52 @@ pub fn spawn_orphan_gc(pool: sqlx::PgPool) {
     });
 }
 
-fn media_data_dir() -> PathBuf {
-    std::env::var("MEDIA_DATA_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/data/shroud-media"))
-}
-
-fn blob_path(media: &MediaRow) -> PathBuf {
-    media_data_dir().join(&media.object_key)
-}
-
-async fn write_blob(state: &AppState, media: &MediaRow, bytes: &[u8]) -> Result<(), AppError> {
-    // Local volume (fast path for single-node) + Nebular mirror for multi-replica reads.
-    let path = blob_path(media);
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(|err| {
-            AppError::Internal(format!(
-                "create media dir failed at {}: {err} (check MEDIA_DATA_DIR permissions; container user needs write access)",
-                parent.display()
-            ))
-        })?;
-    }
-    tokio::fs::write(&path, bytes).await.map_err(|err| {
-        AppError::Internal(format!(
-            "write media blob failed at {}: {err}",
-            path.display()
-        ))
-    })?;
-
-    // Mirror to Nebular for multi-replica reads. Local volume remains authoritative for
-    // this write — a Nebular blip must not fail the client upload (photos would "not send").
-    // Prefer-Nebular only affects *read* path (see get_content).
-    if let Some(base) = &state.nebular_url {
-        let base = base.trim_end_matches('/');
-        let url = format!("{base}/{}/{}", media.bucket, media.object_key);
-        match state
-            .http_client
-            .put(&url)
-            .body(bytes.to_vec())
-            .send()
-            .await
-        {
-            Ok(resp) if resp.status().is_success() => {
-                tracing::debug!(%url, "media mirrored to nebular");
-            }
-            Ok(resp) => {
-                tracing::warn!(
-                    status = %resp.status(),
-                    %url,
-                    prefer_nebular = state.media_prefer_nebular,
-                    "nebular mirror put failed; local blob kept"
-                );
-            }
-            Err(err) => {
-                tracing::warn!(
-                    error = %err,
-                    %url,
-                    prefer_nebular = state.media_prefer_nebular,
-                    "nebular mirror put error; local blob kept"
-                );
-            }
+/// Deletes one row's blob; `false` (logged) when the store couldn't.
+async fn delete_blob(media: &MediaStore, metrics: &Metrics, row: &MediaRow) -> bool {
+    match media.delete(&row.bucket, &row.object_key).await {
+        Ok(()) => true,
+        Err(err) => {
+            metrics
+                .media_store_errors_total
+                .fetch_add(1, Ordering::Relaxed);
+            tracing::warn!(
+                error = %err,
+                media_object_id = %row.id,
+                "media blob delete failed; the row stays for the orphan GC to retry"
+            );
+            false
         }
     }
-
-    Ok(())
 }
 
-async fn read_blob_nebular(state: &AppState, media: &MediaRow) -> Result<Vec<u8>, AppError> {
-    let Some(base) = &state.nebular_url else {
-        return Err(AppError::not_found("Media content not found."));
-    };
-    let base = base.trim_end_matches('/');
-    let url = format!("{base}/{}/{}", media.bucket, media.object_key);
-    match state.http_client.get(&url).send().await {
-        Ok(resp) if resp.status().is_success() => resp
-            .bytes()
-            .await
-            .map(|b| b.to_vec())
-            .map_err(|err| AppError::Internal(format!("nebular body read failed: {err}"))),
-        Ok(resp) => Err(AppError::Internal(format!(
-            "nebular get failed with status {}",
-            resp.status()
-        ))),
-        Err(err) => Err(AppError::Internal(format!("nebular get error: {err}"))),
-    }
-}
-
-async fn read_blob(state: &AppState, media: &MediaRow) -> Result<Vec<u8>, AppError> {
-    let path = blob_path(media);
-    if Path::new(&path).exists() {
-        return tokio::fs::read(&path)
-            .await
-            .map_err(|err| AppError::Internal(format!("read media blob failed: {err}")));
-    }
-
-    // Fallback: try Nebular if local missing (other replica / legacy).
-    match read_blob_nebular(state, media).await {
-        Ok(bytes) => Ok(bytes),
-        Err(_) => Err(AppError::not_found("Media content not found.")),
+/// A client-facing error for a failed store call; the detail goes to the log.
+fn store_error(
+    metrics: &Metrics,
+    media_id: Uuid,
+    operation: &'static str,
+    err: MediaStoreError,
+) -> AppError {
+    match err {
+        MediaStoreError::NotFound => AppError::not_found("Media content not found."),
+        MediaStoreError::InvalidKey => {
+            tracing::error!(
+                media_object_id = %media_id,
+                operation,
+                "media row holds an object key the store refuses"
+            );
+            AppError::Internal(format!("invalid object key for media {media_id}"))
+        }
+        MediaStoreError::Unavailable(detail) => {
+            metrics
+                .media_store_errors_total
+                .fetch_add(1, Ordering::Relaxed);
+            tracing::error!(
+                media_object_id = %media_id,
+                operation,
+                error = %detail,
+                "media store call failed"
+            );
+            AppError::media_unavailable()
+        }
     }
 }

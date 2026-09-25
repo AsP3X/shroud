@@ -10,7 +10,9 @@
 #   http://shroud-web:80     → web client (also reverse-proxies /api/v1)
 #   http://shroud-api:8080   → API for the iOS app (/api/v1, /api/v1/ws)
 #
-# Nebular build context defaults to the sibling Ownly checkout (`../ownly/nebular-os`).
+# Nebular OS is the published image, pinned by digest. Its secrets come from .env, which
+# ./deploy.sh fills in (NOS_JWT_SECRET, NEBULAR_ACCESS_KEY_ID, NEBULAR_SECRET_ACCESS_KEY,
+# NOS_METRICS_TOKEN).
 
 x-shroud-logging: &shroud-logging
   RUST_LOG: ${RUST_LOG:-info}
@@ -50,23 +52,56 @@ services:
     restart: unless-stopped
 
   nebular:
-    build:
-      context: ${NEBULAR_CONTEXT:-../ownly/nebular-os}
-      dockerfile: Dockerfile
+    # Nebular OS 0.2.0, pinned by digest so a pull can't swap it. To upgrade, change tag and
+    # digest together (`docker buildx imagetools inspect ghcr.io/asp3x/nebular-os:<tag>`) after
+    # reading the release's upgrade notes: a version that has written data can't be rolled back.
+    image: ghcr.io/asp3x/nebular-os:0.2.0@sha256:5d18264c2c7c06ebfa5d515d3fc110fa90826032f28e0d92500fff15259bebc9
     container_name: shroud-nebular
     environment:
       <<: *shroud-logging
       NOS_BIND_ADDR: 0.0.0.0:9000
       NOS_DATA_DIR: /data/blobs
       NOS_META_PATH: /data/meta/metadata.db
-      NOS_JWT_SECRET: ${NOS_JWT_SECRET:-shroud-compose-local-dev-nos-jwt-secret-not-for-production}
-      NOS_SIGNING_SECRET: ${NOS_SIGNING_SECRET:-shroud-compose-local-dev-nos-signing-secret-not-for-production}
-      JWT_SECRET: ${NOS_JWT_SECRET:-shroud-compose-local-dev-nos-jwt-secret-not-for-production}
-      SIGNING_SECRET: ${NOS_SIGNING_SECRET:-shroud-compose-local-dev-nos-signing-secret-not-for-production}
+      # Nebular refuses to start without it. Only Nebular knows it: the API has its own access
+      # key below. Without NOS_SIGNING_SECRET, Nebular's presigned URLs are off.
+      NOS_JWT_SECRET: ${NOS_JWT_SECRET:-}
+      # The API's key. Requests are SigV4-signed (body hash included, replays refused after
+      # 15 minutes); `editor` can read, write and delete but not reach maintenance, and the
+      # policy keeps it to the media bucket.
+      NOS_S3_ACCESS_KEY: ${NEBULAR_ACCESS_KEY_ID:-}
+      NOS_S3_SECRET_KEY: ${NEBULAR_SECRET_ACCESS_KEY:-}
+      NOS_S3_ACCESS_KEY_ROLE: editor
+      NOS_BUCKET_POLICY: '{"${NEBULAR_ACCESS_KEY_ID:-}":["shroud-media"]}'
+      # Deleted media is gone at once, instead of sitting on disk as a 24 h soft delete.
+      NOS_SOFT_DELETE_TTL_SECS: "0"
+      # Blobs are ciphertext, which compression can't shrink: store them as they are.
+      NOS_COMPRESS_MIN_SIZE: "1073741824"
+      # The API caps media at 25 MiB; nothing larger has a reason to arrive.
+      NOS_MAX_BODY_SIZE: "33554432"
+      # Room for several full-size uploads at once (the 32 MiB default admits about one).
+      NOS_UPLOAD_MAX_IN_FLIGHT_BYTES: "268435456"
+      # No browser ever calls Nebular; an origin that can't exist allows none.
+      NOS_CORS_ORIGINS: https://nebular.invalid
+      NOS_METRICS_TOKEN: ${NOS_METRICS_TOKEN:-}
     volumes:
       - shroud_nebular_data:/data
     networks:
       - shroud-internal
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Only for the entrypoint, which hands /data to the `nos` user (uid 10001) and then starts
+    # the server with none of them.
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/health/ready >/dev/null"]
       interval: 10s
@@ -96,6 +131,10 @@ services:
       REDIS_URL: redis://redis:6379
       NEBULAR_URL: http://nebular:9000
       NEBULAR_MEDIA_BUCKET: shroud-media
+      NEBULAR_ACCESS_KEY_ID: ${NEBULAR_ACCESS_KEY_ID:-}
+      NEBULAR_SECRET_ACCESS_KEY: ${NEBULAR_SECRET_ACCESS_KEY:-}
+      # Where earlier releases kept blobs. The API moves them into Nebular on start and reads
+      # them from here until then; nothing new is written to it.
       MEDIA_DATA_DIR: /data/shroud-media
       HOST: 0.0.0.0
       PORT: "8080"

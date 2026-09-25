@@ -30,12 +30,16 @@ prompt() {
   printf '%s' "${value:-$default}"
 }
 
-generate_secret() {
+generate_hex() {
   if command -v openssl >/dev/null 2>&1; then
-    openssl rand -hex 32
+    openssl rand -hex "$1"
   else
-    dd if=/dev/urandom bs=1 count=32 2>/dev/null | od -An -tx1 | tr -d ' \n'
+    dd if=/dev/urandom bs=1 count="$1" 2>/dev/null | od -An -tx1 | tr -d ' \n'
   fi
+}
+
+generate_secret() {
+  generate_hex 32
 }
 
 if [[ -f .env && "${SHROUD_SETUP_ASSUME_YES:-}" != "1" ]]; then
@@ -101,15 +105,12 @@ else
   fi
 fi
 NOS_JWT_SECRET="$(generate_secret)"
-NOS_SIGNING_SECRET="$(generate_secret)"
-echo "  Nebular JWT and signing secret: ${GREEN}generated${NC}"
+NEBULAR_ACCESS_KEY_ID="SHRD$(generate_hex 8 | tr '[:lower:]' '[:upper:]')"
+NEBULAR_SECRET_ACCESS_KEY="$(generate_secret)"
+NOS_METRICS_TOKEN="$(generate_secret)"
+echo "  Nebular OS secret and the API's access key: ${GREEN}generated${NC}"
 
 CORS_ALLOWED_ORIGINS="$WEB_PUBLIC_URL"
-
-NEBULAR_CONTEXT="${NEBULAR_CONTEXT:-../ownly/nebular-os}"
-if [[ ! -d "$NEBULAR_CONTEXT" ]]; then
-  echo "${YELLOW}  Note: ${NEBULAR_CONTEXT} is missing — set NEBULAR_CONTEXT in .env if nebular-os lives elsewhere.${NC}"
-fi
 
 umask 077
 cat > .env <<EOF
@@ -123,10 +124,11 @@ POSTGRES_USER=shroud
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 POSTGRES_DB=shroud
 NOS_JWT_SECRET=${NOS_JWT_SECRET}
-NOS_SIGNING_SECRET=${NOS_SIGNING_SECRET}
+NEBULAR_ACCESS_KEY_ID=${NEBULAR_ACCESS_KEY_ID}
+NEBULAR_SECRET_ACCESS_KEY=${NEBULAR_SECRET_ACCESS_KEY}
+NOS_METRICS_TOKEN=${NOS_METRICS_TOKEN}
 RUST_LOG=info
 RUST_LOG_FORMAT=text
-NEBULAR_CONTEXT=${NEBULAR_CONTEXT}
 EOF
 chmod 600 .env 2>/dev/null || true
 

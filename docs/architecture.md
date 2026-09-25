@@ -28,7 +28,7 @@ High-level structure for the E2E encrypted messenger.
                                                                     presence)
 ```
 
-**coturn** (Compose profile) supplies TURN when P2P fails. Call media does not flow through the Rust API. App media ciphertext is stored on the API volume and, when `NEBULAR_URL` is set, mirrored to Nebular with prefer-Nebular reads for multi-replica (`MEDIA_PREFER_NEBULAR`, default true). Clients always use `/media/{id}/content`. Prometheus text metrics: `GET /api/v1/metrics`.
+**coturn** (Compose profile) supplies TURN when P2P fails. Call media does not flow through the Rust API. App media ciphertext lives in **Nebular OS** when `NEBULAR_URL` is set (Compose sets it), so every API replica sees the same blobs; otherwise in files under `MEDIA_DATA_DIR`. Clients always use `/media/{id}/content`, where the API checks access and streams the bytes: clients never reach Nebular, and Nebular never sees a client address or token. The API talks to Nebular with a SigV4 access key. Nebular gives that key the `editor` role on the `shroud-media` bucket only, verifies each request's body hash before storing it, and refuses requests more than 15 minutes old. Deleted media is removed at once (`NOS_SOFT_DELETE_TTL_SECS=0`); the orphan GC retries a delete the store missed. New object keys are `media/{xx}/{media id}` and never name the uploader. Blobs earlier releases kept on the local volume are moved into Nebular on start (see `media_store`). Prometheus text metrics: `GET /api/v1/metrics`.
 
 ## Repository map
 
@@ -243,7 +243,7 @@ from an unlocked but unwatched web tab). The server pushes only to the account's
 
 ## Local development
 
-Compose stack: **Postgres + Redis + API** (Nebular optional later).
+Compose stack: **Postgres + Redis + Nebular OS + API + web**.
 
 ```bash
 docker compose up -d --build   # from repo root
@@ -267,7 +267,7 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 3. **Contacts** — **done** (UUID requests, mutual auto-accept, directed contacts, blocks)  
 4. **Messages** — **done** (HTTP send/history; lazy conversations; delivery acks)  
 4b. **WebSocket** — **done** (in-process fan-out; `message.new` + `message.delivered`)  
-5. **Media** — **done** (API-proxied upload/download → message link; optional Nebular mirror; 25 MiB)  
+5. **Media** — **done** (API-proxied upload/download → message link; blobs in Nebular OS or a local directory; 25 MiB)  
 6. **Presence / receipts** — **done** (typing / recording WS; online/last-seen contacts-only; read receipts)  
 7. **Deletes** — **done** (for me / for everyone; account deletion deletes each chat for both and keeps a scrubbed placeholder user row)  
 8. **Push** — **done** (token register; offline gate; live HTTP/2 APNs with .p8 JWT when configured)  

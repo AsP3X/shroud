@@ -15,8 +15,12 @@ pub struct Metrics {
     pub messages_sent_total: AtomicU64,
     pub media_puts_total: AtomicU64,
     pub media_gets_total: AtomicU64,
-    pub media_nebular_hits_total: AtomicU64,
-    pub media_local_hits_total: AtomicU64,
+    /// Media store calls that failed (not counting blobs that were simply absent).
+    pub media_store_errors_total: AtomicU64,
+    /// Reads served from the pre-Nebular local volume; drops to zero once it is moved.
+    pub media_legacy_reads_total: AtomicU64,
+    /// Blobs moved from the pre-Nebular local volume into Nebular.
+    pub media_migrated_total: AtomicU64,
     pub calls_created_total: AtomicU64,
     pub started_at: std::sync::OnceLock<Instant>,
 }
@@ -69,12 +73,15 @@ shroud_media_puts_total {}
 # HELP shroud_media_gets_total Media content GET successes.
 # TYPE shroud_media_gets_total counter
 shroud_media_gets_total {}
-# HELP shroud_media_nebular_hits_total Media reads served from Nebular.
-# TYPE shroud_media_nebular_hits_total counter
-shroud_media_nebular_hits_total {}
-# HELP shroud_media_local_hits_total Media reads served from local volume.
-# TYPE shroud_media_local_hits_total counter
-shroud_media_local_hits_total {}
+# HELP shroud_media_store_errors_total Media store calls that failed (absent blobs not counted).
+# TYPE shroud_media_store_errors_total counter
+shroud_media_store_errors_total {}
+# HELP shroud_media_legacy_reads_total Media reads served from the pre-Nebular local volume.
+# TYPE shroud_media_legacy_reads_total counter
+shroud_media_legacy_reads_total {}
+# HELP shroud_media_migrated_total Blobs moved from the pre-Nebular local volume into Nebular.
+# TYPE shroud_media_migrated_total counter
+shroud_media_migrated_total {}
 # HELP shroud_calls_created_total Calls created.
 # TYPE shroud_calls_created_total counter
 shroud_calls_created_total {}
@@ -85,8 +92,9 @@ shroud_calls_created_total {}
             self.messages_sent_total.load(Ordering::Relaxed),
             self.media_puts_total.load(Ordering::Relaxed),
             self.media_gets_total.load(Ordering::Relaxed),
-            self.media_nebular_hits_total.load(Ordering::Relaxed),
-            self.media_local_hits_total.load(Ordering::Relaxed),
+            self.media_store_errors_total.load(Ordering::Relaxed),
+            self.media_legacy_reads_total.load(Ordering::Relaxed),
+            self.media_migrated_total.load(Ordering::Relaxed),
             self.calls_created_total.load(Ordering::Relaxed),
         )
     }

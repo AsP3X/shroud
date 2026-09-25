@@ -11,8 +11,9 @@ services:
       - "6379:6379"
 
   nebular:
+    # This machine only: for an API run with `cargo run` (NEBULAR_URL=http://127.0.0.1:9000).
     ports:
-      - "9000:9000"
+      - "127.0.0.1:9000:9000"
 
   api:
     ports:

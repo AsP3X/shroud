@@ -175,6 +175,15 @@ impl AppError {
         }
     }
 
+    /// The media store can't be reached right now; the upload or download can be retried.
+    pub fn media_unavailable() -> Self {
+        Self::Api {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            code: "MEDIA_UNAVAILABLE",
+            message: "Media storage is unavailable. Try again shortly.".into(),
+        }
+    }
+
     /// Legacy-friendly constructors used by existing routes/tests.
     /// Wrong PIN against a PIN guard; the message carries the attempts left.
     pub fn pin_incorrect(attempts_left: i32) -> Self {

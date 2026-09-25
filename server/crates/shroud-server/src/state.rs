@@ -7,6 +7,7 @@ use sqlx::PgPool;
 
 use crate::config::IceServer;
 use crate::link_relay::RelayPolicy;
+use crate::media_store::MediaStore;
 use crate::metrics::Metrics;
 use crate::push::PushService;
 use crate::rate_limit::{self, RateLimiter};
@@ -18,12 +19,8 @@ use crate::routes::link_relay::LinkRelay;
 pub struct AppState {
     /// Shared Postgres pool for metadata queries (no message plaintext).
     pub pool: PgPool,
-    /// Optional Nebular base URL; `None` uses local media volume only.
-    pub nebular_url: Option<String>,
-    /// Object storage bucket name for encrypted media.
-    pub media_bucket: String,
-    /// When true and Nebular is configured, prefer Nebular for media reads (multi-replica).
-    pub media_prefer_nebular: bool,
+    /// Encrypted media blobs: Nebular OS, or a local directory.
+    pub media: Arc<MediaStore>,
     /// In-process WebSocket fan-out hub (single instance).
     pub realtime: Arc<RealtimeHub>,
     /// Push dispatcher: APNs (sends only with credentials) and Web Push.
@@ -34,8 +31,6 @@ pub struct AppState {
     pub rate_limiter: RateLimiter,
     /// When true, readiness requires a live Redis connection (`REDIS_URL` was set).
     pub redis_required: bool,
-    /// Shared HTTP client for Nebular (and other outbound) calls.
-    pub http_client: reqwest::Client,
     /// Honor `X-Forwarded-For` / `X-Real-IP` only when behind a trusted proxy.
     pub trust_forwarded_headers: bool,
     /// Process metrics for `/metrics`.
@@ -67,16 +62,13 @@ impl AppState {
         let push = PushService::recording(pool.clone(), realtime.clone());
         Self {
             pool,
-            nebular_url: None,
-            media_bucket: "shroud-media".into(),
-            media_prefer_nebular: false,
+            media: Arc::new(MediaStore::for_integration_tests()),
             realtime,
             push,
             ice_servers: vec![],
             reactions_max_per_user: 5,
             rate_limiter,
             redis_required: false,
-            http_client: reqwest::Client::new(),
             trust_forwarded_headers: true,
             metrics: Arc::new(Metrics::new()),
             link_relay: Arc::new(LinkRelay::new(RelayPolicy::production())),

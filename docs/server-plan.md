@@ -4,7 +4,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 
 | | |
 | --- | --- |
-| **Status** | Server m1–m9 **done** + notifications (m11) + metrics + multi-replica media prefer-Nebular. iOS: live chats, media, voice, calls/WebRTC/CallKit, notifications, Double Ratchet v3. |
+| **Status** | Server m1–m9 **done** + notifications (m11) + metrics + multi-replica media in Nebular OS 0.2. iOS: live chats, media, voice, calls/WebRTC/CallKit, notifications, Double Ratchet v3. |
 | **Last updated** | 2026-09-24 |
 | **Related** | [architecture.md](./architecture.md) · [thought-collection.md](../thought-collection.md) · [README.md](../README.md) |
 
@@ -124,10 +124,12 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Area | Decision |
 | --- | --- |
 | Types (v1 messaging) | Text + encrypted voice/images |
-| Object store | [Nebular OS](https://github.com/AsP3X/nebular-os) |
-| Transfer | Presigned URLs via Shroud API (no large-body proxy) |
-| Layout | Bucket `shroud-media`, key `{uploader_user_id}/{object_id}` |
-| Presign TTL | **15 minutes** |
+| Object store | [Nebular OS](https://github.com/AsP3X/nebular-os) 0.2 (pinned image); a local directory without `NEBULAR_URL` |
+| Transfer | Through the Shroud API (`/media/{id}/content`, streamed). Clients never reach the store, which never sees them |
+| Store auth | SigV4 access key: `editor` role, `shroud-media` bucket only (`NOS_BUCKET_POLICY`), signed body hash, 15-minute replay window. No JWT secret or presigned URLs in the API |
+| Layout | Bucket `shroud-media`, key `media/{xx}/{object_id}` (no uploader id); rows from before keep `{uploader_user_id}/{object_id}` |
+| Deletion | Immediate in the store (`NOS_SOFT_DELETE_TTL_SECS=0`); a failed delete keeps the row for the orphan GC to retry |
+| Presign TTL | **15 minutes** (the `expires_at` field; the URLs are API paths) |
 | Max object size | **25 MiB** |
 | Transcripts | No transcript APIs in v1 |
 | Real-time | WebSocket + Redis pub/sub |
@@ -162,7 +164,7 @@ Keep as one shared constant in code; reject with `USERNAME_RESERVED`.
 1. Never accept, store, or log message **plaintext**, **private keys**, or the **encryption phrase**.
 2. Session tokens: persist **hash only**; return raw token once at register/login.
 3. Pre-key APIs: **public** material only; one-time pre-keys consumed atomically.
-4. Media objects are **ciphertext**; clients upload/download via the API (`/media/{id}/content`). Optional Nebular mirror is server-side only.
+4. Media objects are **ciphertext**; clients upload/download via the API (`/media/{id}/content`). Only the API talks to Nebular.
 5. Pushes (APNs, Web Push): **ids and a kind** only (message / conversation / call). A sender's name only when the device asks for it, and only where the relay cannot read it.
 6. Enforce **contacts** and **blocks** before full message envelopes.
 7. Rate-limit auth, lookups, contact requests, messages, calls, media, WS connects.
@@ -626,7 +628,7 @@ and cannot read the traffic.
 | **3** | **Contacts** | **Done** — migration 004; user card; requests; mutual accept; contacts; blocks |
 | **4** | **Messages (HTTP)** | **Done** — migration 005; send/list/conversations/delivered |
 | **4b** | **WebSocket** | **Done** — `/ws`, in-process hub, message.new + message.delivered |
-| **5** | **Media** | **Done** — migration 006; API-proxied put/get content; optional Nebular mirror; media on messages |
+| **5** | **Media** | **Done** — migration 006; API-proxied put/get content; blobs in Nebular OS (SigV4) or a local directory; media on messages |
 | **6** | **Receipts & presence** | **Done** — migration 009 `message_reads`; `POST /messages/:id/read` + bulk; `GET /presence/:user_id`; WS `typing` + `presence.update` + `message.read` |
 | **7** | **Deletes** | **Done** — migration 007; for me / everyone; account delete; message.deleted WS |
 | **8** | **APNs** | **Done** — migration 008; `PUT /push/token`; offline WS gate; HTTP/2 ES256 JWT client (`.p8` / `APNS_KEY_PEM`); drop invalid tokens |
@@ -1632,10 +1634,11 @@ and other users' mutes of them.
 | `REACTIONS_MAX_PER_USER` | Most emoji one person may leave on one message (default 5; outside 1–20 the server refuses to start); clients read it from `GET /config` |
 | `HOST` / `PORT` | Bind (default localhost:8080) |
 | `RUN_MIGRATIONS` | Prefer single migrator when scaled |
-| `MEDIA_DATA_DIR` | Local ciphertext blob directory |
-| `NEBULAR_URL` | Nebular base URL |
-| `NEBULAR_SIGNING_SECRET` | Presign material (name may match Nebular docs) |
-| `NEBULAR_MEDIA_BUCKET` | Default `shroud-media` |
+| `MEDIA_DATA_DIR` | Local ciphertext blob directory; with Nebular, the older volume moved into it on start |
+| `NEBULAR_URL` | Nebular base URL (bare origin, e.g. `http://nebular:9000`); unset = local directory |
+| `NEBULAR_ACCESS_KEY_ID` / `NEBULAR_SECRET_ACCESS_KEY` | The API's SigV4 key (Nebular's `NOS_S3_ACCESS_KEY` / `NOS_S3_SECRET_KEY`); required with `NEBULAR_URL`, secret ≥ 16 chars |
+| `NEBULAR_MEDIA_BUCKET` | Default `shroud-media` (S3 naming rules) |
+| `NEBULAR_REGION` | Signature scope only; default `us-east-1` |
 | `APNS_KEY_PATH` or `APNS_KEY_PEM` | PKCS#8 AuthKey `.p8` (path or inline PEM) |
 | `APNS_KEY_ID` | Key ID from Apple developer |
 | `APNS_TEAM_ID` | Apple Team ID (JWT `iss`) |
@@ -1660,14 +1663,14 @@ and other users' mutes of them.
 
 ## Still open
 
-1. **Multi-replica media** — **done** for Nebular path: when `NEBULAR_URL` is set, `MEDIA_PREFER_NEBULAR` defaults true (reads prefer Nebular; mirror put required on upload). Local volume remains a cache. Orphan GC + download ACL are **done**.
+1. **Multi-replica media** — **done**: with `NEBULAR_URL` set, Nebular OS is the only media store, so every replica sees every blob (the earlier mirror never authenticated and stored nothing). Blobs from the old local volume are moved into Nebular on start. Orphan GC + download ACL are **done**.
 2. **Multi-device key fetch for send** — **done** (`GET /keys/bundles/:user_id` returns all publishable devices with optional OTPK each; single-device `GET /keys/bundle/:user_id` kept).
 3. **Redis rate-limit wiring** — **done** (auth, keys, contacts, media, WS, messages, calls, sensitive auth; Redis when configured).
 4. **VoIP / CallKit push** — iOS registers PushKit tokens (`kind: voip`) and the client can send `apns-push-type: voip` (topic `<bundle>.voip`), but calls ring by alert push for now. A PushKit ring must be reported to CallKit and ended when the caller hangs up; that needs the hang-up to reach a locked iPhone without its socket first (a `call.ended` VoIP push).
 5. **iOS polish** — **done** for media, voice, call UI/WebRTC/CallKit, presence, unread, multi-device self-box decrypt. Remaining: group chats, SFU, server-assist transcription.
 6. **Double Ratchet** — **done** on client (envelope v3 default; identity X3DH-lite bootstrap; dual-initiator session reset; v1/v2 still openable).
 7. **Envelope ciphertext encoding** — server stores opaque bytes; client uses JSON sealed / DR envelope inside Base64 ciphertext field.
-8. **Observability** — **done** (lightweight Prometheus text at `GET /api/v1/metrics`: request counts, media local/Nebular hits, calls). Full OpenTelemetry tracing still optional later.
+8. **Observability** — **done** (lightweight Prometheus text at `GET /api/v1/metrics`: request counts, media puts/gets, store errors, legacy-volume reads and moves, calls). Full OpenTelemetry tracing still optional later.
 
 ---
 

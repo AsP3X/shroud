@@ -63,6 +63,51 @@ shroud_ensure_proxy_network() {
   docker network create proxy-network >/dev/null
 }
 
+shroud_random_hex() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex "$1"
+  else
+    dd if=/dev/urandom bs=1 count="$1" 2>/dev/null | od -An -tx1 | tr -d ' \n'
+  fi
+}
+
+# Replaces KEY's line in .env, or appends one. Written to a temp file and moved into place,
+# so an interrupted run never leaves half a .env.
+shroud_set_env_value() {
+  local key="$1" value="$2" file="${SHROUD_REPO_ROOT}/.env" tmp
+  tmp="$(mktemp "${file}.XXXXXX")"
+  if grep -qE "^${key}=" "$file"; then
+    awk -v k="$key" -v v="$value" 'index($0, k "=") == 1 { print k "=" v; next } { print }' "$file" >"$tmp"
+  else
+    cat "$file" >"$tmp"
+    [[ -z "$(tail -c1 "$file")" ]] || echo >>"$tmp"
+    printf '%s=%s\n' "$key" "$value" >>"$tmp"
+  fi
+  chmod 600 "$tmp"
+  mv "$tmp" "$file"
+}
+
+# Nebular OS credentials an older .env lacks, generated once and never replaced: Nebular's own
+# secret, the API's access key (id + secret), and the /metrics token.
+shroud_ensure_nebular_secrets() {
+  local file="${SHROUD_REPO_ROOT}/.env" key value added=""
+  [[ -f "$file" ]] || return 0
+  for key in NOS_JWT_SECRET NEBULAR_ACCESS_KEY_ID NEBULAR_SECRET_ACCESS_KEY NOS_METRICS_TOKEN; do
+    value="$(shroud_env_value "$key")"
+    [[ -n "$value" && "$value" != "GENERATE_ME" ]] && continue
+    if [[ "$key" == NEBULAR_ACCESS_KEY_ID ]]; then
+      value="SHRD$(shroud_random_hex 8 | tr '[:lower:]' '[:upper:]')"
+    else
+      value="$(shroud_random_hex 32)"
+    fi
+    shroud_set_env_value "$key" "$value"
+    added="${added} ${key}"
+  done
+  if [[ -n "$added" ]]; then
+    echo "Added Nebular OS credentials to .env:${added}"
+  fi
+}
+
 shroud_assert_env() {
   local file="${SHROUD_REPO_ROOT}/.env"
   [[ -f "$file" ]] || return 0
@@ -106,6 +151,7 @@ shroud_diagnose_up() {
 }
 
 shroud_up() {
+  shroud_ensure_nebular_secrets
   shroud_assert_env
   shroud_ensure_proxy_network
   if ! shroud_compose up -d --build --remove-orphans; then

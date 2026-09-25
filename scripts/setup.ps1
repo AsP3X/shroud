@@ -4,9 +4,10 @@ $repoRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 Set-Location -LiteralPath $repoRoot
 
 function New-Secret {
-    $bytes = New-Object byte[] 32
-    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
-    -join ($bytes | ForEach-Object { $_.ToString("x2") })
+    param([int]$Bytes = 32)
+    $buffer = New-Object byte[] $Bytes
+    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($buffer)
+    -join ($buffer | ForEach-Object { $_.ToString("x2") })
 }
 
 function Read-Prompt {
@@ -65,8 +66,10 @@ if ($existingPg -and $existingPg -ne "GENERATE_ME") {
     Write-Host "  Postgres password: generated" -ForegroundColor Green
 }
 $NOS_JWT_SECRET = New-Secret
-$NOS_SIGNING_SECRET = New-Secret
-$NEBULAR_CONTEXT = if ($env:NEBULAR_CONTEXT) { $env:NEBULAR_CONTEXT } else { "../ownly/nebular-os" }
+$NEBULAR_ACCESS_KEY_ID = "SHRD" + (New-Secret -Bytes 8).ToUpperInvariant()
+$NEBULAR_SECRET_ACCESS_KEY = New-Secret
+$NOS_METRICS_TOKEN = New-Secret
+Write-Host "  Nebular OS secret and the API's access key: generated" -ForegroundColor Green
 
 @(
     "PROXY_MODE=$PROXY_MODE"
@@ -79,10 +82,11 @@ $NEBULAR_CONTEXT = if ($env:NEBULAR_CONTEXT) { $env:NEBULAR_CONTEXT } else { "..
     "POSTGRES_PASSWORD=$POSTGRES_PASSWORD"
     "POSTGRES_DB=shroud"
     "NOS_JWT_SECRET=$NOS_JWT_SECRET"
-    "NOS_SIGNING_SECRET=$NOS_SIGNING_SECRET"
+    "NEBULAR_ACCESS_KEY_ID=$NEBULAR_ACCESS_KEY_ID"
+    "NEBULAR_SECRET_ACCESS_KEY=$NEBULAR_SECRET_ACCESS_KEY"
+    "NOS_METRICS_TOKEN=$NOS_METRICS_TOKEN"
     "RUST_LOG=info"
     "RUST_LOG_FORMAT=text"
-    "NEBULAR_CONTEXT=$NEBULAR_CONTEXT"
 ) | Set-Content -LiteralPath ".env" -Encoding ascii
 
 Write-Host ""
