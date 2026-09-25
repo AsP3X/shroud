@@ -17,7 +17,7 @@ const PALETTE: readonly [string, string][] = [
    so the low bits of ids that share a long tail — as UUIDs do — all land together.
    (iOS hashes with Swift's per-launch seeded Hasher, so its colours aren't stable
    across launches; this one is stable per user id.) */
-function paletteFor(seed: string): readonly [string, string] {
+export function avatarPalette(seed: string): readonly [string, string] {
   let hash = 0x811c9dc5;
   for (let i = 0; i < seed.length; i++) {
     hash ^= seed.charCodeAt(i);
@@ -40,7 +40,7 @@ export function Avatar({
   size?: "xs" | "sm" | "md" | "lg";
   online?: boolean;
 }) {
-  const [top, bottom] = paletteFor(seed ?? name);
+  const [top, bottom] = avatarPalette(seed ?? name);
   /* Set on the element that paints: a var() inside a custom property declared on
      :root resolves there, so a per-avatar value set here would never reach it. */
   const style = { "--avatar-top": top, "--avatar-bottom": bottom } as CSSProperties;

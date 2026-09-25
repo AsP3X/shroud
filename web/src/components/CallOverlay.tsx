@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   Maximize2,
@@ -27,12 +27,16 @@ import {
   toggleCallMute,
 } from "../calls/service";
 import { useCallView } from "../calls/store";
-import { Avatar } from "./Avatar";
+import { Avatar, avatarPalette } from "./Avatar";
 
 /**
  * The call screen: full-screen and always dark (like the media viewers) while a call rings, is
  * connected, runs, or has just ended; a pill (a bar on phones) once minimized, so the chats stay
  * usable during a call. Escape minimizes and never hangs up.
+ *
+ * Both variants share one layout, as on iOS: the top bar, the person in the middle (their picture
+ * behind everything once a video call shows one), and a floating dock of controls centred at the
+ * bottom.
  */
 export function CallOverlay() {
   const view = useCallView();
@@ -64,6 +68,13 @@ function statusLive(view: CallView): "polite" | "off" {
   return view.phase === "active" && !view.reconnecting ? "off" : "polite";
 }
 
+/** A new key per kind of status, so the text cross-fades when the kind changes, not every second. */
+function statusKey(view: CallView): string {
+  if (view.phase === "outgoing") return view.dialing ? "calling" : "ringing";
+  if (view.phase === "active") return view.reconnecting ? "reconnecting" : "clock";
+  return view.phase;
+}
+
 /** Attaches a stream to a <video>; `revision` re-attaches it when tracks arrive. */
 function useStream(stream: MediaStream | null, revision: unknown) {
   const ref = useRef<HTMLVideoElement>(null);
@@ -79,14 +90,20 @@ function useStream(stream: MediaStream | null, revision: unknown) {
 
 function Control({
   label,
+  ariaLabel,
   icon,
+  iconKey,
   onClick,
   tone = "plain",
   on = false,
   disabled = false,
 }: {
   label: string;
+  /** Spoken name when the visible label does not say the action ("Camera"). */
+  ariaLabel?: string;
   icon: ReactNode;
+  /** Changes when the glyph does (mic to mic-off): the new one pops in. */
+  iconKey?: string;
   onClick: () => void;
   tone?: "plain" | "end" | "accept";
   /** A switch that is on (muted, camera off): the disc turns light. */
@@ -99,12 +116,41 @@ function Control({
       className={`call-ctl call-ctl-${tone}${on ? " is-on" : ""}`}
       onClick={onClick}
       disabled={disabled}
+      aria-label={ariaLabel}
+      aria-pressed={tone === "plain" && iconKey !== undefined ? on : undefined}
     >
       <span className="call-ctl-disc" aria-hidden="true">
-        {icon}
+        <span className="call-ctl-glyph" key={iconKey ?? label}>
+          {icon}
+        </span>
       </span>
       <span className="call-ctl-label">{label}</span>
     </button>
+  );
+}
+
+/** Live transcription is a later feature: until it lands, the slot has no lines and stays hidden. */
+const NO_CAPTIONS: readonly string[] = [];
+
+/**
+ * The live transcription slot, between the person and the dock: the last few lines of what is
+ * being said, the newest at the bottom, older ones fading out at the top. With no lines it
+ * takes no space: nothing is transcribed yet, and an empty slot would push the controls up.
+ */
+export function CallCaptions({ lines }: { lines: readonly string[] }) {
+  const shown = lines.slice(-3);
+  return (
+    <div
+      className={`call-captions${shown.length === 0 ? " is-empty" : ""}`}
+      role="log"
+      aria-label="Live transcription"
+      aria-live="polite"
+      aria-hidden={shown.length === 0}
+    >
+      {shown.map((line, index) => (
+        <p key={`${lines.length - shown.length + index}`}>{line}</p>
+      ))}
+    </div>
   );
 }
 
@@ -112,6 +158,8 @@ function CallScreen({ view }: { view: CallView }) {
   const root = useRef<HTMLDivElement>(null);
   const video = view.modality === "video";
   const live = view.phase === "outgoing" || view.phase === "connecting" || view.phase === "active";
+  const ringing = view.phase === "outgoing" || view.phase === "connecting";
+  const clock = view.phase === "active" && !view.reconnecting;
   const theirVideo = video && live && view.remoteVideo && view.remoteCamera && view.remoteStream !== null;
   const mine = video && live && view.hasCamera && view.localStream !== null;
   /* Before their picture arrives, ours fills the screen (as FaceTime does); then it moves to the corner. */
@@ -119,6 +167,9 @@ function CallScreen({ view }: { view: CallView }) {
   const remote = useStream(theirVideo ? view.remoteStream : null, view.remoteVideo);
   const self = useStream(mine ? view.localStream : null, view.hasCamera);
   const name = view.peer.username;
+  /* The backdrop glows in the peer's avatar colour, so each call looks like its person. */
+  const [tintTop, tintBottom] = avatarPalette(view.peer.id);
+  const tint = { "--call-tint": tintTop, "--call-tint-deep": tintBottom } as CSSProperties;
 
   /* Focus comes into the call (not onto a button: a stray Enter must not answer or hang up),
      and goes back where it was once the screen closes. */
@@ -162,10 +213,23 @@ function CallScreen({ view }: { view: CallView }) {
     );
   }
 
+  const classes = [
+    "call",
+    `call-${view.phase}`,
+    video ? "is-video" : "is-voice",
+    theirVideo ? "has-video" : "",
+    selfFull ? "self-full" : "",
+    ringing ? "is-ringing" : "",
+    view.reconnecting && view.phase === "active" ? "is-reconnecting" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
     <div
       ref={root}
-      className={`call call-${view.phase}${theirVideo ? " has-video" : ""}${selfFull ? " self-full" : ""}`}
+      className={classes}
+      style={tint}
       role="dialog"
       aria-modal="true"
       aria-label={`Call with ${name}`}
@@ -192,6 +256,8 @@ function CallScreen({ view }: { view: CallView }) {
           ) : null}
         </div>
       ) : null}
+      <div className="call-shade call-shade-top" aria-hidden="true" />
+      <div className="call-shade call-shade-bottom" aria-hidden="true" />
 
       <header className="call-top">
         <span className="call-e2e">
@@ -215,53 +281,66 @@ function CallScreen({ view }: { view: CallView }) {
         ) : null}
       </header>
 
-      <div className="call-who">
-        <div className={`call-avatar${view.phase === "incoming" ? " ringing" : ""}`}>
-          <Avatar name={name} seed={view.peer.id} size="lg" />
+      {/* The person: the avatar at the exact centre of the screen, name and clock hanging below it
+          (in a pill at the top instead once a picture fills the screen). */}
+      <section className="call-stage">
+        <div className="call-who">
+          <div className={`call-avatar${view.phase === "incoming" ? " ringing" : ""}`}>
+            <Avatar name={name} seed={view.peer.id} size="lg" />
+          </div>
+          <div className="call-id">
+            <div className="call-id-main">
+              <h2 className="call-name">{name}</h2>
+              <p className={`call-status${clock ? " is-clock" : ""}`} aria-live={statusLive(view)}>
+                <span className="call-status-text" key={statusKey(view)}>
+                  <StatusText view={view} />
+                </span>
+              </p>
+            </div>
+            {chips.length > 0 ? <div className="call-chips">{chips}</div> : null}
+            {view.notice ? (
+              <p className="call-notice" role="status">
+                {view.notice}
+              </p>
+            ) : null}
+          </div>
         </div>
-        <h2 className="call-name">{name}</h2>
-        <p className="call-status" aria-live={statusLive(view)}>
-          <StatusText view={view} />
-        </p>
-        {chips.length > 0 ? <div className="call-chips">{chips}</div> : null}
-        {view.notice ? (
-          <p className="call-notice" role="status">
-            {view.notice}
-          </p>
+      </section>
+
+      <footer className="call-dock">
+        <CallCaptions lines={NO_CAPTIONS} />
+        {view.audioBlocked && live ? (
+          <button type="button" className="call-sound" onClick={resumeCallAudio}>
+            <Volume2 size={16} aria-hidden="true" />
+            Turn on sound
+          </button>
         ) : null}
-      </div>
-
-      {view.audioBlocked && live ? (
-        <button type="button" className="call-sound" onClick={resumeCallAudio}>
-          <Volume2 size={16} aria-hidden="true" />
-          Turn on sound
-        </button>
-      ) : null}
-
-      <div className="call-controls">
         {view.phase === "incoming" ? (
-          <>
-            <Control label="Decline" tone="end" icon={<PhoneOff size={26} />} onClick={declineCall} />
+          <div className="call-bar call-bar-ring" role="group" aria-label="Incoming call">
+            <Control label="Decline" tone="end" icon={<PhoneOff size={28} />} onClick={declineCall} />
             <Control
               label="Accept"
               tone="accept"
-              icon={video ? <Video size={26} /> : <Phone size={26} />}
+              icon={video ? <Video size={28} /> : <Phone size={28} />}
               onClick={acceptCall}
             />
-          </>
+          </div>
         ) : live ? (
-          <>
+          <div className="call-bar" role="group" aria-label="Call controls">
             <Control
               label={view.micOn ? "Mute" : "Unmute"}
               on={!view.micOn}
+              iconKey={view.micOn ? "mic" : "mic-off"}
               icon={view.micOn ? <Mic size={24} /> : <MicOff size={24} />}
               onClick={toggleCallMute}
             />
             {video ? (
               <Control
-                label={view.cameraOn ? "Stop video" : "Start video"}
+                label="Camera"
+                ariaLabel={view.cameraOn ? "Turn camera off" : "Turn camera on"}
                 on={!view.cameraOn}
                 disabled={!view.hasCamera}
+                iconKey={view.cameraOn ? "cam" : "cam-off"}
                 icon={view.cameraOn ? <Video size={24} /> : <VideoOff size={24} />}
                 onClick={toggleCallCamera}
               />
@@ -275,9 +354,9 @@ function CallScreen({ view }: { view: CallView }) {
               />
             ) : null}
             <Control label="End" tone="end" icon={<PhoneOff size={26} />} onClick={hangUpCall} />
-          </>
+          </div>
         ) : null}
-      </div>
+      </footer>
     </div>
   );
 }
@@ -318,6 +397,7 @@ function CallPill({ view }: { view: CallView }) {
             type="button"
             className={`call-pill-btn${view.micOn ? "" : " is-on"}`}
             aria-label={view.micOn ? "Mute" : "Unmute"}
+            aria-pressed={!view.micOn}
             title={view.micOn ? "Mute" : "Unmute"}
             onClick={toggleCallMute}
           >
