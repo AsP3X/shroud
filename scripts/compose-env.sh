@@ -16,8 +16,8 @@ fi
 
 shroud_load_proxy_mode() {
   PROXY_MODE="${PROXY_MODE:-}"
-  if [[ -z "$PROXY_MODE" && -f "${SHROUD_REPO_ROOT}/.env" ]]; then
-    PROXY_MODE="$(grep -E '^PROXY_MODE=' "${SHROUD_REPO_ROOT}/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '\r' | tr -d '"' | tr -d "'")"
+  if [[ -z "$PROXY_MODE" ]]; then
+    PROXY_MODE="$(shroud_env_value PROXY_MODE)"
   fi
   PROXY_MODE="$(printf '%s' "${PROXY_MODE:-local}" | tr '[:upper:]' '[:lower:]')"
   case "$PROXY_MODE" in
@@ -30,7 +30,9 @@ shroud_load_proxy_mode() {
 shroud_env_value() {
   local key="$1" file="${SHROUD_REPO_ROOT}/.env"
   [[ -f "$file" ]] || return 0
-  grep -E "^${key}=" "$file" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '\r' | tr -d '"' | tr -d "'"
+  # A key .env doesn't have is an empty value. Without `|| true`, grep's "no match" fails the
+  # pipeline under deploy.sh's pipefail and aborts the deploy.
+  { grep -E "^${key}=" "$file" 2>/dev/null || true; } | tail -1 | cut -d= -f2- | tr -d '\r' | tr -d '"' | tr -d "'"
 }
 
 shroud_compose_cli_args() {
