@@ -631,6 +631,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn spool_upload_uses_the_given_directory_and_keeps_an_empty_body_out() {
+        use axum::body::Bytes;
+
+        let dir = temp_dir("spool-upload").join(".tmp");
+        let empty = futures_util::stream::iter(std::iter::empty::<Result<Bytes, std::io::Error>>());
+        let err = spool_upload(&dir, empty, 100, None).await;
+        assert!(matches!(err, Err(MediaStoreError::TooLarge)));
+        let mut left = tokio::fs::read_dir(&dir).await.expect("spool dir");
+        assert!(left.next_entry().await.expect("entry").is_none());
+
+        let body = futures_util::stream::iter([Ok::<_, std::io::Error>(Bytes::from_static(b"abc"))]);
+        let spooled = spool_upload(&dir, body, 100, Some(3)).await.expect("spool");
+        assert_eq!(spooled.len, 3);
+        assert!(spooled.path.starts_with(&dir));
+        assert_eq!(tokio::fs::read(&spooled.path).await.expect("bytes"), b"abc");
+        let _ = tokio::fs::remove_file(&spooled.path).await;
+        let _ = tokio::fs::remove_dir_all(dir.parent().expect("parent")).await;
+    }
+
+    #[tokio::test]
     async fn reads_fall_back_to_the_legacy_volume_and_deletes_reach_both() {
         // A local primary stands in for Nebular: the fallback logic is the same.
         let legacy_root = temp_dir("legacy");

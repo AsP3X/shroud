@@ -360,15 +360,16 @@ fn retry_after(response: &reqwest::Response) -> Option<Duration> {
 }
 
 /// An error for a response Nebular refused, with its status and the start of its message.
+///
+/// The body read has the same idle limit as a download. Without it, a peer that sends
+/// headers and then nothing holds this task open: the client no longer has a `read_timeout`,
+/// because that deadline also fires while a long upload is still being written.
 async fn refused(response: reqwest::Response, operation: &str) -> MediaStoreError {
     let status = response.status();
-    let detail: String = response
-        .text()
-        .await
-        .unwrap_or_default()
-        .chars()
-        .take(300)
-        .collect();
+    let detail: String = match tokio::time::timeout(BODY_IDLE, response.text()).await {
+        Ok(Ok(text)) => text.chars().take(300).collect(),
+        Ok(Err(_)) | Err(_) => String::new(),
+    };
     let hint = if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
         " (check NEBULAR_ACCESS_KEY_ID / NEBULAR_SECRET_ACCESS_KEY against Nebular's \
          NOS_S3_ACCESS_KEY / NOS_S3_SECRET_KEY and NOS_BUCKET_POLICY)"
@@ -384,6 +385,7 @@ async fn refused(response: reqwest::Response, operation: &str) -> MediaStoreErro
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::Bytes;
 
     fn config(url: &str) -> NebularConfig {
         NebularConfig {
@@ -433,5 +435,33 @@ mod tests {
     fn backoff_grows() {
         assert_eq!(backoff(1), Duration::from_millis(200));
         assert_eq!(backoff(2), Duration::from_millis(800));
+    }
+
+    #[tokio::test]
+    async fn a_download_chunk_is_passed_through() {
+        use futures_util::StreamExt;
+
+        let stream = futures_util::stream::iter([Ok::<_, reqwest::Error>(Bytes::from_static(b"abc"))]);
+        let mut limited = idle_limited(stream, Duration::from_secs(5)).boxed();
+        let chunk = limited.next().await.expect("chunk").expect("ok");
+        assert_eq!(&chunk[..], b"abc");
+        assert!(limited.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_quiet_download_ends_instead_of_waiting() {
+        use futures_util::StreamExt;
+
+        let pending = futures_util::stream::pending::<Result<Bytes, reqwest::Error>>();
+        let mut limited = idle_limited(pending, Duration::from_millis(40)).boxed();
+        let started = std::time::Instant::now();
+        let err = limited
+            .next()
+            .await
+            .expect("stall yields one item")
+            .expect_err("stall is an error");
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(limited.next().await.is_none(), "the stream ends after the stall");
     }
 }
