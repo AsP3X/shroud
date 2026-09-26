@@ -129,13 +129,20 @@ final class AppRouter {
         guard let crypto = cryptoController else { return false }
         // Fully unlocked mid-session: nothing to fix.
         if crypto.isUnlocked { return false }
-        // Identity still on device → normal lock / Face ID path.
-        if crypto.hasLocalIdentity(for: session.userID) { return false }
-
-        await clearOrphanedLocalSession(
-            toast: "Local data was cleared. Sign in or create an account."
-        )
-        return true
+        // A call answered on the lock screen wakes the app while the device is still locked.
+        // Identity keys cannot be read then. That used to look like a wiped phone: Shroud
+        // signed out and the call it had just accepted was torn down.
+        if callController?.isInCall == true { return false }
+        if !UIApplication.shared.isProtectedDataAvailable { return false }
+        switch crypto.identityPresence(for: session.userID) {
+        case .present, .unavailable:
+            return false
+        case .absent:
+            await clearOrphanedLocalSession(
+                toast: "Local data was cleared. Sign in or create an account."
+            )
+            return true
+        }
     }
 
     /// Drops server session + any leftover crypto shell and returns to fresh Welcome.

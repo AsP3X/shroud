@@ -259,8 +259,29 @@ final class CallController {
         Task { await self.confirmStillRinging(callID) }
     }
 
+    /// True while this phone is ringing, connecting, or in a call. The lock screen must not
+    /// treat that moment as a signed-out launch.
+    var isInCall: Bool {
+        if let machine, !machine.ended { return true }
+        switch active?.phase {
+        case .outgoingRinging, .incomingRinging, .connecting, .active:
+            return true
+        case .idle, .ending, nil:
+            return false
+        }
+    }
+
     /// A PushKit `call_ended`: CallKit must stop, including when this phone never saw the socket.
     func endFromVoipPush(_ callID: UUID) {
+        // This phone is the one that answered, or is already talking. Ending CallKit here
+        // drops a live call. The server check below hangs up only if the call is actually over.
+        if machine?.serverID == callID,
+           machine?.accepting == true || active?.phase == .connecting || active?.phase == .active
+        {
+            ensureCallKit().update(callID, callerName: active?.peerUsername ?? "Shroud", video: active?.modality == .video)
+            Task { await self.confirmStillRinging(callID) }
+            return
+        }
         rememberFinished(callID)
         let kit = ensureCallKit()
         if machine?.serverID == callID || kit.isTracking(callID) {

@@ -208,7 +208,11 @@ struct RootView: View {
         // A call that ends while the app is in the background: nothing needs the socket now,
         // and closing it lets the server push again (see `.background` below).
         .onChange(of: callController.active == nil) { _, ended in
-            guard ended, scenePhase == .background, router.isUnlocked else { return }
+            guard ended else { return }
+            if scenePhase == .active, !cryptoController.isUnlocked {
+                router.hasUnlockedMessaging = false
+            }
+            guard scenePhase == .background, router.isUnlocked else { return }
             stepAway()
         }
         .onChange(of: scenePhase) { _, phase in
@@ -236,9 +240,14 @@ struct RootView: View {
                 // Face ID is opt-in via the lock screen's unlock button — never auto-prompt here
                 // (auto-prompt raced with Welcome and left the system sheet stuck).
                 if !cryptoController.isUnlocked {
-                    router.hasUnlockedMessaging = false
-                    // Immediate probe when returning to the lock screen (don't wait for loop sleep).
-                    Task { await sessionController.validateSessionIfNeeded() }
+                    // Answering on the lock screen brings the scene forward. Dropping into the
+                    // chat lock then stops messaging and, while the device is still locked,
+                    // used to sign the phone out. The lock screen waits until the call is over.
+                    if !callController.isInCall {
+                        router.hasUnlockedMessaging = false
+                        // Immediate probe when returning to the lock screen (don't wait for loop sleep).
+                        Task { await sessionController.validateSessionIfNeeded() }
+                    }
                 } else if router.isUnlocked {
                     messagingController.handleAppBecameActive()
                 }

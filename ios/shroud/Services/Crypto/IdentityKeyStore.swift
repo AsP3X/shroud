@@ -35,9 +35,57 @@ nonisolated struct IdentityKeyStore: Sendable {
         var needsResealing = false
     }
 
-    /// Account the stored identity belongs to. Readable while chats are locked.
+    /// Whether this account's identity is on the device.
+    ///
+    /// Human: A locked phone cannot open these items (they wait until the device is unlocked).
+    /// That is not the same as a wipe. Callers that delete the session must only do it for
+    /// `.absent`.
+    enum Presence: Equatable, Sendable {
+        case present
+        case absent
+        case unavailable
+    }
+
+    /// Account the stored identity belongs to. Readable while chats are locked, once the
+    /// device itself is unlocked.
     func storedUserID() -> UUID? {
         read(key: Key.userID).flatMap(UUID.init(uuidString:))
+    }
+
+    /// `.unavailable` while the device is locked. `.absent` only when the Keychain says the
+    /// item is gone.
+    func presence(for userID: UUID) -> Presence {
+        let user = readStatus(key: Key.userID)
+        let key = readStatus(key: Key.agreementPrivate)
+        return Self.presence(
+            userIDStatus: user.status,
+            storedUserID: user.data.flatMap { String(data: $0, encoding: .utf8) }.flatMap(UUID.init(uuidString:)),
+            expected: userID,
+            privateKeyStatus: key.status
+        )
+    }
+
+    static func presence(
+        userIDStatus: OSStatus,
+        storedUserID: UUID?,
+        expected: UUID,
+        privateKeyStatus: OSStatus
+    ) -> Presence {
+        if userIDStatus == errSecInteractionNotAllowed || privateKeyStatus == errSecInteractionNotAllowed {
+            return .unavailable
+        }
+        guard userIDStatus == errSecSuccess else {
+            return userIDStatus == errSecItemNotFound ? .absent : .unavailable
+        }
+        guard storedUserID == expected else { return .absent }
+        switch privateKeyStatus {
+        case errSecSuccess:
+            return .present
+        case errSecItemNotFound:
+            return .absent
+        default:
+            return .unavailable
+        }
     }
 
     /// Opens the private keys with the history key. Nil while locked, with the wrong key, or
@@ -139,9 +187,10 @@ nonisolated struct IdentityKeyStore: Sendable {
     }
 
     /// True when Keychain holds identity for this user. Does not open the sealed keys, so it
-    /// answers while chats are locked.
+    /// answers while chats are locked. False when the device is locked: the items exist but
+    /// cannot be read (`presence` says `.unavailable`).
     func hasIdentity(for userID: UUID) -> Bool {
-        storedUserID() == userID && readData(key: Key.agreementPrivate) != nil
+        presence(for: userID) == .present
     }
 
     // MARK: - Sealing
@@ -184,6 +233,12 @@ nonisolated struct IdentityKeyStore: Sendable {
     }
 
     private func readData(key: String) -> Data? {
+        let read = readStatus(key: key)
+        guard read.status == errSecSuccess else { return nil }
+        return read.data
+    }
+
+    private func readStatus(key: String) -> (status: OSStatus, data: Data?) {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -193,8 +248,8 @@ nonisolated struct IdentityKeyStore: Sendable {
         ]
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess else { return nil }
-        return item as? Data
+        guard status == errSecSuccess else { return (status, nil) }
+        return (status, item as? Data)
     }
 
     private func write(key: String, value: String) throws {

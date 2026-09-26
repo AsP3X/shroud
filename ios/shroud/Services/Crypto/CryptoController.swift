@@ -27,9 +27,15 @@ final class CryptoController {
 
     /// True when Keychain still holds identity material for this account (Face ID / vault path).
     /// False after a full local wipe, incomplete login, or first install — caller should not
-    /// show the lock screen in that case.
+    /// show the lock screen in that case. Also false while the device is locked; use
+    /// `identityPresence` before deleting the session.
     func hasLocalIdentity(for userID: UUID) -> Bool {
         store.hasIdentity(for: userID)
+    }
+
+    /// `.unavailable` while the phone is locked. That must not be treated as a wiped identity.
+    func identityPresence(for userID: UUID) -> IdentityKeyStore.Presence {
+        store.presence(for: userID)
     }
 
     /// True when identity keys exist for the user but history vault has not been opened.
