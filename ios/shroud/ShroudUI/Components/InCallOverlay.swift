@@ -5,29 +5,36 @@ import SwiftUI
 /// Human: A call is voice or video by what the two cameras do right now. Either person turns
 /// theirs on or off with Video at any time. Their picture opens out of their face as a growing
 /// circle once its first frame arrives, and closes back into it; ours sits in the corner while
-/// it is on. The name, the running time and the speaking meter show under the face as the call
-/// connects, where the eye already is, and a moment later glide into the top-leading corner, out
-/// of the way of the face and the picture (`CallStageLayout`).
+/// it is on. The name, the running time and the speaking meter show under the face. On a voice
+/// call they stay there, as on the web. A picture — theirs filling the screen, or ours in the
+/// corner — moves them to the top-leading corner, clear of that picture, and back under the face
+/// when the cameras are off again (`CallStageLayout`).
 struct InCallOverlay: View {
     @Environment(CallController.self) private var calls
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Where the face is on screen: their picture opens from it and closes back into it. A
     /// reference, so measuring the face never re-renders the call screen.
     @State private var face = FaceSpot()
-    /// The call whose name block has moved into the corner (`dockDelay` after it connected).
-    @State private var dockedCall: UUID?
+    /// The call the name block has been placed for, and whether that block is in the corner.
+    /// Until the first placement, the corner follows the cameras directly so the opening frame
+    /// is already right.
+    @State private var placedCall: UUID?
+    @State private var inCorner = false
     /// Reduce Motion only: the name block is faded out while it changes places.
     @State private var blockHidden = false
 
-    /// How long the name, the clock and the meter stay under the face once the call runs, before
-    /// they move into the corner.
-    static let dockDelay: TimeInterval = 1.5
     /// Our own picture, in the top-trailing corner of the safe area.
     static let selfViewSize = CGSize(width: 108, height: 164)
     static let selfViewInsets = EdgeInsets(top: 12, leading: 0, bottom: 0, trailing: 16)
     /// What the docked name block leaves free at the trailing edge: our picture, its inset and a
-    /// 12 pt gap. Kept free whether or not our camera is on, so turning it on never changes the block.
+    /// 12 pt gap. Kept free whether or not our camera is on, so turning it on never resizes the block.
     static let selfViewReserve = selfViewInsets.trailing + selfViewSize.width + 12
+
+    /// The name block leaves the face only while a picture is on screen. A voice call has nothing
+    /// there to clear.
+    static func nameBelongsInCorner(remotePicture: Bool, localPicture: Bool) -> Bool {
+        remotePicture || localPicture
+    }
 
     var body: some View {
         if let active = calls.active {
@@ -48,7 +55,13 @@ struct InCallOverlay: View {
 
     @ViewBuilder
     private func content(for call: CallController.ActiveCall) -> some View {
-        let docked = isDocked(call)
+        let picture = Self.nameBelongsInCorner(
+            remotePicture: showsRemoteVideo,
+            localPicture: showsLocalVideo(call)
+        )
+        // Ending hides our picture at once. Hold the name where it already is for that last moment.
+        let videoOn = call.phase == .ending && placedCall == call.id ? inCorner : picture
+        let docked = placedCall == call.id ? inCorner : videoOn
         let ending = call.phase == .ending
         ZStack {
             LinearGradient(
@@ -128,14 +141,16 @@ struct InCallOverlay: View {
             }
         }
         .animation(Motion.standard, value: showsLocalVideo(call))
-        .task(id: DockKey(call: call.id, phase: call.phase)) { await dockWhenDue(call) }
+        .task(id: NamePlace(call: call.id, video: videoOn)) {
+            await placeName(call.id, inCorner: videoOn)
+        }
     }
 
     /// Human: The name, the status line and the speaking meter. Under the face they are centred;
     /// docked in the corner they line up on the leading edge. The text keeps its size and weight
     /// in both places, so it reads the same wherever it is and is never rescaled mid-move.
     /// Agent: One view in both places; `CallStageLayout` moves it and the alignment change slides
-    /// each line, all in the transaction that flips `dockedCall`.
+    /// each line, all in the transaction that flips `inCorner`.
     private func info(for call: CallController.ActiveCall, docked: Bool) -> some View {
         VStack(alignment: docked ? .leading : .center, spacing: 6) {
             Text(call.peerUsername)
@@ -196,59 +211,52 @@ struct InCallOverlay: View {
             .accessibilityHidden(true)
     }
 
-    // MARK: - Docking the name block
+    // MARK: - Placing the name block
 
-    /// The block sits in the corner from `dockDelay` into the running call until the screen closes.
-    private func isDocked(_ call: CallController.ActiveCall) -> Bool {
-        dockedCall == call.id && (call.phase == .active || call.phase == .ending)
-    }
-
-    /// What the dock waits on: a new call or a new phase starts the wait over.
-    private struct DockKey: Equatable {
+    /// What the name follows: a new call, or a picture arriving or leaving.
+    private struct NamePlace: Equatable {
         let call: UUID
-        let phase: CallController.Phase
+        let video: Bool
     }
 
-    /// Human: `dockDelay` after the call connected, the block moves into the corner; straight
-    /// there when the screen shows up later than that. A call that ends first never docks.
-    /// Agent: WRITES dockedCall after a sleep; the `.task` id (call, phase) cancels it on a new
-    /// phase or call.
-    private func dockWhenDue(_ call: CallController.ActiveCall) async {
-        guard call.phase == .active, dockedCall != call.id, let start = call.startedAt else { return }
-        let wait = Self.dockDelay - Date().timeIntervalSince(start)
-        guard wait > 0 else {
-            dockedCall = call.id
+    /// Human: A voice call keeps the name under the face. A picture moves it into the corner, and
+    /// turning the cameras off brings it back. The first frame of a call is already in the right
+    /// place; later changes travel on one spring. Reduce Motion fades instead of travelling.
+    /// Agent: WRITES placedCall and inCorner. The `.task` id cancels an in-flight fade when the
+    /// picture changes again; that fade leaves the text hidden for the next one to finish.
+    private func placeName(_ id: UUID, inCorner video: Bool) async {
+        if placedCall != id {
+            placedCall = id
+            var snap = Transaction()
+            snap.disablesAnimations = true
+            withTransaction(snap) {
+                inCorner = video
+                blockHidden = false
+            }
             return
         }
-        do {
-            try await Task.sleep(for: .seconds(wait))
-        } catch {
-            return
-        }
-        await dock(call.id)
-    }
-
-    /// Human: One spring carries the block round the face into the corner (`CallStageLayout`).
-    /// The text keeps its size, so only its position animates and nothing is redrawn on the way.
-    /// Reduce Motion: nothing travels; the block fades out, changes places unseen, and fades back
-    /// in, while the face stays as it is.
-    /// Agent: WRITES dockedCall (animated), and blockHidden around it under Reduce Motion.
-    private func dock(_ id: UUID) async {
         guard reduceMotion else {
-            withAnimation(Motion.gentle) { dockedCall = id }
+            withAnimation(Motion.gentle) {
+                inCorner = video
+                blockHidden = false
+            }
             return
         }
-        withAnimation(Motion.reduced) { blockHidden = true }
-        // A new phase cancels this wait. Still bring the text back, and leave it where it is:
-        // a call that ends during the fade never jumps into the corner.
-        try? await Task.sleep(for: .seconds(Motion.reducedDuration))
-        if Task.isCancelled {
-            withAnimation(Motion.reduced) { blockHidden = false }
+        if inCorner == video {
+            if blockHidden { withAnimation(Motion.reduced) { blockHidden = false } }
             return
+        }
+        if !blockHidden {
+            withAnimation(Motion.reduced) { blockHidden = true }
+            do {
+                try await Task.sleep(for: .seconds(Motion.reducedDuration))
+            } catch {
+                return
+            }
         }
         var unseen = Transaction()
         unseen.disablesAnimations = true
-        withTransaction(unseen) { dockedCall = id }
+        withTransaction(unseen) { inCorner = video }
         withAnimation(Motion.reduced) { blockHidden = false }
     }
 
@@ -470,10 +478,10 @@ struct InCallOverlay: View {
 
 /// Places the call screen's face and the name block that belongs to it.
 ///
-/// Human: The face sits in the middle of the space above the controls for the whole call and
-/// never moves; only the block does. Until the call is under way the name, the status line and
-/// the speaking meter hang under the face. Docked, they sit in the top-leading corner, level
-/// with our own picture in the other corner and clear of it. On the way the block slides out
+/// Human: The face sits in the middle of the space above the controls. On a voice call the name,
+/// the status line and the speaking meter hang under it. While a picture is on they sit in the
+/// top-leading corner, level with our own picture in the other corner and clear of it. On the
+/// way the block slides out
 /// sideways from under the face first and rises up the leading edge after, so it goes round the
 /// face rather than across it; the face is drawn on top, so a long name that cannot clear it
 /// passes behind it. Only positions change per frame: the text keeps one size and one line

@@ -3,9 +3,9 @@ import SwiftUI
 import Testing
 @testable import shroud
 
-/// The call screen's face stays in the middle of the stage; the name block hangs under it while
-/// the call gets going, then moves into the top-leading corner, level with our own picture and
-/// clear of it. On the way it goes out sideways first and up after, round the face.
+/// The call screen's face stays in the middle of the stage. On a voice call the name block hangs
+/// under it. While a picture is showing it sits in the top-leading corner, level with our own
+/// picture and clear of it. On the way it goes out sideways first and up after, round the face.
 @MainActor
 struct CallStageLayoutTests {
     /// iPhone 17 Pro in portrait: the safe area above the controls (874 pt less the 62 pt status
@@ -21,6 +21,13 @@ struct CallStageLayoutTests {
         block: CGSize? = nil
     ) -> (face: CGRect, block: CGRect) {
         CallStageLayout.frames(stage: stage ?? self.stage, face: face, block: block ?? self.block, progress: progress)
+    }
+
+    @Test func aVoiceCallKeepsTheNameUnderTheFace() {
+        #expect(!InCallOverlay.nameBelongsInCorner(remotePicture: false, localPicture: false))
+        #expect(InCallOverlay.nameBelongsInCorner(remotePicture: true, localPicture: false))
+        #expect(InCallOverlay.nameBelongsInCorner(remotePicture: false, localPicture: true))
+        #expect(InCallOverlay.nameBelongsInCorner(remotePicture: true, localPicture: true))
     }
 
     @Test func theFaceSitsInTheMiddleAndTheBlockHangsUnderIt() {

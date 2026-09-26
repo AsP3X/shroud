@@ -220,16 +220,17 @@ never touched, and a switch takes as long as a camera needs to open.
   with both off it is a voice call again. A camera the system pauses (the app left the screen,
   another app took the camera) counts as off, so the other side sees the face and not a frozen
   frame.
-- **The name makes way on the iPhone.** The name, the running time and the speaking meter show
-  under the face as the call connects and, 1.5 s later, move into the top-leading corner, level
-  with our own picture and clear of it, where they stay for the rest of the call. On the way they
-  slide out sideways from under the face first and rise after, on one spring; the face stays in
-  the middle and is drawn on top, so a long name passes behind it. On a short stage (landscape)
-  the docked face steps out from under that block, beside it where there is room and below it
-  otherwise. Only positions change per
-  frame (`CallStageLayout`). Over their picture a shade under the status bar keeps the text at
-  4.5:1 or better even on a white frame. With Reduce Motion the block fades across instead. The
-  web puts the name in a pill at the top once a picture fills the screen.
+- **The name stays under the face on a voice call,** on the iPhone and on the web: the name, the
+  running time and the speaking meter. Nothing is in their way, so they do not move on a timer.
+  A picture moves them. On the iPhone that is the top-leading corner, level with our own picture
+  and clear of it, for as long as either camera is actually showing; cameras off brings them back
+  under the face. On the way they slide out sideways first and rise after, on one spring; the face
+  stays in the middle and is drawn on top, so a long name passes behind it. On a short stage
+  (landscape) the docked face steps out from under that block, beside it where there is room and
+  below it otherwise. Only positions change per frame (`CallStageLayout`). Over their picture a
+  shade under the status bar keeps the text at 4.5:1 or better even on a white frame. With Reduce
+  Motion the block fades across instead. The web puts the name in a pill at the top once a
+  picture fills the screen.
 - **Sound on the iPhone.** Turning our camera on while the earpiece plays moves the sound to the
   speaker, and back to the earpiece once no video is left (also for a call placed as video), unless
   the speaker was chosen by hand. CallKit's `hasVideo` follows whether any picture is on.
