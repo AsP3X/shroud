@@ -9,6 +9,9 @@ actor WhisperKitEngine: TranscriptionEngine {
     let id = "whisperkit"
     private var preparedModel: TranscriptionModelID?
     private var kit: WhisperKit?
+    /// Resumes a voice note after Whisper stops early. Probes and live chunks keep the stock seeker.
+    private let wholeNoteSeeker = WholeVoiceNoteSeeker()
+    private let windowSeeker = SegmentSeeker()
 
     func prepare(
         model: TranscriptionModelID,
@@ -36,11 +39,10 @@ actor WhisperKitEngine: TranscriptionEngine {
     }
 
     func transcribe(fileURL: URL, request: TranscriptionRequest) async throws -> TranscriptionOutput {
-        let kit = try readyKit()
-        let options = decodeOptions(request)
+        let (kit, options) = try prepared(for: request)
         do {
             let results = try await kit.transcribe(audioPath: fileURL.path, decodeOptions: options)
-            return Self.output(from: results)
+            return Self.output(from: results, tokenizer: kit.tokenizer)
         } catch {
             throw TranscriptionEngineError.failed(error.localizedDescription)
         }
@@ -51,8 +53,7 @@ actor WhisperKitEngine: TranscriptionEngine {
         sampleRate: Double,
         request: TranscriptionRequest
     ) async throws -> TranscriptionOutput {
-        let kit = try readyKit()
-        let options = decodeOptions(request)
+        let (kit, options) = try prepared(for: request)
         let pcm: [Float]
         if abs(sampleRate - 16_000) < 1 {
             pcm = samples
@@ -61,10 +62,17 @@ actor WhisperKitEngine: TranscriptionEngine {
         }
         do {
             let results = try await kit.transcribe(audioArray: pcm, decodeOptions: options)
-            return Self.output(from: results)
+            return Self.output(from: results, tokenizer: kit.tokenizer)
         } catch {
             throw TranscriptionEngineError.failed(error.localizedDescription)
         }
+    }
+
+    private func prepared(for request: TranscriptionRequest) throws -> (WhisperKit, DecodingOptions) {
+        let kit = try readyKit()
+        let plan = WhisperDecodePlan.make(for: request)
+        kit.segmentSeeker = plan.keepTimestamps ? wholeNoteSeeker : windowSeeker
+        return (kit, decodeOptions(request))
     }
 
     private func readyKit() throws -> WhisperKit {
@@ -74,6 +82,7 @@ actor WhisperKitEngine: TranscriptionEngine {
 
     private func decodeOptions(_ request: TranscriptionRequest) -> DecodingOptions {
         let profile = request.profile
+        let plan = WhisperDecodePlan.make(for: request)
         let hinted = request.language.map { !$0.isEmpty } ?? false
         var clip: [Float] = []
         if let range = request.clipSeconds {
@@ -88,15 +97,17 @@ actor WhisperKitEngine: TranscriptionEngine {
             usePrefillCache: true,
             detectLanguage: !hinted,
             skipSpecialTokens: true,
-            withoutTimestamps: true,
+            // Timestamps are what let a note continue after Whisper stops at a pause.
+            // Without them the rest of that window is skipped.
+            withoutTimestamps: !plan.keepTimestamps,
             clipTimestamps: clip,
-            windowClipTime: profile.windowClipTime,
+            windowClipTime: plan.tailClipSeconds,
             suppressBlank: true,
             compressionRatioThreshold: profile.compressionRatioThreshold,
             logProbThreshold: profile.logProbThreshold,
             firstTokenLogProbThreshold: profile.firstTokenLogProbThreshold,
             noSpeechThreshold: profile.noSpeechThreshold,
-            chunkingStrategy: request.clipSeconds == nil ? .vad : nil
+            chunkingStrategy: plan.useVoiceActivityChunking ? .vad : nil
         )
     }
 
@@ -152,10 +163,14 @@ actor WhisperKitEngine: TranscriptionEngine {
         return config
     }
 
-    nonisolated private static func output(from results: [TranscriptionResult]) -> TranscriptionOutput {
+    nonisolated private static func output(
+        from results: [TranscriptionResult],
+        tokenizer: WhisperTokenizer?
+    ) -> TranscriptionOutput {
         let merged = TranscriptionUtilities.mergeTranscriptionResults(results).text
         let text = merged.trimmingCharacters(in: .whitespacesAndNewlines)
-        let language = results.first.map { String($0.language.prefix(2)).lowercased() }
+        let language = firstLanguage(in: results, tokenizer: tokenizer)
+            ?? results.first.map { String($0.language.prefix(2)).lowercased() }
         let segments = results.flatMap(\.segments)
         let confidence: Double
         if segments.isEmpty {
@@ -165,6 +180,24 @@ actor WhisperKitEngine: TranscriptionEngine {
             confidence = Double(min(1, max(0, exp(mean))))
         }
         return TranscriptionOutput(text: text, language: language, confidence: confidence)
+    }
+
+    /// Language is decided on the first window. A later window (the tail, after a pause)
+    /// detects again, and that second guess must not replace the one the note opened with.
+    nonisolated private static func firstLanguage(
+        in results: [TranscriptionResult],
+        tokenizer: WhisperTokenizer?
+    ) -> String? {
+        guard let tokenizer else { return nil }
+        var texts: [String] = []
+        for segment in results.first?.segments ?? [] {
+            for token in segment.tokens where tokenizer.allLanguageTokens.contains(token) {
+                if let text = tokenizer.convertIdToToken(token) {
+                    texts.append(text)
+                }
+            }
+        }
+        return WhisperLanguageToken.firstCode(in: texts)
     }
 
     nonisolated private static func resample(_ samples: [Float], from: Double, to: Double) -> [Float] {
@@ -180,5 +213,82 @@ actor WhisperKitEngine: TranscriptionEngine {
             out[i] = samples[i0] * (1 - t) + samples[i1] * t
         }
         return out
+    }
+}
+
+/// Stock WhisperKit jumps to the end of the window when a decode stops early.
+/// A voice note resumes at the last timestamp instead, so the words after a pause
+/// (or after the token budget) are still transcribed.
+final class WholeVoiceNoteSeeker: SegmentSeeking {
+    private let inner = SegmentSeeker()
+
+    func findSeekPointAndSegments(
+        decodingResult: DecodingResult,
+        options: DecodingOptions,
+        allSegmentsCount: Int,
+        currentSeek seek: Int,
+        segmentSize: Int,
+        sampleRate: Int,
+        timeToken: Int,
+        specialToken: Int,
+        tokenizer: WhisperTokenizer
+    ) -> (Int, [TranscriptionSegment]?) {
+        let (engineSeek, found) = inner.findSeekPointAndSegments(
+            decodingResult: decodingResult,
+            options: options,
+            allSegmentsCount: allSegmentsCount,
+            currentSeek: seek,
+            segmentSize: segmentSize,
+            sampleRate: sampleRate,
+            timeToken: timeToken,
+            specialToken: specialToken,
+            tokenizer: tokenizer
+        )
+        guard var segments = found else { return (engineSeek, nil) }
+        guard let resume = VoiceNoteSeek.resumeSample(
+            tokens: decodingResult.tokens,
+            timeTokenBegin: timeToken,
+            sampleRate: sampleRate,
+            windowStart: seek,
+            segmentSamples: segmentSize,
+            engineSeek: engineSeek,
+            secondsPerTimestamp: Double(WhisperKit.secondsPerTimeToken)
+        ) else {
+            return (engineSeek, segments)
+        }
+        for index in segments.indices {
+            segments[index].tokens = VoiceNoteSeek.tokensThroughLastTimestamp(
+                segments[index].tokens,
+                timeTokenBegin: timeToken,
+                endToken: specialToken
+            )
+        }
+        return (resume, segments)
+    }
+
+    func addWordTimestamps(
+        segments: [TranscriptionSegment],
+        alignmentWeights: MLMultiArray,
+        tokenizer: WhisperTokenizer,
+        seek: Int,
+        segmentSize: Int,
+        prependPunctuations: String,
+        appendPunctuations: String,
+        lastSpeechTimestamp: Float,
+        options: DecodingOptions,
+        timings: TranscriptionTimings
+    ) throws -> [TranscriptionSegment]? {
+        try inner.addWordTimestamps(
+            segments: segments,
+            alignmentWeights: alignmentWeights,
+            tokenizer: tokenizer,
+            seek: seek,
+            segmentSize: segmentSize,
+            prependPunctuations: prependPunctuations,
+            appendPunctuations: appendPunctuations,
+            lastSpeechTimestamp: lastSpeechTimestamp,
+            options: options,
+            timings: timings
+        )
     }
 }

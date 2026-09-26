@@ -103,6 +103,90 @@ struct TranscriptionEngineTests {
         #expect(TranscriptionProfile.liveCall.noSpeechThreshold > TranscriptionProfile.voiceNote.noSpeechThreshold)
     }
 
+    /// A finished note must be walked to the end. Timestamps continue after an early stop,
+    /// the last second is not clipped, and silence detection must not drop a quiet stretch.
+    @Test
+    func aVoiceNoteCoversTheWholeRecording() {
+        let plan = WhisperDecodePlan.make(for: .voiceNote())
+        #expect(plan.keepTimestamps)
+        #expect(plan.tailClipSeconds == 0)
+        #expect(!plan.useVoiceActivityChunking)
+
+        let forced = WhisperDecodePlan.make(for: .voiceNote(language: "ja"))
+        #expect(forced == plan)
+    }
+
+    /// Whisper stopped at 8s of a 30s window and the stock seeker jumped to the end.
+    /// The note resumes at 8s, and words past that timestamp are not kept to be repeated.
+    @Test
+    func aVoiceNoteResumesAfterAnEarlyStop() {
+        let time = 5_000
+        let end = 50
+        let eightSeconds = time + 400
+        let tokens = [time, 11, 12, eightSeconds, 13, 14, end]
+        let window = 30 * 16_000
+        let resume = VoiceNoteSeek.resumeSample(
+            tokens: tokens,
+            timeTokenBegin: time,
+            sampleRate: 16_000,
+            windowStart: 0,
+            segmentSamples: window,
+            engineSeek: window
+        )
+        #expect(resume == 8 * 16_000)
+        #expect(VoiceNoteSeek.tokensThroughLastTimestamp(tokens, timeTokenBegin: time, endToken: end) == [time, 11, 12, eightSeconds, end])
+    }
+
+    /// The model closed the window. Starting another pass would only re-read silence.
+    @Test
+    func aFinishedWindowIsNotDecodedAgain() {
+        let time = 5_000
+        let window = 30 * 16_000
+        let atTheEnd = time + Int((29.9 / VoiceNoteSeek.secondsPerTimestamp).rounded())
+        let resume = VoiceNoteSeek.resumeSample(
+            tokens: [time, 11, atTheEnd, 50],
+            timeTokenBegin: time,
+            sampleRate: 16_000,
+            windowStart: 0,
+            segmentSamples: window,
+            engineSeek: window
+        )
+        #expect(resume == nil)
+
+        let alreadyContinued = VoiceNoteSeek.resumeSample(
+            tokens: [time, 11, time + 400, 50],
+            timeTokenBegin: time,
+            sampleRate: 16_000,
+            windowStart: 0,
+            segmentSamples: window,
+            engineSeek: 8 * 16_000
+        )
+        #expect(alreadyContinued == nil)
+    }
+
+    /// A quiet tail must not replace the language the opening of the note already settled.
+    @Test
+    func theOpeningLanguageTokenWins() {
+        #expect(WhisperLanguageToken.code(from: "<|ja|>") == "ja")
+        #expect(WhisperLanguageToken.code(from: "<|zh|>") == "zh")
+        #expect(WhisperLanguageToken.code(from: "<|0.00|>") == nil)
+        #expect(WhisperLanguageToken.code(from: "<|transcribe|>") == nil)
+        #expect(WhisperLanguageToken.firstCode(in: ["<|startoftranscript|>", "<|ko|>", "<|en|>"]) == "ko")
+    }
+
+    /// A language probe is only the opening of the note, and a live-call chunk stays single-pass.
+    @Test
+    func aLanguageProbeAndALiveChunkDoNotWalkTheFile() {
+        let probe = WhisperDecodePlan.make(for: .detectLanguage())
+        #expect(!probe.keepTimestamps)
+        #expect(!probe.useVoiceActivityChunking)
+
+        let call = WhisperDecodePlan.make(for: .liveCall())
+        #expect(!call.keepTimestamps)
+        #expect(call.useVoiceActivityChunking)
+        #expect(call.tailClipSeconds == TranscriptionProfile.liveCall.windowClipTime)
+    }
+
     @Test
     func modelCatalogIsStableForSettings() {
         #expect(TranscriptionModelID.default == .small)

@@ -11,6 +11,13 @@
 import wasmUrl from "onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url";
 import wasmFactoryUrl from "onnxruntime-web/ort-wasm-simd-threaded.asyncify.mjs?url";
 import { env, pipeline } from "@huggingface/transformers";
+import {
+  contiguousVoice,
+  joinVoicePieces,
+  nextVoiceSample,
+  voiceNoteDecodeOptions,
+  WHISPER_WINDOW_SECONDS,
+} from "./decode";
 
 env.allowLocalModels = false;
 env.useBrowserCache = true;
@@ -27,8 +34,13 @@ wasm.wasmPaths = { wasm: wasmUrl, mjs: wasmFactoryUrl };
 wasm.numThreads = 1;
 wasm.proxy = false;
 
+type AsrOut = {
+  text?: string;
+  chunks?: { timestamp?: [number | null, number | null]; text?: string }[];
+};
+
 type AsrPipe = {
-  (audio: Float32Array, options: Record<string, unknown>): Promise<{ text?: string }>;
+  (audio: Float32Array, options: Record<string, unknown>): Promise<AsrOut>;
 };
 
 const WHISPER_RATE = 16_000;
@@ -70,14 +82,38 @@ async function handle(
   }
   if (!pipe) throw new Error("Whisper is not loaded.");
   const samples = new Float32Array(data.audio);
-  const seconds = samples.length / WHISPER_RATE;
-  const out = await pipe(samples, {
-    language: data.language || undefined,
-    task: "transcribe",
-    return_timestamps: false,
-    ...(seconds > 30 ? { chunk_length_s: 30, stride_length_s: 5 } : {}),
-  });
-  self.postMessage({ type: "result", text: typeof out?.text === "string" ? out.text : "" });
+  const pieces: string[] = [];
+  let offset = 0;
+  // Each pass hears one window. A long or paused note takes several; the cap
+  // is only a backstop if a pass reports no progress.
+  for (let pass = 0; pass < 40 && offset < samples.length; pass++) {
+    const slice = samples.subarray(offset);
+    const seconds = slice.length / WHISPER_RATE;
+    if (seconds < 0.25) break;
+    let out: AsrOut;
+    try {
+      out = await pipe(slice, {
+        language: data.language || undefined,
+        ...voiceNoteDecodeOptions(),
+      });
+    } catch (err) {
+      // Keep the words already decoded. A later window failing must not drop them.
+      console.warn("Whisper window failed:", err instanceof Error ? err.message : err);
+      break;
+    }
+    const heard = contiguousVoice(out.chunks, Math.min(seconds, WHISPER_WINDOW_SECONDS));
+    const text = heard ? heard.text : typeof out.text === "string" ? out.text : "";
+    if (text.trim()) pieces.push(text);
+    const next = nextVoiceSample({
+      totalSamples: samples.length,
+      offset,
+      sampleRate: WHISPER_RATE,
+      coveredUntil: heard ? heard.coveredUntil : null,
+    });
+    if (next == null) break;
+    offset = next;
+  }
+  self.postMessage({ type: "result", text: joinVoicePieces(pieces) });
 }
 
 let chain: Promise<void> = Promise.resolve();

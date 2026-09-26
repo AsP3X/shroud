@@ -72,6 +72,117 @@ nonisolated struct TranscriptionRequest: Sendable {
     }
 }
 
+/// How a request is handed to Whisper. A finished voice note must cover the whole file:
+/// timestamps let the decoder continue after it stops early, and the tail is not clipped.
+/// A short language probe and a live-call chunk keep the old single-pass settings.
+nonisolated struct WhisperDecodePlan: Equatable, Sendable {
+    var keepTimestamps: Bool
+    /// Seconds cut off the end of each window. Zero for a voice note, so the last words stay.
+    var tailClipSeconds: Float
+    var useVoiceActivityChunking: Bool
+
+    static func make(for request: TranscriptionRequest) -> WhisperDecodePlan {
+        let wholeVoiceNote = request.profile == .voiceNote && request.clipSeconds == nil
+        if wholeVoiceNote {
+            return WhisperDecodePlan(
+                keepTimestamps: true,
+                tailClipSeconds: 0,
+                useVoiceActivityChunking: false
+            )
+        }
+        return WhisperDecodePlan(
+            keepTimestamps: false,
+            tailClipSeconds: request.profile.windowClipTime,
+            useVoiceActivityChunking: request.clipSeconds == nil
+        )
+    }
+}
+
+/// Where to resume after Whisper stops inside a window.
+///
+/// With no timestamps, an early end (a pause, or the token budget on a dense
+/// language) is treated as the end of the whole window and the rest is skipped.
+/// A timestamp says how far the words actually reached, so the next pass starts there.
+enum VoiceNoteSeek {
+    /// Whisper's timestamp grid. The engine passes its own constant as well.
+    static let secondsPerTimestamp = 0.02
+    /// A shorter tail than this stays with the pass that already decoded it.
+    static let minimumTailSeconds = 0.2
+
+    static func resumeSample(
+        tokens: [Int],
+        timeTokenBegin: Int,
+        sampleRate: Int,
+        windowStart: Int,
+        segmentSamples: Int,
+        engineSeek: Int,
+        secondsPerTimestamp: Double = secondsPerTimestamp
+    ) -> Int? {
+        guard segmentSamples > 0, sampleRate > 0, secondsPerTimestamp > 0 else { return nil }
+        // The stock seeker already continued inside the window.
+        guard engineSeek >= windowStart + segmentSamples else { return nil }
+        let steps = lastTimestampSteps(in: tokens, timeTokenBegin: timeTokenBegin)
+        guard steps > 0 else { return nil }
+        let resume = windowStart + Int((Double(steps) * secondsPerTimestamp * Double(sampleRate)).rounded())
+        let minimumTail = Int((minimumTailSeconds * Double(sampleRate)).rounded())
+        guard resume > windowStart, resume + minimumTail < windowStart + segmentSamples else { return nil }
+        return resume
+    }
+
+    /// A segment the model closed with a timestamp. Anything after that timestamp
+    /// is decoded again from the resume point, so it must not stay in this segment.
+    static func isFinishedSegment(tokens: [Int], timeTokenBegin: Int, endToken: Int) -> Bool {
+        var body = tokens
+        while body.last == endToken { body.removeLast() }
+        guard let last = body.last else { return false }
+        return last >= timeTokenBegin
+    }
+
+    /// Drops words that sit past the last timestamp. Those words are decoded again
+    /// when the window resumes, and keeping them would repeat them.
+    static func tokensThroughLastTimestamp(_ tokens: [Int], timeTokenBegin: Int, endToken: Int) -> [Int] {
+        if isFinishedSegment(tokens: tokens, timeTokenBegin: timeTokenBegin, endToken: endToken) {
+            return tokens
+        }
+        guard let lastTime = tokens.lastIndex(where: { $0 >= timeTokenBegin }),
+              tokens[lastTime] != timeTokenBegin
+        else { return tokens }
+        var kept = Array(tokens[...lastTime])
+        if tokens.last == endToken {
+            kept.append(endToken)
+        }
+        return kept
+    }
+
+    private static func lastTimestampSteps(in tokens: [Int], timeTokenBegin: Int) -> Int {
+        guard let last = tokens.last(where: { $0 >= timeTokenBegin }) else { return 0 }
+        return max(0, last - timeTokenBegin)
+    }
+}
+
+/// The language token from the first window. Later windows detect again, and a quiet
+/// tail must not replace the language the opening of the note already settled.
+enum WhisperLanguageToken {
+    static func code(from tokenText: String) -> String? {
+        let trimmed = tokenText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let inner: Substring
+        if trimmed.hasPrefix("<|"), trimmed.hasSuffix("|>"), trimmed.count > 4 {
+            inner = trimmed.dropFirst(2).dropLast(2)
+        } else {
+            inner = Substring(trimmed)
+        }
+        guard inner.count == 2, inner.allSatisfy(\.isLetter) else { return nil }
+        return inner.lowercased()
+    }
+
+    static func firstCode(in tokenTexts: [String]) -> String? {
+        for text in tokenTexts {
+            if let code = code(from: text) { return code }
+        }
+        return nil
+    }
+}
+
 nonisolated struct TranscriptionOutput: Sendable, Equatable {
     var text: String
     var language: String?
