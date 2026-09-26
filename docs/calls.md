@@ -12,6 +12,10 @@ and video never pass through it.
 | iPhone | `ios/shroud/Services/Calls/` (native WebRTC, CallKit, PushKit) |
 | Web | `web/src/calls/` |
 
+A call is voice or video by what its two cameras do, not by how it was placed: either side can
+switch its camera on or off at any time without restarting the call (below, "Switching between
+voice and video").
+
 ## Flow
 
 Calls use **protocol 2**: nothing about the media is negotiated until the call is answered, and
@@ -42,16 +46,21 @@ The caller is always the offerer, also for ICE restarts, so offers never collide
 | GET | `/calls/ice-servers` | → `{ice_servers: [{urls, username?, credential?}]}` |
 | POST | `/calls` | `{peer_user_id, modality: "voice"\|"video", protocol: 2}` → 201 call |
 | GET | `/calls` | `?limit=1..100&before=<created_at>` → `{calls: [call]}`, newest first |
-| GET | `/calls/{id}` | → call |
+| GET | `/calls/{id}` | → call (with `peer_media_state` for a device in the live call) |
 | POST | `/calls/{id}/accept` | `{}` → call (status `active`) |
 | POST | `/calls/{id}/reject` | → call |
 | POST | `/calls/{id}/hangup` | → call |
 | POST | `/calls/{id}/signal` | `{signal_type, payload}` → 204 |
-| POST | `/calls/{id}/heartbeat` | → call (read its `status`: an ended call ends here too) |
+| POST | `/calls/{id}/heartbeat` | → call (read its `status`: an ended call ends here too), with `peer_media_state` |
 
 A call: `{id, caller_user_id, caller_device_id, caller_username, callee_user_id,
 callee_device_id?, callee_username, modality, status, ended_reason?, protocol, created_at,
-answered_at?, ended_at?}`. Usernames are `null` for a deleted account.
+answered_at?, ended_at?, peer_media_state?}`. Usernames are `null` for a deleted account.
+`modality` is how the call was placed (it picks the ring, the push and the history's icon); what
+the call carries later is up to the devices. `peer_media_state` (`{from_device_id, payload}`)
+appears only in `GET /calls/{id}` and heartbeat answers, only to one of the two devices in an
+active call, and only once the other device has sent a `media_state`: it is that signal, still
+sealed (see "Switching between voice and video").
 
 Errors (`{error: {code, message}}`): `CALL_BUSY` (409, the callee is in a call),
 `FORBIDDEN` (not contacts, or blocked; or a device outside
@@ -137,7 +146,7 @@ additional data stops the server relabelling it. A signal that does not open is 
 | `sdp_answer` | `{"t":"answer","sdp":"…","n":1}` |
 | `ice_candidate` | `{"t":"ice","cs":[{"candidate":"…","sdpMid":"0","sdpMLineIndex":0}],"n":2}` |
 | `renegotiate` | `{"t":"restart","n":3}`: the callee asks the caller for an ICE restart |
-| `media_state` | `{"t":"media","mic":true,"camera":false,"n":4}`: what the sender sends now |
+| `media_state` | `{"t":"media","mic":true,"camera":false,"n":4}`: what the sender sends now; `camera` switches the call between voice and video |
 
 Candidates are batched (up to ~100 ms) to keep requests down. Candidates that arrive before the
 remote description is set wait for it.
@@ -169,9 +178,9 @@ its content.
 
 ## Media
 
-- Voice calls carry audio only; video calls audio and video. Turning the camera or microphone
-  off disables the track and sends `media_state`, so the other side shows the avatar or a muted
-  mark instead of black.
+- A voice call starts with sound only, a video call with sound and both cameras; either side can
+  turn its camera on or off at any time (next section). Turning the microphone off disables its
+  track and sends `media_state`, so the other side shows a muted mark.
 - Voice is Opus, mono, about 32 kbps, with in-band error correction and silence suppression.
   Video stays at most 720p30 and about 1.2 Mbps, and gives up frame rate and detail together
   when the link is tight. Speech is sent ahead of video. The microphone is captured as speech
@@ -182,6 +191,42 @@ its content.
   when the server offered a TURN server. Until that happens, a short disconnect restarts on
   every path, direct ones included.
 - If no media connects within 30 s of the answer, the device hangs up ("Couldn't connect").
+
+## Switching between voice and video
+
+Video goes on and off inside the running call: no new offer, so ICE, DTLS and the sound are
+never touched, and a switch takes as long as a camera needs to open.
+
+- **Every call has a video section both ways.** The caller's offer always brings one
+  (`sendrecv`): with its camera on it for a video call, empty for a voice call. The callee sets the
+  offer's video section to send and receive before answering, camera or not. An empty section
+  sends nothing, so a voice call costs nothing more on the wire.
+- **Video on** opens the camera, puts its track on that section's sender (`replaceTrack` on the
+  web, `RTCRtpSender.track` on the iPhone) and sends `media_state` with `camera: true`. **Video
+  off** takes the track off at once (`null`), sends `camera: false` and closes the camera, so its
+  light goes out. The web lets its own picture fade out first (300 ms), and takes the same
+  camera back without asking if Video is pressed again meanwhile.
+- **Each side switches only its own camera.** The screen follows both. Their picture fills it
+  from the first frame after `camera: true` (never black, never a frame from before), ours
+  sits in a corner while it is on (the whole screen only while the call is being placed), and
+  with both off it is a voice call again. A camera the system pauses (the app left the screen,
+  another app took the camera) counts as off, so the other side sees the face and not a frozen
+  frame.
+- **Sound on the iPhone.** Turning our camera on while the earpiece plays moves the sound to the
+  speaker, and back to the earpiece once no video is left (also for a call placed as video), unless
+  the speaker was chosen by hand. CallKit's `hasVideo` follows whether any picture is on.
+- **Older apps.** A voice call placed by an app from before this carries no video section, and
+  such an app answers ours "receive only". Video then stays off on the side that cannot send (the
+  button says why), and the call goes on as before.
+
+**The server's part.** A switch is a sealed `media_state` like any other, so the server does not
+learn of it. It keeps each device's latest one (`calls.caller_media_state` /
+`callee_media_state`, at most 4 KiB, cleared when the call ends) and hands the other device's to
+the two devices in the call as `peer_media_state` on `GET /calls/{id}` and on every heartbeat. A
+device whose socket missed a switch catches up there: at once when its socket is back (`auth.ok`
+reads the call), else with the next heartbeat. The copy is opened and checked like any signal,
+and a device takes a `media_state` only if its `n` is newer than the last one it took from that
+device: a kept copy that arrives after a newer signal changes nothing.
 
 ## Pushes
 
@@ -195,6 +240,9 @@ A device counts as in front while its socket is open and it has not sent `{type:
 Leaving the app or the tab sends that, so a suspended phone or a hidden tab still gets the push
 even if the socket has not dropped. A socket that never says stays "in front" (older apps show
 their own notices).
+
+The simulator has no system call screen, and iOS ends every CallKit call there at once, so
+simulator builds skip CallKit and run calls in the app only (`CallKitManager.isAvailable`).
 
 A PushKit push carries the same `shroud` object as an alert: `{v, k: "call" | "video_call" | "call_ended",
 call, p: caller, e: sealed caller name}` (`NotificationPayload.swift`), expires when the ringing

@@ -516,6 +516,166 @@ async fn answering_on_one_device_and_signals_between_the_two_in_the_call() {
     assert_eq!(again["status"], "ended");
 }
 
+/// A sealed-looking `media_state` payload (the server never opens one).
+fn media_payload(tag: &str) -> String {
+    format!("c1.{}", BASE64.encode(format!("media-{tag}")))
+}
+
+async fn media_seen_by(app: &axum::Router, who: &Account, call_id: &str) -> (Value, Value) {
+    let (status, read) = call(
+        app,
+        "GET",
+        &format!("/api/v1/calls/{call_id}"),
+        &who.token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    let (status, beat) = call(
+        app,
+        "POST",
+        &format!("/api/v1/calls/{call_id}/heartbeat"),
+        &who.token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{beat}");
+    (
+        read.get("peer_media_state").cloned().unwrap_or(Value::Null),
+        beat.get("peer_media_state").cloned().unwrap_or(Value::Null),
+    )
+}
+
+#[tokio::test]
+async fn switching_video_mid_call_keeps_the_call_and_the_latest_media_state() {
+    let Some((app, state)) = test_state().await else {
+        eprintln!(
+            "skipping switching_video_mid_call_keeps_the_call_and_the_latest_media_state: no DATABASE_URL"
+        );
+        return;
+    };
+    let a = register(&app).await;
+    let b = register(&app).await;
+    let b_laptop = login_again(&app, &b).await;
+    become_contacts(&app, &a, &b).await;
+    let mut a_events = socket(&state, &a).await;
+    let mut b_events = socket(&state, &b).await;
+
+    // A voice call, answered on B's phone, negotiated once.
+    let placed = place_call(&app, &a, &b, "voice").await;
+    let id = placed["id"].as_str().unwrap().to_string();
+    let (status, _) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/calls/{id}/accept"),
+        &b.token,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    for (who, signal_type) in [(&a, "sdp_offer"), (&b, "sdp_answer")] {
+        let (status, _) = signal(&app, who, &id, signal_type, "c1.sdp").await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+    }
+    next_event(&mut b_events, "call.signal").await;
+    next_event(&mut a_events, "call.signal").await;
+
+    // Nobody has said what they send yet.
+    assert_eq!(
+        media_seen_by(&app, &b, &id).await,
+        (Value::Null, Value::Null)
+    );
+
+    // A turns the camera on: B hears it at once, and reads it back later.
+    let on = media_payload("a-camera-on");
+    let (status, _) = signal(&app, &a, &id, "media_state", &on).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let got = next_event(&mut b_events, "call.signal").await;
+    assert_eq!(got["signal_type"], "media_state");
+    assert_eq!(got["payload"], on.as_str());
+    let (read, beat) = media_seen_by(&app, &b, &id).await;
+    for seen in [&read, &beat] {
+        assert_eq!(seen["from_device_id"], a.device_id.to_string());
+        assert_eq!(seen["payload"], on.as_str());
+    }
+    // A reads nothing of its own; B has not sent one.
+    assert_eq!(
+        media_seen_by(&app, &a, &id).await,
+        (Value::Null, Value::Null)
+    );
+    // B's other device is not in the call and reads nothing either.
+    assert_eq!(
+        media_seen_by(&app, &b_laptop, &id).await,
+        (Value::Null, Value::Null)
+    );
+
+    // B turns theirs on; then A toggles quickly. Every switch goes through, the call stays up,
+    // and each side reads the other's latest.
+    let b_on = media_payload("b-camera-on");
+    let (status, _) = signal(&app, &b, &id, "media_state", &b_on).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let mut last = on.clone();
+    for n in 0..20 {
+        last = media_payload(&format!("a-toggle-{n}"));
+        let (status, body) = signal(&app, &a, &id, "media_state", &last).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    }
+    assert_eq!(status_of(&state, &id).await, ("active".into(), None));
+    let (read, _) = media_seen_by(&app, &b, &id).await;
+    assert_eq!(read["payload"], last.as_str());
+    let (read, _) = media_seen_by(&app, &a, &id).await;
+    assert_eq!(read["from_device_id"], b.device_id.to_string());
+    assert_eq!(read["payload"], b_on.as_str());
+    let relayed: Vec<Value> = drain(&mut b_events)
+        .into_iter()
+        .filter(|e| e["type"] == "call.signal")
+        .collect();
+    assert_eq!(relayed.len(), 20, "every switch reached B");
+    assert_eq!(relayed[19]["payload"], last.as_str());
+
+    // A media state is a few flags: an oversized one is refused and not kept.
+    let huge = format!("c1.{}", "A".repeat(5000));
+    let (status, _) = signal(&app, &a, &id, "media_state", &huge).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (read, _) = media_seen_by(&app, &b, &id).await;
+    assert_eq!(read["payload"], last.as_str());
+    // Other signals are not taken for media states.
+    let (status, _) = signal(&app, &a, &id, "ice_candidate", "c1.ice").await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (read, _) = media_seen_by(&app, &b, &id).await;
+    assert_eq!(read["payload"], last.as_str());
+
+    // History and the call's own events never carry them.
+    let (_, history) = call(&app, "GET", "/api/v1/calls", &b.token, None).await;
+    assert!(history["calls"][0].get("peer_media_state").is_none());
+
+    // Once it ends they are gone, from the answers and from the row.
+    let (status, ended) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/calls/{id}/hangup"),
+        &a.token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(ended.get("peer_media_state").is_none());
+    let over = next_event(&mut b_events, "call.ended").await;
+    assert!(over["call"].get("peer_media_state").is_none());
+    assert_eq!(
+        media_seen_by(&app, &b, &id).await,
+        (Value::Null, Value::Null)
+    );
+    let kept: (Option<String>, Option<String>) =
+        sqlx::query_as(r#"SELECT caller_media_state, callee_media_state FROM calls WHERE id = $1"#)
+            .bind(id.parse::<Uuid>().unwrap())
+            .fetch_one(&state.pool)
+            .await
+            .expect("call row");
+    assert_eq!(kept, (None, None));
+    drain(&mut a_events);
+}
+
 #[tokio::test]
 async fn a_quiet_device_ends_its_call_and_nobody_stays_busy() {
     let Some((app, state)) = test_state().await else {
@@ -560,6 +720,8 @@ async fn a_quiet_device_ends_its_call_and_nobody_stays_busy() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = signal(&app, &a, &id, "media_state", &media_payload("a")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
 
     // B's app dies: nothing from it for longer than the limit.
     sqlx::query(r#"UPDATE calls SET callee_seen_at = now() - interval '2 minutes' WHERE id = $1"#)
@@ -577,6 +739,13 @@ async fn a_quiet_device_ends_its_call_and_nobody_stays_busy() {
     let ended = next_event(&mut a_events, "call.ended").await;
     assert_eq!(ended["call"]["id"], id.as_str());
     assert_eq!(ended["call"]["ended_reason"], "connection_lost");
+    let kept: Option<String> =
+        sqlx::query_scalar(r#"SELECT caller_media_state FROM calls WHERE id = $1"#)
+            .bind(id.parse::<Uuid>().unwrap())
+            .fetch_one(&state.pool)
+            .await
+            .expect("call row");
+    assert!(kept.is_none(), "the sweep drops the kept media states");
 
     // A heartbeat on an ended call says so.
     let (status, beat) = call(

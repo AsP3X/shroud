@@ -58,10 +58,28 @@ enum CallAudio {
     }
 
     /// The loudspeaker on or off (off: the receiver, or a connected headset).
+    ///
+    /// Human: A call placed as video plays on the speaker by default, so "off" first turns it
+    /// into a voice-chat session; otherwise a video call switched to voice could never reach
+    /// the earpiece.
     static func setSpeaker(_ on: Bool) {
         let session = RTCAudioSession.sharedInstance()
         session.lockForConfiguration()
         defer { session.unlockForConfiguration() }
+        if !on, session.mode == AVAudioSession.Mode.videoChat.rawValue
+            || session.categoryOptions.contains(.defaultToSpeaker)
+        {
+            let config = RTCAudioSessionConfiguration.webRTC()
+            config.mode = AVAudioSession.Mode.voiceChat.rawValue
+            config.categoryOptions = [.allowBluetoothHFP]
+            RTCAudioSessionConfiguration.setWebRTC(config)
+            try? session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetoothHFP])
+        }
         try? session.overrideOutputAudioPort(on ? .speaker : .none)
+    }
+
+    /// The call plays on the phone's earpiece (not the speaker, not a headset or car).
+    static var isOnReceiver: Bool {
+        AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.portType == .builtInReceiver }
     }
 }

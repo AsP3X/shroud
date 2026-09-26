@@ -14,7 +14,7 @@ import {
   Volume2,
   X,
 } from "lucide-react";
-import { incomingStaysInBanner, statusLine, type CallView } from "../calls/logic";
+import { incomingStaysInBanner, statusLine, videoLayout, type CallView } from "../calls/logic";
 import {
   acceptCall,
   declineCall,
@@ -89,48 +89,83 @@ function statusKey(view: CallView): string {
   return view.phase;
 }
 
-/** Attaches a stream to a <video>; `revision` re-attaches it when tracks arrive. */
-function useStream(stream: MediaStream | null, revision: unknown) {
+/**
+ * One side's picture in a <video>. The stream goes on when the picture is wanted (a camera was
+ * switched on), and `shown` turns true only with the first frame after that, so a camera coming
+ * on never flashes black, nor the last picture from before it went off. Once not wanted, the
+ * element keeps its last frame, so the picture fades out rather than blinking away.
+ * `revision` re-attaches the stream when its tracks change.
+ */
+function usePicture(stream: MediaStream | null, wanted: boolean, revision: unknown) {
   const ref = useRef<HTMLVideoElement>(null);
+  const [shown, setShown] = useState(false);
   useEffect(() => {
+    setShown(false);
     const element = ref.current;
-    if (!element) return;
+    if (!element || !stream || !wanted) return;
+    let current = true;
+    const show = () => {
+      if (current) setShown(true);
+    };
     element.srcObject = null;
     element.srcObject = stream;
-    if (stream) void element.play().catch(() => undefined);
-  }, [stream, revision]);
-  return ref;
+    void element.play().catch(() => undefined);
+    let frame: number | null = null;
+    let timer: number | null = null;
+    if (typeof element.requestVideoFrameCallback === "function") {
+      frame = element.requestVideoFrameCallback(show);
+    } else {
+      // No frame callbacks: once the picture has a size, or after a moment.
+      element.addEventListener("resize", show, { once: true });
+      timer = window.setTimeout(show, 500);
+    }
+    return () => {
+      current = false;
+      if (frame !== null) element.cancelVideoFrameCallback(frame);
+      if (timer !== null) window.clearTimeout(timer);
+      element.removeEventListener("resize", show);
+    };
+  }, [stream, wanted, revision]);
+  return { ref, shown: shown && wanted };
 }
 
 function Control({
   label,
   ariaLabel,
+  title,
   icon,
   iconKey,
   onClick,
   tone = "plain",
   on = false,
+  pending = false,
   disabled = false,
 }: {
   label: string;
-  /** Spoken name when the visible label does not say the action ("Camera"). */
+  /** Spoken name when the visible label does not say the action ("Video"). */
   ariaLabel?: string;
+  /** Why it is disabled, on hover. */
+  title?: string;
   icon: ReactNode;
   /** Changes when the glyph does (mic to mic-off): the new one pops in. */
   iconKey?: string;
   onClick: () => void;
   tone?: "plain" | "end" | "accept";
-  /** A switch that is on (muted, camera off): the disc turns light. */
+  /** A switch that is on (muted, video on): the disc turns light. */
   on?: boolean;
+  /** Turning on takes a moment (a camera opening): the disc breathes until it is. */
+  pending?: boolean;
   disabled?: boolean;
 }) {
   return (
     <button
       type="button"
-      className={`call-ctl call-ctl-${tone}${on ? " is-on" : ""}`}
+      className={`call-ctl call-ctl-${tone}${on ? " is-on" : ""}${pending ? " is-pending" : ""}`}
       onClick={onClick}
       disabled={disabled}
+      title={title}
       aria-label={ariaLabel}
+      aria-busy={pending || undefined}
       aria-pressed={tone === "plain" && iconKey !== undefined ? on : undefined}
     >
       <span className="call-ctl-disc" aria-hidden="true">
@@ -170,16 +205,22 @@ export function CallCaptions({ lines }: { lines: readonly string[] }) {
 
 function CallScreen({ view }: { view: CallView }) {
   const root = useRef<HTMLDivElement>(null);
-  const video = view.modality === "video";
   const live = view.phase === "outgoing" || view.phase === "connecting" || view.phase === "active";
   const ringing = view.phase === "outgoing" || view.phase === "connecting";
   const clock = view.phase === "active" && !view.reconnecting;
-  const theirVideo = video && live && view.remoteVideo && view.remoteCamera && view.remoteStream !== null;
-  const mine = video && live && view.hasCamera && view.localStream !== null;
-  /* Before their picture arrives, ours fills the screen (as FaceTime does); then it moves to the corner. */
-  const selfFull = mine && !theirVideo && view.cameraOn;
-  const remote = useStream(theirVideo ? view.remoteStream : null, view.remoteVideo);
-  const self = useStream(mine ? view.localStream : null, view.hasCamera);
+  /* Voice or video is whatever the cameras say right now: either side can switch its own on or
+     off mid-call, and the screen follows, back to the face when both are off. */
+  const remote = usePicture(
+    view.remoteStream,
+    live && view.remoteVideo && view.remoteCamera && view.remoteStream !== null,
+    view.remoteVideo,
+  );
+  const self = usePicture(view.localStream, live && view.cameraOn && view.localStream !== null, null);
+  const layout = videoLayout(view, self.shown, remote.shown);
+  const theirVideo = layout === "theirs";
+  /* While the call is placed, our picture fills the screen (as FaceTime does); after that it sits
+     in the corner, over their picture or their face. */
+  const selfFull = layout === "mine";
   const name = view.peer.username;
   /* The backdrop carries a faint wash of the peer's avatar colour, so each call looks like its person. */
   const tint = { "--call-tint": avatarPalette(view.peer.id)[0] } as CSSProperties;
@@ -217,19 +258,11 @@ function CallScreen({ view }: { view: CallView }) {
       </span>,
     );
   }
-  if (video && view.phase === "active" && !view.remoteCamera) {
-    chips.push(
-      <span className="call-chip" key="camera">
-        <VideoOff size={13} aria-hidden="true" />
-        Camera off
-      </span>,
-    );
-  }
 
   const classes = [
     "call",
     `call-${view.phase}`,
-    video ? "is-video" : "is-voice",
+    remote.shown || self.shown ? "is-video" : "is-voice",
     theirVideo ? "has-video" : "",
     selfFull ? "self-full" : "",
     ringing ? "is-ringing" : "",
@@ -237,6 +270,7 @@ function CallScreen({ view }: { view: CallView }) {
   ]
     .filter(Boolean)
     .join(" ");
+  const videoLabel = view.cameraOn ? "Turn video off" : "Turn video on";
 
   return (
     <div
@@ -249,26 +283,22 @@ function CallScreen({ view }: { view: CallView }) {
       tabIndex={-1}
     >
       <div className="call-backdrop" aria-hidden="true" />
-      {video ? (
-        <video ref={remote} className="call-remote" autoPlay playsInline muted hidden={!theirVideo} />
-      ) : null}
-      {video ? (
-        <div className={`call-self${selfFull ? " full" : ""}`} hidden={!mine}>
-          <video
-            ref={self}
-            className={view.mirrorSelf ? "mirrored" : undefined}
-            autoPlay
-            playsInline
-            muted
-            hidden={!view.cameraOn}
-          />
-          {!view.cameraOn ? (
-            <span className="call-self-off" aria-hidden="true">
-              <VideoOff size={20} />
-            </span>
-          ) : null}
-        </div>
-      ) : null}
+      {/* Both pictures stay in place for the whole call, so a camera switched on mid-call fades
+          in (and out again) over the face instead of rebuilding the screen. */}
+      <video
+        ref={remote.ref}
+        className={`call-remote${theirVideo ? " is-shown" : ""}`}
+        autoPlay
+        playsInline
+        muted
+        aria-hidden="true"
+      />
+      <div
+        className={`call-self${selfFull ? " full" : ""}${self.shown ? " is-shown" : ""}`}
+        aria-hidden="true"
+      >
+        <video ref={self.ref} className={view.mirrorSelf ? "mirrored" : undefined} autoPlay playsInline muted />
+      </div>
       <div className="call-shade call-shade-top" aria-hidden="true" />
       <div className="call-shade call-shade-bottom" aria-hidden="true" />
 
@@ -297,7 +327,9 @@ function CallScreen({ view }: { view: CallView }) {
       {/* The person: the avatar at the exact centre of the screen, name and clock hanging below it
           (in a pill at the top instead once a picture fills the screen). */}
       <section className="call-stage">
-        <div className="call-who">
+        {/* A new key when the picture takes over the screen or gives it back: the name rises into
+            its new place (the pill at the top, or under the face) instead of jumping there. */}
+        <div className="call-who" key={theirVideo || selfFull ? "over-picture" : "under-face"}>
           <div className={`call-avatar${view.phase === "incoming" ? " ringing" : ""}`}>
             <Avatar name={name} seed={view.peer.id} size="lg" />
           </div>
@@ -336,7 +368,7 @@ function CallScreen({ view }: { view: CallView }) {
             <Control
               label="Accept"
               tone="accept"
-              icon={video ? <Video size={28} /> : <Phone size={28} />}
+              icon={view.modality === "video" ? <Video size={28} /> : <Phone size={28} />}
               onClick={acceptCall}
             />
           </div>
@@ -349,24 +381,20 @@ function CallScreen({ view }: { view: CallView }) {
               icon={view.micOn ? <Mic size={24} /> : <MicOff size={24} />}
               onClick={toggleCallMute}
             />
-            {video ? (
-              <Control
-                label="Camera"
-                ariaLabel={view.cameraOn ? "Turn camera off" : "Turn camera on"}
-                on={!view.cameraOn}
-                disabled={!view.hasCamera}
-                iconKey={view.cameraOn ? "cam" : "cam-off"}
-                icon={view.cameraOn ? <Video size={24} /> : <VideoOff size={24} />}
-                onClick={toggleCallCamera}
-              />
-            ) : null}
-            {video && view.canSwitchCamera ? (
-              <Control
-                label="Flip"
-                disabled={!view.cameraOn}
-                icon={<SwitchCamera size={24} />}
-                onClick={switchCallCamera}
-              />
+            {/* Every call has it: video on makes a voice call a video call, off makes it voice again. */}
+            <Control
+              label="Video"
+              ariaLabel={videoLabel}
+              title={view.canVideo || view.cameraOn ? videoLabel : "Video isn’t available in this call"}
+              on={view.cameraOn}
+              pending={view.cameraPending}
+              disabled={!view.canVideo && !view.cameraOn}
+              iconKey={view.cameraOn ? "cam" : "cam-off"}
+              icon={view.cameraOn ? <Video size={24} /> : <VideoOff size={24} />}
+              onClick={toggleCallCamera}
+            />
+            {view.cameraOn && view.canSwitchCamera ? (
+              <Control label="Flip" icon={<SwitchCamera size={24} />} onClick={switchCallCamera} />
             ) : null}
             <Control label="End" tone="end" icon={<PhoneOff size={26} />} onClick={hangUpCall} />
           </div>
@@ -491,6 +519,18 @@ function CallPill({ view }: { view: CallView }) {
           >
             {view.micOn ? <Mic size={17} /> : <MicOff size={17} />}
           </button>
+          {/* Still on camera with the call tucked away: one click stops it. */}
+          {view.cameraOn ? (
+            <button
+              type="button"
+              className="call-pill-btn"
+              aria-label="Turn video off"
+              title="Turn video off"
+              onClick={toggleCallCamera}
+            >
+              <Video size={17} />
+            </button>
+          ) : null}
           <button
             type="button"
             className="call-pill-btn end"

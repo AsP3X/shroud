@@ -1,6 +1,10 @@
 import SwiftUI
 
 /// Full-screen in-call chrome for voice and video sessions.
+///
+/// Human: A call is voice or video by what the two cameras do right now. Either person turns
+/// theirs on or off with Video at any time; their picture fades in over the face once its first
+/// frame arrives, and out again, and ours sits in the corner while it is on.
 struct InCallOverlay: View {
     @Environment(CallController.self) private var calls
 
@@ -11,8 +15,14 @@ struct InCallOverlay: View {
         }
     }
 
+    /// Their picture: their camera is on and its frames arrive (never a black or stale frame).
     private var showsRemoteVideo: Bool {
-        calls.remoteVideoTrack != nil && calls.active?.remoteCameraOff != true
+        calls.remoteVideoTrack != nil && calls.active?.remoteCameraOff == false && calls.remoteVideoLive
+    }
+
+    /// Our own picture, in the corner, from the camera's first frame.
+    private func showsLocalVideo(_ call: CallController.ActiveCall) -> Bool {
+        call.isVideoEnabled && call.phase != .ending && calls.localVideoTrack != nil && calls.localVideoLive
     }
 
     @ViewBuilder
@@ -31,6 +41,7 @@ struct InCallOverlay: View {
             if showsRemoteVideo, let track = calls.remoteVideoTrack {
                 CallVideoView(track: track)
                     .ignoresSafeArea()
+                    .transition(.opacity)
             }
 
             VStack(spacing: 28) {
@@ -49,6 +60,7 @@ struct InCallOverlay: View {
                                     .offset(x: 4, y: 4)
                             }
                         }
+                        .transition(.scale(scale: 0.9).combined(with: .opacity))
                 }
 
                 VStack(spacing: 6) {
@@ -84,7 +96,7 @@ struct InCallOverlay: View {
             }
             .padding(.horizontal, 24)
 
-            if call.modality == .video, call.isVideoEnabled, let local = calls.localVideoTrack, call.phase != .ending {
+            if showsLocalVideo(call), let local = calls.localVideoTrack {
                 CallVideoView(track: local, mirror: calls.usesFrontCamera)
                     .frame(width: 108, height: 164)
                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -105,11 +117,15 @@ struct InCallOverlay: View {
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
                             .strokeBorder(.white.opacity(0.35), lineWidth: 1)
                     }
+                    // Video on grows it out of the corner; off shrinks it back there.
+                    .transition(.scale(scale: 0.8, anchor: .topTrailing).combined(with: .opacity))
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                     .padding(.top, 12)
                     .padding(.trailing, 16)
             }
         }
+        .animation(Motion.standard, value: showsRemoteVideo)
+        .animation(Motion.standard, value: showsLocalVideo(call))
     }
 
     /// Human: Liquid Glass circles over the backdrop or the remote video, as the system's
@@ -134,15 +150,18 @@ struct InCallOverlay: View {
                     Task { await calls.toggleMute() }
                 }
 
-                if call.modality == .video {
-                    callButton(
-                        icon: call.isVideoEnabled ? "video.fill" : "video.slash.fill",
-                        label: "Video",
-                        tint: call.isVideoEnabled ? nil : Theme.danger
-                    ) {
-                        Task { await calls.toggleVideo() }
-                    }
+                // Every call has it: on makes a voice call a video call, off makes it voice again.
+                let videoAvailable = call.canVideo || call.isVideoEnabled
+                callButton(
+                    icon: call.isVideoEnabled ? "video.fill" : "video.slash.fill",
+                    label: "Video",
+                    tint: call.isVideoEnabled ? Theme.accent : nil,
+                    accessibilityLabel: call.isVideoEnabled ? "Turn video off" : "Turn video on"
+                ) {
+                    Task { await calls.toggleVideo() }
                 }
+                .disabled(!videoAvailable)
+                .opacity(videoAvailable ? 1 : 0.45)
 
                 callButton(
                     icon: call.speakerOn ? "speaker.wave.2.fill" : "speaker.fill",
@@ -246,6 +265,7 @@ struct InCallOverlay: View {
         icon: String,
         label: String,
         tint: Color?,
+        accessibilityLabel: String? = nil,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -265,6 +285,8 @@ struct InCallOverlay: View {
                     .contentTransition(.opacity)
             }
             .contentShape(Rectangle())
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(accessibilityLabel ?? label)
         }
         // Call controls are consequential — a heavier tick on press-down.
         .buttonStyle(PressableButtonStyle(scale: 1, dimming: 0, haptic: .medium))

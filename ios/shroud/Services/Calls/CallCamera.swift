@@ -8,9 +8,23 @@ final class CallCamera {
     private let capturer: RTCCameraVideoCapturer
     private(set) var usesFrontCamera = true
     private(set) var isRunning = false
+    /// The system paused the capture (Shroud left the screen, another app took the camera), or
+    /// let it go on again: true while paused.
+    var onPaused: ((Bool) -> Void)?
+    private var observers: [NSObjectProtocol] = []
 
     init(source: RTCVideoSource) {
         capturer = RTCCameraVideoCapturer(delegate: source)
+        let session = capturer.captureSession
+        let center = NotificationCenter.default
+        observers = [
+            center.addObserver(forName: AVCaptureSession.wasInterruptedNotification, object: session, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.onPaused?(true) }
+            },
+            center.addObserver(forName: AVCaptureSession.interruptionEndedNotification, object: session, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.onPaused?(false) }
+            },
+        ]
     }
 
     /// False on a device without cameras (the simulator).
@@ -18,8 +32,20 @@ final class CallCamera {
         !RTCCameraVideoCapturer.captureDevices().isEmpty
     }
 
+    /// Whether the camera may be used, asking the person the first time.
+    static func requestAccess() async -> Bool {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            return true
+        case .notDetermined:
+            return await AVCaptureDevice.requestAccess(for: .video)
+        default:
+            return false
+        }
+    }
+
     func start() {
-        guard let device = device(front: usesFrontCamera) else { return }
+        guard !isRunning, let device = device(front: usesFrontCamera) else { return }
         let formats = RTCCameraVideoCapturer.supportedFormats(for: device)
         guard let format = Self.bestFormat(formats) else { return }
         let maxRate = format.videoSupportedFrameRateRanges.map(\.maxFrameRate).max() ?? 30
@@ -31,6 +57,16 @@ final class CallCamera {
         guard isRunning else { return }
         capturer.stopCapture()
         isRunning = false
+    }
+
+    /// Stops for good: the call is over.
+    func close() {
+        stop()
+        for observer in observers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        observers = []
+        onPaused = nil
     }
 
     func switchCamera() {

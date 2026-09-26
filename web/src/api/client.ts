@@ -122,6 +122,12 @@ export type CallInfo = {
   created_at: string;
   answered_at?: string | null;
   ended_at?: string | null;
+  /**
+   * Only in `GET /calls/{id}` and heartbeat answers to one of the two devices in a live call:
+   * the other device's latest sealed `media_state`, so a camera switch missed in a socket gap
+   * is caught up.
+   */
+  peer_media_state?: { from_device_id: string; payload: string } | null;
 };
 
 /** One STUN or TURN server; TURN logins are minted per user and expire (12 h). */

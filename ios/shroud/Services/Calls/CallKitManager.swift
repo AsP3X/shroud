@@ -29,6 +29,21 @@ final class CallKitManager: NSObject {
     /// Answer / end / mute that arrived before the call controller existed (a push woke the app).
     private var pendingActions: [(CallKitManagerDelegate) -> Void] = []
 
+    /// The simulator has no system call screen, and iOS ends every CallKit call there at once
+    /// ("there wont be a UI to host the call"). There calls run in the app only, as they do when
+    /// CallKit refuses a request: every request throws and every report is skipped.
+    static let isAvailable: Bool = {
+        #if targetEnvironment(simulator)
+        false
+        #else
+        true
+        #endif
+    }()
+
+    enum KitError: Error {
+        case unavailable
+    }
+
     private let provider: CXProvider
     private let callController = CXCallController()
 
@@ -58,17 +73,24 @@ final class CallKitManager: NSObject {
         video: Bool,
         completion: @escaping @Sendable (Error?) -> Void = { _ in }
     ) {
+        guard Self.isAvailable else {
+            completion(nil)
+            return
+        }
         provider.reportNewIncomingCall(with: id, update: update(name: callerName, video: video)) { error in
             completion(error)
         }
     }
 
-    /// New details for a call CallKit shows (the caller's name arrived).
+    /// New details for a call CallKit shows (the caller's name arrived, the call went to video
+    /// or back).
     func update(_ id: UUID, callerName: String, video: Bool) {
+        guard Self.isAvailable else { return }
         provider.reportCall(with: id, updated: update(name: callerName, video: video))
     }
 
     func requestStart(_ id: UUID, handle: String, video: Bool) async throws {
+        guard Self.isAvailable else { throw KitError.unavailable }
         let action = CXStartCallAction(call: id, handle: CXHandle(type: .generic, value: handle))
         action.isVideo = video
         action.contactIdentifier = handle
@@ -76,33 +98,40 @@ final class CallKitManager: NSObject {
     }
 
     func requestAnswer(_ id: UUID) async throws {
+        guard Self.isAvailable else { throw KitError.unavailable }
         try await callController.request(CXTransaction(action: CXAnswerCallAction(call: id)))
     }
 
     func requestEnd(_ id: UUID) async throws {
+        guard Self.isAvailable else { throw KitError.unavailable }
         try await callController.request(CXTransaction(action: CXEndCallAction(call: id)))
     }
 
     func requestMute(_ id: UUID, muted: Bool) async throws {
+        guard Self.isAvailable else { throw KitError.unavailable }
         try await callController.request(CXTransaction(action: CXSetMutedCallAction(call: id, muted: muted)))
     }
 
     func reportConnecting(_ id: UUID) {
+        guard Self.isAvailable else { return }
         provider.reportOutgoingCall(with: id, startedConnectingAt: Date())
     }
 
     func reportConnected(_ id: UUID) {
+        guard Self.isAvailable else { return }
         provider.reportOutgoingCall(with: id, connectedAt: Date())
     }
 
     /// The call ended without the user ending it here.
     func reportEnded(_ id: UUID, reason: CXCallEndedReason) {
+        guard Self.isAvailable else { return }
         provider.reportCall(with: id, endedAt: Date(), reason: reason)
     }
 
     /// True when CallKit shows a call with this id.
     func isTracking(_ id: UUID) -> Bool {
-        callController.callObserver.calls.contains { $0.uuid == id && !$0.hasEnded }
+        guard Self.isAvailable else { return false }
+        return callController.callObserver.calls.contains { $0.uuid == id && !$0.hasEnded }
     }
 
     /// Runs actions that arrived before `delegate` was set. Call once the call exists.

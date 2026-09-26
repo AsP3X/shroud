@@ -3360,14 +3360,18 @@ button.reply-quote { cursor: pointer; }
     linear-gradient(180deg, #141420 0%, #0c0c13 60%, #08080c 100%);
 }
 .call-ended .call-backdrop { filter: saturate(0.5) brightness(0.8); transition: filter 0.6s ease; }
+/* Their picture is there for the whole call and fades in over their face once its first frame
+   arrives (a camera switched on mid-call), and out again when they switch it off. */
 .call-remote {
   position: absolute; inset: 0;
   width: 100%; height: 100%;
   object-fit: cover;
   background: #000;
-  animation: fade-in 0.4s ease;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.4s ease;
 }
-.call-remote[hidden] { display: none; }
+.call-remote.is-shown { opacity: 1; }
 @media (min-width: 901px) {
   /* A wide window shows all of their picture; a phone fills its screen with it. */
   .call-remote { object-fit: contain; }
@@ -3561,7 +3565,8 @@ button.reply-quote { cursor: pointer; }
 .call.has-video .call-status,
 .call.self-full .call-status { font-size: var(--fs-sm); font-weight: 400; color: rgba(255, 255, 255, 0.74); min-height: 0; }
 
-/* Our own camera: the whole screen before theirs shows, then the top corner (as on iOS). */
+/* Our own camera: the whole screen while the call is placed, then the top corner (as on iOS),
+   over their picture or their face. Video on grows it out of the corner; off shrinks it back. */
 .call-self {
   position: absolute; z-index: 2;
   top: calc(66px + env(safe-area-inset-top)); right: 16px;
@@ -3571,10 +3576,14 @@ button.reply-quote { cursor: pointer; }
   background: #1b1b22;
   box-shadow: 0 10px 34px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.12);
   display: grid; place-items: center;
-  transition: width 0.35s var(--ease), height 0.35s var(--ease), top 0.35s var(--ease),
-    right 0.35s var(--ease), border-radius 0.35s var(--ease), box-shadow 0.35s ease;
+  opacity: 0;
+  transform: scale(0.86);
+  transform-origin: top right;
+  pointer-events: none;
+  transition: opacity 0.28s ease, transform 0.35s var(--ease), width 0.35s var(--ease), height 0.35s var(--ease),
+    top 0.35s var(--ease), right 0.35s var(--ease), border-radius 0.35s var(--ease), box-shadow 0.35s ease;
 }
-.call-self[hidden], .call-self video[hidden] { display: none; }
+.call-self.is-shown { opacity: 1; transform: none; }
 .call-self video { width: 100%; height: 100%; object-fit: cover; display: block; }
 .call-self video.mirrored { transform: scaleX(-1); }
 .call-self.full {
@@ -3582,8 +3591,8 @@ button.reply-quote { cursor: pointer; }
   top: 0; right: 0;
   width: 100%; height: 100%; aspect-ratio: auto;
   border-radius: 0; box-shadow: none;
+  transform-origin: center;
 }
-.call-self-off { color: rgba(255, 255, 255, 0.72); }
 
 /* The dock: the transcription slot, then the controls, centred at the bottom in one floating
    glass bar. */
@@ -3672,6 +3681,11 @@ button.reply-quote { cursor: pointer; }
 .call-ctl-accept:hover:not(:disabled) .call-ctl-disc { filter: brightness(1.1); }
 .call-ctl-label { font-size: var(--fs-xs); font-weight: 600; color: rgba(255, 255, 255, 0.86); white-space: nowrap; }
 .call-ctl:disabled { opacity: 0.4; cursor: default; }
+/* Video pressed, the camera still opening: the disc breathes towards "on" until it is. */
+.call-ctl.is-pending .call-ctl-disc { animation: call-ctl-wait 1.1s ease-in-out infinite; }
+@keyframes call-ctl-wait {
+  50% { background: rgba(255, 255, 255, 0.42); }
+}
 /* The ring shows on the disc, where the eye is, not around the label. */
 .call-ctl:focus-visible { outline: none; }
 .call-ctl:focus-visible .call-ctl-disc { outline: 3px solid #fff; outline-offset: 3px; }
@@ -3863,5 +3877,7 @@ button.reply-quote { cursor: pointer; }
   .call-banner-avatar::before, .call-banner-avatar::after { animation: none; opacity: 0; }
   .call-avatar.ringing .avatar { box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.22); }
   .call-pill-dot { animation: none; }
-  .call-self, .call-avatar, .call-shade { transition: none; }
+  .call-self, .call-avatar, .call-shade, .call-remote { transition: none; }
+  .call-self { transform: none; }
+  .call-ctl.is-pending .call-ctl-disc { animation: none; background: rgba(255, 255, 255, 0.3); }
 }

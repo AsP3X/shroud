@@ -157,6 +157,21 @@ nonisolated struct CallSignalSequencer: Sendable {
     }
 }
 
+/// Media states apply newest first. The server hands back the other device's latest one (after
+/// a reconnect, on the heartbeat), and that answer can arrive after a newer one came over the
+/// socket: the older one must not undo it.
+nonisolated struct CallMediaOrder: Sendable {
+    private var latest: [String: Int] = [:]
+
+    /// True when a media state numbered `n` is newer than the last one taken from `device`.
+    mutating func isNewer(_ n: Int, from device: String) -> Bool {
+        let key = device.lowercased()
+        guard n > latest[key, default: 0] else { return false }
+        latest[key] = n
+        return true
+    }
+}
+
 /// Why a call ended, as this device tells its user.
 nonisolated enum CallEndReason: Equatable, Sendable {
     case ended

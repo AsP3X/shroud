@@ -92,6 +92,67 @@ struct CallSignalTests {
         #expect(!again)
         #expect(second)
     }
+
+    /// A camera switch lost in a socket gap comes back from the server, possibly after a newer
+    /// one arrived over the socket: only newer media states count, per device.
+    @Test
+    func anOlderMediaStateDoesNotUndoANewerOne() {
+        var order = CallMediaOrder()
+        let first = order.isNewer(4, from: "DEV-A")
+        let newer = order.isNewer(9, from: "dev-a")
+        let older = order.isNewer(6, from: "dev-a")
+        let same = order.isNewer(9, from: "dev-a")
+        let otherDevice = order.isNewer(2, from: "dev-b")
+        #expect(first)
+        #expect(newer)
+        #expect(!older)
+        #expect(!same)
+        #expect(otherDevice)
+    }
+
+    /// The server's copy of the other device's latest media state rides on `GET /calls/:id` and
+    /// the heartbeat, and opens like the signal it was.
+    @Test
+    func aKeptMediaStateDecodesAndOpens() throws {
+        let secret = try secret()
+        let caller = CallSignalKeys(secret: secret, callID: callID, role: .caller)
+        let callee = CallSignalKeys(secret: secret, callID: callID, role: .callee)
+        let payload = try CallCrypto.seal(
+            CallSignal.media(mic: true, camera: true).plaintext(n: 7),
+            key: caller.send,
+            callID: callID,
+            signalType: "media_state"
+        )
+        let device = UUID()
+        var object: [String: Any] = [
+            "id": callID.uuidString.lowercased(),
+            "caller_user_id": UUID().uuidString,
+            "caller_device_id": device.uuidString,
+            "caller_username": "alice",
+            "callee_user_id": UUID().uuidString,
+            "callee_device_id": UUID().uuidString,
+            "callee_username": "bob",
+            "modality": "voice",
+            "status": "active",
+            "protocol": 2,
+            "created_at": "2026-09-26T10:00:00Z",
+            "answered_at": "2026-09-26T10:00:05Z",
+            "peer_media_state": ["from_device_id": device.uuidString.lowercased(), "payload": payload],
+        ]
+        let call = try JSONDecoder.api.decode(CallDTO.self, from: JSONSerialization.data(withJSONObject: object))
+        #expect(call.callModality == .voice)
+        let kept = try #require(call.peerMediaState)
+        #expect(kept.fromDeviceId == device)
+        let opened = try CallCrypto.open(kept.payload, key: callee.receive, callID: callID, signalType: "media_state")
+        let parsed = try CallSignal.parse(opened, signalType: "media_state")
+        #expect(parsed.n == 7)
+        #expect(parsed.signal == .media(mic: true, camera: true))
+
+        // Everywhere else the field is absent.
+        object["peer_media_state"] = nil
+        let plain = try JSONDecoder.api.decode(CallDTO.self, from: JSONSerialization.data(withJSONObject: object))
+        #expect(plain.peerMediaState == nil)
+    }
 }
 
 private extension Data {

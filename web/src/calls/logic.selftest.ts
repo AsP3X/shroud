@@ -4,12 +4,14 @@
  */
 import { ApiError } from "../api/client";
 import {
+  CAMERA_UNAVAILABLE,
   CallFailure,
   RestartGate,
   RESTART_GAP_MS,
   SeenSignals,
   callClock,
   callErrorText,
+  cameraErrorText,
   cameraOnlyFailure,
   endedText,
   incomingStaysInBanner,
@@ -20,6 +22,7 @@ import {
   sameId,
   signalTypeOf,
   statusLine,
+  videoLayout,
   voiceSdp,
   type CallView,
 } from "./logic";
@@ -62,6 +65,20 @@ check(mediaErrorText({ name: "NotReadableError" }, false).includes("another app"
 check(mediaErrorText(new Error("?"), false) === "Couldn’t start your microphone.", "unknown media error");
 check(cameraOnlyFailure(denied) && cameraOnlyFailure({ name: "NotFoundError" }), "camera failures worth audio only");
 check(!cameraOnlyFailure({ name: "TypeError" }) && !cameraOnlyFailure(null), "not a camera failure");
+check(cameraErrorText(denied) === "Allow camera access in your browser to turn on video.", "camera denied mid-call");
+check(cameraErrorText({ name: "NotFoundError" }) === "No camera found.", "no camera");
+check(cameraErrorText({ name: "NotReadableError" }).includes("another app"), "camera in use");
+check(cameraErrorText(null) === CAMERA_UNAVAILABLE, "camera failed some other way");
+
+/* --- which picture fills the screen --- */
+for (const phase of ["outgoing", "connecting", "active"] as const) {
+  check(videoLayout({ phase }, true, true) === "theirs", `${phase}: their picture wins`);
+  check(videoLayout({ phase }, false, true) === "theirs", `${phase}: theirs alone`);
+  check(videoLayout({ phase }, false, false) === null, `${phase}: no picture, the face`);
+}
+check(videoLayout({ phase: "outgoing" }, true, false) === "mine", "placing a call with the camera on: ours fills it");
+check(videoLayout({ phase: "connecting" }, true, false) === "mine", "and while it connects");
+check(videoLayout({ phase: "active" }, true, false) === null, "mid-call, ours stays in the corner over their face");
 
 /* --- the clock and the status line --- */
 check(callClock(0) === "00:00", "zero");
@@ -82,7 +99,8 @@ const base: CallView = {
   connectedAt: null,
   micOn: true,
   cameraOn: false,
-  hasCamera: false,
+  cameraPending: false,
+  canVideo: true,
   canSwitchCamera: false,
   mirrorSelf: true,
   remoteMic: true,
@@ -171,6 +189,10 @@ check(seen.first("DEV-A", 1) && seen.first("dev-a", 2), "new numbers count");
 check(!seen.first("dev-a", 1), "a number seen before is dropped, whatever the id's case");
 check(seen.first("dev-b", 1), "numbers are per device");
 check(seen.first("dev-a", 0 + 7) && !seen.first("dev-a", 7), "out of order is fine, twice is not");
+check(seen.newerMedia("DEV-A", 4) && seen.newerMedia("dev-a", 9), "newer media states count");
+check(!seen.newerMedia("dev-a", 6), "an older media state (the server's copy, late) changes nothing");
+check(!seen.newerMedia("dev-a", 9), "nor the same one again");
+check(seen.newerMedia("dev-b", 2), "media states are ordered per device");
 
 /* --- restarts, link state, ids --- */
 const gate = new RestartGate();

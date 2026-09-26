@@ -32,11 +32,16 @@ final class CallController {
         var id: UUID
         var peerUserID: UUID
         var peerUsername: String
+        /// How the call was placed (the ring says so). Whether it is voice or video now is up to
+        /// the two cameras: `isVideoEnabled` and `remoteCameraOff`.
         var modality: CallModality
         let isOutgoing: Bool
         var phase: Phase
         var isMuted: Bool
+        /// Our camera is on and sent. Either side can switch its own at any time mid-call.
         var isVideoEnabled: Bool
+        /// This call can carry our video. False only with an older app on the other side.
+        var canVideo: Bool
         var connectionState: String
         var startedAt: Date?
         var endedText: String?
@@ -54,6 +59,10 @@ final class CallController {
     private(set) var recent: [RecentCall] = []
     private(set) var localVideoTrack: RTCVideoTrack?
     private(set) var remoteVideoTrack: RTCVideoTrack?
+    /// Their camera's frames are arriving since it was last switched on: their picture shows.
+    private(set) var remoteVideoLive = false
+    /// Our camera's frames are arriving since it was switched on: our own picture shows.
+    private(set) var localVideoLive = false
     private(set) var usesFrontCamera = true
     private(set) var canSwitchCamera = false
 
@@ -111,6 +120,16 @@ final class CallController {
         /// Set when the link has failed. A restart delayed by the 10 s gate still uses the relay.
         var wantRelay = false
         var reportedConnected = false
+        var mediaOrder = CallMediaOrder()
+        /// The system paused our camera: they are told it is off until it runs again.
+        var cameraPaused = false
+        /// Waiting for camera access after Video was pressed.
+        var cameraBusy = false
+        /// Video moved the sound to the speaker; it goes back to the earpiece with the video.
+        var speakerForVideo = false
+        /// What CallKit was last told: a video call or not.
+        var reportedVideo: Bool?
+        var noticeTask: Task<Void, Never>?
 
         init(generation: Int, role: CallCrypto.Role) {
             self.generation = generation
@@ -147,6 +166,18 @@ final class CallController {
         }
         engine.onRemoteVideo = { [weak self] track in
             self?.remoteVideoTrack = track
+        }
+        engine.onRemoteFrame = { [weak self] in
+            self?.remoteVideoLive = true
+        }
+        engine.onLocalFrame = { [weak self] in
+            self?.localVideoLive = true
+        }
+        engine.onCameraPaused = { [weak self] paused in
+            guard let self, let machine = self.machine, self.current(machine) else { return }
+            machine.cameraPaused = paused
+            // They see our face rather than the last frame, frozen, while the camera is away.
+            if self.active?.isVideoEnabled == true { self.sendMedia(machine) }
         }
     }
 
@@ -340,12 +371,13 @@ final class CallController {
             let token = try requireToken()
             let ice = try await service.iceServers(token: token)
             guard current(machine) else { return }
-            engine.start(iceServers: ice, video: modality == .video)
+            let camera = modality == .video ? await cameraAccess() : false
+            guard current(machine) else { return }
+            engine.start(iceServers: ice, video: camera, offering: true)
             publishLocalPreview(modality: modality, machine: machine)
-            let receiveVideo = modality == .video
             let media = engine
             machine.offerTask = Task { @MainActor in
-                try await media.makeOffer(iceRestart: false, receiveVideo: receiveVideo)
+                try await media.makeOffer(iceRestart: false)
             }
             let created = try await service.createCall(peerUserID: peerUserID, modality: modality, token: token)
             guard current(machine) else {
@@ -395,24 +427,53 @@ final class CallController {
         await setMuted(!call.isMuted, fromKit: false)
     }
 
+    /// Video on or off: a voice call becomes a video call and back, from either side, without a
+    /// new offer (docs/calls.md, "Switching between voice and video"). Only our own camera;
+    /// theirs is theirs to switch.
     func toggleVideo() async {
-        guard var call = active, call.modality == .video, call.phase != .incomingRinging, call.phase != .ending else { return }
-        guard localVideoTrack != nil else { return }
-        call.isVideoEnabled.toggle()
-        active = call
-        engine.setCameraEnabled(call.isVideoEnabled)
-        if let machine { sendMedia(machine) }
+        guard let machine, current(machine), !machine.cameraBusy, let call = active else { return }
+        guard call.phase == .outgoingRinging || call.phase == .connecting || call.phase == .active else { return }
+        if call.isVideoEnabled {
+            engine.stopCamera()
+            localVideoLive = false
+            canSwitchCamera = false
+            setVideoEnabled(false, machine)
+            return
+        }
+        guard engine.canSendVideo else {
+            note("Video isn’t available in this call. Their app needs an update.", machine)
+            return
+        }
+        machine.cameraBusy = true
+        let allowed = await cameraAccess()
+        machine.cameraBusy = false
+        guard current(machine), active?.isVideoEnabled == false, active?.phase != .ending else { return }
+        guard allowed else {
+            note("Allow camera access for Shroud in Settings to turn on video.", machine)
+            return
+        }
+        guard engine.startCamera() else {
+            note("Your camera isn’t available right now.", machine)
+            return
+        }
+        localVideoTrack = engine.localVideoTrack
+        canSwitchCamera = engine.canSwitchCamera
+        usesFrontCamera = engine.usesFrontCamera
+        machine.cameraPaused = false
+        setVideoEnabled(true, machine)
     }
 
     func toggleSpeaker() {
         guard var call = active, call.phase != .ending else { return }
         call.speakerOn.toggle()
         active = call
+        // Chosen by hand: video no longer moves it.
+        machine?.speakerForVideo = false
         CallAudio.setSpeaker(call.speakerOn)
     }
 
     func switchCamera() {
-        guard canSwitchCamera else { return }
+        guard canSwitchCamera, active?.isVideoEnabled == true else { return }
         engine.switchCamera()
         usesFrontCamera = engine.usesFrontCamera
     }
@@ -577,7 +638,9 @@ final class CallController {
             machine.keys = CallSignalKeys(secret: secret, callID: id, role: .callee)
             let ice = (try? await service.iceServers(token: token)) ?? []
             guard current(machine) else { return }
-            engine.start(iceServers: ice, video: video)
+            let camera = video ? await cameraAccess() : false
+            guard current(machine) else { return }
+            engine.start(iceServers: ice, video: camera, offering: false)
             publishLocalPreview(modality: active?.modality ?? .voice, machine: machine)
             do {
                 _ = try await service.acceptCall(id: id, token: token)
@@ -746,10 +809,18 @@ final class CallController {
             guard machine.role == .caller else { return }
             restartIce(machine)
         case let .media(mic, camera):
-            guard var call = active else { return }
+            // The latest wins: the server's kept copy can arrive after a newer one.
+            guard machine.mediaOrder.isNewer(parsed.n, from: from), var call = active else { return }
+            let cameraWasOn = !call.remoteCameraOff
             call.remoteMicMuted = !mic
             call.remoteCameraOff = !camera
             active = call
+            if camera != cameraWasOn {
+                // Their picture shows again from its first new frame, never a stale one.
+                remoteVideoLive = false
+                if camera { engine.awaitRemoteFrame() }
+            }
+            videoChanged(machine)
         }
     }
 
@@ -760,6 +831,7 @@ final class CallController {
             flushRemote(machine)
             send(.answer(sdp: answer), machine)
             if !machine.negotiated { markNegotiated(machine) }
+            refreshCanVideo()
         } catch {
             guard current(machine), !machine.negotiated else { return }
             finish(machine, text: "Couldn't connect", notify: .hangup, status: "ended", close: .report(.failed))
@@ -770,6 +842,7 @@ final class CallController {
         guard current(machine) else { return }
         guard let applied = try? await engine.applyAnswer(sdp), applied else { return }
         flushRemote(machine)
+        refreshCanVideo()
     }
 
     private func addRemote(_ candidates: [IceCandidatePayload], _ machine: Machine) {
@@ -817,9 +890,10 @@ final class CallController {
         sendMedia(machine)
     }
 
+    /// What we send now. A camera the system paused counts as off: they see our face, not a still.
     private func sendMedia(_ machine: Machine) {
         guard machine.negotiated, let call = active else { return }
-        let camera = call.isVideoEnabled && localVideoTrack != nil
+        let camera = call.isVideoEnabled && engine.isCameraOn && !machine.cameraPaused
         send(.media(mic: !call.isMuted, camera: camera), machine)
     }
 
@@ -977,11 +1051,10 @@ final class CallController {
             }
             return
         }
-        let receiveVideo = active?.modality == .video
         Task { [weak self] in
             guard let self, self.current(machine) else { return }
             do {
-                let sdp = try await self.engine.makeOffer(iceRestart: true, receiveVideo: receiveVideo)
+                let sdp = try await self.engine.makeOffer(iceRestart: true)
                 guard self.current(machine) else { return }
                 self.send(.offer(sdp: sdp, restart: true), machine)
             } catch {
@@ -1042,7 +1115,9 @@ final class CallController {
             if machine.role == .caller { callerAnswered(machine, info) }
             else if active?.phase == .incomingRinging {
                 finish(machine, text: "Answered on another device", notify: nil, status: "ended", close: .report(.answeredElsewhere))
+                return
             }
+            catchUpMedia(info, machine)
             return
         }
         let outgoing = active?.isOutgoing ?? (machine.role == .caller)
@@ -1185,13 +1260,97 @@ final class CallController {
         machine.reconnectTimer?.cancel()
         machine.restartTimer?.cancel()
         machine.batchTimer?.cancel()
+        machine.noticeTask?.cancel()
     }
 
     private func teardownMedia() {
         engine.close()
         localVideoTrack = nil
         remoteVideoTrack = nil
+        remoteVideoLive = false
+        localVideoLive = false
         canSwitchCamera = false
+    }
+
+    // MARK: - Switching between voice and video
+
+    /// Our camera went on or off: they are told, and the call's sound and CallKit follow.
+    private func setVideoEnabled(_ on: Bool, _ machine: Machine) {
+        guard var call = active else { return }
+        call.isVideoEnabled = on
+        call.notice = nil
+        active = call
+        sendMedia(machine)
+        // The phone is away from the ear now: the sound leaves the earpiece for the speaker.
+        if on, !call.speakerOn, CallAudio.isOnReceiver {
+            machine.speakerForVideo = true
+            setSpeaker(true)
+        }
+        videoChanged(machine)
+    }
+
+    /// Either camera changed. CallKit shows a video call while any picture is on, and once no
+    /// video is left the sound goes back to the earpiece, if it was video that moved it.
+    private func videoChanged(_ machine: Machine) {
+        guard let call = active, call.phase != .ending else { return }
+        let hasVideo = call.isVideoEnabled || !call.remoteCameraOff
+        if let id = machine.serverID, machine.reportedVideo != hasVideo {
+            machine.reportedVideo = hasVideo
+            ensureCallKit().update(id, callerName: call.peerUsername, video: hasVideo)
+        }
+        if !hasVideo, machine.speakerForVideo, call.speakerOn {
+            machine.speakerForVideo = false
+            setSpeaker(false)
+        }
+    }
+
+    private func setSpeaker(_ on: Bool) {
+        guard var call = active else { return }
+        call.speakerOn = on
+        active = call
+        CallAudio.setSpeaker(on)
+    }
+
+    /// The answer settled whether our video can go out in this call.
+    private func refreshCanVideo() {
+        guard var call = active, call.canVideo != engine.canSendVideo else { return }
+        call.canVideo = engine.canSendVideo
+        active = call
+    }
+
+    /// The other device's latest media state as the server kept it: a camera switch whose
+    /// signal was lost in a socket gap still arrives, at the latest with the next heartbeat.
+    /// It is opened and checked like any signal; one taken already, or older, changes nothing.
+    private func catchUpMedia(_ info: CallDTO, _ machine: Machine) {
+        guard let kept = info.peerMediaState, same(kept.fromDeviceId, machine.peerDeviceID) else { return }
+        let from = kept.fromDeviceId.uuidString.lowercased()
+        let previous = machine.inbox
+        machine.inbox = Task { [weak self] in
+            await previous?.value
+            guard let self, self.current(machine) else { return }
+            await self.receive(from: from, type: "media_state", payload: kept.payload, machine: machine)
+        }
+    }
+
+    /// Whether the camera may be used, asking the first time. The simulator's test pattern
+    /// needs no permission.
+    private func cameraAccess() async -> Bool {
+        guard CallCamera.isAvailable else { return true }
+        return await CallCamera.requestAccess()
+    }
+
+    /// A passing line under the name (why the camera did not come on).
+    private func note(_ text: String, _ machine: Machine) {
+        guard var call = active else { return }
+        call.notice = text
+        active = call
+        machine.noticeTask?.cancel()
+        machine.noticeTask = Task { [weak self] in
+            guard let self, await self.sleep(.seconds(6)), self.current(machine) else { return }
+            guard var call = self.active, call.notice == text else { return }
+            call.notice = nil
+            self.active = call
+        }
     }
 
     private func arm(
@@ -1249,11 +1408,16 @@ final class CallController {
         canSwitchCamera = engine.canSwitchCamera
         usesFrontCamera = engine.usesFrontCamera
         guard var call = active else { return }
-        if modality == .video, localVideoTrack == nil {
-            call.isVideoEnabled = false
-            call.notice = "Your camera isn’t available, so this call is audio only."
-        }
+        call.isVideoEnabled = engine.isCameraOn
+        call.canVideo = engine.canSendVideo
         active = call
+        // A video call whose camera is refused or missing goes on with sound; Video can try again.
+        if modality == .video, !engine.isCameraOn {
+            note("Your camera isn’t available, so your video is off.", machine)
+        }
+        // Video put the sound on the speaker; it goes back to the earpiece with the video.
+        if modality == .video, call.speakerOn { machine.speakerForVideo = true }
+        machine.reportedVideo = modality == .video
     }
 
     private func makeCall(
@@ -1273,12 +1437,14 @@ final class CallController {
             phase: phase,
             isMuted: false,
             isVideoEnabled: modality == .video,
+            canVideo: false,
             connectionState: "new",
             startedAt: nil,
             endedText: nil,
             reconnecting: false,
             remoteMicMuted: false,
-            remoteCameraOff: false,
+            // Until they say otherwise: a video call's other side sends video, a voice call's not.
+            remoteCameraOff: modality != .video,
             notice: nil,
             speakerOn: modality == .video
         )

@@ -40,16 +40,19 @@ export type CallView = {
   /** When media first connected (epoch ms), for the timer. */
   connectedAt: number | null;
   micOn: boolean;
+  /** Our camera is on and sent: with theirs, it makes a voice call a video call. */
   cameraOn: boolean;
-  /** This device sends video: a video call whose camera opened. */
-  hasCamera: boolean;
+  /** The camera is being opened (Video was pressed). */
+  cameraPending: boolean;
+  /** This call can carry our video. False only with an older app on the other side. */
+  canVideo: boolean;
   canSwitchCamera: boolean;
   /** The self-view shows a front camera, so it is mirrored. */
   mirrorSelf: boolean;
   /** What the other side says it sends (`media_state`). */
   remoteMic: boolean;
   remoteCamera: boolean;
-  /** A video track has arrived from the other side. */
+  /** The other side's video track is there (every call has one; it carries frames while their camera is on). */
   remoteVideo: boolean;
   localStream: MediaStream | null;
   remoteStream: MediaStream | null;
@@ -79,6 +82,9 @@ export const RECONNECT_LIMIT_MS = 30_000;
 /** Candidates gathered this close together travel in one signal. */
 export const ICE_BATCH_MS = 100;
 export const ICE_BATCH_MAX = 20;
+/** Video off: nothing more is sent at once, and the camera closes this much later, once our own
+ *  picture has faded out. Video back on within it takes the same camera, without asking again. */
+export const CAMERA_RELEASE_MS = 300;
 /** How long the ended screen stays; errors a little longer, to be read. */
 export const ENDED_VISIBLE_MS = 2_000;
 export const ERROR_VISIBLE_MS = 4_000;
@@ -171,7 +177,39 @@ export function cameraOnlyFailure(err: unknown): boolean {
   );
 }
 
-export const CAMERA_UNAVAILABLE = "Your camera isn’t available, so this call is audio only.";
+export const CAMERA_UNAVAILABLE = "Your camera isn’t available, so your video is off.";
+export const VIDEO_UNAVAILABLE = "Video isn’t available in this call. Their app needs an update.";
+
+/** Why the camera would not open when Video was pressed mid-call. */
+export function cameraErrorText(err: unknown): string {
+  switch (errorName(err)) {
+    case "NotAllowedError":
+    case "SecurityError":
+      return "Allow camera access in your browser to turn on video.";
+    case "NotFoundError":
+    case "OverconstrainedError":
+      return "No camera found.";
+    case "NotReadableError":
+    case "AbortError":
+      return "Your camera is in use by another app.";
+  }
+  return CAMERA_UNAVAILABLE;
+}
+
+/**
+ * The picture that fills the screen, if any: theirs once it shows, else ours while the call is
+ * still being placed or connected (as FaceTime does). During the call our own camera stays in the
+ * corner over their face, so it is always clear whether they can see us or only we see us.
+ */
+export function videoLayout(
+  view: Pick<CallView, "phase">,
+  mine: boolean,
+  theirs: boolean,
+): "theirs" | "mine" | null {
+  if (theirs) return "theirs";
+  if (mine && (view.phase === "outgoing" || view.phase === "connecting")) return "mine";
+  return null;
+}
 
 /** 00:42, 12:05, 1:02:03. */
 export function callClock(ms: number): string {
@@ -339,6 +377,7 @@ export function readSignal(signalType: string, value: Record<string, unknown>): 
 /** The `n` values each sending device has used, so a signal delivered twice counts once. */
 export class SeenSignals {
   private readonly seen = new Map<string, Set<number>>();
+  private readonly media = new Map<string, number>();
 
   /** True the first time this device's `n` comes by. */
   first(deviceId: string, n: number): boolean {
@@ -350,6 +389,18 @@ export class SeenSignals {
     }
     if (used.has(n)) return false;
     used.add(n);
+    return true;
+  }
+
+  /**
+   * True when a media state numbered `n` is newer than the last one taken from this device.
+   * The server hands back the latest it kept (on a heartbeat, after a reconnect), and that answer
+   * can arrive after a newer one came over the socket: the older one must not undo it.
+   */
+  newerMedia(deviceId: string, n: number): boolean {
+    const key = deviceId.toLowerCase();
+    if (n <= (this.media.get(key) ?? 0)) return false;
+    this.media.set(key, n);
     return true;
   }
 }

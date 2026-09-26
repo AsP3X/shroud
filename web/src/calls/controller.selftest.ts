@@ -10,7 +10,7 @@ import { ApiError, type CallInfo, type CallModality, type CallSignalType } from 
 import type { RealtimeEvent } from "../realtime";
 import { CallController, type CallApi, type CallEnv } from "./controller";
 import { callKeys, deriveCallSecret, openSignal, sealSignal } from "./crypto";
-import { CAMERA_UNAVAILABLE, type CallPeer, type CallView } from "./logic";
+import { CAMERA_RELEASE_MS, CAMERA_UNAVAILABLE, VIDEO_UNAVAILABLE, type CallPeer, type CallView } from "./logic";
 
 function check(ok: boolean, what: string): void {
   if (!ok) throw new Error(`calls controller selftest: ${what}`);
@@ -63,8 +63,12 @@ let trackIds = 0;
 
 class FakeTrack {
   enabled = true;
+  muted = false;
   readyState: "live" | "ended" = "live";
   readonly id = `track-${++trackIds}`;
+  onmute: (() => void) | null = null;
+  onunmute: (() => void) | null = null;
+  onended: (() => void) | null = null;
   constructor(
     readonly kind: "audio" | "video",
     private readonly facing: string | undefined = undefined,
@@ -75,6 +79,11 @@ class FakeTrack {
   }
   getSettings(): MediaTrackSettings {
     return this.kind === "video" ? { facingMode: this.facing, deviceId: this.deviceId } : {};
+  }
+  /** The system pauses or resumes the capture, as a browser reports it. */
+  pause(paused: boolean): void {
+    this.muted = paused;
+    (paused ? this.onmute : this.onunmute)?.();
   }
 }
 
@@ -98,6 +107,65 @@ class FakeStream {
 }
 
 type Description = { type: string; sdp: string };
+type Direction = "sendrecv" | "sendonly" | "recvonly" | "inactive" | "stopped";
+
+const sends = (d: string) => d === "sendrecv" || d === "sendonly";
+const receives = (d: string) => d === "sendrecv" || d === "recvonly";
+function direction(send: boolean, receive: boolean): Direction {
+  return send ? (receive ? "sendrecv" : "sendonly") : receive ? "recvonly" : "inactive";
+}
+/** The same section seen from the other end. */
+function reversed(d: string): Direction {
+  return direction(receives(d), sends(d));
+}
+
+class FakeSender {
+  /** Every replaceTrack, in order (null takes the track off). */
+  readonly replaced: (FakeTrack | null)[] = [];
+  constructor(
+    public track: FakeTrack | null,
+    private readonly peer: FakePeer,
+  ) {}
+  async replaceTrack(next: FakeTrack | null): Promise<void> {
+    if (this.peer.closed) throw Object.assign(new Error("closed"), { name: "InvalidStateError" });
+    if (next && next.kind !== "video" && next.kind !== "audio") throw new TypeError("kind");
+    this.track = next;
+    this.replaced.push(next);
+  }
+  getParameters(): { encodings: { maxBitrate?: number; priority?: string }[] } {
+    return { encodings: [{}] };
+  }
+  async setParameters(params: { encodings?: { maxBitrate?: number; priority?: string }[] }): Promise<void> {
+    const encoding = params.encodings?.[0];
+    this.peer.tuned.push({ kind: this.track?.kind ?? "", maxBitrate: encoding?.maxBitrate, priority: encoding?.priority });
+  }
+}
+
+/** A transceiver as a browser keeps it: a sender, a receiver whose track exists from the start,
+ *  and the direction asked for next to the one the last offer and answer settled. */
+class FakeTransceiver {
+  mid: string | null = null;
+  currentDirection: Direction | null = null;
+  readonly receiver: { track: FakeTrack };
+  /** ontrack fired for it (once the other side sends on it). */
+  announced = false;
+  constructor(
+    readonly kind: "audio" | "video",
+    public direction: Direction,
+    readonly sender: FakeSender,
+    readonly byAddTrack: boolean,
+  ) {
+    this.receiver = { track: new FakeTrack(kind) };
+  }
+}
+
+/** One media section of a fake SDP: `m=video sendrecv`. */
+function sections(sdp: string): { kind: "audio" | "video"; direction: Direction }[] {
+  return [...sdp.matchAll(/^m=(audio|video) (\w+)$/gm)].map((m) => ({
+    kind: m[1] as "audio" | "video",
+    direction: m[2] as Direction,
+  }));
+}
 
 class FakePeer {
   localDescription: Description | null = null;
@@ -109,20 +177,17 @@ class FakePeer {
   ontrack: ((event: { track: FakeTrack; streams: FakeStream[] }) => void) | null = null;
   onconnectionstatechange: (() => void) | null = null;
   oniceconnectionstatechange: (() => void) | null = null;
-  readonly senders: {
-    track: FakeTrack | null;
-    replaceTrack: (track: FakeTrack | null) => Promise<void>;
-    getParameters: () => { encodings: { maxBitrate?: number; priority?: string }[] };
-    setParameters: (params: { encodings?: { maxBitrate?: number; priority?: string }[] }) => Promise<void>;
-  }[] = [];
+  readonly list: FakeTransceiver[] = [];
+  /** addTransceiver calls, as `kind:direction`. */
   readonly transceivers: string[] = [];
   readonly remoteCandidates: unknown[] = [];
-  readonly remoteTracks: FakeTrack[] = [];
   readonly descriptionsSet: string[] = [];
   readonly tuned: { kind: string; maxBitrate?: number; priority?: string }[] = [];
   closed = false;
   /** The network refuses every path (for timeouts). */
   blocked = false;
+  /** Offers leave video out, as an older app's voice call did. */
+  legacyVoice = false;
   private generation = 0;
 
   constructor(
@@ -137,39 +202,45 @@ class FakePeer {
     return { ...this.config };
   }
 
-  addTrack(track: FakeTrack): unknown {
-    const sender = {
-      track: track as FakeTrack | null,
-      replaceTrack: async (next: FakeTrack | null) => {
-        sender.track = next;
-      },
-      getParameters: () => ({ encodings: [{}] }),
-      setParameters: async (params: { encodings?: { maxBitrate?: number; priority?: string }[] }) => {
-        const encoding = params.encodings?.[0];
-        this.tuned.push({ kind: sender.track?.kind ?? "", maxBitrate: encoding?.maxBitrate, priority: encoding?.priority });
-      },
-    };
-    this.senders.push(sender);
+  addTrack(track: FakeTrack): FakeSender {
+    const sender = new FakeSender(track, this);
+    this.list.push(new FakeTransceiver(track.kind, "sendrecv", sender, true));
     return sender;
   }
-  addTransceiver(kind: string, init: { direction: string }): void {
-    this.transceivers.push(`${kind}:${init.direction}`);
+  addTransceiver(kind: "audio" | "video", init: { direction?: Direction }): FakeTransceiver {
+    const transceiver = new FakeTransceiver(kind, init.direction ?? "sendrecv", new FakeSender(null, this), false);
+    this.list.push(transceiver);
+    this.transceivers.push(`${kind}:${transceiver.direction}`);
+    return transceiver;
   }
-  getSenders(): unknown[] {
-    return this.senders;
+  getTransceivers(): FakeTransceiver[] {
+    return [...this.list];
   }
-  private describe(type: string): string {
-    const kinds = [...this.senders.flatMap((s) => (s.track ? [s.track.kind] : []))];
-    return `v=0\r\nfake-${type} peer=${this.name} gen=${this.generation} sends=${kinds.join(",")}\r\n`;
+  getSenders(): FakeSender[] {
+    return this.list.map((t) => t.sender);
+  }
+  /** The sender of the video section (the one the camera goes on). */
+  get videoSender(): FakeSender | undefined {
+    return this.list.find((t) => t.kind === "video")?.sender;
+  }
+  private describe(type: string, lines: string[]): string {
+    return `v=0\r\nfake-${type} peer=${this.name} gen=${this.generation}\r\n${lines.map((l) => `${l}\r\n`).join("")}`;
   }
   async createOffer(options?: { iceRestart?: boolean }): Promise<Description> {
     if (options?.iceRestart) this.generation += 1;
-    return { type: "offer", sdp: this.describe("offer") };
+    const offered = this.list.filter((t) => !(this.legacyVoice && t.kind === "video"));
+    return { type: "offer", sdp: this.describe("offer", offered.map((t) => `m=${t.kind} ${t.direction}`)) };
   }
   async createAnswer(): Promise<Description> {
     const remoteGeneration = /gen=(\d+)/.exec(this.remoteDescription?.sdp ?? "")?.[1];
     this.generation = Number(remoteGeneration ?? this.generation);
-    return { type: "answer", sdp: this.describe("answer") };
+    const lines = sections(this.remoteDescription?.sdp ?? "").map((section, index) => {
+      const t = this.list.find((x) => x.mid === String(index));
+      const offered = reversed(section.direction);
+      const answer = t ? direction(sends(t.direction) && sends(offered), receives(t.direction) && receives(offered)) : "inactive";
+      return `m=${section.kind} ${answer}`;
+    });
+    return { type: "answer", sdp: this.describe("answer", lines) };
   }
   async setLocalDescription(description: Description): Promise<void> {
     if (description.type === "rollback") {
@@ -180,6 +251,18 @@ class FakePeer {
     }
     this.localDescription = description;
     this.descriptionsSet.push(`local:${description.type}`);
+    if (description.type === "offer") {
+      let index = 0;
+      for (const t of this.list) {
+        if (this.legacyVoice && t.kind === "video") continue;
+        t.mid = String(index++);
+      }
+    } else {
+      sections(description.sdp).forEach((section, index) => {
+        const t = this.list.find((x) => x.mid === String(index));
+        if (t) t.currentDirection = section.direction;
+      });
+    }
     this.signalingState = description.type === "offer" ? "have-local-offer" : "stable";
     const generation = this.generation;
     setTimeout(() => {
@@ -206,13 +289,27 @@ class FakePeer {
     this.signalingState = description.type === "offer" ? "have-remote-offer" : "stable";
     // A restart needs fresh candidates before it connects again.
     this.remoteCandidates.length = 0;
-    const kinds = /sends=([a-z,]*)/.exec(description.sdp)?.[1]?.split(",").filter(Boolean) ?? [];
-    for (const kind of kinds) {
-      if (this.remoteTracks.some((t) => t.kind === kind)) continue;
-      const track = new FakeTrack(kind as "audio" | "video");
-      this.remoteTracks.push(track);
-      this.ontrack?.({ track, streams: [] });
-    }
+    sections(description.sdp).forEach((section, index) => {
+      const mid = String(index);
+      let t = this.list.find((x) => x.mid === mid);
+      if (description.type === "offer" && !t) {
+        // A section is matched with a transceiver addTrack made (JSEP), or gets a new one that
+        // only receives until told otherwise.
+        t = this.list.find((x) => x.mid === null && x.byAddTrack && x.kind === section.kind);
+        if (!t) {
+          t = new FakeTransceiver(section.kind, "recvonly", new FakeSender(null, this), false);
+          this.list.push(t);
+        }
+        t.mid = mid;
+      }
+      if (!t) return;
+      if (description.type === "answer") t.currentDirection = reversed(section.direction);
+      // The other end sends on it: its track shows up here (once).
+      if (sends(section.direction) && !t.announced) {
+        t.announced = true;
+        this.ontrack?.({ track: t.receiver.track, streams: [] });
+      }
+    });
     this.maybeConnect();
   }
   async addIceCandidate(candidate: unknown): Promise<void> {
@@ -263,6 +360,8 @@ class Device {
   denyCamera = false;
   /** Peer connections made from now on never connect. */
   blockPeers = false;
+  /** Offers leave video out, as an older app's voice call did. */
+  legacyVoice = false;
   cameras = ["cam-front", "cam-back"];
 
   constructor(
@@ -306,6 +405,7 @@ class Device {
       createPeer: (config) => {
         const peer = new FakePeer(this.id, config);
         peer.blocked = this.blockPeers;
+        peer.legacyVoice = this.legacyVoice;
         this.peers.push(peer);
         return peer as unknown as RTCPeerConnection;
       },
@@ -370,6 +470,8 @@ class Server {
   deliverTwice = false;
   /** Holds `POST /calls`'s response back (the ring is out already), until released. */
   holdCreate: Promise<void> | null = null;
+  /** The latest `media_state` per `call id:sending device`, as the server keeps it. */
+  readonly media = new Map<string, string>();
 
   addUser(name: string): User {
     const privateKey = x25519.utils.randomSecretKey();
@@ -419,6 +521,21 @@ class Server {
     return { ...call };
   }
 
+  /** The call as one device reads it: in a live call, with the other device's latest media state. */
+  private forDevice(call: CallInfo, device: Device): CallInfo {
+    const out = this.copy(call);
+    if (call.status !== "active" || !call.callee_device_id) return out;
+    const other =
+      device.id === call.caller_device_id
+        ? call.callee_device_id
+        : device.id === call.callee_device_id
+          ? call.caller_device_id
+          : null;
+    const payload = other ? this.media.get(`${call.id}:${other}`) : undefined;
+    if (other && payload) out.peer_media_state = { from_device_id: other, payload };
+    return out;
+  }
+
   /** Ends a call the way the server does, telling everyone but `except`. */
   end(call: CallInfo, status: CallInfo["status"], reason: string, except: string | null): void {
     call.status = status;
@@ -458,7 +575,7 @@ class Server {
       },
       getCall: async (callId) => {
         log("get");
-        return this.copy(this.get(callId, device));
+        return this.forDevice(this.get(callId, device), device);
       },
       acceptCall: async (callId) => {
         log("accept");
@@ -506,6 +623,7 @@ class Server {
               : null;
         if (!other) throw new ApiError("FORBIDDEN", "Not in this call.", 403);
         this.signals.push({ callId, from: device.id, to: other, type: signalType, payload });
+        if (signalType === "media_state") this.media.set(`${call.id}:${device.id}`, payload);
         const target = this.devices.find((d) => d.id === other);
         if (target) {
           this.deliver(target, {
@@ -523,7 +641,7 @@ class Server {
       },
       heartbeat: async (callId) => {
         log("heartbeat");
-        return this.copy(this.get(callId, device));
+        return this.forDevice(this.get(callId, device), device);
       },
     };
   }
@@ -616,7 +734,16 @@ const ICE = 150;
   check(a1.tone === null && a1.awake && b1.awake, "no tones; screens stay awake");
   check((a1.view?.connectedAt ?? 0) > 0 && (b1.view?.connectedAt ?? 0) > 0, "the timers started");
   check(a1.audio !== null && b1.audio !== null, "each plays the other's audio");
-  check(b1.peer.transceivers.length === 0 && b1.peer.senders.length === 1, "the callee sends its microphone");
+  check(b1.peer.transceivers.length === 0, "the callee adds no section of its own");
+  check(b1.peer.list.find((t) => t.kind === "audio")?.sender.track?.kind === "audio", "the callee sends its microphone");
+  check(a1.peer.transceivers.join() === "video:sendrecv", "a voice call still offers video, both ways");
+  const calleeVideo = b1.peer.list.find((t) => t.kind === "video");
+  check(
+    calleeVideo?.direction === "sendrecv" && calleeVideo.currentDirection === "sendrecv" && calleeVideo.sender.track === null,
+    "the callee takes it both ways, with no camera on it yet",
+  );
+  check(a1.view?.canVideo === true && b1.view?.canVideo === true, "so either side can switch to video");
+  check(a1.view?.cameraOn === false && b1.view?.remoteCamera === false, "no camera in a voice call");
 
   const fromCaller = await plaintexts(server, a1, b1, "caller");
   const fromCallee = await plaintexts(server, b1, a1, "callee");
@@ -686,11 +813,19 @@ const ICE = 150;
   check(b1.peer.descriptionsSet.join() === "remote:offer,local:answer", "the offer was answered once");
   check(a1.peer.descriptionsSet.join() === "local:offer,remote:answer", "the answer was taken once");
   check(a1.view?.remoteVideo === true && a1.view.remoteCamera === true, "alice sees bob's camera");
-  check(a1.view?.hasCamera === true && a1.view.mirrorSelf === true && a1.view.canSwitchCamera, "a mirrored front camera, and a second one");
+  check(a1.view?.cameraOn === true && a1.view.mirrorSelf === true && a1.view.canSwitchCamera, "a mirrored front camera, and a second one");
   check(
     a1.peer.tuned.some((t) => t.kind === "video" && t.maxBitrate === 1_200_000 && t.priority === "low"),
     "video stays near 1.2 Mbps and yields to speech",
   );
+  // A video call goes to voice: both cameras off, no new offer, every event still doubled.
+  const offers = server.signals.filter((s) => s.type === "sdp_offer").length;
+  a1.controller.toggleCamera();
+  b1.controller.toggleCamera();
+  await clock.advance(CAMERA_RELEASE_MS);
+  check(a1.view?.remoteCamera === false && b1.view?.remoteCamera === false, "a video call becomes a voice call");
+  check(a1.peer.videoSender?.track === null && b1.peer.videoSender?.track === null, "no video goes out either way");
+  check(server.signals.filter((s) => s.type === "sdp_offer").length === offers, "without a new offer");
   b1.controller.hangup();
   await clock.advance(0);
   check(a1.view?.endedText === "Call ended", "ended once");
@@ -778,17 +913,24 @@ const ICE = 150;
   a1.denyCamera = true;
   a1.controller.start({ id: bob.id, username: "bob" }, "video");
   await clock.advance(0);
-  check(a1.view?.notice === CAMERA_UNAVAILABLE && a1.view.hasCamera === false, "told the camera is unavailable");
-  check(a1.peer.transceivers.join() === "video:recvonly", "still receives video");
+  check(a1.view?.notice === CAMERA_UNAVAILABLE && a1.view.cameraOn === false, "told the camera is unavailable");
+  check(a1.peer.transceivers.join() === "video:sendrecv", "still offers video both ways, to turn on later");
   b1.controller.accept();
   await clock.advance(ICE);
   await clock.advance(ICE);
   check(phase(a1) === "active" && b1.view?.remoteCamera === false, "bob sees alice's camera is off");
   check(a1.view?.remoteVideo === true && a1.view.remoteCamera === true, "alice sees bob");
   a1.controller.toggleCamera();
-  check(a1.view?.cameraOn === false, "no camera to turn on");
+  await clock.advance(0);
+  check(a1.view?.cameraOn === false, "still no camera to turn on");
+  check(a1.view?.notice === "Allow camera access in your browser to turn on video.", "and why");
   await clock.advance(6_000);
   check(a1.view?.notice === null, "the notice passes");
+  // Allowed now: her video comes on mid-call.
+  a1.denyCamera = false;
+  a1.controller.toggleCamera();
+  await clock.advance(0);
+  check(a1.view?.cameraOn === true && b1.view?.remoteCamera === true, "alice's video comes on");
   // Bob's camera goes off and on.
   b1.controller.toggleCamera();
   await clock.advance(0);
@@ -799,7 +941,8 @@ const ICE = 150;
   // Bob flips his camera.
   await b1.controller.switchCamera();
   check(b1.view?.mirrorSelf === false, "the back camera is not mirrored");
-  check(b1.peer.senders.find((s) => s.track?.kind === "video")?.track?.getSettings().facingMode === "environment", "the sender sends the back camera");
+  check(b1.peer.videoSender?.track?.getSettings().facingMode === "environment", "the sender sends the back camera");
+  check(b1.view?.localStream?.getVideoTracks()[0]?.getSettings().facingMode === "environment", "and our picture shows it");
   a1.controller.hangup();
   await clock.advance(2_000);
 }
@@ -1028,6 +1171,176 @@ const ICE = 150;
   a1.controller.start({ id: bob.id, username: "bob" }, "voice");
   await clock.advance(0);
   check(b2.view === null, "a released controller hears no ring");
+  a1.controller.hangup();
+  await clock.advance(2_000);
+}
+
+/* --- 20. a voice call becomes a video call and back, from either side, without a new offer ---- */
+{
+  const { clock, server, alice, bob } = world();
+  const a1 = new Device(alice, "a1", server, clock);
+  const b1 = new Device(bob, "b1", server, clock);
+  await connect(clock, a1, b1);
+  check(b1.view?.remoteVideo === true && b1.view.remoteCamera === false, "their video track is there, with no picture yet");
+  const offers = () => server.signals.filter((s) => s.type === "sdp_offer").length;
+  const offersBefore = offers();
+  const opened = a1.streams.length;
+
+  // Alice turns video on.
+  a1.controller.toggleCamera();
+  check(a1.view?.cameraPending === true && a1.view.cameraOn === false, "the camera opens");
+  await clock.advance(0);
+  check(a1.view?.cameraOn === true && a1.view.cameraPending === false, "video on");
+  const camera = a1.streams[opened]?.getVideoTracks()[0];
+  check(Boolean(camera) && a1.peer.videoSender?.track === camera, "the camera goes on the video section");
+  check(a1.view?.localStream?.getVideoTracks()[0] === (camera as unknown as MediaStreamTrack), "and into our own picture");
+  check(a1.view?.localStream?.getAudioTracks().length === 1, "next to the microphone");
+  check(a1.view?.mirrorSelf === true && a1.view.canSwitchCamera, "the front camera, mirrored; a second one to flip to");
+  check(b1.view?.remoteCamera === true, "bob is told");
+  check(a1.peer.tuned.some((t) => t.kind === "video" && t.maxBitrate === 1_200_000), "tuned like a video call's video");
+
+  // Bob turns his on too; then alice goes back to voice while bob stays on video.
+  b1.controller.toggleCamera();
+  await clock.advance(0);
+  check(b1.view?.cameraOn === true && a1.view?.remoteCamera === true, "both on video");
+  a1.controller.toggleCamera();
+  check(a1.view?.cameraOn === false, "alice's video off");
+  await clock.advance(0);
+  check(a1.peer.videoSender?.track === null && b1.view?.remoteCamera === false, "nothing more goes out, and bob is told");
+  check(camera?.readyState === "live", "her own picture fades out before the camera closes");
+  await clock.advance(CAMERA_RELEASE_MS);
+  check(camera?.readyState === "ended", "then the camera closes");
+  check(a1.view?.localStream?.getVideoTracks().length === 0, "and leaves her picture");
+  check(a1.view?.remoteCamera === true, "bob's video goes on");
+  b1.controller.toggleCamera();
+  await clock.advance(CAMERA_RELEASE_MS);
+  check(a1.view?.remoteCamera === false && b1.view?.cameraOn === false, "a voice call again");
+
+  check(offers() === offersBefore, "no new offer for any of it");
+  check(phase(a1) === "active" && phase(b1) === "active", "the same call");
+  check(a1.peers.length === 1 && b1.peers.length === 1 && !a1.peer.closed, "on the same connection");
+  check([...server.calls.values()][0].modality === "voice", "the server's call stays as it was placed");
+
+  // On, off and on again quickly: the camera from a moment ago comes back without asking again.
+  a1.controller.toggleCamera();
+  await clock.advance(0);
+  const count = a1.streams.length;
+  a1.controller.toggleCamera();
+  a1.controller.toggleCamera();
+  await clock.advance(0);
+  check(a1.view?.cameraOn === true && a1.streams.length === count, "back on with the same camera");
+  await clock.advance(CAMERA_RELEASE_MS);
+  check(a1.peer.videoSender?.track?.readyState === "live" && b1.view?.remoteCamera === true, "and it stays on");
+  // A press while the camera is still opening is not a second camera.
+  a1.controller.toggleCamera();
+  await clock.advance(CAMERA_RELEASE_MS);
+  a1.controller.toggleCamera();
+  a1.controller.toggleCamera();
+  await clock.advance(0);
+  check(a1.streams.length === count + 1 && a1.view?.cameraOn === true, "one camera per press that counts");
+
+  // Hung up with the camera on: everything closes.
+  a1.controller.hangup();
+  await clock.advance(0);
+  check(a1.streams.every((s) => s.getTracks().every((t) => t.readyState === "ended")), "camera and microphone released");
+  check(b1.view?.endedText === "Call ended", "bob hears it");
+  await clock.advance(2_000);
+  check(a1.view === null && b1.view === null, "both idle");
+}
+
+/* --- 21. a camera refused mid-call; an older caller whose voice call has no video -------------- */
+{
+  const { clock, server, alice, bob } = world();
+  const a1 = new Device(alice, "a1", server, clock);
+  const b1 = new Device(bob, "b1", server, clock);
+  await connect(clock, a1, b1);
+  a1.denyCamera = true;
+  a1.controller.toggleCamera();
+  await clock.advance(0);
+  check(a1.view?.cameraOn === false && a1.view.cameraPending === false, "no camera, no video");
+  check(a1.view?.notice === "Allow camera access in your browser to turn on video.", "and why");
+  check(b1.view?.remoteCamera === false && phase(a1) === "active" && phase(b1) === "active", "the call goes on");
+  a1.controller.hangup();
+  await clock.advance(2_000);
+
+  const old = new Device(alice, "a2", server, clock);
+  old.legacyVoice = true;
+  await connect(clock, old, b1);
+  check(b1.view?.canVideo === false, "an older app's voice call brings no video to switch to");
+  const asked = b1.streams.length;
+  b1.controller.toggleCamera();
+  await clock.advance(0);
+  check(b1.view?.cameraOn === false && b1.streams.length === asked, "the camera is not even opened");
+  check(b1.view?.notice === VIDEO_UNAVAILABLE, "and why");
+  check(phase(b1) === "active" && phase(old) === "active", "the call goes on");
+  old.controller.hangup();
+  await clock.advance(2_000);
+}
+
+/* --- 22. a switch lost in a socket gap is caught up from the server ---------------------------- */
+{
+  const { clock, server, alice, bob } = world();
+  const a1 = new Device(alice, "a1", server, clock);
+  const b1 = new Device(bob, "b1", server, clock);
+  await connect(clock, a1, b1);
+  b1.connected = false;
+  a1.controller.toggleCamera();
+  await clock.advance(0);
+  check(a1.view?.cameraOn === true && b1.view?.remoteCamera === false, "the switch did not reach bob");
+  b1.connected = true;
+  b1.controller.handle({ type: "auth.ok", raw: { type: "auth.ok" } });
+  await clock.advance(0);
+  check(b1.view?.remoteCamera === true, "back on the socket, bob reads it from the server");
+
+  // Lost again, and no reconnect noticed: the next heartbeat brings it.
+  b1.connected = false;
+  a1.controller.toggleCamera();
+  await clock.advance(0);
+  b1.connected = true;
+  check(b1.view?.remoteCamera === true, "the switch back was lost too");
+  await clock.advance(10_000);
+  check(b1.view?.remoteCamera === false, "the heartbeat brings it");
+
+  // The server's copy can be older than one that came over the socket: it changes nothing.
+  await clock.advance(CAMERA_RELEASE_MS);
+  b1.connected = false;
+  a1.controller.toggleCamera();
+  await clock.advance(0);
+  const lost = server.signals.filter((s) => s.from === "a1" && s.type === "media_state").pop()!;
+  b1.connected = true;
+  a1.controller.toggleCamera();
+  await clock.advance(0);
+  check(b1.view?.remoteCamera === false, "bob has the latest: off");
+  server.media.set(`${lost.callId}:a1`, lost.payload);
+  await clock.advance(10_000);
+  check(b1.view?.remoteCamera === false, "an older copy from the server does not undo it");
+  a1.controller.hangup();
+  await clock.advance(2_000);
+}
+
+/* --- 23. the system pauses our camera; the camera goes away ------------------------------------ */
+{
+  const { clock, server, alice, bob } = world();
+  const a1 = new Device(alice, "a1", server, clock);
+  const b1 = new Device(bob, "b1", server, clock);
+  await connect(clock, a1, b1, "video");
+  const camera = a1.peer.videoSender?.track;
+  check(Boolean(camera) && b1.view?.remoteCamera === true, "a video call");
+  camera!.pause(true);
+  await clock.advance(0);
+  check(b1.view?.remoteCamera === false, "paused: bob sees alice's face, not a frozen frame");
+  check(a1.view?.cameraOn === true, "alice's video stays on, waiting for the camera");
+  camera!.pause(false);
+  await clock.advance(0);
+  check(b1.view?.remoteCamera === true, "resumed: her picture again");
+  camera!.readyState = "ended";
+  camera!.onended?.();
+  await clock.advance(0);
+  check(a1.view?.cameraOn === false && a1.view.notice === CAMERA_UNAVAILABLE, "a camera that goes away turns video off");
+  check(b1.view?.remoteCamera === false && a1.peer.videoSender?.track === null, "and bob is told");
+  a1.controller.toggleCamera();
+  await clock.advance(0);
+  check(a1.view?.cameraOn === true && b1.view?.remoteCamera === true, "a camera that comes back can be turned on again");
   a1.controller.hangup();
   await clock.advance(2_000);
 }

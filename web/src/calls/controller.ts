@@ -2,6 +2,7 @@ import { ApiError, type CallInfo, type CallModality, type CallSignalType, type I
 import type { RealtimeEvent } from "../realtime";
 import { callKeys, deriveCallSecret, openSignal, sealSignal, type CallKeys, type CallRole } from "./crypto";
 import {
+  CAMERA_RELEASE_MS,
   CAMERA_UNAVAILABLE,
   CONNECT_TIMEOUT_MS,
   CallFailure,
@@ -17,6 +18,8 @@ import {
   RECONNECT_LIMIT_MS,
   RestartGate,
   SeenSignals,
+  VIDEO_UNAVAILABLE,
+  cameraErrorText,
   cameraOnlyFailure,
   callErrorText,
   endedText,
@@ -46,6 +49,10 @@ import {
  * ICE restarts included; the callee asks for one with `restart`. Every signal is sealed
  * (crypto.ts) and numbered, and every event handler is idempotent: the server may deliver an
  * event twice, and replays a ring after each reconnect.
+ *
+ * Voice or video is not fixed: every call negotiates a video section both ways from the start, so
+ * either side turns its camera on or off at any time by swapping the track on that section and
+ * saying so in `media_state`. No new offer, so the call never drops or stalls for it.
  *
  * Browser APIs come in through `CallEnv`, so the selftest can run two controllers against a fake
  * server and fake peer connections.
@@ -129,6 +136,7 @@ type TimerKey =
   | "restartTimer"
   | "batchTimer"
   | "noticeTimer"
+  | "cameraTimer"
   | "endTimer";
 type IntervalKey = "heartbeat" | "ringCheck";
 
@@ -156,6 +164,13 @@ type Call = {
   triedRelay: boolean;
   local: MediaStream | null;
   remote: MediaStream | null;
+  /** Our video section: the camera's track goes on its sender and comes off it again. */
+  video: RTCRtpTransceiver | null;
+  /** The open camera (also while its picture fades out after Video went off). */
+  camera: MediaStreamTrack | null;
+  /** The browser or the system paused the camera (another app took it, the page went away). */
+  cameraMuted: boolean;
+  cameraPending: boolean;
   /** Caller: the offer made while it rang; true once it is the local description. */
   offerReady: Promise<boolean> | null;
   /** The offer (caller) or answer (callee) went: candidates and media state may follow. */
@@ -171,7 +186,6 @@ type Call = {
   switching: boolean;
   micOn: boolean;
   cameraOn: boolean;
-  hasCamera: boolean;
   canSwitchCamera: boolean;
   mirrorSelf: boolean;
   remoteMic: boolean;
@@ -393,22 +407,22 @@ export class CallController {
     this.publish(call);
   }
 
+  /**
+   * Video on or off: a voice call becomes a video call and back, in either direction, without a
+   * new offer. Only our own camera; theirs is theirs to switch.
+   */
   toggleCamera(): void {
     const call = this.live();
-    if (!call || !call.hasCamera) return;
-    call.cameraOn = !call.cameraOn;
-    for (const track of call.local?.getVideoTracks() ?? []) track.enabled = call.cameraOn;
-    this.sendMediaState(call);
-    this.publish(call);
+    if (!call || call.cameraPending || call.switching) return;
+    if (call.cameraOn) this.cameraOff(call);
+    else void this.cameraOnNow(call);
   }
 
   /** The next camera: the other facing one on a phone, the next device elsewhere. */
   async switchCamera(): Promise<void> {
     const call = this.live();
-    const local = call?.local;
-    if (!call || !local || !call.hasCamera || !call.canSwitchCamera || call.switching) return;
-    const old = local.getVideoTracks()[0];
-    if (!old) return;
+    const old = call?.camera;
+    if (!call || !old || !call.cameraOn || !call.canSwitchCamera || call.switching) return;
     call.switching = true;
     const facing = facingOf(old);
     const oldDevice = old.getSettings?.().deviceId;
@@ -436,26 +450,150 @@ export class CallController {
       fresh?.stop();
       return;
     }
-    const sender = call.pc?.getSenders().find((s) => s.track === old || s.track?.kind === "video") ?? null;
     if (!fresh) {
-      // Neither camera opens now: the call goes on without video.
-      call.hasCamera = false;
-      call.cameraOn = false;
-      await sender?.replaceTrack(null).catch(() => undefined);
-      call.local = this.env.createStream(local.getAudioTracks());
-      this.sendMediaState(call);
-      this.note(call, CAMERA_UNAVAILABLE);
+      // Neither camera opens now: the call goes on without our video.
+      this.cameraOff(call, CAMERA_UNAVAILABLE);
       return;
     }
-    fresh.enabled = call.cameraOn;
-    await sender?.replaceTrack(fresh).catch(() => undefined);
+    fresh.enabled = true;
+    await call.video?.sender.replaceTrack(fresh).catch(() => undefined);
     if (this.gone(call)) {
       fresh.stop();
       return;
     }
-    call.local = this.env.createStream([...local.getAudioTracks(), fresh]);
-    call.mirrorSelf = facingOf(fresh) !== "environment";
+    this.useCamera(call, fresh);
     this.publish(call);
+  }
+
+  /** Video on: the camera opens (or the one still fading out comes back) and goes on our section. */
+  private async cameraOnNow(call: Call): Promise<void> {
+    const video = call.video;
+    if (!video || !this.videoSendable(call)) {
+      this.note(call, VIDEO_UNAVAILABLE);
+      return;
+    }
+    this.stop(call, "cameraTimer");
+    call.cameraPending = true;
+    let track = call.camera?.readyState === "live" ? call.camera : null;
+    if (!track) {
+      this.publish(call);
+      let failure: unknown = null;
+      try {
+        track = (await this.env.getUserMedia({ video: { ...VIDEO, facingMode: "user" } })).getVideoTracks()[0] ?? null;
+      } catch (err) {
+        failure = err;
+      }
+      if (this.gone(call)) {
+        track?.stop();
+        return;
+      }
+      if (!track) {
+        call.cameraPending = false;
+        this.note(call, cameraErrorText(failure));
+        return;
+      }
+    }
+    track.enabled = true;
+    const sent = await video.sender.replaceTrack(track).then(
+      () => true,
+      () => false,
+    );
+    if (this.gone(call)) {
+      track.stop();
+      return;
+    }
+    call.cameraPending = false;
+    if (!sent) {
+      // The camera from a moment ago closes as it was about to; a new one closes now.
+      if (track === call.camera) {
+        this.cameraOff(call, CAMERA_UNAVAILABLE);
+      } else {
+        track.stop();
+        this.note(call, CAMERA_UNAVAILABLE);
+      }
+      return;
+    }
+    if (track !== call.camera) this.useCamera(call, track);
+    call.cameraOn = true;
+    if (call.pc) tuneSenders(call.pc);
+    this.sendMediaState(call);
+    this.publish(call);
+    this.findCameras(call);
+  }
+
+  /**
+   * Video off: nothing more goes out at once and they are told; our own picture fades out, and
+   * only then does the camera close.
+   */
+  private cameraOff(call: Call, notice: string | null = null): void {
+    call.cameraOn = false;
+    call.cameraPending = false;
+    void call.video?.sender.replaceTrack(null).catch(() => undefined);
+    this.sendMediaState(call);
+    if (notice) this.note(call, notice);
+    else this.publish(call);
+    const track = call.camera;
+    this.stop(call, "cameraTimer");
+    call.cameraTimer = this.env.setTimeout(() => {
+      call.cameraTimer = null;
+      if (this.gone(call) || call.cameraOn || call.camera !== track) return;
+      this.useCamera(call, null);
+      this.publish(call);
+    }, CAMERA_RELEASE_MS);
+  }
+
+  /** Makes `track` our camera (null: none), and the local stream to match. */
+  private useCamera(call: Call, track: MediaStreamTrack | null): void {
+    const old = call.camera;
+    if (old && old !== track) {
+      old.onmute = null;
+      old.onunmute = null;
+      old.onended = null;
+      old.stop();
+    }
+    call.camera = track;
+    call.cameraMuted = track?.muted === true;
+    const audio = call.local?.getAudioTracks() ?? [];
+    call.local = this.env.createStream(track ? [...audio, track] : audio);
+    if (!track) return;
+    call.mirrorSelf = facingOf(track) !== "environment";
+    track.onmute = () => this.cameraPaused(call, track, true);
+    track.onunmute = () => this.cameraPaused(call, track, false);
+    // Unplugged, or the permission taken back: the call goes on without our video.
+    track.onended = () => {
+      if (!this.gone(call) && call.camera === track && call.cameraOn) this.cameraOff(call, CAMERA_UNAVAILABLE);
+    };
+  }
+
+  /**
+   * The system paused our camera (another app took it, a phone put the page away) or gave it
+   * back. They are told, so they see our face instead of the last frame, frozen.
+   */
+  private cameraPaused(call: Call, track: MediaStreamTrack, paused: boolean): void {
+    if (this.gone(call) || call.camera !== track || call.cameraMuted === paused) return;
+    call.cameraMuted = paused;
+    if (call.cameraOn) this.sendMediaState(call);
+    this.publish(call);
+  }
+
+  /** Our video can go out in this call: its section was offered both ways (every current app does). */
+  private videoSendable(call: Call): boolean {
+    const video = call.video;
+    if (!video) return false;
+    const direction = video.currentDirection ?? video.direction;
+    return direction === "sendrecv" || direction === "sendonly";
+  }
+
+  /** With a second camera, Flip is offered. */
+  private findCameras(call: Call): void {
+    void this.env
+      .cameras()
+      .then((ids) => {
+        if (this.gone(call)) return;
+        call.canSwitchCamera = ids.length > 1;
+        this.publish(call);
+      })
+      .catch(() => undefined);
   }
 
   setMinimized(minimized: boolean): void {
@@ -608,6 +746,10 @@ export class CallController {
       triedRelay: false,
       local: null,
       remote: null,
+      video: null,
+      camera: null,
+      cameraMuted: false,
+      cameraPending: false,
       offerReady: null,
       negotiated: false,
       outbox: Promise.resolve(),
@@ -618,8 +760,7 @@ export class CallController {
       restartGate: new RestartGate(),
       switching: false,
       micOn: true,
-      cameraOn: init.modality === "video",
-      hasCamera: false,
+      cameraOn: false,
       canSwitchCamera: false,
       mirrorSelf: true,
       remoteMic: true,
@@ -639,6 +780,7 @@ export class CallController {
       restartTimer: null,
       batchTimer: null,
       noticeTimer: null,
+      cameraTimer: null,
       endTimer: null,
       heartbeat: null,
       ringCheck: null,
@@ -784,20 +926,12 @@ export class CallController {
       track.contentHint = "speech";
     }
     const video = stream.getVideoTracks()[0];
-    call.hasCamera = Boolean(video);
-    call.cameraOn = Boolean(video);
-    call.mirrorSelf = facingOf(video) !== "environment";
-    if (cameraFailed) this.note(call, CAMERA_UNAVAILABLE);
     if (video) {
-      void this.env
-        .cameras()
-        .then((ids) => {
-          if (this.gone(call)) return;
-          call.canSwitchCamera = ids.length > 1;
-          this.publish(call);
-        })
-        .catch(() => undefined);
+      this.useCamera(call, video);
+      call.cameraOn = true;
+      this.findCameras(call);
     }
+    if (cameraFailed) this.note(call, CAMERA_UNAVAILABLE);
     this.publish(call);
     return true;
   }
@@ -825,10 +959,15 @@ export class CallController {
     const pc = this.env.createPeer(peerConfig(rtcServers, false));
     call.pc = pc;
     const local = call.local;
-    if (local) for (const track of local.getTracks()) pc.addTrack(track, local);
-    // A video call without our camera still receives theirs.
-    if (call.role === "caller" && call.modality === "video" && !call.hasCamera) {
-      pc.addTransceiver("video", { direction: "recvonly" });
+    if (local) for (const track of local.getAudioTracks()) pc.addTrack(track, local);
+    // Every call carries a video section both ways, with or without a camera on it yet, so
+    // either side can turn video on or off later without another offer. The caller's comes
+    // from here; the callee takes the one the offer brings (answerOffer).
+    if (call.camera && local) {
+      const sender = pc.addTrack(call.camera, local);
+      call.video = pc.getTransceivers().find((t) => t.sender === sender) ?? null;
+    } else if (call.role === "caller") {
+      call.video = pc.addTransceiver("video", { direction: "sendrecv", streams: local ? [local] : [] });
     }
     tuneSenders(pc);
     pc.onicecandidate = (event) => this.gatheredCandidate(call, event.candidate);
@@ -948,6 +1087,8 @@ export class CallController {
           if (call.role === "caller") this.restartIce(call);
           return;
         case "media":
+          // The latest wins: the server's kept copy can arrive after a newer one.
+          if (!call.seen.newerMedia(from, signal.n)) return;
           call.remoteMic = signal.mic;
           call.remoteCamera = signal.camera;
           this.publish(call);
@@ -965,16 +1106,35 @@ export class CallController {
     try {
       await pc.setRemoteDescription({ type: "offer", sdp });
       if (this.gone(call)) return;
+      this.adoptVideo(call, pc);
       await this.flushRemoteCandidates(call);
       const answer = withVoice(await pc.createAnswer());
       await pc.setLocalDescription(answer);
       tuneSenders(pc);
       if (this.gone(call)) return;
       this.send(call, { t: "answer", sdp: pc.localDescription?.sdp ?? answer.sdp ?? "" });
-      if (!call.negotiated) this.negotiated(call);
+      if (!call.negotiated) {
+        this.negotiated(call);
+        // Video is known to be possible (or not) from here.
+        this.publish(call);
+      }
     } catch {
       if (!call.negotiated && !this.gone(call)) this.finish(call, "Couldn’t connect", "hangup");
     }
+  }
+
+  /**
+   * Callee: the offer's video section becomes ours, both ways. Without a camera on it the
+   * browser would answer "receive only", and turning video on later would need a new offer.
+   * An older caller whose voice call brings no video section leaves the call without one.
+   */
+  private adoptVideo(call: Call, pc: RTCPeerConnection): void {
+    if (call.video) return;
+    const video = pc.getTransceivers().find((t) => t.receiver.track?.kind === "video" && t.direction !== "stopped");
+    if (!video) return;
+    if (video.direction === "recvonly") video.direction = "sendrecv";
+    else if (video.direction === "inactive") video.direction = "sendonly";
+    call.video = video;
   }
 
   private async takeAnswer(call: Call, sdp: string): Promise<void> {
@@ -984,6 +1144,8 @@ export class CallController {
     await pc.setRemoteDescription({ type: "answer", sdp });
     tuneSenders(pc);
     await this.flushRemoteCandidates(call);
+    // The answer settles whether our video can go out (an older app may have taken it one way).
+    this.publish(call);
   }
 
   private async addRemoteCandidates(call: Call, candidates: IceCandidateJson[]): Promise<void> {
@@ -1024,9 +1186,11 @@ export class CallController {
     while (call.gathered.length > 0) this.send(call, { t: "ice", cs: call.gathered.splice(0, ICE_BATCH_MAX) });
   }
 
+  /** What we send now. A camera the system paused counts as off: they see our face, not a still. */
   private sendMediaState(call: Call): void {
     if (!call.negotiated) return;
-    this.send(call, { t: "media", mic: call.micOn, camera: call.hasCamera && call.cameraOn });
+    const camera = call.cameraOn && call.camera !== null && !call.cameraMuted;
+    this.send(call, { t: "media", mic: call.micOn, camera });
   }
 
   /* --- media and the connection ------------------------------------------------------------ */
@@ -1193,9 +1357,22 @@ export class CallController {
     if (info.status === "active") {
       if (call.role === "caller") this.answered(call, info);
       else if (call.phase === "incoming") this.finish(call, "Answered on another device", null);
+      this.catchUpMedia(call, info);
       return;
     }
     this.finish(call, endedText(info.status, info.ended_reason, call.role), null);
+  }
+
+  /**
+   * The other device's latest media state as the server kept it: a camera switch whose signal
+   * was lost in a socket gap still arrives, at the latest with the next heartbeat. It is opened
+   * and checked like any signal; one already taken, or older than one taken, changes nothing.
+   */
+  private catchUpMedia(call: Call, info: CallInfo): void {
+    const kept = info.peer_media_state;
+    if (!kept?.payload || !call.peerDevice || !sameId(kept.from_device_id, call.peerDevice)) return;
+    const from = kept.from_device_id;
+    call.inbox = call.inbox.then(() => this.receive(call, from, "media_state", kept.payload)).catch(() => undefined);
   }
 
   /* --- ending ----------------------------------------------------------------------------- */
@@ -1248,6 +1425,7 @@ export class CallController {
       "restartTimer",
       "batchTimer",
       "noticeTimer",
+      "cameraTimer",
     ] as const) {
       this.stop(call, key);
     }
@@ -1268,10 +1446,21 @@ export class CallController {
       }
       call.pc = null;
     }
+    const camera = call.camera;
+    if (camera) {
+      camera.onmute = null;
+      camera.onunmute = null;
+      camera.onended = null;
+      camera.stop();
+    }
     stopTracks(call.local);
     stopTracks(call.remote);
     call.local = null;
     call.remote = null;
+    call.video = null;
+    call.camera = null;
+    call.cameraOn = false;
+    call.cameraPending = false;
     call.remoteVideo = false;
     call.audioBlocked = false;
     void this.env.playAudio(null);
@@ -1355,8 +1544,9 @@ export class CallController {
       reconnecting: call.reconnecting,
       connectedAt: call.connectedAt,
       micOn: call.micOn,
-      cameraOn: call.cameraOn,
-      hasCamera: call.hasCamera,
+      cameraOn: call.cameraOn && call.camera !== null,
+      cameraPending: call.cameraPending,
+      canVideo: this.videoSendable(call),
       canSwitchCamera: call.canSwitchCamera,
       mirrorSelf: call.mirrorSelf,
       remoteMic: call.remoteMic,

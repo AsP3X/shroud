@@ -3,6 +3,8 @@
 //! Human: The server never sees call media, nor what the signals say — `payload` is sealed
 //! between the two people (docs/calls.md). It rings devices, remembers which two devices are
 //! in a call, and ends calls whose devices went quiet, so nobody stays "busy" after a crash.
+//! Switching a call between voice and video is the devices' business (a sealed `media_state`);
+//! the server keeps each device's latest one so the other can catch up after a gap.
 //! Agent: Contacts-only; protocol 2 only; signals go to the other device in the call
 //! (RealtimeHub::publish_to_device); pushes via PushService; `spawn_call_gc` every 10 s.
 
@@ -25,6 +27,8 @@ use crate::routes::contacts::{are_contacts, is_blocked_either_way};
 use crate::state::AppState;
 
 const MAX_SIGNAL_BYTES: usize = 64 * 1024;
+/// A `media_state` is a few flags; the server keeps the latest one per device, so it stays small.
+const MAX_MEDIA_STATE_BYTES: usize = 4 * 1024;
 /// A call nobody answers stops ringing after this long (`missed`, `timeout`).
 pub const RINGING_TIMEOUT_SECS: i64 = 60;
 /// A call ends when one of its devices has not been heard from for this long. Devices report
@@ -47,12 +51,15 @@ const HISTORY_MAX_LIMIT: i64 = 100;
 const CALL_FIELDS: &str = r#"
     c.id, c.caller_user_id, c.caller_device_id, c.callee_user_id, c.callee_device_id,
     c.modality, c.status, c.ended_reason, c.created_at, c.answered_at, c.ended_at, c.protocol,
+    c.caller_media_state, c.callee_media_state,
     cu.username AS caller_username, ce.username AS callee_username
 "#;
 const CALL_JOINS: &str = r#"
     LEFT JOIN users cu ON cu.id = c.caller_user_id
     LEFT JOIN users ce ON ce.id = c.callee_user_id
 "#;
+/// Part of every `SET` that ends a call: the kept media states go with it.
+const CLEAR_MEDIA_STATES: &str = "caller_media_state = NULL, callee_media_state = NULL";
 
 #[derive(Debug, Deserialize)]
 pub struct CreateCallRequest {
@@ -103,6 +110,17 @@ pub struct CallResponse {
     pub answered_at: Option<DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ended_at: Option<DateTime<Utc>>,
+    /// Only for one of the two devices in a live call (`GET /calls/:id`, heartbeat): the latest
+    /// `media_state` the other device sent, so a missed camera switch is caught up.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peer_media_state: Option<PeerMediaState>,
+}
+
+/// A sealed `media_state` signal as the other device sent it (see `call.signal`).
+#[derive(Debug, Serialize)]
+pub struct PeerMediaState {
+    pub from_device_id: Uuid,
+    pub payload: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -129,6 +147,8 @@ struct CallRow {
     answered_at: Option<DateTime<Utc>>,
     ended_at: Option<DateTime<Utc>>,
     protocol: i16,
+    caller_media_state: Option<String>,
+    callee_media_state: Option<String>,
     caller_username: Option<String>,
     callee_username: Option<String>,
 }
@@ -136,6 +156,26 @@ struct CallRow {
 impl CallRow {
     fn is_live(&self) -> bool {
         self.status == "ringing" || self.status == "active"
+    }
+
+    /// The latest media state the other device in the call sent, when `device_id` is one of
+    /// the two devices in this live call; `None` for anybody else.
+    fn media_state_for(&self, device_id: Uuid) -> Option<PeerMediaState> {
+        if self.status != "active" {
+            return None;
+        }
+        let callee_device_id = self.callee_device_id?;
+        let (from_device_id, payload) = if device_id == self.caller_device_id {
+            (callee_device_id, self.callee_media_state.as_ref()?)
+        } else if device_id == callee_device_id {
+            (self.caller_device_id, self.caller_media_state.as_ref()?)
+        } else {
+            return None;
+        };
+        Some(PeerMediaState {
+            from_device_id,
+            payload: payload.clone(),
+        })
     }
 }
 
@@ -351,7 +391,7 @@ pub async fn list_calls(
     }))
 }
 
-/// `GET /calls/:id`
+/// `GET /calls/:id` — for a device in the call, with the other device's latest media state.
 pub async fn get_call(
     State(state): State<AppState>,
     auth: AuthContext,
@@ -361,7 +401,7 @@ pub async fn get_call(
         .await?
         .ok_or_else(|| AppError::not_found("Call not found."))?;
     ensure_participant(&call, auth.user_id)?;
-    Ok(Json(call_to_response(&call)))
+    Ok(Json(call_to_device_response(&call, auth.device_id)))
 }
 
 /// `POST /calls/:id/accept` — this device answers; the others stop ringing.
@@ -480,6 +520,12 @@ pub async fn signal_call(
             "signal payload must be 1–{MAX_SIGNAL_BYTES} bytes."
         )));
     }
+    let media_state = signal_type == "media_state";
+    if media_state && body.payload.len() > MAX_MEDIA_STATE_BYTES {
+        return Err(AppError::validation(format!(
+            "media_state payload must be at most {MAX_MEDIA_STATE_BYTES} bytes."
+        )));
+    }
 
     let call = load_call(&state.pool, call_id)
         .await?
@@ -512,7 +558,15 @@ pub async fn signal_call(
         (call.caller_user_id, call.caller_device_id)
     };
 
-    touch_participant(&state.pool, call_id, auth.device_id).await?;
+    // Human: A camera switched on or off must reach the other device even if its socket was
+    // down just then: it reads this back on its next heartbeat, or when it reconnects.
+    touch_participant(
+        &state.pool,
+        call_id,
+        auth.device_id,
+        media_state.then_some(body.payload.as_str()),
+    )
+    .await?;
 
     let event = serde_json::json!({
         "type": "call.signal",
@@ -532,7 +586,8 @@ pub async fn signal_call(
 }
 
 /// `POST /calls/:id/heartbeat` — "this device is still in the call". Answers with the call,
-/// so a device that missed `call.ended` learns it here.
+/// so a device that missed `call.ended` learns it here, and with the other device's latest
+/// media state, so it also learns a camera switch it missed.
 pub async fn heartbeat_call(
     State(state): State<AppState>,
     auth: AuthContext,
@@ -581,7 +636,7 @@ pub async fn heartbeat_call(
             call
         }
     };
-    Ok(Json(call_to_response(&call)))
+    Ok(Json(call_to_device_response(&call, auth.device_id)))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -630,7 +685,8 @@ async fn end_call_as(
             UPDATE calls
             SET status = $1,
                 ended_reason = $2,
-                ended_at = now()
+                ended_at = now(),
+                {CLEAR_MEDIA_STATES}
             WHERE id = $3 AND status IN ('ringing', 'active')
             RETURNING *
         )
@@ -723,22 +779,33 @@ fn ensure_participant(call: &CallRow, user_id: Uuid) -> Result<(), AppError> {
     }
 }
 
-/// Records that `device_id` was heard from in a live call it is part of.
+/// Records that `device_id` was heard from in a live call it is part of, and keeps `media_state`
+/// (a sealed `media_state` signal) as that device's latest when there is one.
 async fn touch_participant(
     pool: &sqlx::PgPool,
     call_id: Uuid,
     device_id: Uuid,
+    media_state: Option<&str>,
 ) -> Result<(), AppError> {
     sqlx::query(
         r#"
         UPDATE calls
         SET caller_seen_at = CASE WHEN caller_device_id = $2 THEN now() ELSE caller_seen_at END,
-            callee_seen_at = CASE WHEN callee_device_id = $2 THEN now() ELSE callee_seen_at END
+            callee_seen_at = CASE WHEN callee_device_id = $2 THEN now() ELSE callee_seen_at END,
+            caller_media_state = CASE
+                WHEN $3::text IS NOT NULL AND caller_device_id = $2 THEN $3
+                ELSE caller_media_state
+            END,
+            callee_media_state = CASE
+                WHEN $3::text IS NOT NULL AND callee_device_id = $2 THEN $3
+                ELSE callee_media_state
+            END
         WHERE id = $1 AND status IN ('ringing', 'active')
         "#,
     )
     .bind(call_id)
     .bind(device_id)
+    .bind(media_state)
     .execute(pool)
     .await
     .map_err(|err| AppError::Internal(format!("touch call failed: {err}")))?;
@@ -797,7 +864,8 @@ async fn end_live_calls_of(
                     WHEN status = 'ringing' THEN 'declined'
                     ELSE 'hangup'
                 END,
-                ended_at = now()
+                ended_at = now(),
+                {CLEAR_MEDIA_STATES}
             WHERE status IN ('ringing', 'active')
               AND (caller_user_id = $1 OR callee_user_id = $1)
             RETURNING *
@@ -837,6 +905,16 @@ fn call_to_response(row: &CallRow) -> CallResponse {
         created_at: row.created_at,
         answered_at: row.answered_at,
         ended_at: row.ended_at,
+        peer_media_state: None,
+    }
+}
+
+/// The call as `device_id` reads it: with the other device's latest media state when it is
+/// one of the two devices in the live call.
+fn call_to_device_response(row: &CallRow, device_id: Uuid) -> CallResponse {
+    CallResponse {
+        peer_media_state: row.media_state_for(device_id),
+        ..call_to_response(row)
     }
 }
 
@@ -936,7 +1014,7 @@ pub async fn end_stale_calls(
             r#"
             WITH c AS (
                 UPDATE calls
-                SET status = $3, ended_reason = $4, ended_at = now()
+                SET status = $3, ended_reason = $4, ended_at = now(), {CLEAR_MEDIA_STATES}
                 WHERE {condition}
                   AND ($2::uuid[] IS NULL
                        OR caller_user_id = ANY($2) OR callee_user_id = ANY($2))
@@ -982,6 +1060,63 @@ pub fn spawn_call_gc(state: AppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn active_call(caller_device: Uuid, callee_device: Uuid) -> CallRow {
+        CallRow {
+            id: Uuid::new_v4(),
+            caller_user_id: Uuid::new_v4(),
+            caller_device_id: caller_device,
+            callee_user_id: Uuid::new_v4(),
+            callee_device_id: Some(callee_device),
+            modality: "voice".into(),
+            status: "active".into(),
+            ended_reason: None,
+            created_at: Utc::now(),
+            answered_at: Some(Utc::now()),
+            ended_at: None,
+            protocol: CALL_PROTOCOL,
+            caller_media_state: Some("c1.caller".into()),
+            callee_media_state: Some("c1.callee".into()),
+            caller_username: None,
+            callee_username: None,
+        }
+    }
+
+    #[test]
+    fn each_device_in_a_call_reads_only_the_other_ones_media_state() {
+        let (caller, callee) = (Uuid::new_v4(), Uuid::new_v4());
+        let call = active_call(caller, callee);
+
+        let seen_by_caller = call
+            .media_state_for(caller)
+            .expect("caller reads the callee's");
+        assert_eq!(seen_by_caller.from_device_id, callee);
+        assert_eq!(seen_by_caller.payload, "c1.callee");
+        let seen_by_callee = call
+            .media_state_for(callee)
+            .expect("callee reads the caller's");
+        assert_eq!(seen_by_callee.from_device_id, caller);
+        assert_eq!(seen_by_callee.payload, "c1.caller");
+        // Another device of either person, or anybody else, reads nothing.
+        assert!(call.media_state_for(Uuid::new_v4()).is_none());
+
+        // Nothing sent yet by the other side: nothing to read.
+        let quiet = CallRow {
+            callee_media_state: None,
+            ..active_call(caller, callee)
+        };
+        assert!(quiet.media_state_for(caller).is_none());
+        assert!(quiet.media_state_for(callee).is_some());
+
+        // Only while the call runs.
+        for status in ["ringing", "ended", "missed"] {
+            let over = CallRow {
+                status: status.into(),
+                ..active_call(caller, callee)
+            };
+            assert!(over.media_state_for(caller).is_none(), "{status}");
+        }
+    }
 
     #[test]
     fn busy_lock_keys_differ_per_user_and_are_stable() {

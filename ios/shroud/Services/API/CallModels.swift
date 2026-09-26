@@ -66,6 +66,10 @@ struct CallDTO: Decodable, Equatable, Sendable, Identifiable {
     let createdAt: Date
     let answeredAt: Date?
     let endedAt: Date?
+    /// Only in `GET /calls/:id` and heartbeat answers to one of the two devices in a live call:
+    /// the other device's latest sealed `media_state`, so a camera switch missed in a socket gap
+    /// is caught up.
+    let peerMediaState: PeerMediaStateDTO?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -82,6 +86,7 @@ struct CallDTO: Decodable, Equatable, Sendable, Identifiable {
         case createdAt = "created_at"
         case answeredAt = "answered_at"
         case endedAt = "ended_at"
+        case peerMediaState = "peer_media_state"
     }
 
     var callModality: CallModality {
@@ -94,6 +99,17 @@ struct CallDTO: Decodable, Equatable, Sendable, Identifiable {
 
     var isLive: Bool {
         status == "ringing" || status == "active"
+    }
+}
+
+/// A sealed `media_state` signal the server kept for the other device in the call.
+struct PeerMediaStateDTO: Decodable, Equatable, Sendable {
+    let fromDeviceId: UUID
+    let payload: String
+
+    enum CodingKeys: String, CodingKey {
+        case fromDeviceId = "from_device_id"
+        case payload
     }
 }
 

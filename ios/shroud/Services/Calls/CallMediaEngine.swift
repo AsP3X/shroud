@@ -3,6 +3,11 @@ import WebRTC
 
 /// The WebRTC side of one call: peer connection, local audio/video tracks, remote video.
 /// The controller handles signaling and calls in here with SDP and candidates.
+///
+/// Human: Every call carries a video section both ways from the start, a voice call too, with no
+/// camera on it. Turning video on or off mid-call puts the camera's track on that section's
+/// sender or takes it off: no new offer, so the call never drops or stalls for it
+/// (docs/calls.md, "Switching between voice and video").
 @MainActor
 final class CallMediaEngine: NSObject {
     enum EngineError: LocalizedError {
@@ -29,6 +34,12 @@ final class CallMediaEngine: NSObject {
     var onLocalCandidate: ((IceCandidatePayload) -> Void)?
     var onConnection: ((Connection) -> Void)?
     var onRemoteVideo: ((RTCVideoTrack?) -> Void)?
+    /// The first frame of the other side's video since `awaitRemoteFrame()`.
+    var onRemoteFrame: (() -> Void)?
+    /// The first frame of our camera since it was switched on.
+    var onLocalFrame: (() -> Void)?
+    /// The system paused our camera (true) or let it go on (false).
+    var onCameraPaused: ((Bool) -> Void)?
 
     private(set) var localVideoTrack: RTCVideoTrack?
     private(set) var remoteVideoTrack: RTCVideoTrack?
@@ -41,10 +52,15 @@ final class CallMediaEngine: NSObject {
     /// Kept from `add`: `connection.senders` hops to the signaling thread on every read, and
     /// the speaking indicator asks for this sender many times a second.
     private var audioSender: RTCRtpSender?
+    /// Our video section: the caller's from `start`, the callee's from the offer.
+    private var videoTransceiver: RTCRtpTransceiver?
+    private var cameraOn = false
     private var camera: CallCamera?
     #if DEBUG && targetEnvironment(simulator)
     private var testPattern: TestPatternCapturer?
     #endif
+    private let remoteFrames = FrameWatch()
+    private let localFrames = FrameWatch()
 
     private static let factory = RTCPeerConnectionFactory(
         encoderFactory: RTCDefaultVideoEncoderFactory(),
@@ -52,14 +68,28 @@ final class CallMediaEngine: NSObject {
     )
 
     var usesFrontCamera: Bool { camera?.usesFrontCamera ?? true }
-    var canSwitchCamera: Bool { camera != nil }
+    var canSwitchCamera: Bool { camera != nil && cameraOn }
+    /// Our camera is on and on the video section.
+    var isCameraOn: Bool { cameraOn }
 
     /// True when the caller can set a new offer (the previous one has its answer).
     var canOffer: Bool {
         peerConnection?.signalingState == .stable
     }
 
-    func start(iceServers: [IceServerDTO], video: Bool) {
+    /// Our video can go out in this call: its video section goes both ways (every current app
+    /// offers one; an older app's voice call brought none, and then video stays off).
+    var canSendVideo: Bool {
+        guard let video = videoTransceiver, !video.isStopped else { return false }
+        var current = RTCRtpTransceiverDirection.inactive
+        let direction = video.currentDirection(&current) ? current : video.direction
+        return direction == .sendRecv || direction == .sendOnly
+    }
+
+    /// - Parameters:
+    ///   - video: Start with the camera on (a video call, and the camera may be used).
+    ///   - offering: The caller. Its offer brings the video section; the callee takes that one.
+    func start(iceServers: [IceServerDTO], video: Bool, offering: Bool) {
         close()
         peerLink = .new
         iceLink = .new
@@ -99,32 +129,82 @@ final class CallMediaEngine: NSObject {
         audioSender = connection.add(audio, streamIds: ["shroud"])
         audioTrack = audio
 
-        if video {
-            if CallCamera.isAvailable || Self.simulatorPattern {
-                let source = Self.factory.videoSource()
-                source.adaptOutputFormat(toWidth: 1280, height: 720, fps: 30)
-                let track = Self.factory.videoTrack(with: source, trackId: "shroud-video")
-                connection.add(track, streamIds: ["shroud"])
-                localVideoTrack = track
-                if CallCamera.isAvailable {
-                    let camera = CallCamera(source: source)
-                    camera.start()
-                    self.camera = camera
-                } else {
-                    #if DEBUG && targetEnvironment(simulator)
-                    let pattern = TestPatternCapturer(delegate: source)
-                    pattern.start()
-                    testPattern = pattern
-                    #endif
-                }
-            } else {
-                // No camera: still receive the other side's video.
-                let parameters = RTCRtpTransceiverInit()
-                parameters.direction = .recvOnly
-                connection.addTransceiver(of: .video, init: parameters)
-            }
+        remoteFrames.setHandler { [weak self] in self?.onRemoteFrame?() }
+        localFrames.setHandler { [weak self] in self?.onLocalFrame?() }
+        remoteFrames.arm()
+
+        if video, let track = makeVideoTrack() {
+            // Added as a track, so a callee's is matched with the offer's video section.
+            connection.add(track, streamIds: ["shroud"])
+            videoTransceiver = connection.transceivers.first { $0.mediaType == .video }
+            startCapture(track)
+        } else if offering {
+            // No camera yet: the section still goes both ways, for a camera switched on later.
+            let parameters = RTCRtpTransceiverInit()
+            parameters.direction = .sendRecv
+            parameters.streamIds = ["shroud"]
+            videoTransceiver = connection.addTransceiver(of: .video, init: parameters)
         }
         tuneSenders()
+    }
+
+    /// Video on mid-call: the camera goes on our video section (made now, or the one from
+    /// before). False when there is no section to send on, or no camera.
+    func startCamera() -> Bool {
+        guard peerConnection != nil, let video = videoTransceiver, canSendVideo else { return false }
+        guard let track = localVideoTrack ?? makeVideoTrack() else { return false }
+        video.sender.track = track
+        startCapture(track)
+        tuneSenders()
+        return true
+    }
+
+    /// Video off: nothing more goes out, and the camera stops, its light with it.
+    func stopCamera() {
+        guard cameraOn else { return }
+        cameraOn = false
+        videoTransceiver?.sender.track = nil
+        localVideoTrack?.isEnabled = false
+        localFrames.disarm()
+        camera?.stop()
+        #if DEBUG && targetEnvironment(simulator)
+        testPattern?.stop()
+        #endif
+    }
+
+    /// The other side switched its camera on: `onRemoteFrame` fires with its first frame.
+    func awaitRemoteFrame() {
+        remoteFrames.arm()
+    }
+
+    /// A camera track and what feeds it: the device camera, or the simulator's test pattern.
+    private func makeVideoTrack() -> RTCVideoTrack? {
+        guard CallCamera.isAvailable || Self.simulatorPattern else { return nil }
+        let source = Self.factory.videoSource()
+        source.adaptOutputFormat(toWidth: 1280, height: 720, fps: 30)
+        let track = Self.factory.videoTrack(with: source, trackId: "shroud-video")
+        if CallCamera.isAvailable {
+            let camera = CallCamera(source: source)
+            camera.onPaused = { [weak self] paused in self?.onCameraPaused?(paused) }
+            self.camera = camera
+        } else {
+            #if DEBUG && targetEnvironment(simulator)
+            testPattern = TestPatternCapturer(delegate: source)
+            #endif
+        }
+        track.add(localFrames)
+        localVideoTrack = track
+        return track
+    }
+
+    private func startCapture(_ track: RTCVideoTrack) {
+        track.isEnabled = true
+        cameraOn = true
+        localFrames.arm()
+        camera?.start()
+        #if DEBUG && targetEnvironment(simulator)
+        testPattern?.start()
+        #endif
     }
 
     /// Direct paths first. After `failed`, the next gathering uses only the TURN relay.
@@ -163,17 +243,11 @@ final class CallMediaEngine: NSObject {
         #endif
     }
 
-    /// Caller: a new offer, set as the local description.
-    func makeOffer(iceRestart: Bool, receiveVideo: Bool) async throws -> String {
+    /// Caller: a new offer, set as the local description. Its sections are the transceivers',
+    /// video included; the old receive-video constraint would turn that one to send-only.
+    func makeOffer(iceRestart: Bool) async throws -> String {
         guard let connection = peerConnection else { throw EngineError.notStarted }
-        var mandatory = [
-            kRTCMediaConstraintsOfferToReceiveAudio: kRTCMediaConstraintsValueTrue,
-            kRTCMediaConstraintsOfferToReceiveVideo: receiveVideo
-                ? kRTCMediaConstraintsValueTrue : kRTCMediaConstraintsValueFalse,
-        ]
-        if iceRestart {
-            mandatory[kRTCMediaConstraintsIceRestart] = kRTCMediaConstraintsValueTrue
-        }
+        let mandatory = iceRestart ? [kRTCMediaConstraintsIceRestart: kRTCMediaConstraintsValueTrue] : nil
         let constraints = RTCMediaConstraints(mandatoryConstraints: mandatory, optionalConstraints: nil)
         let sdp: String = try await withCheckedThrowingContinuation { cont in
             connection.offer(for: constraints) { description, error in
@@ -194,6 +268,7 @@ final class CallMediaEngine: NSObject {
     func answer(offer: String) async throws -> String {
         guard let connection = peerConnection else { throw EngineError.notStarted }
         try await setRemote(RTCSessionDescription(type: .offer, sdp: offer), on: connection)
+        adoptOfferedVideo(on: connection)
         let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
         let sdp: String = try await withCheckedThrowingContinuation { cont in
             connection.answer(for: constraints) { description, error in
@@ -209,6 +284,23 @@ final class CallMediaEngine: NSObject {
         tuneSenders()
         refreshRemoteVideo()
         return tuned
+    }
+
+    /// Callee: the offer's video section becomes ours both ways. With no camera on it WebRTC
+    /// would answer "receive only", and a camera switched on later would need a new offer.
+    /// An older caller's voice call brings none: video stays off in that call.
+    private func adoptOfferedVideo(on connection: RTCPeerConnection) {
+        guard videoTransceiver == nil else { return }
+        guard let video = connection.transceivers.first(where: { $0.mediaType == .video && !$0.isStopped }) else {
+            return
+        }
+        var error: NSError?
+        switch video.direction {
+        case .recvOnly: video.setDirection(.sendRecv, error: &error)
+        case .inactive: video.setDirection(.sendOnly, error: &error)
+        default: break
+        }
+        videoTransceiver = video
     }
 
     /// Caller: applies the callee's answer. False when no offer is waiting for one.
@@ -273,26 +365,24 @@ final class CallMediaEngine: NSObject {
         return nil
     }
 
-    func setCameraEnabled(_ enabled: Bool) {
-        localVideoTrack?.isEnabled = enabled
-        if enabled {
-            camera?.start()
-        } else {
-            camera?.stop()
-        }
-    }
-
     func switchCamera() {
+        guard cameraOn else { return }
         camera?.switchCamera()
     }
 
     func close() {
-        camera?.stop()
+        camera?.close()
         camera = nil
         #if DEBUG && targetEnvironment(simulator)
         testPattern?.stop()
         testPattern = nil
         #endif
+        cameraOn = false
+        videoTransceiver = nil
+        remoteFrames.disarm()
+        localFrames.disarm()
+        localVideoTrack?.remove(localFrames)
+        remoteVideoTrack?.remove(remoteFrames)
         // Drop the connection before closing it. WebRTC reports "closed" and late candidates
         // after `close()` returns; those must not land on the next call.
         let connection = peerConnection
@@ -362,12 +452,18 @@ final class CallMediaEngine: NSObject {
     }
 
     /// The remote video track, once a remote description created its receiver.
+    ///
+    /// Agent: compared by id, not identity: `receiver.track` may wrap the same native track in a
+    /// new object on each read, and an ICE restart's answer must keep the view and the frame
+    /// watch where they are.
     private func refreshRemoteVideo() {
         let track = peerConnection?.transceivers
             .first { $0.mediaType == .video }?
             .receiver.track as? RTCVideoTrack
-        guard track !== remoteVideoTrack else { return }
+        guard track?.trackId != remoteVideoTrack?.trackId else { return }
+        remoteVideoTrack?.remove(remoteFrames)
         remoteVideoTrack = track
+        track?.add(remoteFrames)
         onRemoteVideo?(track)
     }
 
@@ -465,6 +561,43 @@ extension CallMediaEngine: RTCPeerConnectionDelegate {
             guard self.peerConnection === peerConnection else { return }
             self.refreshRemoteVideo()
         }
+    }
+}
+
+/// Reports the first frame of a video track after `arm()`, on the main actor.
+///
+/// Human: A camera switched on shows up only once it has a picture, never as a black box or as
+/// the last frame from before it went off.
+/// Agent: WebRTC calls `renderFrame` on its own thread for every frame, so each one costs a lock
+/// and a flag; only the first after `arm()` hops to the main actor.
+nonisolated private final class FrameWatch: NSObject, RTCVideoRenderer, @unchecked Sendable {
+    private let lock = NSLock()
+    private var armed = false
+    private var handler: (@MainActor @Sendable () -> Void)?
+
+    func setHandler(_ handler: @escaping @MainActor @Sendable () -> Void) {
+        lock.withLock { self.handler = handler }
+    }
+
+    func arm() {
+        lock.withLock { armed = true }
+    }
+
+    func disarm() {
+        lock.withLock { armed = false }
+    }
+
+    func setSize(_ size: CGSize) {}
+
+    func renderFrame(_ frame: RTCVideoFrame?) {
+        guard frame != nil else { return }
+        let fire: (@MainActor @Sendable () -> Void)? = lock.withLock {
+            guard armed else { return nil }
+            armed = false
+            return handler
+        }
+        guard let fire else { return }
+        Task { @MainActor in fire() }
     }
 }
 
