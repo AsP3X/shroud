@@ -185,17 +185,24 @@ its content.
 
 ## Pushes
 
-| Device | Incoming call | When it ends unanswered |
+| Device | Incoming call | When the ring ends |
 | --- | --- | --- |
-| iPhone with a VoIP token | PushKit push, even when connected (CallKit ignores a call it already shows) | the app shows "Missed call" itself |
-| iPhone without one (older builds) | alert "Incoming call", only when not connected | alert "Missed call", same `apns-collapse-id` |
-| Browser | Web Push `call`/`video_call`, only when not connected | Web Push `missed_call`, same tag |
+| iPhone with a VoIP token | PushKit push, even when the app is in front (CallKit ignores a call it already shows) | PushKit `call_ended` (same call id) so CallKit stops; the app shows "Missed call" itself |
+| iPhone without one (older builds) | alert "Incoming call", only when that app is not in front | alert "Missed call", same `apns-collapse-id` |
+| Browser | Web Push `call`/`video_call`, only when that tab is not in front | Web Push `missed_call`, same tag |
 
-A PushKit push carries the same `shroud` object as an alert: `{v, k: "call" | "video_call",
+A device counts as in front while its socket is open and it has not sent `{type:"focus", focused:false}`.
+Leaving the app or the tab sends that, so a suspended phone or a hidden tab still gets the push
+even if the socket has not dropped. A socket that never says stays "in front" (older apps show
+their own notices).
+
+A PushKit push carries the same `shroud` object as an alert: `{v, k: "call" | "video_call" | "call_ended",
 call, p: caller, e: sealed caller name}` (`NotificationPayload.swift`), expires when the ringing
 does, and must be reported to CallKit before the handler returns. The app then connects, checks
-the call still rings (`GET /calls/{id}`), and ends the CallKit call at once if not. Per-device
-"notifications off" also stops call pushes; a muted chat does not.
+the call still rings (`GET /calls/{id}`), and ends the CallKit call at once if not. `call_ended`
+ends the CallKit call with that id (or reports one and ends it immediately, which PushKit
+requires even when the call is already over). Per-device "notifications off" also stops call
+pushes; a muted chat does not.
 
 ## TURN
 

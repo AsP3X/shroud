@@ -26,6 +26,8 @@ final class CallKitManager: NSObject {
     static let shared = CallKitManager()
 
     weak var delegate: CallKitManagerDelegate?
+    /// Answer / end / mute that arrived before the call controller existed (a push woke the app).
+    private var pendingActions: [(CallKitManagerDelegate) -> Void] = []
 
     private let provider: CXProvider
     private let callController = CXCallController()
@@ -103,6 +105,24 @@ final class CallKitManager: NSObject {
         callController.callObserver.calls.contains { $0.uuid == id && !$0.hasEnded }
     }
 
+    /// Runs actions that arrived before `delegate` was set. Call once the call exists.
+    func flushPending() {
+        guard let delegate else { return }
+        let queued = pendingActions
+        pendingActions.removeAll()
+        for action in queued {
+            action(delegate)
+        }
+    }
+
+    private func forward(_ body: @escaping (CallKitManagerDelegate) -> Void) {
+        if let delegate {
+            body(delegate)
+        } else {
+            pendingActions.append(body)
+        }
+    }
+
     private func update(name: String, video: Bool) -> CXCallUpdate {
         let update = CXCallUpdate()
         update.remoteHandle = CXHandle(type: .generic, value: name)
@@ -119,34 +139,39 @@ final class CallKitManager: NSObject {
 extension CallKitManager: CXProviderDelegate {
     nonisolated func providerDidReset(_ provider: CXProvider) {
         MainActor.assumeIsolated {
-            delegate?.callKitReset()
+            self.forward { $0.callKitReset() }
         }
     }
 
     nonisolated func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
+        let id = action.callUUID
         MainActor.assumeIsolated {
-            delegate?.callKitStartCall(action.callUUID)
+            self.forward { $0.callKitStartCall(id) }
             action.fulfill()
         }
     }
 
     nonisolated func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
+        let id = action.callUUID
         MainActor.assumeIsolated {
-            delegate?.callKitAnswerCall(action.callUUID)
+            self.forward { $0.callKitAnswerCall(id) }
             action.fulfill()
         }
     }
 
     nonisolated func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
+        let id = action.callUUID
         MainActor.assumeIsolated {
-            delegate?.callKitEndCall(action.callUUID)
+            self.forward { $0.callKitEndCall(id) }
             action.fulfill()
         }
     }
 
     nonisolated func provider(_ provider: CXProvider, perform action: CXSetMutedCallAction) {
+        let id = action.callUUID
+        let muted = action.isMuted
         MainActor.assumeIsolated {
-            delegate?.callKitSetMuted(action.callUUID, muted: action.isMuted)
+            self.forward { $0.callKitSetMuted(id, muted: muted) }
             action.fulfill()
         }
     }
@@ -161,13 +186,13 @@ extension CallKitManager: CXProviderDelegate {
 
     nonisolated func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
         MainActor.assumeIsolated {
-            delegate?.callKitAudioActivated(audioSession)
+            self.forward { $0.callKitAudioActivated(audioSession) }
         }
     }
 
     nonisolated func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
         MainActor.assumeIsolated {
-            delegate?.callKitAudioDeactivated(audioSession)
+            self.forward { $0.callKitAudioDeactivated(audioSession) }
         }
     }
 }

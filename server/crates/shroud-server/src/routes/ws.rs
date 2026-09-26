@@ -39,6 +39,8 @@ struct ClientMessage {
     peer_user_id: Option<Uuid>,
     is_typing: Option<bool>,
     is_recording: Option<bool>,
+    /// `focus`: this app is in front (`true`) or has left (`false`).
+    focused: Option<bool>,
 }
 
 /// `GET /ws` — upgrade to WebSocket.
@@ -238,7 +240,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                         }
                     }
                     Some(Ok(Message::Text(text))) => {
-                        handle_client_text(&state, user_id, device_id, &text).await;
+                        handle_client_text(&state, user_id, device_id, connection_id, &text).await;
                     }
                     Some(Ok(Message::Binary(_))) | Some(Ok(Message::Pong(_))) => {}
                     Some(Err(_)) => break,
@@ -289,7 +291,13 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     tracing::info!(%user_id, %device_id, "ws.disconnected");
 }
 
-async fn handle_client_text(state: &AppState, user_id: Uuid, device_id: Uuid, text: &str) {
+async fn handle_client_text(
+    state: &AppState,
+    user_id: Uuid,
+    device_id: Uuid,
+    connection_id: u64,
+    text: &str,
+) {
     let parsed: ClientMessage = match serde_json::from_str(text) {
         Ok(m) => m,
         Err(_) => {
@@ -337,6 +345,16 @@ async fn handle_client_text(state: &AppState, user_id: Uuid, device_id: Uuid, te
         }
         "auth" => {
             // Already authenticated; ignore duplicate auth frames.
+        }
+        "focus" => {
+            let Some(focused) = parsed.focused else {
+                tracing::debug!(%user_id, "ws.focus missing focused");
+                return;
+            };
+            state
+                .realtime
+                .set_focus(user_id, device_id, connection_id, focused)
+                .await;
         }
         other => {
             tracing::debug!(%user_id, r#type = other, "ws.client unknown type");

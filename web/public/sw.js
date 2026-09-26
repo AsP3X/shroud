@@ -17,6 +17,7 @@ const LINES = {
   call: "Incoming call",
   video_call: "Incoming video call",
   missed_call: "Missed call",
+  call_ended: "Call ended",
   test: "Notifications are working",
 };
 

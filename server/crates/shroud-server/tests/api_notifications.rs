@@ -616,20 +616,35 @@ async fn no_push_when_open_muted_disabled_or_not_a_message() {
     send(&app, &b, &b.user_id, "text").await;
     assert_eq!(count(), 0);
 
-    // An open app (live socket) shows its own notification.
+    // An app in front (live socket, and it has not said otherwise) shows its own notification.
+    let user_id = b.user_id.parse().unwrap();
     let socket = state
         .realtime
-        .subscribe(b.user_id.parse().unwrap(), b.device_id, Uuid::new_v4())
+        .subscribe(user_id, b.device_id, Uuid::new_v4())
         .await
         .expect("subscribe");
     send(&app, &a, &b.user_id, "text").await;
     assert_eq!(count(), 0);
+    // The same socket, once the app has left the foreground, still needs a push: iOS keeps
+    // the TCP connection after suspending, and a hidden browser tab stops running.
     state
         .realtime
-        .unsubscribe(b.user_id.parse().unwrap(), b.device_id, socket.id)
+        .set_focus(user_id, b.device_id, socket.id, false)
         .await;
     send(&app, &a, &b.user_id, "text").await;
     assert_eq!(count(), 1);
+    state
+        .realtime
+        .set_focus(user_id, b.device_id, socket.id, true)
+        .await;
+    send(&app, &a, &b.user_id, "text").await;
+    assert_eq!(count(), 1);
+    state
+        .realtime
+        .unsubscribe(user_id, b.device_id, socket.id)
+        .await;
+    send(&app, &a, &b.user_id, "text").await;
+    assert_eq!(count(), 2);
 
     // A muted chat stays silent; unmuted it pushes again.
     call(
@@ -641,7 +656,7 @@ async fn no_push_when_open_muted_disabled_or_not_a_message() {
     )
     .await;
     send(&app, &a, &b.user_id, "text").await;
-    assert_eq!(count(), 1);
+    assert_eq!(count(), 2);
     call(
         &app,
         "DELETE",
@@ -651,7 +666,7 @@ async fn no_push_when_open_muted_disabled_or_not_a_message() {
     )
     .await;
     send(&app, &a, &b.user_id, "text").await;
-    assert_eq!(count(), 2);
+    assert_eq!(count(), 3);
 
     // Names off: no sealed name. Everything off: nothing.
     call(
@@ -676,7 +691,7 @@ async fn no_push_when_open_muted_disabled_or_not_a_message() {
     )
     .await;
     send(&app, &a, &b.user_id, "text").await;
-    assert_eq!(count(), 3);
+    assert_eq!(count(), 4);
 }
 
 #[tokio::test]
@@ -1154,8 +1169,8 @@ async fn a_call_rings_by_pushkit_and_notifies_closed_devices() {
         "only for the callee"
     );
 
-    // The caller gives up: "Missed call" replaces the notifications; PushKit phones say it
-    // themselves.
+    // The caller gives up: "Missed call" replaces the alert and the Web Push. The PushKit
+    // phone gets a second VoIP push so CallKit stops — it cannot see the socket event.
     let (status, _) = call(
         &app,
         "POST",
@@ -1173,7 +1188,11 @@ async fn a_call_rings_by_pushkit_and_notifies_closed_devices() {
     assert_eq!(browser.len(), 2, "{browser:?}");
     assert_eq!(browser[1].1["kind"], "missed_call");
     assert_eq!(browser[1].1["tag"], "calls");
-    assert_eq!(pushes_to(&state, b_phone.device_id).len(), 1);
+    let phone = pushes_to(&state, b_phone.device_id);
+    assert_eq!(phone.len(), 2, "{phone:?}");
+    assert_eq!(phone[1].1["shroud"]["k"], "call_ended");
+    assert_eq!(phone[1].1["shroud"]["call"], body["id"]);
+    assert!(phone[1].1["aps"]["alert"].is_null());
     assert!(
         routes::calls::ring_to_replay(&state, b_id).await.is_none(),
         "a call given up no longer rings"
@@ -1202,6 +1221,38 @@ async fn a_call_rings_by_pushkit_and_notifies_closed_devices() {
             .iter()
             .all(|(_, p)| p["shroud"]["call"] != second["id"] || p["shroud"]["k"] == "call"),
         "no missed-call push for a declined call"
+    );
+    let ended = pushes_to(&state, b_phone.device_id);
+    assert!(
+        ended
+            .iter()
+            .any(|(_, p)| p["shroud"]["k"] == "call_ended" && p["shroud"]["call"] == second["id"]),
+        "the ringing iPhone is told the declined call is over: {ended:?}"
+    );
+
+    // The iPhone that answers must not be told to drop the call it just took.
+    let (_, third) = call(
+        &app,
+        "POST",
+        "/api/v1/calls",
+        &a.token,
+        Some(json!({ "peer_user_id": b.user_id, "modality": "voice", "protocol": 2 })),
+    )
+    .await;
+    let (status, _) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/calls/{}/accept", third["id"].as_str().unwrap()),
+        &b_phone.token,
+        Some(json!({})),
+    )
+    .await;
+    assert!(status.is_success(), "{status}");
+    assert!(
+        pushes_to(&state, b_phone.device_id).iter().all(|(_, p)| {
+            p["shroud"]["k"] != "call_ended" || p["shroud"]["call"] != third["id"]
+        }),
+        "answering does not end the call on that iPhone"
     );
 }
 

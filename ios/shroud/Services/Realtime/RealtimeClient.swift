@@ -44,6 +44,12 @@ final class RealtimeClient {
     private var holders: Set<Holder> = []
     private var reconnectAttempt = 0
     private var intentionalDisconnect = false
+    /// What the server should treat this app as: in front, or away (background, locked).
+    /// Sent after `auth.ok` and whenever it changes. A live socket counts as in front until
+    /// this says otherwise, which is why a suspended phone used to swallow its pushes.
+    private var wantsFocus = true
+    /// The value the server has been told on this socket, so a repeat is not sent.
+    private var sentFocus: Bool?
 
     /// `holder`'s handler for every event (replaces an earlier one of the same holder).
     func setListener(_ holder: Holder, _ handler: @escaping (RealtimeEvent) -> Void) {
@@ -66,6 +72,32 @@ final class RealtimeClient {
 
     func isHeld(by holder: Holder) -> Bool {
         holders.contains(holder)
+    }
+
+    /// The app came to the front or left it. Takes effect now, and again after the next connect.
+    func noteFocus(_ focused: Bool) {
+        wantsFocus = focused
+    }
+
+    /// Tells the server, if the socket is up. Returns whether that frame was sent.
+    @discardableResult
+    func deliverFocus() async -> Bool {
+        guard case .connected = state, let task else { return false }
+        if sentFocus == wantsFocus { return true }
+        let focused = wantsFocus
+        let payload: [String: Any] = ["type": "focus", "focused": focused]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let string = String(data: data, encoding: .utf8)
+        else { return false }
+        let sent: Bool = await withCheckedContinuation { continuation in
+            task.send(.string(string)) { error in
+                continuation.resume(returning: error == nil)
+            }
+        }
+        if sent, wantsFocus == focused {
+            sentFocus = focused
+        }
+        return sent
     }
 
     private func emit(_ event: RealtimeEvent) {
@@ -101,6 +133,7 @@ final class RealtimeClient {
         task = nil
         session?.invalidateAndCancel()
         session = nil
+        sentFocus = nil
         if state != .disconnected {
             state = .disconnected
         }
@@ -266,7 +299,9 @@ final class RealtimeClient {
         case "auth.ok":
             state = .connected
             reconnectAttempt = 0
+            sentFocus = nil
             startKeepalive()
+            Task { await self.deliverFocus() }
             // A reconnect: a call checks what it may have missed meanwhile.
             emit(.raw(type: type, json: json))
         case "auth.error":

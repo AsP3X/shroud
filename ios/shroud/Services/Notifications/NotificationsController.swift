@@ -46,6 +46,9 @@ final class NotificationsController {
     var isSignedIn = false
     /// The chat on screen (its messages need no banner).
     var activePeerID: UUID?
+    /// The server was told this iPhone is not in front, so it pushes. A local notification
+    /// on top of that push would show the same message twice.
+    private var pushCoversBackground = false
 
     private var bannerDismissTask: Task<Void, Never>?
     private var lastAlertAt: Date?
@@ -94,7 +97,7 @@ final class NotificationsController {
 
         let name = preferences.showSender ? username : nil
         if UIApplication.shared.applicationState != .active {
-            guard preferences.enabled else { return }
+            guard preferences.enabled, !pushCoversBackground else { return }
             postLocal(kind: kind, name: name, peerUserID: peerUserID, conversationID: conversationID)
             return
         }
@@ -132,6 +135,10 @@ final class NotificationsController {
             guard !Task.isCancelled else { return }
             self?.dismissBanner(id: notification.id)
         }
+    }
+
+    func setPushCoversBackground(_ covers: Bool) {
+        pushCoversBackground = covers
     }
 
     func dismissBanner(id: UUID? = nil) {

@@ -21,6 +21,9 @@ const REVOKED_SESSIONS_CHANNEL: &str = "shroud:sessions:revoked";
 /// A ringing call's `call.ring` event, per callee (see [`RealtimeHub::remember_ring`]).
 const RING_KEY_PREFIX: &str = "shroud:ring:";
 const ONLINE_KEY_PREFIX: &str = "shroud:online:";
+/// Whether a connected device is in the foreground (`{connection_id}:1` or `:0`).
+/// Missing means "in front": older clients never say, and they show their own notices.
+const FOCUS_KEY_PREFIX: &str = "shroud:focus:";
 /// Redis online hash entries older than this are treated as stale (crash without unsubscribe).
 pub const ONLINE_TTL_SECS: i64 = 90;
 /// Bounded outbound queue per device — drops events when full (slow-client backpressure).
@@ -30,6 +33,10 @@ pub const MAX_WS_PER_USER: usize = 5;
 
 fn online_key(user_id: Uuid) -> String {
     format!("{ONLINE_KEY_PREFIX}{user_id}")
+}
+
+fn focus_key(user_id: Uuid) -> String {
+    format!("{FOCUS_KEY_PREFIX}{user_id}")
 }
 
 fn unix_now_secs() -> i64 {
@@ -46,6 +53,9 @@ struct Connection {
     /// The session the socket authenticated with.
     session_id: Uuid,
     tx: DeviceTx,
+    /// The app is in front and shows its own notices. A client says otherwise with `focus`;
+    /// until it does, a live socket counts as in front (that is what older apps do).
+    focused: bool,
     /// What this socket last wrote to the Redis online hash. Its cleanup deletes the entry
     /// only while it still holds that: a newer socket of the device, on another replica, may
     /// have written its own since.
@@ -55,6 +65,15 @@ struct Connection {
 /// HDEL the field only while it holds the value the caller wrote.
 const DELETE_IF_UNCHANGED: &str = r#"
 if redis.call('HGET', KEYS[1], ARGV[1]) == ARGV[2] then
+    return redis.call('HDEL', KEYS[1], ARGV[1])
+end
+return 0
+"#;
+
+/// HDEL a focus field only while it still belongs to this socket (`{connection_id}:`).
+const DELETE_FOCUS_IF_OURS: &str = r#"
+local v = redis.call('HGET', KEYS[1], ARGV[1])
+if v and string.sub(v, 1, string.len(ARGV[2])) == ARGV[2] then
     return redis.call('HDEL', KEYS[1], ARGV[1])
 end
 return 0
@@ -188,6 +207,7 @@ impl RealtimeHub {
                     id,
                     session_id,
                     tx,
+                    focused: true,
                     online_ts: None,
                 },
             );
@@ -222,6 +242,42 @@ impl RealtimeHub {
             online_ts
         };
         self.mark_offline(user_id, device_id, online_ts).await;
+        self.clear_focus(user_id, device_id, connection_id).await;
+    }
+
+    /// The app on this socket came to the front, or left it.
+    ///
+    /// Human: A phone the OS just suspended, and a browser tab that is open but not in front,
+    /// still have a socket. Pushes are skipped for a device that is actually in front; these
+    /// are not, so a call and a message still reach them.
+    /// Agent: NO-OP unless `connection_id` still owns the device. Also written to Redis so
+    /// another replica's push decision sees it.
+    pub async fn set_focus(
+        &self,
+        user_id: Uuid,
+        device_id: Uuid,
+        connection_id: u64,
+        focused: bool,
+    ) {
+        {
+            let mut connections = self.connections.write().await;
+            if !connections
+                .devices_by_user
+                .get(&user_id)
+                .is_some_and(|devices| devices.contains(&device_id))
+            {
+                return;
+            }
+            let Some(connection) = connections.by_device.get_mut(&device_id) else {
+                return;
+            };
+            if connection.id != connection_id {
+                return;
+            }
+            connection.focused = focused;
+        }
+        self.write_focus(user_id, device_id, connection_id, focused)
+            .await;
     }
 
     /// Closes the sockets opened with any of `session_ids`, here and on every other replica.
@@ -263,7 +319,7 @@ impl RealtimeHub {
 
     /// Drops this replica's sockets for `session_ids`.
     async fn close_local_sessions(&self, user_id: Uuid, session_ids: &[Uuid]) {
-        let closed: Vec<(Uuid, Option<i64>)> = {
+        let closed: Vec<(Uuid, Option<i64>, Option<u64>)> = {
             let mut connections = self.connections.write().await;
             let devices: Vec<Uuid> = connections
                 .devices_by_user
@@ -281,18 +337,20 @@ impl RealtimeHub {
             devices
                 .into_iter()
                 .map(|device_id| {
-                    let online_ts = connections
-                        .by_device
-                        .get(&device_id)
-                        .and_then(|connection| connection.online_ts);
+                    let connection = connections.by_device.get(&device_id);
+                    let online_ts = connection.and_then(|connection| connection.online_ts);
+                    let connection_id = connection.map(|connection| connection.id);
                     connections.remove(user_id, device_id);
-                    (device_id, online_ts)
+                    (device_id, online_ts, connection_id)
                 })
                 .collect()
         };
-        for (device_id, online_ts) in closed {
+        for (device_id, online_ts, connection_id) in closed {
             tracing::info!(%user_id, %device_id, "realtime.session_closed");
             self.mark_offline(user_id, device_id, online_ts).await;
+            if let Some(connection_id) = connection_id {
+                self.clear_focus(user_id, device_id, connection_id).await;
+            }
         }
     }
 
@@ -312,10 +370,36 @@ impl RealtimeHub {
             .is_some_and(|devices| !devices.is_empty())
     }
 
+    /// True when this device is connected and its app is in front, so it shows its own notices.
+    ///
+    /// Human: Push decisions are per device. An app the user is looking at needs no push. One
+    /// that is signed in but backgrounded or unfocused does, even while its socket lingers.
+    /// A socket that never says (an older app) counts as in front. A device with no socket
+    /// does not.
+    pub async fn is_device_foreground(&self, user_id: Uuid, device_id: Uuid) -> bool {
+        {
+            let connections = self.connections.read().await;
+            if connections
+                .devices_by_user
+                .get(&user_id)
+                .is_some_and(|devices| devices.contains(&device_id))
+                && let Some(connection) = connections.by_device.get(&device_id)
+            {
+                return connection.focused;
+            }
+        }
+        if !self.is_device_online(user_id, device_id).await {
+            return false;
+        }
+        // Online on another replica. An explicit "away" is a push; no record means the app
+        // is in front (or Redis missed the write — a duplicate notice is worse than a delay).
+        self.redis_focus(user_id, device_id).await.unwrap_or(true)
+    }
+
     /// True if this device has a live WebSocket here or (with Redis) on another replica.
     ///
-    /// Human: Push decisions are per device: an open app shows its own notifications, while the
-    /// same account's closed apps still need a push.
+    /// Human: Presence is per device: a connected app counts as online, whether or not it is
+    /// the one in front.
     pub async fn is_device_online(&self, user_id: Uuid, device_id: Uuid) -> bool {
         {
             let connections = self.connections.read().await;
@@ -394,6 +478,16 @@ impl RealtimeHub {
     }
 
     async fn mark_online(&self, user_id: Uuid, device_id: Uuid, connection_id: u64) {
+        let focused = {
+            let connections = self.connections.read().await;
+            let Some(connection) = connections.by_device.get(&device_id) else {
+                return;
+            };
+            if connection.id != connection_id {
+                return;
+            }
+            connection.focused
+        };
         let Some(mut conn) = self.redis.read().await.clone() else {
             return;
         };
@@ -415,6 +509,55 @@ impl RealtimeHub {
             && connection.id == connection_id
         {
             connection.online_ts = Some(now);
+        }
+        self.write_focus(user_id, device_id, connection_id, focused)
+            .await;
+    }
+
+    async fn write_focus(&self, user_id: Uuid, device_id: Uuid, connection_id: u64, focused: bool) {
+        let Some(mut conn) = self.redis.read().await.clone() else {
+            return;
+        };
+        let key = focus_key(user_id);
+        let value = format!("{connection_id}:{}", if focused { "1" } else { "0" });
+        if let Err(err) = conn
+            .hset::<_, _, _, ()>(&key, device_id.to_string(), value)
+            .await
+        {
+            tracing::warn!(error = %err, "redis focus hset failed");
+            return;
+        }
+        if let Err(err) = conn.expire::<_, ()>(&key, ONLINE_TTL_SECS).await {
+            tracing::warn!(error = %err, "redis focus expire failed");
+        }
+    }
+
+    async fn clear_focus(&self, user_id: Uuid, device_id: Uuid, connection_id: u64) {
+        let Some(mut conn) = self.redis.read().await.clone() else {
+            return;
+        };
+        if let Err(err) = redis::Script::new(DELETE_FOCUS_IF_OURS)
+            .key(focus_key(user_id))
+            .arg(device_id.to_string())
+            .arg(format!("{connection_id}:"))
+            .invoke_async::<i64>(&mut conn)
+            .await
+        {
+            tracing::warn!(error = %err, "redis focus hdel failed");
+        }
+    }
+
+    /// `Some` when this replica can read an explicit focus flag for the device.
+    async fn redis_focus(&self, user_id: Uuid, device_id: Uuid) -> Option<bool> {
+        let mut conn = self.redis.read().await.clone()?;
+        let value: Option<String> = conn
+            .hget(focus_key(user_id), device_id.to_string())
+            .await
+            .ok()?;
+        match value.as_deref().and_then(|value| value.rsplit(':').next()) {
+            Some("1") => Some(true),
+            Some("0") => Some(false),
+            _ => None,
         }
     }
 
@@ -768,6 +911,30 @@ mod tests {
 
         assert_eq!(laptop_socket.events.try_recv().as_deref(), Ok("signal"));
         assert_eq!(phone_socket.events.try_recv(), Err(TryRecvError::Empty));
+    }
+
+    #[tokio::test]
+    async fn a_socket_that_left_the_foreground_is_not_in_front() {
+        let hub = Arc::new(RealtimeHub::new());
+        let (user, device) = (Uuid::new_v4(), Uuid::new_v4());
+        let socket = hub
+            .subscribe(user, device, Uuid::new_v4())
+            .await
+            .expect("socket");
+
+        assert!(hub.is_device_foreground(user, device).await);
+        // A stale socket cannot mark the live one away.
+        hub.set_focus(user, device, socket.id + 1, false).await;
+        assert!(hub.is_device_foreground(user, device).await);
+
+        hub.set_focus(user, device, socket.id, false).await;
+        assert!(!hub.is_device_foreground(user, device).await);
+        hub.set_focus(user, device, socket.id, true).await;
+        assert!(hub.is_device_foreground(user, device).await);
+
+        hub.unsubscribe(user, device, socket.id).await;
+        assert!(!hub.is_device_foreground(user, device).await);
+        assert!(!hub.is_device_online(user, device).await);
     }
 
     #[test]

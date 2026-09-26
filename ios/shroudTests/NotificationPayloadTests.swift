@@ -89,6 +89,7 @@ final class NotificationPayloadTests: XCTestCase {
         XCTAssertEqual(NotificationPayload.body(for: .contactRequest), "Wants to add you as a contact")
         XCTAssertEqual(NotificationPayload.body(for: .call), "Incoming call")
         XCTAssertEqual(NotificationPayload.body(for: .videoCall), "Incoming video call")
+        XCTAssertEqual(NotificationPayload.body(for: .callEnded), "Call ended")
         XCTAssertEqual(NotificationPayload.body(for: .test), "Notifications are working")
     }
 }

@@ -1,5 +1,29 @@
 import SwiftUI
 
+/// One `beginBackgroundTask` balanced with a single `end`, from the work or from the expiry.
+private final class AwayTask: @unchecked Sendable {
+    private let lock = NSLock()
+    private var id: UIBackgroundTaskIdentifier = .invalid
+
+    func begin(_ application: UIApplication) {
+        let started = application.beginBackgroundTask(withName: "shroud.away") { [weak self] in
+            self?.end(application)
+        }
+        lock.lock()
+        id = started
+        lock.unlock()
+    }
+
+    func end(_ application: UIApplication) {
+        lock.lock()
+        let current = id
+        id = .invalid
+        lock.unlock()
+        guard current != .invalid else { return }
+        application.endBackgroundTask(current)
+    }
+}
+
 /// Root navigation shell — routes between onboarding and the main tab shell.
 ///
 /// Onboarding and Main **must not** share one `NavigationStack`: nested stacks under a typed
@@ -123,9 +147,13 @@ struct RootView: View {
             notifications.isSignedIn = sessionController.isSignedIn
             // A tap that launched a signed-out app belongs to no one here.
             if !sessionController.isSignedIn { notifications.pendingOpen = nil }
+            // Pushes, including a call, have to reach a signed-in phone that is still on the
+            // lock screen. The chats themselves wait for unlock.
+            if sessionController.isSignedIn {
+                PushNotificationService.shared.start()
+            }
             if router.isUnlocked {
                 messagingController.start()
-                PushNotificationService.shared.start()
             }
         }
         // While signed in but messaging is locked, messaging polls are stopped — so re-probe
@@ -181,16 +209,16 @@ struct RootView: View {
         // and closing it lets the server push again (see `.background` below).
         .onChange(of: callController.active == nil) { _, ended in
             guard ended, scenePhase == .background, router.isUnlocked else { return }
-            messagingController.suspendForBackground()
+            stepAway()
         }
         .onChange(of: scenePhase) { _, phase in
             privacyCoverArmed = phase != .active && router.isUnlocked
             switch phase {
             case .background:
-                // The socket closes so the server pushes to this iPhone while it is away (a
-                // suspended app kept counting as online). A call needs its socket for signaling.
-                if router.isUnlocked, callController.active == nil {
-                    messagingController.suspendForBackground()
+                // Tell the server this iPhone is away, and close the socket, before iOS
+                // suspends the process. A call keeps the socket for signaling.
+                if router.isUnlocked {
+                    stepAway()
                 }
                 notifications.dismissBanner()
                 // Drop plaintext history from RAM; sealed files stay on disk.
@@ -219,6 +247,21 @@ struct RootView: View {
             @unknown default:
                 break
             }
+        }
+    }
+
+    /// Leaves the foreground with enough time for the "away" frame to leave the device.
+    /// A suspended app otherwise keeps its socket, and the server sends nothing.
+    private func stepAway() {
+        guard router.isUnlocked else { return }
+        let keepSocket = callController.active != nil
+        let messaging = messagingController
+        let application = UIApplication.shared
+        let task = AwayTask()
+        task.begin(application)
+        Task { @MainActor in
+            await messaging.leaveForeground(keepSocket: keepSocket)
+            task.end(application)
         }
     }
 

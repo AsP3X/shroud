@@ -24,6 +24,8 @@ pub enum NotificationKind {
     VideoCall,
     /// A call rang out, or its caller hung up, before anyone answered.
     MissedCall,
+    /// PushKit only: the ring is over, so the iPhone ends the CallKit call. Not an alert.
+    CallEnded,
     Test,
 }
 
@@ -36,6 +38,7 @@ impl NotificationKind {
             Self::Call => "call",
             Self::VideoCall => "video_call",
             Self::MissedCall => "missed_call",
+            Self::CallEnded => "call_ended",
             Self::Test => "test",
         }
     }
@@ -51,6 +54,7 @@ impl NotificationKind {
             Self::Call => "Incoming call",
             Self::VideoCall => "Incoming video call",
             Self::MissedCall => "Missed call",
+            Self::CallEnded => "Call ended",
             Self::Test => "Notifications are working",
         }
     }
@@ -77,7 +81,10 @@ impl Notification {
         match (self.kind, self.conversation_id) {
             (NotificationKind::ContactRequest, _) => "contacts".into(),
             (
-                NotificationKind::Call | NotificationKind::VideoCall | NotificationKind::MissedCall,
+                NotificationKind::Call
+                | NotificationKind::VideoCall
+                | NotificationKind::MissedCall
+                | NotificationKind::CallEnded,
                 _,
             ) => "calls".into(),
             (NotificationKind::Test, _) => "test".into(),

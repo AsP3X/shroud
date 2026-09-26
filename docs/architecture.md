@@ -187,17 +187,19 @@ What the tag does not cover:
 
 ## Notifications
 
-A device with a live WebSocket notifies its user itself: it can read the message, so the open app
-shows the sender and, if the user wants, the text (an in-app banner on iOS; a page notification
-from an unlocked but unwatched web tab). The server pushes only to the account's **other** devices
-(`push/mod.rs`), and only ids and a kind — it has no content to send.
+A device in the foreground notifies its user itself: it can read the message, so the open app
+shows the sender and, if the user wants, the text (an in-app banner on iOS; a sound in a focused
+web tab). The server pushes to every signed-in device that is not in front
+(`push/mod.rs`) — including one whose socket is still open — and only ids and a kind. It has no
+content to send.
 
 - **Who gets a push.** Each of the recipient's signed-in devices with an APNs token or a Web
-  Push subscription and no live socket. The server pings every 30 s and closes a socket 75 s
-  after the last frame it heard, so a phone the OS suspended counts as offline instead of
-  swallowing its pushes; the iPhone app also closes its socket when it goes to the background
-  (unless a call needs it). A device signed out by a password change gets none until it signs
-  in again. Per-device settings (`device_notification_settings`: on/off, sender name, reactions,
+  Push subscription that is not in the foreground. A live socket counts as in front until the
+  client sends `{type:"focus", focused:false}` (the iPhone does this when it backgrounds, the
+  browser when the tab is hidden or unfocused). The server also pings every 30 s and closes a
+  socket 75 s after the last frame it heard, and the iPhone closes its socket when it goes to
+  the background (unless a call needs it). A device signed out by a password change gets none
+  until it signs in again. Per-device settings (`device_notification_settings`: on/off, sender name, reactions,
   contact requests, sound, badge, whether muted chats count) decide the rest. A muted chat
   (`chat_mutes`, per account, for a while or until unmuted) pushes nothing — only a silent badge
   to an iPhone that counts muted chats; contact requests and calls ignore mutes. Saved
@@ -213,10 +215,11 @@ from an unlocked but unwatched web tab). The server pushes only to the account's
   the server, which chose them. Web Push is RFC 8291 (`aes128gcm`) with VAPID (RFC 8292); the push
   service cannot read the payload, so the name travels inside it and the service worker
   (`web/public/sw.js`) writes the text.
-- **Calls** ring locked iPhones with an ordinary alert (`call` / `video_call`, expires after
-  90 s), not PushKit: a PushKit ring must be ended when the caller hangs up, and the app learns
-  that only over its socket. The server keeps the ring while the call rings, and hands it to a
-  device that connects meanwhile, so tapping the alert opens the app on the ringing call.
+- **Calls** ring iPhones through PushKit (`call` / `video_call`), even when the app is not in
+  front, and a `call_ended` VoIP push stops CallKit when the ring ends. Older iPhones and
+  browsers get an alert only while they are not in front. The server keeps the ring while the
+  call rings, and hands it to a device that connects meanwhile, so opening the app from the
+  notification lands on the ringing call.
 - **Unread counts are server metadata** (`conversation_reads`, one read marker per user and chat,
   moved by reading and by replying). `GET /conversations` returns `unread_count` (capped at 999)
   and `mute`; pushes carry the total as the icon badge; reading on one device clears the others
@@ -300,7 +303,7 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 | Replies | **done** — swipe left (or the context menu) to quote; the quote is sealed **inside** the plaintext, never server metadata |
 | Links & link previews | **done** — links are tappable (in-app browser), Telegram-style preview block; the sender builds the preview (the iPhone directly, the browser through the link relay) and seals it, recipients never contact the site; toggle in Privacy & Security |
 | Calls UI / WebRTC | **done** — signaling + WKWebView WebRTC + CallKit; voice & video |
-| Notifications | **done** — alert pushes named by the notification service extension; in-app banner, sound and haptic while open; Settings → Notifications and Sounds (per-device toggles, sound picker, badge, muted chats, test notification); mute from the chat list or contact info; icon badge from server unread counts; a tap opens the chat. PushKit VoIP token registered (`kind: voip`), but calls ring by alert |
+| Notifications | **done** — alert pushes named by the notification service extension; in-app banner, sound and haptic while in front; Settings → Notifications and Sounds (per-device toggles, sound picker, badge, muted chats, test notification); mute from the chat list or contact info; icon badge from server unread counts; a tap opens the chat. PushKit rings calls when the app is backgrounded or locked, and a `call_ended` VoIP push stops the ring |
 | Sealed messaging v2 | **done** — dual-seal (peer + self) so sender devices can decrypt history |
 | Sealed messaging (live) | **v3 Double Ratchet** (default) + self dual-seal; first message from non-initiator uses **v2** |
 | Dual-initiator prevention | **done** — only lower `user_id` starts a new DR session; higher UUID sends v2 until session exists |

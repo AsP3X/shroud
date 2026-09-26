@@ -582,9 +582,14 @@ final class MessagingController {
         isLoadingChats = false
     }
 
+    /// Bumped when the app comes back to the front, so a background close that is still
+    /// in flight does not tear down the socket the return just opened.
+    private var foregroundEpoch = 0
+
     /// Call when the app returns to the foreground (history key must already be in memory).
     func handleAppBecameActive() {
         guard let token = sessionController?.bearerToken else { return }
+        foregroundEpoch += 1
         // Re-bind history key after biometry unlock (start may have been skipped).
         if local.historyKey == nil, let key = cryptoController?.material?.historyKey {
             local.setHistoryKey(key)
@@ -592,7 +597,10 @@ final class MessagingController {
         }
         isOffline = !connectivity.isOnline
         realtimeActive = true
+        NotificationsController.shared.setPushCoversBackground(false)
+        realtime.noteFocus(true)
         realtime.hold(.messaging, token: token)
+        Task { await realtime.deliverFocus() }
         if pollTask == nil { startPollingFallback() }
         if contactsPollTask == nil { startContactsPolling() }
         Task {
@@ -607,13 +615,23 @@ final class MessagingController {
         }
     }
 
-    /// The app went to the background: the socket closes and the polls stop.
+    /// The app left the foreground. The server is told first, so a push goes out even if the
+    /// socket's close never makes it off the device. A call keeps the socket (`keepSocket`).
     ///
     /// Human: A suspended app keeps its TCP connection open for a long time, and the server
-    /// counted it online all that while — so it sent no push, and messages arrived unnoticed.
-    /// Closed, the server pushes at once. `handleAppBecameActive` reconnects.
+    /// counted it in front all that while — so it sent no push, and calls and messages arrived
+    /// unnoticed. `handleAppBecameActive` reconnects.
     /// Agent: KEEPS threads, caches and the history key (that is `lockSensitiveMemory`'s job).
-    func suspendForBackground() {
+    func leaveForeground(keepSocket: Bool) async {
+        let epoch = foregroundEpoch
+        realtime.noteFocus(false)
+        let told = await realtime.deliverFocus()
+        // The focus frame is accepted by URLSession before this returns; give it a moment
+        // to leave the radio. A return to the app during the wait cancels the close.
+        try? await Task.sleep(for: .milliseconds(200))
+        guard epoch == foregroundEpoch else { return }
+        NotificationsController.shared.setPushCoversBackground(told)
+        guard !keepSocket else { return }
         pollTask?.cancel()
         pollTask = nil
         contactsPollTask?.cancel()
@@ -621,6 +639,9 @@ final class MessagingController {
         realtimeActive = false
         realtime.release(.messaging)
         updateBadge()
+        // `release` only hands the close to URLSession. Stay awake until it can leave the radio,
+        // or iOS suspends the process with the server still seeing this phone as connected.
+        try? await Task.sleep(for: .milliseconds(200))
     }
 
     /// Clears decrypted threads and history key from RAM (sealed files stay on disk).

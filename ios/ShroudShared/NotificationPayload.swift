@@ -26,6 +26,8 @@ nonisolated enum NotificationPayload {
         case call
         case videoCall = "video_call"
         case missedCall = "missed_call"
+        /// PushKit: the ring is over. Ends the CallKit call; not shown as an alert.
+        case callEnded = "call_ended"
         case test
     }
 
@@ -96,6 +98,7 @@ nonisolated enum NotificationPayload {
         case .call: "Incoming call"
         case .videoCall: "Incoming video call"
         case .missedCall: "Missed call"
+        case .callEnded: "Call ended"
         case .test: "Notifications are working"
         }
     }

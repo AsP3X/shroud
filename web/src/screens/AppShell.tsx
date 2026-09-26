@@ -14,7 +14,7 @@ import {
   type WireReaction,
 } from "../api/client";
 import { configureCalls, endCallForLock, handleCallEvent, startCall } from "../calls/service";
-import { useCallBusy } from "../calls/store";
+import { getCallView, useCallBusy } from "../calls/store";
 import { Avatar } from "../components/Avatar";
 import { BrandMark } from "../components/BrandMark";
 import { CallOverlay } from "../components/CallOverlay";
@@ -1217,6 +1217,12 @@ export function AppShell({ session }: { session: Session }) {
     const connection = connectRealtime({
       token: session.token,
       onFatalAuth: endSession,
+      // A call's signaling stays up when the tab is in the background. Otherwise the socket
+      // closes, and a message or a call arrives as a notification.
+      keepWhenHidden: () => {
+        const view = getCallView();
+        return view != null && view.phase !== "ended";
+      },
       onEvent: (event) => {
         if (event.type === "auth.ok" || event.type.startsWith("call.")) {
           // A reconnect may have missed a call's events; the calls read them back.

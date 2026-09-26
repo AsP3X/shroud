@@ -405,6 +405,16 @@ pub async fn accept_call(
     let response = call_to_response(&updated);
     let event = serde_json::json!({ "type": "call.accepted", "call": &response });
     publish_call_event(&state, &updated, Some(auth.device_id), &event).await;
+    // The other iPhones rang through PushKit and may have no socket to hear `call.accepted`.
+    state
+        .push
+        .dispatch(PushEvent::CallEnded {
+            recipient: auth.user_id,
+            caller: updated.caller_user_id,
+            call_id,
+            except_device: Some(auth.device_id),
+        })
+        .await;
 
     tracing::info!(call_id = %call_id, callee = %auth.user_id, "calls.accept ok");
     Ok(Json(response))
@@ -658,6 +668,20 @@ async fn announce_end(state: &AppState, call: &CallRow, except_device: Option<Uu
     let response = call_to_response(call);
     let event = serde_json::json!({ "type": "call.ended", "call": &response });
     publish_call_event(state, call, except_device, &event).await;
+    // A ring PushKit already showed has to be ended by a push: the phone closed its socket.
+    // An answered call's other phones were told when it was accepted; telling them again
+    // would flash a new call as this one hangs up.
+    if call.answered_at.is_none() {
+        state
+            .push
+            .dispatch(PushEvent::CallEnded {
+                recipient: call.callee_user_id,
+                caller: call.caller_user_id,
+                call_id: call.id,
+                except_device,
+            })
+            .await;
+    }
     if call.answered_at.is_none()
         && (call.status == "missed" || call.status == "cancelled")
         && call.ended_reason.as_deref() != Some("declined")

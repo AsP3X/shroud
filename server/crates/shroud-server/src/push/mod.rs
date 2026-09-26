@@ -1,10 +1,11 @@
 //! Push notifications: which of a user's devices get one, and what it says.
 //!
-//! Human: A device with a live WebSocket notifies its user itself — it can read the message.
-//! The recipient's other devices get a push through their platform's relay: APNs for the
-//! iPhone, Web Push for a browser. A push carries ids and a kind, plus the sender's name when
-//! the device asked for it — sealed so the relay cannot read it. Never message content: the
-//! server has none.
+//! Human: A device in the foreground notifies its user itself — it can read the message.
+//! One that is signed in but not in front (the app backgrounded, the tab unfocused) gets a
+//! push even if its socket has not dropped yet: a suspended app keeps that socket open and
+//! would otherwise swallow the notice. The relay is APNs for the iPhone and Web Push for a
+//! browser. A push carries ids and a kind, plus the sender's name when the device asked for
+//! it — sealed so the relay cannot read it. Never message content: the server has none.
 //! Agent: `dispatch` spawns (a recording service delivers inline); READS devices,
 //! device_notification_settings, push_tokens, web_push_subscriptions, chat_mutes; DELETES
 //! tokens and subscriptions their relay reports gone.
@@ -61,7 +62,7 @@ pub enum PushEvent {
         reader_device: Uuid,
     },
     /// `caller` is ringing `recipient`: every iPhone with a VoIP token rings through PushKit;
-    /// older iPhones and browsers that are not connected get a notification.
+    /// older iPhones and browsers that are not in the foreground get a notification.
     IncomingCall {
         recipient: Uuid,
         caller: Uuid,
@@ -73,6 +74,14 @@ pub enum PushEvent {
         recipient: Uuid,
         caller: Uuid,
         call_id: Uuid,
+    },
+    /// The call is over for `recipient`'s iPhones that rang through PushKit. `except_device`
+    /// is the one that answered or ended it here, and must not be told to drop its own call.
+    CallEnded {
+        recipient: Uuid,
+        caller: Uuid,
+        call_id: Uuid,
+        except_device: Option<Uuid>,
     },
 }
 
@@ -351,6 +360,15 @@ impl PushService {
                 caller,
                 call_id,
             } => self.notify_missed_call(recipient, caller, call_id).await,
+            PushEvent::CallEnded {
+                recipient,
+                caller,
+                call_id,
+                except_device,
+            } => {
+                self.notify_call_ended(recipient, caller, call_id, except_device)
+                    .await
+            }
         }
     }
 
@@ -375,10 +393,10 @@ impl PushService {
             if self
                 .inner
                 .realtime
-                .is_device_online(recipient, target.device_id)
+                .is_device_foreground(recipient, target.device_id)
                 .await
             {
-                // The app is open there and shows this itself.
+                // The app is in front there and shows this itself.
                 continue;
             }
             let settings = target.settings();
@@ -403,6 +421,7 @@ impl PushService {
                     | NotificationKind::Call
                     | NotificationKind::VideoCall
                     | NotificationKind::MissedCall
+                    | NotificationKind::CallEnded
                     | NotificationKind::Test => true,
                 };
             if !wanted {
@@ -455,7 +474,7 @@ impl PushService {
             if self
                 .inner
                 .realtime
-                .is_device_online(recipient, target.device_id)
+                .is_device_foreground(recipient, target.device_id)
                 .await
             {
                 continue;
@@ -500,8 +519,9 @@ impl PushService {
     /// phone the OS just suspended still looks connected for a while, and would miss the ring.
     /// The app reports it to CallKit (which shows a call it already shows only once), then
     /// connects and checks the call still rings. Older iPhones get an "Incoming call" alert
-    /// and browsers a Web Push, each only while not connected. Mutes do not silence a call;
-    /// a device with notifications off gets nothing.
+    /// and browsers a Web Push, each while that device is not in the foreground — a socket
+    /// left open by a suspended app or an unfocused tab does not count. Mutes do not silence
+    /// a call; a device with notifications off gets nothing.
     async fn notify_call(&self, recipient: Uuid, caller: Uuid, call_id: Uuid, modality: &str) {
         if recipient == caller {
             return;
@@ -559,7 +579,7 @@ impl PushService {
             if self
                 .inner
                 .realtime
-                .is_device_online(recipient, target.device_id)
+                .is_device_foreground(recipient, target.device_id)
                 .await
             {
                 continue;
@@ -569,9 +589,66 @@ impl PushService {
         }
     }
 
+    /// Tells PushKit iPhones the call is over, so CallKit stops ringing after a hang-up the
+    /// socket never delivered. The device that answered or ended it is skipped: that push
+    /// would drop the call it is in.
+    async fn notify_call_ended(
+        &self,
+        recipient: Uuid,
+        caller: Uuid,
+        call_id: Uuid,
+        except_device: Option<Uuid>,
+    ) {
+        let mut caller_name: Option<Option<String>> = None;
+        for target in self.targets(recipient, None, true).await {
+            if except_device == Some(target.device_id) {
+                continue;
+            }
+            let (Some(token), Some(environment)) = (&target.voip_token, &target.voip_environment)
+            else {
+                continue;
+            };
+            if !target.settings().enabled {
+                continue;
+            }
+            let name = if target.settings().show_sender {
+                if caller_name.is_none() {
+                    caller_name = Some(self.username(caller).await);
+                }
+                caller_name.clone().flatten()
+            } else {
+                None
+            };
+            let notification = Notification {
+                kind: NotificationKind::CallEnded,
+                conversation_id: None,
+                peer_user_id: Some(caller),
+                message_id: None,
+                call_id: Some(call_id),
+                sender_name: name,
+                badge: None,
+            };
+            let payload = payload::apns_voip(&notification, target.payload_key.as_deref());
+            self.send_apns(
+                target.device_id,
+                token,
+                ApnsEnvironment::parse(environment),
+                PushChannel::Apns,
+                ApnsRequest {
+                    push_type: ApnsPushType::Voip,
+                    priority: 10,
+                    expiration: Some(unix_now() + CALL_PUSH_LIFETIME_SECS),
+                    collapse_id: None,
+                    payload: &payload,
+                },
+            )
+            .await;
+        }
+    }
+
     /// "Missed call" where an "Incoming call" notification may still show: it replaces that
-    /// one (same APNs collapse id, same Web Push tag). iPhones that rang through PushKit
-    /// learn the call ended from the server and say so themselves.
+    /// one (same APNs collapse id, same Web Push tag). iPhones that rang through PushKit get
+    /// a `call_ended` VoIP push instead and dismiss CallKit themselves.
     async fn notify_missed_call(&self, recipient: Uuid, caller: Uuid, call_id: Uuid) {
         let mut caller_name: Option<Option<String>> = None;
         for target in self.targets(recipient, None, true).await {
@@ -588,7 +665,7 @@ impl PushService {
             if self
                 .inner
                 .realtime
-                .is_device_online(recipient, target.device_id)
+                .is_device_foreground(recipient, target.device_id)
                 .await
             {
                 continue;

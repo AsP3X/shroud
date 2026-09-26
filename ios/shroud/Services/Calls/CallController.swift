@@ -206,6 +206,12 @@ final class CallController {
         }
     }
 
+    /// True when a VoIP push for this call has already ended it. A later ring push must not
+    /// start the call UI again.
+    func callWasFinished(_ callID: UUID) -> Bool {
+        finished.contains(callID.uuidString.lowercased())
+    }
+
     /// Seed an incoming call from a VoIP push when the socket ring has not arrived yet.
     /// - Parameter alreadyReported: True when CallKit was told in the PushKit callback.
     func handleVoipPush(
@@ -216,12 +222,26 @@ final class CallController {
         alreadyReported: Bool = false
     ) {
         ensureCallKit()
+        if callWasFinished(callID) {
+            if alreadyReported {
+                ensureCallKit().reportEnded(callID, reason: .remoteEnded)
+            } else {
+                ensureCallKit().reportIncoming(callID, callerName: peerUsername, video: modality == .video) { _ in
+                    Task { @MainActor in
+                        CallKitManager.shared.reportEnded(callID, reason: .remoteEnded)
+                    }
+                }
+            }
+            return
+        }
         if let machine, machine.serverID != callID {
             ensureCallKit().reportEnded(callID, reason: .unanswered)
+            ensureCallKit().flushPending()
             return
         }
         if machine?.serverID == callID {
             applyCallerName(peerUsername, callID: callID, video: modality == .video)
+            ensureCallKit().flushPending()
             return
         }
         guard beginIncoming(
@@ -231,8 +251,31 @@ final class CallController {
             modality: modality,
             peerDeviceID: nil,
             reportKit: !alreadyReported
-        ) else { return }
+        ) else {
+            ensureCallKit().flushPending()
+            return
+        }
+        ensureCallKit().flushPending()
         Task { await self.confirmStillRinging(callID) }
+    }
+
+    /// A PushKit `call_ended`: CallKit must stop, including when this phone never saw the socket.
+    func endFromVoipPush(_ callID: UUID) {
+        rememberFinished(callID)
+        let kit = ensureCallKit()
+        if machine?.serverID == callID || kit.isTracking(callID) {
+            kit.reportEnded(callID, reason: .remoteEnded)
+            if machine?.serverID == callID {
+                Task { await self.confirmStillRinging(callID) }
+            }
+            return
+        }
+        // Already over, or this push beat the ring. PushKit still requires a report.
+        kit.reportIncoming(callID, callerName: "Shroud", video: false) { _ in
+            Task { @MainActor in
+                CallKitManager.shared.reportEnded(callID, reason: .remoteEnded)
+            }
+        }
     }
 
     // MARK: - Actions
