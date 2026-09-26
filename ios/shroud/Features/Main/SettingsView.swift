@@ -12,6 +12,12 @@ enum SettingsRoute: Hashable {
 
 /// Settings tab — Telegram-style profile hero for the **title-only** sticky bar
 /// (no leading/trailing nav actions). Avatar exits; name settles as the compact bar title.
+///
+/// Human: The compact bar is a Liquid Glass bar: an empty `safeAreaBar` the height of the
+/// title row, so the scroll edge effect fades the cards as they slide under the name. The
+/// hero above it needs no backdrop — nothing scrolls under it until it has collapsed.
+/// Agent: READS the scroll offset (inset-corrected) to drive the hero; WRITES nothing but
+/// `scrollOffsetY`. The bar itself is not hit-testable, like the old overlay.
 struct SettingsView: View {
     let router: AppRouter
     /// When non-empty, the floating tab bar should hide (detail is covering Settings).
@@ -124,10 +130,6 @@ struct SettingsView: View {
         max(0, 1 - collapseProgress * 2.4)
     }
 
-    private var materialProgress: CGFloat {
-        min(1, max(0, collapseProgress * 1.1))
-    }
-
     init(router: AppRouter, navigationPath: Binding<[SettingsRoute]> = .constant([])) {
         self.router = router
         _navigationPath = navigationPath
@@ -202,9 +204,10 @@ struct SettingsView: View {
             ZStack(alignment: .top) {
                 ScrollView {
                     VStack(spacing: 0) {
-                        // Match expanded sticky height so content sits below the hero at rest.
+                        // Match expanded sticky height so content sits below the hero at rest
+                        // (the compact bar's share is already a safe-area inset).
                         Color.clear
-                            .frame(height: expandedHeroHeight)
+                            .frame(height: expandedHeroHeight - compactBarHeight)
                             .accessibilityHidden(true)
 
                         VStack(spacing: 14) {
@@ -222,6 +225,14 @@ struct SettingsView: View {
                 .scrollIndicators(.hidden)
                 // Log Out ends at the floating tab bar's top edge instead of under it.
                 .safeAreaPadding(.bottom, tabBarClearance)
+                // The compact title row: the name is drawn by `stickyChrome`; this only claims
+                // the bar's height so cards fade out under it instead of colliding with it.
+                .glassTopBar {
+                    Color.clear
+                        .frame(height: compactBarHeight)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
                 .onScrollGeometryChange(for: CGFloat.self) { geometry in
                     // Include top content inset so progress is 0 when pinned at rest.
                     max(0, geometry.contentOffset.y + geometry.contentInsets.top)
@@ -260,10 +271,6 @@ struct SettingsView: View {
 
     private func stickyChrome(midX: CGFloat) -> some View {
         ZStack(alignment: .top) {
-            stickyGradientBackground
-                .frame(height: stickyChromeHeight + 28)
-                .frame(maxWidth: .infinity, alignment: .top)
-
             // Avatar — exits upward as the bar collapses.
             AvatarView(
                 initials: initials,
@@ -306,44 +313,6 @@ struct SettingsView: View {
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(displayName), \(handle)")
-    }
-
-    private var stickyGradientBackground: some View {
-        ZStack(alignment: .top) {
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .mask(
-                    LinearGradient(
-                        stops: [
-                            .init(color: .white.opacity(0.95), location: 0),
-                            .init(color: .white.opacity(0.55), location: 0.5),
-                            .init(color: .white.opacity(0.1), location: 0.85),
-                            .init(color: .clear, location: 1),
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .opacity(0.7 + 0.25 * Double(materialProgress))
-
-            LinearGradient(
-                stops: [
-                    .init(
-                        color: Theme.backgroundGrouped.opacity(0.92 + 0.06 * Double(materialProgress)),
-                        location: 0
-                    ),
-                    .init(
-                        color: Theme.backgroundGrouped.opacity(0.55 + 0.2 * Double(materialProgress)),
-                        location: 0.55
-                    ),
-                    .init(color: Theme.backgroundGrouped.opacity(0), location: 1),
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        }
-        .padding(.bottom, 20)
-        .ignoresSafeArea(edges: .top)
     }
 
     // MARK: - Cards

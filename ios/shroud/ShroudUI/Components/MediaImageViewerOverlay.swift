@@ -60,7 +60,10 @@ struct MediaImageViewerOverlay: View {
         _currentID = State(initialValue: initialID)
     }
 
-    private let circleFill = Color(red: 44 / 255, green: 44 / 255, blue: 46 / 255).opacity(0.92)
+    /// Human: The chrome is Liquid Glass over the photo, as the system's own viewers draw it.
+    /// Static pills (title, banner) use plain glass; every tappable circle is interactive glass.
+    private let chromeGlass: Glass = .regular
+    private let controlGlass: Glass = .regular.interactive()
 
     private var currentItem: Item? {
         items.first { $0.id == currentID } ?? items.first
@@ -111,8 +114,7 @@ struct MediaImageViewerOverlay: View {
                             .foregroundStyle(Color.white)
                             .padding(.horizontal, 16)
                             .padding(.vertical, 10)
-                            .background(circleFill)
-                            .clipShape(Capsule())
+                            .glassEffect(chromeGlass, in: .capsule)
                             .padding(.bottom, bottomInset + 96)
                     }
                     .transition(.opacity)
@@ -319,8 +321,7 @@ struct MediaImageViewerOverlay: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 6)
-        .background(circleFill)
-        .clipShape(Capsule())
+        .glassEffect(chromeGlass, in: .capsule)
         // The pill re-reads on every page, so cross-fade instead of snapping the name.
         .animation(.easeOut(duration: 0.18), value: currentID)
         .accessibilityElement(children: .combine)
@@ -348,9 +349,9 @@ struct MediaImageViewerOverlay: View {
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(Color.white)
                 .frame(width: 40, height: 40)
-                .background(circleFill)
-                .clipShape(Circle())
+                .contentShape(Circle())
         }
+        .glassEffect(controlGlass, in: .circle)
         .accessibilityLabel("More")
     }
 
@@ -386,8 +387,7 @@ struct MediaImageViewerOverlay: View {
                         onComingSoon?("Text recognition")
                     }
                 }
-                .background(circleFill)
-                .clipShape(Capsule())
+                .glassEffect(chromeGlass, in: .capsule)
 
                 Spacer(minLength: 0)
 
@@ -422,10 +422,10 @@ struct MediaImageViewerOverlay: View {
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(Color.white)
                 .frame(width: 40, height: 40)
-                .background(circleFill)
-                .clipShape(Circle())
+                .contentShape(Circle())
         }
-        .pressable(scale: 0.85, dimming: 0)
+        .buttonStyle(PressableButtonStyle(scale: 1, dimming: 0))
+        .glassEffect(controlGlass, in: .circle)
         .accessibilityLabel(accessibility)
     }
 
@@ -439,13 +439,13 @@ struct MediaImageViewerOverlay: View {
                 .font(.system(size: 18, weight: .regular))
                 .foregroundStyle(Color.white)
                 .frame(width: 40, height: 40)
-                .background(circleFill)
-                .clipShape(Circle())
+                .contentShape(Circle())
+                .glassEffect(controlGlass, in: .circle)
                 // Keeps the 40 pt Telegram look with a 48 pt target.
                 .padding(4)
                 .contentShape(Rectangle())
         }
-        .pressable(scale: 0.85, dimming: 0)
+        .buttonStyle(PressableButtonStyle(scale: 1, dimming: 0))
         .accessibilityLabel(label)
     }
 

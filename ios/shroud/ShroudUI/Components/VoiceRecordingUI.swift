@@ -100,6 +100,11 @@ private struct RecordingBlink: ViewModifier {
 // MARK: - Locked bar (hands-free)
 
 /// Post-lock controls: discard, keep-recording readout, send.
+///
+/// Human: Three glass shapes in the composer's container — a plain circle for the bin, a
+/// capsule for the readout, an accent-tinted circle for send — so the row reads as the
+/// idle composer with the field swapped for the recording.
+/// Agent: Pure presentation; the host owns the recorder and the two outcomes.
 struct VoiceLockedBar: View {
     let elapsed: TimeInterval
     let levels: [Float]
@@ -109,15 +114,16 @@ struct VoiceLockedBar: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             Button(action: onDiscard) {
                 Image(systemName: "trash")
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(Theme.danger)
-                    .frame(width: 40, height: 40)
-                    .contentShape(Rectangle())
+                    .frame(width: ChatComposerView.controlSize, height: ChatComposerView.controlSize)
+                    .contentShape(Circle())
             }
-            .pressable(scale: 0.85, haptic: .medium)
+            .buttonStyle(PressableButtonStyle(scale: 1, dimming: 0, haptic: .medium))
+            .glassEffect(.regular.interactive(), in: .circle)
             .accessibilityLabel("Discard recording")
 
             HStack(spacing: 10) {
@@ -142,22 +148,20 @@ struct VoiceLockedBar: View {
                 .frame(maxWidth: .infinity)
             }
             .padding(.horizontal, 14)
-            .frame(height: 44)
-            .background(Theme.backgroundGrouped)
-            .clipShape(Capsule())
+            .frame(height: ChatComposerView.controlSize)
+            .glassEffect(.regular, in: .capsule)
 
             Button(action: onSend) {
                 Image(systemName: "arrow.up")
-                    .font(.system(size: 17, weight: .bold))
+                    .font(.system(size: 15, weight: .bold))
                     .foregroundStyle(Color.white)
-                    .frame(width: 44, height: 44)
-                    .background(Theme.accent)
-                    .clipShape(Circle())
+                    .frame(width: ChatComposerView.controlSize, height: ChatComposerView.controlSize)
+                    .contentShape(Circle())
             }
-            .pressable(scale: 0.88, dimming: 0, haptic: .medium)
+            .buttonStyle(PressableButtonStyle(scale: 1, dimming: 0, haptic: .medium))
+            .glassEffect(.regular.tint(Theme.accent).interactive(), in: .circle)
             .accessibilityLabel("Send recording")
         }
-        .padding(.horizontal, 12)
         .accessibilityElement(children: .contain)
     }
 }
@@ -184,22 +188,17 @@ struct VoiceLockIndicator: View {
         }
         .frame(width: 36, height: 60)
         .background {
+            // Fill rises with the finger — a progress bar disguised as a capsule. It sits on
+            // the content side of the glass so it stays crisp.
             Capsule(style: .continuous)
-                .fill(progress >= 1 ? Theme.accent : Theme.backgroundGrouped)
-                .overlay(alignment: .bottom) {
-                    // Fill rises with the finger — a progress bar disguised as a capsule.
-                    Capsule(style: .continuous)
-                        .fill(Theme.accentSoft)
-                        .frame(height: 60 * progress)
-                        .opacity(progress >= 1 ? 0 : 1)
-                }
+                .fill(Theme.accentSoft)
+                .frame(height: 60 * progress)
+                .opacity(progress >= 1 ? 0 : 1)
+                .frame(maxHeight: .infinity, alignment: .bottom)
                 .clipShape(Capsule(style: .continuous))
         }
-        .overlay {
-            Capsule(style: .continuous)
-                .strokeBorder(Theme.separator, lineWidth: 0.5)
-        }
-        .shadow(color: Theme.textPrimary.opacity(0.1), radius: 8, y: 3)
+        // Clear glass that turns accent the moment the lock engages.
+        .glassEffect(progress >= 1 ? .regular.tint(Theme.accent) : .regular, in: .capsule)
         .offset(y: -progress * 6)
         .animation(Motion.snappy, value: progress >= 1)
         .accessibilityHidden(true)
@@ -241,6 +240,6 @@ enum VoiceTimeFormat {
             VoiceLockIndicator(progress: 1)
         }
     }
-    .padding(.vertical, 24)
-    .background(Theme.background)
+    .padding(24)
+    .background(Theme.backgroundChat)
 }

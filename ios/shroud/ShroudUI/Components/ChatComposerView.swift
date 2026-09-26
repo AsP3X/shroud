@@ -4,14 +4,18 @@ import SwiftUI
 ///
 /// Three states:
 /// - **Idle**: attach + field + mic (or send, once there is a draft).
-/// - **Recording**: hold the mic. The field is replaced by a live waveform + timer, and a lock
+/// - **Recording**: hold the mic. The field is replaced by a live timer, and a lock
 ///   affordance floats above the thumb. Slide left to cancel, up to lock, release to send.
 /// - **Locked**: hands-free. Trash / waveform / send.
 ///
-/// Human: The gesture lives here rather than in `ConversationView` so its thresholds sit next to
-/// the geometry they act on; the host only receives the three outcomes (start / cancel / send).
+/// Human: Liquid Glass throughout — the attach circle, the field capsule and the mic / send
+/// circle each carry their own glass and float over the thread, which the host fades under
+/// them with `glassBottomBar`. A reply or link strip rides above the row as one more glass
+/// panel. The gesture lives here rather than in `ConversationView` so its thresholds sit next
+/// to the geometry they act on; the host only receives the three outcomes (start / cancel / send).
 /// Agent: READS `recorder` (@Observable) for live elapsed + levels; CALLS onRecordStart /
-/// onRecordCancel / onRecordSend. Owns no audio state itself.
+/// onRecordCancel / onRecordSend. Owns no audio state itself. Every glass shape sits in one
+/// `GlassEffectContainer`, so the mic ⇄ send swap morphs instead of cross-fading.
 struct ChatComposerView: View {
     @Binding var draft: String
     /// Live recording state. Owned by the host so audio outlives composer view updates.
@@ -44,12 +48,18 @@ struct ChatComposerView: View {
     /// ✕ / "Remove Preview": drop the preview, keep the draft.
     var onRemoveLinkPreview: () -> Void = {}
 
+    /// Composer control diameter — lighter than the 44 pt bar controls above the thread.
+    static let controlSize: CGFloat = 40
+    /// Corner radius of the field: a capsule at one line, a rounded rect as it grows.
+    static let fieldRadius: CGFloat = 20
+
     @FocusState private var focused: Bool
     @State private var phase: VoiceRecordingPhase = .idle
     /// Guards the drag from firing again while `onRecordStart` is still awaiting.
     @State private var isStarting = false
     /// Set when the finger lifts before start() resolved — we discard whatever arrives.
     @State private var abandonedDuringStart = false
+    @Namespace private var glassNamespace
 
     private var canSend: Bool {
         !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -66,45 +76,46 @@ struct ChatComposerView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            if let linkBar, !phase.isActive {
-                ChatLinkBar(
-                    state: linkBar,
-                    showsAboveText: linkShowsAboveText,
-                    canToggleImageSize: linkCanToggleImageSize,
-                    usesLargeImage: linkUsesLargeImage,
-                    onToggleAboveText: onToggleLinkAboveText,
-                    onToggleImageSize: onToggleLinkImageSize,
-                    onRemove: onRemoveLinkPreview
-                )
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-            } else if let reply {
-                // Stays up while recording: a voice note can answer a message too.
-                ChatReplyBar(content: reply, onTapPreview: onTapReply, onCancel: onCancelReply)
+        GlassEffectContainer(spacing: 8) {
+            VStack(spacing: 8) {
+                if let linkBar, !phase.isActive {
+                    ChatLinkBar(
+                        state: linkBar,
+                        showsAboveText: linkShowsAboveText,
+                        canToggleImageSize: linkCanToggleImageSize,
+                        usesLargeImage: linkUsesLargeImage,
+                        onToggleAboveText: onToggleLinkAboveText,
+                        onToggleImageSize: onToggleLinkImageSize,
+                        onRemove: onRemoveLinkPreview
+                    )
+                    .modifier(ComposerStripGlass())
                     .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
+                } else if let reply {
+                    // Stays up while recording: a voice note can answer a message too.
+                    ChatReplyBar(content: reply, onTapPreview: onTapReply, onCancel: onCancelReply)
+                        .modifier(ComposerStripGlass())
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
 
-            if phase.isLocked {
-                VoiceLockedBar(
-                    elapsed: recorder.elapsed,
-                    levels: recorder.liveLevels,
-                    onDiscard: { finishRecording(send: false) },
-                    onSend: { finishRecording(send: true) }
-                )
-                .padding(.vertical, 8)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-            } else {
-                composerRow
+                if phase.isLocked {
+                    VoiceLockedBar(
+                        elapsed: recorder.elapsed,
+                        levels: recorder.liveLevels,
+                        onDiscard: { finishRecording(send: false) },
+                        onSend: { finishRecording(send: true) }
+                    )
                     .transition(.move(edge: .bottom).combined(with: .opacity))
+                } else {
+                    composerRow
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
         }
-        .background {
-            // Extends under the home indicator; content stays in the safe area.
-            Theme.background
-                .ignoresSafeArea(edges: .bottom)
-        }
+        .padding(.horizontal, 12)
+        .padding(.top, 4)
+        .padding(.bottom, 8)
         .animation(Motion.standard, value: phase.isLocked)
-        // The bar pushes the thread up as it appears; spring it so nothing snaps.
+        // The strip pushes the thread up as it appears; spring it so nothing snaps.
         .animation(Motion.snappy, value: reply)
         .animation(Motion.snappy, value: linkBar)
         .onChange(of: focusToken) { _, _ in
@@ -115,12 +126,16 @@ struct ChatComposerView: View {
     // MARK: - Idle / recording row
 
     private var composerRow: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             if phase.isActive {
                 VoiceRecordingBar(
                     elapsed: recorder.elapsed,
                     cancelProgress: cancelProgress
                 )
+                .padding(.horizontal, 14)
+                .frame(minHeight: Self.controlSize)
+                .glassEffect(.regular, in: .capsule)
+                .glassEffectID("field", in: glassNamespace)
                 .transition(.opacity)
             } else {
                 attachButton
@@ -130,8 +145,6 @@ struct ChatComposerView: View {
 
             trailingControl
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
         .animation(Motion.snappy, value: phase.isActive)
         // Bouncy: the send button appearing is the "you can send now" moment.
         .animation(Motion.bouncy, value: canSend)
@@ -142,10 +155,13 @@ struct ChatComposerView: View {
             Image(systemName: "plus")
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundStyle(Theme.accent)
-                .frame(width: 34, height: 34)
-                .contentShape(Rectangle())
+                .frame(width: Self.controlSize, height: Self.controlSize)
+                .contentShape(Circle())
         }
-        .pressable(scale: 0.82)
+        // Interactive glass swells under the finger; the style only adds the haptic tick.
+        .buttonStyle(PressableButtonStyle(scale: 1, dimming: 0))
+        .glassEffect(.regular.interactive(), in: .circle)
+        .glassEffectID("attach", in: glassNamespace)
         .accessibilityLabel("Attach")
     }
 
@@ -165,18 +181,15 @@ struct ChatComposerView: View {
                 .foregroundStyle(focused ? Theme.accent : Theme.textSecondary)
                 .accessibilityHidden(true)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .frame(minHeight: 36)
-        .background(Theme.backgroundGrouped)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay {
-            // Focus ring fades in rather than snapping — signals the field is live.
-            // Decorative only: it must never swallow taps meant for the text field.
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Theme.accent.opacity(focused ? 0.35 : 0), lineWidth: 1)
-                .allowsHitTesting(false)
-        }
+        .frame(minHeight: Self.controlSize)
+        // A whisper of accent in the glass while the field is live, instead of a stroke.
+        .glassEffect(
+            focused ? .regular.tint(Theme.accent.opacity(0.12)) : .regular,
+            in: .rect(cornerRadius: Self.fieldRadius)
+        )
+        .glassEffectID("field", in: glassNamespace)
         // Field grows as the draft wraps; spring the whole row so nothing jumps.
         .animation(Motion.snappy, value: focused)
         .animation(Motion.snappy, value: draft)
@@ -190,11 +203,12 @@ struct ChatComposerView: View {
                     Image(systemName: "arrow.up")
                         .font(.system(size: 15, weight: .bold))
                         .foregroundStyle(Color.white)
-                        .frame(width: 34, height: 34)
-                        .background(Theme.accent)
-                        .clipShape(Circle())
+                        .frame(width: Self.controlSize, height: Self.controlSize)
+                        .contentShape(Circle())
                 }
-                .pressable(scale: 0.86, dimming: 0, haptic: nil)
+                .buttonStyle(PressableButtonStyle(scale: 1, dimming: 0, haptic: nil))
+                .glassEffect(.regular.tint(Theme.accent).interactive(), in: .circle)
+                .glassEffectID("trailing", in: glassNamespace)
                 .accessibilityLabel("Send")
                 .transition(Motion.iconSwap.combined(with: .offset(y: 6)))
             } else {
@@ -202,8 +216,8 @@ struct ChatComposerView: View {
                     .transition(Motion.iconSwap)
             }
         }
-        // 44pt so the hit target survives the first points of drag travel; the glyphs
-        // inside stay 34pt to match the design system's composer spec.
+        // 44pt so the hit target survives the first points of drag travel; the glass
+        // inside stays `controlSize` to match the other composer controls.
         .frame(width: 44, height: 44)
         // Lock affordance floats above the thumb while the finger is down.
         .overlay(alignment: .bottom) {
@@ -216,19 +230,20 @@ struct ChatComposerView: View {
         .animation(Motion.snappy, value: phase.isActive)
     }
 
-    /// Grows and glows while recording; the halo tracks the current input level.
+    /// Grows and fills with accent while recording; the halo tracks the current input level.
     private var micButton: some View {
         let level = CGFloat(recorder.liveLevels.last ?? 0)
         return Image(systemName: "mic.fill")
             .font(.system(size: 18, weight: .semibold))
             .foregroundStyle(phase.isActive ? Color.white : Theme.accent)
-            .frame(width: 34, height: 34)
-            .background {
-                Circle()
-                    .fill(Theme.accent)
-                    .opacity(phase.isActive ? 1 : 0)
-                    .scaleEffect(phase.isActive ? 1 : 0.4)
-            }
+            .frame(width: Self.controlSize, height: Self.controlSize)
+            .contentShape(Circle())
+            // Clear glass at rest, accent-tinted glass while the mic is live.
+            .glassEffect(
+                phase.isActive ? .regular.tint(Theme.accent).interactive() : .regular.interactive(),
+                in: .circle
+            )
+            .glassEffectID("trailing", in: glassNamespace)
             .background {
                 // Level-reactive halo — visible proof the mic is hearing something.
                 Circle()
@@ -327,27 +342,45 @@ struct ChatComposerView: View {
     }
 }
 
-#Preview {
-    VStack {
-        Spacer()
-        ChatComposerView(
-            draft: .constant(""),
-            recorder: VoiceRecorder(),
-            onAttach: {},
-            onSend: {},
-            onRecordStart: { true },
-            onRecordCancel: {},
-            onRecordSend: {}
-        )
-        ChatComposerView(
-            draft: .constant("Hello"),
-            recorder: VoiceRecorder(),
-            onAttach: {},
-            onSend: {},
-            onRecordStart: { true },
-            onRecordCancel: {},
-            onRecordSend: {}
-        )
+/// The reply / link strip as one glass panel above the field.
+private struct ComposerStripGlass: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(.vertical, 2)
+            .glassEffect(.regular, in: .rect(cornerRadius: ChatComposerView.fieldRadius))
     }
-    .background(Theme.backgroundChat)
+}
+
+#Preview {
+    ZStack {
+        Theme.backgroundChat.ignoresSafeArea()
+        VStack {
+            Spacer()
+            ChatComposerView(
+                draft: .constant(""),
+                recorder: VoiceRecorder(),
+                onAttach: {},
+                onSend: {},
+                onRecordStart: { true },
+                onRecordCancel: {},
+                onRecordSend: {}
+            )
+            ChatComposerView(
+                draft: .constant("Hello"),
+                recorder: VoiceRecorder(),
+                onAttach: {},
+                onSend: {},
+                onRecordStart: { true },
+                onRecordCancel: {},
+                onRecordSend: {},
+                reply: ReplyQuoteContent(
+                    author: "Jane Cooper",
+                    text: "Are we still on for tomorrow?",
+                    isStandIn: false,
+                    thumbnail: nil,
+                    symbolName: nil
+                )
+            )
+        }
+    }
 }

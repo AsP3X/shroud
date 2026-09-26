@@ -458,11 +458,13 @@ struct VideoComposeOverlay: View {
                 .font(.system(size: 17, weight: .medium))
                 .foregroundStyle(active ? telegramBlue : Color.white)
                 .frame(width: 44, height: 44)
-                .background(chrome, in: Circle())
+                .contentShape(Circle())
                 .opacity(enabled ? 1 : 0.35)
                 .contentTransition(.symbolEffect(.replace))
         }
-        .pressable(scale: 0.85, dimming: 0)
+        // Liquid Glass tool circles over the clip, as the system's own editors draw them.
+        .buttonStyle(PressableButtonStyle(scale: 1, dimming: 0))
+        .glassEffect(.regular.interactive(), in: .circle)
         .disabled(!enabled)
         .accessibilityLabel(label)
     }

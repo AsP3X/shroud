@@ -17,7 +17,6 @@ struct ConversationView: View {
     @Environment(MessagingController.self) private var messaging
     @Environment(CallController.self) private var calls
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.displayScale) private var displayScale
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var draft = ""
@@ -244,11 +243,12 @@ struct ConversationView: View {
             })
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Theme.backgroundChat)
-            .safeAreaInset(edge: .top, spacing: 0) {
+            // Glass bars: the thread scrolls under both and the scroll edge effect fades it.
+            .glassTopBar {
                 topChrome
             }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                VStack(spacing: 0) {
+            .glassBottomBar {
+                VStack(spacing: 8) {
                     if isNotes {
                         notesToolbar
                     }
@@ -538,8 +538,7 @@ struct ConversationView: View {
         if isSendingMedia {
             ProgressView("Sending media…")
                 .padding(16)
-                .background(.ultraThinMaterial)
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .glassEffect(.regular, in: .rect(cornerRadius: 14))
                 .transition(.scale(scale: 0.9).combined(with: .opacity))
         }
     }
@@ -584,173 +583,145 @@ struct ConversationView: View {
     /// Telegram caps an album at 10; matching that keeps one send from ballooning.
     private static let maxPhotosPerSend = 10
 
-    // MARK: - Top chrome (extends under status bar)
+    // MARK: - Top chrome (Liquid Glass bar)
 
+    /// Back, the contact (avatar + name + presence), and the call / more controls.
+    ///
+    /// Human: Only the controls carry glass; the contact block is plain so the name reads
+    /// like a title. Video and Call fuse into one capsule, the way the system toolbar groups
+    /// neighbouring items. There is no backdrop: `glassTopBar` fades the thread under it.
+    /// Agent: RETURNS the bar row; presence animation lives on the centre block.
     private var topChrome: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                Button {
-                    if let onBack {
-                        onBack()
-                    } else {
-                        dismiss()
-                    }
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(Theme.accent)
-                        .frame(width: 34, height: 34)
-                        .contentShape(Rectangle())
+        GlassBarRow(centersTitle: false) {
+            GlassBarButton(systemImage: "chevron.left") {
+                if let onBack {
+                    onBack()
+                } else {
+                    dismiss()
                 }
-                .pressable(scale: 0.82)
-                .accessibilityLabel("Back")
-
-                Group {
-                    if isNotes {
-                        HStack(spacing: 10) {
-                            notesHeaderAvatar
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(peerUsername)
-                                    .font(.system(size: 16, weight: .semibold))
-                                    .foregroundStyle(Theme.textPrimary)
-                                    .lineLimit(1)
-                                Text(presenceLabel)
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(Theme.textSecondary)
-                                    .lineLimit(1)
-                            }
-                            Spacer(minLength: 0)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    } else {
-                        Button {
-                            profileDestination = ProfileDestination(
-                                peerUserID: peerUserID,
-                                peerUsername: peerUsername
-                            )
-                        } label: {
-                            HStack(spacing: 10) {
-                                AvatarView(
-                                    initials: AvatarView.initials(for: peerUsername),
-                                    size: 40,
-                                    gradient: AvatarView.gradient(for: peerUsername),
-                                    fontSize: 14
-                                )
-
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text(peerUsername)
-                                        .font(.system(size: 16, weight: .semibold))
-                                        .foregroundStyle(Theme.textPrimary)
-                                        .lineLimit(1)
-                                    HStack(spacing: 4) {
-                                        if let peerActivity {
-                                            // "online" → "typing" / "recording" swaps in place,
-                                            // its glyph moving in step with the thread bubble.
-                                            TypingLabel(activity: peerActivity)
-                                                .transition(.opacity)
-                                        } else {
-                                            if isOnline {
-                                                PresenceDot()
-                                                    .transition(Motion.iconSwap)
-                                            }
-                                            Text(presenceLabel)
-                                                .font(.system(size: 12))
-                                                .foregroundStyle(presenceAccent ? Theme.accent : Theme.textSecondary)
-                                                .lineLimit(1)
-                                                .contentTransition(.opacity)
-                                                .transition(.opacity)
-                                        }
-                                    }
-                                    // Presence is the header's only live state — animate every part of it.
-                                    .animation(Motion.snappy, value: presenceLabel)
-                                    .animation(Motion.snappy, value: isOnline)
-                                    .animation(Motion.snappy, value: peerActivity)
-                                }
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .pressable(scale: 0.98, dimming: 0.12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .accessibilityLabel("Back")
+        } center: {
+            headerContact
+        } trailing: {
+            if !isNotes {
+                GlassBarGroup {
+                    GlassBarButton(systemImage: "video.fill", haptic: .medium) {
+                        startCall(.video)
                     }
-                }
-
-                if !isNotes {
-                    Button {
-                        Task {
-                            await calls.startCall(
-                                peerUserID: peerUserID,
-                                peerUsername: peerUsername,
-                                modality: .video
-                            )
-                            if let err = calls.lastError {
-                                toast = err
-                                scheduleToastClear()
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "video.fill")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(Theme.accent)
-                            .frame(width: 34, height: 34)
-                            .contentShape(Rectangle())
-                    }
-                    .pressable(scale: 0.82, haptic: .medium)
                     .accessibilityLabel("Video call")
 
-                    Button {
-                        Task {
-                            await calls.startCall(
-                                peerUserID: peerUserID,
-                                peerUsername: peerUsername,
-                                modality: .voice
-                            )
-                            if let err = calls.lastError {
-                                toast = err
-                                scheduleToastClear()
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "phone.fill")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(Theme.accent)
-                            .frame(width: 34, height: 34)
-                            .contentShape(Rectangle())
+                    GlassBarButton(systemImage: "phone.fill", haptic: .medium) {
+                        startCall(.voice)
                     }
-                    .pressable(scale: 0.82, haptic: .medium)
                     .accessibilityLabel("Call")
                 }
-
-                // Chat-level actions. Notes are local Saved Messages, so they only clear.
-                Menu {
-                    Button(role: .destructive) {
-                        showChatDeleteConfirm = true
-                    } label: {
-                        Label(
-                            isNotes ? "Delete Saved Messages" : "Delete Chat",
-                            systemImage: "trash"
-                        )
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(Theme.accent)
-                        .frame(width: 30, height: 34)
-                        .contentShape(Rectangle())
-                }
-                .accessibilityLabel("More")
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 6)
-            .padding(.bottom, 10)
 
-            Rectangle()
-                .fill(Theme.separator)
-                .frame(height: 1 / displayScale)
+            // Chat-level actions. Notes are local Saved Messages, so they only clear.
+            Menu {
+                Button(role: .destructive) {
+                    showChatDeleteConfirm = true
+                } label: {
+                    Label(
+                        isNotes ? "Delete Saved Messages" : "Delete Chat",
+                        systemImage: "trash"
+                    )
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(GlassBarMetrics.glyphFont)
+                    .foregroundStyle(Theme.accent)
+                    .frame(width: GlassBarMetrics.controlSize, height: GlassBarMetrics.controlSize)
+                    .contentShape(Circle())
+            }
+            .glassEffect(.regular.interactive(), in: .circle)
+            .accessibilityLabel("More")
         }
-        .background {
-            // Solid theme color under status bar (works in light + dark).
-            Theme.background
-                .ignoresSafeArea(edges: .top)
+    }
+
+    /// The bar's centre: Notes' bookmark, or the peer (tap opens the profile).
+    @ViewBuilder
+    private var headerContact: some View {
+        if isNotes {
+            HStack(spacing: 10) {
+                notesHeaderAvatar
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(peerUsername)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                    Text(presenceLabel)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+        } else {
+            Button {
+                profileDestination = ProfileDestination(
+                    peerUserID: peerUserID,
+                    peerUsername: peerUsername
+                )
+            } label: {
+                HStack(spacing: 10) {
+                    AvatarView(
+                        initials: AvatarView.initials(for: peerUsername),
+                        size: 40,
+                        gradient: AvatarView.gradient(for: peerUsername),
+                        fontSize: 14
+                    )
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(peerUsername)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                            .lineLimit(1)
+                        HStack(spacing: 4) {
+                            if let peerActivity {
+                                // "online" → "typing" / "recording" swaps in place,
+                                // its glyph moving in step with the thread bubble.
+                                TypingLabel(activity: peerActivity)
+                                    .transition(.opacity)
+                            } else {
+                                if isOnline {
+                                    PresenceDot()
+                                        .transition(Motion.iconSwap)
+                                }
+                                Text(presenceLabel)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(presenceAccent ? Theme.accent : Theme.textSecondary)
+                                    .lineLimit(1)
+                                    .contentTransition(.opacity)
+                                    .transition(.opacity)
+                            }
+                        }
+                        // Presence is the header's only live state — animate every part of it.
+                        .animation(Motion.snappy, value: presenceLabel)
+                        .animation(Motion.snappy, value: isOnline)
+                        .animation(Motion.snappy, value: peerActivity)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .pressable(scale: 0.98, dimming: 0.12)
+        }
+    }
+
+    /// Places a call to the peer; a failure shows as a toast.
+    private func startCall(_ modality: CallModality) {
+        Task {
+            await calls.startCall(
+                peerUserID: peerUserID,
+                peerUsername: peerUsername,
+                modality: modality
+            )
+            if let err = calls.lastError {
+                toast = err
+                scheduleToastClear()
+            }
         }
     }
 
@@ -1570,12 +1541,12 @@ struct ConversationView: View {
                 Label("Todo", systemImage: "checklist")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(Theme.accent)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Theme.backgroundGrouped)
-                    .clipShape(Capsule())
+                    .padding(.horizontal, 14)
+                    .frame(height: 36)
             }
-            .pressable(scale: 0.94)
+            .buttonStyle(PressableButtonStyle(scale: 1, dimming: 0))
+            // A small glass capsule, sitting in the same bar as the composer.
+            .glassEffect(.regular.interactive(), in: .capsule)
             .accessibilityLabel("Add as todo")
 
             Text("Saved only on this device")
@@ -1584,9 +1555,6 @@ struct ConversationView: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 14)
-        .padding(.top, 8)
-        .padding(.bottom, 2)
-        .background(Theme.background)
     }
 
     private func handleAttach(_ option: ChatAttachOption) {

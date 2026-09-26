@@ -44,8 +44,6 @@ struct ServerSettingsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            navRow
-
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     header
@@ -71,9 +69,21 @@ struct ServerSettingsView: View {
             bottomSave
         }
         .background(Theme.backgroundGrouped)
-        .navigationBarHidden(true)
+        // System navigation bar: Liquid Glass back button, large title, Save capsule.
+        .navigationTitle("Server")
+        .navigationBarTitleDisplayMode(.large)
+        .toolbar(.visible, for: .navigationBar)
+        // No way back while a save is in flight — it may end in a sign-out.
+        .navigationBarBackButtonHidden(isBusy)
         .interactiveDismissDisabled(isBusy)
         .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") {
+                    attemptSave()
+                }
+                .tint(Theme.accent)
+                .disabled(isBusy)
+            }
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
                 Button("Done") {
@@ -105,47 +115,9 @@ struct ServerSettingsView: View {
         }
     }
 
-    // MARK: - Chrome
-
-    private var navRow: some View {
-        HStack {
-            Button {
-                Haptics.impact(.light)
-                dismiss()
-            } label: {
-                HStack(spacing: 2) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 16, weight: .semibold))
-                    Text("Settings")
-                        .font(.system(size: 16))
-                }
-                .foregroundStyle(Theme.accent)
-            }
-            .pressable(scale: 0.9)
-            .disabled(isBusy)
-            .opacity(isBusy ? 0.4 : 1)
-
-            Spacer()
-
-            Button("Save") {
-                attemptSave()
-            }
-            .font(.system(size: 16, weight: .semibold))
-            .foregroundStyle(Theme.accent)
-            .pressable(scale: 0.9)
-            .disabled(isBusy)
-            .opacity(isBusy ? 0.4 : 1)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 4)
-        .frame(height: 44)
-    }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Server")
-                .font(.system(size: 32, weight: .bold))
-                .foregroundStyle(Theme.textPrimary)
             Text("Use the official Shroud network or connect to your own self-hosted server.")
                 .font(.system(size: 14))
                 .foregroundStyle(Theme.textSecondary)

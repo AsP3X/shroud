@@ -1,17 +1,25 @@
 import SwiftUI
 
-/// Scrollable main-tab screen with Telegram-style transparent chrome.
+/// Scrollable main-tab screen under a Liquid Glass bar.
 ///
 /// Collapsing screens (Chats / Contacts / Calls):
 /// ```
-/// [ Edit ]     Title     [ actions ]
+/// (Edit)       Title       (actions)
 /// ```
-/// Single-line sticky bar: compact centered title between side buttons.
+/// One row: glass controls at the sides, the plain title centred on the screen. Rows scroll
+/// under the bar and the status bar, where the scroll edge effect fades them out.
 ///
-/// Settings: large title scrolls away; bar keeps only leading/trailing actions.
+/// Settings-style: the 32 pt title scrolls away with the content; the bar keeps only the
+/// leading and trailing actions.
+///
+/// Human: The bar used to paint its own material gradient and watch the scroll offset to
+/// thicken it. iOS 26 does that with `safeAreaBar` + the scroll edge effect, so the screen
+/// no longer tracks the offset at all.
+/// Agent: READS `tabBarClearance` to end the list at the floating tab bar. RETURNS a
+/// `ScrollView` with the bar pinned by `glassTopBar`; the callers keep the same slots.
 struct MainScrollScreen<NavLeading: View, NavTrailing: View, Accessory: View, Content: View>: View {
     let title: String
-    /// When true, title stays sticky & centered and shrinks on scroll.
+    /// When true the title lives in the bar; when false the accessory carries it.
     var collapsesTitle: Bool = true
 
     @ViewBuilder var navLeading: () -> NavLeading
@@ -19,171 +27,31 @@ struct MainScrollScreen<NavLeading: View, NavTrailing: View, Accessory: View, Co
     @ViewBuilder var accessory: () -> Accessory
     @ViewBuilder var content: () -> Content
 
-    @State private var scrollOffsetY: CGFloat = 0
-
     @Environment(\.tabBarClearance) private var tabBarClearance
 
-    // MARK: - Metrics
-
-    private let navRowHeight: CGFloat = 44
-    private let collapseDistance: CGFloat = 36
-
-    private var collapseProgress: CGFloat {
-        guard collapsesTitle else { return 0 }
-        return min(1, max(0, scrollOffsetY / collapseDistance))
-    }
-
-    private var scrollBoost: CGFloat {
-        if collapsesTitle {
-            return collapseProgress
-        }
-        return min(1, max(0, scrollOffsetY / 36))
-    }
-
-    private var gradientTopOpacity: CGFloat { 0.88 + 0.08 * scrollBoost }
-    private var gradientMidOpacity: CGFloat { 0.55 + 0.2 * scrollBoost }
-
-    private var stickyHeaderHeight: CGFloat { navRowHeight }
-
-    private var scrollTopInset: CGFloat { navRowHeight }
-
     var body: some View {
-        ZStack(alignment: .top) {
-            ScrollView {
-                VStack(spacing: 0) {
-                    Color.clear
-                        .frame(height: scrollTopInset)
-                        .accessibilityHidden(true)
+        ScrollView {
+            VStack(spacing: 0) {
+                accessory()
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                    accessory()
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    content()
-                }
-                .background {
-                    GeometryReader { proxy in
-                        Color.clear.preference(
-                            key: MainScrollOffsetKey.self,
-                            value: -proxy.frame(in: .named("mainScroll")).minY
-                        )
-                    }
-                }
-            }
-            .coordinateSpace(name: "mainScroll")
-            .onPreferenceChange(MainScrollOffsetKey.self) { value in
-                if abs(value - scrollOffsetY) > 0.5 {
-                    scrollOffsetY = value
-                }
-            }
-            .scrollDismissesKeyboard(.interactively)
-            // Last row ends at the floating tab bar's top edge instead of under it.
-            .safeAreaPadding(.bottom, tabBarClearance)
-
-            stickyHeader
-        }
-    }
-
-    // MARK: - Sticky header
-
-    private var stickyHeader: some View {
-        VStack(spacing: 0) {
-            if collapsesTitle {
-                collapsingTitleBar
-            } else {
-                actionsOnlyBar
+                content()
             }
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: stickyHeaderHeight, alignment: .top)
-        .background { telegramGradientBackground }
-    }
-
-    /// Single row like Telegram compact nav: Edit | Title | actions.
-    private var collapsingTitleBar: some View {
-        HStack(spacing: 0) {
-            HStack(spacing: 0) {
+        .scrollDismissesKeyboard(.interactively)
+        // Last row ends at the floating tab bar's top edge instead of under it.
+        .safeAreaPadding(.bottom, tabBarClearance)
+        .glassTopBar {
+            GlassBarRow {
                 navLeading()
-                Spacer(minLength: 0)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            Text(title)
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity)
-                .accessibilityAddTraits(.isHeader)
-
-            HStack(spacing: 0) {
-                Spacer(minLength: 0)
+            } center: {
+                if collapsesTitle {
+                    GlassBarTitle(title: title)
+                }
+            } trailing: {
                 navTrailing()
             }
-            .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .padding(.horizontal, 16)
-        .frame(height: navRowHeight)
-    }
-
-    private var actionsOnlyBar: some View {
-        HStack(spacing: 0) {
-            HStack(spacing: 0) {
-                navLeading()
-                Spacer(minLength: 0)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            HStack(spacing: 0) {
-                Spacer(minLength: 0)
-                navTrailing()
-            }
-            .frame(maxWidth: .infinity, alignment: .trailing)
-        }
-        .padding(.horizontal, 16)
-        .frame(height: navRowHeight)
-    }
-
-    private var telegramGradientBackground: some View {
-        ZStack(alignment: .top) {
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .mask(
-                    LinearGradient(
-                        stops: [
-                            .init(color: .white.opacity(0.95), location: 0),
-                            .init(color: .white.opacity(0.55), location: 0.45),
-                            .init(color: .white.opacity(0.12), location: 0.82),
-                            .init(color: .clear, location: 1),
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .opacity(0.75 + 0.2 * Double(scrollBoost))
-
-            LinearGradient(
-                stops: [
-                    .init(
-                        color: Theme.background.opacity(Double(gradientTopOpacity)),
-                        location: 0
-                    ),
-                    .init(
-                        color: Theme.background.opacity(Double(gradientMidOpacity)),
-                        location: 0.42
-                    ),
-                    .init(
-                        color: Theme.background.opacity(0.12 + 0.1 * Double(scrollBoost)),
-                        location: 0.78
-                    ),
-                    .init(color: Theme.background.opacity(0), location: 1),
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        }
-        .padding(.bottom, 20)
-        .ignoresSafeArea(edges: .top)
     }
 }
 
@@ -218,11 +86,26 @@ struct ScrollAwayTitle: View {
     }
 }
 
-// MARK: - Preference
-
-private struct MainScrollOffsetKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
+#Preview("Collapsing title") {
+    MainScrollScreen(title: "Chats", collapsesTitle: true) {
+        GlassBarButton("Edit") {}
+    } navTrailing: {
+        GlassBarButton(systemImage: "square.and.pencil") {}
+    } accessory: {
+        SearchField(text: .constant(""))
+            .padding(.horizontal, 16)
+            .padding(.bottom, 10)
+    } content: {
+        LazyVStack(spacing: 0) {
+            ForEach(0 ..< 24, id: \.self) { index in
+                ChatRowView(
+                    title: "Contact \(index)",
+                    subtitle: "Preview text",
+                    time: "9:41",
+                    avatarGradient: AvatarView.gradient(for: "c\(index)")
+                )
+            }
+        }
     }
+    .background(Theme.background)
 }

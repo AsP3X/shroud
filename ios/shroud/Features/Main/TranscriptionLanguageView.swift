@@ -15,62 +15,36 @@ struct TranscriptionLanguageView: View {
 
     var body: some View {
         GroupedScreen {
-            VStack(spacing: 0) {
-                navRow
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    header
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        header
-
-                        if install.phase == .downloading {
-                            downloadProgressCard
-                        }
-
-                        automaticCard
-                        languageCard
-
-                        Color.clear.frame(height: 24)
+                    if install.phase == .downloading {
+                        downloadProgressCard
                     }
-                    .padding(.horizontal, 16)
+
+                    automaticCard
+                    languageCard
+
+                    Color.clear.frame(height: 24)
                 }
+                .padding(.horizontal, 16)
             }
         }
-        .navigationBarBackButtonHidden(true)
-        .toolbar(.hidden, for: .navigationBar)
+        // System navigation bar: Liquid Glass back button, large title, scroll edge fade.
+        .navigationTitle("Transcription")
+        .navigationBarTitleDisplayMode(.large)
+        .toolbar(.visible, for: .navigationBar)
         .onAppear {
             available = TranscriptionLanguage.whisperLocales
             selection = TranscriptionLanguage.override
         }
     }
 
-    // MARK: - Chrome
-
-    private var navRow: some View {
-        HStack {
-            Button {
-                dismiss()
-            } label: {
-                HStack(spacing: 2) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 16, weight: .semibold))
-                    Text("Settings")
-                        .font(.system(size: 16))
-                }
-                .foregroundStyle(Theme.accent)
-            }
-            .pressable(scale: 0.9)
-
-            Spacer()
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 44)
-    }
+    // MARK: - Header
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Transcription")
-                .font(.system(size: 32, weight: .bold))
-                .foregroundStyle(Theme.textPrimary)
             Text("Voice messages are transcribed on this device with Whisper. Audio never leaves it. The model downloads once, the first time you transcribe, then works for every language.")
                 .font(.system(size: 14))
                 .foregroundStyle(Theme.textSecondary)

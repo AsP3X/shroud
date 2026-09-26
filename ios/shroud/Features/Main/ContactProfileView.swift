@@ -50,30 +50,19 @@ struct ContactProfileView: View {
             .padding(.bottom, 32)
         }
         .background(Theme.backgroundGrouped.ignoresSafeArea())
-        .navigationBarBackButtonHidden(true)
+        // System navigation bar: Liquid Glass back button and Edit capsule; the hero
+        // scrolls under the bar and fades, so there is no title and no solid backdrop.
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button {
-                    dismiss()
-                } label: {
-                    HStack(spacing: 2) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 16, weight: .semibold))
-                        Text("Back")
-                            .font(.system(size: 16))
-                    }
-                    .foregroundStyle(Theme.accent)
-                }
-            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Edit") {
                     toast = "Edit coming soon"
                     scheduleClear()
                 }
-                .foregroundStyle(Theme.accent)
+                .tint(Theme.accent)
             }
         }
-        .toolbarBackground(Theme.backgroundGrouped, for: .navigationBar)
         .toast($toast)
         .task {
             await messaging.refreshPresence(for: [peerUserID])

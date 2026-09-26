@@ -91,36 +91,28 @@ struct LogInFlowView: View {
         }
     }
 
+    /// Glass back circle and a "Sign Up" capsule that fades out once the phrase step is up.
     private var navRow: some View {
-        HStack {
-            Button {
+        GlassBarRow {
+            GlassBarButton(systemImage: "chevron.left") {
                 if isCredentialsPhase {
                     router.pop()
                 } else {
                     phase = .credentials
                 }
-            } label: {
-                HStack(spacing: 2) {
-                    Image(systemName: "chevron.left")
-                    Text("Back")
-                }
-                .font(.system(size: 16))
-                .foregroundStyle(Theme.accent)
             }
-
-            Spacer()
-
-            Text("Sign Up")
-                .font(.system(size: 16))
-                .foregroundStyle(Theme.accent)
-                .opacity(isCredentialsPhase ? 1 : 0)
-                .allowsHitTesting(isCredentialsPhase)
-                .onTapGesture {
-                    router.showSignUp()
-                }
+            .accessibilityLabel("Back")
+        } center: {
+            EmptyView()
+        } trailing: {
+            GlassBarButton("Sign Up") {
+                router.showSignUp()
+            }
+            .opacity(isCredentialsPhase ? 1 : 0)
+            .allowsHitTesting(isCredentialsPhase)
+            .accessibilityHidden(!isCredentialsPhase)
+            .animation(Motion.fade, value: isCredentialsPhase)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 4)
     }
 
     // Human: Green confirmation strip that grows in below the nav once credentials are accepted.

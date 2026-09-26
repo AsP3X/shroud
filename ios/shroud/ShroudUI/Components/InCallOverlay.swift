@@ -104,14 +104,24 @@ struct InCallOverlay: View {
         }
     }
 
+    /// Human: Liquid Glass circles over the backdrop or the remote video, as the system's
+    /// own call screen draws them. A control that is *on* (muted, speaker, camera off) takes
+    /// a colour tint; the rest stay clear glass. One container, so neighbours morph together.
     @ViewBuilder
     private func controls(for call: CallController.ActiveCall) -> some View {
+        GlassEffectContainer(spacing: 22) {
+            controlRow(for: call)
+        }
+    }
+
+    @ViewBuilder
+    private func controlRow(for call: CallController.ActiveCall) -> some View {
         HStack(spacing: 22) {
             if call.phase != .incomingRinging {
                 callButton(
                     icon: call.isMuted ? "mic.slash.fill" : "mic.fill",
                     label: call.isMuted ? "Unmute" : "Mute",
-                    color: call.isMuted ? Theme.danger : .white.opacity(0.18)
+                    tint: call.isMuted ? Theme.danger : nil
                 ) {
                     Task { await calls.toggleMute() }
                 }
@@ -120,7 +130,7 @@ struct InCallOverlay: View {
                     callButton(
                         icon: call.isVideoEnabled ? "video.fill" : "video.slash.fill",
                         label: "Video",
-                        color: call.isVideoEnabled ? .white.opacity(0.18) : Theme.danger
+                        tint: call.isVideoEnabled ? nil : Theme.danger
                     ) {
                         Task { await calls.toggleVideo() }
                     }
@@ -129,21 +139,21 @@ struct InCallOverlay: View {
                 callButton(
                     icon: call.speakerOn ? "speaker.wave.2.fill" : "speaker.fill",
                     label: "Speaker",
-                    color: call.speakerOn ? Theme.accent : .white.opacity(0.18)
+                    tint: call.speakerOn ? Theme.accent : nil
                 ) {
                     calls.toggleSpeaker()
                 }
             }
 
             if call.phase == .incomingRinging {
-                callButton(icon: "phone.down.fill", label: "Decline", color: Theme.danger) {
+                callButton(icon: "phone.down.fill", label: "Decline", tint: Theme.danger) {
                     Task { await calls.rejectIncoming() }
                 }
-                callButton(icon: "phone.fill", label: "Accept", color: Theme.online) {
+                callButton(icon: "phone.fill", label: "Accept", tint: Theme.online) {
                     Task { await calls.acceptIncoming() }
                 }
             } else {
-                callButton(icon: "phone.down.fill", label: "End", color: Theme.danger) {
+                callButton(icon: "phone.down.fill", label: "End", tint: Theme.danger) {
                     Task { await calls.hangup() }
                 }
             }
@@ -223,10 +233,11 @@ struct InCallOverlay: View {
         return String(format: "%d:%02d", m, s)
     }
 
+    /// One call control: a 64 pt glass circle (tinted when `tint` is set) over its caption.
     private func callButton(
         icon: String,
         label: String,
-        color: Color,
+        tint: Color?,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -237,8 +248,9 @@ struct InCallOverlay: View {
                     // Mute / video glyphs morph through their slashed variant.
                     .contentTransition(.symbolEffect(.replace))
                     .frame(width: 64, height: 64)
-                    .background(color)
-                    .clipShape(Circle())
+                    .contentShape(Circle())
+                    // Interactive glass swells under the finger; a tint marks an "on" state.
+                    .glassEffect(callGlass(tint: tint), in: .circle)
                 Text(label)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.white.opacity(0.8))
@@ -246,10 +258,17 @@ struct InCallOverlay: View {
             }
             .contentShape(Rectangle())
         }
-        // Call controls are consequential — a firmer press and a heavier tick.
-        .pressable(scale: 0.9, dimming: 0, haptic: .medium)
+        // Call controls are consequential — a heavier tick on press-down.
+        .buttonStyle(PressableButtonStyle(scale: 1, dimming: 0, haptic: .medium))
         .animation(Motion.snappy, value: icon)
-        .animation(Motion.snappy, value: color)
+        .animation(Motion.snappy, value: tint)
         .transition(Motion.iconSwap)
+    }
+
+    private func callGlass(tint: Color?) -> Glass {
+        if let tint {
+            return .regular.tint(tint).interactive()
+        }
+        return .regular.interactive()
     }
 }

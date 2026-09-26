@@ -58,16 +58,9 @@ struct ChatsView: View {
             MainScrollScreen(title: "Chats", collapsesTitle: true) {
                 EmptyView()
             } navTrailing: {
-                Button {
+                GlassBarButton(systemImage: "square.and.pencil") {
                     showNewChat = true
-                } label: {
-                    Image(systemName: "square.and.pencil")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(Theme.accent)
-                        .frame(width: 44, height: 44, alignment: .trailing)
-                        .contentShape(Rectangle())
                 }
-                .pressable(scale: 0.88)
                 .accessibilityLabel("New chat")
             } accessory: {
                 VStack(spacing: 8) {

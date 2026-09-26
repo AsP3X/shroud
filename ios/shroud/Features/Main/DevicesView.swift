@@ -44,26 +44,24 @@ struct DevicesView: View {
 
     var body: some View {
         GroupedScreen {
-            VStack(spacing: 0) {
-                navRow
-
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        if let devices {
-                            loadedContent(devices)
-                        } else {
-                            loadingCard
-                        }
-                        Color.clear.frame(height: 24)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if let devices {
+                        loadedContent(devices)
+                    } else {
+                        loadingCard
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
+                    Color.clear.frame(height: 24)
                 }
-                .refreshable { await load() }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
             }
+            .refreshable { await load() }
         }
-        .navigationBarBackButtonHidden(true)
-        .toolbar(.hidden, for: .navigationBar)
+        // System navigation bar: Liquid Glass back button, inline title, scroll edge fade.
+        .navigationTitle("Devices")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
         .toast($toast)
         .task { await load() }
         .alert(
@@ -385,33 +383,6 @@ struct DevicesView: View {
 
     // MARK: - Chrome
 
-    private var navRow: some View {
-        HStack {
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(Theme.accent)
-                    .frame(width: 44, height: 44, alignment: .leading)
-                    .contentShape(Rectangle())
-            }
-            .pressable(scale: 0.88)
-            .accessibilityLabel("Back")
-
-            Spacer()
-
-            Text("Devices")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary)
-
-            Spacer()
-
-            Color.clear.frame(width: 44, height: 44)
-        }
-        .padding(.horizontal, 16)
-        .padding(.bottom, 4)
-    }
 
     private func sectionHeader(_ title: String) -> some View {
         Text(title.uppercased())

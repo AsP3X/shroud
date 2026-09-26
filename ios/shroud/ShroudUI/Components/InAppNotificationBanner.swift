@@ -5,6 +5,7 @@ import SwiftUI
 ///
 /// Human: It lives only on screen — nothing of it reaches the system's notification centre, so
 /// it may show the message text (Settings → Notifications and Sounds → Message Preview).
+/// It is a Liquid Glass card, like the system's own banners over an app.
 struct InAppNotificationBanner: View {
     let notification: InAppNotification
     let onOpen: () -> Void
@@ -29,12 +30,8 @@ struct InAppNotificationBanner: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .strokeBorder(Theme.separator.opacity(0.6), lineWidth: 0.5)
-        )
-        .shadow(color: Color.black.opacity(0.16), radius: 20, y: 10)
+        // Interactive glass: the card answers the finger before the tap opens the chat.
+        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 24))
         .frame(maxWidth: 500)
         .offset(y: min(0, dragOffset))
         .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))

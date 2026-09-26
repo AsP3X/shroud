@@ -90,27 +90,20 @@ struct SignUpView: View {
         }
     }
 
+    /// Glass back circle and a "Log In" capsule — the same bar recipe as the main screens.
     private var navRow: some View {
-        HStack {
-            Button {
+        GlassBarRow {
+            GlassBarButton(systemImage: "chevron.left") {
                 router.pop()
-            } label: {
-                HStack(spacing: 2) {
-                    Image(systemName: "chevron.left")
-                    Text("Back")
-                }
-                .font(.system(size: 16))
-                .foregroundStyle(Theme.accent)
             }
-            Spacer()
-            Button("Log In") {
+            .accessibilityLabel("Back")
+        } center: {
+            EmptyView()
+        } trailing: {
+            GlassBarButton("Log In") {
                 router.showLogIn()
             }
-            .font(.system(size: 16))
-            .foregroundStyle(Theme.accent)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 4)
     }
 
     private func sectionHeader(

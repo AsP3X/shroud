@@ -113,20 +113,17 @@ struct VideoPlayerOverlay: View {
                     Haptics.impact(.light)
                     showChrome()
                 } label: {
-                    ZStack {
-                        Circle()
-                            .fill(Color.black.opacity(0.32))
-                            .background(.ultraThinMaterial.opacity(0.6), in: Circle())
-                            .frame(width: 74, height: 74)
-                        Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 30, weight: .semibold))
-                            .foregroundStyle(Color.white)
-                            .offset(x: playback.isPlaying ? 0 : 2)
-                            .contentTransition(.symbolEffect(.replace))
-                    }
+                    Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 30, weight: .semibold))
+                        .foregroundStyle(Color.white)
+                        .offset(x: playback.isPlaying ? 0 : 2)
+                        .contentTransition(.symbolEffect(.replace))
+                        .frame(width: 74, height: 74)
+                        .contentShape(Circle())
                 }
-                .buttonStyle(.plain)
-                .pressable(scale: 0.9, haptic: nil)
+                // A large glass disc over the frame; interactive glass swells under the finger.
+                .buttonStyle(PressableButtonStyle(scale: 1, dimming: 0, haptic: nil))
+                .glassEffect(.regular.interactive(), in: .circle)
                 .transition(.scale(scale: 0.8).combined(with: .opacity))
             }
         }
@@ -151,11 +148,11 @@ struct VideoPlayerOverlay: View {
                 Image(systemName: "xmark")
                     .font(.system(size: 15, weight: .bold))
                     .foregroundStyle(Color.white)
-                    .frame(width: 32, height: 32)
-                    .background(Color.white.opacity(0.14), in: Circle())
+                    .frame(width: 40, height: 40)
+                    .contentShape(Circle())
             }
-            .buttonStyle(.plain)
-            .pressable(scale: 0.88, haptic: nil)
+            .buttonStyle(PressableButtonStyle(scale: 1, dimming: 0, haptic: nil))
+            .glassEffect(.regular.interactive(), in: .circle)
             .accessibilityLabel("Close video")
 
             if !title.isEmpty {

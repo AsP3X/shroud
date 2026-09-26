@@ -1,6 +1,9 @@
 import SwiftUI
 
 /// Brief confirmation banner shown above the home indicator (e.g. after copying sensitive data).
+///
+/// Human: A glass capsule — it floats over whatever screen raised it, the way the other
+/// transient surfaces (banner, tab bar) do, instead of a white pill with a shadow.
 struct ToastBanner: View {
     let message: String
 
@@ -19,9 +22,7 @@ struct ToastBanner: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(Theme.background)
-        .clipShape(Capsule())
-        .shadow(color: Theme.textPrimary.opacity(0.12), radius: 16, y: 8)
+        .glassEffect(.regular, in: .capsule)
     }
 }
 

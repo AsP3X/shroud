@@ -30,32 +30,30 @@ struct NotificationsSettingsView: View {
 
     var body: some View {
         GroupedScreen {
-            VStack(spacing: 0) {
-                navRow
-
-                ScrollView {
-                    VStack(spacing: 14) {
-                        permissionCard
-                        messageCard
-                        sectionFooter(
-                            "Notifications that arrive while Shroud is closed or locked never contain message text — the server can't read it. With Show Sender on, the sender's name travels sealed, so Apple can't read it either."
-                        )
-                        alsoCard
-                        inAppCard
-                        sectionFooter("While Shroud is open, a banner, sound or vibration tells you about messages in other chats. Banners can show the text: they never reach the notification centre.")
-                        badgeCard
-                        mutedCard
-                        testCard
-                        resetCard
-                        Color.clear.frame(height: 24)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
+            ScrollView {
+                VStack(spacing: 14) {
+                    permissionCard
+                    messageCard
+                    sectionFooter(
+                        "Notifications that arrive while Shroud is closed or locked never contain message text — the server can't read it. With Show Sender on, the sender's name travels sealed, so Apple can't read it either."
+                    )
+                    alsoCard
+                    inAppCard
+                    sectionFooter("While Shroud is open, a banner, sound or vibration tells you about messages in other chats. Banners can show the text: they never reach the notification centre.")
+                    badgeCard
+                    mutedCard
+                    testCard
+                    resetCard
+                    Color.clear.frame(height: 24)
                 }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
             }
         }
-        .navigationBarBackButtonHidden(true)
-        .toolbar(.hidden, for: .navigationBar)
+        // System navigation bar: Liquid Glass back button, inline title, scroll edge fade.
+        .navigationTitle("Notifications and Sounds")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
         .toast($toast)
         .task { await notifications.refreshAuthorization() }
         .onChange(of: scenePhase) { _, phase in
@@ -439,33 +437,6 @@ struct NotificationsSettingsView: View {
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
-    private var navRow: some View {
-        HStack {
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(Theme.accent)
-                    .frame(width: 44, height: 44, alignment: .leading)
-                    .contentShape(Rectangle())
-            }
-            .pressable(scale: 0.88)
-            .accessibilityLabel("Back")
-
-            Spacer()
-
-            Text("Notifications and Sounds")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary)
-
-            Spacer()
-
-            Color.clear.frame(width: 44, height: 44)
-        }
-        .padding(.horizontal, 16)
-        .padding(.bottom, 4)
-    }
 }
 
 /// Picks the notification sound; each choice plays as it is picked.
@@ -478,58 +449,36 @@ struct NotificationSoundPicker: View {
 
     var body: some View {
         GroupedScreen {
-            VStack(spacing: 0) {
-                HStack {
-                    Button {
-                        dismiss()
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(Theme.accent)
-                            .frame(width: 44, height: 44, alignment: .leading)
-                            .contentShape(Rectangle())
-                    }
-                    .pressable(scale: 0.88)
-                    .accessibilityLabel("Back")
-                    Spacer()
-                    Text("Sound")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                    Spacer()
-                    Color.clear.frame(width: 44, height: 44)
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 4)
-
-                ScrollView {
-                    VStack(spacing: 8) {
-                        VStack(spacing: 0) {
-                            ForEach(NotificationSound.allCases) { sound in
-                                row(sound)
-                                if sound != NotificationSound.allCases.last {
-                                    Rectangle()
-                                        .fill(Theme.separator)
-                                        .frame(height: 1)
-                                        .padding(.leading, 14)
-                                }
+            ScrollView {
+                VStack(spacing: 8) {
+                    VStack(spacing: 0) {
+                        ForEach(NotificationSound.allCases) { sound in
+                            row(sound)
+                            if sound != NotificationSound.allCases.last {
+                                Rectangle()
+                                    .fill(Theme.separator)
+                                    .frame(height: 1)
+                                    .padding(.leading, 14)
                             }
                         }
-                        .background(Theme.background)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-
-                        Text("Plays for notifications, and for banners while Shroud is open (unless the iPhone is on silent).")
-                            .font(.system(size: 13))
-                            .foregroundStyle(Theme.textSecondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 14)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
+                    .background(Theme.background)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                    Text("Plays for notifications, and for banners while Shroud is open (unless the iPhone is on silent).")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 14)
                 }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
             }
         }
-        .navigationBarBackButtonHidden(true)
-        .toolbar(.hidden, for: .navigationBar)
+        // System navigation bar: Liquid Glass back button, inline title, scroll edge fade.
+        .navigationTitle("Sound")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
     }
 
     private func row(_ sound: NotificationSound) -> some View {

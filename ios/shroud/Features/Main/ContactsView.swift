@@ -52,44 +52,30 @@ struct ContactsView: View {
     var body: some View {
         NavigationStack(path: $path) {
             MainScrollScreen(title: "Contacts", collapsesTitle: true) {
-                Button {
+                GlassBarButton(shape: .capsule) {
                     // Sections re-sort with a spring so the letters visibly travel.
                     withAnimation(Motion.standard) {
                         sortAscending.toggle()
                     }
                 } label: {
                     Text(sortAscending ? "A–Z" : "Z–A")
-                        .font(.system(size: 16))
-                        .foregroundStyle(Theme.accent)
+                        .font(GlassBarMetrics.labelFont)
+                        .padding(.horizontal, 16)
                         .contentTransition(.opacity)
-                        .frame(height: 44)
-                        .contentShape(Rectangle())
                 }
-                .pressable(scale: 0.92)
+                .accessibilityLabel(sortAscending ? "Sorted A to Z" : "Sorted Z to A")
+                .accessibilityHint("Reverses the order")
             } navTrailing: {
-                HStack(spacing: 14) {
-                    Button {
+                // Two related actions fused into one capsule, as the system toolbar groups them.
+                GlassBarGroup {
+                    GlassBarButton(systemImage: "qrcode") {
                         showMyQR = true
-                    } label: {
-                        Image(systemName: "qrcode")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(Theme.accent)
-                            .frame(width: 40, height: 44)
-                            .contentShape(Rectangle())
                     }
-                    .pressable(scale: 0.88)
                     .accessibilityLabel("My QR code")
 
-                    Button {
+                    GlassBarButton(systemImage: "person.badge.plus") {
                         showAdd = true
-                    } label: {
-                        Image(systemName: "person.badge.plus")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(Theme.accent)
-                            .frame(width: 40, height: 44, alignment: .trailing)
-                            .contentShape(Rectangle())
                     }
-                    .pressable(scale: 0.88)
                     .accessibilityLabel("Add contact")
                 }
             } accessory: {

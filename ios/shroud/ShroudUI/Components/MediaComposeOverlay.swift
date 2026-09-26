@@ -648,14 +648,15 @@ struct MediaComposeOverlay: View {
                 // A tool that has been used stays lit, so the toolbar shows what's applied.
                 .foregroundStyle(active ? telegramBlue : Color.white)
                 .frame(width: 44, height: 44)
-                .background(chrome)
-                .clipShape(Circle())
+                .contentShape(Circle())
                 .overlay {
                     Circle()
                         .stroke(active ? telegramBlue.opacity(0.85) : Color.clear, lineWidth: 1.5)
                 }
         }
-        .pressable(scale: 0.85, dimming: 0)
+        // Liquid Glass tool circles over the photo, as the system's own editors draw them.
+        .buttonStyle(PressableButtonStyle(scale: 1, dimming: 0, haptic: nil))
+        .glassEffect(.regular.interactive(), in: .circle)
         .accessibilityLabel(label)
         .accessibilityAddTraits(active ? [.isSelected] : [])
         .animation(Motion.snappy, value: active)
