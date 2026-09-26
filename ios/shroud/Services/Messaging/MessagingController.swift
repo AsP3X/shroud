@@ -2491,11 +2491,14 @@ final class MessagingController {
                     sourceURL: plan.sourceURL,
                     trim: plan.trim,
                     removeAudio: plan.removeAudio,
+                    quality: plan.quality,
                     onProgress: onProgress
                 )
             }.value
         } catch VideoMedia.VideoError.tooLarge {
-            let message = "This video is too large even after compression. Try a shorter clip."
+            let message = plan.quality == .original
+                ? "This video is too large to send at original quality. Trim it or choose a lower quality."
+                : "This video is too large even after compression. Try a shorter clip."
             markVideoFailed(optimisticID: optimisticID, peerUserID: peerUserID, error: message)
             return message
         } catch {

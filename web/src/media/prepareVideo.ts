@@ -1,5 +1,5 @@
 import type { EncodedParts, VideoReply, VideoRequest } from "./videoWorker";
-import { VideoTooLongError, type VideoProbe, type VideoTrim } from "./videoPlan";
+import { VideoTooLongError, type VideoProbe, type VideoQuality, type VideoTrim } from "./videoPlan";
 
 /**
  * The main thread's side of the video worker: what the send sheet asks about a
@@ -47,6 +47,13 @@ export type VideoSendDraft = {
   file: File;
   trim: VideoTrim | null;
   mute: boolean;
+  /** Rung chosen in the send sheet. The encode uses this, not a fixed 720p. */
+  quality: VideoQuality;
+  /** Size the sheet promised, so the bubble can show it before the encode finishes. */
+  estimatedBytes: number | null;
+  /** Frame the sheet promised. The bubble uses this, not the source frame. */
+  width: number;
+  height: number;
   poster: Blob | null;
   probe: VideoProbe;
 };
@@ -202,13 +209,21 @@ export function encodeVideo(
   options: {
     trim?: VideoTrim | null;
     mute?: boolean;
+    quality?: VideoQuality;
     onProgress?: (value: number) => void;
     signal?: AbortSignal;
   } = {},
 ): Promise<EncodedVideo> {
   const start = () =>
     run<EncodedVideo>(
-      { type: "encode", file, trim: options.trim ?? null, mute: Boolean(options.mute), posterEdge: POSTER_EDGE },
+      {
+        type: "encode",
+        file,
+        trim: options.trim ?? null,
+        mute: Boolean(options.mute),
+        quality: options.quality ?? "high",
+        posterEdge: POSTER_EDGE,
+      },
       (reply, resolve) => {
         if (reply.type === "progress") options.onProgress?.(reply.value);
         else if (reply.type === "encoded") resolve(toEncoded(reply.video));

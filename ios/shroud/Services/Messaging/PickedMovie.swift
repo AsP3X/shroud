@@ -62,6 +62,8 @@ nonisolated struct VideoSendPlan: Sendable {
     var trim: VideoTrim?
     /// "Send without sound" — drops the audio track during export.
     var removeAudio: Bool = false
+    /// Rung chosen in the compose sheet. High is at most 720p.
+    var quality: VideoUploadQuality = .high
     /// First kept frame, for the optimistic bubble.
     var posterJPEG: Data?
     var width: Int?

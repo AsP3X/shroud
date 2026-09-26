@@ -6,7 +6,7 @@ import UIKit
 ///
 /// Mirrors `MediaComposeOverlay` (photos) on purpose: same black surface, same top bar with the
 /// recipient and Add, same stable caption field with the blue send button. What's different is
-/// what sits between them — a looping preview, a filmstrip you can trim, and a mute toggle.
+/// what sits between them — a looping preview, a filmstrip you can trim, mute, and a quality choice.
 ///
 /// Important: the caption `TextField` must stay in the hierarchy across focus changes; swapping
 /// whole bars in and out is what caused freezes in the photo compose screen.
@@ -25,6 +25,8 @@ struct VideoComposeOverlay: View {
     /// Trim window per clip id, so removing one can't hand its handles to another.
     @State private var trims: [UUID: VideoTrim] = [:]
     @State private var muted: Set<UUID> = []
+    /// One quality for every clip in this send. High is at most 720p.
+    @State private var quality: VideoUploadQuality = .high
     /// Filmstrip tiles per clip id, generated once each.
     @State private var strips: [UUID: [UIImage]] = [:]
     @State private var player = ChatVideoPlayer()
@@ -52,19 +54,48 @@ struct VideoComposeOverlay: View {
 
     private var isFocused: Bool { captionFocused }
 
-    /// Rough output size: the source scaled by how much of it survives the trim.
-    private var estimatedBytes: Int? {
-        guard let current, current.probe.fileSizeBytes > 0, current.probe.durationSeconds > 0 else {
-            return nil
+    private func plan(for video: PickedVideo, quality: VideoUploadQuality) -> Result<VideoOutgoingPlan, VideoPlanError> {
+        let trim = trims[video.id] ?? VideoTrim(start: 0, end: video.probe.durationSeconds)
+        do {
+            return .success(
+                try VideoMedia.previewPlan(
+                    probe: video.probe,
+                    fileExtension: video.url.pathExtension,
+                    trim: trim,
+                    removeAudio: muted.contains(video.id),
+                    quality: quality
+                )
+            )
+        } catch let error as VideoPlanError {
+            return .failure(error)
+        } catch {
+            return .failure(VideoPlanError(message: "This video is too long to send.", maxSeconds: 1))
         }
-        let kept = currentTrim.duration / current.probe.durationSeconds
-        return max(1, Int(Double(current.probe.fileSizeBytes) * kept))
+    }
+
+    private var currentPlan: VideoOutgoingPlan? {
+        guard let current else { return nil }
+        if case .success(let plan) = plan(for: current, quality: quality) { return plan }
+        return nil
+    }
+
+    /// Why Send is held back. Nil when every staged clip fits the chosen quality.
+    private var sendBlocked: String? {
+        for video in videos {
+            if case .failure(let error) = plan(for: video, quality: quality) {
+                if video.id == current?.id { return error.message }
+                return "One video won’t fit at this quality. \(error.message)"
+            }
+        }
+        return nil
     }
 
     private var selectionLabel: String {
         let kept = ChatVideoPlayer.timeLabel(currentTrim.duration)
-        guard let estimatedBytes else { return kept }
-        return "\(kept)  ·  ≈\(MediaCrypto.byteCountLabel(estimatedBytes))"
+        guard let current else { return kept }
+        if case .failure = plan(for: current, quality: quality) { return "\(kept)  ·  Too long" }
+        guard let currentPlan else { return kept }
+        return "\(kept)  ·  \(currentPlan.resolutionLabel)  ·  ≈\(MediaCrypto.byteCountLabel(currentPlan.estimatedBytes))"
     }
 
     var body: some View {
@@ -344,9 +375,11 @@ struct VideoComposeOverlay: View {
                 HStack(spacing: 6) {
                     Text(selectionLabel)
                         .font(.system(size: 12, weight: .medium).monospacedDigit())
-                        .foregroundStyle(Color.white.opacity(0.75))
+                        .foregroundStyle(currentPlan == nil ? Color(red: 1, green: 0.62, blue: 0.55) : Color.white.opacity(0.75))
+                        .lineLimit(2)
                         .contentTransition(.numericText())
                     Spacer(minLength: 0)
+                    qualityMenu
                     if currentTrim.duration < current.probe.durationSeconds - 0.05 {
                         Text("TRIMMED")
                             .font(.system(size: 10, weight: .bold))
@@ -355,6 +388,14 @@ struct VideoComposeOverlay: View {
                     }
                 }
                 .animation(Motion.snappy, value: currentTrim)
+                .animation(Motion.snappy, value: quality)
+
+                if let sendBlocked {
+                    Text(sendBlocked)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color(red: 1, green: 0.62, blue: 0.55))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
         }
     }
@@ -414,9 +455,68 @@ struct VideoComposeOverlay: View {
                     .background(telegramBlue, in: Circle())
             }
             .pressable(scale: 0.85, dimming: 0, haptic: .medium)
+            .disabled(sendBlocked != nil)
+            .opacity(sendBlocked == nil ? 1 : 0.4)
             .accessibilityLabel(videos.count > 1 ? "Send \(videos.count) videos" : "Send video")
             .transition(.scale.combined(with: .opacity))
         }
+    }
+
+    private var qualityMenu: some View {
+        Menu {
+            ForEach(VideoUploadQuality.allCases) { item in
+                qualityChoice(item)
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(quality.label)
+                    .font(.system(size: 12, weight: .semibold))
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+            }
+            .foregroundStyle(Color.white)
+            .padding(.horizontal, 10)
+            .frame(height: 26)
+            .background(chrome, in: Capsule())
+        }
+        .tint(telegramBlue)
+        .accessibilityLabel("Video quality, \(quality.label)")
+        .onChange(of: quality) { _, new in
+            Haptics.impact(.light)
+            if let current, case .success(let plan) = plan(for: current, quality: new) {
+                flash("\(new.label) · \(Self.hint(for: new, plan: plan))")
+            } else {
+                flash(new.label)
+            }
+        }
+    }
+
+    private func qualityChoice(_ item: VideoUploadQuality) -> some View {
+        let offer: VideoOutgoingPlan? = {
+            guard let current else { return nil }
+            if case .success(let plan) = plan(for: current, quality: item) { return plan }
+            return nil
+        }()
+        let title: String = {
+            guard let offer else { return "\(item.label) · Too long" }
+            let size = MediaCrypto.byteCountLabel(offer.estimatedBytes)
+            return "\(item.label) · \(Self.hint(for: item, plan: offer))  ≈\(size)"
+        }()
+        return Button {
+            quality = item
+        } label: {
+            if item == quality {
+                Label(title, systemImage: "checkmark")
+            } else {
+                Text(title)
+            }
+        }
+        .disabled(offer == nil)
+    }
+
+    private static func hint(for quality: VideoUploadQuality, plan: VideoOutgoingPlan) -> String {
+        if quality == .original, plan.resolutionLabel == "Original" { return quality.hint }
+        return plan.resolutionLabel
     }
 
     private var toolRow: some View {
@@ -529,26 +629,35 @@ struct VideoComposeOverlay: View {
     }
 
     private func send() {
+        if let sendBlocked {
+            flash(sendBlocked)
+            return
+        }
         Haptics.impact(.medium)
         player.pause()
         let text = caption.trimmingCharacters(in: .whitespacesAndNewlines)
         let plans = videos.enumerated().map { index, video -> VideoSendPlan in
             let trim = trims[video.id] ?? VideoTrim(start: 0, end: video.probe.durationSeconds)
             let kept = trim.duration
-            let ratio = video.probe.durationSeconds > 0 ? kept / video.probe.durationSeconds : 1
+            let preview = try? VideoMedia.previewPlan(
+                probe: video.probe,
+                fileExtension: video.url.pathExtension,
+                trim: trim,
+                removeAudio: muted.contains(video.id),
+                quality: quality
+            )
             return VideoSendPlan(
                 sourceURL: video.url,
                 // Telegram puts the caption on the first item of an album; so does the photo path.
                 caption: index == 0 ? text : "",
                 trim: trim,
                 removeAudio: muted.contains(video.id),
+                quality: quality,
                 posterJPEG: posterJPEG(for: video, at: trim.start),
-                width: video.probe.width,
-                height: video.probe.height,
+                width: preview?.width ?? video.probe.width,
+                height: preview?.height ?? video.probe.height,
                 durationMs: max(1, Int(kept * 1000)),
-                estimatedBytes: video.probe.fileSizeBytes > 0
-                    ? max(1, Int(Double(video.probe.fileSizeBytes) * ratio))
-                    : nil
+                estimatedBytes: preview?.estimatedBytes
             )
         }
         onSend(plans)

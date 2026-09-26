@@ -1,7 +1,14 @@
 import { isHeif } from "./heic";
 import { clipboardImages, imageFiles } from "./prepareImage";
 import { clipboardVideos, isVideoFile, videoFiles } from "./prepareVideo";
-import { clockLabel, effectiveTrim, planVideo, VideoTooLongError, type VideoProbe } from "./videoPlan";
+import {
+  clockLabel,
+  effectiveTrim,
+  planResolutionLabel,
+  planVideo,
+  VideoTooLongError,
+  type VideoProbe,
+} from "./videoPlan";
 import { isVideoPayload, isVoicePayload, parseMediaPayload } from "../crypto/mediaPayload";
 
 function heifLike(brand: string): Uint8Array {
@@ -72,6 +79,53 @@ const hevc = planVideo(probe({ bytes: 12_000_000, duration: 8, width: 1920, heig
 if (hevc.video !== "encode" || hevc.width > 1280 || hevc.height > 720) {
   throw new Error("planVideo: HEVC should re-encode into the 1280 box");
 }
+
+const fullHd = probe({ bytes: 2_000_000, duration: 8, width: 1920, height: 1080 });
+const asHigh = planVideo(fullHd, { quality: "high" });
+if (asHigh.video !== "encode" || asHigh.width !== 1280 || asHigh.height !== 720) {
+  throw new Error(`planVideo: high caps 1080p at 720p, got ${asHigh.width}×${asHigh.height} ${asHigh.video}`);
+}
+if (planResolutionLabel(asHigh, fullHd, "high") !== "720p") throw new Error("planResolutionLabel: 720p");
+const asOriginal = planVideo(fullHd, { quality: "original" });
+if (asOriginal.video !== "copy") throw new Error("planVideo: original keeps a modest H.264 file");
+if (planResolutionLabel(asOriginal, fullHd, "original") !== "Original") {
+  throw new Error("planResolutionLabel: original copy");
+}
+
+const hevcOriginal = planVideo(
+  probe({ bytes: 12_000_000, duration: 8, width: 1920, height: 1080, videoCodec: "hevc" }),
+  { quality: "original" },
+);
+if (hevcOriginal.video !== "encode" || hevcOriginal.width !== 1920 || hevcOriginal.height !== 1080) {
+  throw new Error("planVideo: original re-encodes HEVC at the source size");
+}
+
+const medium = planVideo(probe({ bytes: 2_000_000, duration: 8, width: 1280, height: 720 }), { quality: "medium" });
+if (medium.video !== "encode" || medium.width !== 960 || medium.height !== 540) {
+  throw new Error(`planVideo: medium is 540p, got ${medium.width}×${medium.height}`);
+}
+const kept540 = planVideo(probe({ bytes: 800_000, duration: 8, width: 960, height: 540 }), { quality: "medium" });
+if (kept540.video !== "copy") throw new Error("planVideo: medium keeps a modest 540p file");
+
+const small = planVideo(probe({ bytes: 2_000_000, duration: 8, width: 1280, height: 720 }), { quality: "small" });
+if (small.video !== "encode" || small.width !== 640 || small.height !== 360) {
+  throw new Error(`planVideo: small is 360p, got ${small.width}×${small.height}`);
+}
+const small43 = planVideo(probe({ bytes: 2_000_000, duration: 8, width: 1440, height: 1080 }), { quality: "small" });
+if (small43.video !== "encode" || small43.width !== 480 || small43.height !== 360) {
+  throw new Error(`planVideo: 4:3 small stays 360p, got ${small43.width}×${small43.height}`);
+}
+
+let originalThrew = false;
+try {
+  planVideo(
+    probe({ bytes: 80_000_000, duration: 600, width: 3840, height: 2160, fps: 30, videoCodec: "hevc" }),
+    { quality: "original" },
+  );
+} catch (err) {
+  originalThrew = err instanceof VideoTooLongError && /original/i.test(err.message);
+}
+if (!originalThrew) throw new Error("planVideo: original refuses a clip that cannot stay full size");
 
 const muted = planVideo(probe({ bytes: 2_000_000, duration: 8, width: 1280, height: 720 }), { mute: true });
 if (muted.audio !== "none") throw new Error("planVideo: mute drops sound");

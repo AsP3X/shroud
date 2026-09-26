@@ -29,12 +29,27 @@ import {
   type InputVideoTrack,
 } from "mediabunny";
 import { envelopePreview, fitEdge } from "./envelopePreview";
-import { MAX_VIDEO_BYTES, planVideo, VideoTooLongError, type VideoProbe, type VideoTrim } from "./videoPlan";
+import {
+  MAX_VIDEO_BYTES,
+  planVideo,
+  VideoTooLongError,
+  type VideoProbe,
+  type VideoQuality,
+  type VideoTrim,
+} from "./videoPlan";
 
 export type VideoRequest =
   | { id: number; type: "inspect"; file: File; posterEdge: number }
   | { id: number; type: "filmstrip"; file: File; count: number; edge: number }
-  | { id: number; type: "encode"; file: File; trim: VideoTrim | null; mute: boolean; posterEdge: number }
+  | {
+      id: number;
+      type: "encode";
+      file: File;
+      trim: VideoTrim | null;
+      mute: boolean;
+      quality: VideoQuality;
+      posterEdge: number;
+    }
   /** Stops the request with this id: an encode throws, a filmstrip ends early. */
   | { id: number; type: "cancel" };
 
@@ -254,7 +269,12 @@ async function encode(request: Extract<VideoRequest, { type: "encode" }>): Promi
     const { probe, track } = await readProbe(input, request.file);
     let squeeze = 1;
     for (let attempt = 0; attempt < 3; attempt++) {
-      const plan = planVideo(probe, { trim: request.trim, mute: request.mute, squeeze });
+      const plan = planVideo(probe, {
+        trim: request.trim,
+        mute: request.mute,
+        squeeze,
+        quality: request.quality,
+      });
       if (plan.video === "encode") {
         if (!(await track.canDecode())) {
           throw new Refusal(
@@ -342,7 +362,11 @@ async function encode(request: Extract<VideoRequest, { type: "encode" }>): Promi
       // The encoder overshot its target: aim lower, in proportion.
       squeeze *= Math.min(0.85, (MAX_VIDEO_BYTES * 0.9) / buffer.byteLength);
     }
-    throw new Refusal("This video is too large to send. Trim it and try again.");
+    throw new Refusal(
+      request.quality === "original"
+        ? "This video is too large to send at original quality. Trim it or choose a lower quality."
+        : "This video is too large to send. Trim it and try again.",
+    );
   } finally {
     cancels.delete(request.id);
     input.dispose();

@@ -48,6 +48,55 @@ nonisolated struct VideoProbe: Sendable {
     }
 }
 
+/// What the sender picks in the compose sheet. `high` is the default (at most 720p).
+///
+/// `original` sends an MP4 that already fits unchanged. Anything else is re-encoded,
+/// and the highest H.264 preset is 1080p, so a larger movie comes back at 1080p.
+/// The web client can re-encode up to 4K; both still share High, Medium and Small.
+enum VideoUploadQuality: String, CaseIterable, Identifiable, Sendable {
+    case original
+    case high
+    case medium
+    case small
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .original: return "Original"
+        case .high: return "High"
+        case .medium: return "Medium"
+        case .small: return "Small"
+        }
+    }
+
+    /// Nominal rung shown before a long clip has to step down.
+    var hint: String {
+        switch self {
+        case .original: return "Full size"
+        case .high: return "720p"
+        case .medium: return "540p"
+        case .small: return "360p"
+        }
+    }
+}
+
+/// What the compose sheet can promise before an export starts.
+struct VideoOutgoingPlan: Equatable, Sendable {
+    var width: Int
+    var height: Int
+    var estimatedBytes: Int
+    /// "720p", or "Original" when that choice keeps the source frame.
+    var resolutionLabel: String
+    var passthrough: Bool
+}
+
+/// The chosen quality cannot fit under the media cap.
+struct VideoPlanError: Error, Equatable {
+    var message: String
+    var maxSeconds: Int
+}
+
 /// Compresses library / camera movies so the sealed blob fits the API media limit.
 ///
 /// Human: Server caps encrypted media at 25 MiB. Phone-recorded 4K clips are often larger,
@@ -133,6 +182,7 @@ nonisolated enum VideoMedia {
         sourceURL: URL,
         trim: VideoTrim? = nil,
         removeAudio: Bool = false,
+        quality: VideoUploadQuality = .high,
         onProgress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> EncodedVideo {
         let asset = AVURLAsset(url: sourceURL)
@@ -161,14 +211,19 @@ nonisolated enum VideoMedia {
             at: effectiveTrim.map { CMTime(seconds: $0.start, preferredTimescale: 600) } ?? .zero
         )
 
-        // Only pass through real MP4 under the size cap. Never ship raw .mov / HEVC camera
-        // containers — recipients write a temp `.mp4` for playback and those formats fail to open.
-        if !mustRewrite,
-           sourceURL.pathExtension.lowercased() == "mp4" || sourceURL.pathExtension.lowercased() == "m4v",
-           let attrs = try? FileManager.default.attributesOfItem(atPath: sourceURL.path),
+        // Only pass through a real MP4 that already fits the chosen rung and the size cap.
+        // Never ship raw .mov / HEVC camera containers — recipients write a temp `.mp4`
+        // for playback and those formats fail to open.
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: sourceURL.path),
            let size = attrs[.size] as? NSNumber,
-           size.intValue > 0,
-           size.intValue <= maxPlaintextBytes,
+           canPassthrough(
+               fileExtension: sourceURL.pathExtension,
+               fileSize: size.intValue,
+               width: width,
+               height: height,
+               mustRewrite: mustRewrite,
+               quality: quality
+           ),
            let data = try? Data(contentsOf: sourceURL, options: [.mappedIfSafe])
         {
             onProgress?(1)
@@ -195,14 +250,9 @@ nonisolated enum VideoMedia {
             exportAsset = asset
         }
 
-        // Progressive quality until under the cap (always H.264/AAC MP4).
-        let presets: [String] = [
-            AVAssetExportPreset1280x720,
-            AVAssetExportPreset960x540,
-            AVAssetExportPreset640x480,
-            AVAssetExportPresetMediumQuality,
-            AVAssetExportPresetLowQuality,
-        ]
+        // The chosen rung first, then smaller presets until the file fits (H.264/AAC MP4).
+        // Original stops at 1080p: that is the highest preset that re-encodes to H.264.
+        let presets = exportPresets(for: quality)
 
         // Human: Every preset used to be tried by running a full export and checking the size
         // afterwards. A 40 s clip ran 720p, then 540p, then 480p: three full encodes, with the
@@ -300,10 +350,207 @@ nonisolated enum VideoMedia {
         return UIImage(cgImage: cg).jpegData(compressionQuality: 0.72)
     }
 
+    /// Presets for `quality`, best first. Original is the 1080p H.264 preset.
+    static func exportPresets(for quality: VideoUploadQuality) -> [String] {
+        switch quality {
+        case .original:
+            return [AVAssetExportPreset1920x1080]
+        case .high:
+            return [
+                AVAssetExportPreset1280x720,
+                AVAssetExportPreset960x540,
+                AVAssetExportPreset640x480,
+                AVAssetExportPresetMediumQuality,
+                AVAssetExportPresetLowQuality,
+            ]
+        case .medium:
+            return [
+                AVAssetExportPreset960x540,
+                AVAssetExportPreset640x480,
+                AVAssetExportPresetMediumQuality,
+                AVAssetExportPresetLowQuality,
+            ]
+        case .small:
+            return [
+                AVAssetExportPreset640x480,
+                AVAssetExportPresetMediumQuality,
+                AVAssetExportPresetLowQuality,
+            ]
+        }
+    }
+
+    /// Size and resolution the compose sheet shows. Same rungs as web `planVideo`.
+    /// Original re-encodes stop at 1080p because that is the highest H.264 preset.
+    static func previewPlan(
+        probe: VideoProbe,
+        fileExtension: String,
+        trim: VideoTrim?,
+        removeAudio: Bool,
+        quality: VideoUploadQuality
+    ) throws -> VideoOutgoingPlan {
+        let full = trim?.isFullRange(of: probe.durationSeconds) ?? true
+        let mustRewrite = !full || removeAudio
+        let duration = max(0.1, full ? probe.durationSeconds : (trim?.duration ?? probe.durationSeconds))
+        let width = max(1, probe.width)
+        let height = max(1, probe.height)
+
+        if canPassthrough(
+            fileExtension: fileExtension,
+            fileSize: probe.fileSizeBytes,
+            width: width,
+            height: height,
+            mustRewrite: mustRewrite,
+            quality: quality
+        ) {
+            return VideoOutgoingPlan(
+                width: width,
+                height: height,
+                estimatedBytes: max(1, probe.fileSizeBytes),
+                resolutionLabel: resolutionLabel(width: width, height: height, keptSource: quality == .original),
+                passthrough: true
+            )
+        }
+
+        let hasSound = probe.hasAudio && !removeAudio
+        let budgetBits = (Double(maxPlaintextBytes) * 8 * headroom) / duration
+        let bitrateCap = quality == .original ? originalMaxVideoBitrate : maxVideoBitrate
+        var fallback = (floor: minVideoBitrate, audio: 0.0)
+        for box in encodeBoxes(for: quality) {
+            let fitted = fit(width: width, height: height, box: box)
+            let rate = min(assumedFps, box.tier >= 2 ? 30 : 60)
+            let pixels = Double(fitted.width * fitted.height) * rate
+            let audioBitrate = hasSound ? (box.tier >= 2 ? 96_000.0 : 128_000.0) : 0
+            let target = min(bitrateCap, max(minVideoBitrate, pixels * targetBpp))
+            let floor = max(minVideoBitrate, pixels * floorBpp)
+            let budget = budgetBits - audioBitrate
+            fallback = (floor, audioBitrate)
+            if budget < floor { continue }
+            let videoBitrate = min(target, budget)
+            let bytes = Int((((videoBitrate + audioBitrate) * duration) / 8 * 1.02).rounded())
+            let keptSource = quality == .original
+                && abs(max(fitted.width, fitted.height) - max(width, height)) <= 4
+                && abs(min(fitted.width, fitted.height) - min(width, height)) <= 4
+            return VideoOutgoingPlan(
+                width: fitted.width,
+                height: fitted.height,
+                estimatedBytes: max(1, bytes),
+                resolutionLabel: resolutionLabel(width: fitted.width, height: fitted.height, keptSource: keptSource),
+                passthrough: false
+            )
+        }
+        let maxSeconds = Int((Double(maxPlaintextBytes) * 8 * headroom) / (fallback.floor + fallback.audio))
+        let seconds = max(1, maxSeconds)
+        let clock = Self.clock(seconds)
+        throw VideoPlanError(
+            message: quality == .original
+                ? "Original quality won’t fit. Trim it to \(clock) or choose a lower quality."
+                : "This video is too long to send. Trim it to \(clock) or less.",
+            maxSeconds: seconds
+        )
+    }
+
     // MARK: - Private
 
     /// Presets whose estimated output is under this share of the cap get exported.
     static let estimateMargin = 0.85
+
+    /// Same bitrate model as web `videoPlan.ts`, at an assumed 30 fps (the probe has no frame rate).
+    private static let targetBpp = 0.085
+    private static let floorBpp = 0.028
+    private static let minVideoBitrate = 120_000.0
+    private static let maxVideoBitrate = 3_200_000.0
+    private static let originalMaxVideoBitrate = 12_000_000.0
+    private static let headroom = 0.9
+    private static let assumedFps = 30.0
+
+    private struct PlanBox {
+        var long: Double
+        var short: Double
+        var tier: Int
+    }
+
+    /// Boxes the sheet may promise, best first. The 640-wide rung matches
+    /// `AVAssetExportPreset640x480`: 16:9 lands at 360p, and a squarer frame stays inside
+    /// 640×480. A 360-tall box would promise a size that preset does not make.
+    private static func encodeBoxes(for quality: VideoUploadQuality) -> [PlanBox] {
+        switch quality {
+        case .original:
+            return [PlanBox(long: 1920, short: 1080, tier: 0)]
+        case .high:
+            return [
+                PlanBox(long: 1280, short: 720, tier: 0),
+                PlanBox(long: 960, short: 540, tier: 1),
+                PlanBox(long: 640, short: 480, tier: 2),
+                PlanBox(long: 480, short: 270, tier: 3),
+            ]
+        case .medium:
+            return [
+                PlanBox(long: 960, short: 540, tier: 1),
+                PlanBox(long: 640, short: 480, tier: 2),
+                PlanBox(long: 480, short: 270, tier: 3),
+            ]
+        case .small:
+            return [
+                PlanBox(long: 640, short: 480, tier: 2),
+                PlanBox(long: 480, short: 270, tier: 3),
+            ]
+        }
+    }
+
+    /// Largest frame that may be sent unchanged. Nil means any size (original).
+    private static func passthroughLimit(_ quality: VideoUploadQuality) -> (long: Int, short: Int)? {
+        switch quality {
+        case .original: return nil
+        case .high: return (1280, 720)
+        case .medium: return (960, 540)
+        case .small: return (640, 480)
+        }
+    }
+
+    private static func canPassthrough(
+        fileExtension: String,
+        fileSize: Int,
+        width: Int,
+        height: Int,
+        mustRewrite: Bool,
+        quality: VideoUploadQuality
+    ) -> Bool {
+        if mustRewrite || fileSize <= 0 || fileSize > maxPlaintextBytes { return false }
+        let ext = fileExtension.lowercased()
+        guard ext == "mp4" || ext == "m4v" else { return false }
+        if let limit = passthroughLimit(quality) {
+            if max(width, height) > limit.long || min(width, height) > limit.short { return false }
+        }
+        return true
+    }
+
+    private static func fit(width: Int, height: Int, box: PlanBox) -> (width: Int, height: Int) {
+        let w = Double(max(width, 1))
+        let h = Double(max(height, 1))
+        let landscape = w >= h
+        let long = landscape ? w : h
+        let short = landscape ? h : w
+        let scale = min(1, box.long / max(long, 1), box.short / max(short, 1))
+        return (evenDimension(w * scale), evenDimension(h * scale))
+    }
+
+    private static func evenDimension(_ n: Double) -> Int {
+        max(2, Int((n / 2).rounded()) * 2)
+    }
+
+    private static func resolutionLabel(width: Int, height: Int, keptSource: Bool) -> String {
+        if keptSource { return "Original" }
+        let short = min(width, height)
+        let named = [(1080, "1080p"), (720, "720p"), (540, "540p"), (480, "480p"), (360, "360p"), (270, "270p")]
+        for (edge, label) in named where abs(short - edge) <= 16 { return label }
+        return "\(short)p"
+    }
+
+    private static func clock(_ seconds: Int) -> String {
+        let total = max(0, seconds)
+        let padded = total % 60
+        return "\(total / 60):\(padded < 10 ? "0" : "")\(padded)"
+    }
 
     /// The presets worth exporting, best first, given each one's size estimate.
     ///

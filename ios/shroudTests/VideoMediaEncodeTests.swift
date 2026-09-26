@@ -31,6 +31,122 @@ struct VideoMediaEncodeTests {
         #expect(chosen == ["low"])
     }
 
+    @Test func presetsFollowTheChosenQuality() {
+        #expect(VideoMedia.exportPresets(for: .high).first == AVAssetExportPreset1280x720)
+        #expect(VideoMedia.exportPresets(for: .medium).first == AVAssetExportPreset960x540)
+        #expect(!VideoMedia.exportPresets(for: .medium).contains(AVAssetExportPreset1280x720))
+        #expect(VideoMedia.exportPresets(for: .small).first == AVAssetExportPreset640x480)
+        #expect(VideoMedia.exportPresets(for: .original) == [AVAssetExportPreset1920x1080])
+    }
+
+    @Test func originalKeepsAFittingMp4() throws {
+        let plan = try VideoMedia.previewPlan(
+            probe: VideoProbe(durationSeconds: 8, width: 1920, height: 1080, fileSizeBytes: 2_000_000, hasAudio: true),
+            fileExtension: "mp4",
+            trim: nil,
+            removeAudio: false,
+            quality: .original
+        )
+        #expect(plan.passthrough)
+        #expect(plan.resolutionLabel == "Original")
+        #expect(plan.width == 1920)
+        #expect(plan.estimatedBytes == 2_000_000)
+    }
+
+    @Test func highScalesA1080pFileDownTo720() throws {
+        let plan = try VideoMedia.previewPlan(
+            probe: VideoProbe(durationSeconds: 8, width: 1920, height: 1080, fileSizeBytes: 2_000_000, hasAudio: true),
+            fileExtension: "mp4",
+            trim: nil,
+            removeAudio: false,
+            quality: .high
+        )
+        #expect(!plan.passthrough)
+        #expect(plan.width == 1280)
+        #expect(plan.height == 720)
+        #expect(plan.resolutionLabel == "720p")
+    }
+
+    @Test func mediumAndSmallUseTheirBoxes() throws {
+        let probe = VideoProbe(durationSeconds: 8, width: 1280, height: 720, fileSizeBytes: 4_000_000, hasAudio: true)
+        let medium = try VideoMedia.previewPlan(
+            probe: probe, fileExtension: "mov", trim: nil, removeAudio: false, quality: .medium
+        )
+        #expect(medium.width == 960)
+        #expect(medium.height == 540)
+        #expect(medium.resolutionLabel == "540p")
+        let small = try VideoMedia.previewPlan(
+            probe: probe, fileExtension: "mov", trim: nil, removeAudio: false, quality: .small
+        )
+        #expect(small.width == 640)
+        #expect(small.height == 360)
+        #expect(small.resolutionLabel == "360p")
+        // 4:3 cannot become 360p: the preset that Small exports with fits inside 640×480.
+        let fourByThree = try VideoMedia.previewPlan(
+            probe: VideoProbe(durationSeconds: 8, width: 1440, height: 1080, fileSizeBytes: 4_000_000, hasAudio: true),
+            fileExtension: "mov",
+            trim: nil,
+            removeAudio: false,
+            quality: .small
+        )
+        #expect(fourByThree.width == 640)
+        #expect(fourByThree.height == 480)
+        #expect(fourByThree.resolutionLabel == "480p")
+        let kept480 = try VideoMedia.previewPlan(
+            probe: VideoProbe(durationSeconds: 8, width: 640, height: 480, fileSizeBytes: 1_000_000, hasAudio: true),
+            fileExtension: "mp4",
+            trim: nil,
+            removeAudio: false,
+            quality: .small
+        )
+        #expect(kept480.passthrough)
+        #expect(kept480.resolutionLabel == "480p")
+    }
+
+    @Test func originalReencodeOf4KStopsAt1080() throws {
+        let plan = try VideoMedia.previewPlan(
+            probe: VideoProbe(durationSeconds: 8, width: 3840, height: 2160, fileSizeBytes: 20_000_000, hasAudio: true),
+            fileExtension: "mov",
+            trim: nil,
+            removeAudio: false,
+            quality: .original
+        )
+        #expect(!plan.passthrough)
+        #expect(plan.width == 1920)
+        #expect(plan.height == 1080)
+        #expect(plan.resolutionLabel == "1080p")
+    }
+
+    @Test func muteAndTrimStopPassthrough() throws {
+        let probe = VideoProbe(durationSeconds: 8, width: 1280, height: 720, fileSizeBytes: 1_000_000, hasAudio: true)
+        let muted = try VideoMedia.previewPlan(
+            probe: probe, fileExtension: "mp4", trim: nil, removeAudio: true, quality: .high
+        )
+        #expect(!muted.passthrough)
+        let trimmed = try VideoMedia.previewPlan(
+            probe: probe,
+            fileExtension: "mp4",
+            trim: VideoTrim(start: 1, end: 4),
+            removeAudio: false,
+            quality: .original
+        )
+        #expect(!trimmed.passthrough)
+        #expect(trimmed.width == 1280)
+        #expect(trimmed.height == 720)
+    }
+
+    @Test func originalRefusesAClipThatCannotStayFullSize() {
+        #expect(throws: VideoPlanError.self) {
+            try VideoMedia.previewPlan(
+                probe: VideoProbe(durationSeconds: 3600, width: 3840, height: 2160, fileSizeBytes: 80_000_000, hasAudio: true),
+                fileExtension: "mov",
+                trim: nil,
+                removeAudio: false,
+                quality: .original
+            )
+        }
+    }
+
     @Test func givesUpWhenEvenTheSmallestEstimateIsOverTheCap() {
         let chosen = VideoMedia.exportCandidates([("720", 400_000_000), ("low", 101_000_000)], cap: cap)
         #expect(chosen.isEmpty)
@@ -62,6 +178,22 @@ struct VideoMediaEncodeTests {
         let values = recorder.values
         #expect(values.last == 1)
         #expect(zip(values, values.dropFirst()).allSatisfy { $0 <= $1 })
+    }
+
+    @Test func smallQualityExportStaysInsideTheSmallBox() async throws {
+        let url = try await Self.makeMovie(seconds: 1)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let out = try await VideoMedia.encode(sourceURL: url, quality: .small)
+        #expect(max(out.width, out.height) <= 640)
+        #expect(min(out.width, out.height) <= 360)
+    }
+
+    @Test func smallQualityExportOfA4x3ClipFitsThe640x480Preset() async throws {
+        let url = try await Self.makeMovie(seconds: 1, width: 1440, height: 1080)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let out = try await VideoMedia.encode(sourceURL: url, quality: .small)
+        #expect(out.width == 640)
+        #expect(out.height == 480)
     }
 
     @Test func trimmedAndMutedEncodeFinishes() async throws {
@@ -96,11 +228,10 @@ struct VideoMediaEncodeTests {
     }
 
     /// A small H.264 .mov, so the encode takes the real export path rather than passthrough.
-    private static func makeMovie(seconds: Int, fps: Int32 = 30) async throws -> URL {
+    private static func makeMovie(seconds: Int, fps: Int32 = 30, width: Int = 640, height: Int = 360) async throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("video-media-test-\(UUID().uuidString).mov")
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
-        let width = 640, height = 360
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: width,

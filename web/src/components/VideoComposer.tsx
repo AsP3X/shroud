@@ -9,7 +9,9 @@ import {
 import { createPortal } from "react-dom";
 import {
   AlertTriangle,
+  Check,
   ChevronLeft,
+  ChevronsUpDown,
   Play,
   Plus,
   RotateCcw,
@@ -32,9 +34,12 @@ import {
   clockLabel,
   effectiveTrim,
   MIN_CLIP_SECONDS,
+  planResolutionLabel,
   planVideo,
+  VIDEO_QUALITIES,
   VideoTooLongError,
   type VideoProbe,
+  type VideoQuality,
   type VideoTrim,
 } from "../media/videoPlan";
 
@@ -52,6 +57,29 @@ type Entry = {
   mute: boolean;
 };
 
+/** Size and resolution of one quality rung, or why that rung cannot be sent. */
+function offerFor(
+  probe: VideoProbe,
+  trim: VideoTrim | null | undefined,
+  mute: boolean,
+  quality: VideoQuality,
+): { bytes: number; duration: number; resolution: string; width: number; height: number } | { error: string } {
+  try {
+    const plan = planVideo(probe, { trim, mute, quality });
+    return {
+      bytes: plan.estimatedBytes,
+      duration: plan.duration,
+      resolution: planResolutionLabel(plan, probe, quality),
+      width: plan.width,
+      height: plan.height,
+    };
+  } catch (err) {
+    return {
+      error: err instanceof VideoTooLongError ? err.message : "This video is too long to send.",
+    };
+  }
+}
+
 function emptyEntry(file: File): Entry {
   return {
     file,
@@ -67,7 +95,7 @@ function emptyEntry(file: File): Entry {
 
 /**
  * Telegram-style send sheet for clips: looping preview, filmstrip trim, mute,
- * caption. Encoding waits until Send so the chat bubble can land immediately.
+ * quality, caption. Encoding waits until Send so the chat bubble can land immediately.
  */
 export function VideoComposer({
   files,
@@ -89,7 +117,10 @@ export function VideoComposer({
   const [playhead, setPlayhead] = useState(0);
   const [banner, setBanner] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [quality, setQuality] = useState<VideoQuality>("high");
+  const [qualityOpen, setQualityOpen] = useState(false);
   const player = useRef<HTMLVideoElement>(null);
+  const qualityMenu = useRef<HTMLDivElement>(null);
   const picker = useRef<HTMLInputElement>(null);
   const previewUrl = useRef<string | null>(null);
   const alive = useRef(true);
@@ -121,11 +152,25 @@ export function VideoComposer({
 
   useEffect(() => {
     function onKeyDown(event: globalThis.KeyboardEvent) {
-      if (event.key === "Escape") onClose();
+      if (event.key !== "Escape") return;
+      if (qualityOpen) {
+        setQualityOpen(false);
+        return;
+      }
+      onClose();
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  }, [onClose, qualityOpen]);
+
+  useEffect(() => {
+    if (!qualityOpen) return;
+    function onPointerDown(event: globalThis.PointerEvent) {
+      if (!qualityMenu.current?.contains(event.target as Node)) setQualityOpen(false);
+    }
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [qualityOpen]);
 
   /* Keep the entry list aligned with `files`, then inspect each new clip once. */
   useEffect(() => {
@@ -296,14 +341,23 @@ export function VideoComposer({
 
   function submit(event?: FormEvent) {
     event?.preventDefault();
-    if (handedOff.current) return;
+    // The caption field sends on Enter. That must hit the same wall as the button: still
+    // reading a clip, or one that will not fit, sends nothing (and does not drop the others).
+    if (handedOff.current || sending) return;
+    if (entries.some((item) => !item.probe && !item.error)) return;
     const drafts: VideoSendDraft[] = [];
     for (const item of entries) {
       if (!item.probe || item.error) continue;
+      const chosen = offerFor(item.probe, item.trim, item.mute, quality);
+      if (!("bytes" in chosen)) return;
       drafts.push({
         file: item.file,
         trim: item.trim,
         mute: item.mute,
+        quality,
+        estimatedBytes: chosen.bytes,
+        width: chosen.width,
+        height: chosen.height,
         poster: item.poster,
         probe: item.probe,
       });
@@ -320,29 +374,29 @@ export function VideoComposer({
     submit();
   }
 
-  let estimate: { bytes: number; duration: number } | null = null;
+  let estimate: { bytes: number; duration: number; resolution: string } | null = null;
   let tooLong: string | null = null;
   if (probe) {
-    try {
-      const plan = planVideo(probe, { trim: entry?.trim, mute: Boolean(entry?.mute) });
-      estimate = { bytes: plan.estimatedBytes, duration: plan.duration };
-    } catch (err) {
-      tooLong = err instanceof VideoTooLongError ? err.message : "This video is too long to send.";
-    }
+    const chosen = offerFor(probe, entry?.trim, Boolean(entry?.mute), quality);
+    if (chosen && "bytes" in chosen) estimate = chosen;
+    else tooLong = chosen?.error ?? "This video is too long to send.";
   }
 
   const readyCount = entries.filter((item) => item.probe && !item.error).length;
   const inspecting = entries.some((item) => !item.probe && !item.error);
-  const anyTooLong = entries.some((item) => {
-    if (!item.probe || item.error) return false;
-    try {
-      planVideo(item.probe, { trim: item.trim, mute: item.mute });
-      return false;
-    } catch {
-      return true;
-    }
+  const otherTooLong = entries.find((item) => {
+    if (!item.probe || item.error || item === entry) return false;
+    const chosen = offerFor(item.probe, item.trim, item.mute, quality);
+    return chosen != null && "error" in chosen;
   });
-  const canSend = readyCount > 0 && !inspecting && !tooLong && !anyTooLong && !sending;
+  const otherMessage =
+    otherTooLong?.probe && !tooLong
+      ? offerFor(otherTooLong.probe, otherTooLong.trim, otherTooLong.mute, quality)
+      : null;
+  const sendBlocked =
+    tooLong ??
+    (otherMessage && "error" in otherMessage ? `One video won’t fit at this quality. ${otherMessage.error}` : null);
+  const canSend = readyCount > 0 && !inspecting && !sendBlocked && !sending;
   const canAdd = files.length < MAX_PHOTOS_PER_SEND;
   const title = files.length === 1 ? "Send video" : `Send ${files.length} videos`;
 
@@ -442,16 +496,67 @@ export function VideoComposer({
         <div className="vcompose-meta">
           <span>
             {estimate
-              ? `${clockLabel(estimate.duration)}  ·  ≈${formatBytes(estimate.bytes)}`
+              ? `${clockLabel(estimate.duration)}  ·  ${estimate.resolution}  ·  ≈${formatBytes(estimate.bytes)}`
               : inspecting
                 ? "Reading…"
-                : tooLong ?? " "}
+                : tooLong
+                  ? `${clockLabel(Math.max(0, kept.end - kept.start))}  ·  Too long`
+                  : " "}
           </span>
           {probe && kept.end - kept.start < probe.duration - 0.05 ? <em>TRIMMED</em> : null}
+          <div className="vcompose-quality" ref={qualityMenu}>
+            <button
+              className="vcompose-quality-btn"
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded={qualityOpen}
+              aria-label={`Video quality, ${VIDEO_QUALITIES.find((item) => item.id === quality)?.label ?? "High"}`}
+              onClick={() => setQualityOpen((open) => !open)}
+            >
+              {VIDEO_QUALITIES.find((item) => item.id === quality)?.label ?? "High"}
+              <ChevronsUpDown size={13} aria-hidden="true" />
+            </button>
+            {qualityOpen ? (
+              <div className="vcompose-quality-menu" role="menu" aria-label="Video quality">
+                {VIDEO_QUALITIES.map((item) => {
+                  const offer = probe ? offerFor(probe, entry?.trim, Boolean(entry?.mute), item.id) : null;
+                  const blocked = offer != null && "error" in offer;
+                  const hint =
+                    offer && "resolution" in offer
+                      ? item.id === "original" && offer.resolution === "Original"
+                        ? item.hint
+                        : offer.resolution
+                      : item.hint;
+                  return (
+                    <button
+                      key={item.id}
+                      className={item.id === quality ? "vcompose-quality-item is-current" : "vcompose-quality-item"}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={item.id === quality}
+                      disabled={blocked}
+                      onClick={() => {
+                        setQuality(item.id);
+                        setQualityOpen(false);
+                        flash(`${item.label} · ${hint}`);
+                      }}
+                    >
+                      <span className="vcompose-quality-name">
+                        <Check size={14} aria-hidden="true" />
+                        {item.label}
+                        <small>{hint}</small>
+                      </span>
+                      <small>{blocked ? "Too long" : offer && "bytes" in offer ? `≈${formatBytes(offer.bytes)}` : ""}</small>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
         </div>
-        {tooLong ? (
+        {sendBlocked ? (
           <p className="err" role="status">
-            {tooLong}
+            {sendBlocked}
           </p>
         ) : null}
 

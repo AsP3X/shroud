@@ -1936,9 +1936,9 @@ export function AppShell({ session }: { session: Session }) {
         failed: false,
         kind: "video",
         mime: "video/mp4",
-        imageWidth: draft.probe.width,
-        imageHeight: draft.probe.height,
-        mediaBytes: draft.probe.bytes,
+        imageWidth: draft.width,
+        imageHeight: draft.height,
+        mediaBytes: draft.estimatedBytes ?? draft.probe.bytes,
         videoDurationMs: Math.round(kept * 1000),
         pending: true,
         replyTo: index === 0 ? reference : null,
@@ -1954,6 +1954,7 @@ export function AppShell({ session }: { session: Session }) {
         const encoded = await encodeVideo(job.draft.file, {
           trim: job.draft.trim,
           mute: job.draft.mute,
+          quality: job.draft.quality,
           onProgress: (value) =>
             setTransfer(job.localId, {
               direction: "up",

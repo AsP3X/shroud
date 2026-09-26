@@ -2706,6 +2706,36 @@ button.reply-quote { cursor: pointer; }
   font-variant-numeric: tabular-nums;
 }
 .vcompose-meta em { color: var(--accent-text); font-style: normal; font-weight: 700; font-size: 10px; }
+.vcompose-meta > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vcompose-quality { position: relative; flex-shrink: 0; margin-left: auto; }
+.vcompose-quality-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 26px; padding: 0 10px; border: 0; border-radius: var(--r-full);
+  background: #2c2c2e; color: #fff;
+  font-size: 12px; font-weight: 600;
+}
+.vcompose-quality-btn:hover { background: #3a3a3c; }
+.vcompose-quality-menu {
+  position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 2;
+  min-width: 232px; padding: 6px;
+  border-radius: 14px; background: #2c2c2e;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+.vcompose-quality-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%; min-height: 44px; padding: 8px 10px;
+  border: 0; border-radius: 10px;
+  background: transparent; color: #fff;
+  font-size: 14px; font-weight: 600; text-align: left;
+}
+.vcompose-quality-item:hover:not(:disabled) { background: rgba(255, 255, 255, 0.08); }
+.vcompose-quality-item.is-current { background: rgba(255, 255, 255, 0.08); }
+.vcompose-quality-item:disabled { opacity: 0.4; }
+.vcompose-quality-name { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.vcompose-quality-item svg { opacity: 0; flex-shrink: 0; }
+.vcompose-quality-item.is-current svg { opacity: 1; }
+.vcompose-quality-item small { color: rgba(255, 255, 255, 0.62); font-size: 12px; font-weight: 500; }
+.vcompose-quality-name small { font-weight: 500; }
 .vcompose-send { display: flex; align-items: flex-end; gap: 8px; }
 .vcompose-send .compose-grow {
   background: #2c2c2e; color: #fff;

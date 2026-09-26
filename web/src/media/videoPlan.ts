@@ -1,9 +1,9 @@
 /**
  * How a picked clip leaves the browser, worked out from its probe alone so the
  * send sheet can show the size before anything is encoded. The result matches
- * iOS `VideoMedia.encode`: H.264 + AAC in an MP4, at most 1280 × 720, under the
- * server's cap. A clip that is already modest H.264 is only re-wrapped instead —
- * which still leaves its metadata (location included) behind.
+ * iOS `VideoMedia`: H.264 + AAC in an MP4, under the server's cap, at the
+ * quality the sender picked. A clip that already fits that rung as modest H.264
+ * is only re-wrapped — which still leaves its metadata (location included) behind.
  *
  * No mediabunny and no DOM in here: the video worker and the send sheet share it.
  */
@@ -53,32 +53,62 @@ export type VideoPlan = {
   estimatedBytes: number;
 };
 
+/**
+ * What the sender picks in the compose sheet.
+ * `high` is the default: at most 720p, stepping down when the clip would not fit.
+ * `original` keeps the picture size (re-encoding above 4K down to 4K). iOS
+ * re-encodes top out at 1080p; a file that already fits is sent unchanged on both.
+ */
+export type VideoQuality = "original" | "high" | "medium" | "small";
+
+export const VIDEO_QUALITIES: readonly { id: VideoQuality; label: string; hint: string }[] = [
+  { id: "original", label: "Original", hint: "Full size" },
+  { id: "high", label: "High", hint: "720p" },
+  { id: "medium", label: "Medium", hint: "540p" },
+  { id: "small", label: "Small", hint: "360p" },
+];
+
 /** Even at the smallest size this clip can't fit; `maxSeconds` is how long it may be. */
 export class VideoTooLongError extends Error {
-  constructor(readonly maxSeconds: number) {
-    super(`This video is too long to send. Trim it to ${clockLabel(maxSeconds)} or less.`);
+  constructor(
+    readonly maxSeconds: number,
+    readonly quality: VideoQuality = "high",
+  ) {
+    super(
+      quality === "original"
+        ? `Original quality won’t fit. Trim it to ${clockLabel(maxSeconds)} or choose a lower quality.`
+        : `This video is too long to send. Trim it to ${clockLabel(maxSeconds)} or less.`,
+    );
     this.name = "VideoTooLongError";
   }
 }
 
-/** Output boxes, largest first — iOS steps down 1280×720 → 960×540 → 640×480 the same way. */
-const BOXES = [
-  { long: 1280, short: 720 },
-  { long: 960, short: 540 },
-  { long: 640, short: 360 },
-  { long: 480, short: 270 },
+/** Output boxes, largest first — 720p, then 540p, then 360p. iOS's smallest named preset is
+ *  640×480, so a 4:3 clip at Small is 480p there and 360p here. */
+const LADDER: { long: number; short: number; tier: number }[] = [
+  { long: 1280, short: 720, tier: 0 },
+  { long: 960, short: 540, tier: 1 },
+  { long: 640, short: 360, tier: 2 },
+  { long: 480, short: 270, tier: 3 },
 ];
+const QUALITY_START: Record<Exclude<VideoQuality, "original">, number> = {
+  high: 0,
+  medium: 1,
+  small: 2,
+};
+/** Re-encoding "original" stops at 4K. A larger frame is scaled into this box. */
+const ORIGINAL_MAX = { long: 3840, short: 2160, tier: 0 };
 /** Bits per pixel per frame that H.264 needs to look clean at these sizes. */
 const TARGET_BPP = 0.085;
 /** Below this a size turns to mush, so the next smaller one is used instead. */
 const FLOOR_BPP = 0.028;
 const MIN_VIDEO_BITRATE = 120_000;
 const MAX_VIDEO_BITRATE = 3_200_000;
+/** Original keeps more of the source's own bitrate than the smaller rungs. */
+const ORIGINAL_MAX_VIDEO_BITRATE = 12_000_000;
 /** Share of the cap we aim for: MP4 boxes and encoders overshooting their target. */
 const HEADROOM = 0.9;
-/** Already-modest H.264 goes as it is: anything bigger, or denser, is re-encoded. */
-const COPY_MAX_LONG = 1920;
-const COPY_MAX_SHORT = 1080;
+/** Already-modest H.264 inside the chosen rung is re-wrapped. Denser video is encoded. */
 const COPY_MAX_BITRATE = 6_000_000;
 
 /** `0:07`, `12:30` — what the trim strip and the size hint show. */
@@ -108,15 +138,52 @@ function fitBox(width: number, height: number, box: { long: number; short: numbe
   return { width: even(width * scale), height: even(height * scale) };
 }
 
+/** "720p", or "Original" when that choice keeps the source frame. */
+export function planResolutionLabel(plan: VideoPlan, probe: VideoProbe, quality: VideoQuality): string {
+  const sameFrame =
+    Math.abs(Math.max(plan.width, plan.height) - Math.max(probe.width, probe.height)) <= 4 &&
+    Math.abs(Math.min(plan.width, plan.height) - Math.min(probe.width, probe.height)) <= 4;
+  if (quality === "original" && sameFrame) return "Original";
+  return shortEdgeLabel(Math.min(plan.width, plan.height));
+}
+
+function shortEdgeLabel(short: number): string {
+  const named: readonly [number, string][] = [
+    [1080, "1080p"],
+    [720, "720p"],
+    [540, "540p"],
+    [480, "480p"],
+    [360, "360p"],
+    [270, "270p"],
+  ];
+  for (const [edge, label] of named) {
+    if (Math.abs(short - edge) <= 16) return label;
+  }
+  return `${Math.round(short)}p`;
+}
+
+/** Boxes the chosen quality may use, best first. Original has one box and does not step down. */
+function encodeBoxes(quality: VideoQuality, width: number, height: number) {
+  if (quality !== "original") return LADDER.slice(QUALITY_START[quality]);
+  const long = Math.max(width, height);
+  const short = Math.min(width, height);
+  if (long <= ORIGINAL_MAX.long && short <= ORIGINAL_MAX.short) {
+    return [{ long: even(long), short: even(short), tier: 0 }];
+  }
+  return [ORIGINAL_MAX];
+}
+
 /**
  * Decides sizes and bitrates. `squeeze` < 1 asks for a smaller file than last
  * time (the encoder overshot the cap) and rules out re-wrapping.
+ * `quality` picks the largest frame; High, Medium and Small still step down to fit.
  */
 export function planVideo(
   probe: VideoProbe,
-  options: { trim?: VideoTrim | null; mute?: boolean; squeeze?: number } = {},
+  options: { trim?: VideoTrim | null; mute?: boolean; squeeze?: number; quality?: VideoQuality } = {},
 ): VideoPlan {
   const squeeze = options.squeeze ?? 1;
+  const quality = options.quality ?? "high";
   const trim = effectiveTrim(options.trim, probe.duration);
   const duration = Math.max(0.1, trim ? trim.end - trim.start : probe.duration);
   const wantsSound = Boolean(probe.audioCodec) && !options.mute;
@@ -129,15 +196,15 @@ export function planVideo(
 
   const copyAudioBitrate = probe.audioBitrate ?? 128_000;
   const sourceBitrate = (probe.bytes * 8) / Math.max(0.1, probe.duration);
+  const copyLimit = quality === "original" ? null : LADDER[QUALITY_START[quality]];
   const canCopy =
     squeeze === 1 &&
     !trim &&
     probe.videoCodec === "avc" &&
     (!hasSound || soundCopies) &&
-    long <= COPY_MAX_LONG &&
-    short <= COPY_MAX_SHORT &&
     fps <= 61 &&
-    sourceBitrate <= COPY_MAX_BITRATE &&
+    (copyLimit == null ||
+      (long <= copyLimit.long && short <= copyLimit.short && sourceBitrate <= COPY_MAX_BITRATE)) &&
     probe.bytes <= MAX_VIDEO_BYTES * 0.97;
   if (canCopy) {
     const dropped = probe.audioCodec && !hasSound ? (copyAudioBitrate * probe.duration) / 8 : 0;
@@ -157,19 +224,20 @@ export function planVideo(
 
   const budgetBits = (MAX_VIDEO_BYTES * 8 * HEADROOM * squeeze) / duration;
   const stereo = probe.audioChannels !== 1;
+  const bitrateCap = quality === "original" ? ORIGINAL_MAX_VIDEO_BITRATE : MAX_VIDEO_BITRATE;
   let fallback = { width: 0, height: 0, floor: 0, audio: 0 };
-  for (let index = 0; index < BOXES.length; index++) {
-    const { width, height } = fitBox(probe.width, probe.height, BOXES[index]);
-    const rate = Math.min(fps, index >= 2 ? 30 : 60);
+  for (const box of encodeBoxes(quality, probe.width, probe.height)) {
+    const { width, height } = fitBox(probe.width, probe.height, box);
+    const rate = Math.min(fps, box.tier >= 2 ? 30 : 60);
     const pixels = width * height * rate;
     const audioBitrate = !hasSound
       ? 0
       : soundCopies
         ? copyAudioBitrate
-        : index >= 2
+        : box.tier >= 2
           ? stereo ? 96_000 : 48_000
           : stereo ? 128_000 : 64_000;
-    const target = Math.min(MAX_VIDEO_BITRATE, Math.max(MIN_VIDEO_BITRATE, pixels * TARGET_BPP)) * squeeze;
+    const target = Math.min(bitrateCap, Math.max(MIN_VIDEO_BITRATE, pixels * TARGET_BPP)) * squeeze;
     const floor = Math.max(MIN_VIDEO_BITRATE, pixels * FLOOR_BPP);
     const budget = budgetBits - audioBitrate;
     fallback = { width, height, floor, audio: audioBitrate };
@@ -189,5 +257,5 @@ export function planVideo(
     };
   }
   const maxSeconds = (MAX_VIDEO_BYTES * 8 * HEADROOM) / (fallback.floor + fallback.audio);
-  throw new VideoTooLongError(Math.max(MIN_CLIP_SECONDS, Math.floor(maxSeconds)));
+  throw new VideoTooLongError(Math.max(MIN_CLIP_SECONDS, Math.floor(maxSeconds)), quality);
 }
