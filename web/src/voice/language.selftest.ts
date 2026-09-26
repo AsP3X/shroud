@@ -22,6 +22,7 @@ if (!hints.includes("de")) throw new Error("en-DE must hint German");
 if (challenger("en", hints) !== "de") throw new Error("English auto-detect must be challenged with German");
 if (challenger(null, ["en", "de"]) !== "de") throw new Error("unknown detection must skip a wasted English pass");
 if (challenger("de", ["de", "en"]) !== null) throw new Error("matching German detection must not spend a second pass");
+if (challenger("fr", ["en", "de"]) !== null) throw new Error("a detected language must not be replaced by the region");
 if (normalize("german") !== "de") throw new Error("normalize german");
 if (languageForRegion("DE") !== "de") throw new Error("region DE");
 

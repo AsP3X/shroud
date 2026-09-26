@@ -5,10 +5,12 @@ type WorkerIn =
   | { type: "prepare"; modelId: string }
   | { type: "transcribe"; audio: ArrayBuffer; language: string | null };
 
+type WorkerResult = { text: string; language: string | null };
+
 type WorkerOut =
   | { type: "progress"; fraction: number }
   | { type: "ready" }
-  | { type: "result"; text: string }
+  | { type: "result"; text: string; language?: string | null }
   | { type: "error"; message: string };
 
 /**
@@ -20,7 +22,7 @@ export class WhisperEngine implements TranscriptionEngine {
   private worker: Worker | null = null;
   private preparedFor: string | null = null;
   private waiting: {
-    resolve: (value: string | void) => void;
+    resolve: (value: WorkerResult | void) => void;
     reject: (error: Error) => void;
     progress?: (fraction: number) => void;
   } | null = null;
@@ -39,8 +41,9 @@ export class WhisperEngine implements TranscriptionEngine {
       this.waiting = null;
       if (!waiting) return;
       if (msg.type === "error") waiting.reject(new Error(msg.message));
-      else if (msg.type === "result") waiting.resolve(msg.text);
-      else waiting.resolve();
+      else if (msg.type === "result") {
+        waiting.resolve({ text: msg.text, language: msg.language ?? null });
+      } else waiting.resolve();
     };
     worker.onerror = (event) => {
       const waiting = this.waiting;
@@ -70,9 +73,13 @@ export class WhisperEngine implements TranscriptionEngine {
     }
   }
 
-  private send(message: WorkerIn, transfer?: Transferable[], progress?: (fraction: number) => void): Promise<string | void> {
+  private send(
+    message: WorkerIn,
+    transfer?: Transferable[],
+    progress?: (fraction: number) => void,
+  ): Promise<WorkerResult | void> {
     const run = () =>
-      new Promise<string | void>((resolve, reject) => {
+      new Promise<WorkerResult | void>((resolve, reject) => {
         try {
           const worker = this.ensureWorker();
           this.waiting = { resolve, reject, progress };
@@ -103,10 +110,11 @@ export class WhisperEngine implements TranscriptionEngine {
     request: TranscriptionRequest,
   ): Promise<TranscriptionOutput> {
     const copy = new Float32Array(samples);
-    const text = await this.send(
+    const sent = await this.send(
       { type: "transcribe", audio: copy.buffer, language: request.language ?? null },
       [copy.buffer],
     );
-    return { text: typeof text === "string" ? text : "", language: request.language ?? null };
+    if (!sent) return { text: "", language: request.language ?? null };
+    return { text: sent.text, language: sent.language ?? request.language ?? null };
   }
 }

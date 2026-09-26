@@ -18,6 +18,7 @@ import {
   voiceNoteDecodeOptions,
   WHISPER_WINDOW_SECONDS,
 } from "./decode";
+import { detectSpokenLanguage } from "./spoken";
 
 env.allowLocalModels = false;
 env.useBrowserCache = true;
@@ -82,6 +83,9 @@ async function handle(
   }
   if (!pipe) throw new Error("Whisper is not loaded.");
   const samples = new Float32Array(data.audio);
+  // A missing language used to be transcribed as English. Detect it from the
+  // opening of the note and keep that code for every later window.
+  const language = data.language || (await detectSpokenLanguage(pipe, samples));
   const pieces: string[] = [];
   let offset = 0;
   // Each pass hears one window. A long or paused note takes several; the cap
@@ -93,7 +97,7 @@ async function handle(
     let out: AsrOut;
     try {
       out = await pipe(slice, {
-        language: data.language || undefined,
+        language: language || undefined,
         ...voiceNoteDecodeOptions(),
       });
     } catch (err) {
@@ -113,7 +117,7 @@ async function handle(
     if (next == null) break;
     offset = next;
   }
-  self.postMessage({ type: "result", text: joinVoicePieces(pieces) });
+  self.postMessage({ type: "result", text: joinVoicePieces(pieces), language: language || null });
 }
 
 let chain: Promise<void> = Promise.resolve();

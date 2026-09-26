@@ -174,6 +174,17 @@ struct TranscriptionEngineTests {
         #expect(WhisperLanguageToken.firstCode(in: ["<|startoftranscript|>", "<|ko|>", "<|en|>"]) == "ko")
     }
 
+    /// The language asked for, then the opening of the note, then the engine's last window.
+    @Test
+    func theLanguageTheNoteOpenedWithIsTheOneReported() {
+        #expect(WhisperReportedLanguage.choose(forced: "fr", openingToken: "en", reported: "de") == "fr")
+        #expect(WhisperReportedLanguage.choose(forced: nil, openingToken: "de", reported: "en") == "de")
+        #expect(WhisperReportedLanguage.choose(forced: nil, openingToken: nil, reported: "german") == "de")
+        #expect(WhisperReportedLanguage.choose(forced: "en", openingToken: "ja", reported: "ja") == "en")
+        #expect(WhisperReportedLanguage.code("german") == "de")
+        #expect(WhisperReportedLanguage.code("<|ja|>") == nil)
+    }
+
     /// A language probe is only the opening of the note, and a live-call chunk stays single-pass.
     @Test
     func aLanguageProbeAndALiveChunkDoNotWalkTheFile() {

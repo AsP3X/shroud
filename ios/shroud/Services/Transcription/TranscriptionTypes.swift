@@ -183,6 +183,27 @@ enum WhisperLanguageToken {
     }
 }
 
+/// Which language a finished note reports.
+///
+/// A language the caller asked for wins. Otherwise the token from the opening
+/// of the note wins over the engine's file-level label, because a later window
+/// detects again and that label is the last window.
+enum WhisperReportedLanguage {
+    /// A two-letter code Whisper can be asked for, or nil.
+    static func code(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let normalized = TranscriptionLanguage.normalize(raw)
+        guard normalized.count == 2, normalized.allSatisfy(\.isLetter) else { return nil }
+        return normalized
+    }
+
+    static func choose(forced: String?, openingToken: String?, reported: String?) -> String? {
+        if let forced = code(forced) { return forced }
+        if let opening = code(openingToken) { return opening }
+        return code(reported)
+    }
+}
+
 nonisolated struct TranscriptionOutput: Sendable, Equatable {
     var text: String
     var language: String?

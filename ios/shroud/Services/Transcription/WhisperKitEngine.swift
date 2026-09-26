@@ -39,10 +39,13 @@ actor WhisperKitEngine: TranscriptionEngine {
     }
 
     func transcribe(fileURL: URL, request: TranscriptionRequest) async throws -> TranscriptionOutput {
+        let request = await applyingDetection(request) {
+            await self.detectSpokenLanguage(fileURL: fileURL)
+        }
         let (kit, options) = try prepared(for: request)
         do {
             let results = try await kit.transcribe(audioPath: fileURL.path, decodeOptions: options)
-            return Self.output(from: results, tokenizer: kit.tokenizer)
+            return Self.output(from: results, tokenizer: kit.tokenizer, forced: request.language)
         } catch {
             throw TranscriptionEngineError.failed(error.localizedDescription)
         }
@@ -53,19 +56,47 @@ actor WhisperKitEngine: TranscriptionEngine {
         sampleRate: Double,
         request: TranscriptionRequest
     ) async throws -> TranscriptionOutput {
-        let (kit, options) = try prepared(for: request)
         let pcm: [Float]
         if abs(sampleRate - 16_000) < 1 {
             pcm = samples
         } else {
             pcm = Self.resample(samples, from: sampleRate, to: 16_000)
         }
+        let request = await applyingDetection(request) {
+            await self.detectSpokenLanguage(samples: pcm)
+        }
+        let (kit, options) = try prepared(for: request)
         do {
             let results = try await kit.transcribe(audioArray: pcm, decodeOptions: options)
-            return Self.output(from: results, tokenizer: kit.tokenizer)
+            return Self.output(from: results, tokenizer: kit.tokenizer, forced: request.language)
         } catch {
             throw TranscriptionEngineError.failed(error.localizedDescription)
         }
+    }
+
+    /// Whisper's decoder is prefilled with English before its own detector runs, and each
+    /// later window detects again. A fresh check on the opening of the note avoids both.
+    private func applyingDetection(
+        _ request: TranscriptionRequest,
+        detect: () async -> String?
+    ) async -> TranscriptionRequest {
+        if WhisperReportedLanguage.code(request.language) != nil { return request }
+        guard let detected = await detect() else { return request }
+        var copy = request
+        copy.language = detected
+        return copy
+    }
+
+    private func detectSpokenLanguage(fileURL: URL) async -> String? {
+        guard let kit else { return nil }
+        guard let found = try? await kit.detectLanguage(audioPath: fileURL.path) else { return nil }
+        return WhisperReportedLanguage.code(found.language)
+    }
+
+    private func detectSpokenLanguage(samples: [Float]) async -> String? {
+        guard let kit, !samples.isEmpty else { return nil }
+        guard let found = try? await kit.detectLangauge(audioArray: samples) else { return nil }
+        return WhisperReportedLanguage.code(found.language)
     }
 
     private func prepared(for request: TranscriptionRequest) throws -> (WhisperKit, DecodingOptions) {
@@ -165,12 +196,16 @@ actor WhisperKitEngine: TranscriptionEngine {
 
     nonisolated private static func output(
         from results: [TranscriptionResult],
-        tokenizer: WhisperTokenizer?
+        tokenizer: WhisperTokenizer?,
+        forced: String?
     ) -> TranscriptionOutput {
         let merged = TranscriptionUtilities.mergeTranscriptionResults(results).text
         let text = merged.trimmingCharacters(in: .whitespacesAndNewlines)
-        let language = firstLanguage(in: results, tokenizer: tokenizer)
-            ?? results.first.map { String($0.language.prefix(2)).lowercased() }
+        let language = WhisperReportedLanguage.choose(
+            forced: forced,
+            openingToken: firstLanguage(in: results, tokenizer: tokenizer),
+            reported: results.first?.language
+        )
         let segments = results.flatMap(\.segments)
         let confidence: Double
         if segments.isEmpty {
@@ -188,13 +223,11 @@ actor WhisperKitEngine: TranscriptionEngine {
         in results: [TranscriptionResult],
         tokenizer: WhisperTokenizer?
     ) -> String? {
-        guard let tokenizer else { return nil }
+        guard let tokenizer, let segment = results.first?.segments.first else { return nil }
         var texts: [String] = []
-        for segment in results.first?.segments ?? [] {
-            for token in segment.tokens where tokenizer.allLanguageTokens.contains(token) {
-                if let text = tokenizer.convertIdToToken(token) {
-                    texts.append(text)
-                }
+        for token in segment.tokens where tokenizer.allLanguageTokens.contains(token) {
+            if let text = tokenizer.convertIdToToken(token) {
+                texts.append(text)
             }
         }
         return WhisperLanguageToken.firstCode(in: texts)

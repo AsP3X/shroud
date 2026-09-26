@@ -2,7 +2,8 @@
  * Language hints for Whisper. Same contract as iOS `TranscriptionLanguage` /
  * `VoiceTranscript`: auto-detect is English-biased, so we challenge it with
  * conversation history and the device region (English UI in Germany is common)
- * and keep the better transcript.
+ * and keep the better transcript. A detection that is already another language
+ * is kept; only an English result is challenged.
  */
 
 import { vaultGet, vaultSet } from "../crypto/vault";
@@ -174,6 +175,10 @@ export function decodeHints(peerId?: string | null): string[] {
 
 export function challenger(detected: string | null | undefined, hints: string[]): string | null {
   const got = detected ? normalize(detected) : "";
+  // Only English, or a detection that failed, gets a second pass. A French or
+  // German result is the language of the note. English is the biased default,
+  // so a hint may challenge that and nothing else. The hint is never English.
+  if (got && got !== "en") return null;
   for (const hint of hints) {
     const code = normalize(hint);
     if (!code || code === got || code === "en") continue;

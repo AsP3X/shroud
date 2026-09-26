@@ -299,6 +299,8 @@ struct TranscriptionLanguageMemoryTests {
         #expect(TranscriptionLanguage.challenger(detected: "german", hints: ["de"]) == nil)
         #expect(TranscriptionLanguage.challenger(detected: nil, hints: ["en"]) == nil)
         #expect(TranscriptionLanguage.challenger(detected: nil, hints: ["en", "de"]) == "de")
+        #expect(TranscriptionLanguage.challenger(detected: "fr", hints: ["en", "de"]) == nil)
+        #expect(TranscriptionLanguage.challenger(detected: "ja", hints: ["de", "en"]) == nil)
     }
 
     @Test

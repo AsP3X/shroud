@@ -4,7 +4,8 @@
  * Whisper reads about 30 seconds at a time. Without timestamps, an early stop
  * (a pause, or the token budget on a dense script) drops the rest of that window.
  * Timestamps say how far the words reached. The worker then decodes whatever is
- * still left, including audio past the first 30 seconds. Language is the caller's.
+ * still left, including audio past the first 30 seconds. When the caller did not
+ * name a language, it is detected from the opening of the note and kept.
  */
 
 export const WHISPER_WINDOW_SECONDS = 30;

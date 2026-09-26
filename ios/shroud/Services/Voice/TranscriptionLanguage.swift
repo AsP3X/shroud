@@ -7,8 +7,9 @@ import NaturalLanguage
 /// Human: Whisper's own language ID is strongly English-biased, especially on short notes, so
 /// "Automatic" is not a coin flip — it will happily transcribe German as English. An English UI
 /// with a German region is a common setup, and that region *is* a useful *challenger* (not a
-/// forced language): we decode once with auto-detect, once with the hint, and keep the better
-/// transcript. Conversation history then takes over.
+/// forced language): when detection lands on English we decode again with the hint and keep
+/// the better transcript. A detection that is already another language is kept.
+/// Conversation history then takes over.
 /// Agent: READS/WRITES UserDefaults key `transcription.locale`; no other state.
 nonisolated enum TranscriptionLanguage {
     private static let defaultsKey = "transcription.locale"
@@ -99,11 +100,12 @@ nonisolated enum TranscriptionLanguage {
         return ordered
     }
 
-    /// Second-pass language when auto-detect disagrees with a hint. Nil means one pass is enough.
-    /// Never challenges with English: Whisper already defaults there, and a second English pass
-    /// cannot undo an English-biased first pass.
+    /// Second pass when detection landed on English or failed. Nil means one pass is enough.
+    /// A French or German detection is the language of the note. English is Whisper's biased
+    /// default, so a hint may challenge that and nothing else. The hint itself is never English.
     static func challenger(detected: String?, hints: [String]) -> String? {
         let detected = detected.map { normalize($0) } ?? ""
+        guard detected.isEmpty || detected == "en" else { return nil }
         for hint in hints {
             let code = normalize(hint)
             if code.isEmpty || code == detected || code == "en" { continue }
