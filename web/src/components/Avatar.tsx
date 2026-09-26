@@ -13,10 +13,10 @@ const PALETTE: readonly [string, string][] = [
   ["#8e8e93", "#5f5f66"],
 ];
 
-/* FNV-1a plus a finalizer. A plain `h * 31 + c` collapses here: 31 ≡ -1 (mod 8),
-   so the low bits of ids that share a long tail — as UUIDs do — all land together.
-   (iOS hashes with Swift's per-launch seeded Hasher, so its colours aren't stable
-   across launches; this one is stable per user id.) */
+/* FNV-1a plus a finalizer, over UTF-16 code units. The same function as iOS
+   `AvatarView.paletteIndex`: a contact keeps one colour on every launch and the
+   same colour in both clients. A plain `h * 31 + c` collapses here: 31 ≡ -1 (mod 8),
+   so the low bits of ids that share a long tail — as UUIDs do — all land together. */
 export function avatarPalette(seed: string): readonly [string, string] {
   let hash = 0x811c9dc5;
   for (let i = 0; i < seed.length; i++) {
