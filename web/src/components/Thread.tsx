@@ -249,6 +249,14 @@ function MessageRow({
     />
   ) : null;
 
+  /* Time and ticks: the last thing in every bubble, wherever its last row is. */
+  const meta = (
+    <span className="bubble-meta" title={fullTimestamp(message.createdAt)}>
+      <time dateTime={message.createdAt}>{clockTime(message.createdAt)}</time>
+      {message.isMine && !message.deleted ? <Receipt message={message} /> : null}
+    </span>
+  );
+
   let bubble = null;
   if (photo) {
     bubble = (
@@ -276,11 +284,20 @@ function MessageRow({
       />
     );
   } else if (voice) {
-    /* The transcript folds away inside the bubble, behind the →A button. */
+    /* The transcript folds away inside the bubble, behind the →A button. The time sits in
+       the waveform footer, moves to the end of the unfolded transcript, and on a reacted
+       note closes the chip row — always the bubble's last row (Telegram). */
     bubble = (
       <div className={bubbleClass}>
-        <VoiceBubble message={message} loadVoice={onLoadVoice} query={query} inTail={inTail} quote={quote} />
-        {strip()}
+        <VoiceBubble
+          message={message}
+          loadVoice={onLoadVoice}
+          query={query}
+          inTail={inTail}
+          quote={quote}
+          meta={reacted ? null : meta}
+        />
+        {strip(meta)}
       </div>
     );
   } else {
@@ -288,12 +305,6 @@ function MessageRow({
        or over the text when the sender picked "Show above text". */
     const preview = message.linkPreview && !message.deleted ? message.linkPreview : null;
     const above = preview?.showsAboveText ?? false;
-    const meta = (
-      <span className="bubble-meta" title={fullTimestamp(message.createdAt)}>
-        <time dateTime={message.createdAt}>{clockTime(message.createdAt)}</time>
-        {message.isMine && !message.deleted ? <Receipt message={message} /> : null}
-      </span>
-    );
     const card = preview ? (
       <LinkPreviewCard message={message} preview={preview} loadImage={onLoadImage} />
     ) : null;

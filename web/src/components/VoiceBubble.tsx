@@ -18,7 +18,6 @@ import {
   resampleWaveform,
   waveformUsable,
 } from "../crypto/mediaPayload";
-import { clockTime, fullTimestamp } from "../format";
 import {
   cycleVoiceRate,
   getVoicePlayback,
@@ -39,10 +38,16 @@ import {
   wasHandedOff,
 } from "../voice/transcriptView";
 import { Highlight } from "./Highlight";
-import { Receipt } from "./Receipt";
 
 
 const MIN_TRUSTED_MS = 300;
+/** Waveform width ramps with duration between these, like Telegram's voice bubbles. */
+const SHORT_NOTE_S = 2;
+const LONG_NOTE_S = 14;
+/** Narrowest waveform: below it the footer crowds and a short transcript is a thin column. */
+const MIN_WAVE_PX = 160;
+/** Widest; the bubble's own max-width still clamps it on a narrow thread. */
+const MAX_WAVE_PX = 260;
 /** Drawer unfold; the glyph morph and text fade in index.css run on the same clock. */
 const UNFOLD_MS = 320;
 const UNFOLD_EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
@@ -150,6 +155,7 @@ export function VoiceBubble({
   query = "",
   inTail = false,
   quote,
+  meta = null,
 }: {
   message: ChatMessage;
   loadVoice: (message: ChatMessage) => Promise<Uint8Array | null>;
@@ -159,6 +165,11 @@ export function VoiceBubble({
   inTail?: boolean;
   /** Reply header drawn above the waveform row. */
   quote?: ReactNode;
+  /**
+   * The time and ticks. Drawn in the waveform footer while the transcript is folded, at the
+   * end of the transcript once unfolded. Null on a reacted note, whose chip row takes them.
+   */
+  meta?: ReactNode;
 }) {
   const playback = useSyncExternalStore(subscribeVoicePlayback, getVoicePlayback);
   useSyncExternalStore(subscribeTranscriptView, transcriptViewVersion);
@@ -176,9 +187,12 @@ export function VoiceBubble({
   const stated = message.voiceDurationMs ?? 0;
   const durationMs = stated >= MIN_TRUSTED_MS ? stated : (measuredMs ?? stated);
   const seconds = durationMs / 1000;
-  /** Duration still sizes the bubble; short notes keep this floor so the footer fits. */
-  const durationBars = Math.min(38, Math.max(18, 16 + Math.round(seconds * 1.6)));
-  const waveWidth = Math.max(148, durationBars * 5);
+  /* Duration sizes the bubble, so a 2-second note is visibly shorter than a 40-second one;
+     a long note runs wide enough for its transcript to read comfortably, never the whole
+     thread. Whole 5px bars, so the waveform ends on one. */
+  const ramp = Math.min(1, Math.max(0, (seconds - SHORT_NOTE_S) / (LONG_NOTE_S - SHORT_NOTE_S)));
+  const waveWidth = Math.floor((MIN_WAVE_PX + (MAX_WAVE_PX - MIN_WAVE_PX) * ramp) / 5) * 5;
+  const durationBars = waveWidth / 5;
   /* Pack as many real samples as the track can hold (min 3px per sample). Short
      notes show the envelope at higher resolution instead of a few fat bars. */
   const maxFit = Math.max(1, Math.floor(waveWidth / 3));
@@ -397,10 +411,7 @@ export function VoiceBubble({
                 {rateLabel}
               </button>
             ) : null}
-            <span className="voice-meta" title={fullTimestamp(message.createdAt)}>
-              <time dateTime={message.createdAt}>{clockTime(message.createdAt)}</time>
-              {message.isMine && !message.deleted ? <Receipt message={message} /> : null}
-            </span>
+            {open ? null : meta}
           </div>
         </div>
         {loadFailed && !audio ? <span className="sr-only">Could not load this voice message.</span> : null}
@@ -427,6 +438,7 @@ export function VoiceBubble({
               <span>Transcribing…</span>
             </p>
           )}
+          {open ? meta : null}
         </div>
       ) : null}
     </>

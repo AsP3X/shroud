@@ -28,6 +28,7 @@ import {
 } from "../calls/service";
 import { useCallView } from "../calls/store";
 import { Avatar, avatarPalette } from "./Avatar";
+import { SpeakingIndicator } from "./SpeakingIndicator";
 
 /**
  * The call screen: full-screen and always dark (like the media viewers) while a call rings out, is
@@ -309,6 +310,8 @@ function CallScreen({ view }: { view: CallView }) {
                 </span>
               </p>
             </div>
+            {/* "You're speaking": only while the call runs with an open mic; muting hides it. */}
+            <SpeakingIndicator stream={view.localStream} active={view.phase === "active" && view.micOn} />
             {chips.length > 0 ? <div className="call-chips">{chips}</div> : null}
             {view.notice ? (
               <p className="call-notice" role="status">

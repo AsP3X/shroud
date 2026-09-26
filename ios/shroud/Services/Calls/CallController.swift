@@ -385,6 +385,11 @@ final class CallController {
         await userEnd(fromKit: false)
     }
 
+    /// The microphone's level for the speaking indicator; nil with no media.
+    func localAudioLevel() async -> Float? {
+        await engine.localAudioLevel()
+    }
+
     func toggleMute() async {
         guard let call = active else { return }
         await setMuted(!call.isMuted, fromKit: false)

@@ -57,6 +57,13 @@ struct InCallOverlay: View {
                         .foregroundStyle(.white)
                         .shadow(color: .black.opacity(showsRemoteVideo ? 0.45 : 0), radius: 8, y: 2)
                     statusLabel(for: call)
+                    // "You're speaking": only while the call runs with an open mic. Muting
+                    // hides it; the Mute control already says so in red.
+                    if call.phase == .active, !call.isMuted {
+                        SpeakingIndicatorView { await calls.localAudioLevel() }
+                            .padding(.top, 6)
+                            .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                    }
                     if let notice = call.notice, call.phase != .ending {
                         Text(notice)
                             .font(.system(size: 13))
@@ -65,6 +72,7 @@ struct InCallOverlay: View {
                     }
                 }
                 .animation(Motion.snappy, value: call.phase)
+                .animation(Motion.snappy, value: call.isMuted)
 
                 Spacer()
 

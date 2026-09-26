@@ -38,6 +38,9 @@ final class CallMediaEngine: NSObject {
     private var hasTurn = false
     private var triedRelay = false
     private var audioTrack: RTCAudioTrack?
+    /// Kept from `add`: `connection.senders` hops to the signaling thread on every read, and
+    /// the speaking indicator asks for this sender many times a second.
+    private var audioSender: RTCRtpSender?
     private var camera: CallCamera?
     #if DEBUG && targetEnvironment(simulator)
     private var testPattern: TestPatternCapturer?
@@ -93,7 +96,7 @@ final class CallMediaEngine: NSObject {
         )
         let audioSource = Self.factory.audioSource(with: audioConstraints)
         let audio = Self.factory.audioTrack(with: audioSource, trackId: "shroud-audio")
-        connection.add(audio, streamIds: ["shroud"])
+        audioSender = connection.add(audio, streamIds: ["shroud"])
         audioTrack = audio
 
         if video {
@@ -238,6 +241,38 @@ final class CallMediaEngine: NSObject {
         audioTrack?.isEnabled = enabled
     }
 
+    /// The microphone's level right now, linear 0…1; nil before the call has media.
+    ///
+    /// Human: The stock WebRTC build has no audio tap on a track, so the level comes from the
+    /// audio sender's `media-source` stats. Asking for one sender keeps the report small; the
+    /// stats collector answers from the signaling thread, and only the number crosses back.
+    func localAudioLevel() async -> Float? {
+        guard let connection = peerConnection, let sender = audioSender else { return nil }
+        let gate = LevelGate()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (cont: CheckedContinuation<Float?, Never>) in
+                gate.arm(cont)
+                connection.statistics(for: sender) { report in
+                    gate.resume(Self.audioLevel(in: report))
+                }
+            }
+        } onCancel: {
+            // The call screen went away while stats were still queued. Resume once so the
+            // poll task can finish; a late report is ignored.
+            gate.resume(nil)
+        }
+    }
+
+    /// `media-source` is the mic. `audioLevel` arrives as a number, sometimes as a string.
+    nonisolated private static func audioLevel(in report: RTCStatisticsReport) -> Float? {
+        let stats = report.statistics.values
+        let source = stats.first { $0.type == "media-source" } ?? stats.first { $0.type == "track" }
+        guard let raw = source?.values["audioLevel"] else { return nil }
+        if let number = raw as? NSNumber { return number.floatValue }
+        if let text = raw as? String { return Float(text) }
+        return nil
+    }
+
     func setCameraEnabled(_ enabled: Bool) {
         localVideoTrack?.isEnabled = enabled
         if enabled {
@@ -269,6 +304,7 @@ final class CallMediaEngine: NSObject {
         peerLink = .closed
         iceLink = .closed
         audioTrack = nil
+        audioSender = nil
         localVideoTrack = nil
         if remoteVideoTrack != nil {
             remoteVideoTrack = nil
@@ -429,5 +465,39 @@ extension CallMediaEngine: RTCPeerConnectionDelegate {
             guard self.peerConnection === peerConnection else { return }
             self.refreshRemoteVideo()
         }
+    }
+}
+
+/// Resumes one level read, from the stats callback or from cancellation, and never both.
+private final class LevelGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Float?, Never>?
+    private var value: Float?
+    private var finished = false
+
+    func arm(_ continuation: CheckedContinuation<Float?, Never>) {
+        lock.lock()
+        if finished {
+            let value = self.value
+            lock.unlock()
+            continuation.resume(returning: value)
+            return
+        }
+        self.continuation = continuation
+        lock.unlock()
+    }
+
+    func resume(_ value: Float?) {
+        lock.lock()
+        if finished {
+            lock.unlock()
+            return
+        }
+        finished = true
+        self.value = value
+        let continuation = self.continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume(returning: value)
     }
 }

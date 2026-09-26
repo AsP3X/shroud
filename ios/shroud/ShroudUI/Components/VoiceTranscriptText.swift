@@ -11,13 +11,18 @@ import SwiftUI
 struct VoiceTranscriptText: View {
     let text: String
     let color: Color
+    /// Invisible glyphs appended after the last word so the last line stays clear of the
+    /// time and ticks drawn over its end (`MessageBubbleMetrics.metaReservation`). They are
+    /// set in the meta's own font, so the room kept is exactly the meta's width.
+    let trailingReservation: String?
 
     /// Seconds into the reveal; starts past the end when the text is drawn in place.
     @State private var elapsed: Double
 
-    init(text: String, color: Color, streams: Bool) {
+    init(text: String, color: Color, streams: Bool, trailingReservation: String? = nil) {
         self.text = text
         self.color = color
+        self.trailingReservation = trailingReservation
         _elapsed = State(initialValue: streams ? 0 : .infinity)
     }
 
@@ -36,9 +41,16 @@ struct VoiceTranscriptText: View {
     }
 
     private func styled(_ text: Text) -> some View {
-        text
+        var styled = text
             .font(.system(size: 15))
             .foregroundStyle(color)
+        if let trailingReservation {
+            // Clear, and untagged: the reveal renderer draws it at once, and nothing shows.
+            styled = styled + Text(verbatim: trailingReservation)
+                .font(.system(size: MessageBubbleMetrics.metaFontSize).monospacedDigit())
+                .foregroundStyle(Color.clear)
+        }
+        return styled
             .lineSpacing(2)
             .fixedSize(horizontal: false, vertical: true)
     }

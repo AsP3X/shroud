@@ -20,6 +20,12 @@ enum GlassBarMetrics {
     static let spacing: CGFloat = 8
     /// Room under the control row before content starts.
     static let bottomPadding: CGFloat = 6
+    /// Width a centred title keeps free on each side for a cluster of `controls` glass
+    /// controls (fused or not) plus the gap to the title.
+    static func sideReserve(controls: Int) -> CGFloat {
+        controlSize * CGFloat(max(1, controls)) + spacing
+    }
+
     static let glyphFont = Font.system(size: 17, weight: .semibold)
     static let labelFont = Font.system(size: 16, weight: .medium)
     static let titleFont = Font.system(size: 17, weight: .semibold)
@@ -192,13 +198,16 @@ struct GlassBarGroup<Content: View>: View {
 /// leading-aligned centre content (the chat header's avatar and name).
 ///
 /// Human: The title is centred on the *screen*, not between the clusters, so it stays put
-/// when a side gains or loses a button. Side clusters win the space fight — a long title
-/// truncates before it can overlap them.
+/// when a side gains or loses a button. Side clusters win the space fight: the centre is
+/// inset by `sideReserve` on both sides (two fused controls plus the gap by default), so a
+/// long title truncates before it can overlap them, on any phone width.
 /// Agent: RETURNS a fixed-height row; the caller pins it with `glassTopBar`. No scroll
 /// tracking: legibility over passing content comes from the scroll edge effect, not from a
 /// backdrop here.
 struct GlassBarRow<Leading: View, Center: View, Trailing: View>: View {
     var centersTitle = true
+    /// Width kept free of the centre on each side, so it never runs under a cluster.
+    var sideReserve: CGFloat = GlassBarMetrics.sideReserve(controls: 2)
     @ViewBuilder var leading: () -> Leading
     @ViewBuilder var center: () -> Center
     @ViewBuilder var trailing: () -> Trailing
@@ -208,8 +217,7 @@ struct GlassBarRow<Leading: View, Center: View, Trailing: View>: View {
             if centersTitle {
                 ZStack {
                     center()
-                        // Roughly the width the system leaves a title beside two buttons.
-                        .frame(maxWidth: 220)
+                        .padding(.horizontal, sideReserve)
                     HStack(spacing: GlassBarMetrics.spacing) {
                         leading()
                         Spacer(minLength: 0)

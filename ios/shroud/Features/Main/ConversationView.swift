@@ -24,6 +24,8 @@ struct ConversationView: View {
     /// Owns the mic session for this thread. The composer only reads its live state.
     @State private var voiceRecorder = VoiceRecorder()
     @State private var toast: String?
+    /// Notes only: the header menu's "Delete Saved Messages" confirmation.
+    @State private var showNotesDeleteConfirm = false
     /// A reaction on its way from the bar or a double tap to its chip (`ReactionFlight`).
     @State private var reactionFlight: ReactionFlight?
     /// Active long-press focus session.
@@ -37,7 +39,6 @@ struct ConversationView: View {
     /// Message waiting on the delete-scope confirmation.
     @State private var pendingDelete: PendingDelete?
     /// Whole-chat delete confirmation (scope is picked in the dialog).
-    @State private var showChatDeleteConfirm = false
     /// Live global frames of each bubble (visual only — no row spacers). Only read when a menu
     /// opens, so it lives in a reference type: as `@State` every scroll frame and every frame of
     /// the back swipe redrew the whole thread, and the redraw re-fired the preference in the
@@ -197,21 +198,14 @@ struct ConversationView: View {
                 Button("Cancel", role: .cancel) { pendingDelete = nil }
             }
             .confirmationDialog(
-                isNotes ? "Delete Saved Messages?" : "Delete chat with \(peerUsername)?",
-                isPresented: $showChatDeleteConfirm,
+                "Delete Saved Messages?",
+                isPresented: $showNotesDeleteConfirm,
                 titleVisibility: .visible
             ) {
-                if !isNotes {
-                    Button("Delete for me and \(peerUsername)", role: .destructive) {
-                        performChatDelete(scope: .everyone)
-                    }
-                }
-                Button(isNotes ? "Delete" : "Delete for me", role: .destructive) {
-                    performChatDelete(scope: .me)
-                }
+                Button("Delete", role: .destructive) { deleteNotes() }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text(chatDeleteExplanation)
+                Text("Removes every saved message from this device and your account.")
             }
             .toast($toast)
             .animation(Motion.scrim, value: viewingMedia != nil)
@@ -381,7 +375,18 @@ struct ConversationView: View {
                 .ignoresSafeArea()
             }
             .navigationDestination(item: $profileDestination) { dest in
-                ContactProfileView(peerUserID: dest.peerUserID, peerUsername: dest.peerUsername)
+                ContactProfileView(
+                    peerUserID: dest.peerUserID,
+                    peerUsername: dest.peerUsername,
+                    // The chat is gone: leave the thread, which takes the profile with it.
+                    onChatDeleted: {
+                        if let onBack {
+                            onBack()
+                        } else {
+                            dismiss()
+                        }
+                    }
+                )
             }
     }
 
@@ -585,14 +590,19 @@ struct ConversationView: View {
 
     // MARK: - Top chrome (Liquid Glass bar)
 
-    /// Back, the contact (avatar + name + presence), and the call / more controls.
+    /// Back on the left, the contact (avatar + name + presence) centred on the screen, and
+    /// on the right Video + Call for a peer, or the More menu for Notes.
     ///
     /// Human: Only the controls carry glass; the contact block is plain so the name reads
-    /// like a title. Video and Call fuse into one capsule, the way the system toolbar groups
-    /// neighbouring items. There is no backdrop: `glassTopBar` fades the thread under it.
+    /// like a title, and it is centred like one. Video and Call fuse into one capsule, the way
+    /// the system toolbar groups neighbouring items. A peer chat is deleted from the chat
+    /// list's long-press menu, so its bar holds nothing else; Notes keeps a More menu because
+    /// that is the only place its saved messages can be cleared from inside the thread. There
+    /// is no backdrop: `glassTopBar` fades the thread under it.
     /// Agent: RETURNS the bar row; presence animation lives on the centre block.
     private var topChrome: some View {
-        GlassBarRow(centersTitle: false) {
+        // Notes has one control per side, so its centre may use the width the calls would take.
+        GlassBarRow(sideReserve: GlassBarMetrics.sideReserve(controls: isNotes ? 1 : 2)) {
             GlassBarButton(systemImage: "chevron.left") {
                 if let onBack {
                     onBack()
@@ -616,27 +626,24 @@ struct ConversationView: View {
                     }
                     .accessibilityLabel("Call")
                 }
-            }
-
-            // Chat-level actions. Notes are local Saved Messages, so they only clear.
-            Menu {
-                Button(role: .destructive) {
-                    showChatDeleteConfirm = true
+            } else {
+                // Notes are local Saved Messages, so the menu only clears them.
+                Menu {
+                    Button(role: .destructive) {
+                        showNotesDeleteConfirm = true
+                    } label: {
+                        Label("Delete Saved Messages", systemImage: "trash")
+                    }
                 } label: {
-                    Label(
-                        isNotes ? "Delete Saved Messages" : "Delete Chat",
-                        systemImage: "trash"
-                    )
+                    Image(systemName: "ellipsis")
+                        .font(GlassBarMetrics.glyphFont)
+                        .foregroundStyle(Theme.accent)
+                        .frame(width: GlassBarMetrics.controlSize, height: GlassBarMetrics.controlSize)
+                        .contentShape(Capsule())
                 }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(GlassBarMetrics.glyphFont)
-                    .foregroundStyle(Theme.accent)
-                    .frame(width: GlassBarMetrics.controlSize, height: GlassBarMetrics.controlSize)
-                    .contentShape(Circle())
+                .glassEffect(.regular.interactive(), in: .capsule)
+                .accessibilityLabel("More")
             }
-            .glassEffect(.regular.interactive(), in: .circle)
-            .accessibilityLabel("More")
         }
     }
 
@@ -656,7 +663,6 @@ struct ConversationView: View {
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(1)
                 }
-                Spacer(minLength: 0)
             }
         } else {
             Button {
@@ -702,7 +708,6 @@ struct ConversationView: View {
                         .animation(Motion.snappy, value: isOnline)
                         .animation(Motion.snappy, value: peerActivity)
                     }
-                    Spacer(minLength: 0)
                 }
                 .contentShape(Rectangle())
             }
@@ -2087,24 +2092,10 @@ struct ConversationView: View {
         }
     }
 
-    /// Spells out the asymmetric outcome before the tap: "for both" always disconnects the
-    /// two accounts, but the peer's own messages only vanish if they allowed that.
-    private var chatDeleteExplanation: String {
-        if isNotes {
-            return "Removes every saved message from this device and your account."
-        }
-        return """
-        Deleting for both unsends your messages in \(peerUsername)'s chat and removes them as \
-        a contact — you'd both have to add each other again. Their own messages stay unless \
-        they allow chats to be cleared for them.
-        """
-    }
-
-    /// Deletes the whole thread and leaves the screen — there is nothing left to show here.
-    private func performChatDelete(scope: ConversationDeleteScope) {
-        showChatDeleteConfirm = false
+    /// Clears Saved Messages and leaves the screen — there is nothing left to show here.
+    private func deleteNotes() {
         Task {
-            let outcome = await messaging.deleteConversation(peerUserID: peerUserID, scope: scope)
+            let outcome = await messaging.deleteConversation(peerUserID: peerUserID, scope: .me)
             if case let .failed(message) = outcome {
                 toast = message
                 Haptics.notification(.error)

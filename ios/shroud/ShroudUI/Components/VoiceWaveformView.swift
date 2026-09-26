@@ -20,10 +20,14 @@ struct VoiceWaveformView: View {
 
     var body: some View {
         GeometryReader { geo in
+            // Only as many bars as the width holds, newest last: a live recording's window
+            // can be longer than the readout it sits in, and the extra bars used to run out of
+            // the capsule on the right. Sent bubbles resample to an exact count, so they fit.
+            let shown = visibleSamples(width: geo.size.width)
             HStack(alignment: .center, spacing: spacing) {
-                ForEach(Array(samples.enumerated()), id: \.offset) { index, sample in
+                ForEach(Array(shown.enumerated()), id: \.offset) { index, sample in
                     Capsule(style: .continuous)
-                        .fill(color(at: index))
+                        .fill(color(at: index, of: shown.count))
                         .frame(
                             width: barWidth,
                             height: height(for: sample, in: geo.size.height)
@@ -31,8 +35,17 @@ struct VoiceWaveformView: View {
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .leading)
+            .clipped()
         }
         .accessibilityHidden(true)
+    }
+
+    /// The newest samples that fit `width` at `barWidth` + `spacing` per bar. Half a point
+    /// of slack keeps a bubble sized for exactly N bars from losing its oldest one to rounding.
+    private func visibleSamples(width: CGFloat) -> [Float] {
+        let capacity = Int(((width + spacing + 0.5) / (barWidth + spacing)).rounded(.down))
+        guard capacity < samples.count else { return samples }
+        return Array(samples.suffix(max(0, capacity)))
     }
 
     private func height(for sample: Float, in available: CGFloat) -> CGFloat {
@@ -40,10 +53,10 @@ struct VoiceWaveformView: View {
     }
 
     /// Bars fully behind the playhead are "played"; the one under it blends by how far in it is.
-    private func color(at index: Int) -> Color {
-        guard !samples.isEmpty else { return remainingColor }
-        let position = Double(index) / Double(samples.count)
-        let next = Double(index + 1) / Double(samples.count)
+    private func color(at index: Int, of count: Int) -> Color {
+        guard count > 0 else { return remainingColor }
+        let position = Double(index) / Double(count)
+        let next = Double(index + 1) / Double(count)
         if progress >= next { return playedColor }
         if progress <= position { return remainingColor }
         let fraction = (progress - position) / max(next - position, .ulpOfOne)

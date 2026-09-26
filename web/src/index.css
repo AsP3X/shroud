@@ -1319,7 +1319,8 @@ button.reply-quote { cursor: pointer; }
   align-items: stretch;
   gap: 0;
   padding: 8px 10px;
-  max-width: 100%;
+  /* A long note runs wider than a text bubble may (Telegram), never the whole thread. */
+  max-width: min(560px, 85%);
 }
 .voice { display: flex; align-items: center; gap: 10px; }
 .voice-play {
@@ -1335,7 +1336,7 @@ button.reply-quote { cursor: pointer; }
 .voice-play:hover:not(:disabled) { filter: brightness(1.08); }
 .voice-spin { animation: voice-spin 0.8s linear infinite; }
 @keyframes voice-spin { to { transform: rotate(360deg); } }
-.voice-body { min-width: 148px; flex: 0 1 auto; display: flex; flex-direction: column; gap: 5px; }
+.voice-body { min-width: 160px; flex: 0 1 auto; display: flex; flex-direction: column; gap: 5px; }
 .voice-top { display: flex; align-items: center; gap: 8px; }
 /* Width comes from the note's duration (inline style); never grow past it. */
 .voice-wave {
@@ -1369,11 +1370,8 @@ button.reply-quote { cursor: pointer; }
   background: var(--accent-soft); color: var(--accent-text);
 }
 .bubble.out .voice-rate { background: rgba(255, 255, 255, 0.22); color: #fff; }
-.voice-meta {
-  margin-left: auto;
-  display: inline-flex; align-items: center; gap: 4px;
-  opacity: 0.85;
-}
+/* The time and ticks close the footer while the transcript is folded... */
+.voice-footer > .bubble-meta { margin-left: auto; }
 .bubble.out .voice-footer { color: rgba(255, 255, 255, 0.82); }
 .bubble.in .voice-footer { color: var(--text-secondary); }
 
@@ -1448,6 +1446,11 @@ button.reply-quote { cursor: pointer; }
   transition: visibility 0s linear 320ms;
 }
 .voice-tx-drawer[data-open] { height: auto; visibility: visible; transition: none; }
+/* ...and sit at the end of the transcript once it is unfolded, beside its last line like a
+   text bubble's: the drawer is a row, the text takes the width, the meta hangs at its foot. */
+.voice-tx-drawer[data-open] { display: flex; align-items: flex-end; gap: 9px; }
+.voice-tx-drawer > p { flex: 1 1 auto; min-width: 0; }
+.voice-tx-drawer > .bubble-meta { padding: 0 3px 3px 0; }
 .voice-tx-drawer > p {
   margin: 0;
   padding: 7px 3px 2px;
@@ -3498,6 +3501,30 @@ button.reply-quote { cursor: pointer; }
   -webkit-backdrop-filter: blur(12px);
   font-size: var(--fs-xs); font-weight: 600;
   animation: call-status-in 0.3s var(--ease);
+}
+/* "You're speaking": mic glyph + five bars in a glass capsule. The bars are 16 px tall spans the
+   frame loop scales from the centre (transform only, never layout); the whole capsule dims a
+   little while the mic is quiet. */
+.call-mic {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 10px; border-radius: var(--r-full);
+  background: rgba(0, 0, 0, 0.38);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: #fff;
+  opacity: 0.72;
+  transition: opacity 0.25s ease;
+  animation: call-status-in 0.3s var(--ease);
+}
+.call-mic[data-live="true"] { opacity: 1; }
+.call-mic-bars { display: inline-flex; align-items: center; gap: 2px; height: 16px; }
+.call-mic-bar {
+  display: block; width: 3px; height: 16px; border-radius: 2px;
+  background: #fff;
+  transform: scaleY(0.1875);
+  transform-origin: center;
+  will-change: transform;
 }
 .call-notice {
   margin: 0; max-width: 340px;

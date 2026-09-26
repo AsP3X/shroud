@@ -4,6 +4,9 @@ import SwiftUI
 struct ContactProfileView: View {
     let peerUserID: UUID
     let peerUsername: String
+    /// Called after the chat was deleted; the host leaves the thread (this screen goes with
+    /// it). Without it the profile just pops back.
+    var onChatDeleted: (() -> Void)? = nil
 
     @Environment(MessagingController.self) private var messaging
     @Environment(CallController.self) private var calls
@@ -12,6 +15,8 @@ struct ContactProfileView: View {
     @State private var showBlockConfirm = false
     @State private var showAcceptIdentityConfirm = false
     @State private var isBlocking = false
+    @State private var showDeleteChatConfirm = false
+    @State private var isDeletingChat = false
 
     private var isOnline: Bool {
         messaging.presenceByUser[peerUserID]?.online == true
@@ -44,6 +49,7 @@ struct ContactProfileView: View {
                 infoCard
                 optionsCard
                 blockCard
+                deleteChatCard
             }
             .padding(.horizontal, 16)
             .padding(.top, 4)
@@ -396,6 +402,79 @@ struct ContactProfileView: View {
                     ? "They can send you a contact request again. Your existing messages are unaffected."
                     : "They can't message you or send contact requests. You'll also stop being contacts."
             )
+        }
+    }
+
+    /// Deleting the chat moved here from the thread's header, next to Block, so every
+    /// account-level action on this person sits in one place.
+    ///
+    /// Human: The dialog spells out the asymmetric outcome up front — deleting for both
+    /// always disconnects the two accounts, but the peer's own messages only disappear if
+    /// they allowed it. On success the host pops the thread; there is nothing left to show.
+    /// Agent: CALLS messaging.deleteConversation; on success CALLS `onChatDeleted` (or
+    /// dismisses); a failure stays here with a toast.
+    private var deleteChatCard: some View {
+        Button {
+            showDeleteChatConfirm = true
+        } label: {
+            HStack(spacing: 8) {
+                if isDeletingChat {
+                    ProgressView().controlSize(.small)
+                }
+                Text("Delete Chat")
+                    .font(.system(size: 16))
+                    .foregroundStyle(Theme.danger)
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 13)
+            .background(Theme.background)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isDeletingChat)
+        .confirmationDialog(
+            "Delete chat with \(peerUsername)?",
+            isPresented: $showDeleteChatConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Delete for me and \(peerUsername)", role: .destructive) {
+                performChatDelete(scope: .everyone)
+            }
+            Button("Delete for me", role: .destructive) {
+                performChatDelete(scope: .me)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                """
+                Deleting for both unsends your messages in \(peerUsername)'s chat and removes them \
+                as a contact — you'd both have to add each other again. Their own messages stay \
+                unless they allow chats to be cleared for them.
+                """
+            )
+        }
+    }
+
+    private func performChatDelete(scope: ConversationDeleteScope) {
+        isDeletingChat = true
+        Task {
+            let outcome = await messaging.deleteConversation(peerUserID: peerUserID, scope: scope)
+            isDeletingChat = false
+            if case let .failed(message) = outcome {
+                toast = message
+                Haptics.notification(.error)
+                scheduleClear()
+                return
+            }
+            Haptics.notification(.success)
+            if let onChatDeleted {
+                onChatDeleted()
+            } else {
+                dismiss()
+            }
         }
     }
 

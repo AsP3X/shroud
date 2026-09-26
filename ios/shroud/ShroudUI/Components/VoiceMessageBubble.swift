@@ -24,9 +24,13 @@ struct VoiceMessageBubble: View {
     var reply: ReplyQuoteContent? = nil
     /// Jump to the quoted message.
     var onReplyTap: (() -> Void)? = nil
-    /// Reaction chips, in a row under the waveform (the time stays in the waveform footer).
+    /// Reaction chips, in a row under the waveform; the time moves to the end of that row.
     var reactions: [ReactionChipContent] = []
     var onReactionTap: ((String) -> Void)? = nil
+
+    @Environment(\.chatRowWidth) private var chatRowWidth
+    /// Carries the time and ticks between the footer, the transcript and the reaction row.
+    @Namespace private var metaSlot
 
     @State private var playback = VoicePlaybackCoordinator.shared
     @State private var install = TranscriptionModelInstall.shared
@@ -91,22 +95,47 @@ struct VoiceMessageBubble: View {
 
     // MARK: - Sizing
 
-    /// Bubble width tracks duration (to a ceiling), so a 2-second note is visibly shorter than a
-    /// 40-second one — the single strongest "this is a voice message" cue.
-    private var barCount: Int {
-        let seconds = Double(durationMs) / 1000
-        return min(38, max(18, 16 + Int(seconds * 1.6)))
-    }
-
+    /// Notes this short draw the narrowest waveform; notes this long (and longer) the widest.
+    /// Telegram ramps its voice bubbles by duration the same way.
+    private static let shortNoteSeconds = 2.0
+    private static let longNoteSeconds = 14.0
+    /// Narrowest waveform. Below this the duration, speed chip and unplayed dot crowd the
+    /// footer, and a short transcript folds into a column too thin to read.
+    private static let minWaveformWidth: CGFloat = 160
     /// 3pt bar + 2pt gap, matching `VoiceWaveformView`'s defaults.
-    private var waveformWidth: CGFloat {
-        CGFloat(barCount) * 5
+    private static let barPitch: CGFloat = 5
+
+    /// Widest the bubble may draw — the same edge a long text message stops at.
+    private var maxBubbleWidth: CGFloat {
+        // A host that hasn't measured yet reports 0; fall back rather than collapse the bubble.
+        let row = chatRowWidth > 0 ? chatRowWidth : MessageBubbleMetrics.fallbackRowWidth
+        return min(row, max(MessageBubbleMetrics.minBubbleWidth, row - MessageBubbleMetrics.oppositeGutter))
     }
 
-    /// The bubble hugs its content, but never gets narrower than the footer needs —
-    /// without this floor the duration, speed chip, timestamp and ticks collide on short notes.
+    /// Everything in the waveform row besides the waveform: the bubble's padding, the play
+    /// disc and the transcript toggle.
+    private static var waveformChrome: CGFloat {
+        horizontalPadding * 2 + playButtonSize + playButtonGap + transcriptButtonGap + VoiceTranscriptButton.size
+    }
+
+    /// Bubble width tracks duration, so a 2-second note is visibly shorter than a 40-second
+    /// one — the single strongest "this is a voice message" cue. A long note runs to the width
+    /// of a long text bubble, which is also where its transcript wraps: wide enough to read
+    /// comfortably, never the whole thread. Whole bars, so the waveform ends on one.
+    private var waveformWidth: CGFloat {
+        let seconds = Double(durationMs) / 1000
+        let ramp = (seconds - Self.shortNoteSeconds) / (Self.longNoteSeconds - Self.shortNoteSeconds)
+        let ceiling = max(Self.minWaveformWidth, maxBubbleWidth - Self.waveformChrome)
+        let width = Self.minWaveformWidth + (ceiling - Self.minWaveformWidth) * min(1, max(0, ramp))
+        return (width / Self.barPitch).rounded(.down) * Self.barPitch
+    }
+
+    private var barCount: Int {
+        Int(waveformWidth / Self.barPitch)
+    }
+
     private var contentWidth: CGFloat {
-        max(waveformWidth, 148)
+        waveformWidth
     }
 
     /// Waveform plus the transcript toggle beside it; the footer spans both.
@@ -117,6 +146,7 @@ struct VoiceMessageBubble: View {
     private static let playButtonSize: CGFloat = 38
     private static let playButtonGap: CGFloat = 10
     private static let transcriptButtonGap: CGFloat = 8
+    private static let horizontalPadding: CGFloat = 10
     /// Transcript text sits a hair inside the bubble's padding, level with text bubbles' inset.
     private static let transcriptInset: CGFloat = 2
 
@@ -238,21 +268,30 @@ struct VoiceMessageBubble: View {
                     ))
             }
 
-            if !reactions.isEmpty, !message.deleted {
-                // The footer layout wants a meta view last; the time already sits above.
+            if showsReactions {
+                // Chips flow left to right; the time and ticks close the last row (Telegram).
                 ReactionFooter(
                     chips: reactions,
                     onOutgoingBubble: isMine,
                     onTap: onReactionTap,
                     chipsAccessible: false
                 ) {
-                    Color.clear.frame(width: 0, height: 0)
+                    metaRow
                 }
                 .frame(width: Self.playButtonSize + Self.playButtonGap + columnWidth, alignment: .leading)
                 .padding(.top, 7)
             }
         }
-        .padding(.horizontal, 10)
+        // The unfolded transcript's time and ticks. Outside the drawer, so they slide down from
+        // the footer on the bubble's growing bottom edge instead of fading in with the text.
+        .overlay(alignment: .bottomTrailing) {
+            if metaInTranscript, drawerContent != nil {
+                metaRow
+                    .padding(.trailing, Self.transcriptInset)
+                    .transition(.identity)
+            }
+        }
+        .padding(.horizontal, Self.horizontalPadding)
         .padding(.vertical, 8)
         .background(isMine ? Theme.accent : Theme.bubbleIncoming)
         .clipShape(
@@ -360,10 +399,37 @@ struct VoiceMessageBubble: View {
 
             Spacer(minLength: 4)
 
+            if metaInFooter {
+                metaRow
+            }
+        }
+        .animation(Motion.snappy, value: playback.isActive(message.id))
+        .animation(Motion.snappy, value: showsUnplayedDot)
+    }
+
+    // MARK: - Meta (time + ticks)
+
+    /// The time and ticks are always the last thing in the bubble, as in Telegram: in the
+    /// waveform footer of a bare note, at the end of the transcript's last line once it is
+    /// unfolded, and closing the reaction row of a reacted note. Nothing may sit under them.
+    private var showsReactions: Bool {
+        !reactions.isEmpty && !message.deleted
+    }
+
+    private var metaInFooter: Bool {
+        !isTranscriptOpen && !showsReactions
+    }
+
+    private var metaInTranscript: Bool {
+        isTranscriptOpen && !showsReactions
+    }
+
+    private var metaRow: some View {
+        HStack(spacing: MessageBubbleMetrics.metaSpacing) {
             Text(time)
-                .font(.system(size: 11))
-                .monospacedDigit()
+                .font(Self.metaFont)
                 .foregroundStyle(metaColor)
+                .fixedSize()
 
             if isMine {
                 MessageReceiptIcon(
@@ -374,9 +440,14 @@ struct VoiceMessageBubble: View {
                 )
             }
         }
-        .animation(Motion.snappy, value: playback.isActive(message.id))
-        .animation(Motion.snappy, value: showsUnplayedDot)
+        // One view moving between three places, so a fold or unfold slides it rather than
+        // cutting it from one row into another.
+        .matchedGeometryEffect(id: "meta", in: metaSlot)
     }
+
+    /// Same font `MessageBubbleMetrics.metaReservation` measures with, so the room kept at
+    /// the end of a transcript's last line is exactly the meta's width.
+    private static let metaFont = Font.system(size: MessageBubbleMetrics.metaFontSize).monospacedDigit()
 
     /// Telegram's 1× / 1.5× / 2× chip, shown only while this note is loaded.
     private var speedChip: some View {
@@ -478,6 +549,8 @@ struct VoiceMessageBubble: View {
         return transcript == nil && !isWorkingOnTranscript ? "Transcribe" : "Show transcript"
     }
 
+    /// With no reaction row under it, the time and ticks (the bubble's overlay) sit at the end
+    /// of the drawer's last line like a text bubble's, and the content keeps clear of them.
     private var transcriptDrawer: some View {
         ZStack(alignment: .topLeading) {
             switch drawerContent {
@@ -485,16 +558,19 @@ struct VoiceMessageBubble: View {
                 VoiceTranscriptText(
                     text: text,
                     color: isMine ? Color.white : Theme.textPrimary,
-                    streams: hasAppeared && revealsArrival && !reduceMotion
+                    streams: hasAppeared && revealsArrival && !reduceMotion,
+                    trailingReservation: metaInTranscript ? metaReservation : nil
                 )
                 .transition(.opacity)
             case .working:
                 transcriptProgress
+                    .padding(.trailing, metaClearance)
                     .transition(.opacity)
             case .noSpeech:
                 Text("No speech detected")
                     .font(.system(size: 13).italic())
                     .foregroundStyle(metaColor)
+                    .padding(.trailing, metaClearance)
                     .transition(.opacity)
             case nil:
                 EmptyView()
@@ -504,6 +580,17 @@ struct VoiceMessageBubble: View {
         .padding(.horizontal, Self.transcriptInset)
         .padding(.top, 8)
         .padding(.bottom, 1)
+    }
+
+    /// Invisible tail on the transcript that keeps its last line clear of the time and ticks.
+    private var metaReservation: String {
+        MessageBubbleMetrics.metaReservation(time: time, showsReceipt: isMine)
+    }
+
+    /// Room kept beside the progress or "no speech" line for the time and ticks.
+    private var metaClearance: CGFloat {
+        guard metaInTranscript else { return 0 }
+        return MessageBubbleMetrics.metaWidth(time: time, showsReceipt: isMine) + MessageBubbleMetrics.metaGap
     }
 
     private var transcriptProgress: some View {
