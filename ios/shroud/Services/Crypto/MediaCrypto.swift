@@ -56,9 +56,9 @@ nonisolated enum MediaCrypto {
 
     /// Largest payload we will pass through untouched.
     ///
-    /// The API rejects sealed blobs over 25 MiB and AES-GCM adds 28 bytes, so leave headroom.
-    /// Anything bigger (ProRAW, panoramas) falls back to the re-encode path.
-    private static let passthroughByteLimit = 24 * 1024 * 1024
+    /// Same plaintext budget as video (`VideoMedia.maxPlaintextBytes`). Anything bigger
+    /// falls back to the re-encode path.
+    private static let passthroughByteLimit = VideoMedia.maxPlaintextBytes
 
     /// Container formats every client decodes natively, so the original file can ship as-is.
     private static let passthroughTypes: [UTType] = [.jpeg, .png, .heic, .heif]

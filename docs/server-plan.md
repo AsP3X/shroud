@@ -130,7 +130,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Layout | Bucket `shroud-media`, key `media/{xx}/{object_id}` (no uploader id); rows from before keep `{uploader_user_id}/{object_id}` |
 | Deletion | Immediate in the store (`NOS_SOFT_DELETE_TTL_SECS=0`); a failed delete keeps the row for the orphan GC to retry |
 | Presign TTL | **15 minutes** (the `expires_at` field; the URLs are API paths) |
-| Max object size | **25 MiB** |
+| Max object size | **2 GiB** |
 | Transcripts | No transcript APIs in v1 |
 | Real-time | WebSocket + Redis pub/sub |
 | WS auth | First message with token within **10 seconds** |
@@ -548,7 +548,7 @@ Redis: pub/sub fan-out, online sets, future rate limits.
 
 ### Media
 
-- Client encrypts → register upload → PUT `/media/{id}/content` (≤25 MiB) → envelope refs media id.
+- Client encrypts → register upload → PUT `/media/{id}/content` (≤2 GiB) → envelope refs media id.
 - Path: `shroud-media` / `{uploader_user_id}/{object_id}`.
 
 ### Rate limits (starting budgets)
@@ -1084,7 +1084,7 @@ Marks `message_deliveries.delivered_at = now()` for **current device**. `404` if
 }
 ```
 
-`size_bytes` required, 1…25 MiB. Response:
+`size_bytes` required, 1…2 GiB. Response:
 
 ```json
 {

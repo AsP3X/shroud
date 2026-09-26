@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use axum::body::Bytes;
-use futures_util::StreamExt;
+use futures_util::{Stream, StreamExt};
 use tokio::io::AsyncWriteExt;
 use tokio_util::io::ReaderStream;
 
@@ -34,6 +34,29 @@ impl LocalStore {
     /// Writes `body` under `key`. The bytes go to an fsynced scratch file that is then renamed
     /// over the blob, so neither a reader nor a crash ever sees half an object.
     pub async fn put(&self, key: &str, body: Bytes) -> Result<(), MediaStoreError> {
+        self.put_stream(
+            key,
+            futures_util::stream::iter([Ok::<_, std::io::Error>(body)]),
+            u64::MAX,
+            None,
+        )
+        .await
+        .map(|_| ())
+    }
+
+    /// Streams `body` to `key`, refusing a body over `max_bytes` or different from `expected`.
+    /// Nothing is published when either check fails.
+    pub async fn put_stream<S, E>(
+        &self,
+        key: &str,
+        body: S,
+        max_bytes: u64,
+        expected: Option<u64>,
+    ) -> Result<u64, MediaStoreError>
+    where
+        S: Stream<Item = Result<Bytes, E>> + Send,
+        E: std::fmt::Display,
+    {
         let path = self.path_for(key)?;
         let parent = path.parent().ok_or(MediaStoreError::InvalidKey)?;
         let scratch_dir = self.root.join(SCRATCH_DIR);
@@ -43,20 +66,41 @@ impl LocalStore {
             .map_err(io_error)?;
 
         let scratch = scratch_dir.join(format!("{}.part", uuid::Uuid::new_v4()));
-        let written = async {
-            let mut file = tokio::fs::File::create(&scratch).await?;
-            file.write_all(&body).await?;
+        let written = write_capped(&scratch, body, max_bytes).await;
+        let byte_count = match written {
+            Ok(count) => count,
+            Err(err) => {
+                let _ = tokio::fs::remove_file(&scratch).await;
+                return Err(err);
+            }
+        };
+        // An empty body is not a stored object. Refuse it before the rename publishes it.
+        if byte_count == 0 {
+            let _ = tokio::fs::remove_file(&scratch).await;
+            return Err(MediaStoreError::TooLarge);
+        }
+        if let Some(expected) = expected
+            && byte_count != expected
+        {
+            let _ = tokio::fs::remove_file(&scratch).await;
+            return Err(MediaStoreError::SizeMismatch {
+                actual: byte_count,
+                expected,
+            });
+        }
+        if let Err(err) = async {
+            let file = tokio::fs::File::open(&scratch).await?;
             file.sync_all().await?;
             drop(file);
             tokio::fs::rename(&scratch, &path).await?;
             sync_dir(parent).await
         }
-        .await;
-        if let Err(err) = written {
+        .await
+        {
             let _ = tokio::fs::remove_file(&scratch).await;
             return Err(io_error(err));
         }
-        Ok(())
+        Ok(byte_count)
     }
 
     pub async fn get(&self, key: &str) -> Result<MediaBlob, MediaStoreError> {
@@ -83,7 +127,8 @@ impl LocalStore {
         }
     }
 
-    /// The whole blob, for moving it to another store (media is at most 25 MiB).
+    /// The whole blob, for callers that already know it is small. Large objects go through
+    /// [`Self::put_stream`].
     pub async fn read(&self, key: &str) -> Result<Bytes, MediaStoreError> {
         let path = self.path_for(key)?;
         match tokio::fs::read(&path).await {
@@ -143,6 +188,28 @@ pub(crate) fn validate_key(key: &str) -> Result<(), MediaStoreError> {
     }
 }
 
+/// Writes `body` to `path`, stopping once `max_bytes` would be exceeded.
+async fn write_capped<S, E>(path: &Path, body: S, max_bytes: u64) -> Result<u64, MediaStoreError>
+where
+    S: Stream<Item = Result<Bytes, E>> + Send,
+    E: std::fmt::Display,
+{
+    let mut file = tokio::fs::File::create(path).await.map_err(io_error)?;
+    let mut body = std::pin::pin!(body);
+    let mut written: u64 = 0;
+    while let Some(chunk) = body.next().await {
+        let chunk = chunk.map_err(|err| MediaStoreError::Unavailable(err.to_string()))?;
+        let next = written.saturating_add(chunk.len() as u64);
+        if next > max_bytes {
+            return Err(MediaStoreError::TooLarge);
+        }
+        file.write_all(&chunk).await.map_err(io_error)?;
+        written = next;
+    }
+    file.sync_all().await.map_err(io_error)?;
+    Ok(written)
+}
+
 fn io_error(err: std::io::Error) -> MediaStoreError {
     MediaStoreError::Unavailable(format!("local media store: {err}"))
 }
@@ -173,6 +240,45 @@ mod tests {
             out.extend_from_slice(&chunk.expect("chunk"));
         }
         out
+    }
+
+    #[tokio::test]
+    async fn put_stream_does_not_publish_an_empty_body() {
+        let store = temp_store();
+        let err = store
+            .put_stream(
+                "media/ab/empty",
+                futures_util::stream::iter(Vec::<Result<Bytes, std::io::Error>>::new()),
+                100,
+                None,
+            )
+            .await;
+        assert!(matches!(err, Err(MediaStoreError::TooLarge)));
+        assert!(matches!(
+            store.get("media/ab/empty").await,
+            Err(MediaStoreError::NotFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn put_stream_rejects_a_body_over_the_cap_without_publishing() {
+        let store = temp_store();
+        let err = store
+            .put_stream(
+                "media/ab/big",
+                futures_util::stream::iter([
+                    Ok::<_, std::io::Error>(Bytes::from(vec![1; 8])),
+                    Ok(Bytes::from(vec![2; 8])),
+                ]),
+                10,
+                None,
+            )
+            .await;
+        assert!(matches!(err, Err(MediaStoreError::TooLarge)));
+        assert!(matches!(
+            store.get("media/ab/big").await,
+            Err(MediaStoreError::NotFound)
+        ));
     }
 
     #[tokio::test]

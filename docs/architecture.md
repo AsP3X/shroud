@@ -270,7 +270,7 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 3. **Contacts** — **done** (UUID requests, mutual auto-accept, directed contacts, blocks)  
 4. **Messages** — **done** (HTTP send/history; lazy conversations; delivery acks)  
 4b. **WebSocket** — **done** (in-process fan-out; `message.new` + `message.delivered`)  
-5. **Media** — **done** (API-proxied upload/download → message link; blobs in Nebular OS or a local directory; 25 MiB)  
+5. **Media** — **done** (API-proxied upload/download → message link; blobs in Nebular OS or a local directory; 2 GiB)  
 6. **Presence / receipts** — **done** (typing / recording WS; online/last-seen contacts-only; read receipts)  
 7. **Deletes** — **done** (for me / for everyone; account deletion deletes each chat for both and keeps a scrubbed placeholder user row)  
 8. **Push** — **done** (token register; offline gate; live HTTP/2 APNs with .p8 JWT when configured)  

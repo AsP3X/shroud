@@ -4,6 +4,7 @@ import { clipboardVideos, isVideoFile, videoFiles } from "./prepareVideo";
 import {
   clockLabel,
   effectiveTrim,
+  MAX_VIDEO_BYTES,
   planResolutionLabel,
   planVideo,
   VideoTooLongError,
@@ -116,10 +117,29 @@ if (small43.video !== "encode" || small43.width !== 480 || small43.height !== 36
   throw new Error(`planVideo: 4:3 small stays 360p, got ${small43.width}×${small43.height}`);
 }
 
+const halfHour = planVideo(
+  probe({
+    bytes: 200_000_000,
+    duration: 30 * 60,
+    width: 1920,
+    height: 1080,
+    fps: 30,
+    videoCodec: "hevc",
+    audioBitrate: 256_000,
+  }),
+  { quality: "high" },
+);
+if (halfHour.video !== "encode" || halfHour.width !== 1280 || halfHour.height !== 720) {
+  throw new Error(`planVideo: 30 min at high should stay 720p, got ${halfHour.width}×${halfHour.height} ${halfHour.video}`);
+}
+if (halfHour.estimatedBytes > MAX_VIDEO_BYTES) {
+  throw new Error(`planVideo: 30 min estimate ${halfHour.estimatedBytes} exceeds the cap`);
+}
+
 let originalThrew = false;
 try {
   planVideo(
-    probe({ bytes: 80_000_000, duration: 600, width: 3840, height: 2160, fps: 30, videoCodec: "hevc" }),
+    probe({ bytes: 8_000_000_000, duration: 2 * 3600, width: 3840, height: 2160, fps: 30, videoCodec: "hevc" }),
     { quality: "original" },
   );
 } catch (err) {
@@ -132,11 +152,13 @@ if (muted.audio !== "none") throw new Error("planVideo: mute drops sound");
 
 let threw = false;
 try {
-  planVideo(probe({ bytes: 80_000_000, duration: 3600, width: 3840, height: 2160, fps: 60, videoCodec: "hevc" }));
+  planVideo(
+    probe({ bytes: 8_000_000_000, duration: 60 * 3600, width: 3840, height: 2160, fps: 60, videoCodec: "hevc" }),
+  );
 } catch (err) {
   threw = err instanceof VideoTooLongError && err.maxSeconds >= 1;
 }
-if (!threw) throw new Error("planVideo: dense hour-long clip must be too long");
+if (!threw) throw new Error("planVideo: a 60-hour clip must be too long");
 
 const videoByType = parseMediaPayload('{"t":"video","k":"YQ==","mime":"video/mp4","w":1,"h":1}');
 if (!videoByType || !isVideoPayload(videoByType) || isVoicePayload(videoByType)) {

@@ -8,8 +8,12 @@
  * No mediabunny and no DOM in here: the video worker and the send sheet share it.
  */
 
-/** The server caps sealed blobs at 25 MiB and AES-GCM adds 28 bytes (iOS `VideoMedia.maxPlaintextBytes`). */
-export const MAX_VIDEO_BYTES = 24 * 1024 * 1024;
+/**
+ * Largest video before encryption. The server accepts a 2 GiB sealed blob;
+ * one mebibyte of room covers AES-GCM and a little encoder overshoot
+ * (iOS `VideoMedia.maxPlaintextBytes`).
+ */
+export const MAX_VIDEO_BYTES = 2 * 1024 * 1024 * 1024 - 1024 * 1024;
 /** Shortest clip the trim handles allow (iOS `VideoTrimStrip.minimumDuration`). */
 export const MIN_CLIP_SECONDS = 1;
 
@@ -48,6 +52,8 @@ export type VideoPlan = {
   trim: VideoTrim | null;
   videoBitrate: number;
   audioBitrate: number;
+  /** Channels when audio is re-encoded. Null keeps the source's count (at most two). */
+  audioChannels: number | null;
   /** Frame-rate cap for a re-encode; null keeps the source's. */
   frameRate: number | null;
   estimatedBytes: number;
@@ -83,13 +89,19 @@ export class VideoTooLongError extends Error {
   }
 }
 
-/** Output boxes, largest first — 720p, then 540p, then 360p. iOS's smallest named preset is
- *  640×480, so a 4:3 clip at Small is 480p there and 360p here. */
+/**
+ * Output boxes, largest first. Tiers 0–1 keep up to 60 fps, 2–3 drop to 30 fps.
+ * Tier 4 is the same 270p frame at 15 fps with quiet audio, for a clip that would
+ * still be over the 2 GiB cap at 30 fps. iOS writes that rung itself; its named
+ * presets do not go that low. A 4:3 clip at Small is 480p on iOS (preset 640×480)
+ * and 360p here.
+ */
 const LADDER: { long: number; short: number; tier: number }[] = [
   { long: 1280, short: 720, tier: 0 },
   { long: 960, short: 540, tier: 1 },
   { long: 640, short: 360, tier: 2 },
   { long: 480, short: 270, tier: 3 },
+  { long: 480, short: 270, tier: 4 },
 ];
 const QUALITY_START: Record<Exclude<VideoQuality, "original">, number> = {
   high: 0,
@@ -103,6 +115,10 @@ const TARGET_BPP = 0.085;
 /** Below this a size turns to mush, so the next smaller one is used instead. */
 const FLOOR_BPP = 0.028;
 const MIN_VIDEO_BITRATE = 120_000;
+/** Tier 4 may sit under the normal floor: 30 minutes at 120 kbps does not fit. */
+const LONG_MIN_VIDEO_BITRATE = 40_000;
+/** Mono AAC. Stereo at the source rate would use the whole 24 MiB by itself. */
+const LONG_AUDIO_BITRATE = 32_000;
 const MAX_VIDEO_BITRATE = 3_200_000;
 /** Original keeps more of the source's own bitrate than the smaller rungs. */
 const ORIGINAL_MAX_VIDEO_BITRATE = 12_000_000;
@@ -217,6 +233,7 @@ export function planVideo(
       trim: null,
       videoBitrate: Math.max(0, sourceBitrate - (hasSound ? copyAudioBitrate : 0)),
       audioBitrate: hasSound ? copyAudioBitrate : 0,
+      audioChannels: null,
       frameRate: null,
       estimatedBytes: Math.round(Math.max(probe.bytes * 0.5, probe.bytes - dropped)),
     };
@@ -227,31 +244,38 @@ export function planVideo(
   const bitrateCap = quality === "original" ? ORIGINAL_MAX_VIDEO_BITRATE : MAX_VIDEO_BITRATE;
   let fallback = { width: 0, height: 0, floor: 0, audio: 0 };
   for (const box of encodeBoxes(quality, probe.width, probe.height)) {
+    const longForm = box.tier >= 4;
     const { width, height } = fitBox(probe.width, probe.height, box);
-    const rate = Math.min(fps, box.tier >= 2 ? 30 : 60);
+    const rate = Math.min(fps, longForm ? 15 : box.tier >= 2 ? 30 : 60);
     const pixels = width * height * rate;
+    const minRate = longForm ? LONG_MIN_VIDEO_BITRATE : MIN_VIDEO_BITRATE;
     const audioBitrate = !hasSound
       ? 0
-      : soundCopies
-        ? copyAudioBitrate
-        : box.tier >= 2
-          ? stereo ? 96_000 : 48_000
-          : stereo ? 128_000 : 64_000;
-    const target = Math.min(bitrateCap, Math.max(MIN_VIDEO_BITRATE, pixels * TARGET_BPP)) * squeeze;
-    const floor = Math.max(MIN_VIDEO_BITRATE, pixels * FLOOR_BPP);
+      : longForm
+        ? LONG_AUDIO_BITRATE
+        : soundCopies
+          ? copyAudioBitrate
+          : box.tier >= 2
+            ? stereo ? 96_000 : 48_000
+            : stereo ? 128_000 : 64_000;
+    const target = Math.min(bitrateCap, Math.max(minRate, pixels * TARGET_BPP)) * squeeze;
+    const floor = Math.max(minRate, pixels * FLOOR_BPP);
     const budget = budgetBits - audioBitrate;
     fallback = { width, height, floor, audio: audioBitrate };
     if (budget < floor) continue;
     const videoBitrate = Math.round(Math.min(target, budget));
     return {
       video: "encode",
-      audio: !hasSound ? "none" : soundCopies ? "copy" : "encode",
+      // The long rung always re-encodes sound. Copying a 128 kbps track would
+      // spend the whole cap before the picture gets any.
+      audio: !hasSound ? "none" : longForm || !soundCopies ? "encode" : "copy",
       width,
       height,
       duration,
       trim,
       videoBitrate,
       audioBitrate,
+      audioChannels: longForm && hasSound ? 1 : null,
       frameRate: fps > rate + 1 ? rate : null,
       estimatedBytes: Math.round(((videoBitrate + audioBitrate) * duration) / 8 * 1.02),
     };

@@ -9,7 +9,7 @@ use std::sync::atomic::Ordering;
 
 use axum::{
     Json,
-    body::{Body, Bytes},
+    body::Body,
     extract::{Path as AxumPath, State},
     http::{HeaderValue, StatusCode, header},
     response::Response,
@@ -21,13 +21,16 @@ use uuid::Uuid;
 
 use crate::auth::session::AuthContext;
 use crate::error::AppError;
+use futures_util::StreamExt;
+
 use crate::media_store::{BlobSource, MediaStore, MediaStoreError};
 use crate::metrics::Metrics;
 use crate::rate_limit::budgets;
 use crate::state::AppState;
 
-/// Maximum encrypted object size (25 MiB).
-pub const MAX_MEDIA_BYTES: i64 = 25 * 1024 * 1024;
+/// Largest encrypted media object: 2 GiB. A half-hour 1080p video and a large
+/// photo both fit. The upload is written to disk as it arrives, not held in RAM.
+pub const MAX_MEDIA_BYTES: i64 = 2 * 1024 * 1024 * 1024;
 /// Presign TTL (15 minutes) — kept for response compatibility.
 const PRESIGN_TTL_MINUTES: i64 = 15;
 /// Unlinked media older than this is eligible for orphan GC.
@@ -145,7 +148,7 @@ pub async fn put_content(
     State(state): State<AppState>,
     auth: AuthContext,
     AxumPath(media_id): AxumPath<Uuid>,
-    body: Bytes,
+    body: Body,
 ) -> Result<StatusCode, AppError> {
     let media = load_media(&state, media_id).await?;
     if media.uploader_user_id != auth.user_id {
@@ -159,26 +162,38 @@ pub async fn put_content(
         ));
     }
 
-    let len = body.len() as i64;
-    if !(1..=MAX_MEDIA_BYTES).contains(&len) {
-        return Err(AppError::validation(format!(
-            "body size must be between 1 and {MAX_MEDIA_BYTES} bytes."
-        )));
-    }
-    if let Some(expected) = media.size_bytes {
-        // Allow small variance? Keep strict: must match declared size.
-        if expected != len {
+    let stream = body
+        .into_data_stream()
+        .map(|chunk| chunk.map_err(|err| std::io::Error::other(err.to_string())));
+    let len = match state
+        .media
+        .put_stream(
+            &media.bucket,
+            &media.object_key,
+            stream,
+            MAX_MEDIA_BYTES as u64,
+            media.size_bytes.map(|n| n as u64),
+        )
+        .await
+    {
+        Ok(0) => {
             return Err(AppError::validation(format!(
-                "body size {len} does not match declared size_bytes {expected}."
+                "body size must be between 1 and {MAX_MEDIA_BYTES} bytes."
             )));
         }
-    }
-
-    state
-        .media
-        .put(&media.bucket, &media.object_key, body)
-        .await
-        .map_err(|err| store_error(&state.metrics, media_id, "put", err))?;
+        Ok(len) => len,
+        Err(err) => {
+            return Err(match err {
+                MediaStoreError::TooLarge => AppError::validation(format!(
+                    "body size must be between 1 and {MAX_MEDIA_BYTES} bytes."
+                )),
+                MediaStoreError::SizeMismatch { actual, expected } => AppError::validation(
+                    format!("body size {actual} does not match declared size_bytes {expected}."),
+                ),
+                other => store_error(&state.metrics, media_id, "put", other),
+            });
+        }
+    };
     state
         .metrics
         .media_puts_total
@@ -225,7 +240,7 @@ pub async fn get_content(
         "media.content_get ok"
     );
 
-    // Streamed at the client's pace: a 25 MiB blob never sits in memory whole.
+    // Streamed at the client's pace: the blob is not buffered whole.
     let mut response = Response::new(Body::from_stream(blob.body));
     let headers = response.headers_mut();
     headers.insert(
@@ -344,7 +359,30 @@ async fn authorize_download(
     Ok(())
 }
 
-/// Deletes media rows and their blobs now (Saved Messages hard-delete, account deletion).
+/// Blobs attached to these messages, from either pointer (`media_objects.message_id` or
+/// `messages.media_object_id`).
+pub async fn media_ids_for_messages(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    message_ids: &[Uuid],
+) -> Result<Vec<Uuid>, AppError> {
+    if message_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    sqlx::query_scalar(
+        r#"
+        SELECT id FROM media_objects WHERE message_id = ANY($1)
+        UNION
+        SELECT media_object_id FROM messages
+        WHERE id = ANY($1) AND media_object_id IS NOT NULL
+        "#,
+    )
+    .bind(message_ids)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("list media for messages failed: {err}")))
+}
+
+/// Deletes media rows and their blobs now (delete for everyone, Saved Messages, account deletion).
 ///
 /// Caller must already have unlinked `messages.media_object_id` / `media_objects.message_id`
 /// so FK order does not block the DELETE. Safe to call with an empty slice. A blob the store
@@ -383,8 +421,9 @@ pub async fn purge_media_ids(state: &AppState, media_ids: &[Uuid]) -> Result<u64
     Ok(purged)
 }
 
-/// Deletes unlinked media older than [`ORPHAN_TTL_MINUTES`]: abandoned uploads, and media whose
-/// message was deleted for everyone, a chat deletion, or an account deletion unlinked.
+/// Deletes unlinked media older than [`ORPHAN_TTL_MINUTES`]: abandoned uploads, and blobs a
+/// delete could not remove because the store was down. Delete for everyone removes its blobs
+/// immediately; this pass is the retry.
 ///
 /// The blob goes first and the row only once it is gone, so a store outage leaves the row for
 /// the next pass rather than a blob nothing points at.
@@ -483,6 +522,12 @@ fn store_error(
 ) -> AppError {
     match err {
         MediaStoreError::NotFound => AppError::not_found("Media content not found."),
+        MediaStoreError::TooLarge => AppError::validation(format!(
+            "body size must be between 1 and {MAX_MEDIA_BYTES} bytes."
+        )),
+        MediaStoreError::SizeMismatch { actual, expected } => AppError::validation(format!(
+            "body size {actual} does not match declared size_bytes {expected}."
+        )),
         MediaStoreError::InvalidKey => {
             tracing::error!(
                 media_object_id = %media_id,

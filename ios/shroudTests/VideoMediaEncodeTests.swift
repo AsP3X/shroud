@@ -135,10 +135,72 @@ struct VideoMediaEncodeTests {
         #expect(trimmed.height == 720)
     }
 
+    @Test func halfHourFitsUnderTheCap() throws {
+        let plan = try VideoMedia.previewPlan(
+            probe: VideoProbe(
+                durationSeconds: 30 * 60,
+                width: 1920,
+                height: 1080,
+                fileSizeBytes: 200_000_000,
+                hasAudio: true
+            ),
+            fileExtension: "mov",
+            trim: nil,
+            removeAudio: false,
+            quality: .high
+        )
+        #expect(!plan.passthrough)
+        #expect(plan.width == 1280)
+        #expect(plan.height == 720)
+        #expect(plan.resolutionLabel == "720p")
+        #expect(plan.estimatedBytes <= VideoMedia.maxPlaintextBytes)
+    }
+
+    @Test func aFourMinuteClipAtSmallStaysUnderHigh() throws {
+        let probe = VideoProbe(
+            durationSeconds: 240,
+            width: 1920,
+            height: 1080,
+            fileSizeBytes: 80_000_000,
+            hasAudio: true
+        )
+        let small = try VideoMedia.previewPlan(
+            probe: probe, fileExtension: "mov", trim: nil, removeAudio: false, quality: .small
+        )
+        let high = try VideoMedia.previewPlan(
+            probe: probe, fileExtension: "mov", trim: nil, removeAudio: false, quality: .high
+        )
+        #expect(max(small.width, small.height) <= 640)
+        #expect(max(high.width, high.height) > 640)
+        #expect(small.estimatedBytes <= VideoMedia.maxPlaintextBytes)
+        #expect(high.estimatedBytes <= VideoMedia.maxPlaintextBytes)
+    }
+
+    @Test func budgetEncodeWritesAnMp4() async throws {
+        let url = try await Self.makeMovie(seconds: 1)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let written = try await VideoMedia.writeBudget(
+            asset: AVURLAsset(url: url),
+            width: 320,
+            height: 180,
+            videoBitrate: 80_000,
+            audioBitrate: 0,
+            frameRate: 15
+        )
+        defer { try? FileManager.default.removeItem(at: written) }
+        let data = try Data(contentsOf: written)
+        #expect(data.count > 0)
+        #expect(data.count <= VideoMedia.maxPlaintextBytes)
+        let track = try await AVURLAsset(url: written).loadTracks(withMediaType: .video).first
+        let natural = try #require(try await track?.load(.naturalSize))
+        #expect(Int(natural.width.rounded()) == 320)
+        #expect(Int(natural.height.rounded()) == 180)
+    }
+
     @Test func originalRefusesAClipThatCannotStayFullSize() {
         #expect(throws: VideoPlanError.self) {
             try VideoMedia.previewPlan(
-                probe: VideoProbe(durationSeconds: 3600, width: 3840, height: 2160, fileSizeBytes: 80_000_000, hasAudio: true),
+                probe: VideoProbe(durationSeconds: 4 * 3600, width: 3840, height: 2160, fileSizeBytes: 80_000_000, hasAudio: true),
                 fileExtension: "mov",
                 trim: nil,
                 removeAudio: false,

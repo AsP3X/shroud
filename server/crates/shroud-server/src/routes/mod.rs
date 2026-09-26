@@ -123,7 +123,8 @@ pub fn router() -> Router<AppState> {
             .route("/privacy/settings", put(privacy::put_settings))
             .route("/media/uploads", post(media::create_upload))
             .route("/media/{id}/download", post(media::create_download))
-            // Axum’s default body limit is 2 MiB — raise to match MAX_MEDIA_BYTES so HD photos work.
+            // Axum’s default body limit is 2 MiB — raise to the media cap. The handler streams
+            // the body, so this only bounds the total, it does not buffer it.
             .route(
                 "/media/{id}/content",
                 axum::routing::put(media::put_content)

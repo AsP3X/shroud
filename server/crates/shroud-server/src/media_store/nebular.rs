@@ -6,9 +6,12 @@
 
 use std::time::Duration;
 
+use std::path::Path;
+
 use axum::body::Bytes;
 use futures_util::StreamExt;
 use reqwest::{Method, StatusCode, Url};
+use tokio_util::io::ReaderStream;
 
 use super::sigv4::{self, Credentials};
 use super::{MediaBlob, MediaStoreError};
@@ -20,11 +23,18 @@ const PROBE_KEY: &str = "health/readiness-probe";
 const MAX_ATTEMPTS: u32 = 3;
 /// Longest `Retry-After` honoured before a retry (Nebular's upload budget says 1 s).
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(2);
-/// Response headers for an upload: the body (at most 25 MiB) goes out first, then Nebular
-/// fsyncs it.
-const PUT_TIMEOUT: Duration = Duration::from_secs(120);
+/// The whole upload, body included. A 2 GiB object on a slow link needs far longer than
+/// the old 25 MiB budget; a stall is still cut off by the client's read timeout.
+const PUT_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 /// Response headers for everything else. A download's body then streams at the client's pace.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// What `send` uploads. A file is re-opened on each retry; a buffer is cloned.
+enum Upload {
+    Empty,
+    Buffered(Bytes),
+    File { path: std::path::PathBuf, len: u64 },
+}
 
 /// Where Nebular is and the access key it gave this API.
 #[derive(Clone)]
@@ -109,7 +119,35 @@ impl NebularStore {
     pub async fn put(&self, bucket: &str, key: &str, body: Bytes) -> Result<(), MediaStoreError> {
         let payload = sigv4::sha256_hex(&body);
         let response = self
-            .send(Method::PUT, bucket, key, Some(body), &payload)
+            .send(Method::PUT, bucket, key, Upload::Buffered(body), &payload)
+            .await?;
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            Err(refused(response, "upload").await)
+        }
+    }
+
+    /// Uploads a file already on disk. The caller hashed it; retries re-read the file.
+    pub async fn put_file(
+        &self,
+        bucket: &str,
+        key: &str,
+        path: &Path,
+        len: u64,
+        payload_sha256: &str,
+    ) -> Result<(), MediaStoreError> {
+        let response = self
+            .send(
+                Method::PUT,
+                bucket,
+                key,
+                Upload::File {
+                    path: path.to_path_buf(),
+                    len,
+                },
+                payload_sha256,
+            )
             .await?;
         if response.status().is_success() {
             Ok(())
@@ -120,7 +158,13 @@ impl NebularStore {
 
     pub async fn get(&self, bucket: &str, key: &str) -> Result<MediaBlob, MediaStoreError> {
         let response = self
-            .send(Method::GET, bucket, key, None, sigv4::EMPTY_PAYLOAD_SHA256)
+            .send(
+                Method::GET,
+                bucket,
+                key,
+                Upload::Empty,
+                sigv4::EMPTY_PAYLOAD_SHA256,
+            )
             .await?;
         match response.status() {
             StatusCode::OK => {
@@ -146,7 +190,7 @@ impl NebularStore {
                 Method::DELETE,
                 bucket,
                 key,
-                None,
+                Upload::Empty,
                 sigv4::EMPTY_PAYLOAD_SHA256,
             )
             .await?;
@@ -164,7 +208,7 @@ impl NebularStore {
                 Method::HEAD,
                 bucket,
                 PROBE_KEY,
-                None,
+                Upload::Empty,
                 sigv4::EMPTY_PAYLOAD_SHA256,
             )
             .await?;
@@ -179,7 +223,7 @@ impl NebularStore {
         method: Method,
         bucket: &str,
         key: &str,
-        body: Option<Bytes>,
+        body: Upload,
         payload_sha256: &str,
     ) -> Result<reqwest::Response, MediaStoreError> {
         let path = sigv4::encode_path(bucket, key);
@@ -216,9 +260,18 @@ impl NebularStore {
                 .header("x-amz-content-sha256", payload_sha256)
                 .header("x-amz-date", &amz_date)
                 .header(reqwest::header::AUTHORIZATION, authorization);
-            if let Some(body) = &body {
-                request = request.body(body.clone());
-            }
+            request = match &body {
+                Upload::Empty => request,
+                Upload::Buffered(bytes) => request.body(bytes.clone()),
+                Upload::File { path, len } => {
+                    let file = tokio::fs::File::open(path).await.map_err(|err| {
+                        MediaStoreError::Unavailable(format!("open upload {path:?}: {err}"))
+                    })?;
+                    request
+                        .header(reqwest::header::CONTENT_LENGTH, *len)
+                        .body(reqwest::Body::wrap_stream(ReaderStream::new(file)))
+                }
+            };
 
             let failure = match tokio::time::timeout(wait, request.send()).await {
                 Ok(Ok(response)) if is_retryable(response.status()) && attempt < MAX_ATTEMPTS => {

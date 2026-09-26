@@ -39,8 +39,8 @@ struct MediaService: Sendable {
         token: String,
         onProgress: (@Sendable (Double) -> Void)? = nil
     ) async throws {
-        // Server limit is 25 MiB (encrypted blob). Fail early with a clear message.
-        let maxBytes = 25 * 1024 * 1024
+        // Server limit is 2 GiB (encrypted blob). Fail early with a clear message.
+        let maxBytes = VideoMedia.maxSealedBytes
         guard data.count <= maxBytes else {
             let mb = max(1, data.count / 1_048_576)
             throw APIError.server(

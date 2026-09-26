@@ -253,8 +253,7 @@ async fn upload_link_download_for_peer() {
         .expect("response");
     assert_eq!(sender_still_ok.status(), StatusCode::OK);
 
-    // Delete for everyone unlinks media; peer and sender (non-uploader path for linked)
-    // — after unlink only uploader may fetch; sender is uploader so still ok for unlinked.
+    // Delete for everyone removes the blob. Neither side can fetch it.
     let del = app
         .clone()
         .oneshot(
@@ -269,7 +268,6 @@ async fn upload_link_download_for_peer() {
         .expect("response");
     assert_eq!(del.status(), StatusCode::NO_CONTENT);
 
-    // Peer is not uploader and media is unlinked → forbidden.
     let peer_after_unsend = app
         .oneshot(
             Request::builder()
@@ -281,7 +279,7 @@ async fn upload_link_download_for_peer() {
         )
         .await
         .expect("response");
-    assert_eq!(peer_after_unsend.status(), StatusCode::FORBIDDEN);
+    assert_eq!(peer_after_unsend.status(), StatusCode::NOT_FOUND);
 }
 
 /// Ciphertext-like test bytes: every byte value, so a store that re-encodes or truncates shows.
@@ -536,9 +534,9 @@ async fn purge_orphan_media_deletes_stale_unlinked_rows() {
 }
 
 #[tokio::test]
-async fn media_deleted_for_everyone_leaves_the_store() {
+async fn media_deleted_for_everyone_frees_the_store() {
     let Some((app, state)) = test_setup().await else {
-        eprintln!("skipping media_deleted_for_everyone_leaves_the_store: no DATABASE_URL");
+        eprintln!("skipping media_deleted_for_everyone_frees_the_store: no DATABASE_URL");
         return;
     };
     let (token_a, user_a) = register(&app).await;
@@ -554,6 +552,23 @@ async fn media_deleted_for_everyone_leaves_the_store() {
     let message_id = send_media(&app, &token_a, &user_b, &media_id).await;
     let (bucket, key) = blob_location(&state, &media_id).await;
 
+    // Hidden for one person: the other person still has the message, so the blob stays.
+    let hide = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/messages/{message_id}?scope=me"))
+                .header(header::AUTHORIZATION, format!("Bearer {token_b}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(hide.status(), StatusCode::NO_CONTENT);
+    assert!(!row_is_gone(&state, &media_id).await);
+    assert!(!blob_is_gone(&state, &bucket, &key).await);
+
     let del = app
         .clone()
         .oneshot(
@@ -568,17 +583,63 @@ async fn media_deleted_for_everyone_leaves_the_store() {
         .expect("response");
     assert_eq!(del.status(), StatusCode::NO_CONTENT);
     assert_eq!(
-        get_content(&app, &token_b, &media_id).await.status(),
-        StatusCode::FORBIDDEN
+        get_content(&app, &token_a, &media_id).await.status(),
+        StatusCode::NOT_FOUND
     );
-
-    // The unlinked row is the orphan GC's; its next pass removes the ciphertext for good.
-    backdate(&state, &media_id).await;
-    shroud_server::routes::media::purge_orphan_media(&state.pool, &state.media, &state.metrics)
-        .await
-        .expect("purge");
+    assert_eq!(
+        get_content(&app, &token_b, &media_id).await.status(),
+        StatusCode::NOT_FOUND
+    );
     assert!(row_is_gone(&state, &media_id).await);
     assert!(blob_is_gone(&state, &bucket, &key).await);
+}
+
+#[tokio::test]
+async fn chat_deleted_for_everyone_frees_the_senders_blobs() {
+    let Some((app, state)) = test_setup().await else {
+        eprintln!("skipping chat_deleted_for_everyone_frees_the_senders_blobs: no DATABASE_URL");
+        return;
+    };
+    let (token_a, user_a) = register(&app).await;
+    let (token_b, user_b) = register(&app).await;
+    become_contacts(&app, &token_a, &user_a, &token_b, &user_b).await;
+
+    let bytes_a = blob_bytes(4096);
+    let media_a = create_upload(&app, &token_a, bytes_a.len()).await;
+    assert_eq!(
+        put_content(&app, &token_a, &media_a, &bytes_a).await,
+        StatusCode::NO_CONTENT
+    );
+    send_media(&app, &token_a, &user_b, &media_a).await;
+    let (bucket_a, key_a) = blob_location(&state, &media_a).await;
+
+    let bytes_b = blob_bytes(2048);
+    let media_b = create_upload(&app, &token_b, bytes_b.len()).await;
+    assert_eq!(
+        put_content(&app, &token_b, &media_b, &bytes_b).await,
+        StatusCode::NO_CONTENT
+    );
+    send_media(&app, &token_b, &user_a, &media_b).await;
+    let (bucket_b, key_b) = blob_location(&state, &media_b).await;
+
+    // Peer has not allowed a full clear, so only A's messages are deleted for everyone.
+    let del = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/conversations/{user_b}?scope=everyone"))
+                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(del.status(), StatusCode::OK);
+    assert!(row_is_gone(&state, &media_a).await);
+    assert!(blob_is_gone(&state, &bucket_a, &key_a).await);
+    assert!(!row_is_gone(&state, &media_b).await);
+    assert!(!blob_is_gone(&state, &bucket_b, &key_b).await);
 }
 
 #[tokio::test]

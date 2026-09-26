@@ -519,6 +519,8 @@ pub async fn delete_conversation(
     let now = Utc::now();
     let mut tombstoned = 0_u64;
     let mut cleared_for_peer = false;
+    // Blobs of messages nobody can read any more. Removed from the store after commit.
+    let mut media_ids = Vec::new();
 
     if let Some(conversation_id) = conversation_id {
         upsert_clear(&mut tx, auth.user_id, conversation_id, now).await?;
@@ -530,8 +532,10 @@ pub async fn delete_conversation(
             } else {
                 // Peer keeps their own history, but nothing of ours stays readable there: our
                 // messages become tombstones and our reactions on theirs are taken back.
-                tombstoned =
+                let (count, ids) =
                     tombstone_own_messages(&mut tx, conversation_id, auth.user_id, now).await?;
+                tombstoned = count;
+                media_ids.extend(ids);
                 crate::routes::reactions::clear_reactions_by(
                     &mut tx,
                     auth.user_id,
@@ -542,7 +546,7 @@ pub async fn delete_conversation(
         }
 
         // Ciphertext neither side can reach any more has no reason to exist on the server.
-        purge_fully_cleared(&mut tx, conversation_id).await?;
+        media_ids.extend(purge_fully_cleared(&mut tx, conversation_id).await?);
     }
 
     let contact_removed = if for_everyone {
@@ -554,6 +558,20 @@ pub async fn delete_conversation(
     tx.commit()
         .await
         .map_err(|err| AppError::Internal(format!("commit delete conversation failed: {err}")))?;
+
+    media_ids.sort_unstable();
+    media_ids.dedup();
+    let media_purged = if media_ids.is_empty() {
+        0
+    } else {
+        match crate::routes::media::purge_media_ids(&state, &media_ids).await {
+            Ok(purged) => purged,
+            Err(err) => {
+                tracing::warn!(error = %err, "conversations.delete media purge failed");
+                0
+            }
+        }
+    };
 
     // Human: Tell the other participant (and our own other devices) to drop or reload the
     // thread instead of waiting for the next poll to notice it changed.
@@ -585,6 +603,7 @@ pub async fn delete_conversation(
         cleared_for_peer,
         tombstoned,
         contact_removed,
+        media_purged,
         "conversations.delete ok"
     );
 
@@ -635,12 +654,13 @@ pub(crate) struct DeletedChat {
 /// Agent: SELECT conversations FOR UPDATE (id order) JOIN users; UPDATE messages/media_objects
 /// (tombstones); upsert conversation_clears; purge fully cleared messages; clear reactions on
 /// the tombstones and the account's own (a new seq each); RETURNS one DeletedChat per
-/// conversation.
+/// conversation and the media ids whose blobs the caller must delete after commit (the
+/// account's own uploads are listed separately by the caller).
 pub(crate) async fn delete_chats_for_both(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     user_id: Uuid,
     at: DateTime<Utc>,
-) -> Result<Vec<DeletedChat>, AppError> {
+) -> Result<(Vec<DeletedChat>, Vec<Uuid>), AppError> {
     #[derive(FromRow)]
     struct Row {
         id: Uuid,
@@ -668,6 +688,21 @@ pub(crate) async fn delete_chats_for_both(
 
     // `tombstone_own_messages` without its time bound: a send already under way when the
     // deletion began stamps its own clock, which can be later than `at`.
+    let tombstone_ids: Vec<Uuid> = sqlx::query_scalar(
+        r#"
+        SELECT id FROM messages
+        WHERE conversation_id = ANY($1)
+          AND sender_user_id = $2
+          AND deleted_for_everyone_at IS NULL
+        "#,
+    )
+    .bind(&ids)
+    .bind(user_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("list messages for account delete failed: {err}")))?;
+    let mut media_ids = crate::routes::media::media_ids_for_messages(tx, &tombstone_ids).await?;
+
     sqlx::query(
         r#"
         UPDATE media_objects
@@ -715,7 +750,9 @@ pub(crate) async fn delete_chats_for_both(
         if row.allow_peer_chat_delete {
             upsert_clear(tx, row.peer_id, row.id, at).await?;
         }
-        purge_fully_cleared(tx, row.id).await?;
+        // The peer's blobs, when their copy of the chat went too. The account's own uploads
+        // are purged by the caller from `uploader_user_id`.
+        media_ids.extend(purge_fully_cleared(tx, row.id).await?);
         chats.push(DeletedChat {
             conversation_id: row.id,
             peer_user_id: row.peer_id,
@@ -731,7 +768,7 @@ pub(crate) async fn delete_chats_for_both(
         crate::routes::reactions::clear_reactions_on(tx, *conversation_id, message_ids).await?;
     }
     crate::routes::reactions::clear_reactions_by(tx, user_id, &ids).await?;
-    Ok(chats)
+    Ok((chats, media_ids))
 }
 
 /// Timestamp at or before which `user_id` has hidden this conversation, if ever.
@@ -825,9 +862,26 @@ async fn tombstone_own_messages(
     conversation_id: Uuid,
     sender_user_id: Uuid,
     at: DateTime<Utc>,
-) -> Result<u64, AppError> {
-    // Unlink first: the media row points at the message, and the UPDATE below only clears
-    // the pointer in the other direction. Orphan media is reclaimed by the media GC.
+) -> Result<(u64, Vec<Uuid>), AppError> {
+    let pending: Vec<Uuid> = sqlx::query_scalar(
+        r#"
+        SELECT id FROM messages
+        WHERE conversation_id = $1
+          AND sender_user_id = $2
+          AND created_at <= $3
+          AND deleted_for_everyone_at IS NULL
+        "#,
+    )
+    .bind(conversation_id)
+    .bind(sender_user_id)
+    .bind(at)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("list messages to tombstone failed: {err}")))?;
+    // Taken before the unlink. The caller deletes the blobs after commit; a store failure
+    // leaves the row unlinked for the orphan GC.
+    let media_ids = crate::routes::media::media_ids_for_messages(tx, &pending).await?;
+
     sqlx::query(
         r#"
         UPDATE media_objects
@@ -870,7 +924,7 @@ async fn tombstone_own_messages(
     // A tombstone carries no reactions, sealed ones included.
     crate::routes::reactions::clear_reactions_on(tx, conversation_id, &tombstoned).await?;
 
-    Ok(tombstoned.len() as u64)
+    Ok((tombstoned.len() as u64, media_ids))
 }
 
 /// Deletes messages both participants have cleared past. `LEAST` alone would be wrong here
@@ -878,8 +932,38 @@ async fn tombstone_own_messages(
 async fn purge_fully_cleared(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     conversation_id: Uuid,
-) -> Result<u64, AppError> {
-    let result = sqlx::query(
+) -> Result<Vec<Uuid>, AppError> {
+    let doomed: Vec<Uuid> = sqlx::query_scalar(
+        r#"
+        WITH bounds AS (
+            SELECT
+                (
+                    SELECT cc.cleared_at FROM conversation_clears cc
+                    WHERE cc.conversation_id = c.id AND cc.user_id = c.user_a_id
+                ) AS a_at,
+                (
+                    SELECT cc.cleared_at FROM conversation_clears cc
+                    WHERE cc.conversation_id = c.id AND cc.user_id = c.user_b_id
+                ) AS b_at
+            FROM conversations c
+            WHERE c.id = $1
+        )
+        SELECT m.id
+        FROM messages m
+        INNER JOIN bounds b ON TRUE
+        WHERE m.conversation_id = $1
+          AND b.a_at IS NOT NULL
+          AND b.b_at IS NOT NULL
+          AND m.created_at <= LEAST(b.a_at, b.b_at)
+        "#,
+    )
+    .bind(conversation_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("list cleared messages failed: {err}")))?;
+    let media_ids = crate::routes::media::media_ids_for_messages(tx, &doomed).await?;
+
+    sqlx::query(
         r#"
         WITH bounds AS (
             SELECT
@@ -907,7 +991,7 @@ async fn purge_fully_cleared(
     .await
     .map_err(|err| AppError::Internal(format!("purge cleared messages failed: {err}")))?;
 
-    Ok(result.rows_affected())
+    Ok(media_ids)
 }
 
 /// Drops the contact edge both ways and cancels anything pending, so the pair has to

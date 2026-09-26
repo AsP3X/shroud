@@ -89,6 +89,10 @@ struct VideoOutgoingPlan: Equatable, Sendable {
     /// "720p", or "Original" when that choice keeps the source frame.
     var resolutionLabel: String
     var passthrough: Bool
+    var videoBitrate: Int
+    var audioBitrate: Int
+    /// 0 keeps the source frame rate.
+    var frameRate: Int
 }
 
 /// The chosen quality cannot fit under the media cap.
@@ -99,9 +103,9 @@ struct VideoPlanError: Error, Equatable {
 
 /// Compresses library / camera movies so the sealed blob fits the API media limit.
 ///
-/// Human: Server caps encrypted media at 25 MiB. Phone-recorded 4K clips are often larger,
-/// so we re-export to H.264 MP4 at a chat-friendly resolution before sealing. Trim and mute
-/// come from the compose screen and are applied here, in the same single export.
+/// Human: The server accepts an encrypted media file up to 2 GiB. A clip that would
+/// land over that is re-exported smaller. Trim and mute come from the compose screen
+/// and are applied here, in the same export.
 nonisolated enum VideoMedia {
     enum VideoError: Error, Equatable {
         case unreadable
@@ -110,8 +114,11 @@ nonisolated enum VideoMedia {
         case cancelled
     }
 
-    /// Largest sealed payload the API accepts, with AES-GCM headroom.
-    static let maxPlaintextBytes = 24 * 1024 * 1024
+    /// Largest file before encryption. The API accepts 2 GiB sealed; a mebibyte covers
+    /// the AES-GCM tag and a little encoder overshoot.
+    static let maxPlaintextBytes = 2 * 1024 * 1024 * 1024 - 1024 * 1024
+    /// What `PUT /media/{id}/content` will accept, ciphertext included.
+    static let maxSealedBytes = 2 * 1024 * 1024 * 1024
 
     /// Longest edge for chat export (1080p class).
     private static let maxExportEdge: CGFloat = 1280
@@ -267,9 +274,19 @@ nonisolated enum VideoMedia {
             estimates.append((preset, await estimatedBytes(asset: exportAsset, preset: preset)))
         }
         let candidates = exportCandidates(estimates)
-        // Not even the lowest preset is expected to fit, so fail now instead of encoding
-        // several minutes of video that will only be rejected.
-        guard !candidates.isEmpty else { throw VideoError.tooLarge }
+        // A preset whose estimate is over the cap is skipped. What remains, if nothing
+        // named will fit, is written at the bitrate the plan picked for this quality.
+        guard !candidates.isEmpty else {
+            return try await exportAtPlanBitrate(
+                source: exportAsset,
+                width: width,
+                height: height,
+                durationMs: durationMs,
+                thumbnail: thumbnail,
+                quality: quality,
+                onProgress: onProgress
+            )
+        }
 
         var lastError: Error = VideoError.exportFailed
         for (attempt, preset) in candidates.enumerated() {
@@ -322,7 +339,76 @@ nonisolated enum VideoMedia {
                 lastError = error
             }
         }
+        if let tooBig = lastError as? VideoError, tooBig == .tooLarge {
+            return try await exportAtPlanBitrate(
+                source: exportAsset,
+                width: width,
+                height: height,
+                durationMs: durationMs,
+                thumbnail: thumbnail,
+                quality: quality,
+                onProgress: onProgress
+            )
+        }
         throw lastError
+    }
+
+    /// Writes H.264 + AAC at the size and bitrate `previewPlan` would pick for this asset
+    /// and `quality`. Used when every named preset is larger than the server cap. Original
+    /// does not step down here: if 1080p will not fit, this fails the same way the sheet does.
+    private static func exportAtPlanBitrate(
+        source: AVAsset,
+        width: Int,
+        height: Int,
+        durationMs: Int,
+        thumbnail: Data?,
+        quality: VideoUploadQuality,
+        onProgress: (@Sendable (Double) -> Void)?
+    ) async throws -> EncodedVideo {
+        let seconds = Double(durationMs) / 1000
+        let hasAudio = (try? await source.loadTracks(withMediaType: .audio).first) != nil
+        let probe = VideoProbe(
+            durationSeconds: max(0.1, seconds),
+            width: width,
+            height: height,
+            fileSizeBytes: maxPlaintextBytes + 1,
+            hasAudio: hasAudio
+        )
+        // Over the cap and not an mp4 passthrough, so this takes the chosen quality's ladder.
+        // The duration picks how far down that ladder goes.
+        let plan: VideoOutgoingPlan
+        do {
+            plan = try previewPlan(
+                probe: probe,
+                fileExtension: "mov",
+                trim: nil,
+                removeAudio: !hasAudio,
+                quality: quality
+            )
+        } catch {
+            throw VideoError.tooLarge
+        }
+        let url = try await writeBudget(
+            asset: source,
+            width: plan.width,
+            height: plan.height,
+            videoBitrate: plan.videoBitrate,
+            audioBitrate: plan.audioBitrate,
+            frameRate: plan.frameRate == 0 ? 30 : plan.frameRate,
+            onProgress: onProgress
+        )
+        defer { try? FileManager.default.removeItem(at: url) }
+        let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+        guard data.count <= maxPlaintextBytes else { throw VideoError.tooLarge }
+        onProgress?(1)
+        return EncodedVideo(
+            data: data,
+            width: plan.width,
+            height: plan.height,
+            durationMs: durationMs,
+            mime: "video/mp4",
+            thumbnailJPEG: thumbnail
+        )
     }
 
     /// First-frame thumbnail as JPEG (for bubble placeholder before full decode).
@@ -407,7 +493,10 @@ nonisolated enum VideoMedia {
                 height: height,
                 estimatedBytes: max(1, probe.fileSizeBytes),
                 resolutionLabel: resolutionLabel(width: width, height: height, keptSource: quality == .original),
-                passthrough: true
+                passthrough: true,
+                videoBitrate: 0,
+                audioBitrate: 0,
+                frameRate: 0
             )
         }
 
@@ -416,12 +505,15 @@ nonisolated enum VideoMedia {
         let bitrateCap = quality == .original ? originalMaxVideoBitrate : maxVideoBitrate
         var fallback = (floor: minVideoBitrate, audio: 0.0)
         for box in encodeBoxes(for: quality) {
+            let longForm = box.tier >= 4
             let fitted = fit(width: width, height: height, box: box)
-            let rate = min(assumedFps, box.tier >= 2 ? 30 : 60)
+            let rateCap = longForm ? 15.0 : (box.tier >= 2 ? 30.0 : 60.0)
+            let rate = min(assumedFps, rateCap)
             let pixels = Double(fitted.width * fitted.height) * rate
-            let audioBitrate = hasSound ? (box.tier >= 2 ? 96_000.0 : 128_000.0) : 0
-            let target = min(bitrateCap, max(minVideoBitrate, pixels * targetBpp))
-            let floor = max(minVideoBitrate, pixels * floorBpp)
+            let minRate = longForm ? longMinVideoBitrate : minVideoBitrate
+            let audioBitrate = hasSound ? (longForm ? longAudioBitrate : (box.tier >= 2 ? 96_000.0 : 128_000.0)) : 0
+            let target = min(bitrateCap, max(minRate, pixels * targetBpp))
+            let floor = max(minRate, pixels * floorBpp)
             let budget = budgetBits - audioBitrate
             fallback = (floor, audioBitrate)
             if budget < floor { continue }
@@ -435,7 +527,10 @@ nonisolated enum VideoMedia {
                 height: fitted.height,
                 estimatedBytes: max(1, bytes),
                 resolutionLabel: resolutionLabel(width: fitted.width, height: fitted.height, keptSource: keptSource),
-                passthrough: false
+                passthrough: false,
+                videoBitrate: Int(videoBitrate.rounded()),
+                audioBitrate: Int(audioBitrate.rounded()),
+                frameRate: assumedFps > rate + 1 ? Int(rate) : 0
             )
         }
         let maxSeconds = Int((Double(maxPlaintextBytes) * 8 * headroom) / (fallback.floor + fallback.audio))
@@ -458,6 +553,9 @@ nonisolated enum VideoMedia {
     private static let targetBpp = 0.085
     private static let floorBpp = 0.028
     private static let minVideoBitrate = 120_000.0
+    /// Same as web `LONG_MIN_VIDEO_BITRATE` / `LONG_AUDIO_BITRATE`.
+    private static let longMinVideoBitrate = 40_000.0
+    private static let longAudioBitrate = 32_000.0
     private static let maxVideoBitrate = 3_200_000.0
     private static let originalMaxVideoBitrate = 12_000_000.0
     private static let headroom = 0.9
@@ -482,17 +580,20 @@ nonisolated enum VideoMedia {
                 PlanBox(long: 960, short: 540, tier: 1),
                 PlanBox(long: 640, short: 480, tier: 2),
                 PlanBox(long: 480, short: 270, tier: 3),
+                PlanBox(long: 480, short: 270, tier: 4),
             ]
         case .medium:
             return [
                 PlanBox(long: 960, short: 540, tier: 1),
                 PlanBox(long: 640, short: 480, tier: 2),
                 PlanBox(long: 480, short: 270, tier: 3),
+                PlanBox(long: 480, short: 270, tier: 4),
             ]
         case .small:
             return [
                 PlanBox(long: 640, short: 480, tier: 2),
                 PlanBox(long: 480, short: 270, tier: 3),
+                PlanBox(long: 480, short: 270, tier: 4),
             ]
         }
     }
@@ -664,6 +765,178 @@ nonisolated enum VideoMedia {
             try? FileManager.default.removeItem(at: out)
             throw error
         }
+    }
+
+    /// H.264 + AAC at an explicit bitrate. Named export presets cannot go low enough for a
+    /// half-hour clip to land under the server cap.
+    static func writeBudget(
+        asset: AVAsset,
+        width: Int,
+        height: Int,
+        videoBitrate: Int,
+        audioBitrate: Int,
+        frameRate: Int,
+        onProgress: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> URL {
+        let renderWidth = max(2, width - width % 2)
+        let renderHeight = max(2, height - height % 2)
+        let render = CGSize(width: renderWidth, height: renderHeight)
+        let duration = try await asset.load(.duration)
+        let seconds = max(0.1, CMTimeGetSeconds(duration))
+        guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
+            throw VideoError.unreadable
+        }
+        let natural = try await videoTrack.load(.naturalSize)
+        let preferred = try await videoTrack.load(.preferredTransform)
+
+        let composition = AVMutableVideoComposition()
+        composition.renderSize = render
+        composition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(max(1, frameRate)))
+        let instruction = AVMutableVideoCompositionInstruction()
+        instruction.timeRange = CMTimeRange(start: .zero, duration: duration)
+        let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTrack)
+        layer.setTransform(fittedTransform(natural: natural, preferred: preferred, render: render), at: .zero)
+        instruction.layerInstructions = [layer]
+        composition.instructions = [instruction]
+
+        let reader = try AVAssetReader(asset: asset)
+        let videoOutput = AVAssetReaderVideoCompositionOutput(
+            videoTracks: [videoTrack],
+            videoSettings: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            ]
+        )
+        videoOutput.videoComposition = composition
+        videoOutput.alwaysCopiesSampleData = false
+        guard reader.canAdd(videoOutput) else { throw VideoError.exportFailed }
+        reader.add(videoOutput)
+
+        let audioTrack = audioBitrate > 0
+            ? try await asset.loadTracks(withMediaType: .audio).first
+            : nil
+        let audioOutput: AVAssetReaderTrackOutput? = audioTrack.map { track in
+            let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
+                AVFormatIDKey: kAudioFormatLinearPCM,
+                AVLinearPCMBitDepthKey: 16,
+                AVLinearPCMIsFloatKey: false,
+                AVLinearPCMIsBigEndianKey: false,
+                AVLinearPCMIsNonInterleaved: false,
+                AVSampleRateKey: 44_100,
+                AVNumberOfChannelsKey: 1,
+            ])
+            output.alwaysCopiesSampleData = false
+            return output
+        }
+        if let audioOutput {
+            guard reader.canAdd(audioOutput) else { throw VideoError.exportFailed }
+            reader.add(audioOutput)
+        }
+
+        let out = FileManager.default.temporaryDirectory
+            .appendingPathComponent("shroud-budget-\(UUID().uuidString).mp4")
+        var keep = false
+        defer {
+            if !keep { try? FileManager.default.removeItem(at: out) }
+        }
+        let writer = try AVAssetWriter(outputURL: out, fileType: .mp4)
+        writer.shouldOptimizeForNetworkUse = true
+        let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: renderWidth,
+            AVVideoHeightKey: renderHeight,
+            AVVideoCompressionPropertiesKey: [
+                AVVideoAverageBitRateKey: max(40_000, videoBitrate),
+                AVVideoExpectedSourceFrameRateKey: max(1, frameRate),
+                AVVideoMaxKeyFrameIntervalKey: max(1, frameRate) * 2,
+                AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
+            ],
+        ])
+        videoInput.expectsMediaDataInRealTime = false
+        guard writer.canAdd(videoInput) else { throw VideoError.exportFailed }
+        writer.add(videoInput)
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: videoInput,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: renderWidth,
+                kCVPixelBufferHeightKey as String: renderHeight,
+            ]
+        )
+        let audioInput: AVAssetWriterInput? = audioOutput == nil ? nil : AVAssetWriterInput(
+            mediaType: .audio,
+            outputSettings: [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: 44_100,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderBitRateKey: max(32_000, audioBitrate),
+            ]
+        )
+        if let audioInput {
+            audioInput.expectsMediaDataInRealTime = false
+            guard writer.canAdd(audioInput) else { throw VideoError.exportFailed }
+            writer.add(audioInput)
+        }
+
+        guard reader.startReading() else { throw VideoError.exportFailed }
+        writer.startWriting()
+        guard writer.status == .writing else { throw VideoError.exportFailed }
+        writer.startSession(atSourceTime: .zero)
+
+        var videoBuffer = videoOutput.copyNextSampleBuffer()
+        var audioBuffer = audioOutput?.copyNextSampleBuffer()
+        while videoBuffer != nil || audioBuffer != nil {
+            try Task.checkCancellation()
+            let videoTime = videoBuffer.map { CMSampleBufferGetPresentationTimeStamp($0).seconds } ?? .infinity
+            let audioTime = audioBuffer.map { CMSampleBufferGetPresentationTimeStamp($0).seconds } ?? .infinity
+            if videoTime <= audioTime, let sample = videoBuffer {
+                try await waitUntilReady(videoInput)
+                if let image = CMSampleBufferGetImageBuffer(sample) {
+                    let time = CMSampleBufferGetPresentationTimeStamp(sample)
+                    if !adaptor.append(image, withPresentationTime: time) {
+                        throw VideoError.exportFailed
+                    }
+                    onProgress?(min(0.99, max(0, time.seconds / seconds)))
+                }
+                videoBuffer = videoOutput.copyNextSampleBuffer()
+            } else if let sample = audioBuffer, let audioInput {
+                try await waitUntilReady(audioInput)
+                if !audioInput.append(sample) { throw VideoError.exportFailed }
+                audioBuffer = audioOutput?.copyNextSampleBuffer()
+            } else {
+                break
+            }
+        }
+        if reader.status == .failed { throw VideoError.exportFailed }
+        videoInput.markAsFinished()
+        audioInput?.markAsFinished()
+        await writer.finishWriting()
+        guard writer.status == .completed else { throw VideoError.exportFailed }
+        keep = true
+        return out
+    }
+
+    private static func waitUntilReady(_ input: AVAssetWriterInput) async throws {
+        var spins = 0
+        while !input.isReadyForMoreMediaData {
+            try Task.checkCancellation()
+            if spins > 500 { throw VideoError.exportFailed }
+            spins += 1
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+    }
+
+    /// `preferred` maps the track's stored pixels onto its display rect. Scale that into
+    /// `render` without stretching, and shift a rotated frame back onto the canvas.
+    private static func fittedTransform(natural: CGSize, preferred: CGAffineTransform, render: CGSize) -> CGAffineTransform {
+        let bounds = CGRect(origin: .zero, size: natural).applying(preferred).standardized
+        let display = CGSize(width: max(bounds.width, 1), height: max(bounds.height, 1))
+        let scale = min(render.width / display.width, render.height / display.height)
+        let scaled = CGSize(width: display.width * scale, height: display.height * scale)
+        let tx = (render.width - scaled.width) / 2 - bounds.origin.x * scale
+        let ty = (render.height - scaled.height) / 2 - bounds.origin.y * scale
+        return preferred
+            .concatenating(CGAffineTransform(scaleX: scale, y: scale))
+            .concatenating(CGAffineTransform(translationX: tx, y: ty))
     }
 
     private static func displaySize(natural: CGSize, transform: CGAffineTransform) -> CGSize {

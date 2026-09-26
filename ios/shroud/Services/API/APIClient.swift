@@ -25,7 +25,8 @@ nonisolated final class APIClient: Sendable {
     ///
     /// `timeoutIntervalForRequest` is an *idle* timer (it resets on every chunk), so 20s is
     /// generous for a multi-MB encrypted upload while still surfacing a dead server quickly;
-    /// `timeoutIntervalForResource` is what actually bounds a long upload.
+    /// `timeoutIntervalForResource` bounds the whole transfer. Media can be up to 2 GiB,
+    /// so a slow but moving upload is allowed an hour; a stall still fails on the idle timer.
     ///
     /// `waitsForConnectivity` stays off on purpose: it suppresses "cannot connect" and parks
     /// the request for up to `timeoutIntervalForResource`, which read as an app that loads
@@ -33,7 +34,7 @@ nonisolated final class APIClient: Sendable {
     private static func makeSession() -> URLSession {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 20
-        config.timeoutIntervalForResource = 300
+        config.timeoutIntervalForResource = 3600
         config.waitsForConnectivity = false
         // Human: No HTTP disk cache. The default wrote every response — contact lists, message
         // envelopes, share-code lookups — into a plain SQLite file in Library/Caches, outside

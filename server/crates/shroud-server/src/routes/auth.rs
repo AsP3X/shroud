@@ -473,7 +473,8 @@ pub async fn delete_account(
     // the peer who allowed the clear still sees the chat.
     let now = Utc::now();
     // Locks each chat's row before touching its messages, the order `DELETE /conversations` uses.
-    let chats = crate::routes::conversations::delete_chats_for_both(&mut tx, user_id, now).await?;
+    let (chats, cleared_media) =
+        crate::routes::conversations::delete_chats_for_both(&mut tx, user_id, now).await?;
 
     // Saved Messages has nobody to keep it for (cascades its messages, clears and hides, and
     // unlinks its media).
@@ -515,12 +516,15 @@ pub async fn delete_account(
 
     let ended_calls = crate::routes::calls::delete_calls_of_account(&mut tx, user_id, now).await?;
 
-    let media_ids: Vec<Uuid> =
+    // Everything this account uploaded, plus the other person's files in chats that were
+    // cleared for both (those uploads are not this account's).
+    let mut media_ids: Vec<Uuid> =
         sqlx::query_scalar(r#"SELECT id FROM media_objects WHERE uploader_user_id = $1"#)
             .bind(user_id)
             .fetch_all(&mut *tx)
             .await
             .map_err(|err| AppError::Internal(format!("list media for delete failed: {err}")))?;
+    media_ids.extend(cleared_media);
 
     sqlx::query(
         r#"

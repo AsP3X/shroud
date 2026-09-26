@@ -1380,7 +1380,10 @@ async fn delete_for_everyone(
     }
 
     let now = Utc::now();
+    // Collected before the pointers are cleared, then removed from the store after commit.
+    let mut media_ids = Vec::new();
     if meta.deleted_for_everyone_at.is_none() {
+        media_ids = crate::routes::media::media_ids_for_messages(&mut tx, &[message_id]).await?;
         sqlx::query(
             r#"
             UPDATE messages
@@ -1439,6 +1442,23 @@ async fn delete_for_everyone(
             .realtime
             .publish_to_users([pair.user_a_id, pair.user_b_id], None, &payload)
             .await;
+    }
+
+    // The tombstone is committed either way. A blob the store cannot delete stays unlinked
+    // for the orphan GC.
+    if !media_ids.is_empty() {
+        match crate::routes::media::purge_media_ids(state, &media_ids).await {
+            Ok(purged) => tracing::info!(
+                message_id = %message_id,
+                media_purged = purged,
+                "messages.delete_everyone media purged"
+            ),
+            Err(err) => tracing::warn!(
+                message_id = %message_id,
+                error = %err,
+                "messages.delete_everyone media purge failed"
+            ),
+        }
     }
 
     Ok(StatusCode::NO_CONTENT)

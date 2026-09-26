@@ -288,7 +288,7 @@ async function encode(request: Extract<VideoRequest, { type: "encode" }>): Promi
         });
         if (!encodable) throw new Refusal("This browser can’t convert videos. Try Chrome, Edge or Safari.");
       }
-      const channels = Math.min(2, probe.audioChannels || 2);
+      const channels = plan.audioChannels ?? Math.min(2, probe.audioChannels || 2);
       const sampleRate = AAC_RATES.includes(probe.audioSampleRate) ? probe.audioSampleRate : 48000;
       if (plan.audio === "encode") await ensureAacEncoder(channels, sampleRate, plan.audioBitrate);
 

@@ -74,12 +74,13 @@ services:
       NOS_BUCKET_POLICY: '{"${NEBULAR_ACCESS_KEY_ID:-}":["shroud-media"]}'
       # Deleted media is gone at once, instead of sitting on disk as a 24 h soft delete.
       NOS_SOFT_DELETE_TTL_SECS: "0"
-      # Blobs are ciphertext, which compression can't shrink: store them as they are.
-      NOS_COMPRESS_MIN_SIZE: "1073741824"
-      # The API caps media at 25 MiB; nothing larger has a reason to arrive.
-      NOS_MAX_BODY_SIZE: "33554432"
-      # Room for several full-size uploads at once (the 32 MiB default admits about one).
-      NOS_UPLOAD_MAX_IN_FLIGHT_BYTES: "268435456"
+      # Blobs are ciphertext, which compression can't shrink. The threshold sits
+      # above the 2 GiB media cap so Nebular stores them as they are.
+      NOS_COMPRESS_MIN_SIZE: "4294967296"
+      # The API caps one media object at 2 GiB.
+      NOS_MAX_BODY_SIZE: "2147483648"
+      # Two full-size uploads can be in flight together.
+      NOS_UPLOAD_MAX_IN_FLIGHT_BYTES: "4294967296"
       # No browser ever calls Nebular; an origin that can't exist allows none.
       NOS_CORS_ORIGINS: https://nebular.invalid
       NOS_METRICS_TOKEN: ${NOS_METRICS_TOKEN:-}
@@ -186,7 +187,7 @@ services:
         condition: service_healthy
     environment:
       API_UPSTREAM: http://api:8080
-      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-26214400}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-2147483648}
     networks:
       - shroud-internal
     healthcheck:

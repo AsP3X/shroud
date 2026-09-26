@@ -18,6 +18,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use axum::body::Bytes;
+use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -50,6 +51,10 @@ pub enum MediaStoreError {
     NotFound,
     #[error("media object key is not a valid store path")]
     InvalidKey,
+    #[error("media blob exceeds the size limit")]
+    TooLarge,
+    #[error("media blob is {actual} bytes, declared {expected}")]
+    SizeMismatch { actual: u64, expected: u64 },
     /// The store couldn't be reached or refused the request. The detail is for logs only.
     #[error("{0}")]
     Unavailable(String),
@@ -145,6 +150,34 @@ impl MediaStore {
         match &self.backend {
             Backend::Local(store) => store.put(key, body).await,
             Backend::Nebular(store) => store.put(bucket, key, body).await,
+        }
+    }
+
+    /// Streams an upload to the store. `expected`, when set, must match the bytes received.
+    /// A body over `max_bytes` is refused and not published.
+    pub async fn put_stream<S, E>(
+        &self,
+        bucket: &str,
+        key: &str,
+        body: S,
+        max_bytes: u64,
+        expected: Option<u64>,
+    ) -> Result<u64, MediaStoreError>
+    where
+        S: futures_util::Stream<Item = Result<Bytes, E>> + Send,
+        E: std::fmt::Display,
+    {
+        local::validate_key(key)?;
+        match &self.backend {
+            Backend::Local(store) => store.put_stream(key, body, max_bytes, expected).await,
+            Backend::Nebular(store) => {
+                let spooled = spool_upload(body, max_bytes, expected).await?;
+                let result = store
+                    .put_file(bucket, key, &spooled.path, spooled.len, &spooled.hash)
+                    .await;
+                let _ = tokio::fs::remove_file(&spooled.path).await;
+                result.map(|()| spooled.len)
+            }
         }
     }
 
@@ -318,12 +351,24 @@ impl MediaStore {
         let Backend::Nebular(nebular) = &self.backend else {
             return Ok(false);
         };
-        let bytes = match legacy.read(key).await {
-            Ok(bytes) => bytes,
-            Err(MediaStoreError::NotFound | MediaStoreError::InvalidKey) => return Ok(false),
+        let path = match legacy.path_for(key) {
+            Ok(path) => path,
+            Err(MediaStoreError::InvalidKey) => return Ok(false),
             Err(err) => return Err(err),
         };
-        nebular.put(bucket, key, bytes).await?;
+        let meta = match tokio::fs::metadata(&path).await {
+            Ok(meta) => meta,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(err) => {
+                return Err(MediaStoreError::Unavailable(format!(
+                    "legacy blob metadata: {err}"
+                )));
+            }
+        };
+        let hash = hash_file(&path).await?;
+        nebular
+            .put_file(bucket, key, &path, meta.len(), &hash)
+            .await?;
         // A purge between the read and the upload deleted the row and both copies before this
         // one landed; take the upload back so deleted media stays deleted.
         let still_referenced: bool =
@@ -409,6 +454,110 @@ async fn remove_unreferenced_legacy_blobs(
         let _ = tokio::fs::remove_dir(user_dir.path()).await;
     }
     Ok(removed)
+}
+
+struct SpooledUpload {
+    path: std::path::PathBuf,
+    len: u64,
+    hash: String,
+}
+
+/// Writes `body` to a temp file and hashes it, so Nebular can be signed without holding
+/// the object in memory. The caller deletes `path`.
+async fn spool_upload<S, E>(
+    body: S,
+    max_bytes: u64,
+    expected: Option<u64>,
+) -> Result<SpooledUpload, MediaStoreError>
+where
+    S: futures_util::Stream<Item = Result<Bytes, E>> + Send,
+    E: std::fmt::Display,
+{
+    use sha2::Digest;
+    let path = std::env::temp_dir().join(format!("shroud-upload-{}.part", uuid::Uuid::new_v4()));
+    let mut file = tokio::fs::File::create(&path)
+        .await
+        .map_err(|err| MediaStoreError::Unavailable(format!("create upload spool: {err}")))?;
+    let mut hasher = sha2::Sha256::new();
+    let mut body = std::pin::pin!(body);
+    let mut written: u64 = 0;
+    while let Some(chunk) = body.next().await {
+        let chunk = match chunk {
+            Ok(chunk) => chunk,
+            Err(err) => {
+                let _ = tokio::fs::remove_file(&path).await;
+                return Err(MediaStoreError::Unavailable(err.to_string()));
+            }
+        };
+        let next = written.saturating_add(chunk.len() as u64);
+        if next > max_bytes {
+            let _ = tokio::fs::remove_file(&path).await;
+            return Err(MediaStoreError::TooLarge);
+        }
+        hasher.update(&chunk);
+        if let Err(err) = tokio::io::AsyncWriteExt::write_all(&mut file, &chunk).await {
+            let _ = tokio::fs::remove_file(&path).await;
+            return Err(MediaStoreError::Unavailable(format!(
+                "write upload spool: {err}"
+            )));
+        }
+        written = next;
+    }
+    if let Err(err) = file.sync_all().await {
+        let _ = tokio::fs::remove_file(&path).await;
+        return Err(MediaStoreError::Unavailable(format!(
+            "sync upload spool: {err}"
+        )));
+    }
+    drop(file);
+    if written == 0 {
+        let _ = tokio::fs::remove_file(&path).await;
+        return Err(MediaStoreError::TooLarge);
+    }
+    if let Some(expected) = expected
+        && written != expected
+    {
+        let _ = tokio::fs::remove_file(&path).await;
+        return Err(MediaStoreError::SizeMismatch {
+            actual: written,
+            expected,
+        });
+    }
+    Ok(SpooledUpload {
+        path,
+        len: written,
+        hash: hex_sha256(hasher),
+    })
+}
+
+fn hex_sha256(hasher: sha2::Sha256) -> String {
+    use sha2::Digest;
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+async fn hash_file(path: &std::path::Path) -> Result<String, MediaStoreError> {
+    use sha2::Digest;
+    use tokio::io::AsyncReadExt;
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .map_err(|err| MediaStoreError::Unavailable(format!("open legacy blob: {err}")))?;
+    let mut hasher = sha2::Sha256::new();
+    let mut buf = vec![0_u8; 64 * 1024];
+    loop {
+        let n = file
+            .read(&mut buf)
+            .await
+            .map_err(|err| MediaStoreError::Unavailable(format!("read legacy blob: {err}")))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hex_sha256(hasher))
 }
 
 fn db_error(err: sqlx::Error) -> MediaStoreError {
