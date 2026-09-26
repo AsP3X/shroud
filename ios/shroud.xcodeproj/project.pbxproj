@@ -798,6 +798,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		73WR0001305C000000000001 /* XCLocalSwiftPackageReference "Vendor/WebRTC" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Vendor/WebRTC;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		73WK0001305C000000000001 /* XCRemoteSwiftPackageReference "WhisperKit" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -808,13 +815,6 @@
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
-
-/* Begin XCLocalSwiftPackageReference section */
-		73WR0001305C000000000001 /* XCLocalSwiftPackageReference "Vendor/WebRTC" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = Vendor/WebRTC;
-		};
-/* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		73WK0002305C000000000002 /* WhisperKit */ = {

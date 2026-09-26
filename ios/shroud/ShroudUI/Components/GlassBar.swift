@@ -27,15 +27,18 @@ enum GlassBarMetrics {
 
 // MARK: - Button
 
-/// One glass control: a 44 pt circle around a glyph, or a capsule around a word.
+/// One glass control: a 44 pt circle around a glyph, or a capsule around a word (both are
+/// glass capsules; a square frame makes the circle).
 ///
 /// Human: Regular glass with the accent glyph is the default (Back, New chat…). `prominent`
 /// tints the glass with the accent and turns the glyph white — for the one action a bar
 /// wants pressed (Save, Send). Interactive glass already swells under the finger, so the
 /// press style only adds the haptic tick.
 /// Agent: CALLS Haptics.impact on press-down (via PressableButtonStyle); READS
-/// `isEnabled` to dim. RETURNS a Button; the glass shape is picked by `shape`.
-/// Glass outline of a bar control.
+/// `isEnabled` to dim. RETURNS a Button; `shape` picks the label metrics, the glass is always a capsule.
+/// Outline of a bar control: a circle around a glyph or a capsule around a word. Both are
+/// drawn as glass capsules (a square frame makes the circle); the shape only picks the
+/// label's font, padding and hit area.
 enum GlassBarShape {
     case circle
     case capsule
@@ -55,6 +58,7 @@ struct GlassBarButton<Label: View>: View {
     @ViewBuilder let label: () -> Label
 
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.glassBarUnion) private var union
 
     var body: some View {
         Button(action: action) {
@@ -63,10 +67,10 @@ struct GlassBarButton<Label: View>: View {
                 .padding(.horizontal, shape == .capsule ? 16 : 0)
                 .foregroundStyle(emphasis == .prominent ? Color.white : Theme.accent)
                 .frame(minWidth: GlassBarMetrics.controlSize, minHeight: GlassBarMetrics.controlSize)
-                .contentShape(shape == .circle ? AnyShape(Circle()) : AnyShape(Capsule()))
+                .contentShape(Capsule())
         }
         .buttonStyle(PressableButtonStyle(scale: 1, dimming: 0, haptic: haptic))
-        .modifier(GlassShapeModifier(shape: shape, glass: glass))
+        .modifier(GlassShapeModifier(glass: glass, union: union))
         // Disabled controls fade rather than vanish, so the bar keeps its shape.
         .opacity(isEnabled ? 1 : 0.4)
         .animation(Motion.fade, value: isEnabled)
@@ -112,39 +116,73 @@ extension GlassBarButton where Label == Text {
     }
 }
 
-/// Applies one glass shape; kept as a modifier so the two shapes share one code path.
+/// Applies the glass and, inside a `GlassBarGroup`, the union.
+///
+/// Human: Always a capsule — on a square glyph frame it *is* a circle, and a union of
+/// capsules grows into one long capsule. An explicit `.circle` here would stay a circle when
+/// fused, leaving the second glyph outside the glass.
+/// Agent: `glassEffectUnion` only fuses views that carry a glass effect themselves, so the
+/// union (from an enclosing `GlassBarGroup`) is applied here, right after the glass.
 private struct GlassShapeModifier: ViewModifier {
-    let shape: GlassBarShape
     let glass: Glass
+    let union: GlassBarUnion?
 
     func body(content: Content) -> some View {
-        switch shape {
-        case .circle:
-            content.glassEffect(glass, in: .circle)
-        case .capsule:
-            content.glassEffect(glass, in: .capsule)
+        content
+            .glassEffect(glass, in: .capsule)
+            .modifier(GlassUnionModifier(union: union))
+    }
+}
+
+private struct GlassUnionModifier: ViewModifier {
+    let union: GlassBarUnion?
+
+    func body(content: Content) -> some View {
+        if let union {
+            content.glassEffectUnion(id: union.id, namespace: union.namespace)
+        } else {
+            content
         }
     }
 }
 
 // MARK: - Group
 
+/// The union a `GlassBarGroup` hands its controls through the environment.
+struct GlassBarUnion {
+    let id: String
+    let namespace: Namespace.ID
+}
+
+private struct GlassBarUnionKey: EnvironmentKey {
+    static let defaultValue: GlassBarUnion? = nil
+}
+
+extension EnvironmentValues {
+    /// Set by `GlassBarGroup`; a `GlassBarButton` fuses its glass into the group when present.
+    var glassBarUnion: GlassBarUnion? {
+        get { self[GlassBarUnionKey.self] }
+        set { self[GlassBarUnionKey.self] = newValue }
+    }
+}
+
 /// Neighbouring controls fused into one capsule, as the system toolbar groups its items.
 ///
 /// Human: Contacts' QR + Add, the chat's Video + Call: related actions read as one control
 /// with two glyphs. Each stays its own button.
-/// Agent: Wraps each child in `glassEffectUnion` under one id; needs an enclosing
-/// `GlassEffectContainer` (every `GlassBarRow` provides one).
+/// Agent: WRITES `glassBarUnion` for its children; each `GlassBarButton` inside applies the
+/// union to its own glass (the modifier must sit on the glassed view, not on a container).
+/// Needs an enclosing `GlassEffectContainer` (every `GlassBarRow` provides one).
 struct GlassBarGroup<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
-    @Namespace private var union
+    @Namespace private var namespace
 
     var body: some View {
         HStack(spacing: 0) {
             content()
         }
-        .glassEffectUnion(id: "group", namespace: union)
+        .environment(\.glassBarUnion, GlassBarUnion(id: "group", namespace: namespace))
     }
 }
 

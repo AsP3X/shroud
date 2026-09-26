@@ -130,6 +130,13 @@ struct SettingsView: View {
         max(0, 1 - collapseProgress * 2.4)
     }
 
+    /// How far the name has become the bar's own title: 0 until the last stretch of the
+    /// collapse, 1 when the bar is compact. The travelling name and the bar title cross-fade
+    /// over it, so the hand-over is invisible (same face, same spot).
+    private var barTitleProgress: CGFloat {
+        min(1, max(0, (collapseProgress - 0.85) / 0.15))
+    }
+
     init(router: AppRouter, navigationPath: Binding<[SettingsRoute]> = .constant([])) {
         self.router = router
         _navigationPath = navigationPath
@@ -225,11 +232,13 @@ struct SettingsView: View {
                 .scrollIndicators(.hidden)
                 // Log Out ends at the floating tab bar's top edge instead of under it.
                 .safeAreaPadding(.bottom, tabBarClearance)
-                // The compact title row: the name is drawn by `stickyChrome`; this only claims
-                // the bar's height so cards fade out under it instead of colliding with it.
+                // The compact title row. The name travels here from the hero (drawn by
+                // `stickyChrome`) and hands over to this real title at the very end, because the
+                // scroll edge effect only fades the cards under a bar that is actually visible.
                 .glassTopBar {
-                    Color.clear
+                    GlassBarTitle(title: displayName)
                         .frame(height: compactBarHeight)
+                        .opacity(Double(barTitleProgress))
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                 }
@@ -285,22 +294,26 @@ struct SettingsView: View {
             .position(x: midX, y: avatarCenterY)
             .zIndex(2)
 
-            // Name — continuous path into the compact centered title.
-            HStack(spacing: 6) {
-                Text(displayName)
-                    .font(.system(size: nameFontSize, weight: nameWeight))
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: nameFontSize * 0.78, weight: .semibold))
-                    .foregroundStyle(Theme.accent)
-                    .opacity(Double(badgeOpacity))
-            }
-            .frame(maxWidth: midX * 1.4)
-            .position(x: midX, y: nameCenterY)
-            .accessibilityAddTraits(.isHeader)
-            .zIndex(6)
+            // Name — continuous path into the compact centered title. The badge hangs off the
+            // name's trailing edge without taking layout space, so the name itself stays centred
+            // and lands exactly on the bar's title, which it fades into.
+            Text(displayName)
+                .font(.system(size: nameFontSize, weight: nameWeight))
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .overlay(alignment: .trailing) {
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: nameFontSize * 0.78, weight: .semibold))
+                        .foregroundStyle(Theme.accent)
+                        .opacity(Double(badgeOpacity))
+                        .alignmentGuide(.trailing) { $0[.leading] - 6 }
+                }
+                .frame(maxWidth: midX * 1.4)
+                .position(x: midX, y: nameCenterY)
+                .opacity(Double(1 - barTitleProgress))
+                .accessibilityAddTraits(.isHeader)
+                .zIndex(6)
 
             Text(handle)
                 .font(.system(size: 15))
