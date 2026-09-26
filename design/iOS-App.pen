@@ -21101,6 +21101,86 @@
                       "fontWeight": "500"
                     }
                   ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ECFj2",
+                  "name": "Speaking Pill",
+                  "fill": "#FFFFFF21",
+                  "cornerRadius": 13,
+                  "gap": 6,
+                  "padding": [
+                    5,
+                    10
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "ITOJP",
+                      "name": "Mic",
+                      "width": 11,
+                      "height": 11,
+                      "icon": "mic",
+                      "library": "lucide",
+                      "fill": "#FFFFFF"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "dMOQY",
+                      "name": "Level Bars",
+                      "height": 16,
+                      "gap": 2,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "rectangle",
+                          "cornerRadius": 1.5,
+                          "id": "oGxlw",
+                          "name": "Bar 1",
+                          "fill": "#FFFFFF",
+                          "width": 3,
+                          "height": 7
+                        },
+                        {
+                          "type": "rectangle",
+                          "cornerRadius": 1.5,
+                          "id": "wVCYj",
+                          "name": "Bar 2",
+                          "fill": "#FFFFFF",
+                          "width": 3,
+                          "height": 12
+                        },
+                        {
+                          "type": "rectangle",
+                          "cornerRadius": 1.5,
+                          "id": "Pb5hx",
+                          "name": "Bar 3",
+                          "fill": "#FFFFFF",
+                          "width": 3,
+                          "height": 16
+                        },
+                        {
+                          "type": "rectangle",
+                          "cornerRadius": 1.5,
+                          "id": "GCRmA",
+                          "name": "Bar 4",
+                          "fill": "#FFFFFF",
+                          "width": 3,
+                          "height": 11
+                        },
+                        {
+                          "type": "rectangle",
+                          "cornerRadius": 1.5,
+                          "id": "qGWvM",
+                          "name": "Bar 5",
+                          "fill": "#FFFFFF",
+                          "width": 3,
+                          "height": 6
+                        }
+                      ]
+                    }
+                  ]
                 }
               ]
             }
