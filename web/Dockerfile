@@ -31,7 +31,7 @@ COPY security-headers.conf /etc/nginx/security-headers.conf
 COPY api-proxy.conf /etc/nginx/api-proxy.conf
 # nginx image envsubst only replaces defined environment variables.
 ENV API_UPSTREAM=http://api:8080
-ENV MAX_UPLOAD_BYTES=26214400
+ENV MAX_UPLOAD_BYTES=2147483648
 EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD wget -qO- http://127.0.0.1/ >/dev/null || exit 1
