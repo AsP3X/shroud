@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import {
   Maximize2,
@@ -90,15 +90,23 @@ function statusKey(view: CallView): string {
 }
 
 /**
- * One side's picture in a <video>. The stream goes on when the picture is wanted (a camera was
- * switched on), and `shown` turns true only with the first frame after that, so a camera coming
- * on never flashes black, nor the last picture from before it went off. Once not wanted, the
- * element keeps its last frame, so the picture fades out rather than blinking away.
- * `revision` re-attaches the stream when its tracks change.
+ * One side's picture in a <video>. `shown` turns true only with the first frame presented after
+ * the picture is wanted (a camera was switched on), so a camera coming on never shows black, nor
+ * the last picture from before it went off (the element is hidden until then). Once not wanted,
+ * the element keeps its last frame, so the picture can close or fade rather than blink away.
+ * The stream is attached only when it (or `revision`, its tracks) changes: a camera switched back
+ * on while the picture is still closing goes on from its last frame, not from black.
  */
 function usePicture(stream: MediaStream | null, wanted: boolean, revision: unknown) {
   const ref = useRef<HTMLVideoElement>(null);
   const [shown, setShown] = useState(false);
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    element.srcObject = null;
+    element.srcObject = stream;
+    if (stream) void element.play().catch(() => undefined);
+  }, [stream, revision]);
   useEffect(() => {
     setShown(false);
     const element = ref.current;
@@ -107,8 +115,6 @@ function usePicture(stream: MediaStream | null, wanted: boolean, revision: unkno
     const show = () => {
       if (current) setShown(true);
     };
-    element.srcObject = null;
-    element.srcObject = stream;
     void element.play().catch(() => undefined);
     let frame: number | null = null;
     let timer: number | null = null;
@@ -127,6 +133,151 @@ function usePicture(stream: MediaStream | null, wanted: boolean, revision: unkno
     };
   }, [stream, wanted, revision]);
   return { ref, shown: shown && wanted };
+}
+
+/**
+ * How their picture comes and goes: it opens out of their face as a growing circle, and closes
+ * back into it. "opening" and "closing" are the circle on its way; at rest there is no clip.
+ */
+type RevealStage = "face" | "opening" | "picture" | "closing";
+
+/* Both ways the circle moves from the first frame and slows evenly: into the corners when
+   opening, onto the face when closing. The face's own fade in index.css (`call-face-open`,
+   `call-face-close`) is timed against these; iOS uses the same (CallVideoContainer). */
+const OPEN_MS = 420;
+const CLOSE_MS = 380;
+const EASING = "cubic-bezier(0.33, 1, 0.68, 1)";
+
+function reduceMotion(): boolean {
+  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+}
+
+/**
+ * The face's circle in the picture's coordinates, from layout offsets: neither the face's own
+ * swell nor the name's rise animation may move the centre. No face on screen (our picture fills
+ * it while the call is placed): the middle of the screen, from a point.
+ */
+function faceCircle(picture: HTMLElement, face: HTMLElement | null) {
+  const width = picture.offsetWidth;
+  const height = picture.offsetHeight;
+  let x = width / 2;
+  let y = height / 2;
+  let r = 0;
+  const root = picture.offsetParent;
+  if (face && face.offsetWidth > 0 && root) {
+    let cx = face.offsetWidth / 2;
+    let cy = face.offsetHeight / 2;
+    let node: Element | null = face;
+    while (node instanceof HTMLElement && node !== root) {
+      cx += node.offsetLeft;
+      cy += node.offsetTop;
+      node = node.offsetParent;
+    }
+    if (node === root) {
+      x = cx - picture.offsetLeft;
+      y = cy - picture.offsetTop;
+      // A hair inside the face's edge, so no picture shows around it once it is back.
+      r = (face.offsetWidth / 2) * 0.96;
+    }
+  }
+  const full = Math.hypot(Math.max(x, width - x), Math.max(y, height - y)) + 2;
+  return { x, y, r, full, onFace: r > 0 };
+}
+
+function circle(r: number, x: number, y: number): string {
+  return `circle(${r.toFixed(1)}px at ${x.toFixed(1)}px ${y.toFixed(1)}px)`;
+}
+
+/** The circle's radius right now (an animation may be halfway); null when nothing clips. */
+function clipRadius(picture: HTMLElement): number | null {
+  const match = /circle\(\s*([\d.]+)px/.exec(getComputedStyle(picture).clipPath);
+  return match ? Number(match[1]) : null;
+}
+
+/**
+ * Runs the circle on their picture when `open` changes. Opening starts from the face as it is
+ * on screen; closing first brings the face back (the caller shows it for "closing") and then
+ * shrinks onto it. Turned around halfway, the circle goes back from where it is. `onFace` says
+ * whether the opening came out of the face (else from the middle, the face not being shown).
+ */
+function useFaceReveal(
+  picture: RefObject<HTMLVideoElement | null>,
+  face: RefObject<HTMLDivElement | null>,
+  open: boolean,
+): { stage: RevealStage; onFace: boolean } {
+  const [stage, setStage] = useState<RevealStage>(open ? "picture" : "face");
+  const [onFace, setOnFace] = useState(true);
+  const running = useRef<Animation | null>(null);
+  // Bumped whenever a circle is superseded, so a finish from the one before cannot
+  // put the picture back up after the camera has already turned off.
+  const generation = useRef(0);
+  const openRef = useRef(open);
+  openRef.current = open;
+
+  const run = (element: HTMLVideoElement, from: number, to: number, x: number, y: number, opening: boolean) => {
+    running.current?.cancel();
+    const id = ++generation.current;
+    const animation = element.animate([{ clipPath: circle(from, x, y) }, { clipPath: circle(to, x, y) }], {
+      duration: opening ? OPEN_MS : CLOSE_MS,
+      easing: EASING,
+      fill: "forwards",
+    });
+    running.current = animation;
+    animation.onfinish = () => {
+      if (generation.current !== id || openRef.current !== opening) return;
+      setStage(opening ? "picture" : "face");
+    };
+  };
+
+  // Their picture came or went.
+  useLayoutEffect(() => {
+    const element = picture.current;
+    if (!element) return;
+    if (open && (stage === "face" || stage === "closing")) {
+      const at = faceCircle(element, face.current);
+      setOnFace(at.onFace);
+      if (reduceMotion()) {
+        generation.current += 1;
+        running.current?.cancel();
+        running.current = null;
+        setStage("picture");
+        return;
+      }
+      const from = stage === "closing" ? (clipRadius(element) ?? at.r) : at.r;
+      setStage("opening");
+      run(element, from, at.full, at.x, at.y, true);
+    } else if (!open && (stage === "picture" || stage === "opening")) {
+      // Drop the opening's finish before the close starts. Otherwise that finish
+      // can land in between and show the whole picture after the camera is off.
+      generation.current += 1;
+      if (running.current) running.current.onfinish = null;
+      if (reduceMotion()) {
+        running.current?.cancel();
+        running.current = null;
+        setStage("face");
+        return;
+      }
+      setStage("closing");
+    }
+    // Only a change of `open` starts anything; `stage` is read as it stands then.
+  }, [open]);
+
+  useLayoutEffect(() => {
+    const element = picture.current;
+    if (!element) return;
+    if (stage === "closing") {
+      // The face is back in the layout now: that is where the circle goes.
+      const at = faceCircle(element, face.current);
+      run(element, clipRadius(element) ?? at.full, at.r, at.x, at.y, false);
+    } else if (stage === "picture" || stage === "face") {
+      // At rest nothing clips: all of the picture shows, or none (hidden).
+      running.current?.cancel();
+      running.current = null;
+    }
+  }, [stage]);
+
+  useEffect(() => () => running.current?.cancel(), []);
+  return { stage, onFace };
 }
 
 function Control({
@@ -217,7 +368,12 @@ function CallScreen({ view }: { view: CallView }) {
   );
   const self = usePicture(view.localStream, live && view.cameraOn && view.localStream !== null, null);
   const layout = videoLayout(view, self.shown, remote.shown);
-  const theirVideo = layout === "theirs";
+  /* Their picture opens out of their face as a growing circle, and closes back into it. The name
+     moves up into the pill only once the circle has opened (it came from the face), and comes
+     back under the face as the circle starts closing onto it. */
+  const face = useRef<HTMLDivElement>(null);
+  const reveal = useFaceReveal(remote.ref, face, layout === "theirs");
+  const theirVideo = reveal.stage === "picture" || (reveal.stage === "opening" && !reveal.onFace);
   /* While the call is placed, our picture fills the screen (as FaceTime does); after that it sits
      in the corner, over their picture or their face. */
   const selfFull = layout === "mine";
@@ -283,11 +439,12 @@ function CallScreen({ view }: { view: CallView }) {
       tabIndex={-1}
     >
       <div className="call-backdrop" aria-hidden="true" />
-      {/* Both pictures stay in place for the whole call, so a camera switched on mid-call fades
-          in (and out again) over the face instead of rebuilding the screen. */}
+      {/* Both pictures stay in place for the whole call. Theirs opens out of their face as a circle
+          when their camera comes on and closes back into it (useFaceReveal); ours grows out of
+          the corner. */}
       <video
         ref={remote.ref}
-        className={`call-remote${theirVideo ? " is-shown" : ""}`}
+        className={`call-remote${reveal.stage !== "face" ? " is-shown" : ""}`}
         autoPlay
         playsInline
         muted
@@ -329,8 +486,21 @@ function CallScreen({ view }: { view: CallView }) {
       <section className="call-stage">
         {/* A new key when the picture takes over the screen or gives it back: the name rises into
             its new place (the pill at the top, or under the face) instead of jumping there. */}
-        <div className="call-who" key={theirVideo || selfFull ? "over-picture" : "under-face"}>
-          <div className={`call-avatar${view.phase === "incoming" ? " ringing" : ""}`}>
+        <div
+          className={`call-who${reveal.stage === "opening" && reveal.onFace ? " is-leaving" : ""}`}
+          key={theirVideo || selfFull ? "over-picture" : "under-face"}
+        >
+          <div
+            ref={face}
+            className={[
+              "call-avatar",
+              view.phase === "incoming" ? "ringing" : "",
+              reveal.stage === "opening" && reveal.onFace ? "is-opening" : "",
+              reveal.stage === "closing" ? "is-closing" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+          >
             <Avatar name={name} seed={view.peer.id} size="lg" />
           </div>
           <div className="call-id">

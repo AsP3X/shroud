@@ -3,10 +3,15 @@ import SwiftUI
 /// Full-screen in-call chrome for voice and video sessions.
 ///
 /// Human: A call is voice or video by what the two cameras do right now. Either person turns
-/// theirs on or off with Video at any time; their picture fades in over the face once its first
-/// frame arrives, and out again, and ours sits in the corner while it is on.
+/// theirs on or off with Video at any time. Their picture opens out of their face as a growing
+/// circle once its first frame arrives, and closes back into it; ours sits in the corner while
+/// it is on.
 struct InCallOverlay: View {
     @Environment(CallController.self) private var calls
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Where the face is on screen: their picture opens from it and closes back into it. A
+    /// reference, so measuring the face never re-renders the call screen.
+    @State private var face = FaceSpot()
 
     var body: some View {
         if let active = calls.active {
@@ -38,36 +43,29 @@ struct InCallOverlay: View {
             )
             .ignoresSafeArea()
 
-            if showsRemoteVideo, let track = calls.remoteVideoTrack {
-                CallVideoView(track: track)
-                    .ignoresSafeArea()
-                    .transition(.opacity)
+            // Mounted for the whole call (hidden while their camera is off), so the picture can
+            // open out of the face and close back into it instead of popping in and out.
+            if let track = calls.remoteVideoTrack {
+                CallVideoView(
+                    track: track,
+                    reveal: .init(open: showsRemoteVideo, warm: call.remoteCameraOff == false, face: face)
+                )
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
             }
 
             VStack(spacing: 28) {
                 Spacer(minLength: 48)
 
-                if !showsRemoteVideo {
-                    avatar(for: call)
-                        .overlay(alignment: .bottomTrailing) {
-                            if call.remoteMicMuted {
-                                Image(systemName: "mic.slash.fill")
-                                    .font(.system(size: 12, weight: .bold))
-                                    .foregroundStyle(.white)
-                                    .padding(6)
-                                    .background(Theme.danger)
-                                    .clipShape(Circle())
-                                    .offset(x: 4, y: 4)
-                            }
-                        }
-                        .transition(.scale(scale: 0.9).combined(with: .opacity))
-                }
+                face(for: call)
 
                 VStack(spacing: 6) {
                     Text(call.peerUsername)
                         .font(.system(size: 26, weight: .semibold))
                         .foregroundStyle(.white)
-                        .shadow(color: .black.opacity(showsRemoteVideo ? 0.45 : 0), radius: 8, y: 2)
+                        // Always on: it only shows over their picture, and a shadow that fades
+                        // with the circle would be redrawn every frame of it.
+                        .shadow(color: .black.opacity(0.45), radius: 8, y: 2)
                     statusLabel(for: call)
                     // "You're speaking": only while the call runs with an open mic. Muting
                     // hides it; the Mute control already says so in red.
@@ -124,8 +122,44 @@ struct InCallOverlay: View {
                     .padding(.trailing, 16)
             }
         }
-        .animation(Motion.standard, value: showsRemoteVideo)
         .animation(Motion.standard, value: showsLocalVideo(call))
+    }
+
+    /// The other person's face, where their picture opens from. It keeps its place in the layout
+    /// while the picture shows, so nothing below it moves; it only swells and fades as the circle
+    /// opens out of it, and comes back in front as the circle closes onto it.
+    @ViewBuilder
+    private func face(for call: CallController.ActiveCall) -> some View {
+        let open = showsRemoteVideo
+        ZStack {
+            avatar(for: call)
+                .overlay(alignment: .bottomTrailing) {
+                    if call.remoteMicMuted {
+                        Image(systemName: "mic.slash.fill")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(6)
+                            .background(Theme.danger)
+                            .clipShape(Circle())
+                            .offset(x: 4, y: 4)
+                    }
+                }
+                .scaleEffect(open && !reduceMotion ? 1.14 : 1)
+                .opacity(open ? 0 : 1)
+                .animation(faceAnimation(call, open: open), value: open)
+        }
+        // Measured outside the scale above: the circle needs the face's resting place and size.
+        // Written to a reference, not state: the video reads it when its circle starts to move.
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { [face] in face.frame = $0 }
+        .accessibilityHidden(open)
+    }
+
+    /// The face gives way at once as the circle opens. Closing, it comes straight back while the
+    /// circle shrinks behind it, and is whole before the circle lands
+    /// (`CallVideoContainer.closeDuration`).
+    private func faceAnimation(_ call: CallController.ActiveCall, open: Bool) -> Animation {
+        if open || reduceMotion || call.phase == .ending { return .easeOut(duration: 0.2) }
+        return .easeOut(duration: 0.26).delay(0.06)
     }
 
     /// Human: Liquid Glass circles over the backdrop or the remote video, as the system's

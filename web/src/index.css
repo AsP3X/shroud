@@ -3360,8 +3360,10 @@ button.reply-quote { cursor: pointer; }
     linear-gradient(180deg, #141420 0%, #0c0c13 60%, #08080c 100%);
 }
 .call-ended .call-backdrop { filter: saturate(0.5) brightness(0.8); transition: filter 0.6s ease; }
-/* Their picture is there for the whole call and fades in over their face once its first frame
-   arrives (a camera switched on mid-call), and out again when they switch it off. */
+/* Their picture is there for the whole call. Once its first frame arrives (a camera switched on
+   mid-call) it opens out of their face as a growing circle, and closes back into the face when
+   they switch it off: an animated clip-path, see useFaceReveal in CallOverlay.tsx. It stays in
+   the layout while hidden (opacity, not visibility), so the browser keeps handing it frames. */
 .call-remote {
   position: absolute; inset: 0;
   width: 100%; height: 100%;
@@ -3369,7 +3371,6 @@ button.reply-quote { cursor: pointer; }
   background: #000;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.4s ease;
 }
 .call-remote.is-shown { opacity: 1; }
 @media (min-width: 901px) {
@@ -3462,6 +3463,25 @@ button.reply-quote { cursor: pointer; }
 @keyframes call-pulse {
   from { transform: scale(1); opacity: 0.85; }
   to { transform: scale(1.7); opacity: 0; }
+}
+/* Their picture opens out of the face: the face swells and gives way at once as the circle grows
+   from its edge. Closing, it comes straight back in front while the circle shrinks behind it, and
+   is whole before the circle lands (CLOSE_MS, 380 ms). As on iOS. After the breathing above,
+   which it overrides while the call still connects. */
+.call-stage .call-avatar.is-opening { animation: call-face-open 0.2s ease-out both; }
+.call-stage .call-avatar.is-closing { animation: call-face-close 0.26s ease-out 0.06s both; }
+@keyframes call-face-open {
+  to { transform: scale(1.14); opacity: 0; }
+}
+@keyframes call-face-close {
+  from { transform: scale(1.14); opacity: 0; }
+}
+/* The name stays under the face while the circle opens, then drifts up and out just before it
+   reappears in the pill at the top (the opening lasts 420 ms). `translate`, not `transform`:
+   the block is centred with a transform of its own. */
+.call-who.is-leaving .call-id { animation: call-id-leave 0.2s ease-in 0.22s both; }
+@keyframes call-id-leave {
+  to { opacity: 0; translate: 0 -6px; }
 }
 .call-ended .call-avatar { opacity: 0.6; transform: scale(0.92); }
 .call-id {
@@ -3871,7 +3891,10 @@ button.reply-quote { cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   .call, .call-pill, .call-backdrop, .call-who, .call-bar, .call-sound, .call-status-text,
   .call-chip, .call-notice, .call-ctl-glyph, .call-remote, .call-captions, .call-captions p { animation: none; }
-  .call.is-ringing .call-avatar { animation: none; }
+  .call.is-ringing .call-avatar,
+  .call-stage .call-avatar.is-opening,
+  .call-stage .call-avatar.is-closing,
+  .call-who.is-leaving .call-id { animation: none; }
   .call-banner { animation: none; }
   .call-avatar.ringing::before, .call-avatar.ringing::after,
   .call-banner-avatar::before, .call-banner-avatar::after { animation: none; opacity: 0; }

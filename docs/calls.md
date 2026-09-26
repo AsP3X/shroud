@@ -206,8 +206,16 @@ never touched, and a switch takes as long as a camera needs to open.
   off** takes the track off at once (`null`), sends `camera: false` and closes the camera, so its
   light goes out. The web lets its own picture fade out first (300 ms), and takes the same
   camera back without asking if Video is pressed again meanwhile.
-- **Each side switches only its own camera.** The screen follows both. Their picture fills it
-  from the first frame after `camera: true` (never black, never a frame from before), ours
+- **Each side switches only its own camera.** The screen follows both. Their picture opens out
+  of their face from the first frame after `camera: true` (never black, never a frame from
+  before): a circle grows from the face's edge to the screen's corners (420 ms) while the face
+  swells and fades. With `camera: false` the circle shrinks back onto the face (380 ms) while the
+  face comes straight back in front of it, so the circle ends behind the face. Both ways it moves
+  from the first frame and slows evenly (ease out), and turned around halfway it goes back from
+  where it is. On the iPhone the circle is a clip view whose bounds and corner radius the render
+  server animates, up to 120 Hz whatever the main thread does (no mask layer, no path drawn per
+  frame); at rest nothing is clipped, and a closed picture is hidden with its renderer paused until
+  their `camera: true` arrives. On the web it is an animated `clip-path` on the `<video>`. Ours
   sits in a corner while it is on (the whole screen only while the call is being placed), and
   with both off it is a voice call again. A camera the system pauses (the app left the screen,
   another app took the camera) counts as off, so the other side sees the face and not a frozen
