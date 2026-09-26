@@ -767,8 +767,8 @@ nonisolated enum VideoMedia {
         }
     }
 
-    /// H.264 + AAC at an explicit bitrate. Named export presets cannot go low enough for a
-    /// half-hour clip to land under the server cap.
+    /// H.264 + AAC at an explicit bitrate. Named export presets cannot go low enough once
+    /// every one of them estimates over the server cap.
     static func writeBudget(
         asset: AVAsset,
         width: Int,

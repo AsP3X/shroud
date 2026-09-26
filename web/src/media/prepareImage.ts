@@ -10,8 +10,12 @@ const MAX_EDGE = 2560;
 const JPEG_QUALITY = 0.85;
 /** Same plaintext budget as videos: 2 GiB sealed, with room for AES-GCM. */
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024 * 1024 - 1024 * 1024;
-/** A decode of something larger than we would upload is not worth starting. */
-const MAX_SOURCE_BYTES = MAX_IMAGE_BYTES;
+/**
+ * This path decodes the file into a bitmap and then downsizes it to `MAX_EDGE`.
+ * A multi-gigabyte decode takes the tab down before that resize, so refuse it first.
+ * The encoded result is still checked against `MAX_IMAGE_BYTES`.
+ */
+const MAX_SOURCE_BYTES = 64 * 1024 * 1024;
 /** Formats that can carry transparency; everything else is flattened to JPEG. */
 const MAY_HAVE_ALPHA = /^image\/(png|webp|gif|avif|bmp|x-icon|vnd\.microsoft\.icon)$/i;
 
@@ -118,7 +122,7 @@ function thumbnail(source: Source): Promise<Uint8Array | null> {
 
 /** Decodes, orients, downsizes and re-encodes one picked or pasted image for sending. */
 export async function prepareImage(file: Blob): Promise<PreparedImage> {
-  if (file.size > MAX_SOURCE_BYTES) throw new Error("That image is too large to send.");
+  if (file.size > MAX_SOURCE_BYTES) throw new Error("That image is over 64 MB — too large to send.");
   const source = await loadSource(file);
   try {
     if (!source.width || !source.height) throw new Error("This image has no pixels to send.");

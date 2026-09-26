@@ -84,7 +84,8 @@ impl MediaStore {
     }
 
     /// Blobs in Nebular. `legacy_root` is the local volume earlier releases used; it is read
-    /// while its blobs are moved over, and never written.
+    /// while its blobs are moved over. New uploads spool into its `.tmp` directory (the same
+    /// scratch a local store uses) so a 2 GiB object is not written onto the container's own disk.
     pub fn nebular(
         config: NebularConfig,
         bucket: impl Into<String>,
@@ -137,6 +138,15 @@ impl MediaStore {
         &self.bucket
     }
 
+    /// Where a Nebular upload is written before it is signed and sent. The legacy media volume
+    /// when this process has one; otherwise a directory under the system temp dir.
+    fn spool_dir(&self) -> PathBuf {
+        match &self.legacy {
+            Some(legacy) => legacy.root().join(".tmp"),
+            None => std::env::temp_dir().join("shroud-media-spool"),
+        }
+    }
+
     /// Key for a new upload. It carries only the media id (sharded by its first two hex digits
     /// so a local directory stays small), never who uploaded it.
     pub fn object_key(media_id: Uuid) -> String {
@@ -171,7 +181,12 @@ impl MediaStore {
         match &self.backend {
             Backend::Local(store) => store.put_stream(key, body, max_bytes, expected).await,
             Backend::Nebular(store) => {
-                let spooled = spool_upload(body, max_bytes, expected).await?;
+                let spooled = spool_upload(&self.spool_dir(), body, max_bytes, expected).await?;
+                // An empty body is not an object. Refuse it before Nebular publishes it.
+                if spooled.len == 0 {
+                    let _ = tokio::fs::remove_file(&spooled.path).await;
+                    return Err(MediaStoreError::TooLarge);
+                }
                 let result = store
                     .put_file(bucket, key, &spooled.path, spooled.len, &spooled.hash)
                     .await;
@@ -465,6 +480,7 @@ struct SpooledUpload {
 /// Writes `body` to a temp file and hashes it, so Nebular can be signed without holding
 /// the object in memory. The caller deletes `path`.
 async fn spool_upload<S, E>(
+    dir: &std::path::Path,
     body: S,
     max_bytes: u64,
     expected: Option<u64>,
@@ -474,7 +490,10 @@ where
     E: std::fmt::Display,
 {
     use sha2::Digest;
-    let path = std::env::temp_dir().join(format!("shroud-upload-{}.part", uuid::Uuid::new_v4()));
+    tokio::fs::create_dir_all(dir)
+        .await
+        .map_err(|err| MediaStoreError::Unavailable(format!("create upload spool: {err}")))?;
+    let path = dir.join(format!("shroud-upload-{}.part", uuid::Uuid::new_v4()));
     let mut file = tokio::fs::File::create(&path)
         .await
         .map_err(|err| MediaStoreError::Unavailable(format!("create upload spool: {err}")))?;
@@ -588,6 +607,26 @@ mod tests {
         assert_eq!(
             MediaStore::object_key(id),
             "media/0f/0f6d1c2e-aaaa-4bbb-8ccc-123456789abc"
+        );
+    }
+
+    #[test]
+    fn nebular_uploads_spool_on_the_legacy_volume() {
+        let legacy = temp_dir("spool");
+        let config = NebularConfig {
+            url: "http://127.0.0.1:9".into(),
+            access_key_id: "k".into(),
+            secret_access_key: "s".into(),
+            region: "us-east-1".into(),
+        };
+        let store = MediaStore::nebular(config.clone(), "shroud-media", Some(legacy.clone()))
+            .expect("store");
+        assert_eq!(store.spool_dir(), legacy.join(".tmp"));
+
+        let nowhere = MediaStore::nebular(config, "shroud-media", None).expect("store");
+        assert_eq!(
+            nowhere.spool_dir(),
+            std::env::temp_dir().join("shroud-media-spool")
         );
     }
 

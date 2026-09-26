@@ -115,9 +115,9 @@ const TARGET_BPP = 0.085;
 /** Below this a size turns to mush, so the next smaller one is used instead. */
 const FLOOR_BPP = 0.028;
 const MIN_VIDEO_BITRATE = 120_000;
-/** Tier 4 may sit under the normal floor: 30 minutes at 120 kbps does not fit. */
+/** Tier 4 may sit under the normal floor so a very long clip can still land under the cap. */
 const LONG_MIN_VIDEO_BITRATE = 40_000;
-/** Mono AAC. Stereo at the source rate would use the whole 24 MiB by itself. */
+/** Mono AAC. Copying a stereo track at the source rate would spend the cap before the picture. */
 const LONG_AUDIO_BITRATE = 32_000;
 const MAX_VIDEO_BITRATE = 3_200_000;
 /** Original keeps more of the source's own bitrate than the smaller rungs. */

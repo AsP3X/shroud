@@ -9,7 +9,7 @@ use std::time::Duration;
 use std::path::Path;
 
 use axum::body::Bytes;
-use futures_util::StreamExt;
+use futures_util::{Stream, StreamExt};
 use reqwest::{Method, StatusCode, Url};
 use tokio_util::io::ReaderStream;
 
@@ -23,11 +23,17 @@ const PROBE_KEY: &str = "health/readiness-probe";
 const MAX_ATTEMPTS: u32 = 3;
 /// Longest `Retry-After` honoured before a retry (Nebular's upload budget says 1 s).
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(2);
-/// The whole upload, body included. A 2 GiB object on a slow link needs far longer than
-/// the old 25 MiB budget; a stall is still cut off by the client's read timeout.
+/// The whole upload, body included. A 2 GiB object on a slow link needs the full hour.
+///
+/// This is a total deadline, not an idle timer. Reqwest's `read_timeout` is also a single
+/// deadline until response headers and does not reset while the body is still being written,
+/// so the client must not set one shorter than this or a moving upload is aborted early.
+/// A download that goes quiet is cut off separately, per chunk.
 const PUT_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 /// Response headers for everything else. A download's body then streams at the client's pace.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// A download body that sends nothing for this long is stalled.
+const BODY_IDLE: Duration = Duration::from_secs(60);
 
 /// What `send` uploads. A file is re-opened on each retry; a buffer is cloned.
 enum Upload {
@@ -94,8 +100,6 @@ impl NebularStore {
             // Nebular closes keep-alive connections idle for NOS_HEADER_READ_TIMEOUT_SECS (75 s);
             // retiring them sooner means a request never lands on one as it closes.
             .pool_idle_timeout(Duration::from_secs(30))
-            // A stalled response body fails instead of holding the client's download open.
-            .read_timeout(Duration::from_secs(60))
             .tcp_keepalive(Duration::from_secs(30))
             .build()
             .map_err(|err| format!("Nebular HTTP client could not be built: {err}"))?;
@@ -171,10 +175,7 @@ impl NebularStore {
                 let size = response.content_length().ok_or_else(|| {
                     MediaStoreError::Unavailable("Nebular sent a download without a length".into())
                 })?;
-                let body = response
-                    .bytes_stream()
-                    .map(|chunk| chunk.map_err(std::io::Error::other))
-                    .boxed();
+                let body = idle_limited(response.bytes_stream(), BODY_IDLE).boxed();
                 Ok(MediaBlob { size, body })
             }
             StatusCode::NOT_FOUND => Err(MediaStoreError::NotFound),
@@ -298,6 +299,36 @@ impl NebularStore {
             attempt += 1;
         }
     }
+}
+
+/// Ends `stream` with a timeout error once a chunk takes longer than `idle`.
+///
+/// Reqwest's client `read_timeout` would also bound the upload, and it does not reset while
+/// bytes are still going out, so downloads carry their own idle limit here instead.
+fn idle_limited<S>(
+    stream: S,
+    idle: Duration,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send
+where
+    S: Stream<Item = Result<Bytes, reqwest::Error>> + Send + Unpin + 'static,
+{
+    futures_util::stream::unfold((stream, true), move |(mut stream, alive)| async move {
+        if !alive {
+            return None;
+        }
+        match tokio::time::timeout(idle, stream.next()).await {
+            Ok(Some(Ok(chunk))) => Some((Ok(chunk), (stream, true))),
+            Ok(Some(Err(err))) => Some((Err(std::io::Error::other(err)), (stream, false))),
+            Ok(None) => None,
+            Err(_elapsed) => Some((
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "media download stalled",
+                )),
+                (stream, false),
+            )),
+        }
+    })
 }
 
 fn is_retryable(status: StatusCode) -> bool {
