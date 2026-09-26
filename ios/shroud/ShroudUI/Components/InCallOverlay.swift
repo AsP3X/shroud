@@ -5,10 +5,11 @@ import SwiftUI
 /// Human: A call is voice or video by what the two cameras do right now. Either person turns
 /// theirs on or off with Video at any time. Their picture opens out of their face as a growing
 /// circle once its first frame arrives, and closes back into it; ours sits in the corner while
-/// it is on. The name, the running time and the speaking meter show under the face. On a voice
-/// call they stay there, as on the web. A picture — theirs filling the screen, or ours in the
-/// corner — moves them to the top-leading corner, clear of that picture, and back under the face
-/// when the cameras are off again (`CallStageLayout`).
+/// it is on. The name, the running time and the speaking meter show under the face. They stay
+/// there until the other person's camera is actually showing: our own picture is a small corner
+/// tile and does not cover them. Their picture moves the three together, up and across at once,
+/// into the top-leading corner, and back under the face when their camera turns off
+/// (`CallStageLayout`).
 struct InCallOverlay: View {
     @Environment(CallController.self) private var calls
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -30,10 +31,10 @@ struct InCallOverlay: View {
     /// 12 pt gap. Kept free whether or not our camera is on, so turning it on never resizes the block.
     static let selfViewReserve = selfViewInsets.trailing + selfViewSize.width + 12
 
-    /// The name block leaves the face only while a picture is on screen. A voice call has nothing
-    /// there to clear.
-    static func nameBelongsInCorner(remotePicture: Bool, localPicture: Bool) -> Bool {
-        remotePicture || localPicture
+    /// The name block leaves the face only while their picture is on screen. Our own camera
+    /// does not: it sits in the opposite corner and never covers the name.
+    static func nameBelongsInCorner(remotePicture: Bool) -> Bool {
+        remotePicture
     }
 
     var body: some View {
@@ -55,11 +56,8 @@ struct InCallOverlay: View {
 
     @ViewBuilder
     private func content(for call: CallController.ActiveCall) -> some View {
-        let picture = Self.nameBelongsInCorner(
-            remotePicture: showsRemoteVideo,
-            localPicture: showsLocalVideo(call)
-        )
-        // Ending hides our picture at once. Hold the name where it already is for that last moment.
+        let picture = Self.nameBelongsInCorner(remotePicture: showsRemoteVideo)
+        // Ending can drop their picture at once. Hold the name where it already is for that last moment.
         let videoOn = call.phase == .ending && placedCall == call.id ? inCorner : picture
         let docked = placedCall == call.id ? inCorner : videoOn
         let ending = call.phase == .ending
@@ -94,7 +92,7 @@ struct InCallOverlay: View {
                     face(for: call)
                         // On top: a name too long to clear the face passes behind it.
                         .zIndex(1)
-                    info(for: call, docked: docked)
+                    info(for: call)
                         .animation(Motion.snappy, value: call.phase)
                         .animation(Motion.snappy, value: call.isMuted)
                         .opacity(blockHidden ? 0 : 1)
@@ -146,13 +144,12 @@ struct InCallOverlay: View {
         }
     }
 
-    /// Human: The name, the status line and the speaking meter. Under the face they are centred;
-    /// docked in the corner they line up on the leading edge. The text keeps its size and weight
-    /// in both places, so it reads the same wherever it is and is never rescaled mid-move.
-    /// Agent: One view in both places; `CallStageLayout` moves it and the alignment change slides
-    /// each line, all in the transaction that flips `inCorner`.
-    private func info(for call: CallController.ActiveCall, docked: Bool) -> some View {
-        VStack(alignment: docked ? .leading : .center, spacing: 6) {
+    /// Human: The name, the status line and the speaking meter, centred on each other in both
+    /// places. The whole group travels as one piece: nothing inside it re-aligns on the way, so
+    /// the text is not measured or drawn again while it moves.
+    /// Agent: One view in both places. `CallStageLayout` moves it; alignment stays `.center`.
+    private func info(for call: CallController.ActiveCall) -> some View {
+        VStack(alignment: .center, spacing: 6) {
             Text(call.peerUsername)
                 .font(.system(size: 26, weight: .semibold))
                 .foregroundStyle(.white)
@@ -172,13 +169,13 @@ struct InCallOverlay: View {
             if call.phase == .active, !call.isMuted {
                 SpeakingIndicatorView { await calls.localAudioLevel() }
                     .padding(.top, 6)
-                    .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: docked ? .leading : .center)))
+                    .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .center)))
             }
             if let notice = call.notice, call.phase != .ending {
                 Text(notice)
                     .font(.system(size: 13))
                     .foregroundStyle(.white.opacity(0.8))
-                    .multilineTextAlignment(docked ? .leading : .center)
+                    .multilineTextAlignment(.center)
                     .shadow(color: .black.opacity(0.5), radius: 3, y: 1)
             }
         }
@@ -219,9 +216,10 @@ struct InCallOverlay: View {
         let video: Bool
     }
 
-    /// Human: A voice call keeps the name under the face. A picture moves it into the corner, and
-    /// turning the cameras off brings it back. The first frame of a call is already in the right
-    /// place; later changes travel on one spring. Reduce Motion fades instead of travelling.
+    /// Human: A voice call, and a call where only our camera is on, keeps the name under the face.
+    /// Their picture moves it into the corner, and their camera turning off brings it back. The
+    /// first frame of a call is already in the right place; later changes travel on one spring.
+    /// Reduce Motion fades instead of travelling.
     /// Agent: WRITES placedCall and inCorner. The `.task` id cancels an in-flight fade when the
     /// picture changes again; that fade leaves the text hidden for the next one to finish.
     private func placeName(_ id: UUID, inCorner video: Bool) async {
@@ -236,7 +234,7 @@ struct InCallOverlay: View {
             return
         }
         guard reduceMotion else {
-            withAnimation(Motion.gentle) {
+            withAnimation(Motion.standard) {
                 inCorner = video
                 blockHidden = false
             }
@@ -478,14 +476,13 @@ struct InCallOverlay: View {
 
 /// Places the call screen's face and the name block that belongs to it.
 ///
-/// Human: The face sits in the middle of the space above the controls. On a voice call the name,
-/// the status line and the speaking meter hang under it. While a picture is on they sit in the
-/// top-leading corner, level with our own picture in the other corner and clear of it. On the
-/// way the block slides out
-/// sideways from under the face first and rises up the leading edge after, so it goes round the
-/// face rather than across it; the face is drawn on top, so a long name that cannot clear it
-/// passes behind it. Only positions change per frame: the text keeps one size and one line
-/// throughout, so none of it is laid out or drawn again on the way.
+/// Human: The face sits in the middle of the space above the controls. On a voice call, and
+/// while only our camera is on, the name, the status line and the speaking meter hang under it.
+/// Their picture puts that group in the top-leading corner, level with our own picture and clear
+/// of it. On the way the group travels up and across together, one straight glide; the face stays
+/// in the middle and is drawn on top, so a long name passes behind it. Only positions change per
+/// frame: the text keeps one size and one line throughout, so none of it is laid out or drawn
+/// again on the way.
 /// Agent: Expects two subviews, face then block. `progress` is animatable (0 under the face, 1 in
 /// the corner); the geometry is `frames(stage:face:block:progress:)`, unit-tested in
 /// CallStageLayoutTests, and `placeSubviews` only applies it.
@@ -518,15 +515,15 @@ struct CallStageLayout: Layout {
         cache: inout Void
     ) {
         guard subviews.count == 2 else { return }
-        let block = ProposedViewSize(width: Self.blockWidth(stage: bounds.width), height: nil)
-        let frames = Self.frames(
-            stage: bounds,
-            face: subviews[0].sizeThatFits(.unspecified),
-            block: subviews[1].sizeThatFits(block),
-            progress: progress
-        )
+        let offered = ProposedViewSize(width: Self.blockWidth(stage: bounds.width), height: nil)
+        let face = subviews[0].sizeThatFits(.unspecified)
+        let block = subviews[1].sizeThatFits(offered)
+        let frames = Self.frames(stage: bounds, face: face, block: block, progress: progress)
         subviews[0].place(at: frames.face.origin, proposal: ProposedViewSize(frames.face.size))
-        subviews[1].place(at: frames.block.origin, proposal: block)
+        // The measured size, not the max width offered above. A wider proposal would let the
+        // stack re-align its lines inside a box the geometry does not move, and redraw the text
+        // on the way.
+        subviews[1].place(at: frames.block.origin, proposal: ProposedViewSize(frames.block.size))
     }
 
     /// One width for the block in both places, so a long name never re-wraps on the way: what the
@@ -540,18 +537,15 @@ struct CallStageLayout: Layout {
     static func frames(stage: CGRect, face: CGSize, block: CGSize, progress: CGFloat) -> (face: CGRect, block: CGRect) {
         let under = underFace(stage: stage, face: face, block: block)
         let docked = inCorner(stage: stage, face: face, block: block)
-        // The dock spring can run a little past 0 or 1. The cubic below would turn that into a
-        // much larger jump past the corner, so the ends hold while it settles.
+        // The dock spring can run a little past 0 or 1. Past either end the block would leave
+        // the corner, so the ends hold while it settles.
         let progress = min(1, max(0, progress))
         if progress == 0 { return under }
         if progress == 1 { return docked }
-        // Sideways leads and rising lags: most of the way across is done before most of the way
-        // up, so the block is mostly out of the face's column by the time it passes the face.
-        let across = 1 - pow(1 - progress, 3)
-        let up = pow(progress, 3)
+        // Up and across on the same fraction: one straight glide, not a slide out and a rise after.
         let blockOrigin = CGPoint(
-            x: under.block.minX + (docked.block.minX - under.block.minX) * across,
-            y: under.block.minY + (docked.block.minY - under.block.minY) * up
+            x: under.block.minX + (docked.block.minX - under.block.minX) * progress,
+            y: under.block.minY + (docked.block.minY - under.block.minY) * progress
         )
         let faceOrigin = CGPoint(
             x: under.face.minX + (docked.face.minX - under.face.minX) * progress,
@@ -602,7 +596,7 @@ struct CallStageLayout: Layout {
         CallStageLayout(progress: docked ? 1 : 0) {
             AvatarView(initials: "JC", size: 104, fontSize: 36)
                 .zIndex(1)
-            VStack(alignment: docked ? .leading : .center, spacing: 6) {
+            VStack(alignment: .center, spacing: 6) {
                 Text("Jane Cooper")
                     .font(.system(size: 26, weight: .semibold))
                     .foregroundStyle(.white)
@@ -614,5 +608,5 @@ struct CallStageLayout: Layout {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-    .onTapGesture { withAnimation(Motion.gentle) { docked.toggle() } }
+    .onTapGesture { withAnimation(Motion.standard) { docked.toggle() } }
 }

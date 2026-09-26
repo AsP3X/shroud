@@ -222,10 +222,11 @@ never touched, and a switch takes as long as a camera needs to open.
   frame.
 - **The name stays under the face on a voice call,** on the iPhone and on the web: the name, the
   running time and the speaking meter. Nothing is in their way, so they do not move on a timer.
-  A picture moves them. On the iPhone that is the top-leading corner, level with our own picture
-  and clear of it, for as long as either camera is actually showing; cameras off brings them back
-  under the face. On the way they slide out sideways first and rise after, on one spring; the face
-  stays in the middle and is drawn on top, so a long name passes behind it. On a short stage
+  On the iPhone our own picture is a small corner tile and does not move them either. Their
+  picture moves them to the top-leading corner, level with our own picture and clear of it, for
+  as long as their camera is actually showing; their camera off brings them back under the face.
+  On the way they travel up and across together, on one spring; the face stays in the middle and
+  is drawn on top, so a long name passes behind it. On a short stage
   (landscape) the docked face steps out from under that block, beside it where there is room and
   below it otherwise. Only positions change per frame (`CallStageLayout`). Over their picture a
   shade under the status bar keeps the text at 4.5:1 or better even on a white frame. With Reduce

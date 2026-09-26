@@ -3,9 +3,9 @@ import SwiftUI
 import Testing
 @testable import shroud
 
-/// The call screen's face stays in the middle of the stage. On a voice call the name block hangs
-/// under it. While a picture is showing it sits in the top-leading corner, level with our own
-/// picture and clear of it. On the way it goes out sideways first and up after, round the face.
+/// The call screen's face stays in the middle of the stage. On a voice call, and while only our
+/// camera is on, the name block hangs under it. Their picture puts it in the top-leading corner.
+/// On the way it rises and slides together, one straight glide.
 @MainActor
 struct CallStageLayoutTests {
     /// iPhone 17 Pro in portrait: the safe area above the controls (874 pt less the 62 pt status
@@ -23,11 +23,9 @@ struct CallStageLayoutTests {
         CallStageLayout.frames(stage: stage ?? self.stage, face: face, block: block ?? self.block, progress: progress)
     }
 
-    @Test func aVoiceCallKeepsTheNameUnderTheFace() {
-        #expect(!InCallOverlay.nameBelongsInCorner(remotePicture: false, localPicture: false))
-        #expect(InCallOverlay.nameBelongsInCorner(remotePicture: true, localPicture: false))
-        #expect(InCallOverlay.nameBelongsInCorner(remotePicture: false, localPicture: true))
-        #expect(InCallOverlay.nameBelongsInCorner(remotePicture: true, localPicture: true))
+    @Test func theNameMovesOnlyForTheirCamera() {
+        #expect(!InCallOverlay.nameBelongsInCorner(remotePicture: false))
+        #expect(InCallOverlay.nameBelongsInCorner(remotePicture: true))
     }
 
     @Test func theFaceSitsInTheMiddleAndTheBlockHangsUnderIt() {
@@ -62,21 +60,16 @@ struct CallStageLayoutTests {
         }
     }
 
-    @Test func theBlockGoesOutSidewaysBeforeItRises() {
+    @Test func theBlockRisesAndSlidesTogether() {
         let start = frames(0).block.origin
         let end = frames(1).block.origin
-        for progress: CGFloat in [0.2, 0.4, 0.6] {
+        for progress: CGFloat in [0.2, 0.4, 0.5, 0.6, 0.8] {
             let at = frames(progress).block.origin
             let across = (at.x - start.x) / (end.x - start.x)
             let up = (at.y - start.y) / (end.y - start.y)
-            #expect(across > up)
-            #expect(across > 0 && across < 1)
-            #expect(up > 0 && up < 1)
+            #expect(abs(across - progress) < 0.001)
+            #expect(abs(up - progress) < 0.001)
         }
-        // Half way along, it is nearly all the way across and only an eighth of the way up.
-        let half = frames(0.5).block.origin
-        #expect(abs((half.x - start.x) / (end.x - start.x) - 0.875) < 0.001)
-        #expect(abs((half.y - start.y) / (end.y - start.y) - 0.125) < 0.001)
     }
 
     @Test func aShortStageLiftsTheFaceJustEnoughForTheBlockToFitUnderIt() {
