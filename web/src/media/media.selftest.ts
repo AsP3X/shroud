@@ -1,5 +1,5 @@
 import { isHeif } from "./heic";
-import { clipboardImages, imageFiles } from "./prepareImage";
+import { clipboardImages, displayPixelSize, imageFiles, prepareImage } from "./prepareImage";
 import { clipboardVideos, isVideoFile, videoFiles } from "./prepareVideo";
 import {
   clockLabel,
@@ -43,6 +43,68 @@ const transfer = {
 } as DataTransfer;
 if (clipboardImages(transfer).length !== 0) throw new Error("clipboardImages: empty");
 if (clipboardImages(null).length !== 0) throw new Error("clipboardImages: null");
+
+/** A JPEG header: optional EXIF orientation, then a start-of-frame with the stored size. */
+function jpegHeader(width: number, height: number, orientation?: number): Uint8Array {
+  const parts: number[] = [0xff, 0xd8];
+  if (orientation) {
+    const tiff = [
+      0x49, 0x49, 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x12, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00,
+      orientation, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
+    const body = [0x45, 0x78, 0x69, 0x66, 0x00, 0x00, ...tiff];
+    const length = body.length + 2;
+    parts.push(0xff, 0xe1, length >> 8, length & 0xff, ...body);
+  }
+  parts.push(0xff, 0xc0, 0x00, 0x0b, 0x08, height >> 8, height & 0xff, width >> 8, width & 0xff, 0x01, 0x11, 0x00);
+  return Uint8Array.from(parts);
+}
+
+const stored = displayPixelSize(jpegHeader(32, 16));
+if (!stored || stored.width !== 32 || stored.height !== 16) {
+  throw new Error(`displayPixelSize: stored size, got ${stored?.width}x${stored?.height}`);
+}
+const turned = displayPixelSize(jpegHeader(32, 16, 6));
+if (!turned || turned.width !== 16 || turned.height !== 32) {
+  throw new Error(`displayPixelSize: orientation 6 swaps axes, got ${turned?.width}x${turned?.height}`);
+}
+if (displayPixelSize(new Uint8Array([0, 1, 2, 3])) !== null) throw new Error("displayPixelSize: not an image");
+
+/** Blob whose reported size is not the byte length, so the cap can be tested without a 2 GiB allocation. */
+function sizedBlob(bytes: Uint8Array, size: number, type: string): Blob {
+  const blob = new Blob([bytes as BlobPart], { type });
+  return new Proxy(blob, {
+    get(target, prop, receiver) {
+      if (prop === "size") return size;
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+const sendCap = 2 * 1024 * 1024 * 1024 - 1024 * 1024;
+try {
+  await prepareImage(sizedBlob(jpegHeader(32, 16), sendCap + 1, "image/jpeg"));
+  throw new Error("prepareImage: over the send cap must throw");
+} catch (err) {
+  const message = err instanceof Error ? err.message : String(err);
+  if (message !== "That image is too large to send.") {
+    throw new Error(`prepareImage: send cap message, got ${message}`);
+  }
+}
+
+try {
+  await prepareImage(sizedBlob(jpegHeader(32, 16), 70 * 1024 * 1024, "image/jpeg"));
+  throw new Error("prepareImage: an undecodable header must throw");
+} catch (err) {
+  const message = err instanceof Error ? err.message : String(err);
+  if (message.includes("64") || message === "That image is too large to send.") {
+    throw new Error(`prepareImage: a 70 MB photo must not be refused for its file size, got ${message}`);
+  }
+  if (message !== "This file isn’t an image this browser can read.") {
+    throw new Error(`prepareImage: expected a decode failure, got ${message}`);
+  }
+}
 
 const mp4 = new File([new Uint8Array(8)], "clip.mp4", { type: "video/mp4" });
 const mov = new File([new Uint8Array(8)], "IMG_0001.MOV", { type: "" });
