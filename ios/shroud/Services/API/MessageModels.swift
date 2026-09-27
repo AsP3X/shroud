@@ -81,7 +81,7 @@ enum MessageDeleteScope: String, Equatable, Sendable {
 enum ConversationDeleteScope: String, Equatable, Sendable {
     /// Clears the chat for this account only; the peer keeps everything.
     case me
-    /// Clears it here, unsends our messages on the peer's side, and drops the contact link.
+    /// Clears it here and unsends our messages on the peer's side. The contact stays.
     /// Whether the peer's *own* messages go too depends on their `allowPeerChatDelete`.
     case everyone
 }
@@ -93,7 +93,8 @@ struct DeleteConversationResponse: Decodable, Equatable, Sendable {
     let clearedForPeer: Bool
     /// `everyone` scope: how many of our messages became "Message deleted" for the peer.
     let tombstoned: UInt64
-    /// `everyone` scope: the contact link existed and was dropped in both directions.
+    /// Always false. Deleting a chat does not remove the contact. Kept so older responses
+    /// that still send the field decode.
     let contactRemoved: Bool
 
     enum CodingKeys: String, CodingKey {

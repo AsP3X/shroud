@@ -2,9 +2,9 @@
 //!
 //! Human: "Delete chat" is two different promises depending on scope. `me` only moves a
 //! per-user watermark so the chat disappears here; `everyone` additionally asks the peer's
-//! account whether it consented to being cleared, tombstones the requester's own messages
-//! when it did not, and always drops the contact link so the next chat starts from scratch.
-//! Agent: DB conversations/conversation_clears/messages/contacts/contact_requests;
+//! account whether it consented to being cleared, and tombstones the requester's own messages
+//! when it did not. Either scope leaves the contact in place.
+//! Agent: DB conversations/conversation_clears/messages;
 //! READS users.allow_peer_chat_delete; PUBLISHES `conversation.deleted` over realtime.
 
 use std::collections::BTreeMap;
@@ -95,7 +95,8 @@ pub struct DeleteConversationResponse {
     pub cleared_for_peer: bool,
     /// `everyone` scope: requester messages tombstoned for a peer that withheld consent.
     pub tombstoned: u64,
-    /// `everyone` scope: a contact link existed and was dropped in both directions.
+    /// Always false. Deleting a chat does not remove the contact; the field stays so
+    /// existing clients keep decoding the response.
     pub contact_removed: bool,
 }
 
@@ -474,10 +475,11 @@ pub async fn mark_chat_read(
 /// thread — a chat may need deleting before it has any server rows of its own.
 ///
 /// - `me`: hides every current message from the caller only.
-/// - `everyone`: same for the caller, plus (a) the peer's copy is cleared when they set
-///   `allow_peer_chat_delete`, otherwise the caller's own messages become tombstones the
-///   peer still sees while the peer's messages survive for them, and (b) the contact link
-///   is dropped both ways regardless, so messaging again needs a fresh contact request.
+/// - `everyone`: same for the caller, plus the peer's copy is cleared when they set
+///   `allow_peer_chat_delete`. Otherwise the caller's own messages become tombstones the
+///   peer still sees, while the peer's messages survive for them.
+///
+/// Neither scope removes the contact. Blocking is what ends the connection.
 pub async fn delete_conversation(
     State(state): State<AppState>,
     auth: AuthContext,
@@ -549,11 +551,9 @@ pub async fn delete_conversation(
         media_ids.extend(purge_fully_cleared(&mut tx, conversation_id).await?);
     }
 
-    let contact_removed = if for_everyone {
-        drop_connection(&mut tx, auth.user_id, peer_user_id, now).await?
-    } else {
-        false
-    };
+    // The contact stays. `contact_removed` remains on the response for clients that
+    // already decode it, and is false because this route does not touch `contacts`.
+    let contact_removed = false;
 
     tx.commit()
         .await
@@ -992,50 +992,6 @@ async fn purge_fully_cleared(
     .map_err(|err| AppError::Internal(format!("purge cleared messages failed: {err}")))?;
 
     Ok(media_ids)
-}
-
-/// Drops the contact edge both ways and cancels anything pending, so the pair has to
-/// reconnect before a new chat can exist. Blocking stays a separate, explicit action.
-async fn drop_connection(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    user_id: Uuid,
-    peer_user_id: Uuid,
-    now: DateTime<Utc>,
-) -> Result<bool, AppError> {
-    let removed = sqlx::query(
-        r#"
-        DELETE FROM contacts
-        WHERE (user_id = $1 AND contact_user_id = $2)
-           OR (user_id = $2 AND contact_user_id = $1)
-        "#,
-    )
-    .bind(user_id)
-    .bind(peer_user_id)
-    .execute(&mut **tx)
-    .await
-    .map_err(|err| AppError::Internal(format!("delete contacts on chat delete failed: {err}")))?
-    .rows_affected()
-        > 0;
-
-    sqlx::query(
-        r#"
-        UPDATE contact_requests
-        SET status = 'cancelled', responded_at = $1
-        WHERE status = 'pending'
-          AND (
-            (from_user_id = $2 AND to_user_id = $3)
-            OR (from_user_id = $3 AND to_user_id = $2)
-          )
-        "#,
-    )
-    .bind(now)
-    .bind(user_id)
-    .bind(peer_user_id)
-    .execute(&mut **tx)
-    .await
-    .map_err(|err| AppError::Internal(format!("cancel requests on chat delete failed: {err}")))?;
-
-    Ok(removed)
 }
 
 #[cfg(test)]

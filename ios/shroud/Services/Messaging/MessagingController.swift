@@ -1939,10 +1939,9 @@ final class MessagingController {
 
     /// Deletes an entire chat here and on the server.
     ///
-    /// Human: `.everyone` always drops the contact link, whatever the peer allowed — that is
-    /// what makes the next conversation a genuinely new one instead of a continuation.
-    /// Saved Messages have no second party, so they only accept `.me`.
-    /// Agent: CALLS MessagesService.deleteConversation; WRITES threads/conversations/contacts;
+    /// Human: The contact stays, whichever scope is used. Saved Messages have no second
+    /// party, so they only accept `.me`.
+    /// Agent: CALLS MessagesService.deleteConversation; WRITES threads/conversations;
     /// purges the sealed plaintext + media caches of every message it drops.
     func deleteConversation(
         peerUserID: UUID,
@@ -1978,17 +1977,9 @@ final class MessagingController {
         }
 
         clearChatLocally(peerUserID: peerUserID)
-        if scope == .everyone {
-            // The server dropped the edge both ways; mirror it so Contacts doesn't flash
-            // the stale row until the refresh lands.
-            contacts.removeAll { $0.userId == peerUserID }
-        }
         lastError = nil
 
         await refreshConversations(force: true)
-        if scope == .everyone {
-            await refreshContacts(force: true)
-        }
 
         switch scope {
         case .me:
@@ -2076,9 +2067,8 @@ final class MessagingController {
 
     /// Blocks a user. Returns a user-facing error, or nil on success.
     ///
-    /// Human: Deleting a chat for both only unlinks the accounts — either side can send a new
-    /// contact request afterwards. Blocking is what stops that, so it stays a separate,
-    /// explicit action rather than a side effect of deleting.
+    /// Human: Deleting a chat leaves the contact in place, so either of you can still message.
+    /// Blocking is separate: it removes the contact and stops new requests.
     /// Agent: CALLS BlocksService.block (server also drops contacts + cancels requests);
     /// WRITES contacts/blockedUsers; REFRESHES contacts and chats.
     func blockUser(_ userID: UUID, username: String) async -> String? {
@@ -4092,8 +4082,8 @@ final class MessagingController {
     /// Human: Three cases. Our other device deleted it → drop it here too. The peer deleted
     /// it and we had consented → drop it here too. The peer deleted it and we had not →
     /// keep our own messages and reload, so their bubbles turn into "Message deleted".
-    /// Agent: READS json(user_id, peer_user_id, cleared_for_peer, scope); WRITES threads via
-    /// clearChatLocally; CALLS loadThread / refreshContacts / refreshConversations.
+    /// Agent: READS json(user_id, peer_user_id, cleared_for_peer); WRITES threads via
+    /// clearChatLocally; CALLS loadThread / refreshConversations. The contact is left as it is.
     private func handleConversationDeletedEvent(_ json: [String: Any]) {
         guard let me = sessionController?.userID,
               let initiatorString = json["user_id"] as? String,
@@ -4108,7 +4098,6 @@ final class MessagingController {
         // Saved Messages arrive as a self-conversation; they live under the local sentinel.
         let threadPeer = peer == me ? Self.notesPeerID : peer
         let clearedForPeer = json["cleared_for_peer"] as? Bool ?? false
-        let forEveryone = (json["scope"] as? String) == "everyone"
 
         if initiatedHere || clearedForPeer {
             clearChatLocally(peerUserID: threadPeer)
@@ -4120,7 +4109,6 @@ final class MessagingController {
 
         Task {
             await refreshConversations(force: true)
-            if forEveryone { await refreshContacts(force: true) }
         }
     }
 

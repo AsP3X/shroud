@@ -2,9 +2,8 @@ import Foundation
 
 /// Block list management.
 ///
-/// Human: Blocking is the stronger sibling of "delete chat for both" — that only removes the
-/// contact link (either side can send a new request), while a block also stops the peer from
-/// reaching this account at all.
+/// Human: Blocking removes the contact and stops this person from messaging or sending a
+/// contact request. Deleting a chat leaves the contact in place.
 /// Agent: HTTP GET/POST `/blocks`, DELETE `/blocks/{user_id}`; the server drops contact rows
 /// and cancels pending requests as part of the block.
 struct BlocksService: Sendable {

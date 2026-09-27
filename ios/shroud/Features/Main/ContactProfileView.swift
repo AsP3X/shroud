@@ -361,8 +361,7 @@ struct ContactProfileView: View {
         }
     }
 
-    /// Blocking is the stronger form of "delete chat for both": that only unlinks the
-    /// accounts, while this also stops new contact requests and messages from this user.
+    /// Blocking removes the contact and stops new requests. Deleting the chat does neither.
     private var blockCard: some View {
         Button {
             showBlockConfirm = true
@@ -409,8 +408,8 @@ struct ContactProfileView: View {
     /// account-level action on this person sits in one place.
     ///
     /// Human: The dialog spells out the asymmetric outcome up front — deleting for both
-    /// always disconnects the two accounts, but the peer's own messages only disappear if
-    /// they allowed it. On success the host pops the thread; there is nothing left to show.
+    /// unsends your messages, and the peer's own messages only disappear if they allowed
+    /// it. The contact stays. On success the host pops the thread.
     /// Agent: CALLS messaging.deleteConversation; on success CALLS `onChatDeleted` (or
     /// dismisses); a failure stays here with a toast.
     private var deleteChatCard: some View {
@@ -450,9 +449,8 @@ struct ContactProfileView: View {
         } message: {
             Text(
                 """
-                Deleting for both unsends your messages in \(peerUsername)'s chat and removes them \
-                as a contact — you'd both have to add each other again. Their own messages stay \
-                unless they allow chats to be cleared for them.
+                Deleting for both unsends your messages in \(peerUsername)'s chat. Their own \
+                messages stay unless they allow chats to be cleared for them. They stay in your contacts.
                 """
             )
         }

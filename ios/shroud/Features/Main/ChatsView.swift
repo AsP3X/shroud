@@ -295,16 +295,15 @@ struct ChatsView: View {
         return pending.isNotes ? "Delete Saved Messages?" : "Delete chat with \(pending.username)?"
     }
 
-    /// Spells out the asymmetric outcome up front: deleting for both always disconnects the
-    /// two accounts, but the peer's own messages only disappear if they allowed it.
+    /// Spells out the asymmetric outcome up front: deleting for both unsends your messages,
+    /// and the peer's own messages only disappear if they allowed it. The contact stays.
     private func chatDeleteExplanation(_ pending: PendingChatDelete) -> String {
         if pending.isNotes {
             return "Removes every saved message from this device and your account."
         }
         return """
-        Deleting for both unsends your messages in \(pending.username)'s chat and removes them \
-        as a contact — you'd both have to add each other again. Their own messages stay unless \
-        they allow chats to be cleared for them.
+        Deleting for both unsends your messages in \(pending.username)'s chat. Their own \
+        messages stay unless they allow chats to be cleared for them. They stay in your contacts.
         """
     }
 

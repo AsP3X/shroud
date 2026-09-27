@@ -240,7 +240,7 @@ struct PrivacySecurityView: View {
                     .font(.system(size: 16))
                     .foregroundStyle(Theme.textPrimary)
                 Text(
-                    "When a contact deletes a chat for both of you, your copy is deleted too. Leave this off to keep your own messages — theirs are replaced with “Message deleted” either way, and deleting for both always removes the contact."
+                    "When a contact deletes a chat for both of you, your copy is deleted too. Leave this off to keep your own messages — theirs are replaced with “Message deleted” either way. You stay contacts."
                 )
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.textSecondary)

@@ -617,7 +617,7 @@ async fn deleting_the_chat_for_everyone_while_reacting_never_errors() {
     };
     for task in tasks {
         let (status, body) = task.await.expect("task");
-        // Before the delete: fine. After it: the message is gone or the contact link is.
+        // Before the delete: fine. After it: the message is gone.
         assert!(
             matches!(
                 status,

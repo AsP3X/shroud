@@ -151,6 +151,25 @@ async fn history(app: &axum::Router, token: &str, peer: &str) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+async fn still_contacts(app: &axum::Router, token: &str, peer: &str) -> bool {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/contacts")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+    json_body(response).await["contacts"]
+        .as_array()
+        .map(|rows| rows.iter().any(|row| row["user_id"] == json!(peer)))
+        .unwrap_or(false)
+}
+
 async fn conversations(app: &axum::Router, token: &str) -> Vec<Value> {
     let response = app
         .clone()
@@ -317,7 +336,9 @@ async fn delete_chat_for_everyone_clears_consenting_peer() {
     assert_eq!(body["cleared_for_peer"], true);
     // Consent means the copy goes away outright — no tombstones needed.
     assert_eq!(body["tombstoned"], 0);
-    assert_eq!(body["contact_removed"], true);
+    assert_eq!(body["contact_removed"], false);
+    assert!(still_contacts(&app, &token_a, &user_b).await);
+    assert!(still_contacts(&app, &token_b, &user_a).await);
 
     assert!(history(&app, &token_a, &user_b).await.is_empty());
     assert!(history(&app, &token_b, &user_a).await.is_empty());
@@ -354,7 +375,9 @@ async fn delete_chat_for_everyone_tombstones_when_peer_withholds_consent() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["cleared_for_peer"], false);
     assert_eq!(body["tombstoned"], 2);
-    assert_eq!(body["contact_removed"], true);
+    assert_eq!(body["contact_removed"], false);
+    assert!(still_contacts(&app, &token_a, &user_b).await);
+    assert!(still_contacts(&app, &token_b, &user_a).await);
 
     // Initiator's whole chat is gone regardless of what the peer allowed.
     assert!(history(&app, &token_a, &user_b).await.is_empty());
@@ -383,11 +406,9 @@ async fn delete_chat_for_everyone_tombstones_when_peer_withholds_consent() {
 }
 
 #[tokio::test]
-async fn delete_chat_for_everyone_breaks_the_connection_until_re_added() {
+async fn delete_chat_for_everyone_keeps_the_contact() {
     let Some(app) = test_app().await else {
-        eprintln!(
-            "skipping delete_chat_for_everyone_breaks_the_connection_until_re_added: no DATABASE_URL"
-        );
+        eprintln!("skipping delete_chat_for_everyone_keeps_the_contact: no DATABASE_URL");
         return;
     };
     let (token_a, user_a) = register(&app).await;
@@ -398,33 +419,28 @@ async fn delete_chat_for_everyone_breaks_the_connection_until_re_added() {
         StatusCode::CREATED
     );
 
-    let (status, _) = delete_chat(&app, &token_a, &user_b, "everyone").await;
+    let (status, body) = delete_chat(&app, &token_a, &user_b, "everyone").await;
     assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["contact_removed"], false);
+    assert!(still_contacts(&app, &token_a, &user_b).await);
+    assert!(still_contacts(&app, &token_b, &user_a).await);
 
-    // Connection is gone in both directions.
-    assert_eq!(
-        send_text(&app, &token_a, &user_b, "nope").await,
-        StatusCode::FORBIDDEN
-    );
-    assert_eq!(
-        send_text(&app, &token_b, &user_a, "nope").await,
-        StatusCode::FORBIDDEN
-    );
-
-    // Re-adding starts the chat over for the initiator; the peer keeps what they kept.
-    become_contacts(&app, &token_a, &user_a, &token_b, &user_b).await;
+    // The chat is gone for the person who deleted it, and they can still message.
     assert_eq!(
         send_text(&app, &token_a, &user_b, "fresh").await,
         StatusCode::CREATED
     );
-
     let restarted = history(&app, &token_a, &user_b).await;
     assert_eq!(restarted.len(), 1);
     assert_eq!(restarted[0]["ciphertext"], json!(BASE64.encode(b"fresh")));
     assert_eq!(conversations(&app, &token_a).await.len(), 1);
 
-    // Peer sees the tombstone of the old message plus the new one.
-    assert_eq!(history(&app, &token_b, &user_a).await.len(), 2);
+    // Peer still has the tombstone, the new message, and can reply.
+    assert_eq!(
+        send_text(&app, &token_b, &user_a, "still-here").await,
+        StatusCode::CREATED
+    );
+    assert_eq!(history(&app, &token_b, &user_a).await.len(), 3);
 }
 
 #[tokio::test]

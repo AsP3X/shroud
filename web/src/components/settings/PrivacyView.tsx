@@ -131,7 +131,7 @@ export function PrivacyView({
           disabled={peerDelete === null || savingPeerDelete}
           onChange={(next) => void togglePeerDelete(next)}
           label="Let contacts clear chats for me"
-          description="When a contact deletes a chat for both of you, your copy is deleted too. Leave this off to keep your own messages — theirs are replaced with “Message deleted” either way, and deleting for both always removes the contact."
+          description="When a contact deletes a chat for both of you, your copy is deleted too. Leave this off to keep your own messages — theirs are replaced with “Message deleted” either way. You stay contacts."
         />
       </SettingsGroup>
 
