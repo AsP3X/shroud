@@ -1,5 +1,5 @@
 {
-  "version": "2.18",
+  "version": "2.19",
   "children": [
     {
       "type": "frame",
@@ -7051,7 +7051,7 @@
       "type": "frame",
       "id": "eUcVf",
       "x": 6120,
-      "y": 4610,
+      "y": 4803,
       "name": "Validate — Pen vs implementation",
       "width": 1040,
       "fill": "$bg",
