@@ -120,9 +120,7 @@ struct ImageMessageBubble: View {
 
                 ZStack {
                     Group {
-                        if message.deleted {
-                            deletedPlaceholder
-                        } else if let ui = displayImage {
+                        if let ui = displayImage {
                             Image(uiImage: ui)
                                 .resizable()
                                 .scaledToFill()
@@ -308,16 +306,6 @@ struct ImageMessageBubble: View {
                 .foregroundStyle(isMine ? Color.white.opacity(0.7) : Theme.textSecondary)
         }
         .frame(width: displaySize.width, height: displaySize.height)
-    }
-
-    private var deletedPlaceholder: some View {
-        ZStack {
-            Theme.backgroundGrouped
-            Text("Photo deleted")
-                .font(.system(size: 14))
-                .foregroundStyle(Theme.textSecondary)
-        }
-        .frame(width: displaySize.width, height: 120)
     }
 
     /// Caption and/or reaction chips under the media. With chips the time leaves the caption's

@@ -887,7 +887,7 @@ struct MessageMenuHeroContent: View {
     var reactions: [ReactionChipContent] = []
 
     var body: some View {
-        switch message.kind {
+        switch message.presentedKind {
         case .image:
             ImageMessageBubble(
                 message: message,

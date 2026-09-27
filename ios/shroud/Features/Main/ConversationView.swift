@@ -154,6 +154,18 @@ struct ConversationView: View {
         return "…"
     }
 
+    /// True when this id is still in the thread as a delete-for-everyone tombstone.
+    private func isTombstone(_ id: UUID) -> Bool {
+        messages.contains { $0.id == id && $0.deleted }
+    }
+
+    /// The open photo or clip was deleted for everyone, so its viewer should leave with it.
+    private var deletedOpenMedia: Bool {
+        if let id = viewingMedia?.id, isTombstone(id) { return true }
+        if let id = viewingVideo?.id, isTombstone(id) { return true }
+        return false
+    }
+
     /// The edge swipe pops the whole chat, so it waits while something else owns the screen: the
     /// message menu, a voice take, and the in-screen overlays (viewer, editors, player), whose
     /// own drags start at the left edge too.
@@ -217,6 +229,13 @@ struct ConversationView: View {
             // Applied last so the list *and* the long-press menu hero size bubbles identically —
             // a mismatch here shows up as the bubble re-wrapping the moment the menu opens.
             .environment(\.chatRowWidth, max(0, threadWidth - Self.threadHorizontalInset * 2))
+            .onChange(of: deletedOpenMedia) { _, gone in
+                guard gone else { return }
+                withAnimation(.easeOut(duration: 0.2)) {
+                    viewingMedia = nil
+                    viewingVideo = nil
+                }
+            }
     }
 
     private var deleteDialogBinding: Binding<Bool> {
@@ -409,7 +428,9 @@ struct ConversationView: View {
 
     @ViewBuilder
     private var mediaViewerLayer: some View {
-        if let viewingMedia {
+        // Hide in the same turn the photo becomes a tombstone. Waiting for `onChange`
+        // lets the pager fall through to the next photo for a frame.
+        if let viewingMedia, !isTombstone(viewingMedia.id) {
             MediaImageViewerOverlay(
                 items: mediaViewerItems,
                 initialID: viewingMedia.id,
@@ -521,7 +542,7 @@ struct ConversationView: View {
 
     @ViewBuilder
     private var videoPlayerLayer: some View {
-        if let viewingVideo {
+        if let viewingVideo, !isTombstone(viewingVideo.id) {
             VideoPlayerOverlay(
                 data: viewingVideo.data,
                 title: viewingVideo.title,
@@ -800,14 +821,14 @@ struct ConversationView: View {
                                 // UIKit long-press (0.25s). SwiftUI long-press in ScrollView is unreliable.
                                 .messageContextLongPress(
                                     minimumDuration: 0.25,
-                                    onTap: (message.kind == .image || message.kind == .video)
+                                    onTap: (message.presentedKind == .image || message.presentedKind == .video)
                                         ? {
                                             handleMediaTap(message)
                                         }
                                         : nil,
                                     // Quick reaction on text only: other bubbles have controls
                                     // of their own that would take both taps too.
-                                    onDoubleTap: message.kind == .text && messaging.canReact(to: message)
+                                    onDoubleTap: message.presentedKind == .text && messaging.canReact(to: message)
                                         ? { point in
                                             quickReact(message, at: point)
                                         }
@@ -1352,7 +1373,7 @@ struct ConversationView: View {
         let onReactionTap: ((String) -> Void)? = messaging.canReact(to: message)
             ? { emoji in react(emoji, to: message) }
             : nil
-        switch message.kind {
+        switch message.presentedKind {
         case .image:
             ImageMessageBubble(
                 message: message,
@@ -2145,6 +2166,7 @@ struct ConversationView: View {
 
     /// Tap on media: download if needed, otherwise open.
     private func handleMediaTap(_ message: MessagingController.ChatMessage) {
+        guard !message.deleted else { return }
         if message.needsMediaDownload {
             downloadMedia(message)
             return

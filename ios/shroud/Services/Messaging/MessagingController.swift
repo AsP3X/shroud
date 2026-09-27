@@ -1897,6 +1897,8 @@ final class MessagingController {
         DecodedImageCache.remove(ids: messageIDs)
         LinkPreviewImageCache.remove(ids: messageIDs)
         for id in messageIDs {
+            // A voice note that was playing has no player left once its bubble is a tombstone.
+            VoicePlaybackCoordinator.shared.stopIfActive(id)
             mediaHydrateTasks[id]?.cancel()
             mediaHydrateTasks[id] = nil
             endTransfer(id)
@@ -2933,10 +2935,15 @@ final class MessagingController {
             // Decrypt + poster are seconds of CPU on a 20 MB clip — the ring keeps spinning.
             advanceTransfer(message.id, to: .finishing)
             let video = try MediaCrypto.openFile(sealed: sealedFile, keyData: keyData)
+            guard stillHoldsMedia(message.id, peerID: message.peerUserID) else { return }
             local.saveSealedMedia(messageID: message.id, data: video)
 
             // Poster frame for the bubble (image path uses jpeg bytes; video needs a still).
             let poster = await VideoMedia.thumbnailJPEG(from: video)
+            guard stillHoldsMedia(message.id, peerID: message.peerUserID) else {
+                local.removeCaches(messageIDs: [message.id])
+                return
+            }
 
             updateMessageVideo(
                 messageID: message.id,
@@ -2972,7 +2979,8 @@ final class MessagingController {
         }
 
         guard var thread = threads[resolvedPeer],
-              let idx = thread.firstIndex(where: { $0.id == messageID })
+              let idx = thread.firstIndex(where: { $0.id == messageID }),
+              !thread[idx].deleted
         else { return }
 
         var updated = thread[idx]
@@ -3705,6 +3713,8 @@ final class MessagingController {
             else { return }
             let sealedFile = try await mediaService.downloadContent(mediaID: mediaID, token: token)
             let audio = try MediaCrypto.openFile(sealed: sealedFile, keyData: keyData)
+            // Deleted while the file was downloading: do not write it back onto the tombstone.
+            guard stillHoldsMedia(message.id, peerID: message.peerUserID) else { return }
             local.saveSealedMedia(messageID: message.id, data: audio)
             updateMessageVoice(
                 messageID: message.id,
@@ -3726,7 +3736,8 @@ final class MessagingController {
         transcript: String? = nil
     ) {
         guard var thread = threads[peerID],
-              let idx = thread.firstIndex(where: { $0.id == messageID })
+              let idx = thread.firstIndex(where: { $0.id == messageID }),
+              !thread[idx].deleted
         else { return }
         thread[idx].voiceData = data
         if let durationMs { thread[idx].voiceDurationMs = durationMs }
@@ -3809,6 +3820,7 @@ final class MessagingController {
             try Task.checkCancellation()
             advanceTransfer(message.id, to: .finishing)
             let jpeg = try MediaCrypto.openFile(sealed: sealedFile, keyData: keyData)
+            guard stillHoldsMedia(message.id, peerID: message.peerUserID) else { return }
             local.saveSealedMedia(messageID: message.id, data: jpeg)
             updateMessageImage(messageID: message.id, peerID: message.peerUserID, data: jpeg)
         } catch {
@@ -3858,6 +3870,7 @@ final class MessagingController {
             let sealedFile = try await mediaService.downloadContent(mediaID: mediaID, token: token)
             try Task.checkCancellation()
             let jpeg = try MediaCrypto.openFile(sealed: sealedFile, keyData: keyData)
+            guard stillHoldsMedia(message.id, peerID: message.peerUserID) else { return }
             local.saveSealedMedia(messageID: message.id, data: jpeg)
             updateMessageImage(messageID: message.id, peerID: message.peerUserID, data: jpeg)
         } catch {
@@ -3944,10 +3957,21 @@ final class MessagingController {
 
     private func updateMessageImage(messageID: UUID, peerID: UUID, data: Data) {
         guard var thread = threads[peerID],
-              let idx = thread.firstIndex(where: { $0.id == messageID })
+              let idx = thread.firstIndex(where: { $0.id == messageID }),
+              !thread[idx].deleted
         else { return }
         thread[idx].imageData = data
         threads[peerID] = thread
+    }
+
+    /// False once delete-for-everyone has replaced the message. A download still in flight
+    /// must not save the bytes or attach them to the tombstone.
+    private func stillHoldsMedia(_ id: UUID, peerID: UUID) -> Bool {
+        let resolved = threads[peerID]?.contains(where: { $0.id == id }) == true
+            ? peerID
+            : (self.peerID(forMessage: id) ?? peerID)
+        guard let message = threads[resolved]?.first(where: { $0.id == id }) else { return false }
+        return !message.deleted
     }
 
     func preview(for conversation: ConversationItemDTO) -> String {
@@ -5760,4 +5784,10 @@ private extension ISO8601DateFormatter {
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return f
     }()
+}
+
+extension MessagingController.ChatMessage {
+    /// The bubble the thread draws. A deleted message is the text tombstone, even when
+    /// `kind` still records that it was a photo, video, or voice note.
+    var presentedKind: MessagingController.ChatMessageKind { deleted ? .text : kind }
 }

@@ -230,9 +230,7 @@ struct VideoMessageBubble: View {
     private var posterStack: some View {
         ZStack {
             Group {
-                if message.deleted {
-                    deletedPlaceholder
-                } else if let ui = displayedPoster {
+                if let ui = displayedPoster {
                     Image(uiImage: ui)
                         .resizable()
                         .scaledToFill()
@@ -436,16 +434,6 @@ struct VideoMessageBubble: View {
         }
         .frame(width: displaySize.width, height: displaySize.height)
         .shimmering(transfer != nil)
-    }
-
-    private var deletedPlaceholder: some View {
-        ZStack {
-            Theme.backgroundGrouped
-            Text("Video deleted")
-                .font(.system(size: 14))
-                .foregroundStyle(Theme.textSecondary)
-        }
-        .frame(width: displaySize.width, height: 120)
     }
 
     // MARK: - Caption

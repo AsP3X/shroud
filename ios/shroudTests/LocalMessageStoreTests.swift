@@ -502,6 +502,25 @@ final class ThreadMessageMergeTests: XCTestCase {
         XCTAssertEqual(merged.kind, .image)
     }
 
+    /// A deleted photo, video, or voice note draws the same text tombstone as a deleted sentence.
+    func testDeletedMediaPresentsAsText() {
+        for kind in [
+            MessagingController.ChatMessageKind.text,
+            .image, .video, .voice, .todo,
+        ] {
+            var message = chatMessage(text: "x")
+            message.kind = kind
+            XCTAssertEqual(message.presentedKind, kind, "\(kind)")
+            let gone = ThreadMessageMerge.tombstone(of: message)
+            XCTAssertEqual(gone.presentedKind, .text, "\(kind)")
+        }
+        // A history page cannot tell a deleted voice note from a deleted photo. It still
+        // draws as text; the stored kind stays image.
+        let unseen = serverTombstone(of: chatMessage(text: "x"), isMedia: true)
+        XCTAssertEqual(unseen.kind, .image)
+        XCTAssertEqual(unseen.presentedKind, .text)
+    }
+
     func testTombstoneKinds() {
         for (kind, expected) in [
             (MessagingController.ChatMessageKind.text, MessagingController.ChatMessageKind.text),

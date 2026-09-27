@@ -21,8 +21,8 @@ enum ThreadMessageMerge {
     ) -> MessagingController.ChatMessage {
         if decoded.deleted {
             // Deleted for everyone. If this device missed the `message.deleted` event, the old copy
-            // is still here, and nothing it said may carry over. It only knows the kind of bubble
-            // it was, which a history page can't tell (the server keeps no more than "media").
+            // is still here, and nothing it said may carry over. The kind is kept when this device
+            // still has the old copy; a history page only knows "media". The row draws text either way.
             guard let prior else { return tombstone(of: decoded) }
             var replacement = tombstone(of: prior)
             if replacement.createdAtWire == nil { replacement.createdAtWire = decoded.createdAtWire }
@@ -111,8 +111,8 @@ enum ThreadMessageMerge {
         return result
     }
 
-    /// What a message deleted for everyone leaves in its thread: who sent it, when, and the kind
-    /// of bubble it was. Its text, media, transcript, quote and link preview are all gone.
+    /// What a message deleted for everyone leaves: who sent it, when, and which kind it was.
+    /// Nothing it said remains. The row draws it as a text tombstone (`presentedKind`).
     static func tombstone(
         of message: MessagingController.ChatMessage
     ) -> MessagingController.ChatMessage {

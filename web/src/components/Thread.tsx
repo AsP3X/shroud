@@ -34,6 +34,7 @@ import {
 import type { CallModality } from "../api/client";
 import { clockTime, dayLabel, fullTimestamp, sameDay, MINUTE } from "../format";
 import { isUnsent, type ChatMessage } from "../messaging";
+import { rowBubble } from "../rowBubble";
 import { ReactionPicker, ReactionStrip } from "./Reactions";
 
 /** A message that reached the server and still exists can carry reactions. */
@@ -200,9 +201,10 @@ function MessageRow({
     },
   });
 
-  const voice = message.kind === "voice" && !message.deleted;
-  const photo = isPhoto(message);
-  const video = isVideo(message);
+  const face = rowBubble(message, Boolean(peekImage(message.id)));
+  const voice = face === "voice";
+  const photo = face === "photo";
+  const video = face === "video";
   const reacted = !message.deleted && (message.reactions ?? []).some((r) => r.emojis.length > 0);
   /* What the message already wore when its row appeared (opening a chat isn't news); chips
      added after that pop in. */
@@ -490,12 +492,7 @@ function primaryLink(message: ChatMessage): string | null {
 
 /** A photo we can draw: sealed with a key, or one this tab is sending right now. */
 function isPhoto(message: ChatMessage): boolean {
-  if (message.kind !== "image" || message.deleted) return false;
-  return Boolean(message.mediaKey) || Boolean(peekImage(message.id));
-}
-
-function isVideo(message: ChatMessage): boolean {
-  return message.kind === "video" && !message.deleted;
+  return rowBubble(message, Boolean(peekImage(message.id))) === "photo";
 }
 
 function hasFiles(event: DragEvent): boolean {
@@ -1133,6 +1130,12 @@ export function Thread({
     if (replyTo && finePointer()) field.current?.focus();
   }, [replyTo]);
 
+  /* Delete-for-everyone keeps the row. Drop the full-screen photo or clip with it. */
+  useEffect(() => {
+    if (viewing && messages.some((m) => m.id === viewing && m.deleted)) setViewing(null);
+    if (watching && messages.some((m) => m.id === watching && m.deleted)) setWatching(null);
+  }, [messages, viewing, watching]);
+
   return (
     <section
       className="thread"
@@ -1510,7 +1513,7 @@ export function Thread({
           />
         ) : null}
 
-        {viewing ? (
+        {viewing && !messages.some((m) => m.id === viewing && m.deleted) ? (
           <ImageViewer
             photos={photos}
             startId={viewing}
@@ -1520,7 +1523,7 @@ export function Thread({
           />
         ) : null}
 
-        {watching && messages.some((m) => m.id === watching) ? (
+        {watching && messages.some((m) => m.id === watching && !m.deleted) ? (
           <VideoViewer
             message={messages.find((m) => m.id === watching)!}
             peerName={peer.username}
