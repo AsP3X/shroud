@@ -1,4 +1,5 @@
 import type { Session } from "./api/client";
+import { forgetPeerKeyCache } from "./crypto/peerIdentity";
 import { closeVault, hasVault, isVaultOpen, vaultGet, vaultSet } from "./crypto/vault";
 import { storageSealed } from "./storageSeal";
 
@@ -168,6 +169,7 @@ function forgetLiveToken(): void {
  */
 export function lockNow(): void {
   if (storageSealed()) return;
+  forgetPeerKeyCache();
   closeVault();
   forgetLiveToken();
   setLocked(true);

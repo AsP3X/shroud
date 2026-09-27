@@ -15,6 +15,39 @@ nonisolated enum CallSdp {
         "maxaveragebitrate=32000",
     ]
 
+    /// ICE addresses leave the description. They travel later, under the per-call key.
+    static func withoutCandidates(_ sdp: String) -> String {
+        let eol = sdp.contains("\r\n") ? "\r\n" : "\n"
+        return sdp
+            .components(separatedBy: eol)
+            .filter { !$0.lowercased().hasPrefix("a=candidate:") }
+            .joined(separator: eol)
+    }
+
+    /// The SHA-256 DTLS fingerprint, lowercase, or nil when the description has none.
+    static func fingerprint(_ sdp: String) -> String? {
+        let prefix = "a=fingerprint:sha-256"
+        for line in splitLines(sdp) {
+            let text = line.trimmingCharacters(in: .whitespaces)
+            guard text.lowercased().hasPrefix(prefix) else { continue }
+            let value = text.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces)
+            guard !value.isEmpty else { continue }
+            return value.lowercased()
+        }
+        return nil
+    }
+
+    /// The certificate fingerprint and the sealed one name the same certificate.
+    static func matches(_ sdpPrint: String, _ certPrint: String) -> Bool {
+        let left = normalize(sdpPrint)
+        let right = normalize(certPrint)
+        return !left.isEmpty && left == right
+    }
+
+    private static func normalize(_ value: String) -> String {
+        value.filter { !$0.isWhitespace && $0 != ":" }.lowercased()
+    }
+
     static func withVoiceResilience(_ sdp: String) -> String {
         let eol = sdp.contains("\r\n") ? "\r\n" : "\n"
         var lines = splitLines(sdp)

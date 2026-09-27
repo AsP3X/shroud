@@ -70,6 +70,41 @@ struct CallCryptoTests {
     }
 
     @Test
+    func forwardSecretMatchesTheVector() throws {
+        let identity = try secrets().alice
+        let aliceEph = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: Data(repeating: 0x20, count: 32))
+        let bobEph = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: Data(repeating: 0x30, count: 32))
+        let fromAlice = try CallCrypto.forwardSecret(
+            identitySecret: identity,
+            ourEphemeralPrivate: aliceEph,
+            ourEphemeralPublic: aliceEph.publicKey.rawRepresentation,
+            peerEphemeralPublic: bobEph.publicKey.rawRepresentation,
+            callID: callID
+        )
+        let fromBob = try CallCrypto.forwardSecret(
+            identitySecret: identity,
+            ourEphemeralPrivate: bobEph,
+            ourEphemeralPublic: bobEph.publicKey.rawRepresentation,
+            peerEphemeralPublic: aliceEph.publicKey.rawRepresentation,
+            callID: callID
+        )
+        #expect(fromAlice.hexString == "7d4c5c4a5c2a2d1bc6979d871db81e8642b840c0f0b816378ac62bcf8e4112d6")
+        #expect(fromBob.hexString == fromAlice.hexString)
+        #expect(CallCrypto.forwardSignalKey(secret: fromAlice, callID: callID, role: .caller).hexString
+            == "4f366306d6ee25ffa435b12c0cfb2bf937b625c7f056171c0a1386d2163b98f9")
+        #expect(CallCrypto.forwardSignalKey(secret: fromAlice, callID: callID, role: .callee).hexString
+            == "e8b850838219ef3c085075166994a08e4d6a9a5c4edc16c867afe15f2c0f2873")
+        let caller = CallSignalKeys(forwardSecret: fromAlice, callID: callID, role: .caller)
+        let callee = CallSignalKeys(forwardSecret: fromBob, callID: callID, role: .callee)
+        let sealed = try CallCrypto.seal(Data("ice".utf8), key: caller.send, callID: callID, signalType: "ice_candidate")
+        #expect(try CallCrypto.open(sealed, key: callee.receive, callID: callID, signalType: "ice_candidate") == Data("ice".utf8))
+        let identityKeys = CallSignalKeys(secret: identity, callID: callID, role: .callee)
+        #expect(throws: CallCrypto.CryptoError.openFailed) {
+            try CallCrypto.open(sealed, key: identityKeys.receive, callID: callID, signalType: "ice_candidate")
+        }
+    }
+
+    @Test
     func theCalleeOpensWhatTheCallerSealed() throws {
         let (alice, bob) = try secrets()
         let caller = CallSignalKeys(secret: alice, callID: callID, role: .caller)

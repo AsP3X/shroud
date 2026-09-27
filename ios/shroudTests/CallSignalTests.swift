@@ -23,7 +23,7 @@ struct CallSignalTests {
         let secret = try secret()
         let caller = CallSignalKeys(secret: secret, callID: callID, role: .caller)
         let callee = CallSignalKeys(secret: secret, callID: callID, role: .callee)
-        let offer = CallSignal.offer(sdp: "v=0\r\n", restart: false)
+        let offer = CallSignal.offer(sdp: "v=0\r\n", restart: false, ephemeral: nil)
         let payload = try CallCrypto.seal(
             offer.plaintext(n: 1),
             key: caller.send,
@@ -33,7 +33,7 @@ struct CallSignalTests {
         let opened = try CallCrypto.open(payload, key: callee.receive, callID: callID, signalType: "sdp_offer")
         let parsed = try CallSignal.parse(opened, signalType: "sdp_offer")
         #expect(parsed.n == 1)
-        #expect(parsed.signal == .offer(sdp: "v=0\r\n", restart: false))
+        #expect(parsed.signal == .offer(sdp: "v=0\r\n", restart: false, ephemeral: nil))
         // Reflected back to the sender: their receive key is the other direction.
         #expect(throws: CallCrypto.CryptoError.openFailed) {
             try CallCrypto.open(payload, key: caller.receive, callID: callID, signalType: "sdp_offer")
@@ -66,6 +66,24 @@ struct CallSignalTests {
             signalType: "media_state"
         )
         #expect(media.signal == .media(mic: false, camera: true))
+    }
+
+    @Test
+    func anEphemeralKeyRoundTripsAndABadOneDoesNot() throws {
+        let key = Data(repeating: 7, count: 32)
+        let offer = CallSignal.offer(sdp: "v=0\r\n", restart: false, ephemeral: key)
+        let parsed = try CallSignal.parse(offer.plaintext(n: 1), signalType: "sdp_offer")
+        #expect(parsed.signal == offer)
+        let described = "v=0\r\na=candidate:1 1 udp 1 10.0.0.1 9 typ host\r\na=fingerprint:sha-256 AA:BB:CC\r\n"
+        #expect(CallSdp.withoutCandidates(described) == "v=0\r\na=fingerprint:sha-256 AA:BB:CC\r\n")
+        #expect(CallSdp.fingerprint(described) == "aa:bb:cc")
+        #expect(CallSdp.matches("AA:BB:CC", "aa bb cc"))
+        #expect(!CallSdp.matches("AA:BB:CC", "aa:bb:cd"))
+        var object: [String: Any] = ["t": "offer", "sdp": "v=0", "restart": false, "n": 1, "ek": "%%%%"]
+        let bad = try JSONSerialization.data(withJSONObject: object)
+        #expect(throws: CallSignal.ParseError.malformed) {
+            try CallSignal.parse(bad, signalType: "sdp_offer")
+        }
     }
 
     @Test

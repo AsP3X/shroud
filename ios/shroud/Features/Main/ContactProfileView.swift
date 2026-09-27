@@ -221,6 +221,19 @@ struct ContactProfileView: View {
                         .font(.system(size: 13, weight: .medium, design: .monospaced))
                         .foregroundStyle(Theme.textPrimary)
                         .textSelection(.enabled)
+                    if messaging.identityChange(for: peerUserID) == nil {
+                        if messaging.peerSafetyVerified(peerUserID) {
+                            Text("Compared")
+                                .font(.system(size: 13))
+                                .foregroundStyle(Theme.textSecondary)
+                        } else {
+                            Button("I've compared this number") {
+                                messaging.confirmPeerSafety(peerUserID)
+                            }
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Theme.accent)
+                        }
+                    }
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)

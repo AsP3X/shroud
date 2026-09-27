@@ -5,6 +5,13 @@ import type { RealtimeEvent } from "../realtime";
 import { holdAutoLock } from "../session";
 import { stopVoice } from "../voice/playback";
 import { interruptVoiceRecord } from "../voice/recorder";
+import { safetyNumber } from "../crypto/safetyNumber";
+import {
+  acceptChangedPeerKey,
+  markPeerKeyVerified,
+  peerKeyVerified,
+  storedPeerKey,
+} from "../crypto/peerIdentity";
 import { CallController, type CallEnv, type IdentityKeys } from "./controller";
 import type { CallPeer } from "./logic";
 import { publishCallView } from "./store";
@@ -122,6 +129,26 @@ function tabs(): BroadcastChannel | null {
   return channel;
 }
 
+/** The SHA-256 fingerprint of the certificate the handshake actually used. */
+async function remoteFingerprint(pc: RTCPeerConnection): Promise<string | null> {
+  if (typeof pc.getStats !== "function") return null;
+  const stats = await pc.getStats();
+  let remoteId: string | null = null;
+  for (const report of stats.values()) {
+    const row = report as { type?: string; remoteCertificateId?: string };
+    if (row.type === "transport" && typeof row.remoteCertificateId === "string") {
+      remoteId = row.remoteCertificateId;
+      break;
+    }
+  }
+  if (!remoteId) return null;
+  const cert = stats.get(remoteId) as { type?: string; fingerprint?: string; fingerprintAlgorithm?: string } | undefined;
+  if (!cert || cert.type !== "certificate" || typeof cert.fingerprint !== "string") return null;
+  const algorithm = cert.fingerprintAlgorithm?.toLowerCase();
+  if (algorithm && algorithm !== "sha-256") return null;
+  return cert.fingerprint;
+}
+
 function unsupported(): string | null {
   if (typeof window !== "undefined" && window.isSecureContext === false) {
     return "Calls need a secure (https) connection.";
@@ -157,6 +184,7 @@ const env: CallEnv = {
   },
   notifyRing,
   tellTabs: (callId) => tabs()?.postMessage({ taken: callId }),
+  remoteFingerprint,
 };
 
 const controller = new CallController(env);
@@ -201,6 +229,18 @@ export function configureCalls(options: {
     identity: options.identity,
     peerKey: options.peerKey,
     peerName: options.peerName,
+    safety: (userId) => {
+      const local = options.identity();
+      const peer = storedPeerKey(userId);
+      if (!local || !peer) return null;
+      const number = safetyNumber(local.publicKey, peer);
+      local.privateKey.fill(0);
+      return { number, verified: peerKeyVerified(userId) };
+    },
+    confirmSafety: (userId) => markPeerKeyVerified(userId),
+    acceptKey: (userId) => {
+      acceptChangedPeerKey(userId, options.userId);
+    },
     api: {
       iceServers: async () => (await api.iceServers(token)).ice_servers ?? [],
       createCall: (peerUserId, modality) => api.createCall(token, peerUserId, modality),
@@ -282,4 +322,14 @@ export function resumeCallAudio(): void {
 
 export function dismissCall(): void {
   controller.dismiss();
+}
+
+/** The safety number on the call screen was compared. */
+export function confirmCallSafety(): void {
+  controller.confirmSafety();
+}
+
+/** Trusts the new identity key that stopped this call. */
+export function acceptChangedCallKey(): void {
+  controller.acceptChangedKey();
 }

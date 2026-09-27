@@ -144,6 +144,27 @@ struct InCallOverlay: View {
         }
     }
 
+    /// The safety number, and a tap once it has been compared. It does not block the call.
+    @ViewBuilder
+    private func safetyCompare(for call: CallController.ActiveCall) -> some View {
+        if let number = calls.safetyNumberForActiveCall() {
+            Text(number)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.85))
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .shadow(color: .black.opacity(0.5), radius: 3, y: 1)
+        }
+        Button {
+            calls.confirmSafety()
+        } label: {
+            Text("Safety number not compared")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.white.opacity(0.9))
+        }
+        .buttonStyle(.plain)
+    }
+
     /// Human: The name, the status line and the speaking meter, centred on each other in both
     /// places. The whole group travels as one piece: nothing inside it re-aligns on the way, so
     /// the text is not measured or drawn again while it moves.
@@ -164,6 +185,9 @@ struct InCallOverlay: View {
                 // Tighter than the name's: the smaller, dimmer line needs a firm edge over a
                 // bright picture.
                 .shadow(color: .black.opacity(0.5), radius: 3, y: 1)
+            if !call.safetyVerified, call.phase != .ending {
+                safetyCompare(for: call)
+            }
             // "You're speaking": only while the call runs with an open mic. Muting hides it; the
             // Mute control already says so in red.
             if call.phase == .active, !call.isMuted {

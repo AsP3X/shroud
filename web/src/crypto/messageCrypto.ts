@@ -62,6 +62,17 @@ export function saveRatchet(ourUserId: string, peerUserId: string, session: Ratc
   }
 }
 
+/** Drops the session so the next message starts from the peer's current identity key. */
+export function deleteRatchet(ourUserId: string, peerUserId: string): void {
+  const name = ratchetStorageName(ourUserId, peerUserId);
+  if (!name) return;
+  try {
+    localStorage.removeItem(name);
+  } catch {
+    /* the next send finds whatever is still there */
+  }
+}
+
 /**
  * Untagged identity boxes (every v1 box, and v2/v3 boxes from builds before the sender tag)
  * say nothing about who sealed them: the server could have. They are read only while the

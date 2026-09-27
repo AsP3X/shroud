@@ -44,10 +44,50 @@ nonisolated enum CallCrypto {
 
     /// The key `role` seals its signals with in call `callID`.
     static func signalKey(secret: SymmetricKey, callID: UUID, role: Role) -> SymmetricKey {
+        directionKey(secret: secret, callID: callID, role: role, info: "shroud-call-signal-v1")
+    }
+
+    /// The per-call secret for signals after the offer and answer.
+    ///
+    /// `HKDF-SHA256(X25519(our ephemeral, theirs), salt: the identity call secret,
+    /// info: "shroud-call-fs-v1" ‖ call id ‖ lower ephemeral public ‖ higher)`.
+    /// The identity secret salts it, so a swapped ephemeral key does not mix in.
+    static func forwardSecret(
+        identitySecret: SymmetricKey,
+        ourEphemeralPrivate: Curve25519.KeyAgreement.PrivateKey,
+        ourEphemeralPublic: Data,
+        peerEphemeralPublic: Data,
+        callID: UUID
+    ) throws -> SymmetricKey {
+        let peer = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: peerEphemeralPublic)
+        let shared = try ourEphemeralPrivate.sharedSecretFromKeyAgreement(with: peer)
+        let (low, high) = ourEphemeralPublic.lexicographicallyPrecedes(peerEphemeralPublic)
+            ? (ourEphemeralPublic, peerEphemeralPublic)
+            : (peerEphemeralPublic, ourEphemeralPublic)
+        let salt = identitySecret.withUnsafeBytes { Data($0) }
+        return shared.hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: salt,
+            sharedInfo: Data("shroud-call-fs-v1".utf8) + uuidBytes(callID) + low + high,
+            outputByteCount: 32
+        )
+    }
+
+    /// The key `role` seals its post-setup signals with.
+    static func forwardSignalKey(secret: SymmetricKey, callID: UUID, role: Role) -> SymmetricKey {
+        directionKey(secret: secret, callID: callID, role: role, info: "shroud-call-fs-signal-v1")
+    }
+
+    private static func directionKey(
+        secret: SymmetricKey,
+        callID: UUID,
+        role: Role,
+        info: String
+    ) -> SymmetricKey {
         HKDF<SHA256>.deriveKey(
             inputKeyMaterial: secret,
             salt: uuidBytes(callID),
-            info: Data("shroud-call-signal-v1|\(role.rawValue)".utf8),
+            info: Data("\(info)|\(role.rawValue)".utf8),
             outputByteCount: 32
         )
     }
@@ -106,5 +146,11 @@ nonisolated struct CallSignalKeys: Sendable {
     init(secret: SymmetricKey, callID: UUID, role: CallCrypto.Role) {
         send = CallCrypto.signalKey(secret: secret, callID: callID, role: role)
         receive = CallCrypto.signalKey(secret: secret, callID: callID, role: role.other)
+    }
+
+    /// Post-setup directions. `secret` is the forward secret, not the identity call secret.
+    init(forwardSecret secret: SymmetricKey, callID: UUID, role: CallCrypto.Role) {
+        send = CallCrypto.forwardSignalKey(secret: secret, callID: callID, role: role)
+        receive = CallCrypto.forwardSignalKey(secret: secret, callID: callID, role: role.other)
     }
 }

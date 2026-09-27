@@ -1,6 +1,18 @@
+import { x25519 } from "@noble/curves/ed25519.js";
 import { ApiError, type CallInfo, type CallModality, type CallSignalType, type IceServer } from "../api/client";
+import { b64ToBytes, bytesToB64 } from "../crypto/bytes";
+import { PEER_KEY_CHANGED, PeerKeyChanged } from "../crypto/peerIdentity";
 import type { RealtimeEvent } from "../realtime";
-import { callKeys, deriveCallSecret, openSignal, sealSignal, type CallKeys, type CallRole } from "./crypto";
+import {
+  callKeys,
+  deriveCallSecret,
+  deriveForwardSecret,
+  forwardKeys,
+  openSignal,
+  sealSignal,
+  type CallKeys,
+  type CallRole,
+} from "./crypto";
 import {
   CAMERA_RELEASE_MS,
   CAMERA_UNAVAILABLE,
@@ -23,11 +35,14 @@ import {
   cameraOnlyFailure,
   callErrorText,
   endedText,
+  fingerprintsMatch,
   isLive,
   linkState,
   mediaErrorText,
   readSignal,
   sameId,
+  sdpFingerprint,
+  sdpWithoutCandidates,
   signalTypeOf,
   voiceSdp,
   type CallPeer,
@@ -83,6 +98,12 @@ export type CallAccount = {
   peerKey: (userId: string) => Promise<Uint8Array>;
   /** A contact's name, where the server sent none. */
   peerName: (userId: string) => string | null;
+  /** The safety number for a pinned contact, when the account can show one. */
+  safety?: (userId: string) => { number: string; verified: boolean } | null;
+  /** The user compared the safety number. */
+  confirmSafety?: (userId: string) => void;
+  /** The user accepts a changed identity key after comparing safety numbers. */
+  acceptKey?: (userId: string) => void;
 };
 
 /** Everything outside the controller. */
@@ -111,6 +132,11 @@ export type CallEnv = {
   notifyRing(ring: { peer: CallPeer; modality: CallModality; missed: boolean } | null): void;
   /** Other tabs of this browser (the same device) stop ringing for this call. */
   tellTabs(callId: string): void;
+  /**
+   * The remote DTLS certificate's SHA-256 fingerprint, once the handshake has one.
+   * Null when this browser cannot read it yet. Absent in tests that have no handshake.
+   */
+  remoteFingerprint?(pc: RTCPeerConnection): Promise<string | null>;
 };
 
 /** 720p at most, front camera first. */
@@ -154,6 +180,26 @@ type Call = {
   /** Callee: Accept was pressed and the answer has not been confirmed yet. */
   accepting: boolean;
   keys: CallKeys | null;
+  /** The identity call secret, kept only until the per-call key is derived. */
+  identitySecret: Uint8Array | null;
+  /** Our ephemeral private key, kept only until the peer's public key arrives. */
+  ephPrivate: Uint8Array | null;
+  ephPublic: Uint8Array | null;
+  /** Post-setup signals. The identity keys, when the peer sent no ephemeral key. */
+  forward: CallKeys | null;
+  /** The first offer or answer has been taken, so later ones use `forward`. */
+  gotSetup: boolean;
+  /** Our first answer has been sealed with the identity key. */
+  sentAnswer: boolean;
+  /** The SHA-256 fingerprint in the sealed remote description. */
+  expectedFingerprint: string | null;
+  fingerprintChecked: boolean;
+  /** Post-setup signals that arrived before the per-call key existed. */
+  heldIn: { from: string; type: string; payload: string }[];
+  /** Media and candidates waiting until the per-call key exists. */
+  heldOut: SignalBody[];
+  safety: { number: string; verified: boolean } | null;
+  keyChanged: boolean;
   sent: number;
   seen: SeenSignals;
   pc: RTCPeerConnection | null;
@@ -615,6 +661,26 @@ export class CallController {
     if (call?.phase === "ended") this.idle(call);
   }
 
+  /** The safety number on screen was compared. */
+  confirmSafety(): void {
+    const call = this.live() ?? this.call;
+    if (!call || call.phase === "ended" || !this.account?.confirmSafety) return;
+    this.account.confirmSafety(call.peer.id);
+    this.noteSafety(call);
+    this.publish(call);
+  }
+
+  /** Trusts a changed identity key. A call that never started closes; a ring stays so it can be answered. */
+  acceptChangedKey(): void {
+    const call = this.call;
+    if (!call?.keyChanged || !this.account?.acceptKey) return;
+    this.account.acceptKey(call.peer.id);
+    call.keyChanged = false;
+    if (call.notice === PEER_KEY_CHANGED) call.notice = null;
+    if (call.phase === "ended") this.idle(call);
+    else this.publish(call);
+  }
+
   /** Another tab of this browser answered or declined the ring: it stops here, quietly. */
   takenElsewhere(callId: string): void {
     const call = this.call;
@@ -667,6 +733,7 @@ export class CallController {
       phase: "incoming",
       peerDevice: info.caller_device_id.toLowerCase(),
     });
+    this.noteSafety(call);
     this.env.tone("ringtone");
     this.env.notifyRing({ peer, modality: call.modality, missed: false });
     call.ringTimer = this.env.setTimeout(() => this.finish(call, "Missed call", null), INCOMING_RING_LIMIT_MS);
@@ -738,6 +805,18 @@ export class CallController {
       dialing: false,
       accepting: false,
       keys: null,
+      identitySecret: null,
+      ephPrivate: null,
+      ephPublic: null,
+      forward: null,
+      gotSetup: false,
+      sentAnswer: false,
+      expectedFingerprint: null,
+      fingerprintChecked: false,
+      heldIn: [],
+      heldOut: [],
+      safety: null,
+      keyChanged: false,
       sent: 0,
       seen: new SeenSignals(),
       pc: null,
@@ -813,12 +892,17 @@ export class CallController {
         return;
       }
       const id = info.id.toLowerCase();
-      call.keys = await callKeys(secret, id, "caller");
-      secret.fill(0);
+      const copy = secret.slice();
+      const keys = await callKeys(copy, id, "caller");
+      copy.fill(0);
       if (this.gone(call)) {
+        secret.fill(0);
         void account.api.hangupCall(id).catch(() => undefined);
         return;
       }
+      call.identitySecret = secret;
+      call.keys = keys;
+      this.noteSafety(call);
       call.id = id;
       call.dialing = false;
       this.env.tone("ringback");
@@ -828,7 +912,7 @@ export class CallController {
       // A quick answer or decline that raced the ring's own response.
       for (const event of call.early.splice(0)) this.handle(event);
     } catch (err) {
-      if (!this.gone(call)) this.finish(call, callErrorText(err, call.peer.username), null, ERROR_VISIBLE_MS);
+      if (!this.gone(call)) this.fail(call, err);
     }
   }
 
@@ -852,9 +936,16 @@ export class CallController {
         secret.fill(0);
         return;
       }
-      call.keys = await callKeys(secret, id, "callee");
-      secret.fill(0);
-      if (this.gone(call)) return;
+      const copy = secret.slice();
+      const keys = await callKeys(copy, id, "callee");
+      copy.fill(0);
+      if (this.gone(call)) {
+        secret.fill(0);
+        return;
+      }
+      call.identitySecret = secret;
+      call.keys = keys;
+      this.noteSafety(call);
       this.buildPeer(call, servers);
       try {
         await account.api.acceptCall(id);
@@ -892,7 +983,32 @@ export class CallController {
       // An offer can overtake the accept's own response.
       for (const event of call.early.splice(0)) this.onSignal(event);
     } catch (err) {
-      if (!this.gone(call)) this.finish(call, callErrorText(err, call.peer.username), "hangup", ERROR_VISIBLE_MS);
+      // The ring is still up: keep it, and let them trust the new key before answering.
+      if (!this.gone(call) && err instanceof PeerKeyChanged) {
+        stopTracks(call.local);
+        call.local = null;
+        const pc = call.pc;
+        call.pc = null;
+        try {
+          pc?.close();
+        } catch {
+          /* not open yet */
+        }
+        call.identitySecret?.fill(0);
+        call.ephPrivate?.fill(0);
+        call.identitySecret = null;
+        call.ephPrivate = null;
+        call.ephPublic = null;
+        call.keys = null;
+        call.phase = "incoming";
+        call.accepting = false;
+        call.keyChanged = true;
+        call.notice = err.message;
+        this.env.tone("ringtone");
+        this.publish(call);
+        return;
+      }
+      if (!this.gone(call)) this.fail(call, err);
     }
   }
 
@@ -1012,7 +1128,9 @@ export class CallController {
       this.finish(call, "Couldn’t connect", "hangup");
       return;
     }
-    this.send(call, { t: "offer", sdp, restart: false });
+    this.ensureEphemeral(call);
+    const ek = call.ephPublic ? bytesToB64(call.ephPublic) : undefined;
+    this.send(call, { t: "offer", sdp: sdpWithoutCandidates(sdp), restart: false, ...(ek ? { ek } : {}) });
     this.negotiated(call);
   }
 
@@ -1020,16 +1138,82 @@ export class CallController {
     call.negotiated = true;
     this.flushCandidates(call);
     this.sendMediaState(call);
+    this.drainInbound(call);
+  }
+
+  /** A fresh X25519 key for this call. Kept until the other side's public key arrives. */
+  private ensureEphemeral(call: Call): void {
+    if (call.ephPrivate && call.ephPublic) return;
+    const secret = x25519.utils.randomSecretKey();
+    call.ephPrivate = secret;
+    call.ephPublic = x25519.getPublicKey(secret);
+  }
+
+  /**
+   * Derives the post-setup keys from both ephemeral publics. An older peer sends none:
+   * the identity keys keep sealing the rest of that call.
+   */
+  private async engageForward(call: Call, theirKey: string | undefined): Promise<void> {
+    if (call.forward || !call.id || !call.keys) return;
+    const ours = call.ephPrivate;
+    const pub = call.ephPublic;
+    const identity = call.identitySecret;
+    let their: Uint8Array | null = null;
+    if (theirKey && ours && pub && identity) {
+      try {
+        their = b64ToBytes(theirKey);
+      } catch {
+        their = null;
+      }
+    }
+    // A peer that sent a key must use it. Falling back to the long-term key would seal
+    // addresses with a key the other side is no longer opening.
+    if (theirKey) {
+      if (!(their && their.length === 32 && ours && pub && identity)) return;
+      const forward = deriveForwardSecret(identity, ours, pub, their, call.id);
+      call.forward = await forwardKeys(forward, call.id, call.role);
+    } else {
+      call.forward = call.keys;
+    }
+    ours?.fill(0);
+    identity?.fill(0);
+    call.ephPrivate = null;
+    call.identitySecret = null;
+  }
+
+  private noteSafety(call: Call): void {
+    call.safety = this.account?.safety?.(call.peer.id) ?? null;
+  }
+
+  /** A changed identity key stays on screen until it is trusted or dismissed. */
+  private fail(call: Call, err: unknown): void {
+    call.keyChanged = err instanceof PeerKeyChanged;
+    const visible = call.keyChanged ? 0 : ERROR_VISIBLE_MS;
+    this.finish(call, callErrorText(err, call.peer.username), null, visible);
   }
 
   /* --- signals ----------------------------------------------------------------------------- */
 
+  /**
+   * The first offer and the first answer stay under the identity keys (they carry the
+   * ephemeral public keys). Everything after uses the per-call key, and waits for it.
+   */
+  private sealingKeys(call: Call, body: SignalBody): CallKeys | null {
+    if ((body.t === "offer" && !body.restart) || (body.t === "answer" && !call.sentAnswer)) return call.keys;
+    return call.forward;
+  }
+
   /** Seals and sends one signal, in order behind the ones before it. */
   private send(call: Call, body: SignalBody): void {
     const id = call.id;
-    const keys = call.keys;
+    const keys = this.sealingKeys(call, body);
     const api = this.account?.api;
-    if (!id || !keys || !api) return;
+    if (!id || !api) return;
+    if (!keys) {
+      call.heldOut.push(body);
+      return;
+    }
+    if (body.t === "answer") call.sentAnswer = true;
     const type = signalTypeOf(body.t);
     call.sent += 1;
     const plaintext: Record<string, unknown> = { ...body, n: call.sent };
@@ -1040,6 +1224,23 @@ export class CallController {
         await this.deliver(call, api, id, type, payload);
       })
       .catch(() => undefined);
+  }
+
+  /** Candidates, media state, and inbound signals that waited for the per-call key. */
+  private flushHeld(call: Call): void {
+    this.flushCandidates(call);
+    if (!call.forward) return;
+    const held = call.heldOut.splice(0);
+    for (const body of held) this.send(call, body);
+    this.drainInbound(call);
+  }
+
+  private drainInbound(call: Call): void {
+    if (!call.forward) return;
+    const inbound = call.heldIn.splice(0);
+    for (const item of inbound) {
+      call.inbox = call.inbox.then(() => this.receive(call, item.from, item.type, item.payload)).catch(() => undefined);
+    }
   }
 
   /** A few tries through a flaky network; a call the server ended is read back and ended here. */
@@ -1063,11 +1264,25 @@ export class CallController {
     }
   }
 
+  /** Identity key for the first offer and answer; the per-call key after that. */
+  private async openingKey(call: Call, type: string): Promise<CryptoKey | "wait" | null> {
+    const setup = type === "sdp_offer" || type === "sdp_answer";
+    if (setup && !call.gotSetup) return call.keys?.receive ?? null;
+    if (!call.forward) return "wait";
+    return call.forward.receive;
+  }
+
   private async receive(call: Call, from: string, type: string, payload: string): Promise<void> {
     if (this.gone(call) || !call.keys || !call.id) return;
+    const key = await this.openingKey(call, type);
+    if (key === "wait") {
+      call.heldIn.push({ from, type, payload });
+      return;
+    }
+    if (!key) return;
     let signal: Signal | null;
     try {
-      signal = readSignal(type, await openSignal(call.keys.receive, call.id, type as CallSignalType, payload));
+      signal = readSignal(type, await openSignal(key, call.id, type as CallSignalType, payload));
     } catch {
       return; // does not open: not from the peer, or tampered with
     }
@@ -1075,10 +1290,10 @@ export class CallController {
     try {
       switch (signal.t) {
         case "offer":
-          if (call.role === "callee") await this.answerOffer(call, signal.sdp);
+          if (call.role === "callee") await this.answerOffer(call, signal.sdp, signal.restart, signal.ek);
           return;
         case "answer":
-          if (call.role === "caller") await this.takeAnswer(call, signal.sdp);
+          if (call.role === "caller") await this.takeAnswer(call, signal.sdp, signal.ek);
           return;
         case "ice":
           await this.addRemoteCandidates(call, signal.cs);
@@ -1100,10 +1315,16 @@ export class CallController {
   }
 
   /** Callee: the first offer, or an ICE restart. */
-  private async answerOffer(call: Call, sdp: string): Promise<void> {
+  private async answerOffer(call: Call, sdp: string, restart: boolean, ek?: string): Promise<void> {
     const pc = call.pc;
     if (!pc) return;
     try {
+      if (!restart) {
+        this.ensureEphemeral(call);
+        await this.engageForward(call, ek);
+        call.gotSetup = true;
+      }
+      this.noteFingerprint(call, sdp);
       await pc.setRemoteDescription({ type: "offer", sdp });
       if (this.gone(call)) return;
       this.adoptVideo(call, pc);
@@ -1112,11 +1333,15 @@ export class CallController {
       await pc.setLocalDescription(answer);
       tuneSenders(pc);
       if (this.gone(call)) return;
-      this.send(call, { t: "answer", sdp: pc.localDescription?.sdp ?? answer.sdp ?? "" });
+      const described = sdpWithoutCandidates(pc.localDescription?.sdp ?? answer.sdp ?? "");
+      const ours = !call.sentAnswer && call.ephPublic ? bytesToB64(call.ephPublic) : undefined;
+      this.send(call, { t: "answer", sdp: described, ...(ours ? { ek: ours } : {}) });
       if (!call.negotiated) {
         this.negotiated(call);
         // Video is known to be possible (or not) from here.
         this.publish(call);
+      } else {
+        this.flushHeld(call);
       }
     } catch {
       if (!call.negotiated && !this.gone(call)) this.finish(call, "Couldn’t connect", "hangup");
@@ -1137,15 +1362,29 @@ export class CallController {
     call.video = video;
   }
 
-  private async takeAnswer(call: Call, sdp: string): Promise<void> {
+  private async takeAnswer(call: Call, sdp: string, ek?: string): Promise<void> {
     const pc = call.pc;
     // An answer to an offer that was taken back (a restart overtook it).
     if (!pc || pc.signalingState !== "have-local-offer") return;
+    if (!call.gotSetup) {
+      await this.engageForward(call, ek);
+      call.gotSetup = true;
+    }
+    this.noteFingerprint(call, sdp);
     await pc.setRemoteDescription({ type: "answer", sdp });
     tuneSenders(pc);
     await this.flushRemoteCandidates(call);
+    this.flushHeld(call);
     // The answer settles whether our video can go out (an older app may have taken it one way).
     this.publish(call);
+  }
+
+  /** Remembers the fingerprint in the sealed description, and checks again after a restart. */
+  private noteFingerprint(call: Call, sdp: string): void {
+    const fingerprint = sdpFingerprint(sdp);
+    if (!fingerprint) return;
+    if (fingerprint !== call.expectedFingerprint) call.fingerprintChecked = false;
+    call.expectedFingerprint = fingerprint;
   }
 
   private async addRemoteCandidates(call: Call, candidates: IceCandidateJson[]): Promise<void> {
@@ -1179,10 +1418,10 @@ export class CallController {
     }
   }
 
-  /** Gathered candidates, a batch per signal; before the offer or answer went they wait. */
+  /** Gathered candidates, a batch per signal. They wait for the per-call key, so an address is never sealed with the identity keys. */
   private flushCandidates(call: Call): void {
     this.stop(call, "batchTimer");
-    if (!call.negotiated || this.gone(call)) return;
+    if (!call.negotiated || !call.forward || this.gone(call)) return;
     while (call.gathered.length > 0) this.send(call, { t: "ice", cs: call.gathered.splice(0, ICE_BATCH_MAX) });
   }
 
@@ -1219,6 +1458,7 @@ export class CallController {
         this.stop(call, "graceTimer");
         this.stop(call, "reconnectTimer");
         this.stop(call, "restartTimer");
+        this.checkFingerprint(call);
         if (call.phase === "connecting") {
           call.phase = "active";
           call.connectedAt = this.env.now();
@@ -1297,7 +1537,11 @@ export class CallController {
       await pc.setLocalDescription(offer);
       tuneSenders(pc);
       if (this.gone(call)) return;
-      this.send(call, { t: "offer", sdp: pc.localDescription?.sdp ?? offer.sdp ?? "", restart: true });
+      this.send(call, {
+        t: "offer",
+        sdp: sdpWithoutCandidates(pc.localDescription?.sdp ?? offer.sdp ?? ""),
+        restart: true,
+      });
     } catch {
       /* the next state change, or the gate's timer, tries again */
     }
@@ -1413,6 +1657,7 @@ export class CallController {
       return;
     }
     this.publish(call);
+    if (call.keyChanged) return;
     call.endTimer = this.env.setTimeout(() => this.idle(call), visibleMs);
   }
 
@@ -1464,7 +1709,15 @@ export class CallController {
     call.remoteVideo = false;
     call.audioBlocked = false;
     void this.env.playAudio(null);
+    call.ephPrivate?.fill(0);
+    call.identitySecret?.fill(0);
+    call.ephPrivate = null;
+    call.ephPublic = null;
+    call.identitySecret = null;
     call.keys = null;
+    call.forward = null;
+    call.heldIn = [];
+    call.heldOut = [];
     call.reconnecting = false;
     call.notice = null;
     call.early = [];
@@ -1558,6 +1811,29 @@ export class CallController {
       endedText: call.endedText,
       notice: call.notice,
       minimized: call.minimized,
+      safety: call.safety,
+      keyChanged: call.keyChanged,
     });
+  }
+
+  /** Hangs up when the certificate is not the one named in the sealed description. */
+  private checkFingerprint(call: Call): void {
+    const read = this.env.remoteFingerprint;
+    const expected = call.expectedFingerprint;
+    const pc = call.pc;
+    if (!read || !expected || !pc || call.fingerprintChecked) return;
+    void (async () => {
+      let got = await read(pc).catch(() => null);
+      if (!got && !this.gone(call)) {
+        await new Promise<void>((resolve) => this.env.setTimeout(resolve, 400));
+        if (this.gone(call) || call.pc !== pc) return;
+        got = await read(pc).catch(() => null);
+      }
+      if (this.gone(call) || call.pc !== pc || !got) return;
+      call.fingerprintChecked = true;
+      if (!fingerprintsMatch(expected, got)) {
+        this.finish(call, "This call couldn’t be verified.", "hangup", ERROR_VISIBLE_MS);
+      }
+    })();
   }
 }

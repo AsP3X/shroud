@@ -28,8 +28,10 @@ nonisolated struct IceCandidatePayload: Codable, Equatable, Sendable {
 
 /// What one sealed signal says (docs/calls.md, "Plaintext").
 nonisolated enum CallSignal: Equatable, Sendable {
-    case offer(sdp: String, restart: Bool)
-    case answer(sdp: String)
+    /// `ephemeral` is the sender's fresh X25519 public key, on the first offer only.
+    case offer(sdp: String, restart: Bool, ephemeral: Data?)
+    /// `ephemeral` is the sender's fresh X25519 public key, on the first answer only.
+    case answer(sdp: String, ephemeral: Data?)
     case candidates([IceCandidatePayload])
     /// The callee asks the caller for an ICE restart.
     case restartRequest
@@ -66,11 +68,13 @@ nonisolated enum CallSignal: Equatable, Sendable {
     func plaintext(n: Int) throws -> Data {
         var object: [String: Any] = ["t": tag, "n": n]
         switch self {
-        case let .offer(sdp, restart):
+        case let .offer(sdp, restart, ephemeral):
             object["sdp"] = sdp
             object["restart"] = restart
-        case let .answer(sdp):
+            if let ephemeral { object["ek"] = ephemeral.base64EncodedString() }
+        case let .answer(sdp, ephemeral):
             object["sdp"] = sdp
+            if let ephemeral { object["ek"] = ephemeral.base64EncodedString() }
         case let .candidates(list):
             object["cs"] = list.map { candidate -> [String: Any] in
                 var entry: [String: Any] = [
@@ -100,10 +104,14 @@ nonisolated enum CallSignal: Equatable, Sendable {
         switch tag {
         case "offer":
             guard let sdp = object["sdp"] as? String else { throw ParseError.malformed }
-            signal = .offer(sdp: sdp, restart: Self.bool(object["restart"]) ?? false)
+            signal = .offer(
+                sdp: sdp,
+                restart: Self.bool(object["restart"]) ?? false,
+                ephemeral: try Self.ephemeral(object["ek"])
+            )
         case "answer":
             guard let sdp = object["sdp"] as? String else { throw ParseError.malformed }
-            signal = .answer(sdp: sdp)
+            signal = .answer(sdp: sdp, ephemeral: try Self.ephemeral(object["ek"]))
         case "ice":
             guard let list = object["cs"] as? [[String: Any]] else { throw ParseError.malformed }
             let candidates = list.compactMap { entry -> IceCandidatePayload? in
@@ -136,6 +144,16 @@ nonisolated enum CallSignal: Equatable, Sendable {
         case let number as NSNumber: number.intValue
         default: nil
         }
+    }
+
+    /// Absent is an older peer. Present but not 32 bytes rejects the signal.
+    private static func ephemeral(_ value: Any?) throws -> Data? {
+        guard let value else { return nil }
+        guard let text = value as? String,
+              let data = Data(base64Encoded: text),
+              data.count == 32
+        else { throw ParseError.malformed }
+        return data
     }
 
     private static func bool(_ value: Any?) -> Bool? {

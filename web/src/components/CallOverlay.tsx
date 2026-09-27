@@ -17,6 +17,8 @@ import {
 import { incomingStaysInBanner, statusLine, videoLayout, type CallView } from "../calls/logic";
 import {
   acceptCall,
+  acceptChangedCallKey,
+  confirmCallSafety,
   declineCall,
   dismissCall,
   hangUpCall,
@@ -519,6 +521,16 @@ function CallScreen({ view }: { view: CallView }) {
               <p className="call-notice" role="status">
                 {view.notice}
               </p>
+            ) : null}
+            {view.keyChanged ? (
+              <button type="button" className="call-safety" onClick={acceptChangedCallKey}>
+                Trust new key
+              </button>
+            ) : view.safety && !view.safety.verified && view.phase !== "ended" ? (
+              <button type="button" className="call-safety" onClick={confirmCallSafety}>
+                <span>Safety number not compared</span>
+                <span className="call-safety-num">{view.safety.number}</span>
+              </button>
             ) : null}
           </div>
         </div>

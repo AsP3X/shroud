@@ -1,4 +1,4 @@
-import { api, type Conversation, type TransferProgress, type WireMessage } from "./api/client";
+import { ApiError, api, type Conversation, type TransferProgress, type WireMessage } from "./api/client";
 import { aesGcmOpen, sealFile } from "./crypto/aes";
 import { b64ToBytes, bytesToB64, utf8, utf8decode } from "./crypto/bytes";
 import type { IdentityMaterial } from "./crypto/identity";
@@ -20,6 +20,11 @@ import {
 import { clampSnippet, parseTextPayload, textWire, type ReplyRef } from "./reply";
 import { linkPreviewWire, type LinkPreview } from "./links";
 import { envelopeToWireB64, openMessage, sealMessage, wireB64ToEnvelope } from "./crypto/messageCrypto";
+import {
+  PeerKeyChanged,
+  peerIdentityForSending,
+  peerIdentityPublic as pinnedPeerIdentity,
+} from "./crypto/peerIdentity";
 import {
   forgetPlaintext,
   isWithdrawn,
@@ -110,7 +115,6 @@ export type ChatMessage = {
   reactions?: Reaction[];
 };
 
-const peerKeyCache = new Map<string, Uint8Array>();
 /** Annotation ids already decoded, so polling doesn't fetch them again every tick. */
 const seenAnnotations = new Set<string>();
 /**
@@ -156,16 +160,18 @@ async function withPeerLock<T>(peerUserId: string, fn: () => Promise<T>): Promis
   }
 }
 
-export async function peerIdentityPublic(
-  token: string,
-  peerUserId: string,
-): Promise<Uint8Array> {
-  const cached = peerKeyCache.get(peerUserId.toLowerCase());
-  if (cached) return cached;
-  const res = await api.peerIdentity(token, peerUserId);
-  const key = b64ToBytes(res.identity_key);
-  peerKeyCache.set(peerUserId.toLowerCase(), key);
-  return key;
+/** The pinned identity key. A later change is remembered and the old key is what decrypts. */
+export async function peerIdentityPublic(token: string, peerUserId: string): Promise<Uint8Array> {
+  return pinnedPeerIdentity(token, peerUserId);
+}
+
+export { PeerKeyChanged, peerIdentityForSending };
+
+/** The line a failed send shows. A changed identity key says so; everything else keeps `fallback`. */
+export function sendFailureText(err: unknown, fallback: string): string {
+  if (err instanceof PeerKeyChanged) return err.message;
+  if (err instanceof ApiError) return err.message;
+  return fallback;
 }
 
 export function peerIdForMessage(
@@ -690,7 +696,7 @@ export async function sendText(opts: {
   const me = opts.me.toLowerCase();
   const { wire, sealedPreview } = textWire(opts.text, opts.replyTo, opts.linkPreview);
   return withPeerLock(peer, async () => {
-    const peerPub = await peerIdentityPublic(opts.token, peer);
+    const peerPub = await peerIdentityForSending(opts.token, peer);
     const envelope = await sealMessage({
       plaintext: utf8(wire),
       peerUserId: peer,
@@ -810,7 +816,7 @@ export async function sendVoice(opts: {
       },
       opts.replyTo,
     );
-    const peerPub = await peerIdentityPublic(opts.token, peer);
+    const peerPub = await peerIdentityForSending(opts.token, peer);
     let plaintext = utf8(JSON.stringify(payload));
     if (plaintext.byteLength > MAX_MEDIA_PAYLOAD_PLAINTEXT_BYTES && payload.c) {
       delete payload.c;
@@ -983,7 +989,7 @@ async function sendMediaEnvelope(
   const peer = opts.peerUserId.toLowerCase();
   const me = opts.me.toLowerCase();
   return withPeerLock(peer, async () => {
-    const peerPub = await peerIdentityPublic(opts.token, peer);
+    const peerPub = await peerIdentityForSending(opts.token, peer);
     const seal = () =>
       sealMessage({
         plaintext: utf8(JSON.stringify(payload)),
@@ -1053,7 +1059,7 @@ export async function shareTranscript(opts: {
   const peer = opts.peerUserId.toLowerCase();
   const me = opts.me.toLowerCase();
   await withPeerLock(peer, async () => {
-    const peerPub = await peerIdentityPublic(opts.token, peer);
+    const peerPub = await peerIdentityForSending(opts.token, peer);
     const envelope = await sealMessage({
       plaintext: utf8(JSON.stringify(annotation)),
       peerUserId: peer,

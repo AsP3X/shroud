@@ -44,6 +44,20 @@ struct PeerIdentityStore: Sendable {
         defaults.removeObject(forKey: defaultsPrefix + account)
     }
 
+    /// The safety number for this contact has been compared. A new key clears it.
+    func isVerified(_ userID: UUID) -> Bool {
+        readKeychain(account: verifiedAccount(for: userID)) == "1"
+    }
+
+    func setVerified(_ userID: UUID, _ verified: Bool) {
+        let account = verifiedAccount(for: userID)
+        if verified {
+            try? writeKeychain(account: account, value: "1")
+        } else {
+            deleteKeychain(account: account)
+        }
+    }
+
     func clear() {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -58,6 +72,10 @@ struct PeerIdentityStore: Sendable {
 
     private func account(for userID: UUID) -> String {
         userID.uuidString.lowercased()
+    }
+
+    private func verifiedAccount(for userID: UUID) -> String {
+        "verified." + account(for: userID)
     }
 
     private func readKeychain(account: String) -> String? {

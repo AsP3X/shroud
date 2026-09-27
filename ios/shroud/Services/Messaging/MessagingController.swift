@@ -90,6 +90,9 @@ final class MessagingController {
     private(set) var blockedUsers: [BlockItemDTO] = []
     /// Peers whose server identity key no longer matches the first-seen (TOFU) key.
     private(set) var identityChanges: [UUID: PeerIdentityChange] = [:]
+    /// Contacts whose safety number was compared this session. The Keychain is the record;
+    /// this set is what the contact screen observes when it changes.
+    private(set) var verifiedPeers: Set<UUID> = []
     private var verifiedPeerIDs: Set<UUID> = []
 
     private let contactsService = ContactsService()
@@ -537,6 +540,7 @@ final class MessagingController {
         allowsPeerChatDelete = false
         blockedUsers = []
         identityChanges = [:]
+        verifiedPeers = []
         verifiedPeerIDs = []
         contactsError = nil
         chatsError = nil
@@ -577,6 +581,7 @@ final class MessagingController {
         reactionsSeenLocally = [:]
         reactionRevisions = [:]
         identityChanges = [:]
+        verifiedPeers = []
         verifiedPeerIDs = []
         isLoadingContacts = false
         isLoadingChats = false
@@ -4372,6 +4377,17 @@ final class MessagingController {
         identityChanges[peerUserID]
     }
 
+    func peerSafetyVerified(_ peerUserID: UUID) -> Bool {
+        verifiedPeers.contains(peerUserID) || peerKeys.isVerified(peerUserID)
+    }
+
+    /// The safety number on the call screen, or on the contact, was compared.
+    func confirmPeerSafety(_ peerUserID: UUID) {
+        guard peerKeys.publicKeyData(for: peerUserID) != nil else { return }
+        peerKeys.setVerified(peerUserID, true)
+        verifiedPeers.insert(peerUserID)
+    }
+
     func safetyNumber(for peerUserID: UUID) -> String? {
         guard let local = cryptoController?.material?.identityPublicKeyData,
               let peer = peerKeys.publicKeyData(for: peerUserID)
@@ -4391,6 +4407,8 @@ final class MessagingController {
     func acceptNewPeerIdentity(_ peerUserID: UUID) {
         guard let change = identityChanges[peerUserID] else { return }
         peerKeys.save(userID: peerUserID, publicKeyBase64: change.currentKey.base64EncodedString())
+        peerKeys.setVerified(peerUserID, false)
+        verifiedPeers.remove(peerUserID)
         RatchetSessionStore.delete(peerUserID: peerUserID)
         identityChanges[peerUserID] = nil
         verifiedPeerIDs.insert(peerUserID)

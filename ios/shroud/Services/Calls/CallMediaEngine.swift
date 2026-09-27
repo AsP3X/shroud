@@ -355,6 +355,28 @@ final class CallMediaEngine: NSObject {
         }
     }
 
+    /// The SHA-256 fingerprint of the certificate the handshake actually used, once stats have it.
+    func remoteCertificateFingerprint() async -> String? {
+        guard let connection = peerConnection else { return nil }
+        let report: RTCStatisticsReport = await withCheckedContinuation { continuation in
+            connection.statistics { continuation.resume(returning: $0) }
+        }
+        return Self.remoteFingerprint(in: report)
+    }
+
+    /// `transport.remoteCertificateId` names the peer's certificate stat.
+    nonisolated private static func remoteFingerprint(in report: RTCStatisticsReport) -> String? {
+        let stats = report.statistics
+        guard let transport = stats.values.first(where: { $0.type == "transport" }),
+              let remoteId = transport.values["remoteCertificateId"] as? String,
+              let cert = stats[remoteId]
+        else { return nil }
+        if let algorithm = cert.values["fingerprintAlgorithm"] as? String, algorithm.lowercased() != "sha-256" {
+            return nil
+        }
+        return cert.values["fingerprint"] as? String
+    }
+
     /// `media-source` is the mic. `audioLevel` arrives as a number, sometimes as a string.
     nonisolated private static func audioLevel(in report: RTCStatisticsReport) -> Float? {
         let stats = report.statistics.values

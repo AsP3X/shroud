@@ -50,6 +50,8 @@ final class CallController {
         var remoteCameraOff: Bool
         var notice: String?
         var speakerOn: Bool
+        /// The safety number has been compared on this phone. The call still connects either way.
+        var safetyVerified: Bool
     }
 
     /// Current call screen (nil when idle).
@@ -94,6 +96,20 @@ final class CallController {
         var serverID: UUID?
         var peerDeviceID: UUID?
         var keys: CallSignalKeys?
+        /// The identity call secret, kept only until the per-call key is derived.
+        var identitySecret: SymmetricKey?
+        var ephPrivate: Curve25519.KeyAgreement.PrivateKey?
+        var ephPublic: Data?
+        /// Post-setup signals. The identity keys, when the peer sent no ephemeral key.
+        var forward: CallSignalKeys?
+        /// The first offer or answer has been taken, so later ones use `forward`.
+        var gotSetup = false
+        /// Our first answer has been sealed with the identity key.
+        var sealedAnswer = false
+        var expectedFingerprint: String?
+        var fingerprintChecked = false
+        var pendingSend: [CallSignal] = []
+        var pendingSecure: [(from: String, type: String, payload: String)] = []
         var negotiated = false
         var sent = 0
         var seen: [String: Set<Int>] = [:]
@@ -385,6 +401,7 @@ final class CallController {
                 return
             }
             machine.serverID = created.id
+            machine.identitySecret = secret
             machine.keys = CallSignalKeys(secret: secret, callID: created.id, role: .caller)
             machine.dialing = false
             if var call = active {
@@ -635,6 +652,7 @@ final class CallController {
             guard let peer = active?.peerUserID else { return }
             let secret = try await callSecret(for: peer)
             guard current(machine), let token = sessionController?.bearerToken else { return }
+            machine.identitySecret = secret
             machine.keys = CallSignalKeys(secret: secret, callID: id, role: .callee)
             let ice = (try? await service.iceServers(token: token)) ?? []
             guard current(machine) else { return }
@@ -674,12 +692,20 @@ final class CallController {
             guard current(machine) else { return }
             machine.accepting = false
             machine.keys = nil
+            machine.identitySecret = nil
             if var call = active {
                 call.phase = .incomingRinging
                 call.notice = error.localizedDescription
                 active = call
             }
             lastError = error.localizedDescription
+        } catch is PeerIdentityError {
+            // CallKit is already on the answered call. End it here without telling the server,
+            // so the ring continues on their other devices while this one asks for the safety number.
+            guard current(machine) else { return }
+            let message = callErrorText(PeerIdentityError.changed, peer: active?.peerUsername ?? "them")
+            lastError = message
+            finish(machine, text: message, notify: nil, status: "ended", close: .report(.failed), visible: .seconds(4))
         } catch {
             guard current(machine) else { return }
             let message = callErrorText(error, peer: active?.peerUsername ?? "them")
@@ -776,7 +802,15 @@ final class CallController {
                 throw CallMediaEngine.EngineError.sdp("No offer.")
             }
             guard current(machine) else { return }
-            send(.offer(sdp: sdp, restart: false), machine)
+            if machine.ephPrivate == nil {
+                let eph = Curve25519.KeyAgreement.PrivateKey()
+                machine.ephPrivate = eph
+                machine.ephPublic = eph.publicKey.rawRepresentation
+            }
+            send(
+                .offer(sdp: CallSdp.withoutCandidates(sdp), restart: false, ephemeral: machine.ephPublic),
+                machine
+            )
             markNegotiated(machine)
         } catch {
             guard current(machine) else { return }
@@ -785,10 +819,14 @@ final class CallController {
     }
 
     private func receive(from: String, type: String, payload: String, machine: Machine) async {
-        guard current(machine), let keys = machine.keys, let id = machine.serverID else { return }
+        guard current(machine), machine.keys != nil, let id = machine.serverID else { return }
+        guard let key = openKey(type: type, machine: machine) else {
+            machine.pendingSecure.append((from, type, payload))
+            return
+        }
         let opened: Data
         do {
-            opened = try CallCrypto.open(payload, key: keys.receive, callID: id, signalType: type)
+            opened = try CallCrypto.open(payload, key: key, callID: id, signalType: type)
         } catch {
             return
         }
@@ -797,12 +835,12 @@ final class CallController {
         guard seen.insert(parsed.n).inserted else { return }
         machine.seen[from] = seen
         switch parsed.signal {
-        case let .offer(sdp, _):
+        case let .offer(sdp, restart, ephemeral):
             guard machine.role == .callee else { return }
-            await answerOffer(sdp, machine)
-        case let .answer(sdp):
+            await answerOffer(sdp, ephemeral: restart ? nil : ephemeral, restart: restart, machine)
+        case let .answer(sdp, ephemeral):
             guard machine.role == .caller else { return }
-            await takeAnswer(sdp, machine)
+            await takeAnswer(sdp, ephemeral: ephemeral, machine)
         case let .candidates(list):
             addRemote(list, machine)
         case .restartRequest:
@@ -824,13 +862,28 @@ final class CallController {
         }
     }
 
-    private func answerOffer(_ sdp: String, _ machine: Machine) async {
+    private func answerOffer(_ sdp: String, ephemeral: Data?, restart: Bool, _ machine: Machine) async {
         do {
+            if !restart {
+                if machine.ephPrivate == nil {
+                    let eph = Curve25519.KeyAgreement.PrivateKey()
+                    machine.ephPrivate = eph
+                    machine.ephPublic = eph.publicKey.rawRepresentation
+                }
+                engageForward(ephemeral, machine)
+                machine.gotSetup = true
+            }
+            noteFingerprint(sdp, machine)
             let answer = try await engine.answer(offer: sdp)
             guard current(machine) else { return }
             flushRemote(machine)
-            send(.answer(sdp: answer), machine)
-            if !machine.negotiated { markNegotiated(machine) }
+            let ours = machine.sealedAnswer ? nil : machine.ephPublic
+            send(.answer(sdp: CallSdp.withoutCandidates(answer), ephemeral: ours), machine)
+            if !machine.negotiated {
+                markNegotiated(machine)
+            } else {
+                releaseHeld(machine)
+            }
             refreshCanVideo()
         } catch {
             guard current(machine), !machine.negotiated else { return }
@@ -838,11 +891,95 @@ final class CallController {
         }
     }
 
-    private func takeAnswer(_ sdp: String, _ machine: Machine) async {
+    private func takeAnswer(_ sdp: String, ephemeral: Data?, _ machine: Machine) async {
         guard current(machine) else { return }
+        if !machine.gotSetup {
+            engageForward(ephemeral, machine)
+            machine.gotSetup = true
+        }
+        noteFingerprint(sdp, machine)
         guard let applied = try? await engine.applyAnswer(sdp), applied else { return }
         flushRemote(machine)
+        releaseHeld(machine)
         refreshCanVideo()
+    }
+
+    private func verifyFingerprint(_ machine: Machine) {
+        guard !machine.fingerprintChecked, let expected = machine.expectedFingerprint else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            var got = await self.engine.remoteCertificateFingerprint()
+            if got == nil {
+                guard await self.sleep(.milliseconds(400)), self.current(machine) else { return }
+                got = await self.engine.remoteCertificateFingerprint()
+            }
+            guard self.current(machine), let got else { return }
+            machine.fingerprintChecked = true
+            guard CallSdp.matches(expected, got) else {
+                self.finish(
+                    machine,
+                    text: "This call couldn't be verified.",
+                    notify: .hangup,
+                    status: "ended",
+                    close: .report(.failed),
+                    visible: .seconds(4)
+                )
+                return
+            }
+        }
+    }
+
+    /// Identity key for the first offer and answer; the per-call key after that.
+    private func openKey(type: String, machine: Machine) -> SymmetricKey? {
+        let setup = type == "sdp_offer" || type == "sdp_answer"
+        if setup && !machine.gotSetup { return machine.keys?.receive }
+        return machine.forward?.receive
+    }
+
+    /// Derives the post-setup keys. An older peer sends no ephemeral key, and the identity keys continue.
+    private func engageForward(_ theirKey: Data?, _ machine: Machine) {
+        guard machine.forward == nil, let id = machine.serverID, let identity = machine.keys else { return }
+        if let theirKey {
+            // They sent a key, so they will open later signals with it. The long-term key
+            // must not carry the addresses if that derivation does not succeed.
+            guard let ours = machine.ephPrivate, let pub = machine.ephPublic, let secret = machine.identitySecret,
+                  let forward = try? CallCrypto.forwardSecret(
+                    identitySecret: secret,
+                    ourEphemeralPrivate: ours,
+                    ourEphemeralPublic: pub,
+                    peerEphemeralPublic: theirKey,
+                    callID: id
+                  )
+            else { return }
+            machine.forward = CallSignalKeys(forwardSecret: forward, callID: id, role: machine.role)
+        } else {
+            machine.forward = identity
+        }
+        machine.ephPrivate = nil
+        machine.identitySecret = nil
+    }
+
+    private func noteFingerprint(_ sdp: String, _ machine: Machine) {
+        guard let fingerprint = CallSdp.fingerprint(sdp) else { return }
+        if fingerprint != machine.expectedFingerprint { machine.fingerprintChecked = false }
+        machine.expectedFingerprint = fingerprint
+    }
+
+    private func releaseHeld(_ machine: Machine) {
+        flushGathered(machine)
+        let waiting = machine.pendingSend
+        machine.pendingSend.removeAll()
+        for signal in waiting where current(machine) { send(signal, machine) }
+        let inbound = machine.pendingSecure
+        machine.pendingSecure.removeAll()
+        for item in inbound where current(machine) {
+            let previous = machine.inbox
+            machine.inbox = Task { [weak self] in
+                await previous?.value
+                guard let self, self.current(machine) else { return }
+                await self.receive(from: item.from, type: item.type, payload: item.payload, machine: machine)
+            }
+        }
     }
 
     private func addRemote(_ candidates: [IceCandidatePayload], _ machine: Machine) {
@@ -875,7 +1012,7 @@ final class CallController {
     private func flushGathered(_ machine: Machine) {
         machine.batchTimer?.cancel()
         machine.batchTimer = nil
-        guard machine.negotiated, current(machine) else { return }
+        guard machine.negotiated, machine.forward != nil, current(machine) else { return }
         while !machine.gathered.isEmpty {
             let count = min(20, machine.gathered.count)
             let batch = Array(machine.gathered.prefix(count))
@@ -898,21 +1035,45 @@ final class CallController {
     }
 
     private func send(_ signal: CallSignal, _ machine: Machine) {
-        guard machine.keys != nil, machine.serverID != nil else { return }
+        guard machine.serverID != nil else { return }
+        let needsForward: Bool
+        switch signal {
+        case .offer(_, let restart, _): needsForward = restart
+        case .answer: needsForward = machine.sealedAnswer
+        default: needsForward = true
+        }
+        if needsForward && machine.forward == nil {
+            machine.pendingSend.append(signal)
+            return
+        }
+        guard let key = sealingKey(signal, machine) else { return }
+        if case .answer = signal { machine.sealedAnswer = true }
         machine.sent += 1
         let n = machine.sent
         let previous = machine.outbox
         machine.outbox = Task { [weak self] in
             await previous?.value
             guard let self, self.current(machine) else { return }
-            await self.deliver(signal, n: n, machine: machine)
+            await self.deliver(signal, n: n, key: key, machine: machine)
         }
     }
 
-    private func deliver(_ signal: CallSignal, n: Int, machine: Machine) async {
-        guard let id = machine.serverID, let keys = machine.keys, let token = sessionController?.bearerToken else { return }
+    /// The first offer and the first answer stay under the identity keys. Later signals use the per-call key.
+    private func sealingKey(_ signal: CallSignal, _ machine: Machine) -> SymmetricKey? {
+        switch signal {
+        case .offer(_, let restart, _):
+            return restart ? machine.forward?.send : machine.keys?.send
+        case .answer:
+            return machine.sealedAnswer ? machine.forward?.send : machine.keys?.send
+        default:
+            return machine.forward?.send
+        }
+    }
+
+    private func deliver(_ signal: CallSignal, n: Int, key: SymmetricKey, machine: Machine) async {
+        guard let id = machine.serverID, let token = sessionController?.bearerToken else { return }
         guard let plaintext = try? signal.plaintext(n: n) else { return }
-        guard let payload = try? CallCrypto.seal(plaintext, key: keys.send, callID: id, signalType: signal.signalType) else { return }
+        guard let payload = try? CallCrypto.seal(plaintext, key: key, callID: id, signalType: signal.signalType) else { return }
         for attempt in 0..<3 {
             guard current(machine) else { return }
             do {
@@ -957,6 +1118,7 @@ final class CallController {
         switch state {
         case .connected:
             machine.linkBroken = false
+            verifyFingerprint(machine)
             machine.graceTimer?.cancel()
             machine.graceTimer = nil
             machine.reconnectTimer?.cancel()
@@ -1056,7 +1218,7 @@ final class CallController {
             do {
                 let sdp = try await self.engine.makeOffer(iceRestart: true)
                 guard self.current(machine) else { return }
-                self.send(.offer(sdp: sdp, restart: true), machine)
+                self.send(.offer(sdp: CallSdp.withoutCandidates(sdp), restart: true, ephemeral: nil), machine)
             } catch {
                 // The next failed or disconnected report tries again.
             }
@@ -1446,8 +1608,23 @@ final class CallController {
             // Until they say otherwise: a video call's other side sends video, a voice call's not.
             remoteCameraOff: modality != .video,
             notice: nil,
-            speakerOn: modality == .video
+            speakerOn: modality == .video,
+            safetyVerified: messagingController?.peerSafetyVerified(peerUserID) ?? false
         )
+    }
+
+    /// The safety number for the call on screen, when this phone has the contact's key.
+    func safetyNumberForActiveCall() -> String? {
+        guard let peer = active?.peerUserID else { return nil }
+        return messagingController?.safetyNumber(for: peer)
+    }
+
+    /// The number on the call screen was compared.
+    func confirmSafety() {
+        guard var call = active, call.phase != .ending else { return }
+        messagingController?.confirmPeerSafety(call.peerUserID)
+        call.safetyVerified = true
+        active = call
     }
 
     private func applyCallerName(_ name: String, callID: UUID, video: Bool) {

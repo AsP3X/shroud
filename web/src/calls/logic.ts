@@ -1,4 +1,6 @@
 import { ApiError, type CallModality, type CallSignalType } from "../api/client";
+import { b64ToBytes } from "../crypto/bytes";
+import { PeerKeyChanged } from "../crypto/peerIdentity";
 import type { CallRole } from "./crypto";
 
 /*
@@ -64,6 +66,10 @@ export type CallView = {
   notice: string | null;
   /** Collapsed into the floating pill so the chats stay usable. */
   minimized: boolean;
+  /** The safety number, when this contact's key is pinned and has not been compared. */
+  safety: { number: string; verified: boolean } | null;
+  /** The call ended because their identity key changed. The screen can trust the new one. */
+  keyChanged: boolean;
 };
 
 /* Timings from docs/calls.md, and the client's own. */
@@ -128,6 +134,7 @@ export function isLive(status: string): boolean {
 
 /** A failed call request, for the call screen. */
 export function callErrorText(err: unknown, peerName: string): string {
+  if (err instanceof PeerKeyChanged) return err.message;
   if (err instanceof CallFailure) return err.message;
   if (err instanceof ApiError) {
     switch (err.code) {
@@ -243,16 +250,16 @@ export type IceCandidateJson = { candidate: string; sdpMid: string | null; sdpML
 
 /** The plaintext of a sealed signal (docs/calls.md), `n` counting up per sending device. */
 export type Signal =
-  | { t: "offer"; sdp: string; restart: boolean; n: number }
-  | { t: "answer"; sdp: string; n: number }
+  | { t: "offer"; sdp: string; restart: boolean; n: number; ek?: string }
+  | { t: "answer"; sdp: string; n: number; ek?: string }
   | { t: "ice"; cs: IceCandidateJson[]; n: number }
   | { t: "restart"; n: number }
   | { t: "media"; mic: boolean; camera: boolean; n: number };
 
 /** A signal's body before the sender numbers it. */
 export type SignalBody =
-  | { t: "offer"; sdp: string; restart: boolean }
-  | { t: "answer"; sdp: string }
+  | { t: "offer"; sdp: string; restart: boolean; ek?: string }
+  | { t: "answer"; sdp: string; ek?: string }
   | { t: "ice"; cs: IceCandidateJson[] }
   | { t: "restart" }
   | { t: "media"; mic: boolean; camera: boolean };
@@ -326,6 +333,45 @@ function applyParam(line: string, extra: string): string {
   return `${line};${extra}`;
 }
 
+/**
+ * A fresh X25519 public key on the first offer or answer, standard base64 of 32 bytes.
+ * Absent is an older peer. Present but not a key rejects the signal.
+ */
+function readEphemeral(value: unknown): string | false | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") return false;
+  try {
+    const bytes = b64ToBytes(value);
+    if (bytes.length !== 32) return false;
+    return value;
+  } catch {
+    return false;
+  }
+}
+
+/** ICE addresses leave the session description. They travel later, under the per-call key. */
+export function sdpWithoutCandidates(sdp: string): string {
+  const eol = sdp.includes("\r\n") ? "\r\n" : "\n";
+  return sdp
+    .split(/\r\n|\n/)
+    .filter((line) => !/^a=candidate:/i.test(line))
+    .join(eol);
+}
+
+/** The SHA-256 DTLS fingerprint in a session description, lowercase, or null when it has none. */
+export function sdpFingerprint(sdp: string): string | null {
+  const match = /^a=fingerprint:sha-256[ \t]+([0-9a-f:]+)[ \t]*$/im.exec(sdp);
+  return match ? match[1].toLowerCase() : null;
+}
+
+/** The certificate fingerprint and the one in the sealed description name the same certificate. */
+export function fingerprintsMatch(sdpPrint: string, certPrint: string): boolean {
+  const norm = (value: string) => value.replace(/[\s:]/g, "").toLowerCase();
+  const left = norm(sdpPrint);
+  const right = norm(certPrint);
+  return left.length > 0 && left === right;
+}
+
 /** More candidates than any real batch holds: the rest are dropped. */
 const MAX_CANDIDATES = 64;
 
@@ -351,12 +397,18 @@ export function readSignal(signalType: string, value: Record<string, unknown>): 
   const t = value.t;
   if (typeof t !== "string" || !(t in SIGNAL_TYPE) || SIGNAL_TYPE[t as Signal["t"]] !== signalType) return null;
   switch (t) {
-    case "offer":
+    case "offer": {
       if (typeof value.sdp !== "string" || !value.sdp) return null;
-      return { t, sdp: value.sdp, restart: value.restart === true, n };
-    case "answer":
+      const ek = readEphemeral(value.ek);
+      if (ek === false) return null;
+      return { t, sdp: value.sdp, restart: value.restart === true, n, ...(ek ? { ek } : {}) };
+    }
+    case "answer": {
       if (typeof value.sdp !== "string" || !value.sdp) return null;
-      return { t, sdp: value.sdp, n };
+      const ek = readEphemeral(value.ek);
+      if (ek === false) return null;
+      return { t, sdp: value.sdp, n, ...(ek ? { ek } : {}) };
+    }
     case "ice": {
       if (!Array.isArray(value.cs)) return null;
       const cs = value.cs

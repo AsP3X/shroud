@@ -5,7 +5,16 @@
  */
 import { x25519 } from "@noble/curves/ed25519.js";
 import { bytesToHex, hexToBytes } from "../crypto/bytes";
-import { callKeys, deriveCallSecret, openSignal, sealSignal, signalKeyBytes } from "./crypto";
+import {
+  callKeys,
+  deriveCallSecret,
+  deriveForwardSecret,
+  forwardKeys,
+  forwardSignalKeyBytes,
+  openSignal,
+  sealSignal,
+  signalKeyBytes,
+} from "./crypto";
 
 function check(ok: boolean, what: string): void {
   if (!ok) throw new Error(`calls crypto selftest: ${what}`);
@@ -119,5 +128,29 @@ await rejects(() => openSignal(bob.receive, callId, "sdp_offer", forged), "a key
 const list = await sealSignal(alice.send, callId, "sdp_offer", [1, 2] as unknown as Record<string, unknown>);
 await rejects(() => openSignal(bob.receive, callId, "sdp_offer", list), "a plaintext that is not an object");
 await rejects(async () => signalKeyBytes(aliceSecret, "not-a-call", "caller"), "a malformed call id");
+
+/* --- the per-call key, after the offer and answer --- */
+const aliceEphPrivate = hexToBytes("20".repeat(32));
+const bobEphPrivate = hexToBytes("30".repeat(32));
+const aliceEphPublic = x25519.getPublicKey(aliceEphPrivate);
+const bobEphPublic = x25519.getPublicKey(bobEphPrivate);
+const aliceForward = deriveForwardSecret(aliceSecret, aliceEphPrivate, aliceEphPublic, bobEphPublic, callId);
+const bobForward = deriveForwardSecret(bobSecret, bobEphPrivate, bobEphPublic, aliceEphPublic, callId);
+check(
+  bytesToHex(aliceForward) === "7d4c5c4a5c2a2d1bc6979d871db81e8642b840c0f0b816378ac62bcf8e4112d6",
+  "per-call secret",
+);
+check(bytesToHex(aliceForward) === bytesToHex(bobForward), "both sides derive the same per-call secret");
+check(bytesToHex(aliceForward) !== bytesToHex(aliceSecret), "the per-call secret is not the identity secret");
+const forwardCaller = bytesToHex(forwardSignalKeyBytes(aliceForward, callId, "caller"));
+const forwardCallee = bytesToHex(forwardSignalKeyBytes(aliceForward, callId, "callee"));
+check(forwardCaller === "4f366306d6ee25ffa435b12c0cfb2bf937b625c7f056171c0a1386d2163b98f9", "per-call key(caller)");
+check(forwardCallee === "e8b850838219ef3c085075166994a08e4d6a9a5c4edc16c867afe15f2c0f2873", "per-call key(callee)");
+const aliceFs = await forwardKeys(aliceForward.slice(), callId, "caller");
+const bobFs = await forwardKeys(bobForward.slice(), callId, "callee");
+const ice = await sealSignal(aliceFs.send, callId, "ice_candidate", { t: "ice", cs: [], n: 2 }, nonce);
+await rejects(() => openSignal(bob.receive, callId, "ice_candidate", ice), "the identity key does not open a per-call signal");
+const openedIce = await openSignal(bobFs.receive, callId, "ice_candidate", ice);
+check(openedIce.t === "ice" && openedIce.n === 2, "the per-call key opens it");
 
 console.log("calls crypto selftest ok");

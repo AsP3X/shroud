@@ -1,5 +1,6 @@
 import { api, ApiError } from "./api/client";
 import { closeMediaDb, MEDIA_DB_NAME } from "./crypto/mediaCache";
+import { forgetPeerKeyCache } from "./crypto/peerIdentity";
 import { closeVault } from "./crypto/vault";
 import { forgetPushRegistration, hasPushRegistration } from "./notifications/push";
 import { sealStorage, storageSealed } from "./storageSeal";
@@ -264,6 +265,7 @@ export function followWipesInOtherTabs(): void {
  */
 export async function beginWipe(): Promise<WipeInventory> {
   sealStorage();
+  forgetPeerKeyCache();
   closeVault();
   removeKeys(
     localStorage,

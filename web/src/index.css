@@ -3586,6 +3586,26 @@ button.reply-quote { cursor: pointer; }
   color: #ffd9a8;
   animation: call-status-in 0.3s var(--ease);
 }
+.call-safety {
+  margin: 8px 0 0; max-width: min(420px, 88vw); padding: 8px 12px;
+  border: 0; border-radius: 12px;
+  background: rgba(255, 255, 255, 0.12); color: #fff;
+  font: inherit; font-size: 13px; line-height: 1.35;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  cursor: pointer;
+}
+.call-safety:hover { background: rgba(255, 255, 255, 0.2); }
+.call-safety-num {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px; letter-spacing: 0.02em; opacity: 0.9;
+  text-wrap: balance;
+}
+.thread-banner-action {
+  display: inline-block; margin-left: 8px;
+  border: 0; background: none; padding: 0;
+  color: inherit; font: inherit; font-weight: 650;
+  text-decoration: underline; cursor: pointer;
+}
 
 /* A picture on screen (theirs, or ours while we wait for theirs): the name and clock sit in a
    small pill at the top, as in FaceTime. */
@@ -3920,7 +3940,7 @@ button.reply-quote { cursor: pointer; }
 
 @media (prefers-reduced-motion: reduce) {
   .call, .call-pill, .call-backdrop, .call-who, .call-bar, .call-sound, .call-status-text,
-  .call-chip, .call-notice, .call-ctl-glyph, .call-remote, .call-captions, .call-captions p { animation: none; }
+  .call-chip, .call-notice, .call-safety, .call-ctl-glyph, .call-remote, .call-captions, .call-captions p { animation: none; }
   .call.is-ringing .call-avatar,
   .call-stage .call-avatar.is-opening,
   .call-stage .call-avatar.is-closing,

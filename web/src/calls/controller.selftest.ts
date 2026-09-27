@@ -10,6 +10,7 @@ import { ApiError, type CallInfo, type CallModality, type CallSignalType } from 
 import type { RealtimeEvent } from "../realtime";
 import { CallController, type CallApi, type CallEnv } from "./controller";
 import { callKeys, deriveCallSecret, openSignal, sealSignal } from "./crypto";
+import { sdpWithoutCandidates } from "./logic";
 import { CAMERA_RELEASE_MS, CAMERA_UNAVAILABLE, VIDEO_UNAVAILABLE, type CallPeer, type CallView } from "./logic";
 
 function check(ok: boolean, what: string): void {
@@ -662,13 +663,24 @@ function phase(device: Device): string {
   return device.view?.phase ?? "idle";
 }
 
-/** Opens every signal one device sent in a call, in order. */
+/**
+ * Opens every signal one device sent in a call, in order. The first offer and answer use the
+ * identity keys. Later signals use the per-call key, which this helper does not have: they are
+ * marked `forward` when the identity key cannot open them.
+ */
 async function plaintexts(server: Server, from: Device, to: Device, role: "caller" | "callee") {
   const out: Record<string, unknown>[] = [];
   for (const signal of server.signals.filter((s) => s.from === from.id)) {
     const secret = deriveCallSecret(to.user.privateKey, to.user.publicKey, from.user.publicKey);
     const keys = await callKeys(secret, signal.callId, role === "caller" ? "callee" : "caller");
-    out.push({ type: signal.type, ...(await openSignal(keys.receive, signal.callId, signal.type, signal.payload)) });
+    secret.fill(0);
+    try {
+      const opened = await openSignal(keys.receive, signal.callId, signal.type, signal.payload);
+      if (typeof opened.sdp === "string") opened.sdp = sdpWithoutCandidates(opened.sdp);
+      out.push({ type: signal.type, ...opened });
+    } catch {
+      out.push({ type: signal.type, forward: true });
+    }
   }
   return out;
 }
@@ -749,19 +761,21 @@ const ICE = 150;
   const fromCallee = await plaintexts(server, b1, a1, "callee");
   check(fromCaller[0]?.type === "sdp_offer" && fromCaller[0].t === "offer" && fromCaller[0].restart === false, "the offer first");
   check(
-    JSON.stringify(Object.keys(fromCaller[0])) === JSON.stringify(["type", "t", "sdp", "restart", "n"]),
+    JSON.stringify(Object.keys(fromCaller[0])) === JSON.stringify(["type", "t", "sdp", "restart", "ek", "n"]),
     "the offer's fields as docs/calls.md has them",
   );
-  check(fromCaller.every((s, i) => s.n === i + 1), "the caller numbers its signals 1, 2, 3…");
-  check(fromCallee[0]?.t === "answer" && fromCallee.every((s, i) => s.n === i + 1), "the callee answers first, numbered");
-  const callerIce = fromCaller.filter((s) => s.t === "ice");
-  check(callerIce.length === 1 && (callerIce[0].cs as unknown[]).length === 3, "candidates travel in one batch");
+  check(typeof fromCaller[0].ek === "string" && typeof fromCallee[0].ek === "string", "both sides send a fresh key");
+  check(!String(fromCaller[0].sdp).includes("a=candidate:"), "the offer carries no network address");
+  check(fromCaller[0].n === 1, "the offer is numbered 1");
+  check(fromCallee[0]?.t === "answer" && fromCallee[0].n === 1, "the callee answers first, numbered 1");
+  const callerIce = fromCaller.filter((s) => s.type === "ice_candidate");
+  const calleeIce = fromCallee.filter((s) => s.type === "ice_candidate");
+  check(callerIce.length === 1 && calleeIce.length === 1, "candidates travel in one batch");
   check(
-    JSON.stringify(Object.keys((callerIce[0].cs as Record<string, unknown>[])[0])) ===
-      JSON.stringify(["candidate", "sdpMid", "sdpMLineIndex"]),
-    "a candidate's fields",
+    callerIce[0]?.forward === true && calleeIce[0]?.forward === true && fromCaller.some((s) => s.type === "media_state" && s.forward === true),
+    "addresses and camera state are sealed with the per-call key",
   );
-  check(fromCaller.some((s) => s.t === "media" && s.mic === true && s.camera === false), "the media state goes out");
+  check(a1.peer.remoteCandidates.length === 3 && b1.peer.remoteCandidates.length === 3, "those addresses still connect");
   check(server.signals.every((s) => s.to !== "b2"), "b2 never gets a signal");
 
   // Mute: the other side sees it.
@@ -1042,8 +1056,8 @@ const ICE = 150;
   await clock.advance(ICE);
   await clock.advance(ICE);
   check(a1.view?.reconnecting === false && phase(a1) === "active", "recovered");
-  let offers = (await plaintexts(server, a1, b1, "caller")).filter((s) => s.t === "offer");
-  check(offers.length === 2 && offers[1].restart === true, "a restart offer with restart: true");
+  const offersFrom = (id: string) => server.signals.filter((s) => s.from === id && s.type === "sdp_offer");
+  check(offersFrom(a1.id).length === 2, "a restart offer follows the first");
   check(a1.peer.config.iceTransportPolicy === "relay", "a failed link falls back to the relay");
   check(b1.peer.config.iceTransportPolicy === "all", "bob has not failed, so he still tries every path");
 
@@ -1051,17 +1065,15 @@ const ICE = 150;
   b1.peer.setState("disconnected");
   check(b1.view?.reconnecting === true, "bob reconnecting");
   await clock.advance(4_000);
-  const asked = (await plaintexts(server, b1, a1, "callee")).filter((s) => s.t === "restart");
+  const asked = server.signals.filter((s) => s.from === b1.id && s.type === "renegotiate");
   check(asked.length === 1, "after 4 s disconnected the callee asks for a restart");
   check(b1.peer.config.iceTransportPolicy === "all", "a short disconnect does not force the relay");
   a1.peer.setState("disconnected");
   await clock.advance(ICE);
-  offers = (await plaintexts(server, a1, b1, "caller")).filter((s) => s.t === "offer");
-  check(offers.length === 2, "not within 10 s of the last one");
+  check(offersFrom(a1.id).length === 2, "not within 10 s of the last one");
   await clock.advance(10_000);
   await clock.advance(ICE);
-  offers = (await plaintexts(server, a1, b1, "caller")).filter((s) => s.t === "offer");
-  check(offers.length === 3 && offers[2].restart === true, "then the restart goes");
+  check(offersFrom(a1.id).length === 3, "then the restart goes");
   await clock.advance(ICE);
   check(!a1.view?.reconnecting && !b1.view?.reconnecting && phase(b1) === "active", "both recovered");
 

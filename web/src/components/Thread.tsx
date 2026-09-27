@@ -507,6 +507,7 @@ export function Thread({
   messages,
   loading,
   error,
+  onAcceptIdentity,
   hasOlder = false,
   loadingOlder = false,
   onLoadOlder,
@@ -544,6 +545,8 @@ export function Thread({
   messages: ChatMessage[];
   loading: boolean;
   error: string | null;
+  /** Shown with a changed identity key: trusts the new key after the safety number was compared. */
+  onAcceptIdentity?: () => void;
   /** The server holds messages older than `messages`; `onLoadOlder` fetches the next page. */
   hasOlder?: boolean;
   loadingOlder?: boolean;
@@ -1238,7 +1241,14 @@ export function Thread({
           {loading && messages.length === 0 ? (
             <p className="thread-note">Decrypting history…</p>
           ) : error && messages.length === 0 ? (
-            <p className="thread-note thread-note-error">{error}</p>
+            <div className="thread-note thread-note-error" role="status">
+              {error}
+              {onAcceptIdentity ? (
+                <button type="button" className="thread-banner-action" onClick={onAcceptIdentity}>
+                  Trust new key
+                </button>
+              ) : null}
+            </div>
           ) : query && visible.length === 0 ? (
             <p className="thread-note">No messages match “{query}”.</p>
           ) : messages.length === 0 ? (
@@ -1304,9 +1314,14 @@ export function Thread({
         ) : null}
 
         {error && messages.length > 0 ? (
-          <p className="thread-banner" role="status">
+          <div className="thread-banner" role="status">
             {error}
-          </p>
+            {onAcceptIdentity ? (
+              <button type="button" className="thread-banner-action" onClick={onAcceptIdentity}>
+                Trust new key
+              </button>
+            ) : null}
+          </div>
         ) : null}
 
         {voice.hint ? (

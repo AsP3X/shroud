@@ -137,13 +137,40 @@ payload   = "c1." + base64(sealed)          (standard alphabet, padded)
 The role in the key stops a signal being reflected back to its sender; `signal_type` in the
 additional data stops the server relabelling it. A signal that does not open is dropped.
 
+**After the answer, a fresh key.** The first offer and the first answer stay on the keys above.
+Each carries `ek`, a new X25519 public key (standard base64, 32 bytes). Once both are known:
+
+```
+shared = X25519(our ephemeral private key, their ek)
+lo, hi = the two ephemeral public keys, lower one first (byte order)
+fs     = HKDF-SHA256(ikm: shared, salt: the call secret,
+                     info: "shroud-call-fs-v1" ‖ call id (16 bytes) ‖ lo ‖ hi, 32 bytes)
+key(role) = HKDF-SHA256(ikm: fs, salt: call id as 16 bytes,
+                        info: "shroud-call-fs-signal-v1|" + role, 32 bytes)
+```
+
+ICE candidates, mute and camera updates, restart requests, and later offers and answers use
+these keys. `a=candidate` lines are removed from the session description before it is sealed, so
+a network address travels only under this per-call key. The ephemeral private key, and the copy
+of the call secret used to derive `fs`, are wiped once `fs` exists and again when the call ends.
+A later leak of the two identity keys reopens the offer and the answer, and not the addresses
+exchanged after them. A peer that omits `ek` is an older build: the rest of that call stays on
+the identity signal keys.
+
+**The certificate.** After the media path connects, each client compares the DTLS certificate's
+SHA-256 fingerprint with `a=fingerprint:sha-256` in the sealed remote description. A mismatch
+ends the call. The browser also remembers the first identity key it sees for a contact (the
+vault; the iPhone already does this in the Keychain) and will not place a call or send a new
+message after that key changes until the new one is accepted. Until the safety number has been
+compared, the call says so. Comparing it does not delay the call.
+
 **Plaintext** is a JSON object; `n` counts up from 1 per sending device, and a receiver drops an
 `n` it has seen from that device.
 
 | `signal_type` | plaintext |
 | --- | --- |
-| `sdp_offer` | `{"t":"offer","sdp":"…","restart":false,"n":1}` |
-| `sdp_answer` | `{"t":"answer","sdp":"…","n":1}` |
+| `sdp_offer` | `{"t":"offer","sdp":"…","restart":false,"n":1,"ek":"…"}` — `ek` on the first offer only |
+| `sdp_answer` | `{"t":"answer","sdp":"…","n":1,"ek":"…"}` — `ek` on the first answer only |
 | `ice_candidate` | `{"t":"ice","cs":[{"candidate":"…","sdpMid":"0","sdpMLineIndex":0}],"n":2}` |
 | `renegotiate` | `{"t":"restart","n":3}`: the callee asks the caller for an ICE restart |
 | `media_state` | `{"t":"media","mic":true,"camera":false,"n":4}`: what the sender sends now; `camera` switches the call between voice and video |
@@ -170,11 +197,20 @@ aad                     shroud-call-v1|0190a3b4-1c2d-7e8f-9a0b-1c2d3e4f5a6b|sdp_
 payload                 c1.AAECAwQFBgcICQoLQDFMfgG6gj47QCtynr5cS3IjS6czaNhnseRvgliRTrXZeUi+lMfrLwnqwjds+cTC3HtQ
 ```
 
-**What it does not cover.** The web client takes a peer's identity key from the server's key
-directory (it pins nothing yet), so on the web the server could still hand out its own key; the
-iPhone pins keys and shows safety numbers. The server sees who calls whom, when and for how
-long, and the devices' IP addresses. The TURN relay sees the IPs and the amount of media, not
-its content.
+The per-call key, with the same identity keys and call id. Ephemeral private keys are
+`20` repeated for Alice and `30` repeated for Bob (32 bytes each):
+
+```
+forward secret          7d4c5c4a5c2a2d1bc6979d871db81e8642b840c0f0b816378ac62bcf8e4112d6
+key(caller)             4f366306d6ee25ffa435b12c0cfb2bf937b625c7f056171c0a1386d2163b98f9
+key(callee)             e8b850838219ef3c085075166994a08e4d6a9a5c4edc16c867afe15f2c0f2873
+```
+
+**What it does not cover.** The first time either client sees a contact's identity key, it
+trusts that key (the safety number is how the two people check it). The server sees who calls
+whom, when and for how long, and the devices' IP addresses. The TURN relay sees the IPs and the
+amount of media, not its content. The offer and the answer stay recoverable from the two
+identity keys; the addresses sent after them do not.
 
 ## Media
 

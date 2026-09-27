@@ -31,6 +31,7 @@ import { Rail, TabBar, type Tab } from "../components/Rail";
 import { SettingsPane } from "../components/SettingsPane";
 import { Thread } from "../components/Thread";
 import { listTimestamp, presenceLabel, type Presence } from "../format";
+import { acceptChangedPeerKey, isPeerKeyBlocked, onPeerKeyBlocked, PEER_KEY_CHANGED } from "../crypto/peerIdentity";
 import { loadIdentity } from "../crypto/store";
 import { parseInvite, shareUrl } from "../invite";
 import {
@@ -41,7 +42,9 @@ import {
   ensureVoiceLoaded,
   loadHistoryPage,
   peerIdForMessage,
+  peerIdentityForSending,
   peerIdentityPublic,
+  sendFailureText,
   previewCopy,
   forgetDecryptedState,
   forgetMessageLocally,
@@ -205,6 +208,11 @@ export function AppShell({ session }: { session: Session }) {
   const alive = useRef(true);
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
+  useEffect(() => {
+    return onPeerKeyBlocked((userId) => {
+      if (selectedRef.current?.id.toLowerCase() === userId) setThreadError(PEER_KEY_CHANGED);
+    });
+  }, []);
   const conversationsRef = useRef(conversations);
   conversationsRef.current = conversations;
   const contactsRef = useRef(contacts);
@@ -899,7 +907,10 @@ export function AppShell({ session }: { session: Session }) {
       // Message ids are unique across chats: acting on the thread after a chat switch is a
       // no-op (`withMyReaction` finds nothing), and skipping it would leave the tap pending.
       void (async () => {
-        const peerPub = await peerIdentityPublic(session.token, peer.id).catch(() => null);
+        const peerPub = await peerIdentityForSending(session.token, peer.id).catch((err: unknown) => {
+          if (err instanceof Error && err.name === "PeerKeyChanged") setThreadError(err.message);
+          return null;
+        });
         /* Seqs and the notice belong to the chat the tap was made in. */
         const stillOpen = () => selectedRef.current?.id.toLowerCase() === peer.id.toLowerCase();
         const couldNotSave = () => {
@@ -1047,7 +1058,7 @@ export function AppShell({ session }: { session: Session }) {
     setDraft("");
     setReplyTo(null);
     setThreadLoading(true);
-    setThreadError(null);
+    setThreadError(isPeerKeyBlocked(peerId) ? PEER_KEY_CHANGED : null);
     /* Only the newest page is decrypted before the chat shows. A few older pages follow
        in the background, one at a time with a pause between them so decrypting never
        competes with the reader; past that, pages load as they scroll up (`loadOlder`). */
@@ -1191,7 +1202,7 @@ export function AppShell({ session }: { session: Session }) {
             ? { privateKey: material.agreementPrivate.slice(), publicKey: material.agreementPublic.slice() }
             : null;
         },
-        peerKey: (userId) => peerIdentityPublic(session.token, userId),
+        peerKey: (userId) => peerIdentityForSending(session.token, userId),
         peerName: (userId) => {
           const key = userId.toLowerCase();
           return (
@@ -1695,7 +1706,7 @@ export function AppShell({ session }: { session: Session }) {
       setThread((prev) =>
         prev.map((m) => (m.id === localId ? { ...m, pending: false, failed: true } : m)),
       );
-      setThreadError(err instanceof ApiError ? err.message : "Could not send.");
+      setThreadError(sendFailureText(err, "Could not send."));
     } finally {
       setSendingPeer((current) => (current === peerId ? null : current));
     }
@@ -1808,7 +1819,7 @@ export function AppShell({ session }: { session: Session }) {
       setThread((prev) =>
         prev.map((m) => (m.id === localId ? { ...m, pending: false, failed: true } : m)),
       );
-      setThreadError(err instanceof ApiError ? err.message : "Could not send the voice message.");
+      setThreadError(sendFailureText(err, "Could not send the voice message."));
       return;
     } finally {
       setSendingPeer((current) => (current === peerId ? null : current));
@@ -2257,6 +2268,14 @@ export function AppShell({ session }: { session: Session }) {
                 loadingOlder={loadingOlder}
                 onLoadOlder={loadOlder}
                 error={threadError}
+                onAcceptIdentity={
+                  threadError === PEER_KEY_CHANGED
+                    ? () => {
+                        acceptChangedPeerKey(selected.id, session.user.id);
+                        setThreadError(null);
+                      }
+                    : undefined
+                }
                 canSend={Boolean(identity)}
                 sending={sendingPeer?.toLowerCase() === selected.id.toLowerCase()}
                 draft={draft}

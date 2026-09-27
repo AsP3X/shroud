@@ -18,8 +18,11 @@ import {
   isLive,
   linkState,
   mediaErrorText,
+  fingerprintsMatch,
   readSignal,
   sameId,
+  sdpFingerprint,
+  sdpWithoutCandidates,
   signalTypeOf,
   statusLine,
   videoLayout,
@@ -112,6 +115,8 @@ const base: CallView = {
   endedText: null,
   notice: null,
   minimized: false,
+  safety: null,
+  keyChanged: false,
 };
 check(statusLine(base, 0) === "Calling…", "placing the ring");
 check(statusLine({ ...base, dialing: false }, 0) === "Ringing…", "ringing");
@@ -183,6 +188,22 @@ check(readSignal("renegotiate", { t: "restart", n: 3 })?.t === "restart", "a res
 const media = readSignal("media_state", { t: "media", mic: false, camera: true, n: 4 });
 check(media?.t === "media" && !media.mic && media.camera, "media state");
 check(readSignal("media_state", { t: "media", mic: "no", camera: true, n: 4 }) === null, "flags are booleans");
+
+const ek = btoa(String.fromCharCode(...new Uint8Array(32)));
+const withKey = readSignal("sdp_offer", { t: "offer", sdp: "v=0", restart: false, ek, n: 1 });
+check(withKey?.t === "offer" && withKey.ek === ek, "an offer carries its ephemeral key");
+check(readSignal("sdp_answer", { t: "answer", sdp: "v=0", ek: "%%%", n: 1 }) === null, "a bad ephemeral key");
+check(readSignal("sdp_offer", { t: "offer", sdp: "v=0", ek: btoa("short"), n: 1 }) === null, "a short ephemeral key");
+const described = "v=0\r\na=candidate:1 1 udp 1 10.0.0.1 9 typ host\r\na=fingerprint:sha-256 AA:BB:CC\r\n";
+check(
+  sdpWithoutCandidates(described) === "v=0\r\na=fingerprint:sha-256 AA:BB:CC\r\n",
+  "candidate lines leave the session description",
+);
+check(sdpFingerprint(described) === "aa:bb:cc", "the fingerprint is read in lower case");
+check(sdpFingerprint("v=0\r\n") === null, "a description without one");
+check(fingerprintsMatch("AA:BB:CC", "aa bb cc"), "the certificate fingerprint matches ignoring case and separators");
+check(!fingerprintsMatch("AA:BB:CC", "aa:bb:cd"), "a different certificate does not");
+check(!fingerprintsMatch("", "aa"), "an empty fingerprint does not match");
 
 const seen = new SeenSignals();
 check(seen.first("DEV-A", 1) && seen.first("dev-a", 2), "new numbers count");

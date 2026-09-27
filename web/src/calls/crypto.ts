@@ -64,10 +64,60 @@ async function importKey(raw: Uint8Array, usage: KeyUsage): Promise<CryptoKey> {
 
 /** Both directions of one call, as non-extractable WebCrypto keys. */
 export async function callKeys(secret: Uint8Array, callId: string, ourRole: CallRole): Promise<CallKeys> {
+  return directionKeys(secret, callId, ourRole, "shroud-call-signal-v1");
+}
+
+/**
+ * The per-call secret for everything after the offer and answer.
+ *
+ * `HKDF-SHA256(X25519(our ephemeral, their ephemeral), salt = the identity call secret,
+ * info "shroud-call-fs-v1" ‖ call id ‖ lower ephemeral public ‖ higher ephemeral public)`.
+ * The identity secret is the salt, so a swapped ephemeral key cannot be mixed in. Wiped by
+ * the caller once the direction keys exist.
+ */
+export function deriveForwardSecret(
+  identitySecret: Uint8Array,
+  ourEphemeralPrivate: Uint8Array,
+  ourEphemeralPublic: Uint8Array,
+  peerEphemeralPublic: Uint8Array,
+  callId: string,
+): Uint8Array {
+  const shared = x25519.getSharedSecret(ourEphemeralPrivate, peerEphemeralPublic);
+  const info = concatBytes(
+    utf8("shroud-call-fs-v1"),
+    callIdBytes(callId),
+    sortedConcat(ourEphemeralPublic, peerEphemeralPublic),
+  );
+  const secret = hkdf(sha256, shared, identitySecret, info, 32);
+  shared.fill(0);
+  return secret;
+}
+
+/** The raw key one role seals its post-setup signals with (exported for the test vector). */
+export function forwardSignalKeyBytes(secret: Uint8Array, callId: string, role: CallRole): Uint8Array {
+  return hkdf(sha256, secret, callIdBytes(callId), utf8(`shroud-call-fs-signal-v1|${role}`), 32);
+}
+
+/** Both directions of the post-setup keys. `secret` is wiped; the keys are not extractable. */
+export async function forwardKeys(secret: Uint8Array, callId: string, ourRole: CallRole): Promise<CallKeys> {
+  try {
+    return await directionKeys(secret, callId, ourRole, "shroud-call-fs-signal-v1");
+  } finally {
+    secret.fill(0);
+  }
+}
+
+async function directionKeys(
+  secret: Uint8Array,
+  callId: string,
+  ourRole: CallRole,
+  info: string,
+): Promise<CallKeys> {
   const peerRole: CallRole = ourRole === "caller" ? "callee" : "caller";
+  const derive = (role: CallRole) => hkdf(sha256, secret, callIdBytes(callId), utf8(`${info}|${role}`), 32);
   const [send, receive] = await Promise.all([
-    importKey(signalKeyBytes(secret, callId, ourRole), "encrypt"),
-    importKey(signalKeyBytes(secret, callId, peerRole), "decrypt"),
+    importKey(derive(ourRole), "encrypt"),
+    importKey(derive(peerRole), "decrypt"),
   ]);
   return { send, receive };
 }
