@@ -3,6 +3,7 @@ import { ApiError, type CallInfo, type CallModality, type CallSignalType, type I
 import { b64ToBytes, bytesToB64 } from "../crypto/bytes";
 import { PEER_KEY_CHANGED, PeerKeyChanged } from "../crypto/peerIdentity";
 import type { RealtimeEvent } from "../realtime";
+import { RELAY_UNAVAILABLE } from "./relay";
 import {
   callKeys,
   deriveCallSecret,
@@ -137,6 +138,11 @@ export type CallEnv = {
    * Null when this browser cannot read it yet. Absent in tests that have no handshake.
    */
   remoteFingerprint?(pc: RTCPeerConnection): Promise<string | null>;
+  /**
+   * Every call goes through the TURN relay from the start, so the other side never learns this
+   * network's address (calls/relay.ts). Absent means direct paths first.
+   */
+  alwaysRelay?(): boolean;
 };
 
 /** 720p at most, front camera first. */
@@ -1069,10 +1075,16 @@ export class CallController {
     return account.api.iceServers().catch(() => []);
   }
 
+  /** Throws `CallFailure` when calls must be relayed and the server offers no relay: a direct
+   *  path would show the other side this network's address, which is what the switch prevents. */
   private buildPeer(call: Call, servers: IceServer[]): void {
     const rtcServers = servers.map(toRtcServer);
+    const relayOnly = this.env.alwaysRelay?.() ?? false;
+    if (relayOnly && !hasTurnServer(rtcServers)) throw new CallFailure(RELAY_UNAVAILABLE);
     call.iceServers = rtcServers;
-    const pc = this.env.createPeer(peerConfig(rtcServers, false));
+    // Already relayed, so the fallback after a failed link has nothing left to switch to.
+    call.triedRelay = relayOnly;
+    const pc = this.env.createPeer(peerConfig(rtcServers, relayOnly));
     call.pc = pc;
     const local = call.local;
     if (local) for (const track of local.getAudioTracks()) pc.addTrack(track, local);

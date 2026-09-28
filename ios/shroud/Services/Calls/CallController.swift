@@ -387,9 +387,10 @@ final class CallController {
             let token = try requireToken()
             let ice = try await service.iceServers(token: token)
             guard current(machine) else { return }
+            let relayOnly = try Self.relayPolicy(for: ice)
             let camera = modality == .video ? await cameraAccess() : false
             guard current(machine) else { return }
-            engine.start(iceServers: ice, video: camera, offering: true)
+            engine.start(iceServers: ice, video: camera, offering: true, relayOnly: relayOnly)
             publishLocalPreview(modality: modality, machine: machine)
             let media = engine
             machine.offerTask = Task { @MainActor in
@@ -656,9 +657,10 @@ final class CallController {
             machine.keys = CallSignalKeys(secret: secret, callID: id, role: .callee)
             let ice = (try? await service.iceServers(token: token)) ?? []
             guard current(machine) else { return }
+            let relayOnly = try Self.relayPolicy(for: ice)
             let camera = video ? await cameraAccess() : false
             guard current(machine) else { return }
-            engine.start(iceServers: ice, video: camera, offering: false)
+            engine.start(iceServers: ice, video: camera, offering: false, relayOnly: relayOnly)
             publishLocalPreview(modality: active?.modality ?? .voice, machine: machine)
             do {
                 _ = try await service.acceptCall(id: id, token: token)
@@ -699,6 +701,12 @@ final class CallController {
                 active = call
             }
             lastError = error.localizedDescription
+        } catch is CallRelayUnavailable {
+            // Nothing was accepted: end it here only, so the ring goes on on the other devices.
+            guard current(machine) else { return }
+            let message = callErrorText(CallRelayUnavailable(), peer: active?.peerUsername ?? "them")
+            lastError = message
+            finish(machine, text: message, notify: nil, status: "ended", close: .report(.failed), visible: .seconds(4))
         } catch is PeerIdentityError {
             // CallKit is already on the answered call. End it here without telling the server,
             // so the ring continues on their other devices while this one asks for the safety number.
@@ -1661,7 +1669,22 @@ final class CallController {
         return lhs.uuidString.lowercased() == rhs.uuidString.lowercased()
     }
 
+    /// Whether this call must stay on the relay ("Always relay calls"); throws when it must but
+    /// the server offers none, since the only other way to connect would show this phone's address.
+    static func relayPolicy(for servers: [IceServerDTO]) throws -> Bool {
+        try relayPolicy(for: servers, alwaysRelay: SecurityPreferences.alwaysRelayCalls)
+    }
+
+    static func relayPolicy(for servers: [IceServerDTO], alwaysRelay: Bool) throws -> Bool {
+        guard alwaysRelay else { return false }
+        guard CallMediaEngine.offersRelay(servers) else { throw CallRelayUnavailable() }
+        return true
+    }
+
     private func callErrorText(_ error: Error, peer: String) -> String {
+        if error is CallRelayUnavailable {
+            return "“Always relay calls” is on, but this server has no relay. Turn it off in Privacy and Security to call directly."
+        }
         if let secret = error as? CallSecretError {
             return secret.localizedDescription ?? "Open Shroud and unlock your chats to connect this call."
         }
@@ -1735,3 +1758,5 @@ extension CallController: CallKitManagerDelegate {
     }
 }
 
+/// "Always relay calls" is on, and the server handed out no TURN relay to go through.
+struct CallRelayUnavailable: Error, Equatable {}

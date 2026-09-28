@@ -26,6 +26,8 @@ pub mod budgets {
     pub const KEYS_USER: (u64, Duration) = (60, Duration::from_secs(60));
     pub const KEYS_IP: (u64, Duration) = (120, Duration::from_secs(60));
     pub const CONTACT_REQUEST_USER: (u64, Duration) = (10, Duration::from_secs(3600));
+    /// New share codes per account: each one breaks every QR code and link handed out before.
+    pub const SHARE_CODE_ROTATE_USER: (u64, Duration) = (10, Duration::from_secs(3600));
     pub const MEDIA_PRESIGN_USER: (u64, Duration) = (60, Duration::from_secs(60));
     pub const WS_CONNECT_IP: (u64, Duration) = (30, Duration::from_secs(60));
     /// Message send / delivery hot path.

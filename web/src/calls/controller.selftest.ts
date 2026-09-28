@@ -12,6 +12,7 @@ import { CallController, type CallApi, type CallEnv } from "./controller";
 import { callKeys, deriveCallSecret, openSignal, sealSignal } from "./crypto";
 import { sdpWithoutCandidates } from "./logic";
 import { CAMERA_RELEASE_MS, CAMERA_UNAVAILABLE, VIDEO_UNAVAILABLE, type CallPeer, type CallView } from "./logic";
+import { RELAY_UNAVAILABLE } from "./relay";
 
 function check(ok: boolean, what: string): void {
   if (!ok) throw new Error(`calls controller selftest: ${what}`);
@@ -363,6 +364,8 @@ class Device {
   blockPeers = false;
   /** Offers leave video out, as an older app's voice call did. */
   legacyVoice = false;
+  /** Settings → Privacy → Always relay calls. */
+  alwaysRelay = false;
   cameras = ["cam-front", "cam-back"];
 
   constructor(
@@ -411,6 +414,7 @@ class Device {
         return peer as unknown as RTCPeerConnection;
       },
       createStream: (tracks) => new FakeStream(tracks as unknown as FakeTrack[]) as unknown as MediaStream,
+      alwaysRelay: () => this.alwaysRelay,
       now: () => clock.now,
       setTimeout: (run, ms) => clock.set(run, ms, null),
       clearTimeout: (id) => clock.clear(id),
@@ -469,6 +473,8 @@ class Server {
   readonly attempts: string[] = [];
   readonly requests: string[] = [];
   deliverTwice = false;
+  /** `GET /calls/ice-servers` hands out STUN only, as a server without coturn does. */
+  noRelay = false;
   /** Holds `POST /calls`'s response back (the ring is out already), until released. */
   holdCreate: Promise<void> | null = null;
   /** The latest `media_state` per `call id:sending device`, as the server keeps it. */
@@ -550,6 +556,7 @@ class Server {
     return {
       iceServers: async () => {
         log("ice-servers");
+        if (this.noRelay) return [{ urls: "stun:stun.test:3478" }];
         return [{ urls: "turn:turn.test:3478", username: "1:u", credential: "c" }];
       },
       createCall: async (peerUserId, modality) => {
@@ -1355,6 +1362,48 @@ const ICE = 150;
   check(a1.view?.cameraOn === true && b1.view?.remoteCamera === true, "a camera that comes back can be turned on again");
   a1.controller.hangup();
   await clock.advance(2_000);
+}
+
+/* --- always relay calls: relayed from the start, and refused where no relay exists ---------- */
+{
+  const { clock, server, alice, bob } = world();
+  const a1 = new Device(alice, "a1", server, clock);
+  const b1 = new Device(bob, "b1", server, clock);
+  a1.alwaysRelay = true;
+
+  await connect(clock, a1, b1);
+  check(a1.peer.config.iceTransportPolicy === "relay", "the caller gathers relay candidates only");
+  check(b1.peer.config.iceTransportPolicy === "all", "the callee's own setting stays theirs");
+  a1.peer.setState("failed");
+  await clock.advance(ICE);
+  await clock.advance(ICE);
+  check(a1.peer.config.iceTransportPolicy === "relay", "a failed link stays on the relay");
+  a1.controller.hangup();
+  await clock.advance(4_000);
+
+  server.noRelay = true;
+  const rings = server.requests.filter((r) => r === "a1 create").length;
+  a1.controller.start({ id: bob.id, username: "bob" }, "voice");
+  await clock.advance(0);
+  check(a1.view?.endedText === RELAY_UNAVAILABLE, `no relay: the call is refused, not sent direct (${a1.view?.endedText})`);
+  check(server.requests.filter((r) => r === "a1 create").length === rings, "and no ring goes out");
+  check(a1.peers.every((p) => p.config.iceTransportPolicy === "relay"), "no direct peer connection was made");
+  await clock.advance(4_000);
+
+  // Answering with the switch on and no relay: this device never accepts over a direct path.
+  server.noRelay = false;
+  a1.alwaysRelay = false;
+  b1.alwaysRelay = true;
+  a1.controller.start({ id: bob.id, username: "bob" }, "voice");
+  await clock.advance(0);
+  server.noRelay = true;
+  const accepts = server.requests.filter((r) => r === "b1 accept").length;
+  b1.controller.accept();
+  await clock.advance(0);
+  check(b1.view?.endedText === RELAY_UNAVAILABLE, `the callee sees why it can't answer (${b1.view?.endedText})`);
+  check(server.requests.filter((r) => r === "b1 accept").length === accepts, "and never accepts");
+  a1.controller.hangup();
+  await clock.advance(4_000);
 }
 
 console.log("calls controller selftest ok");

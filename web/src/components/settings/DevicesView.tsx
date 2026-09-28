@@ -15,6 +15,7 @@ import {
 import { api, ApiError, type Device, type Session } from "../../api/client";
 import { fullTimestamp, listTimestamp } from "../../format";
 import { CopyButton } from "../CopyButton";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { SettingsGroup, SettingsNote } from "./SettingsRow";
 
 /** Mirrors `MAX_DEVICES_PER_USER` on the server; the list is the only place to get back under it. */
@@ -464,46 +465,6 @@ export function DevicesView({
         </div>
       ) : null}
     </>
-  );
-}
-
-function ConfirmDialog({
-  title,
-  body,
-  action,
-  onCancel,
-  onConfirm,
-}: {
-  title: string;
-  body: string;
-  action: string;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  return (
-    <div className="modal-scrim" onMouseDown={onCancel}>
-      <div
-        className="modal"
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby="dev-confirm-title"
-        aria-describedby="dev-confirm-body"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <header>
-          <h2 id="dev-confirm-title">{title}</h2>
-        </header>
-        <p id="dev-confirm-body">{body}</p>
-        <div className="modal-actions">
-          <button type="button" className="btn btn-secondary" onClick={onCancel}>
-            Cancel
-          </button>
-          <button type="button" className="btn btn-destructive" onClick={onConfirm} autoFocus>
-            {action}
-          </button>
-        </div>
-      </div>
-    </div>
   );
 }
 

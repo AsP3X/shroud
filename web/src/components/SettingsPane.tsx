@@ -19,6 +19,7 @@ export function SettingsPane({
   onLockNow,
   onShowQr,
   onCacheCleared,
+  onShareCodeChanged,
   mutedChats,
   onUnmute,
 }: {
@@ -32,6 +33,8 @@ export function SettingsPane({
   onLockNow: () => void;
   onShowQr: () => void;
   onCacheCleared: () => void;
+  /** Settings → Privacy made a new share code: the QR code and invite link change with it. */
+  onShareCodeChanged: (shareCode: string) => void;
   /** For Notifications and Sounds: the chats muted now, and a way to unmute one. */
   mutedChats: MutedChat[];
   onUnmute: (peerId: string) => Promise<void>;
@@ -101,7 +104,12 @@ export function SettingsPane({
               />
             ) : null}
             {route === "privacy" ? (
-              <PrivacyView session={session} onLockNow={onLockNow} onUnauthorized={forceLogout} />
+              <PrivacyView
+                session={session}
+                onLockNow={onLockNow}
+                onShareCodeChanged={onShareCodeChanged}
+                onUnauthorized={forceLogout}
+              />
             ) : null}
             {route === "data" ? <DataStorageView onCleared={onCacheCleared} /> : null}
             {route === "appearance" ? <AppearanceView /> : null}

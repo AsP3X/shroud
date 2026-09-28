@@ -18,6 +18,7 @@ use crate::rate_limit::budgets;
 use crate::realtime::Subscription;
 use crate::routes::contacts::are_contacts;
 use crate::routes::presence::{max_last_seen, notify_presence_to_contacts, touch_device_last_seen};
+use crate::routes::privacy::{Visibility, both_allow};
 use crate::state::AppState;
 
 const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
@@ -363,7 +364,8 @@ async fn handle_client_text(
 }
 
 /// Relays an ephemeral activity frame (typing, recording) to the peer's devices only.
-/// Contacts required; never echoed to the sender; never stored.
+/// Contacts required, and both must allow typing indicators (`users.send_typing`); never
+/// echoed to the sender; never stored.
 async fn relay_contact_activity(
     state: &AppState,
     user_id: Uuid,
@@ -384,6 +386,14 @@ async fn relay_contact_activity(
         }
         Err(err) => {
             tracing::warn!(error = %err, kind, "ws.activity contacts check failed");
+            return;
+        }
+    }
+    match both_allow(&state.pool, user_id, peer_user_id, Visibility::Typing).await {
+        Ok(true) => {}
+        Ok(false) => return,
+        Err(err) => {
+            tracing::warn!(error = %err, kind, "ws.activity privacy check failed");
             return;
         }
     }

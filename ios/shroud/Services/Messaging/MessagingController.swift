@@ -81,10 +81,13 @@ final class MessagingController {
     /// change's hold alone.
     private var pendingMuteHolds: [UUID: UUID] = [:]
 
+    /// Server-side privacy flags as last confirmed by the server. Before the first load this
+    /// is the server's defaults (no chat-delete consent, everything visible).
+    private(set) var privacySettings = PrivacySettingsDTO(allowPeerChatDelete: false)
     /// Server-side consent: when true, a contact's "delete for both" also wipes this
     /// account's copy of the chat. Off until the account opts in — see `PrivacySettingsDTO`.
-    private(set) var allowsPeerChatDelete = false
-    /// False until the flag has been read from the server once (the toggle stays disabled).
+    var allowsPeerChatDelete: Bool { privacySettings.allowPeerChatDelete }
+    /// False until the flags have been read from the server once (the toggles stay disabled).
     private(set) var hasLoadedPrivacySettings = false
     /// Users this account has blocked; drives the unblock list in Privacy & Security.
     private(set) var blockedUsers: [BlockItemDTO] = []
@@ -537,7 +540,7 @@ final class MessagingController {
         hasLoadedChats = false
         hasLoadedServerChats = false
         hasLoadedPrivacySettings = false
-        allowsPeerChatDelete = false
+        privacySettings = PrivacySettingsDTO(allowPeerChatDelete: false)
         blockedUsers = []
         identityChanges = [:]
         verifiedPeers = []
@@ -2027,31 +2030,31 @@ final class MessagingController {
         persistThread(peerUserID)
     }
 
-    // MARK: - Privacy consent
+    // MARK: - Privacy settings
 
-    /// Loads the account's chat-delete consent flag. Silent on failure: an unreachable
-    /// server must not flip a consent switch, so the last known value stands.
+    /// Loads the account's privacy flags. Silent on failure: an unreachable server must not
+    /// flip a consent switch, so the last known values stand.
     func refreshPrivacySettings() async {
         guard let token = sessionController?.bearerToken else { return }
         guard let settings = try? await privacyService.settings(token: token) else { return }
-        if allowsPeerChatDelete != settings.allowPeerChatDelete {
-            allowsPeerChatDelete = settings.allowPeerChatDelete
-        }
+        adoptPrivacySettings(settings)
         if !hasLoadedPrivacySettings { hasLoadedPrivacySettings = true }
     }
 
-    /// Writes the consent flag. Returns a user-facing error, or nil on success; the local
-    /// value only moves once the server confirms, so the toggle can never lie.
+    /// Writes the consent flag. Returns a user-facing error, or nil on success.
     func setAllowsPeerChatDelete(_ value: Bool) async -> String? {
+        await updatePrivacySettings(UpdatePrivacySettingsBody(allowPeerChatDelete: value))
+    }
+
+    /// Writes the fields set in `change`. Returns a user-facing error, or nil on success; the
+    /// local values only move once the server confirms, so a toggle can never lie.
+    func updatePrivacySettings(_ change: UpdatePrivacySettingsBody) async -> String? {
         guard let token = sessionController?.bearerToken else {
             return "Sign in to change privacy settings."
         }
         do {
-            let settings = try await privacyService.update(
-                allowPeerChatDelete: value,
-                token: token
-            )
-            allowsPeerChatDelete = settings.allowPeerChatDelete
+            let settings = try await privacyService.update(change, token: token)
+            adoptPrivacySettings(settings)
             hasLoadedPrivacySettings = true
             lastError = nil
             return nil
@@ -2059,6 +2062,75 @@ final class MessagingController {
             let text = SessionController.userMessage(for: error)
             lastError = text
             return text
+        }
+    }
+
+    /// Replaces the account's share code, so QR codes and links handed out so far stop working.
+    /// Returns a user-facing error, or nil once the new code is in the session.
+    func rotateShareCode() async -> String? {
+        guard let sessionController, let token = sessionController.bearerToken else {
+            return "Sign in to reset your QR code."
+        }
+        do {
+            let code = try await privacyService.rotateShareCode(token: token)
+            // `/auth/me` carries the new code; this is the one path that saves session fields.
+            await sessionController.validateSessionIfNeeded()
+            lastError = nil
+            // The old code is already gone on the server; say so rather than show it as current.
+            guard sessionController.shareCode == code else {
+                return "Your QR code was reset. It shows here once Shroud reconnects."
+            }
+            return nil
+        } catch {
+            let text = SessionController.userMessage(for: error)
+            lastError = text
+            return text
+        }
+    }
+
+    /// Applies confirmed flags, and what a change means for what is already on screen.
+    ///
+    /// Human: The server enforces all three switches in both directions, so these are only
+    /// about the leftovers of the old state: ticks already drawn as read, a typing indicator
+    /// mid-flight, presence fetched before the change.
+    private func adoptPrivacySettings(_ settings: PrivacySettingsDTO) {
+        let previous = privacySettings
+        guard settings != previous else { return }
+        privacySettings = settings
+
+        if previous.sendReadReceipts, !settings.sendReadReceipts {
+            hideReadTicks()
+        }
+        if previous.sendTyping, !settings.sendTyping {
+            stopTyping()
+            stopRecording()
+            for peer in typingPeerIDs.union(recordingPeerIDs) {
+                setPeerTyping(peer, false)
+                setPeerRecording(peer, false)
+            }
+        }
+        if previous.sharePresence != settings.sharePresence {
+            // Hidden now: everyone reads as offline and never seen. Shown again: fetch afresh.
+            presenceByUser = [:]
+            lastPresenceSweep = nil
+            if settings.sharePresence, let token = sessionController?.bearerToken {
+                Task { await sweepPresenceIfNeeded(token: token, force: true) }
+            }
+        }
+    }
+
+    /// Read receipts were turned off: the server no longer reports contacts' reads, but ticks
+    /// already drawn as read on older pages would never be refreshed, so they step back here.
+    private func hideReadTicks() {
+        for (peerID, thread) in threads {
+            guard thread.contains(where: { $0.isMine && $0.receipt == .read }) else { continue }
+            threads[peerID] = thread.map { message in
+                guard message.isMine, message.receipt == .read else { return message }
+                var copy = message
+                copy.receipt = .delivered
+                return copy
+            }
+            persistThread(peerID)
         }
     }
 
@@ -2138,7 +2210,9 @@ final class MessagingController {
     }
 
     /// Reports composer activity for `peerUserID`: `isTyping` is false once the draft is empty.
+    /// Nothing is sent while typing indicators are off (the server would drop it anyway).
     func setTyping(peerUserID: UUID, isTyping: Bool) {
+        guard privacySettings.sendTyping else { return }
         if isTyping { stopRecording() }
         if let sentTo = typingSentTo, sentTo != peerUserID || !isTyping {
             stopTyping()
@@ -2159,6 +2233,7 @@ final class MessagingController {
 
     /// Reports a live voice-note take for `peerUserID`.
     func setRecording(peerUserID: UUID, isRecording: Bool) {
+        guard privacySettings.sendTyping else { return }
         if !isRecording {
             if recordingSentTo == peerUserID { stopRecording() }
             return

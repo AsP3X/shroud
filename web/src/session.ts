@@ -142,6 +142,21 @@ export function saveSession(session: Session): void {
 }
 
 /**
+ * The account's new share code (Settings → Privacy → Reset QR code), kept with the session so
+ * the QR code and invite link show it from now on.
+ */
+export function saveShareCode(shareCode: string): void {
+  if (storageSealed()) return;
+  try {
+    const meta = readMeta();
+    if (!meta) return;
+    localStorage.setItem(TOKEN_KEY, JSON.stringify({ ...meta, user: { ...meta.user, share_code: shareCode } }));
+  } catch {
+    /* storage unavailable: the shell reads `/auth/me` again next time it opens */
+  }
+}
+
+/**
  * Seals the token into the open vault: one held in memory since login, or one a pre-vault
  * browser stored in the clear (which is then stripped from `shroud.session`).
  */

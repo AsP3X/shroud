@@ -1,4 +1,4 @@
-//! Online / last-seen presence (accepted contacts only).
+//! Online / last-seen presence (accepted contacts only, and only while both share it).
 
 use axum::{
     Json,
@@ -11,6 +11,7 @@ use uuid::Uuid;
 use crate::auth::session::AuthContext;
 use crate::error::AppError;
 use crate::routes::contacts::{are_contacts, list_contact_user_ids};
+use crate::routes::privacy::{Visibility, allowing, both_allow};
 use crate::state::AppState;
 
 #[derive(Debug, Serialize)]
@@ -42,6 +43,16 @@ pub async fn get_presence(
         return Err(AppError::forbidden(
             "Presence is only visible to accepted contacts.",
         ));
+    }
+
+    // Hidden looks exactly like a contact who is offline and was never seen: the viewer can't
+    // tell "hides it from me" apart from "hides it from everyone" or "stopped sharing myself".
+    if !both_allow(&state.pool, auth.user_id, user_id, Visibility::Presence).await? {
+        return Ok(Json(PresenceResponse {
+            user_id,
+            online: false,
+            last_seen_at: None,
+        }));
     }
 
     let last_seen_at = max_last_seen(&state.pool, user_id).await?;
@@ -96,21 +107,64 @@ pub(crate) async fn touch_device_last_seen(
     Ok(now)
 }
 
-/// Fan-out `presence.update` to accepted contacts (online sockets only via hub).
+/// Fan-out `presence.update` to accepted contacts (online sockets only via hub) — nobody at all
+/// when `user_id` hides presence, and only the contacts who share theirs otherwise.
 pub(crate) async fn notify_presence_to_contacts(
     state: &AppState,
     user_id: Uuid,
     online: bool,
     last_seen_at: Option<DateTime<Utc>>,
 ) {
-    let contacts = match list_contact_user_ids(&state.pool, user_id).await {
-        Ok(ids) => ids,
+    let recipients = match presence_audience(state, user_id).await {
+        Ok(Some(ids)) => ids,
+        Ok(None) => return,
         Err(err) => {
-            tracing::warn!(error = %err, %user_id, "presence notify: list contacts failed");
+            tracing::warn!(error = %err, %user_id, "presence notify: audience lookup failed");
             return;
         }
     };
-    if contacts.is_empty() {
+    publish_presence(state, recipients, user_id, online, last_seen_at).await;
+}
+
+/// Tells contacts right away that `user_id` started or stopped sharing presence.
+///
+/// Stopping reaches every contact, so none keeps showing a stale "online"; starting again
+/// reaches only the contacts who share theirs (the rest would be told nothing anyway).
+pub(crate) async fn announce_presence_setting(state: &AppState, user_id: Uuid, sharing: bool) {
+    if sharing {
+        let online = state.realtime.is_user_online(user_id).await;
+        let last_seen_at = max_last_seen(&state.pool, user_id).await.ok().flatten();
+        notify_presence_to_contacts(state, user_id, online, last_seen_at).await;
+        return;
+    }
+    match list_contact_user_ids(&state.pool, user_id).await {
+        Ok(contacts) => publish_presence(state, contacts, user_id, false, None).await,
+        Err(err) => tracing::warn!(error = %err, %user_id, "presence hide: list contacts failed"),
+    }
+}
+
+/// Contacts allowed to hear `user_id`'s presence; None when the user hides it.
+async fn presence_audience(state: &AppState, user_id: Uuid) -> Result<Option<Vec<Uuid>>, AppError> {
+    if allowing(&state.pool, &[user_id], Visibility::Presence)
+        .await?
+        .is_empty()
+    {
+        return Ok(None);
+    }
+    let contacts = list_contact_user_ids(&state.pool, user_id).await?;
+    Ok(Some(
+        allowing(&state.pool, &contacts, Visibility::Presence).await?,
+    ))
+}
+
+async fn publish_presence(
+    state: &AppState,
+    recipients: Vec<Uuid>,
+    user_id: Uuid,
+    online: bool,
+    last_seen_at: Option<DateTime<Utc>>,
+) {
+    if recipients.is_empty() {
         return;
     }
 
@@ -126,6 +180,6 @@ pub(crate) async fn notify_presence_to_contacts(
 
     state
         .realtime
-        .publish_to_users(contacts, None, &payload)
+        .publish_to_users(recipients, None, &payload)
         .await;
 }

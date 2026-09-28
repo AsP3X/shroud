@@ -43,6 +43,10 @@ struct RootView: View {
     @State private var notifications = NotificationsController.shared
     /// Set when the scene leaves `.active` with the chats open. See `showsPrivacyCover`.
     @State private var privacyCoverArmed = false
+    /// The screen is being recorded, mirrored or shared (`UITraitCollection.sceneCaptureState`).
+    @State private var isScreenCaptured = false
+    /// When the app went to the background with the chats unlocked and a later auto-lock due.
+    @State private var leftForBackgroundAt: Date?
     @Namespace private var onboardingNamespace
 
     var body: some View {
@@ -96,6 +100,11 @@ struct RootView: View {
                 DeviceWipeOverlay()
                     .transition(.opacity)
                     .zIndex(200)
+            }
+        }
+        .background {
+            SceneCaptureStateReader { captured in
+                if isScreenCaptured != captured { isScreenCaptured = captured }
             }
         }
         .environment(\.onboardingNamespace, onboardingNamespace)
@@ -227,14 +236,17 @@ struct RootView: View {
                 notifications.dismissBanner()
                 // Drop plaintext history from RAM; sealed files stay on disk.
                 // Vault remains; re-open via biometry/passcode when returning.
-                if SecurityPreferences.lockChatsOnBackground,
-                   (router.isUnlocked || cryptoController.isUnlocked)
-                {
-                    messagingController.lockSensitiveMemory()
-                    cryptoController.lockHistoryInMemory()
-                    SensitiveTempFiles.sweep(olderThan: Self.staleTempFileAge)
+                // A later auto-lock is checked on the way back (`lockIfAutoLockDue`): a suspended
+                // app runs no timers.
+                if router.isUnlocked || cryptoController.isUnlocked {
+                    switch SecurityPreferences.autoLockDelay {
+                    case .immediately: lockChatsInMemory()
+                    case .never: leftForBackgroundAt = nil
+                    default: leftForBackgroundAt = Date()
+                    }
                 }
             case .active:
+                lockIfAutoLockDue()
                 Task { await notifications.refreshAuthorization() }
                 guard sessionController.isSignedIn else { return }
                 // Face ID is opt-in via the lock screen's unlock button — never auto-prompt here
@@ -252,10 +264,29 @@ struct RootView: View {
                     messagingController.handleAppBecameActive()
                 }
             case .inactive:
-                break
+                // Coming back goes background → inactive → active; locking here happens while
+                // the privacy cover still hides the chats.
+                lockIfAutoLockDue()
             @unknown default:
                 break
             }
+        }
+    }
+
+    private func lockChatsInMemory() {
+        leftForBackgroundAt = nil
+        messagingController.lockSensitiveMemory()
+        cryptoController.lockHistoryInMemory()
+        SensitiveTempFiles.sweep(olderThan: Self.staleTempFileAge)
+    }
+
+    /// Back from the background: locks when the chosen auto-lock delay has passed meanwhile.
+    /// The `.active` handler then routes to the lock screen as for an immediate lock.
+    private func lockIfAutoLockDue() {
+        guard let leftAt = leftForBackgroundAt else { return }
+        leftForBackgroundAt = nil
+        if SecurityPreferences.autoLockDelay.isDue(leftAt: leftAt, now: Date()) {
+            lockChatsInMemory()
         }
     }
 
@@ -282,7 +313,9 @@ struct RootView: View {
     /// to Chats, so the scene is still inactive. Keyed on `isUnlocked` alone, the cover faded in
     /// over the reveal — a second mark on a dark screen — and vanished once Face ID let go.
     private var showsPrivacyCover: Bool {
-        privacyCoverArmed && scenePhase != .active && router.isUnlocked
+        guard router.isUnlocked else { return false }
+        if isScreenCaptured, SecurityPreferences.hidesDuringScreenCapture { return true }
+        return privacyCoverArmed && scenePhase != .active
     }
 
     /// Temp files untouched this long are no playback or recording in progress: locking clears them.
@@ -354,7 +387,49 @@ struct RootView: View {
     RootView()
 }
 
-/// What the app switcher shows instead of an open chat.
+/// Reports the window scene's `sceneCaptureState`: recording, mirroring or sharing the screen.
+///
+/// Human: SwiftUI has no environment value for it; a view inherits the scene's traits, so an
+/// invisible one reports them.
+private struct SceneCaptureStateReader: UIViewRepresentable {
+    let onChange: (Bool) -> Void
+
+    func makeUIView(context: Context) -> CaptureStateView {
+        let view = CaptureStateView()
+        view.onChange = onChange
+        view.isUserInteractionEnabled = false
+        return view
+    }
+
+    func updateUIView(_ view: CaptureStateView, context: Context) {
+        view.onChange = onChange
+    }
+
+    final class CaptureStateView: UIView {
+        var onChange: ((Bool) -> Void)?
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            registerForTraitChanges([UITraitSceneCaptureState.self]) { (view: CaptureStateView, _) in
+                view.report()
+            }
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            report()
+        }
+
+        private func report() {
+            onChange?(traitCollection.sceneCaptureState == .active)
+        }
+    }
+}
+
+/// What the app switcher shows instead of an open chat — and what a screen recording shows.
 private struct AppSwitcherPrivacyCover: View {
     var body: some View {
         ZStack {

@@ -48,6 +48,7 @@ final class CallMediaEngine: NSObject {
     private var iceServers: [RTCIceServer] = []
     private var hasTurn = false
     private var triedRelay = false
+    private var relayOnly = false
     private var audioTrack: RTCAudioTrack?
     /// Kept from `add`: `connection.senders` hops to the signaling thread on every read, and
     /// the speaking indicator asks for this sender many times a second.
@@ -86,10 +87,22 @@ final class CallMediaEngine: NSObject {
         return direction == .sendRecv || direction == .sendOnly
     }
 
+    /// Whether `servers` include a TURN relay (a `turn:` or `turns:` URL).
+    static func offersRelay(_ servers: [IceServerDTO]) -> Bool {
+        servers.contains { server in
+            server.urls.contains { url in
+                let lower = url.lowercased()
+                return lower.hasPrefix("turn:") || lower.hasPrefix("turns:")
+            }
+        }
+    }
+
     /// - Parameters:
     ///   - video: Start with the camera on (a video call, and the camera may be used).
     ///   - offering: The caller. Its offer brings the video section; the callee takes that one.
-    func start(iceServers: [IceServerDTO], video: Bool, offering: Bool) {
+    ///   - relayOnly: Gather relay candidates only ("Always relay calls"). The caller checks
+    ///     `offersRelay` first; without a relay this connection could never connect.
+    func start(iceServers: [IceServerDTO], video: Bool, offering: Bool, relayOnly: Bool = false) {
         close()
         peerLink = .new
         iceLink = .new
@@ -100,12 +113,10 @@ final class CallMediaEngine: NSObject {
             return RTCIceServer(urlStrings: urls, username: server.username, credential: server.credential)
         }
         self.iceServers = built
-        hasTurn = built.contains { server in
-            server.urlStrings.contains { url in
-                let lower = url.lowercased()
-                return lower.hasPrefix("turn:") || lower.hasPrefix("turns:")
-            }
-        }
+        hasTurn = Self.offersRelay(iceServers)
+        // Already relayed, so the fallback after a failed link has nothing left to switch to.
+        self.relayOnly = relayOnly && hasTurn
+        triedRelay = self.relayOnly
 
         let peerConstraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
         guard let connection = Self.factory.peerConnection(
@@ -231,7 +242,7 @@ final class CallMediaEngine: NSObject {
         config.rtcpMuxPolicy = .require
         config.continualGatheringPolicy = .gatherContinually
         config.iceCandidatePoolSize = 1
-        config.iceTransportPolicy = .all
+        config.iceTransportPolicy = relayOnly ? .relay : .all
         return config
     }
 
@@ -413,6 +424,7 @@ final class CallMediaEngine: NSObject {
         iceServers = []
         hasTurn = false
         triedRelay = false
+        relayOnly = false
         peerLink = .closed
         iceLink = .closed
         audioTrack = nil

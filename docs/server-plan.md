@@ -105,6 +105,8 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | History recovery | Login + encryption phrase on client → download ciphertext |
 | Discovery | Share **`users.id` (UUID)** + deep link; username for login/display |
 | Profile lookup | `GET /users/:user_id` → `{ id, username }` (auth, rate-limited) |
+| Username / code lookup | `GET /users/by-username/:u`, `GET /users/by-code/:code`. With `discoverable_by_username` off (migration 026) the name lookup is 404 except for the user, contacts and pending requests either way; the code still works |
+| New share code | `POST /users/me/share-code` → `{ share_code }`; the old code stops resolving (10 per hour) |
 | First contact | **Contact request by target UUID only** before full messaging |
 | Contact request | No expiry in v1; pending until accept / reject / cancel / block |
 | Mutual request | If reverse pending exists → **auto-accept** both ways |
@@ -222,6 +224,10 @@ Forward-only sqlx migrations under `server/migrations/postgres/`. Do not edit ap
 | `password_hash` | `TEXT` NULL | argon2id PHC string; NULL once deleted |
 | `share_code` | `TEXT` NULL UNIQUE | QR / deep-link code (migration 011); NULL once deleted |
 | `allow_peer_chat_delete` | `BOOLEAN` NOT NULL | Default false (migration 016) |
+| `send_read_receipts` | `BOOLEAN` NOT NULL | Default true (migration 025); both ways, see [Presence and push](#presence-and-push) |
+| `send_typing` | `BOOLEAN` NOT NULL | Default true (migration 025); typing and recording indicators |
+| `share_presence` | `BOOLEAN` NOT NULL | Default true (migration 025); online and last seen |
+| `discoverable_by_username` | `BOOLEAN` NOT NULL | Default true (migration 026); off hides the account from name lookups by strangers |
 | `created_at` | `TIMESTAMPTZ` NOT NULL | `now()` |
 | `deleted_at` | `TIMESTAMPTZ` NULL | Set by `DELETE /auth/account`; the row stays as a placeholder (migration 021) |
 
@@ -599,10 +605,11 @@ and cannot read the traffic.
 
 ### Presence and push
 
-- **Typing** — ephemeral WS only: client `{ "type": "typing", "peer_user_id", "is_typing" }` → peer gets same shape plus `user_id` / `device_id`. Contacts only; no DB.
+- **Visibility switches** (`GET/PUT /privacy/settings`: `send_read_receipts`, `send_typing`, `share_presence`; PUT is partial). Each works both ways and only has an effect while **both** users in a chat leave it on (`routes::privacy::both_allow`): hiding yours also hides your contacts' from you. Details in `docs/privacy-options.md`.
+- **Typing** — ephemeral WS only: client `{ "type": "typing", "peer_user_id", "is_typing" }` → peer gets same shape plus `user_id` / `device_id`. Contacts only, both must allow typing; no DB.
 - **Recording** — same relay as typing: client `{ "type": "recording", "peer_user_id", "is_recording" }` → peer only. Keepalive every 3s while the mic is live; no idle timeout (silence is still a take). Receiver expires after 6s.
-- **Online / last-seen** — online = at least one live WS (in-process hub + optional Redis `shroud:online:{user_id}` HASH with TTL). `last_seen_at` = max `devices.last_seen_at`. `GET /presence/:user_id` contacts-only (self always allowed). On connect/disconnect, fan-out `presence.update` to accepted contacts.
-- **Read receipts** — user-level (`message_reads`); not per-device. Recipient only; idempotent. Single + bulk up-to cursor. WS `message.read`.
+- **Online / last-seen** — online = at least one live WS (in-process hub + optional Redis `shroud:online:{user_id}` HASH with TTL). `last_seen_at` = max `devices.last_seen_at`. `GET /presence/:user_id` contacts-only (self always allowed); while either side hides presence it answers `online: false` with no `last_seen_at`. On connect/disconnect, fan-out `presence.update` to accepted contacts who share theirs — nobody when the user hides it. Turning `share_presence` off sends every contact `{online: false, last_seen_at: null}` at once; turning it on sends the current state.
+- **Read receipts** — user-level (`message_reads`); not per-device. Recipient only; idempotent. Single + bulk up-to cursor. WS `message.read`. While either side hides receipts, nothing is recorded or sent, and `GET /messages` reports `read: false` on the caller's messages; the reader's unread marker (`conversation_reads`) moves either way.
 - WS must auth within 10s.
 - **Pushes** go to each of the recipient's devices that registered for them and has **no live socket**: a device with one notifies its user itself, since it can read the message. The server pings every 30 s and closes a socket 75 s after the last frame it heard, so a phone the OS suspended counts as offline. A device signed out elsewhere (a password change) gets none until it signs in again. APNs needs `APNS_KEY_PATH` or `APNS_KEY_PEM` + `APNS_KEY_ID` + `APNS_TEAM_ID` + `APNS_TOPIC`; Web Push works out of the box. What is sent and to whom: [Milestone 11](#milestone-11--notifications).
 
@@ -1183,6 +1190,7 @@ Optional field: `"media_object_id": "<uuid>"` required when `content_type` is `m
 ```
 
 - Self always allowed. Other users: **accepted contacts only** → else `403` + `FORBIDDEN`.
+- Either side has `share_presence` off → `online: false`, `last_seen_at` omitted (migration 025).
 - `online`: any live WebSocket for that user (local hub / Redis online set).
 - `last_seen_at`: max `devices.last_seen_at` (omitted if null).
 

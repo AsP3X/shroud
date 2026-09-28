@@ -64,6 +64,7 @@ pub fn router() -> Router<AppState> {
                 get(users::get_user_by_username),
             )
             .route("/users/by-code/{code}", get(users::get_user_by_share_code))
+            .route("/users/me/share-code", post(users::rotate_share_code))
             .route("/users/{user_id}", get(users::get_user))
             .route("/contacts/requests", post(contacts::create_request))
             .route("/contacts/requests", get(contacts::list_requests))

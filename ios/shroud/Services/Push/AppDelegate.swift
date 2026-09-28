@@ -1,7 +1,15 @@
 import UIKit
 
-/// UIKit app delegate for APNs device token callbacks.
+/// UIKit app delegate for APNs device token callbacks and the keyboard policy.
 final class AppDelegate: NSObject, UIApplicationDelegate {
+    /// Settings → Privacy and Security → "Only Apple keyboards".
+    func application(
+        _ application: UIApplication,
+        shouldAllowExtensionPointIdentifier extensionPointIdentifier: UIApplication.ExtensionPointIdentifier
+    ) -> Bool {
+        extensionPointIdentifier != .keyboard || !SecurityPreferences.blocksThirdPartyKeyboards
+    }
+
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil

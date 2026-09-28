@@ -47,6 +47,43 @@ struct ChatDeleteModelsTests {
     }
 
     @Test
+    func visibilitySwitchesDecodeAndDefaultToOnForOlderServers() throws {
+        let current = """
+        { "allow_peer_chat_delete": false, "send_read_receipts": false, "send_typing": true, "share_presence": false }
+        """.data(using: .utf8)!
+        let decoded = try JSONDecoder.api.decode(PrivacySettingsDTO.self, from: current)
+        #expect(!decoded.sendReadReceipts)
+        #expect(decoded.sendTyping)
+        #expect(!decoded.sharePresence)
+
+        // A server from before the switches enforces none of them, which is "all on".
+        let older = try JSONDecoder.api.decode(
+            PrivacySettingsDTO.self,
+            from: #"{ "allow_peer_chat_delete": true }"#.data(using: .utf8)!
+        )
+        #expect(older.sendReadReceipts && older.sendTyping && older.sharePresence && older.discoverableByUsername)
+    }
+
+    @Test
+    func discoverabilityAndNewShareCodeDecode() throws {
+        let settings = try JSONDecoder.api.decode(
+            PrivacySettingsDTO.self,
+            from: #"{ "allow_peer_chat_delete": false, "discoverable_by_username": false }"#.data(using: .utf8)!
+        )
+        #expect(!settings.discoverableByUsername)
+        let rotated = try JSONDecoder.api.decode(ShareCodeDTO.self, from: #"{ "share_code": "ABCD234567" }"#.data(using: .utf8)!)
+        #expect(rotated.shareCode == "ABCD234567")
+    }
+
+    @Test
+    func privacyUpdateSendsOnlyTheChangedSwitch() throws {
+        let encoded = try JSONEncoder.api.encode(UpdatePrivacySettingsBody(sharePresence: false))
+        let body = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        #expect(body.count == 1)
+        #expect(body["share_presence"] as? Bool == false)
+    }
+
+    @Test
     func blockListDecodesUserIdAndTimestamp() throws {
         let json = """
         {

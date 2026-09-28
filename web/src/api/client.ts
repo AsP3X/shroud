@@ -91,6 +91,14 @@ export type BlockItem = {
 
 export type PrivacySettings = {
   allow_peer_chat_delete: boolean;
+  /** Contacts see when you read their messages, and you see theirs (both ways, server-enforced). */
+  send_read_receipts: boolean;
+  /** Typing and voice-recording indicators go out and come in. */
+  send_typing: boolean;
+  /** Contacts see "online" / "last seen", and you see theirs. */
+  share_presence: boolean;
+  /** Someone who only knows your username can find you (else only QR / share code, and contacts). */
+  discoverable_by_username: boolean;
 };
 
 export type UserCard = {
@@ -416,11 +424,15 @@ export const api = {
   unblock: (token: string, userId: string) =>
     request<void>(`/blocks/${userId}`, { method: "DELETE", token }),
   privacySettings: (token: string) => request<PrivacySettings>("/privacy/settings", { token }),
-  updatePrivacySettings: (token: string, allowPeerChatDelete: boolean) =>
+  /** A new share code; QR codes and links with the old one stop working. */
+  rotateShareCode: (token: string) =>
+    request<{ share_code: string }>("/users/me/share-code", { method: "POST", token }),
+  /** Partial update: fields left out stay as they are. */
+  updatePrivacySettings: (token: string, change: Partial<PrivacySettings>) =>
     request<PrivacySettings>("/privacy/settings", {
       method: "PUT",
       token,
-      body: JSON.stringify({ allow_peer_chat_delete: allowPeerChatDelete }),
+      body: JSON.stringify(change),
     }),
   putBundle: (token: string, body: unknown) =>
     request<void>("/keys/bundle", { method: "PUT", token, body: JSON.stringify(body) }),

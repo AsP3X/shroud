@@ -787,7 +787,11 @@ pub(crate) async fn list_contact_user_ids(
     .map_err(|err| AppError::Internal(format!("list contact ids failed: {err}")))
 }
 
-async fn pending_exists(pool: &sqlx::PgPool, from: Uuid, to: Uuid) -> Result<bool, AppError> {
+pub(crate) async fn pending_exists(
+    pool: &sqlx::PgPool,
+    from: Uuid,
+    to: Uuid,
+) -> Result<bool, AppError> {
     sqlx::query_scalar(
         r#"
         SELECT EXISTS(

@@ -21,6 +21,7 @@ use crate::routes::contacts::{are_contacts, is_blocked_either_way};
 use crate::routes::conversations::{
     advance_read_marker, announce_chat_read, clear_watermark, unread_in,
 };
+use crate::routes::privacy::{Visibility, both_allow};
 use crate::routes::reactions::{self, ReactionEntry};
 use crate::state::AppState;
 
@@ -525,6 +526,17 @@ pub async fn list_messages(
     } else {
         peer_receipt_status_batch(&state.pool, &outbound_ids, query.peer_user_id).await?
     };
+    // Receipts work both ways: a caller who hides theirs doesn't see the peer's either. Reads
+    // the peer made while both allowed them stay recorded and show again if this is turned on.
+    let shows_reads = !is_notes
+        && !outbound_ids.is_empty()
+        && both_allow(
+            &state.pool,
+            auth.user_id,
+            query.peer_user_id,
+            Visibility::ReadReceipts,
+        )
+        .await?;
 
     let live_ids: Vec<Uuid> = rows
         .iter()
@@ -544,7 +556,7 @@ pub async fn list_messages(
                 .copied()
                 .unwrap_or((false, false));
             response.delivered = Some(delivered);
-            response.read = Some(read);
+            response.read = Some(read && shows_reads);
         }
         messages.push(response);
     }
@@ -578,18 +590,29 @@ pub async fn mark_read(
     Path(message_id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
     let meta = load_readable_message(&state.pool, message_id, auth.user_id).await?;
-    let read_at = insert_read(&state.pool, message_id, auth.user_id).await?;
-    fanout_message_read(
-        &state,
-        message_id,
-        meta.conversation_id,
+    // With receipts off on either side nothing is recorded, so turning them on later doesn't
+    // reveal when this message was read. The unread marker below moves either way.
+    if both_allow(
+        &state.pool,
         auth.user_id,
-        auth.device_id,
-        meta.user_a_id,
-        meta.user_b_id,
-        read_at,
+        meta.sender_user_id,
+        Visibility::ReadReceipts,
     )
-    .await;
+    .await?
+    {
+        let read_at = insert_read(&state.pool, message_id, auth.user_id).await?;
+        fanout_message_read(
+            &state,
+            message_id,
+            meta.conversation_id,
+            auth.user_id,
+            auth.device_id,
+            meta.user_a_id,
+            meta.user_b_id,
+            read_at,
+        )
+        .await;
+    }
     if advance_read_marker(
         &state.pool,
         auth.user_id,
@@ -636,16 +659,27 @@ pub async fn mark_read_bulk(
     }
 
     let now = Utc::now();
-    let marked = insert_reads_up_to(
-        &state,
-        &auth,
-        meta.conversation_id,
+    let marked = if both_allow(
+        &state.pool,
+        auth.user_id,
         body.peer_user_id,
-        meta.created_at,
-        body.up_to_message_id,
-        now,
+        Visibility::ReadReceipts,
     )
-    .await?;
+    .await?
+    {
+        insert_reads_up_to(
+            &state,
+            &auth,
+            meta.conversation_id,
+            body.peer_user_id,
+            meta.created_at,
+            body.up_to_message_id,
+            now,
+        )
+        .await?
+    } else {
+        0
+    };
     if marked > 0 {
         publish_bulk_read(
             &state,
@@ -691,7 +725,7 @@ pub async fn mark_read_bulk(
 }
 
 /// Read receipts for the peer's messages in a chat up to `(created_at, id)`, when the peer is
-/// still a contact nobody blocked. Returns how many messages got one.
+/// still a contact nobody blocked and both allow receipts. Returns how many messages got one.
 pub(crate) async fn send_read_receipts(
     state: &AppState,
     auth: &AuthContext,
@@ -702,6 +736,13 @@ pub(crate) async fn send_read_receipts(
 ) -> Result<u64, AppError> {
     if !are_contacts(&state.pool, auth.user_id, peer_user_id).await?
         || is_blocked_either_way(&state.pool, auth.user_id, peer_user_id).await?
+        || !both_allow(
+            &state.pool,
+            auth.user_id,
+            peer_user_id,
+            Visibility::ReadReceipts,
+        )
+        .await?
     {
         return Ok(0);
     }

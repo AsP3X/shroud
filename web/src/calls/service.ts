@@ -14,6 +14,7 @@ import {
 } from "../crypto/peerIdentity";
 import { CallController, type CallEnv, type IdentityKeys } from "./controller";
 import type { CallPeer } from "./logic";
+import { alwaysRelaysCalls } from "./relay";
 import { publishCallView } from "./store";
 import { playCallTone, primeCallTones } from "./tones";
 
@@ -167,6 +168,7 @@ const env: CallEnv = {
       .filter((device) => device.kind === "videoinput")
       .map((device) => device.deviceId),
   createPeer: (config) => new RTCPeerConnection(config),
+  alwaysRelay: alwaysRelaysCalls,
   createStream: (tracks) => new MediaStream(tracks),
   now: () => Date.now(),
   setTimeout: (run, ms) => window.setTimeout(run, ms),

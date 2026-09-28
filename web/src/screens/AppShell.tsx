@@ -82,7 +82,8 @@ import {
   TYPING_EXPIRE_MS,
   type PeerActivity,
 } from "../typing";
-import { lockNow as lockSession } from "../session";
+import { lockNow as lockSession, saveShareCode } from "../session";
+import { sendsTyping, setPrivacySettings, usePrivacySettings } from "../privacy";
 import {
   applyReactionChanges,
   DEFAULT_REACTION_LIMIT,
@@ -174,6 +175,7 @@ export function AppShell({ session }: { session: Session }) {
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [sendingPeer, setSendingPeer] = useState<string | null>(null);
   const [presenceByUser, setPresenceByUser] = useState<Record<string, Presence>>({});
+  const [newShareCode, setNewShareCode] = useState<string | null>(null);
   /** Peers typing to us right now, by lowercased user id. */
   const [typingPeers, setTypingPeers] = useState<ReadonlySet<string>>(() => new Set());
   /** Peers recording a voice note to us right now, by lowercased user id. */
@@ -329,22 +331,27 @@ export function AppShell({ session }: { session: Session }) {
   const realtime = useRef<Realtime | null>(null);
   const typingTimers = useRef(new Map<string, number>());
   const recordingTimers = useRef(new Map<string, number>());
+  // With typing indicators off nothing is sent; the server would drop it anyway (privacy.ts).
   const typingSender = useMemo(
     () =>
-      createTypingSender((peerId, typing) =>
-        realtime.current?.send({ type: "typing", peer_user_id: peerId, is_typing: typing }),
-      ),
+      createTypingSender((peerId, typing) => {
+        if (sendsTyping()) {
+          realtime.current?.send({ type: "typing", peer_user_id: peerId, is_typing: typing });
+        }
+      }),
     [],
   );
   const recordingSender = useMemo(
     () =>
-      createRecordingSender((peerId, recording) =>
-        realtime.current?.send({
-          type: "recording",
-          peer_user_id: peerId,
-          is_recording: recording,
-        }),
-      ),
+      createRecordingSender((peerId, recording) => {
+        if (sendsTyping()) {
+          realtime.current?.send({
+            type: "recording",
+            peer_user_id: peerId,
+            is_recording: recording,
+          });
+        }
+      }),
     [],
   );
 
@@ -409,6 +416,44 @@ export function AppShell({ session }: { session: Session }) {
       recording.clear();
     };
   }, []);
+
+  /* The account's privacy switches, for the whole shell (privacy.ts). Cleared on the way out so
+     the next account in this tab doesn't start from these. */
+  const privacy = usePrivacySettings();
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .privacySettings(session.token)
+      .then((settings) => {
+        if (!cancelled) setPrivacySettings(settings);
+      })
+      .catch(() => {
+        // Unreachable: the server's defaults hold, and it enforces the real values anyway.
+      });
+    return () => {
+      cancelled = true;
+      setPrivacySettings(null);
+    };
+  }, [session.token]);
+
+  /* The share code can change on another device (Settings → Privacy → Reset QR code there): the
+     stored one would then be a QR code that no longer works. */
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .me(session.token)
+      .then(({ user }) => {
+        if (cancelled || !user.share_code || user.share_code === session.user.share_code) return;
+        saveShareCode(user.share_code);
+        setNewShareCode(user.share_code);
+      })
+      .catch(() => {
+        // Offline or signed out: the next refresh or sign-in settles it.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session.token, session.user.share_code]);
 
   /* Leaving a chat (or the page) ends our typing there. A live recording keeps
      signalling until the take itself is cancelled — hiding the tab is not that. */
@@ -523,6 +568,26 @@ export function AppShell({ session }: { session: Session }) {
     }
     return convs;
   }, [session.token, session.user.id, withLocalState]);
+
+  /* What a switch change means for what is already on screen. */
+  const previousPrivacy = useRef(privacy);
+  useEffect(() => {
+    const before = previousPrivacy.current;
+    previousPrivacy.current = privacy;
+    if (!before || !privacy) return;
+    if (before.send_typing && !privacy.send_typing) {
+      typingSender.stop();
+      recordingSender.stop();
+      for (const id of [...typingTimers.current.keys()]) markTyping(id, false);
+      for (const id of [...recordingTimers.current.keys()]) markRecording(id, false);
+    }
+    if (before.share_presence !== privacy.share_presence) {
+      // Hidden now: nobody reads as online or seen. Shown again: fetch afresh right away.
+      setPresenceByUser({});
+      lastPresenceSweep.current = 0;
+      if (privacy.share_presence) void refresh().catch(() => undefined);
+    }
+  }, [privacy, typingSender, recordingSender, markTyping, markRecording, refresh]);
 
   useEffect(() => {
     alive.current = true;
@@ -2135,7 +2200,12 @@ export function AppShell({ session }: { session: Session }) {
     setTab(next);
   }
 
-  const shareLink = shareUrl(session.user.share_code);
+  // A share code reset in Settings shows at once; the stored session has it too (saveShareCode).
+  const profile =
+    newShareCode && newShareCode !== session.user.share_code
+      ? { ...session, user: { ...session.user, share_code: newShareCode } }
+      : session;
+  const shareLink = shareUrl(profile.user.share_code);
   const selectedPresence = selected ? presenceByUser[selected.id.toLowerCase()] : undefined;
   const selectedActivity = selected
     ? activityFor(selected.id, typingPeers, recordingPeers)
@@ -2181,7 +2251,7 @@ export function AppShell({ session }: { session: Session }) {
       <div className="shell-body">
         {tab === "settings" ? (
           <SettingsPane
-            session={session}
+            session={profile}
             identity={identity}
             shareLink={shareLink}
             onLogout={() => setWipe("logout")}
@@ -2189,6 +2259,7 @@ export function AppShell({ session }: { session: Session }) {
             onLockNow={lockNow}
             onShowQr={() => setShowQr(true)}
             onCacheCleared={() => setPreviewRev((n) => n + 1)}
+            onShareCodeChanged={setNewShareCode}
             mutedChats={mutedChats}
             onUnmute={(peerId) => setChatMute(peerId, "off")}
           />
@@ -2390,11 +2461,11 @@ export function AppShell({ session }: { session: Session }) {
         </Modal>
       ) : null}
 
-      {showQr ? <MyQrSheet session={session} onClose={() => setShowQr(false)} /> : null}
+      {showQr ? <MyQrSheet session={profile} onClose={() => setShowQr(false)} /> : null}
 
       {showProfile ? (
         <ProfileSheet
-          session={session}
+          session={profile}
           shareLink={shareLink}
           onShowQr={() => {
             setShowProfile(false);

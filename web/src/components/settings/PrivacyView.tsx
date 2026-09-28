@@ -1,27 +1,36 @@
 import { useCallback, useEffect, useState } from "react";
-import { Lock, ShieldCheck } from "lucide-react";
-import { api, ApiError, type BlockItem, type Session } from "../../api/client";
-import { lockOnHidden, setLockOnHidden } from "../../session";
+import { Lock, QrCode, ShieldCheck } from "lucide-react";
+import { api, ApiError, type BlockItem, type PrivacySettings, type Session } from "../../api/client";
+import { setPrivacySettings, usePrivacySettings } from "../../privacy";
+import { lockOnHidden, saveShareCode, setLockOnHidden } from "../../session";
 import { generatesLinkPreviews, setGeneratesLinkPreviews } from "../../linkPreview/settings";
+import { alwaysRelaysCalls, setAlwaysRelaysCalls } from "../../calls/relay";
 import { Avatar } from "../Avatar";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { SettingsCard, SettingsGroup, SettingsNote, SettingsRow, Switch } from "./SettingsRow";
 
 export function PrivacyView({
   session,
   onLockNow,
+  onShareCodeChanged,
   onUnauthorized,
 }: {
   session: Session;
   onLockNow: () => void;
+  onShareCodeChanged: (shareCode: string) => void;
   onUnauthorized: () => void;
 }) {
   const [background, setBackground] = useState(() => lockOnHidden());
   const [linkPreviews, setLinkPreviews] = useState(() => generatesLinkPreviews());
-  const [peerDelete, setPeerDelete] = useState<boolean | null>(null);
-  const [savingPeerDelete, setSavingPeerDelete] = useState(false);
+  const [relayCalls, setRelayCalls] = useState(() => alwaysRelaysCalls());
+  const settings = usePrivacySettings();
+  const [saving, setSaving] = useState<keyof PrivacySettings | null>(null);
   const [blocked, setBlocked] = useState<BlockItem[]>([]);
   const [unblocking, setUnblocking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmingReset, setConfirmingReset] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const unauthorized = useCallback(
     (err: unknown) => err instanceof ApiError && err.isAuthFailure,
@@ -41,8 +50,8 @@ export function PrivacyView({
       return;
     }
     const messages: string[] = [];
-    if (privacy.status === "fulfilled") setPeerDelete(privacy.value.allow_peer_chat_delete);
-    else messages.push("Could not load chat deletion setting.");
+    if (privacy.status === "fulfilled") setPrivacySettings(privacy.value);
+    else messages.push("Could not load privacy settings.");
     if (blocks.status === "fulfilled") setBlocked(blocks.value.blocks);
     else messages.push("Could not load blocked contacts.");
     setError(messages.length ? messages.join(" ") : null);
@@ -52,25 +61,62 @@ export function PrivacyView({
     void load();
   }, [load]);
 
-  async function togglePeerDelete(next: boolean) {
-    const previous = peerDelete;
-    setPeerDelete(next);
-    setSavingPeerDelete(true);
+  /** Writes one switch; the shown value only moves once the server confirms it. */
+  async function save(key: keyof PrivacySettings, next: boolean) {
+    setSaving(key);
     setError(null);
     try {
-      const saved = await api.updatePrivacySettings(session.token, next);
-      setPeerDelete(saved.allow_peer_chat_delete);
+      setPrivacySettings(await api.updatePrivacySettings(session.token, { [key]: next }));
     } catch (err) {
       if (unauthorized(err)) {
         onUnauthorized();
         return;
       }
-      setPeerDelete(previous);
       setError(err instanceof ApiError ? err.message : "Could not save that setting.");
     } finally {
-      setSavingPeerDelete(false);
+      setSaving(null);
     }
   }
+
+  useEffect(() => {
+    if (!confirmingReset) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setConfirmingReset(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [confirmingReset]);
+
+  async function resetShareCode() {
+    setConfirmingReset(false);
+    setResetting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const { share_code: shareCode } = await api.rotateShareCode(session.token);
+      saveShareCode(shareCode);
+      onShareCodeChanged(shareCode);
+      setNotice("New QR code ready. The old one no longer works.");
+    } catch (err) {
+      if (unauthorized(err)) {
+        onUnauthorized();
+        return;
+      }
+      setError(err instanceof ApiError ? err.message : "Could not reset your QR code.");
+    } finally {
+      setResetting(false);
+    }
+  }
+
+  const serverSwitch = (key: keyof PrivacySettings, label: string, description: string) => (
+    <Switch
+      checked={settings?.[key] ?? false}
+      disabled={settings === null || saving !== null}
+      onChange={(next) => void save(key, next)}
+      label={label}
+      description={description}
+    />
+  );
 
   async function unblock(item: BlockItem) {
     setUnblocking(item.user_id);
@@ -113,6 +159,44 @@ export function PrivacyView({
         />
       </SettingsCard>
 
+      <SettingsGroup title="Visibility">
+        {serverSwitch(
+          "send_read_receipts",
+          "Read receipts",
+          "Contacts see when you've read their messages.",
+        )}
+        {serverSwitch(
+          "send_typing",
+          "Typing indicators",
+          "Contacts see when you're typing or recording a voice message.",
+        )}
+        {serverSwitch(
+          "share_presence",
+          "Online and last seen",
+          "Contacts see when you're online and when you were last here.",
+        )}
+      </SettingsGroup>
+      <SettingsNote>
+        These work both ways: when you hide yours, you won't see your contacts' either.
+      </SettingsNote>
+
+      <SettingsGroup title="Finding you">
+        {serverSwitch(
+          "discoverable_by_username",
+          "Find me by username",
+          "People who know your username can find you and send a request. Off, they need your QR code or share code; your contacts can still find you.",
+        )}
+        <SettingsRow
+          title="Reset QR code"
+          subtitle="Makes a new QR code and invite link. The old ones stop working."
+          Icon={QrCode}
+          tint="var(--danger-bg)"
+          danger
+          onClick={resetting ? undefined : () => setConfirmingReset(true)}
+        />
+      </SettingsGroup>
+      {notice ? <SettingsNote>{notice}</SettingsNote> : null}
+
       <SettingsGroup title="Link previews">
         <Switch
           checked={linkPreviews}
@@ -125,14 +209,24 @@ export function PrivacyView({
         />
       </SettingsGroup>
 
-      <SettingsGroup title="Chat deletion">
+      <SettingsGroup title="Calls">
         <Switch
-          checked={peerDelete ?? false}
-          disabled={peerDelete === null || savingPeerDelete}
-          onChange={(next) => void togglePeerDelete(next)}
-          label="Let contacts clear chats for me"
-          description="When a contact deletes a chat for both of you, your copy is deleted too. Leave this off to keep your own messages — theirs are replaced with “Message deleted” either way. You stay contacts."
+          checked={relayCalls}
+          onChange={(next) => {
+            setRelayCalls(next);
+            setAlwaysRelaysCalls(next);
+          }}
+          label="Always relay calls"
+          description="Calls from this browser go through the Shroud server's relay, so the person you call never sees your IP address. Calls may lag slightly. If the server has no relay, calls won't connect until you turn this off."
         />
+      </SettingsGroup>
+
+      <SettingsGroup title="Chat deletion">
+        {serverSwitch(
+          "allow_peer_chat_delete",
+          "Let contacts clear chats for me",
+          "When a contact deletes a chat for both of you, your copy is deleted too. Leave this off to keep your own messages — theirs are replaced with “Message deleted” either way. You stay contacts.",
+        )}
       </SettingsGroup>
 
       {blocked.length > 0 ? (
@@ -158,6 +252,16 @@ export function PrivacyView({
       ) : null}
 
       {error ? <p className="set-error">{error}</p> : null}
+
+      {confirmingReset ? (
+        <ConfirmDialog
+          title="Reset your QR code?"
+          body="Your current QR code and invite link stop working. Anyone who wants to add you will need the new one. Your contacts aren't affected."
+          action="Reset"
+          onCancel={() => setConfirmingReset(false)}
+          onConfirm={() => void resetShareCode()}
+        />
+      ) : null}
 
       <div className="set-explainer">
         <strong>

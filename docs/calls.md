@@ -226,6 +226,13 @@ identity keys; the addresses sent after them do not.
   A `failed` link switches that device to the TURN relay for this restart and every later one,
   when the server offered a TURN server. Until that happens, a short disconnect restarts on
   every path, direct ones included.
+- **Always relay calls** (Privacy settings, per device: iOS `SecurityPreferences.alwaysRelayCalls`,
+  web `calls/relay.ts`): that device's peer connection uses `iceTransportPolicy: relay` from the
+  start, so it only ever sends relay candidates and the other person sees the TURN server's
+  address, not this device's. Each side's switch covers only its own address. Without a TURN
+  server in `GET /calls/ice-servers`, the device refuses to place or answer the call rather than
+  connect directly; an answer refused that way isn't sent, so the account's other devices keep
+  ringing.
 - If no media connects within 30 s of the answer, the device hangs up ("Couldn't connect").
 
 ## Switching between voice and video

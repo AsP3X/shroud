@@ -1,6 +1,6 @@
 import Foundation
 
-/// Reads and writes the signed-in account's privacy consent flags.
+/// Reads and writes the signed-in account's privacy flags (consent and visibility).
 ///
 /// Agent: HTTP GET/PUT `/privacy/settings`; RETURNS PrivacySettingsDTO; no key material.
 struct PrivacyService: Sendable {
@@ -15,12 +15,22 @@ struct PrivacyService: Sendable {
     }
 
     /// Returns the settings as stored after the write, so callers can trust the toggle state.
-    func update(allowPeerChatDelete: Bool, token: String) async throws -> PrivacySettingsDTO {
+    /// Fields left nil in `change` stay as they are.
+    func update(_ change: UpdatePrivacySettingsBody, token: String) async throws -> PrivacySettingsDTO {
         try await client.put(
             "privacy/settings",
-            body: UpdatePrivacySettingsBody(allowPeerChatDelete: allowPeerChatDelete),
+            body: change,
             as: PrivacySettingsDTO.self,
             bearerToken: token
         )
+    }
+
+    /// A new share code for this account; QR codes and links with the old one stop working.
+    func rotateShareCode(token: String) async throws -> String {
+        try await client.postEmpty(
+            "users/me/share-code",
+            as: ShareCodeDTO.self,
+            bearerToken: token
+        ).shareCode
     }
 }
