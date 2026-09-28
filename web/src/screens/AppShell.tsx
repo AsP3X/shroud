@@ -33,6 +33,14 @@ import { Thread } from "../components/Thread";
 import { listTimestamp, presenceLabel, type Presence } from "../format";
 import { acceptChangedPeerKey, isPeerKeyBlocked, onPeerKeyBlocked, PEER_KEY_CHANGED } from "../crypto/peerIdentity";
 import { loadIdentity } from "../crypto/store";
+import {
+  clearFreshSignIn,
+  currentDeviceLabel,
+  isFreshSignIn,
+  saveDeviceName,
+  suggestedDeviceName,
+} from "../deviceNaming";
+import { DeviceNameDialog } from "../components/DeviceNameDialog";
 import { parseInvite, shareUrl } from "../invite";
 import {
   applyAnnotations,
@@ -1280,6 +1288,39 @@ export function AppShell({ session }: { session: Session }) {
     [session.token, session.user.id, session.device.id],
   );
 
+  /* Right after a login or sign-up — and whenever this browser has no name its account can
+     read — ask what to call it. One `/auth/me` per unlock. */
+  const [namePrompt, setNamePrompt] = useState<{ initial: string; named: boolean } | null>(null);
+  useEffect(() => {
+    const material = loadIdentity(session.user.id);
+    if (!material) return;
+    let cancelled = false;
+    currentDeviceLabel(session.token, session.device.id, material.historyKey)
+      .then((label) => {
+        if (cancelled || (label && !isFreshSignIn())) return;
+        setNamePrompt({ initial: label?.name ?? suggestedDeviceName(), named: Boolean(label) });
+      })
+      .catch(() => {
+        /* offline: the next unlock asks again if the name is still missing */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session.token, session.user.id, session.device.id]);
+
+  const saveThisDeviceName = useCallback(
+    async (name: string, custom: boolean) => {
+      const material = loadIdentity(session.user.id);
+      if (!material) return;
+      await saveDeviceName(session.token, session.device.id, material.historyKey, {
+        name,
+        kind: "web",
+        custom,
+      });
+    },
+    [session.token, session.user.id, session.device.id],
+  );
+
   /* Signing out (or a session the server ended) hangs up before the browser is cleared. */
   useEffect(() => {
     if (wipe) endCallForLock();
@@ -2481,6 +2522,23 @@ export function AppShell({ session }: { session: Session }) {
           onConfirm={() => {
             setConfirmLogout(false);
             setWipe("logout");
+          }}
+        />
+      ) : null}
+
+      {namePrompt && !wipe ? (
+        <DeviceNameDialog
+          initial={namePrompt.initial}
+          onSave={async (name) => {
+            await saveThisDeviceName(name, true);
+            clearFreshSignIn();
+            setNamePrompt(null);
+          }}
+          onSkip={() => {
+            // Unnamed is not an option: skipping keeps the guess, which the next prompt can replace.
+            if (!namePrompt.named) void saveThisDeviceName(namePrompt.initial, false).catch(() => {});
+            clearFreshSignIn();
+            setNamePrompt(null);
           }}
         />
       ) : null}

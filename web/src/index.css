@@ -2087,6 +2087,10 @@ button.reply-quote { cursor: pointer; }
   color: var(--text-secondary); word-break: break-all;
 }
 .set-row.dev-info .copy-pill { align-self: center; }
+.dev-rename { display: flex; flex-direction: column; gap: 8px; }
+.dev-rename label { font-size: var(--fs-sm); font-weight: 600; color: var(--text-secondary); }
+.dev-rename p { margin: 0; font-size: var(--fs-xs); color: var(--text-tertiary); }
+.dev-rename p.dev-rename-error { color: var(--danger); }
 .set-toast {
   /* Centred with auto margins, not a transform, so the `modal-in` entrance can own transform. */
   position: fixed; left: 16px; right: 16px; bottom: 28px; z-index: 90;

@@ -2,7 +2,6 @@ import { useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { TriangleAlert } from "lucide-react";
 import { api, ApiError } from "../api/client";
-import { deviceName } from "../config";
 import { generateMnemonic, PhraseError, WORD_COUNT } from "../crypto/bip39";
 import { establish, putBundleRequest } from "../crypto/identity";
 import { evaluatePassword } from "../crypto/password";
@@ -11,6 +10,7 @@ import { AuthLayout } from "../components/auth/AuthLayout";
 import { PasswordField, RuleList, StrengthMeter, TextField } from "../components/auth/Fields";
 import { PhraseDisplay } from "../components/auth/Phrase";
 import { hasPin } from "../crypto/vaultAccess";
+import { markFreshSignIn } from "../deviceNaming";
 import { saveSession } from "../session";
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,32}$/;
@@ -55,8 +55,9 @@ export function SignUp() {
     setError(null);
     setBusy(true);
     try {
-      const session = await api.register(username.trim().toLowerCase(), password, deviceName());
+      const session = await api.register(username.trim().toLowerCase(), password);
       saveSession(session);
+      markFreshSignIn();
       const material = establish(words, session.user.id);
       saveIdentity(material);
       try {

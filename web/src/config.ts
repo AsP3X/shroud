@@ -18,27 +18,6 @@ export function linkRelayUrl(): string {
   return `${proto}//${window.location.host}${path}`;
 }
 
-export function deviceName(): string {
-  const ua = navigator.userAgent;
-  const browser = /Edg\//.test(ua)
-    ? "Edge"
-    : /Chrome\//.test(ua)
-      ? "Chrome"
-      : /Firefox\//.test(ua)
-        ? "Firefox"
-        : /Safari\//.test(ua)
-          ? "Safari"
-          : "Browser";
-  const os = /Mac OS X/.test(ua)
-    ? "Mac"
-    : /Windows/.test(ua)
-      ? "Windows"
-      : /Linux/.test(ua)
-        ? "Linux"
-        : "Web";
-  return `${browser} on ${os}`;
-}
-
 /** First letters of the first two words, else the first two letters. Splits on
  *  `_ . -` as well as spaces so a username like `niklas_v` matches its display
  *  name "Niklas V" (iOS `AvatarView.initials` only splits on whitespace). */

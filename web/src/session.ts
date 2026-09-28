@@ -99,10 +99,25 @@ function sealedTokenKey(userId: string): string {
   return SEALED_TOKEN_PREFIX + userId.toLowerCase();
 }
 
+/**
+ * What `shroud.session` may hold in the clear: who is signed in, on which device id. Nothing
+ * that describes the device — its name is sealed on the server and opened only when needed.
+ */
+function storedMeta(session: Session): Session {
+  return { ...session, token: "", device: { id: session.device.id } };
+}
+
 function readMeta(): Session | null {
   const raw = localStorage.getItem(TOKEN_KEY);
   if (!raw) return null;
-  return JSON.parse(raw) as Session;
+  const meta = JSON.parse(raw) as Session;
+  // Builds before sealed device names kept the plaintext name here; drop it on sight.
+  if (Object.keys(meta.device ?? {}).some((field) => field !== "id") && !storageSealed()) {
+    const scrubbed = { ...meta, device: { id: meta.device.id } };
+    localStorage.setItem(TOKEN_KEY, JSON.stringify(scrubbed));
+    return scrubbed;
+  }
+  return meta;
 }
 
 /**
@@ -133,7 +148,7 @@ export function saveSession(session: Session): void {
   liveToken = { userId, token: session.token };
   // A new login supersedes whatever token the vault held; unlocking must not bring it back.
   localStorage.removeItem(sealedTokenKey(userId));
-  localStorage.setItem(TOKEN_KEY, JSON.stringify({ ...session, token: "" }));
+  localStorage.setItem(TOKEN_KEY, JSON.stringify(storedMeta(session)));
   sealSessionToken();
   sessionStorage.setItem(TAB_LIVE_KEY, "1");
   touchLastActive(true);

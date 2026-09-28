@@ -13,8 +13,7 @@ struct SessionStoreTests {
             userID: userID,
             username: "alice",
             shareCode: nil,
-            deviceID: deviceID,
-            deviceName: "Phone"
+            deviceID: deviceID
         )
         try store.save(session)
         store.saveDeviceAnchor(username: "Alice", deviceID: deviceID)

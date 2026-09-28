@@ -1,5 +1,4 @@
 import Foundation
-import UIKit
 
 /// Talks to `/auth/*` and persists sessions.
 /// Human: Encryption phrase stays on-device only — never sent here.
@@ -21,12 +20,11 @@ nonisolated struct AuthService: Sendable {
     }
 
     /// Registers a new account and stores the session in Keychain.
+    /// No device name goes with it: `DeviceNameSync` seals the name once the phrase is in.
     func register(username: String, password: String) async throws -> SessionStore.Session {
-        let deviceName = await Self.currentDeviceName()
         let body = RegisterRequest(
             username: username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
-            password: password,
-            deviceName: deviceName
+            password: password
         )
         let response: AuthSessionResponse = try await client.post(
             "auth/register",
@@ -40,13 +38,11 @@ nonisolated struct AuthService: Sendable {
     func login(username: String, password: String) async throws -> SessionStore.Session {
         let normalizedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let existing = sessionStore.load()
-        let deviceName = await Self.currentDeviceName()
         let reusedDeviceID = existing?.deviceID
             ?? sessionStore.loadDeviceID(matchingUsername: normalizedUsername)
         let body = LoginRequest(
             username: normalizedUsername,
             password: password,
-            deviceName: deviceName,
             deviceId: reusedDeviceID
         )
         let response: AuthSessionResponse = try await client.post(
@@ -85,8 +81,7 @@ nonisolated struct AuthService: Sendable {
             userID: response.user.id,
             username: response.user.username,
             shareCode: response.user.shareCode,
-            deviceID: response.device.id,
-            deviceName: response.device.name
+            deviceID: response.device.id
         )
         try sessionStore.save(session)
         sessionStore.saveDeviceAnchor(username: session.username, deviceID: session.deviceID)
@@ -103,8 +98,7 @@ nonisolated struct AuthService: Sendable {
             userID: me.user.id,
             username: me.user.username,
             shareCode: me.user.shareCode,
-            deviceID: me.device.id,
-            deviceName: me.device.name ?? session.deviceName
+            deviceID: me.device.id
         )
         return updated
     }
@@ -113,11 +107,5 @@ nonisolated struct AuthService: Sendable {
     func saveRefreshedProfile(_ session: SessionStore.Session) throws {
         try sessionStore.save(session)
         sessionStore.saveDeviceAnchor(username: session.username, deviceID: session.deviceID)
-    }
-
-    /// UIDevice is main-actor state, so this hops rather than reading it off the caller's thread.
-    @MainActor
-    private static func currentDeviceName() -> String {
-        UIDevice.current.name
     }
 }

@@ -23,7 +23,8 @@ export class ApiError extends Error {
 export type Session = {
   token: string;
   user: { id: string; username: string; share_code: string };
-  device: { id: string; name: string | null };
+  /** `sealed_name`: see `crypto/deviceName.ts`; only the account's devices can open it. */
+  device: { id: string; sealed_name?: string | null };
 };
 
 export type Conversation = {
@@ -77,7 +78,8 @@ export type ContactRequest = {
 
 export type Device = {
   id: string;
-  name?: string | null;
+  /** Sealed by the account's devices (`crypto/deviceName.ts`); absent until one names it. */
+  sealed_name?: string | null;
   created_at: string;
   last_seen_at?: string | null;
   is_current: boolean;
@@ -323,18 +325,18 @@ async function putBytes(path: string, token: string, data: Uint8Array): Promise<
 
 export const api = {
   health: () => request<{ status: string }>("/health/live"),
-  register: (username: string, password: string, deviceName: string) =>
+  /** No device name here: it is sealed once the phrase is known (`deviceNaming.ts`). */
+  register: (username: string, password: string) =>
     request<Session>("/auth/register", {
       method: "POST",
-      body: JSON.stringify({ username, password, device_name: deviceName }),
+      body: JSON.stringify({ username, password }),
     }),
-  login: (username: string, password: string, deviceName: string, deviceId?: string | null) =>
+  login: (username: string, password: string, deviceId?: string | null) =>
     request<Session>("/auth/login", {
       method: "POST",
       body: JSON.stringify({
         username,
         password,
-        device_name: deviceName,
         ...(deviceId && UUID_RE.test(deviceId) ? { device_id: deviceId } : {}),
       }),
     }),
@@ -420,6 +422,13 @@ export const api = {
   devices: (token: string) => request<{ devices: Device[] }>("/devices", { token }),
   revokeDevice: (token: string, deviceId: string) =>
     request<void>(`/devices/${deviceId}`, { method: "DELETE", token }),
+  /** Stores a device's sealed name; the server never sees it in the clear. */
+  putDeviceName: (token: string, deviceId: string, sealedName: string) =>
+    request<void>(`/devices/${encodeURIComponent(deviceId.toLowerCase())}/name`, {
+      method: "PUT",
+      token,
+      body: JSON.stringify({ sealed_name: sealedName }),
+    }),
   blocks: (token: string) => request<{ blocks: BlockItem[] }>("/blocks", { token }),
   unblock: (token: string, userId: string) =>
     request<void>(`/blocks/${userId}`, { method: "DELETE", token }),

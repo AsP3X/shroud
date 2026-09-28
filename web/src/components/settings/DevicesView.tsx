@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type FormEvent } from "react";
 import {
   Check,
   ChevronRight,
@@ -13,6 +13,9 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { api, ApiError, type Device, type Session } from "../../api/client";
+import { DEVICE_NAME_MAX_BYTES, normalizeDeviceName, openDeviceName, type DeviceLabel } from "../../crypto/deviceName";
+import { loadIdentity } from "../../crypto/store";
+import { saveDeviceName } from "../../deviceNaming";
 import { fullTimestamp, listTimestamp } from "../../format";
 import { CopyButton } from "../CopyButton";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -38,11 +41,14 @@ type IconProps = { size?: number };
 type DeviceKind = { label: string; Icon: ComponentType<IconProps>; tint: string };
 
 /**
- * Best guess at what a device is from its name — the same rules as iOS `DeviceKind`. iOS
- * registers `UIDevice.current.name` ("iPhone 17 Pro"); this client registers "<Browser> on <OS>".
+ * What a device is: the kind sealed with its name, else a guess from the name — the same rules
+ * as iOS `DeviceKind`.
  */
-function deviceKind(name: string | null | undefined): DeviceKind {
-  const lower = (name ?? "").toLowerCase();
+function deviceKind(label: DeviceLabel | null): DeviceKind {
+  if (label?.kind === "iphone") return { label: "iPhone app", Icon: Smartphone, tint: "#2e8fe0" };
+  if (label?.kind === "ipad") return { label: "iPad app", Icon: Tablet, tint: "#2e8fe0" };
+  if (label?.kind === "web") return { label: "Web browser", Icon: Globe, tint: "#f76b1c" };
+  const lower = (label?.name ?? "").toLowerCase();
   if (lower.includes("iphone")) return { label: "iPhone app", Icon: Smartphone, tint: "#2e8fe0" };
   if (lower.includes("ipad")) return { label: "iPad app", Icon: Tablet, tint: "#2e8fe0" };
   if (lower.includes("android") || lower.includes("phone")) {
@@ -58,8 +64,8 @@ function deviceKind(name: string | null | undefined): DeviceKind {
   return { label: "Unknown", Icon: MonitorSmartphone, tint: "var(--text-secondary)" };
 }
 
-function DeviceTile({ name, size = 30 }: { name: string | null | undefined; size?: number }) {
-  const { Icon, tint } = deviceKind(name);
+function DeviceTile({ label, size = 30 }: { label: DeviceLabel | null; size?: number }) {
+  const { Icon, tint } = deviceKind(label);
   return (
     <span
       className="set-tile"
@@ -72,10 +78,10 @@ function DeviceTile({ name, size = 30 }: { name: string | null | undefined; size
   );
 }
 
-function displayName(device: Device): string {
-  const trimmed = device.name?.trim() ?? "";
-  return trimmed || "Unnamed device";
+function displayName(label: DeviceLabel | null): string {
+  return label?.name.trim() || "Unnamed device";
 }
+
 
 function lastActiveLabel(device: Device): string {
   return device.last_seen_at
@@ -119,6 +125,13 @@ export function DevicesView({
   /** Latest list for async code, without side effects inside state updaters. */
   const devicesRef = useRef<Device[] | null>(null);
   devicesRef.current = devices;
+  /** Names are sealed to the account; this browser opens them with its phrase's history key. */
+  const historyKey = useMemo(() => loadIdentity(session.user.id)?.historyKey ?? null, [session.user.id]);
+  const labelOf = useCallback(
+    (device: Device) => (historyKey ? openDeviceName(historyKey, device.id, device.sealed_name) : null),
+    [historyKey],
+  );
+  const nameOf = useCallback((device: Device) => displayName(labelOf(device)), [labelOf]);
 
   const isCurrent = useCallback(
     (device: Device) => device.is_current || device.id === session.device.id,
@@ -136,18 +149,21 @@ export function DevicesView({
     [onUnauthorized],
   );
 
-  const load = useCallback(async () => {
+  /** Resolves to the fresh list, or null when it could not be loaded. */
+  const load = useCallback(async (): Promise<Device[] | null> => {
     try {
       const res = await api.devices(session.token);
       setDevices(res.devices);
       setLoadError(null);
       onCount?.(res.devices.length);
+      return res.devices;
     } catch (err) {
-      if (authFailed(err)) return;
+      if (authFailed(err)) return null;
       const message = err instanceof ApiError ? err.message : "Could not load devices.";
       // First load failing gets the retry card; a later refresh keeps the list on screen.
       if (devicesRef.current === null) setLoadError(message);
       else setActionError(message);
+      return null;
     }
   }, [session.token, authFailed, onCount]);
 
@@ -169,6 +185,24 @@ export function DevicesView({
     const timer = window.setTimeout(() => setToast(null), 1800);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  /** Resolves to an error for the rename form, or null once saved. */
+  async function rename(device: Device, name: string): Promise<string | null> {
+    if (!historyKey) return "Unlock Shroud to rename devices.";
+    try {
+      // Keeps the device's kind; `custom` stops an iPhone putting its own name back.
+      const kind = labelOf(device)?.kind ?? (isCurrent(device) ? "web" : "other");
+      await saveDeviceName(session.token, device.id, historyKey, { name, kind, custom: true });
+    } catch (err) {
+      if (authFailed(err)) return null;
+      return err instanceof ApiError ? err.message : "Could not save that name.";
+    }
+    setToast("Name saved");
+    // The open dialog holds the device it was opened with; show the new name there too.
+    const fresh = (await load())?.find((d) => d.id === device.id);
+    if (fresh) setDetail((open) => (open?.id === fresh.id ? fresh : open));
+    return null;
+  }
 
   // Escape closes the top dialog only — never the Settings page behind it.
   const dialogOpen = Boolean(confirming || confirmingAll || detail);
@@ -210,11 +244,11 @@ export function DevicesView({
     try {
       await api.revokeDevice(session.token, device.id);
       removeLocally([device.id]);
-      setToast(`${displayName(device)} removed`);
+      setToast(`${nameOf(device)} removed`);
     } catch (err) {
       if (isAlreadyRemoved(err)) {
         removeLocally([device.id]);
-        setToast(`${displayName(device)} was already removed`);
+        setToast(`${nameOf(device)} was already removed`);
       } else if (!authFailed(err)) {
         setActionError(err instanceof ApiError ? err.message : "Could not remove that device.");
       }
@@ -303,11 +337,11 @@ export function DevicesView({
           type="button"
           className="dev-row-main"
           onClick={() => setDetail(device)}
-          aria-label={`${displayName(device)}, ${mine ? "this browser, active now" : lastActiveLabel(device)}. Show details`}
+          aria-label={`${nameOf(device)}, ${mine ? "this browser, active now" : lastActiveLabel(device)}. Show details`}
         >
-          <DeviceTile name={device.name} />
+          <DeviceTile label={labelOf(device)} />
           <span className="set-row-copy">
-            <strong>{displayName(device)}</strong>
+            <strong>{nameOf(device)}</strong>
             {mine ? (
               <span className="dev-active">
                 <i className="dev-dot" aria-hidden="true" />
@@ -327,7 +361,7 @@ export function DevicesView({
               type="button"
               className="dev-link danger"
               onClick={() => setConfirming(device)}
-              aria-label={`Remove ${displayName(device)}`}
+              aria-label={`Remove ${nameOf(device)}`}
             >
               Remove
             </button>
@@ -419,16 +453,19 @@ export function DevicesView({
           Your phrase stays on each device
         </strong>
         <p>
-          Every device unlocks with your 12-word phrase, which never leaves it. For each device the
-          server records only the name it signed in with, when it was linked and when it was last
-          active — all shown here. Removing a device does not erase what is already stored on it.
+          Every device unlocks with your 12-word phrase, which never leaves it. Device names are
+          encrypted with it too, so only your own devices can read them. The server records when
+          each device was linked and when it was last active — both shown here. Removing a device
+          does not erase what is already stored on it.
         </p>
       </div>
 
       {detail ? (
         <DeviceDetail
           device={detail}
+          label={labelOf(detail)}
           isCurrent={isCurrent(detail)}
+          onRename={historyKey ? (name) => rename(detail, name) : null}
           isRevoking={revoking.has(detail.id) || revokingAll}
           onClose={() => setDetail(null)}
           onRevoke={() => {
@@ -440,7 +477,7 @@ export function DevicesView({
 
       {confirming ? (
         <ConfirmDialog
-          title={`Remove ${displayName(confirming)}?`}
+          title={`Remove ${nameOf(confirming)}?`}
           body={revokeConsequences(false)}
           action="Remove"
           onCancel={() => setConfirming(null)}
@@ -471,19 +508,41 @@ export function DevicesView({
 /** Everything the server knows about one device, plus its actions — iOS `DeviceDetailSheet`. */
 function DeviceDetail({
   device,
+  label,
   isCurrent,
   isRevoking,
+  onRename,
   onClose,
   onRevoke,
 }: {
   device: Device;
+  label: DeviceLabel | null;
   isCurrent: boolean;
   isRevoking: boolean;
+  /** Null when this browser cannot seal names (no identity loaded). Resolves to an error, or null once saved. */
+  onRename: ((name: string) => Promise<string | null>) | null;
   onClose: () => void;
   onRevoke: () => void;
 }) {
-  const kind = deviceKind(device.name);
+  const kind = deviceKind(label);
   const deviceId = device.id.toLowerCase();
+  const [draft, setDraft] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const renamable = onRename !== null;
+  const cleaned = draft === null ? "" : normalizeDeviceName(draft);
+
+  async function submitRename(event: FormEvent) {
+    event.preventDefault();
+    if (!onRename || !cleaned || saving) return;
+    setSaving(true);
+    setRenameError(null);
+    const error = await onRename(cleaned);
+    setSaving(false);
+    if (error) setRenameError(error);
+    else setDraft(null);
+  }
+
   return (
     <div className="modal-scrim" onMouseDown={onClose}>
       <div
@@ -494,8 +553,8 @@ function DeviceDetail({
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="info-sheet">
-          <DeviceTile name={device.name} size={64} />
-          <strong id="dev-detail-title">{displayName(device)}</strong>
+          <DeviceTile label={label} size={64} />
+          <strong id="dev-detail-title">{displayName(label)}</strong>
           <span className={isCurrent ? "dev-active" : undefined}>
             {isCurrent ? "This browser · Active now" : lastActiveLabel(device)}
           </span>
@@ -527,6 +586,39 @@ function DeviceDetail({
           </div>
         </div>
 
+        {draft !== null ? (
+          <form className="dev-rename" onSubmit={submitRename}>
+            <label htmlFor="dev-rename-input">Device name</label>
+            <input
+              id="dev-rename-input"
+              className="afield-input"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              maxLength={DEVICE_NAME_MAX_BYTES}
+              autoComplete="off"
+              spellCheck={false}
+              autoFocus
+            />
+            {renameError ? <p className="dev-rename-error" role="alert">{renameError}</p> : null}
+            <p>Encrypted — only your devices can read it.</p>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  setDraft(null);
+                  setRenameError(null);
+                }}
+              >
+                Cancel
+              </button>
+              <button type="submit" className="btn btn-primary" disabled={!cleaned || saving}>
+                {saving ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </form>
+        ) : null}
+
         {isCurrent ? (
           <p>
             To remove this browser from your account, use Log Out in Settings. It also erases
@@ -534,10 +626,19 @@ function DeviceDetail({
           </p>
         ) : null}
 
-        <div className="modal-actions">
+        <div className="modal-actions" hidden={draft !== null}>
           <button type="button" className="btn btn-secondary" onClick={onClose} autoFocus>
             Done
           </button>
+          {renamable ? (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setDraft(label?.name ?? "")}
+            >
+              Rename
+            </button>
+          ) : null}
           {!isCurrent ? (
             <button
               type="button"

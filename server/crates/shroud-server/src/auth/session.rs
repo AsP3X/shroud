@@ -24,7 +24,8 @@ pub struct AuthContext {
     pub username: String,
     pub share_code: String,
     pub device_id: Uuid,
-    pub device_name: Option<String>,
+    /// Sealed by the account's devices; only echoed back by `/auth/me`.
+    pub device_sealed_name: Option<Vec<u8>>,
     pub session_id: Uuid,
 }
 
@@ -32,7 +33,7 @@ pub struct AuthContext {
 struct AuthRow {
     session_id: Uuid,
     device_id: Uuid,
-    device_name: Option<String>,
+    device_sealed_name: Option<Vec<u8>>,
     user_id: Uuid,
     username: String,
     share_code: String,
@@ -68,7 +69,7 @@ impl FromRequestParts<AppState> for AuthContext {
             SELECT
                 s.id AS session_id,
                 d.id AS device_id,
-                d.name AS device_name,
+                d.sealed_name AS device_sealed_name,
                 u.id AS user_id,
                 u.username AS username,
                 u.share_code AS share_code
@@ -121,7 +122,7 @@ impl FromRequestParts<AppState> for AuthContext {
             username: row.username,
             share_code: row.share_code,
             device_id: row.device_id,
-            device_name: row.device_name,
+            device_sealed_name: row.device_sealed_name,
             session_id: row.session_id,
         })
     }

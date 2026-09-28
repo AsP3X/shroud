@@ -216,8 +216,7 @@ struct DeviceDataWipeTests {
                 userID: UUID(),
                 username: "alice",
                 shareCode: nil,
-                deviceID: UUID(),
-                deviceName: nil
+                deviceID: UUID()
             )
         )
         #expect(!store.hasNoSession())

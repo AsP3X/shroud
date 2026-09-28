@@ -21,7 +21,6 @@ nonisolated struct SessionStore: Sendable {
         /// Short public share code for QR / links (may be nil for pre-migration sessions).
         let shareCode: String?
         let deviceID: UUID
-        let deviceName: String?
     }
 
     func load() -> Session? {
@@ -35,15 +34,13 @@ nonisolated struct SessionStore: Sendable {
         else {
             return nil
         }
-        let deviceName = read(key: Key.deviceName)
         let shareCode = read(key: Key.shareCode)
         return Session(
             token: token,
             userID: userID,
             username: username,
             shareCode: shareCode,
-            deviceID: deviceID,
-            deviceName: deviceName
+            deviceID: deviceID
         )
     }
 
@@ -57,11 +54,13 @@ nonisolated struct SessionStore: Sendable {
         } else {
             delete(key: Key.shareCode)
         }
-        if let deviceName = session.deviceName {
-            try write(key: Key.deviceName, value: deviceName)
-        } else {
-            delete(key: Key.deviceName)
-        }
+        dropLegacyDeviceName()
+    }
+
+    /// Builds before sealed device names kept the device name here in the clear. Called at
+    /// launch so an install that never signs in again loses it too; a no-op once it is gone.
+    func dropLegacyDeviceName() {
+        delete(key: Key.legacyDeviceName)
     }
 
     /// Removes session Keychain items. Device id for the last username is kept so a later
@@ -142,9 +141,10 @@ nonisolated struct SessionStore: Sendable {
         static let username = "username"
         static let shareCode = "share_code"
         static let deviceID = "device_id"
-        static let deviceName = "device_name"
+        /// No longer written: the name is sealed on the server (`DeviceNameSeal`).
+        static let legacyDeviceName = "device_name"
 
-        static let all = [token, userID, username, shareCode, deviceID, deviceName]
+        static let all = [token, userID, username, shareCode, deviceID, legacyDeviceName]
     }
 
     private enum DeviceKey {

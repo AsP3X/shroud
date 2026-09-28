@@ -6,13 +6,15 @@ import SwiftUI
 /// removed here (that's Log Out), every other one can, one at a time or all at once. The
 /// account holds at most `DevicesService.deviceLimit` devices, so this is also where you make
 /// room for a new one.
-/// Agent: CALLS DevicesService (GET/DELETE `/devices`); READS SessionController for the token
-/// and this device's id; 401s are counted by `SessionAuthBridge` like every other request.
+/// Agent: CALLS DevicesService (GET/DELETE `/devices`, PUT `/devices/{id}/name` sealed); READS
+/// SessionController for the token and this device's id, CryptoController for the history key
+/// that opens and seals the names; 401s are counted by `SessionAuthBridge` like every request.
 struct DevicesView: View {
     /// Reports the device count back to the Settings row after every load or removal.
     var onCount: ((Int) -> Void)? = nil
 
     @Environment(SessionController.self) private var sessionController
+    @Environment(CryptoController.self) private var cryptoController
     @Environment(\.dismiss) private var dismiss
 
     @State private var devices: [LinkedDeviceDTO]?
@@ -95,8 +97,10 @@ struct DevicesView: View {
         }) { device in
             DeviceDetailSheet(
                 device: device,
+                label: label(device),
                 isCurrent: isCurrent(device),
                 isRevoking: revokingIDs.contains(device.id) || isRevokingAll,
+                onRename: { name in await rename(device, to: name) },
                 onCopyID: { copyID(of: device) },
                 onRevoke: {
                     revokeAfterSheet = device
@@ -203,7 +207,7 @@ struct DevicesView: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Theme.accent)
                 Text(
-                    "Every device unlocks with your 12-word phrase, which never leaves it. For each device the server records only the name it signed in with, when it was linked and when it was last active — all shown here. Removing a device does not erase what is already stored on it."
+                    "Every device unlocks with your 12-word phrase, which never leaves it. Device names are encrypted with it too, so only your own devices can read them. The server records when each device was linked and when it was last active — both shown here. Removing a device does not erase what is already stored on it."
                 )
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.textSecondary)
@@ -255,7 +259,7 @@ struct DevicesView: View {
                 detailDevice = device
             } label: {
                 HStack(spacing: 12) {
-                    DeviceIconTile(name: device.name, size: 30)
+                    DeviceIconTile(label: label(device), size: 30)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(displayName(device))
                             .font(.system(size: 16))
@@ -424,12 +428,18 @@ struct DevicesView: View {
         device.isCurrent || device.id == sessionController.session?.deviceID
     }
 
-    private func displayName(_ device: LinkedDeviceDTO) -> String {
-        Self.displayName(device)
+    /// The device's name, opened with this account's history key; nil when it has none yet.
+    private func label(_ device: LinkedDeviceDTO) -> DeviceNameSeal.Label? {
+        guard let historyKey = cryptoController.material?.historyKey else { return nil }
+        return DeviceNameSeal.open(device.sealedName, deviceID: device.id, historyKey: historyKey)
     }
 
-    static func displayName(_ device: LinkedDeviceDTO) -> String {
-        let trimmed = device.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    private func displayName(_ device: LinkedDeviceDTO) -> String {
+        Self.displayName(label(device))
+    }
+
+    static func displayName(_ label: DeviceNameSeal.Label?) -> String {
+        let trimmed = label?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? "Unnamed device" : trimmed
     }
 
@@ -529,6 +539,33 @@ struct DevicesView: View {
         onCount?(list.count)
     }
 
+    /// Seals the new name (marked as chosen, so an iPhone keeps it instead of its own) and
+    /// reloads. Returns an error message, or nil once saved.
+    private func rename(_ device: LinkedDeviceDTO, to name: String) async -> String? {
+        guard let token = sessionController.bearerToken,
+              let historyKey = cryptoController.material?.historyKey
+        else { return "Unlock Shroud to rename devices." }
+        let kind = label(device)?.kind
+            ?? (isCurrent(device) ? DeviceNameSync.currentLabel().kind : .other)
+        do {
+            let sealed = try DeviceNameSeal.seal(
+                .init(name: name, kind: kind, custom: true),
+                deviceID: device.id,
+                historyKey: historyKey
+            )
+            try await service.putName(deviceID: device.id, sealedName: sealed, token: token)
+        } catch DeviceNameSeal.SealError.emptyName {
+            return "Enter a name."
+        } catch {
+            return SessionController.userMessage(for: error)
+        }
+        await load()
+        // The open sheet shows the new name.
+        if let updated = devices?.first(where: { $0.id == device.id }) { detailDevice = updated }
+        Haptics.impact(.light)
+        return nil
+    }
+
     private func copyID(of device: LinkedDeviceDTO) {
         UIPasteboard.general.string = device.id.uuidString.lowercased()
         Haptics.impact(.light)
@@ -549,17 +586,25 @@ struct DevicesView: View {
 /// Everything the server knows about one device, plus its actions.
 private struct DeviceDetailSheet: View {
     let device: LinkedDeviceDTO
+    let label: DeviceNameSeal.Label?
     let isCurrent: Bool
     let isRevoking: Bool
+    /// Returns an error message, or nil once the name is saved.
+    let onRename: (String) async -> String?
     let onCopyID: () -> Void
     let onRevoke: () -> Void
+
+    @State private var isRenaming = false
+    @State private var draft = ""
+    @State private var isSavingName = false
+    @State private var renameError: String?
 
     var body: some View {
         ScrollView {
             VStack(spacing: 14) {
                 VStack(spacing: 10) {
-                    DeviceIconTile(name: device.name, size: 64)
-                    Text(DevicesView.displayName(device))
+                    DeviceIconTile(label: label, size: 64)
+                    Text(DevicesView.displayName(label))
                         .font(.system(size: 22, weight: .bold))
                         .foregroundStyle(Theme.textPrimary)
                         .multilineTextAlignment(.center)
@@ -571,7 +616,32 @@ private struct DeviceDetailSheet: View {
                 .padding(.bottom, 4)
 
                 card {
-                    infoRow("Type", value: DeviceKind(name: device.name).label)
+                    Button {
+                        draft = label?.name ?? ""
+                        isRenaming = true
+                    } label: {
+                        HStack(spacing: 12) {
+                            Text("Name")
+                                .font(.system(size: 16))
+                                .foregroundStyle(Theme.textPrimary)
+                            Spacer(minLength: 8)
+                            if isSavingName {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Text("Rename")
+                                    .font(.system(size: 15, weight: .medium))
+                                    .foregroundStyle(Theme.accent)
+                            }
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(HighlightRowButtonStyle())
+                    .disabled(isSavingName)
+                    .accessibilityLabel("Rename \(DevicesView.displayName(label))")
+                    divider
+                    infoRow("Type", value: DeviceKind(label: label).label)
                     divider
                     infoRow("Linked", value: device.createdAt.formatted(date: .long, time: .shortened))
                     divider
@@ -602,6 +672,14 @@ private struct DeviceDetailSheet: View {
                     }
                     .buttonStyle(HighlightRowButtonStyle())
                     .accessibilityLabel("Copy device ID")
+                }
+
+                if let renameError {
+                    Text(renameError)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.danger)
+                        .padding(.horizontal, 14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 if isCurrent {
@@ -635,6 +713,26 @@ private struct DeviceDetailSheet: View {
             .padding(.bottom, 24)
         }
         .background(Theme.backgroundGrouped)
+        .alert("Rename Device", isPresented: $isRenaming) {
+            TextField("Name", text: $draft)
+                .textInputAutocapitalization(.words)
+            Button("Cancel", role: .cancel) {}
+            Button("Save") { saveName() }
+                .disabled(DeviceNameSeal.normalize(draft).isEmpty)
+        } message: {
+            Text("The name is encrypted — only your devices can read it.")
+        }
+    }
+
+    private func saveName() {
+        let name = DeviceNameSeal.normalize(draft)
+        guard !name.isEmpty else { return }
+        isSavingName = true
+        renameError = nil
+        Task {
+            renameError = await onRename(name)
+            isSavingName = false
+        }
     }
 
     private func infoRow(_ title: String, value: String) -> some View {
@@ -671,13 +769,18 @@ private struct DeviceDetailSheet: View {
 
 // MARK: - Device kind
 
-/// Best guess at what a device is from its name. iOS registers `UIDevice.current.name`
-/// ("iPhone", "iPad"); the web client registers "<Browser> on <OS>".
+/// What a device is: the kind sealed with its name, else a guess from the name.
 private enum DeviceKind {
     case iPhone, iPad, android, browser, mac, pc, unknown
 
-    init(name: String?) {
-        let lower = (name ?? "").lowercased()
+    init(label: DeviceNameSeal.Label?) {
+        switch label?.kind {
+        case .iPhone: self = .iPhone; return
+        case .iPad: self = .iPad; return
+        case .web: self = .browser; return
+        case .other, nil: break
+        }
+        let lower = (label?.name ?? "").lowercased()
         if lower.contains("iphone") {
             self = .iPhone
         } else if lower.contains("ipad") {
@@ -731,11 +834,11 @@ private enum DeviceKind {
 }
 
 private struct DeviceIconTile: View {
-    let name: String?
+    let label: DeviceNameSeal.Label?
     let size: CGFloat
 
     var body: some View {
-        let kind = DeviceKind(name: name)
+        let kind = DeviceKind(label: label)
         ZStack {
             RoundedRectangle(cornerRadius: size * 0.27, style: .continuous)
                 .fill(kind.tint)
@@ -751,4 +854,5 @@ private struct DeviceIconTile: View {
 #Preview {
     DevicesView()
         .environment(SessionController())
+        .environment(CryptoController())
 }

@@ -2,7 +2,6 @@ import { useState, type FormEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { TriangleAlert } from "lucide-react";
 import { api, ApiError } from "../api/client";
-import { deviceName } from "../config";
 import { generateMnemonic, PhraseError, validateMnemonic, WORD_COUNT } from "../crypto/bip39";
 import { b64ToBytes, bytesEqual } from "../crypto/bytes";
 import {
@@ -18,6 +17,7 @@ import { PhraseDisplay, PhraseEntry } from "../components/auth/Phrase";
 import { hasIdentity, loadIdentity, loadPlaintextIdentity, saveIdentity } from "../crypto/store";
 import { hasVault, isVaultOpen, openVaultWithPhrase } from "../crypto/vault";
 import { hasPin, needsPhrase, sealLegacyStorage } from "../crypto/vaultAccess";
+import { markFreshSignIn } from "../deviceNaming";
 import { clearSession, loadDeviceAnchor, loadSession, saveSession } from "../session";
 
 /**
@@ -77,13 +77,10 @@ export function Auth() {
     setError(null);
     setBusy(true);
     try {
-      const session = await api.login(
-        username.trim().toLowerCase(),
-        password,
-        deviceName(),
-        loadDeviceAnchor(username),
-      );
+      const session = await api.login(username.trim().toLowerCase(), password, loadDeviceAnchor(username));
       saveSession(session);
+      // The app asks for this browser's name once it opens (it is sealed with the phrase).
+      markFreshSignIn();
       setPhase("phrase");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong.");

@@ -70,7 +70,6 @@ struct SessionAuthFailureTests {
         userID: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
         username: "tester",
         shareCode: nil,
-        deviceID: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!,
-        deviceName: "Tests"
+        deviceID: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
     )
 }

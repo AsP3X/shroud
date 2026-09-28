@@ -60,7 +60,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Password change | Revoke **other** devices’ sessions; keep current session |
 | Sessions | Opaque token; store **hash** only; `Authorization: Bearer`; bound to `device_id` |
 | Session lifetime | **No time expiry**; end on logout, device delete, password-change (others), account delete |
-| Devices | Max **5** per account; optional `device_name` |
+| Devices | Max **5** per account; name only **sealed** by the account's devices (`PUT /devices/:id/name`), never in the clear |
 | Device limit | New device when full → reuse the longest-idle device with no live session (its keys, push tokens, notification settings and PIN guard are dropped); `DEVICE_LIMIT` only when every device is signed in |
 | Returning device | Optional `device_id` on login: reuse if owned by user; else new device (cap applies) |
 
@@ -239,7 +239,7 @@ Indexes: unique on `username` (constraint). Optional non-unique not required. CH
 | --- | --- | --- |
 | `id` | `UUID` PK | Client may send this back on login |
 | `user_id` | `UUID` NOT NULL FK → `users(id)` **ON DELETE CASCADE** | |
-| `name` | `TEXT` NULL | Optional display name |
+| `sealed_name` | `BYTEA` NULL | Name sealed by the account's devices, 28–512 bytes (migration 027 replaced the plaintext `name`); cleared when a login reclaims the device. See [architecture.md](./architecture.md#sealed-device-names) |
 | `created_at` | `TIMESTAMPTZ` NOT NULL | `now()` |
 | `last_seen_at` | `TIMESTAMPTZ` NULL | Updated on authenticated activity |
 | `revoked_at` | `TIMESTAMPTZ` NULL | Set by `DELETE /devices/:id`; the row stays as history (migration 019) |
@@ -572,6 +572,7 @@ Redis: pub/sub fan-out, online sets, future rate limits.
 | WebSocket connect | 30/min per IP |
 | Link relay connect | 120/min per IP; 60/min per user (plus 6 open pipes per account) |
 | Test notification | 6/min per device |
+| Device name | 60/hour per user |
 
 `Retry-After` mirrors the budget window (seconds). `TRUST_FORWARDED_HEADERS` must be true only behind a trusted reverse proxy. Key pattern: `rl:{scope}:{id}`.
 
@@ -661,8 +662,7 @@ and cannot read the traffic.
 ```json
 {
   "username": "alice",
-  "password": "correct-horse-battery",
-  "device_name": "iPhone 16"
+  "password": "correct-horse-battery"
 }
 ```
 
@@ -670,7 +670,9 @@ and cannot read the traffic.
 | --- | --- | --- |
 | `username` | yes | 3–32, `[a-z0-9_]` |
 | `password` | yes | min 8; not common |
-| `device_name` | no | Display label |
+
+A `device_name` from older builds is ignored and never stored: the name is sealed once the client
+has the phrase (`PUT /devices/:id/name`).
 
 Success:
 
@@ -678,7 +680,7 @@ Success:
 {
   "token": "<opaque>",
   "user": { "id": "<uuid>", "username": "alice" },
-  "device": { "id": "<uuid>", "name": "iPhone 16" }
+  "device": { "id": "<uuid>" }
 }
 ```
 
@@ -690,7 +692,6 @@ Success:
 {
   "username": "alice",
   "password": "correct-horse-battery",
-  "device_name": "iPhone 16",
   "device_id": "<uuid>"
 }
 ```
@@ -699,10 +700,9 @@ Success:
 | --- | --- | --- |
 | `username` | yes | |
 | `password` | yes | |
-| `device_name` | no | Refresh name when reusing device |
 | `device_id` | no | Reuse if owned by user; else new device |
 
-Success body: same as register. Reusing a device revokes its previous session (one live session per device) and closes that session's WebSocket.
+Success body: same as register, plus `device.sealed_name` (Base64) when the reused device has one. Reusing a device revokes its previous session (one live session per device) and closes that session's WebSocket.
 
 #### `POST /auth/logout` → `204`
 
@@ -713,7 +713,7 @@ Success body: same as register. Reusing a device revokes its previous session (o
 ```json
 {
   "user": { "id": "<uuid>", "username": "alice" },
-  "device": { "id": "<uuid>", "name": "iPhone 16" }
+  "device": { "id": "<uuid>", "sealed_name": "<base64>" }
 }
 ```
 
@@ -735,7 +735,7 @@ Revokes all **other** sessions and closes their WebSockets.
   "devices": [
     {
       "id": "<uuid>",
-      "name": "iPhone 16",
+      "sealed_name": "<base64>",
       "created_at": "2026-07-15T12:00:00Z",
       "last_seen_at": "2026-07-15T12:05:00Z",
       "is_current": true
@@ -744,7 +744,18 @@ Revokes all **other** sessions and closes their WebSockets.
 }
 ```
 
-`name` / `last_seen_at` may be null.
+`sealed_name` / `last_seen_at` are omitted when null.
+
+#### `PUT /devices/:id/name` → `204`
+
+```json
+{ "sealed_name": "<base64>" }
+```
+
+Stores a device's name sealed by the account's devices ([format](./architecture.md#sealed-device-names));
+the server checks only that it decodes to 28–512 bytes. Any of the caller's non-revoked devices may
+be named, not only the current one. `404` for a foreign or removed id, `400 VALIDATION_ERROR` for bad
+Base64 or size. Budget: 60 per hour per user.
 
 #### `DELETE /devices/:id` → `204`
 

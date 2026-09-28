@@ -5,13 +5,13 @@ import Testing
 struct DeviceModelsTests {
     @Test
     func devicesListDecodesServerShape() throws {
-        // The server omits `name` and `last_seen_at` when null and sends fractional seconds.
+        // The server omits `sealed_name` and `last_seen_at` when null and sends fractional seconds.
         let json = """
         {
           "devices": [
             {
               "id": "11111111-1111-1111-1111-111111111111",
-              "name": "iPhone 17 Pro",
+              "sealed_name": "c2VhbGVk",
               "created_at": "2026-09-20T10:15:00.123456Z",
               "last_seen_at": "2026-09-23T08:00:00Z",
               "is_current": true
@@ -29,7 +29,8 @@ struct DeviceModelsTests {
         #expect(decoded.devices.count == 2)
         #expect(decoded.devices[0].isCurrent)
         #expect(decoded.devices[0].lastSeenAt != nil)
-        #expect(decoded.devices[1].name == nil)
+        #expect(decoded.devices[0].sealedName == "c2VhbGVk")
+        #expect(decoded.devices[1].sealedName == nil)
         #expect(decoded.devices[1].lastSeenAt == nil)
         #expect(!decoded.devices[1].isCurrent)
     }

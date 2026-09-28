@@ -90,7 +90,9 @@ async fn register_login_me_logout_flow() {
     let token = registered["token"].as_str().expect("token");
     let device_id = registered["device"]["id"].as_str().expect("device id");
     assert_eq!(registered["user"]["username"], username);
-    assert_eq!(registered["device"]["name"], "iPhone Test");
+    // An older build's plaintext `device_name` is dropped, not stored or echoed.
+    assert!(registered["device"].get("name").is_none());
+    assert!(registered["device"].get("sealed_name").is_none());
     let share_code = registered["user"]["share_code"]
         .as_str()
         .expect("share_code");
@@ -396,7 +398,6 @@ async fn delete_account_requires_password_and_removes_user() {
                     json!({
                         "username": username,
                         "password": password,
-                        "device_name": "Delete Me"
                     })
                     .to_string(),
                 ))
@@ -407,6 +408,16 @@ async fn delete_account_requires_password_and_removes_user() {
     assert_eq!(register.status(), StatusCode::CREATED);
     let registered = json_body(register).await;
     let token = registered["token"].as_str().unwrap();
+    let device_id = registered["device"]["id"].as_str().unwrap();
+    let named = authed(
+        &app,
+        "PUT",
+        &format!("/api/v1/devices/{device_id}/name"),
+        token,
+        Some(json!({ "sealed_name": BASE64.encode([3_u8; 156]) })),
+    )
+    .await;
+    assert_eq!(named.status(), StatusCode::NO_CONTENT);
 
     let wrong = app
         .clone()
@@ -471,7 +482,7 @@ async fn delete_account_requires_password_and_removes_user() {
     let live_devices: i64 = sqlx::query_scalar(
         r#"
         SELECT COUNT(*)::bigint FROM devices
-        WHERE user_id = $1 AND (revoked_at IS NULL OR name IS NOT NULL)
+        WHERE user_id = $1 AND (revoked_at IS NULL OR sealed_name IS NOT NULL)
         "#,
     )
     .bind(Uuid::parse_str(user_id).unwrap())
@@ -613,6 +624,17 @@ async fn login_at_device_cap_reclaims_an_idle_device() {
         .expect("response");
     assert_eq!(bundle.status(), StatusCode::NO_CONTENT);
 
+    // The first holder had named its device; the name describes them, not whoever comes next.
+    let named = authed(
+        &app,
+        "PUT",
+        &format!("/api/v1/devices/{first_device}/name"),
+        &first_token,
+        Some(json!({ "sealed_name": BASE64.encode([0x5A_u8; 156]) })),
+    )
+    .await;
+    assert_eq!(named.status(), StatusCode::NO_CONTENT);
+
     // The first device logs out and forgets its id; the next login gets that device back.
     let logout = app
         .clone()
@@ -639,7 +661,8 @@ async fn login_at_device_cap_reclaims_an_idle_device() {
     assert_eq!(reclaimed.status(), StatusCode::OK);
     let reclaimed = json_body(reclaimed).await;
     assert_eq!(reclaimed["device"]["id"], first_device);
-    assert_eq!(reclaimed["device"]["name"], "Browser");
+    assert!(reclaimed["device"].get("name").is_none());
+    assert!(reclaimed["device"].get("sealed_name").is_none());
 
     // Nothing the previous holder published is left for peers to encrypt to.
     let reclaimed_token = reclaimed["token"].as_str().unwrap();
@@ -661,6 +684,142 @@ async fn login_at_device_cap_reclaims_an_idle_device() {
 }
 
 /// Sends one authenticated request and returns the response.
+#[tokio::test]
+async fn device_names_are_kept_sealed_only() {
+    let Some(app) = test_app().await else {
+        eprintln!("skipping device_names_are_kept_sealed_only: DATABASE_URL unavailable");
+        return;
+    };
+    let (username, password) = unique_user();
+    let (phone_token, _, phone) = register_user(&app, &username, &password).await;
+    let login = login_request(&app, &username, &password).await;
+    assert_eq!(login.status(), StatusCode::OK);
+    let browser_session = json_body(login).await;
+    let browser_token = browser_session["token"].as_str().unwrap().to_string();
+    let browser = browser_session["device"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Unnamed until a client of the account seals a name.
+    let list = json_body(authed(&app, "GET", "/api/v1/devices", &phone_token, None).await).await;
+    for device in list["devices"].as_array().unwrap() {
+        assert!(device.get("name").is_none());
+        assert!(device.get("sealed_name").is_none());
+    }
+
+    let sealed = BASE64.encode((0..156).map(|i| i as u8).collect::<Vec<_>>());
+    let put = authed(
+        &app,
+        "PUT",
+        &format!("/api/v1/devices/{phone}/name"),
+        &phone_token,
+        Some(json!({ "sealed_name": sealed })),
+    )
+    .await;
+    assert_eq!(put.status(), StatusCode::NO_CONTENT);
+
+    // Another device of the account may name this one (a phone renaming a browser).
+    let browser_sealed = BASE64.encode([7_u8; 156]);
+    let put = authed(
+        &app,
+        "PUT",
+        &format!("/api/v1/devices/{browser}/name"),
+        &phone_token,
+        Some(json!({ "sealed_name": browser_sealed })),
+    )
+    .await;
+    assert_eq!(put.status(), StatusCode::NO_CONTENT);
+
+    let list = json_body(authed(&app, "GET", "/api/v1/devices", &browser_token, None).await).await;
+    let by_id = |id: &str| {
+        list["devices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|device| device["id"] == id)
+            .cloned()
+            .expect("device listed")
+    };
+    assert_eq!(by_id(&phone)["sealed_name"], sealed);
+    assert_eq!(by_id(&browser)["sealed_name"], browser_sealed);
+
+    let me = json_body(authed(&app, "GET", "/api/v1/auth/me", &phone_token, None).await).await;
+    assert_eq!(me["device"]["sealed_name"], sealed);
+    assert!(me["device"].get("name").is_none());
+
+    // Signing in again on the same device keeps its name.
+    let again = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "username": username, "password": password, "device_id": browser })
+                        .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(again.status(), StatusCode::OK);
+    let again = json_body(again).await;
+    assert_eq!(again["device"]["id"], browser);
+    assert_eq!(again["device"]["sealed_name"], browser_sealed);
+    let browser_token = again["token"].as_str().unwrap().to_string();
+
+    // Not Base64, too short to be sealed, too long.
+    for bad in [
+        "not base64!".to_string(),
+        BASE64.encode([1_u8; 27]),
+        BASE64.encode([1_u8; 513]),
+    ] {
+        let put = authed(
+            &app,
+            "PUT",
+            &format!("/api/v1/devices/{phone}/name"),
+            &browser_token,
+            Some(json!({ "sealed_name": bad })),
+        )
+        .await;
+        assert_eq!(put.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // Someone else's device, and a removed one, are not found.
+    let (stranger, _) = unique_user();
+    let (stranger_token, _, _) = register_user(&app, &stranger, &password).await;
+    let put = authed(
+        &app,
+        "PUT",
+        &format!("/api/v1/devices/{phone}/name"),
+        &stranger_token,
+        Some(json!({ "sealed_name": sealed })),
+    )
+    .await;
+    assert_eq!(put.status(), StatusCode::NOT_FOUND);
+
+    let removed = authed(
+        &app,
+        "DELETE",
+        &format!("/api/v1/devices/{browser}"),
+        &phone_token,
+        None,
+    )
+    .await;
+    assert_eq!(removed.status(), StatusCode::NO_CONTENT);
+    let put = authed(
+        &app,
+        "PUT",
+        &format!("/api/v1/devices/{browser}/name"),
+        &phone_token,
+        Some(json!({ "sealed_name": sealed })),
+    )
+    .await;
+    assert_eq!(put.status(), StatusCode::NOT_FOUND);
+}
+
 async fn authed(
     app: &axum::Router,
     method: &str,

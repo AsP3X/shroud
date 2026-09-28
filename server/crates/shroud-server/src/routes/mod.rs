@@ -53,6 +53,10 @@ pub fn router() -> Router<AppState> {
             .route("/pin-guard/abandon", post(pin_guard::abandon))
             .route("/devices", get(devices::list_devices))
             .route("/devices/{id}", delete(devices::delete_device))
+            .route(
+                "/devices/{id}/name",
+                axum::routing::put(devices::put_device_name),
+            )
             .route("/keys/bundle", axum::routing::put(keys::put_bundle))
             .route("/keys/bundle/{user_id}", get(keys::get_bundle))
             .route("/keys/bundles/{user_id}", get(keys::get_bundles))

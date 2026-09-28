@@ -142,6 +142,7 @@ struct RootView: View {
             if await deviceWipe.finishInterruptedWipeIfNeeded() {
                 router.postAuthToast = "Signed out · this \(UIDevice.current.model) was cleared"
             }
+            SessionStore().dropLegacyDeviceName()
             await sessionController.validateSessionIfNeeded()
             // Session without local identity (app data wipe / incomplete login) → Sign Up / Log In.
             if sessionController.isSignedIn {
@@ -163,6 +164,7 @@ struct RootView: View {
             }
             if router.isUnlocked {
                 messagingController.start()
+                syncDeviceName()
             }
         }
         // While signed in but messaging is locked, messaging polls are stopped — so re-probe
@@ -205,6 +207,7 @@ struct RootView: View {
                 router.path = []
                 messagingController.start()
                 PushNotificationService.shared.start()
+                syncDeviceName()
             } else if sessionController.isSignedIn {
                 // Keep the 90-day local cache + Notes when only messaging is locked.
                 messagingController.stop(wipeDisk: false)
@@ -271,6 +274,14 @@ struct RootView: View {
                 break
             }
         }
+    }
+
+    /// Seals this iPhone's name for the device list; needs the history key, so only unlocked.
+    private func syncDeviceName() {
+        guard let session = sessionController.session,
+              let historyKey = cryptoController.material?.historyKey
+        else { return }
+        Task { await DeviceNameSync.syncIfNeeded(session: session, historyKey: historyKey) }
     }
 
     private func lockChatsInMemory() {

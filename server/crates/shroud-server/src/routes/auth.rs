@@ -5,6 +5,7 @@ use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -37,8 +38,10 @@ pub struct UserDto {
 #[derive(Debug, Serialize)]
 pub struct DeviceDto {
     pub id: Uuid,
+    /// The device's name, sealed by the account's own devices (Base64). The server cannot read
+    /// it; absent until a client of this account has named the device.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
+    pub sealed_name: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -47,18 +50,19 @@ pub struct MeResponse {
     pub device: DeviceDto,
 }
 
+/// Older builds also send a plaintext `device_name`; it is ignored and never stored (device names
+/// are sealed, see `routes::devices::put_device_name`).
 #[derive(Debug, Deserialize)]
 pub struct RegisterRequest {
     pub username: String,
     pub password: String,
-    pub device_name: Option<String>,
 }
 
+/// A plaintext `device_name` from older builds is ignored, as for [`RegisterRequest`].
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
     pub username: String,
     pub password: String,
-    pub device_name: Option<String>,
     pub device_id: Option<Uuid>,
 }
 
@@ -95,7 +99,6 @@ pub async fn register(
         .await?;
 
     let password_hash = hash_password(&body.password)?;
-    let device_name = normalize_optional_name(body.device_name);
 
     let mut tx = state
         .pool
@@ -150,13 +153,12 @@ pub async fn register(
     let device_id = Uuid::new_v4();
     sqlx::query(
         r#"
-        INSERT INTO devices (id, user_id, name, last_seen_at)
-        VALUES ($1, $2, $3, now())
+        INSERT INTO devices (id, user_id, last_seen_at)
+        VALUES ($1, $2, now())
         "#,
     )
     .bind(device_id)
     .bind(user_id)
-    .bind(&device_name)
     .execute(&mut *tx)
     .await
     .map_err(|err| AppError::Internal(format!("insert device failed: {err}")))?;
@@ -186,7 +188,7 @@ pub async fn register(
             },
             device: DeviceDto {
                 id: device_id,
-                name: device_name,
+                sealed_name: None,
             },
         }),
     ))
@@ -211,8 +213,6 @@ pub async fn login(
         .rate_limiter
         .check_budget("auth_user", &username, budgets::AUTH_USERNAME)
         .await?;
-
-    let device_name = normalize_optional_name(body.device_name);
 
     let user = sqlx::query_as::<_, UserAuthRow>(
         r#"
@@ -244,8 +244,7 @@ pub async fn login(
         .await
         .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
 
-    let device_id =
-        resolve_login_device(&mut tx, user.id, body.device_id, device_name.as_deref()).await?;
+    let device_id = resolve_login_device(&mut tx, user.id, body.device_id).await?;
 
     // Human: One live token per device — revoke any prior active sessions on this device.
     let revoked_sessions: Vec<Uuid> = sqlx::query_scalar(
@@ -274,11 +273,13 @@ pub async fn login(
         .close_sessions(user.id, &revoked_sessions)
         .await;
 
-    let name: Option<String> = sqlx::query_scalar(r#"SELECT name FROM devices WHERE id = $1"#)
-        .bind(device_id)
-        .fetch_one(&state.pool)
-        .await
-        .map_err(|err| AppError::Internal(format!("load device name failed: {err}")))?;
+    // A device signing in again keeps the name its account sealed for it; a reclaimed one has none.
+    let sealed_name: Option<Vec<u8>> =
+        sqlx::query_scalar(r#"SELECT sealed_name FROM devices WHERE id = $1"#)
+            .bind(device_id)
+            .fetch_one(&state.pool)
+            .await
+            .map_err(|err| AppError::Internal(format!("load device name failed: {err}")))?;
 
     tracing::info!(
         user_id = %user.id,
@@ -296,7 +297,7 @@ pub async fn login(
         },
         device: DeviceDto {
             id: device_id,
-            name,
+            sealed_name: sealed_name.map(|bytes| BASE64.encode(bytes)),
         },
     }))
 }
@@ -376,7 +377,7 @@ pub async fn me(auth: AuthContext) -> Result<Json<MeResponse>, AppError> {
         },
         device: DeviceDto {
             id: auth.device_id,
-            name: auth.device_name,
+            sealed_name: auth.device_sealed_name.map(|bytes| BASE64.encode(bytes)),
         },
     }))
 }
@@ -462,7 +463,7 @@ pub async fn delete_account(
     for device_id in &device_ids {
         revoked_sessions.extend(crate::routes::devices::revoke_device(&mut tx, *device_id).await?);
     }
-    sqlx::query(r#"UPDATE devices SET name = NULL WHERE user_id = $1"#)
+    sqlx::query(r#"UPDATE devices SET sealed_name = NULL WHERE user_id = $1"#)
         .bind(user_id)
         .execute(&mut *tx)
         .await
@@ -704,7 +705,6 @@ async fn resolve_login_device(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     user_id: Uuid,
     requested_device_id: Option<Uuid>,
-    device_name: Option<&str>,
 ) -> Result<Uuid, AppError> {
     if let Some(device_id) = requested_device_id {
         let owned: Option<Uuid> = sqlx::query_scalar(
@@ -719,22 +719,11 @@ async fn resolve_login_device(
         .map_err(|err| AppError::Internal(format!("device ownership check failed: {err}")))?;
 
         if let Some(id) = owned {
-            if let Some(name) = device_name {
-                sqlx::query(r#"UPDATE devices SET name = $1, last_seen_at = now() WHERE id = $2"#)
-                    .bind(name)
-                    .bind(id)
-                    .execute(&mut **tx)
-                    .await
-                    .map_err(|err| {
-                        AppError::Internal(format!("update device name failed: {err}"))
-                    })?;
-            } else {
-                sqlx::query(r#"UPDATE devices SET last_seen_at = now() WHERE id = $1"#)
-                    .bind(id)
-                    .execute(&mut **tx)
-                    .await
-                    .map_err(|err| AppError::Internal(format!("touch device failed: {err}")))?;
-            }
+            sqlx::query(r#"UPDATE devices SET last_seen_at = now() WHERE id = $1"#)
+                .bind(id)
+                .execute(&mut **tx)
+                .await
+                .map_err(|err| AppError::Internal(format!("touch device failed: {err}")))?;
             return Ok(id);
         }
         // Unknown, foreign or removed device_id → treat as new device (subject to cap).
@@ -780,20 +769,19 @@ async fn resolve_login_device(
         let Some(id) = idle else {
             return Err(AppError::device_limit());
         };
-        reset_reclaimed_device(tx, id, device_name).await?;
+        reset_reclaimed_device(tx, id).await?;
         return Ok(id);
     }
 
     let device_id = Uuid::new_v4();
     sqlx::query(
         r#"
-        INSERT INTO devices (id, user_id, name, last_seen_at)
-        VALUES ($1, $2, $3, now())
+        INSERT INTO devices (id, user_id, last_seen_at)
+        VALUES ($1, $2, now())
         "#,
     )
     .bind(device_id)
     .bind(user_id)
-    .bind(device_name)
     .execute(&mut **tx)
     .await
     .map_err(|err| AppError::Internal(format!("insert login device failed: {err}")))?;
@@ -805,14 +793,13 @@ async fn resolve_login_device(
 /// pre-keys would have peers encrypt to keys nobody holds (the new holder's upload only
 /// overwrites the key ids it reuses), its push token would ring someone else's phone, and its
 /// PIN guard belongs to a vault that no longer exists. The next login publishes fresh keys.
+/// Its sealed name described the old holder, so it goes too; the new one seals its own.
 async fn reset_reclaimed_device(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     device_id: Uuid,
-    device_name: Option<&str>,
 ) -> Result<(), AppError> {
     purge_device_secrets(tx, device_id).await?;
-    sqlx::query(r#"UPDATE devices SET name = $1, last_seen_at = now() WHERE id = $2"#)
-        .bind(device_name)
+    sqlx::query(r#"UPDATE devices SET sealed_name = NULL, last_seen_at = now() WHERE id = $1"#)
         .bind(device_id)
         .execute(&mut **tx)
         .await
@@ -846,16 +833,4 @@ pub(crate) async fn purge_device_secrets(
             .map_err(|err| AppError::Internal(format!("reset {table} failed: {err}")))?;
     }
     Ok(())
-}
-
-fn normalize_optional_name(name: Option<String>) -> Option<String> {
-    name.map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .map(|value| {
-            if value.len() > 128 {
-                value.chars().take(128).collect()
-            } else {
-                value
-            }
-        })
 }

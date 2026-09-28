@@ -123,6 +123,28 @@ checked, caps bytes in both directions, and holds at most six pipes per account.
 browser builds is sealed into the message exactly as the iPhone's is — recipients still never
 contact the website.
 
+### Sealed device names
+
+`DeviceNameSeal.swift` / `web/src/crypto/deviceName.ts` (golden vector shared by
+`DeviceNameSealTests` and `deviceName.selftest.ts`). The server keeps a device's name only as
+`devices.sealed_name`, which it cannot open:
+
+- key: HKDF-SHA256 of the phrase's `historyKey`, salt `shroud-v1`, info `shroud-device-name-v1`,
+  32 bytes. Every device of the account derives it; nobody else can.
+- associated data: `shroud-device-name-v1:` + the lowercase device id, so a stored name cannot be
+  moved onto another device.
+- plaintext: one kind byte (1 iPhone app, 2 iPad app, 3 web browser, 0 other; `| 0x80` when a
+  person typed the name), the UTF-8 name (at most 96 bytes, one line, no control or bidi
+  characters), `0x80`, zeros to 128 bytes. Every name
+  seals to the same 156 bytes (`nonce ‖ ciphertext ‖ tag`), so its length does not show.
+
+The iPhone app asks nothing: it uses the phone's own name (the model, such as "iPhone 16 Pro",
+while iOS hands out only the generic "iPhone") and seals it after each unlock when it has changed,
+unless someone renamed it, which it then keeps. A browser asks in a dialog when the app opens after
+a login or sign-up, and whenever it has no name its account can read ("Not now" keeps a guess such
+as "Safari on iPhone"). Settings → Devices renames any device, on both clients. Login and register
+carry no name; a plaintext `device_name` from an older build is ignored.
+
 ## Message envelopes and sender authentication
 
 `MessageCrypto.swift` / `web/src/crypto/messageCrypto.ts` + `sealedBox.ts`. The envelope is JSON
@@ -243,6 +265,7 @@ content to send.
 10. Presence is visible only to **accepted contacts**.
 11. Identity Keychain items use `WhenUnlockedThisDeviceOnly` (no backup restore; unavailable while device locked).
 12. A message reads as coming from a contact only if its ratchet body decrypts or its identity box carries a verified **sender tag**; untagged boxes are read only under the watermark policy above.
+13. **Nothing is stored in the clear unless the server needs to read it.** Device names, for one, are sealed to the account ([Sealed device names](#sealed-device-names)).
 
 ## Local development
 
