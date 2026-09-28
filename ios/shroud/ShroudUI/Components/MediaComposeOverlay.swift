@@ -25,9 +25,10 @@ struct PickedPhoto: Identifiable {
 
 /// Send-quality for media compose.
 ///
-/// - **original** (default): the library file's own bytes, sent untouched — no resize, no
-///   re-encode, no colour-space conversion. Only camera captures and outsized files
-///   (ProRAW, huge panoramas) fall back to a maximum-quality re-encode.
+/// - **original** (default): the library file's own encoded image — no resize, no
+///   re-encode, no colour-space conversion. Its location, capture time and device details are
+///   removed (`MediaMetadataScrubber`). Only camera captures, outsized files (ProRAW, huge
+///   panoramas) and files whose metadata can't be removed fall back to a maximum-quality re-encode.
 /// - **hd**: smaller send — still sharp, but downscaled and more compressed.
 enum MediaComposeQuality: String, CaseIterable, Sendable {
     /// 100% source quality — default when composing a photo.
@@ -609,7 +610,7 @@ struct MediaComposeOverlay: View {
                 quality = quality == .original ? .hd : .original
             }
             flashToolBanner(
-                quality == .original ? "Original file — sent untouched" : "HD — smaller file"
+                quality == .original ? "Original quality · location removed" : "HD — smaller file"
             )
         } label: {
             Text(quality.label)

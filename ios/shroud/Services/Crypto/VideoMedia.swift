@@ -183,8 +183,13 @@ nonisolated enum VideoMedia {
     /// Prepares a file URL for sending: apply the compose trim/mute, compress when needed,
     /// and always produce MP4 when re-exporting.
     ///
-    /// `onProgress` reports 0…1 across the export (nothing to report on the passthrough path,
-    /// which is instant by definition).
+    /// `onProgress` reports 0…1 across the export. The passthrough path copies the streams into
+    /// a fresh MP4 without re-encoding, which only drops the source's metadata (location, device,
+    /// dates) and takes about as long as reading the file.
+    ///
+    /// Human: No path sends the source file itself. Every output is written by an export session
+    /// told to carry none of the source's metadata (`MediaMetadataScrubber.stripMetadata`), or by
+    /// `AVAssetWriter`, which starts empty.
     static func encode(
         sourceURL: URL,
         trim: VideoTrim? = nil,
@@ -220,7 +225,9 @@ nonisolated enum VideoMedia {
 
         // Only pass through a real MP4 that already fits the chosen rung and the size cap.
         // Never ship raw .mov / HEVC camera containers — recipients write a temp `.mp4`
-        // for playback and those formats fail to open.
+        // for playback and those formats fail to open. "Pass through" keeps the encoded
+        // streams; the container is rewritten so the file's metadata stays behind. If that
+        // rewrite fails, the clip is compressed like any other rather than sent as it is.
         if let attrs = try? FileManager.default.attributesOfItem(atPath: sourceURL.path),
            let size = attrs[.size] as? NSNumber,
            canPassthrough(
@@ -231,17 +238,20 @@ nonisolated enum VideoMedia {
                mustRewrite: mustRewrite,
                quality: quality
            ),
-           let data = try? Data(contentsOf: sourceURL, options: [.mappedIfSafe])
+           let remuxed = try? await export(asset: asset, preset: AVAssetExportPresetPassthrough, onProgress: onProgress)
         {
-            onProgress?(1)
-            return EncodedVideo(
-                data: data,
-                width: width,
-                height: height,
-                durationMs: durationMs,
-                mime: "video/mp4",
-                thumbnailJPEG: thumbnail
-            )
+            defer { try? FileManager.default.removeItem(at: remuxed) }
+            if let data = try? Data(contentsOf: remuxed, options: [.mappedIfSafe]), data.count <= maxPlaintextBytes {
+                onProgress?(1)
+                return EncodedVideo(
+                    data: data,
+                    width: width,
+                    height: height,
+                    durationMs: durationMs,
+                    mime: "video/mp4",
+                    thumbnailJPEG: thumbnail
+                )
+            }
         }
 
         // Trim and mute are structural, so they go through a composition; a plain compress
@@ -740,6 +750,7 @@ nonisolated enum VideoMedia {
         let out = FileManager.default.temporaryDirectory
             .appendingPathComponent("shroud-export-\(UUID().uuidString).mp4")
         session.shouldOptimizeForNetworkUse = true
+        MediaMetadataScrubber.stripMetadata(from: session)
 
         // The states sequence ends with the export, so the monitor is bounded; cancelling it
         // in `defer` covers the throwing paths.

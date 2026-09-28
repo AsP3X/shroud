@@ -21,7 +21,7 @@ nonisolated struct EncodedImage: Sendable {
     let data: Data
     let width: Int
     let height: Int
-    /// Real payload type — `image/heic` when an original iPhone photo passed through untouched.
+    /// Real payload type — `image/heic` when an original iPhone photo kept its own encoding.
     let mime: String
 }
 
@@ -65,15 +65,18 @@ nonisolated enum MediaCrypto {
 
     /// Prepares an image for sending.
     ///
-    /// Human: "Original" means *original* — when the source is a library file in a format we can
-    /// ship as-is, the exact bytes go on the wire. Decoding and re-encoding, even at JPEG
-    /// quality 1.0, is a generation loss: it resamples through a bitmap, clips Display P3 to
-    /// whatever the render format is, drops the gain map, and usually *inflates* the file.
+    /// Human: "Original" means original *pixels* — when the source is a library file in a format
+    /// we can ship as-is, its encoded image goes on the wire uncompressed-again. Decoding and
+    /// re-encoding, even at JPEG quality 1.0, is a generation loss: it resamples through a
+    /// bitmap, clips Display P3 to whatever the render format is, drops the gain map, and usually
+    /// *inflates* the file. Its metadata does not go along: location, capture time and device
+    /// details are removed first (`MediaMetadataScrubber`), and a file that can't be cleaned is
+    /// re-encoded instead.
     ///
     /// - Parameters:
     ///   - maxEdge: Longest pixel edge cap applied only on the re-encode path.
     ///   - compression: JPEG quality 0…1 on the re-encode path.
-    ///   - allowsPassthrough: When true, library originals within the size limit are sent verbatim.
+    ///   - allowsPassthrough: When true, library originals within the size limit keep their pixels.
     static func encode(
         _ source: MediaImageSource,
         maxEdge: CGFloat,
@@ -179,7 +182,10 @@ nonisolated enum MediaCrypto {
 
     // MARK: - Encoding internals
 
-    /// Returns the source bytes verbatim when they are already a shippable original.
+    /// The source's own encoded image with its metadata removed, when it is a shippable original.
+    ///
+    /// Nil when the format isn't one every client decodes, or when the metadata couldn't be
+    /// removed without re-compressing — the caller then re-encodes, which carries none.
     private static func passthrough(_ data: Data) -> EncodedImage? {
         guard data.count <= passthroughByteLimit,
               let source = CGImageSourceCreateWithData(data as CFData, nil),
@@ -187,10 +193,11 @@ nonisolated enum MediaCrypto {
               let type = UTType(identifier),
               passthroughTypes.contains(where: { type.conforms(to: $0) }),
               let size = pixelSize(of: source),
-              let mime = type.preferredMIMEType
+              let mime = type.preferredMIMEType,
+              let clean = MediaMetadataScrubber.scrubImage(data)
         else { return nil }
 
-        return EncodedImage(data: data, width: size.width, height: size.height, mime: mime)
+        return EncodedImage(data: clean, width: size.width, height: size.height, mime: mime)
     }
 
     private static func pixelSize(of source: CGImageSource) -> (width: Int, height: Int)? {

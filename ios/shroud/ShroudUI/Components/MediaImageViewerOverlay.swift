@@ -565,7 +565,8 @@ struct MediaImageViewerOverlay: View {
             }
             do {
                 try await PHPhotoLibrary.shared().performChanges {
-                    // Writing the original bytes keeps the sender's quality and metadata.
+                    // Writing the received bytes keeps the sender's quality (and the orientation / HDR
+                    // metadata that survived their scrub — nothing identifying is left in them).
                     PHAssetCreationRequest.forAsset().addResource(with: .photo, data: data, options: nil)
                 }
                 Haptics.notification(.success)

@@ -3,7 +3,9 @@
  * send sheet can show the size before anything is encoded. The result matches
  * iOS `VideoMedia`: H.264 + AAC in an MP4, under the server's cap, at the
  * quality the sender picked. A clip that already fits that rung as modest H.264
- * is only re-wrapped — which still leaves its metadata (location included) behind.
+ * is only re-wrapped: the streams are copied into a fresh MP4, and none of the
+ * source's metadata (location, device, dates, title) is written — checked with
+ * iPhone `.mov` and ISO `loci` fixtures; the worker passes `tags: {}`.
  *
  * No mediabunny and no DOM in here: the video worker and the send sheet share it.
  */
