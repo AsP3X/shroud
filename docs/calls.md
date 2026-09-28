@@ -315,10 +315,34 @@ can share at once. Like video, it needs no new offer: ICE, DTLS and the sound ar
   answer (`screenVideoSdp` / `CallSdp.withScreenVideo`), so VP8 is what goes out there whoever
   offers: an iPhone shares from the background, where its hardware H.264 encoder may not run, and
   VP8 is encoded in software. The camera's section keeps each client's own order.
-- **Encoding.** The screen goes out as screen content (`contentHint: detail` on the web, a
-  screencast source on the iPhone) at up to 1080p and about 2.5 Mbps, keeping its sharpness and
-  giving up frames when the link is tight (`maintain-resolution`), behind speech and ahead of the
-  camera. The web captures up to 30 fps, the iPhone sends up to 15. While a side shares, its camera
+- **Resolution and frame rate.** Like Discord, the sharer picks both before sharing or while it
+  runs (on the web from a small arrow on the Share button's shoulder; on the iPhone in the menu
+  that Share opens): 720p, 1080p or Source (the screen's own pixels), and 15,
+  30 or 60 fps. A change while sharing applies at once (the web's `applyConstraints` on the capture,
+  the iPhone's broadcast told over its socket, and the encoder's limits on both), with no new picker
+  and no new offer. The choice is kept per device (web: `localStorage` `shroud.screenQuality`,
+  `screenQuality.ts`; iPhone: `UserDefaults`, `ScreenShareQuality`); it describes only what this
+  device sends, so nothing about it goes on the wire to the other side. On the web, 720p and 1080p
+  fit the capture inside 1280×720 and 1920×1080. The picker opens the capture at the most any choice
+  uses (the screen's own pixels, up to 60 fps), because a browser may never raise a capture above
+  what it was opened with (Chrome), and `applyConstraints` narrows it to the choice before it goes
+  out; where a browser refuses, the encoder shrinks the full-size picture instead
+  (`scaleResolutionDownBy`). On the iPhone they cap the longest side at 1280 and 1920 (a tall phone
+  screen at 1080p is 1920 pixels high); Source only makes a side even, cutting off one column of an
+  odd-width screen rather than resampling it. Defaults: 1080p at 30 fps on the web,
+  1080p at 15 fps on the iPhone (every frame costs its broadcast extension a scale and a JPEG). The
+  frame rate is a ceiling: a tight link or a busy extension sends fewer.
+
+  | Most bits per second | 15 fps | 30 fps | 60 fps |
+  | --- | --- | --- | --- |
+  | 720p | 1.2 Mbps | 1.8 Mbps | 2.8 Mbps |
+  | 1080p | 1.8 Mbps | 2.5 Mbps | 4 Mbps |
+  | Source | 3 Mbps | 4.5 Mbps | 6.5 Mbps |
+- **Encoding.** Up to 30 fps the screen goes out as screen content (`contentHint: detail` on the
+  web, a screencast source on the iPhone), keeping its sharpness and giving up frames when the link
+  is tight (`maintain-resolution`). At 60 fps it was picked for motion (a game, a video): the web
+  hints `motion`, and both give up some detail and some frames in turn (`balanced`). Either way it
+  goes behind speech and ahead of the camera. While a side shares, its camera
   drops to a thumbnail's worth (about 350 kbps, half size, 15 fps), since the other side shows it
   as a tile. The screen's sound is Opus in stereo at about 128 kbps, never silenced (`usedtx=0`),
   set in its own section's `a=fmtp` so the microphone keeps its speech settings.
@@ -339,14 +363,22 @@ can share at once. Like video, it needs no new offer: ICE, DTLS and the sound ar
   shows the other side's screen. While sharing, a compact red "Sharing screen · Stop" pill sits in
   the top-left corner beside the encryption badge (a sound glyph when sound goes along) and stays
   when the rest fades; a small tile shows what goes out.
-- **Sharing ours, iPhone.** Share opens the system's broadcast picker with Shroud's extension
+- **Sharing ours, iPhone.** Share is a small round glass button in the top-trailing corner, above
+  our camera's picture, not in the row of call controls (tinted while sharing). A tap opens its
+  menu: Share Screen (Stop Sharing while it runs) first, then Resolution and Frame rate. It steps
+  aside with the controls over their screen but keeps its room, so the pictures under it never
+  move. Share Screen opens the system's broadcast picker, 0.35 s later so the menu has closed first, with Shroud's extension
   (`ShroudScreenShare`, `de.corespace.shroud.ScreenShare`) chosen and the microphone switch
   hidden; the phone's whole screen is shared, whichever app is in front, until Stop. The
-  extension runs in its own process with about 50 MB: it scales each frame to at most 1920 pixels
-  on its longest side, compresses it as JPEG, and sends it over a Unix socket in the app group's
-  container (`ScreenShareWire`, 1 MB socket buffers) — at most 15 a second, dropping frames while
-  the last is still on its way; a write that stalls for 3 s (the app stopped reading) ends the
-  broadcast. The app listens on that socket only while a call runs, decodes the frames onto the
+  extension runs in its own process with about 50 MB: it scales each frame to the chosen longest
+  side (1280, 1920, or none for Source), compresses it as JPEG, and sends it over a Unix socket in
+  the app group's container (`ScreenShareWire`, 1 MB socket buffers) — at most the chosen frame
+  rate, dropping frames while the last is still on its way; a write that stalls for 3 s (the app
+  stopped reading) ends the broadcast. The app says one thing back on that socket: a 16-byte
+  settings message (magic `0x53485351`, "SHSQ", written little-endian like every field; a version;
+  the longest side, 0 for Source; the frame rate) as the broadcast connects and whenever
+  the choice changes; until it arrives the extension uses 1920 and 15. Anything else the app sends
+  ends the broadcast. The app listens on that socket only while a call runs, decodes the frames onto the
   screen's section with the broadcast's orientation as the frame's rotation, and sends the last
   frame again every half second while the screen is still, so a frame lost on the way is soon
   replaced. Stop in Shroud, or the call ending, closes the socket, and the extension ends the
@@ -355,7 +387,9 @@ can share at once. Like video, it needs no new offer: ICE, DTLS and the sound ar
   "Sharing screen" pill with a round stop button at the top centre, under the status bar ("Starting…"
   from the broadcast's connection to its first frame; stop works in both). It stays when the
   controls step aside, and the face, the name and the tiles move down by its height while it shows. The simulator cannot broadcast: debug
-  simulator builds send a test pattern through the same socket instead (`SimulatedBroadcast`).
+  simulator builds send a test pattern through the same socket instead (`SimulatedBroadcast`), at
+  an iPhone 17 Pro's size and 60 frames a second, so the chosen resolution and frame rate take
+  effect as on a phone.
 - **Not yet:** the iPhone does not send its apps' sound (stock WebRTC has no way to feed it into
   the call; it needs its own audio capture). The sound section is there both ways already, so it
   can come without changing the protocol.

@@ -3858,6 +3858,72 @@ button.reply-quote { cursor: pointer; }
 .call-ctl:disabled,
 .call-ctl.is-unavailable { opacity: 0.4; cursor: default; }
 .call-ctl.is-unavailable:hover .call-ctl-disc { background: var(--call-glass); }
+/* Share, with a small arrow on its disc's shoulder that opens the screen's quality above the bar. */
+.call-share { position: relative; }
+.call-quality-wrap { position: absolute; top: 0; right: 0; }
+.call-share-more {
+  position: absolute; top: -5px; right: -7px;
+  width: 24px; height: 24px; padding: 0;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(38, 38, 50, 0.92); color: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  transition: background 0.2s ease, transform 0.15s var(--ease);
+  -webkit-tap-highlight-color: transparent;
+}
+.call-share-more svg { transition: transform 0.2s var(--ease); }
+.call-share-more:hover { background: rgba(62, 62, 78, 0.96); }
+.call-share-more:active { transform: scale(0.9); }
+.call-share-more.is-open { background: #fff; color: #111; }
+.call-share-more.is-open svg { transform: rotate(180deg); }
+.call-share-more.is-dimmed:not(.is-open) { opacity: 0.55; }
+.call-share-more:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.call-quality {
+  position: absolute; bottom: calc(100% + 26px); left: calc(var(--call-disc) / -2);
+  transform: translateX(-50%);
+  width: 236px; padding: 14px 14px 12px;
+  display: grid; gap: 12px;
+  border-radius: 20px;
+  background: rgba(24, 24, 34, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  color: #fff; text-align: left;
+  animation: call-quality-in 0.2s var(--ease);
+  z-index: 2;
+}
+@keyframes call-quality-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px) scale(0.97); }
+  to { opacity: 1; transform: translateX(-50%); }
+}
+.call-quality-title { font-size: var(--fs-sm); font-weight: 650; }
+.call-quality-group { margin: 0; padding: 0; border: 0; min-width: 0; display: grid; gap: 6px; }
+.call-quality-group legend {
+  padding: 0; margin-bottom: 6px;
+  font-size: var(--fs-xs); font-weight: 600; color: rgba(255, 255, 255, 0.62);
+}
+.call-quality-options {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px;
+  padding: 2px; border-radius: 12px;
+  background: rgba(255, 255, 255, 0.08);
+}
+.call-quality-option { position: relative; display: block; cursor: pointer; }
+.call-quality-option input {
+  position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer;
+}
+.call-quality-option span {
+  display: flex; align-items: baseline; justify-content: center; gap: 3px;
+  height: 32px; line-height: 32px; border-radius: 10px;
+  font-size: var(--fs-sm); font-weight: 600; color: rgba(255, 255, 255, 0.86);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.call-quality-option span small { font-size: 0.78em; font-weight: 600; opacity: 0.7; }
+.call-quality-option:hover input:not(:checked) + span { background: rgba(255, 255, 255, 0.1); }
+.call-quality-option input:checked + span { background: #fff; color: #111; }
+.call-quality-option input:focus-visible + span { outline: 2px solid #fff; outline-offset: 1px; }
+
 /* Video pressed, the camera still opening: the disc breathes towards "on" until it is. */
 .call-ctl.is-pending .call-ctl-disc { animation: call-ctl-wait 1.1s ease-in-out infinite; }
 @keyframes call-ctl-wait {
@@ -4066,6 +4132,6 @@ button.reply-quote { cursor: pointer; }
   .call-pill-dot { animation: none; }
   .call-self, .call-tile, .call-screen, .call-avatar, .call-shade, .call-remote { transition: none; }
   .call-self, .call-tile, .call-screen { transform: none; }
-  .call-sharing, .call-sharing-dot { animation: none; }
+  .call-sharing, .call-sharing-dot, .call-quality { animation: none; }
   .call-ctl.is-pending .call-ctl-disc { animation: none; background: rgba(255, 255, 255, 0.3); }
 }

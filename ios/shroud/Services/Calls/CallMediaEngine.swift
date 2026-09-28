@@ -91,6 +91,14 @@ final class CallMediaEngine: NSObject {
     /// Our screen is on its section.
     var isScreenOn: Bool { screenOn }
 
+    /// The resolution and frame rate our screen goes out at; the encoder takes a change at once.
+    var screenQuality = ScreenShareQuality.standard {
+        didSet {
+            guard screenQuality != oldValue else { return }
+            tuneSenders()
+        }
+    }
+
     /// True when the caller can set a new offer (the previous one has its answer).
     var canOffer: Bool {
         peerConnection?.signalingState == .stable
@@ -599,8 +607,9 @@ final class CallMediaEngine: NSObject {
 
     /// Speech near 32 kbps, first in line. The camera near 1.2 Mbps at 30 fps, shedding rate and
     /// detail together; while our screen is shared, a thumbnail's worth (they show it as a tile).
-    /// The screen near 2.5 Mbps at up to 15 fps, keeping its sharpness and giving up frames when
-    /// the link is tight, ahead of the camera and behind speech.
+    /// The screen at the chosen frame rate and a bitrate to match (`ScreenShareQuality`), ahead
+    /// of the camera and behind speech: up to 30 fps it keeps its sharpness and gives up frames
+    /// when the link is tight, at 60 it gives up some of each.
     private func tuneSenders() {
         guard let connection = peerConnection else { return }
         for sender in connection.senders {
@@ -608,11 +617,12 @@ final class CallMediaEngine: NSObject {
             let parameters = sender.parameters
             guard let encoding = parameters.encodings.first else { continue }
             if track.trackId == Self.screenTrackID {
-                encoding.maxBitrateBps = NSNumber(value: 2_500_000)
-                encoding.maxFramerate = NSNumber(value: 15)
+                encoding.maxBitrateBps = NSNumber(value: screenQuality.bitrate)
+                encoding.maxFramerate = NSNumber(value: screenQuality.frameRate.rawValue)
                 encoding.networkPriority = .medium
                 encoding.bitratePriority = 2
-                parameters.degradationPreference = NSNumber(value: RTCDegradationPreference.maintainResolution.rawValue)
+                let degradation: RTCDegradationPreference = screenQuality.keepsResolution ? .maintainResolution : .balanced
+                parameters.degradationPreference = NSNumber(value: degradation.rawValue)
             } else if track.kind == kRTCMediaStreamTrackKindAudio {
                 encoding.maxBitrateBps = NSNumber(value: 32_000)
                 encoding.networkPriority = .high

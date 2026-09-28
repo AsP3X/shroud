@@ -32,6 +32,16 @@ import {
   voiceSdp,
   type CallView,
 } from "./logic";
+import {
+  DEFAULT_SCREEN_QUALITY,
+  parseScreenQuality,
+  screenBitrate,
+  screenMotion,
+  SCREEN_CAPTURE_CEILING,
+  screenQualityText,
+  screenScaleDown,
+  screenVideoConstraints,
+} from "./screenQuality";
 
 function check(ok: boolean, what: string): void {
   if (!ok) throw new Error(`calls logic selftest: ${what}`);
@@ -117,6 +127,7 @@ const base: CallView = {
   screenSound: false,
   shareSupported: true,
   canShare: false,
+  screenQuality: DEFAULT_SCREEN_QUALITY,
   remoteScreen: false,
   localStream: null,
   remoteStream: null,
@@ -313,4 +324,47 @@ check(linkState("bogus", "failed") === "failed", "an unknown state falls back to
 check(linkState(undefined, undefined) === "new", "nothing yet");
 check(sameId("ABC", "abc") && !sameId("abc", null) && !sameId("", ""), "ids");
 
+
+/* --- the screen's resolution and frame rate (screenQuality.ts) --- */
+check(DEFAULT_SCREEN_QUALITY.resolution === "1080p" && DEFAULT_SCREEN_QUALITY.frameRate === 30, "1080p at 30 fps, as before the choice");
+check(parseScreenQuality(null) === DEFAULT_SCREEN_QUALITY, "nothing stored: the default");
+check(parseScreenQuality("{nonsense") === DEFAULT_SCREEN_QUALITY, "unreadable: the default");
+{
+  const kept = parseScreenQuality(JSON.stringify({ resolution: "source", frameRate: 60 }));
+  check(kept.resolution === "source" && kept.frameRate === 60, "a stored choice reads back");
+  const half = parseScreenQuality(JSON.stringify({ resolution: "4k", frameRate: 15 }));
+  check(half.resolution === "1080p" && half.frameRate === 15, "an unknown part falls back alone");
+  const odd = parseScreenQuality(JSON.stringify({ resolution: "720p", frameRate: 24 }));
+  check(odd.resolution === "720p" && odd.frameRate === 30, "a frame rate not offered is the default");
+}
+{
+  const hd = screenVideoConstraints({ resolution: "720p", frameRate: 15 });
+  check(
+    JSON.stringify(hd) === JSON.stringify({ width: { max: 1280 }, height: { max: 720 }, frameRate: { ideal: 15, max: 15 } }),
+    "720p: inside 1280×720, at 15 fps",
+  );
+  const full = screenVideoConstraints({ resolution: "1080p", frameRate: 30 });
+  check(JSON.stringify(full.width) === JSON.stringify({ max: 1920 }) && JSON.stringify(full.height) === JSON.stringify({ max: 1080 }), "1080p: inside 1920×1080");
+  const source = screenVideoConstraints({ resolution: "source", frameRate: 60 });
+  check(source.width === undefined && source.height === undefined, "source: no size limit, so applyConstraints lifts an earlier one");
+  check(JSON.stringify(source.frameRate) === JSON.stringify({ ideal: 60, max: 60 }), "source at 60 fps");
+}
+check(screenBitrate(DEFAULT_SCREEN_QUALITY) === 2_500_000, "1080p at 30 fps keeps its 2.5 Mbps");
+check(
+  screenBitrate({ resolution: "720p", frameRate: 15 }) < screenBitrate({ resolution: "1080p", frameRate: 15 }) &&
+    screenBitrate({ resolution: "1080p", frameRate: 60 }) < screenBitrate({ resolution: "source", frameRate: 60 }) &&
+    screenBitrate({ resolution: "source", frameRate: 30 }) < screenBitrate({ resolution: "source", frameRate: 60 }),
+  "more pixels or more frames: more bits",
+);
+check(screenMotion({ resolution: "1080p", frameRate: 30 }).hint === "detail", "up to 30 fps: sharp text");
+check(screenMotion({ resolution: "1080p", frameRate: 30 }).degradation === "maintain-resolution", "and frames give way first");
+check(screenMotion({ resolution: "720p", frameRate: 60 }).hint === "motion", "60 fps: encoded for motion");
+check(screenMotion({ resolution: "720p", frameRate: 60 }).degradation === "balanced", "and gives up some of each");
+check(screenQualityText({ resolution: "source", frameRate: 60 }) === "Source · 60 fps", "said as it is picked");
+check(JSON.stringify(SCREEN_CAPTURE_CEILING) === JSON.stringify({ frameRate: { max: 60 } }), "the capture opens at the most any choice uses");
+check(screenScaleDown({ width: 3840, height: 2160 }, { resolution: "1080p", frameRate: 30 }) === 2, "4K into 1080p: halved");
+check(screenScaleDown({ width: 2560, height: 1600 }, { resolution: "720p", frameRate: 30 }) === 1600 / 720, "16:10 into 720p: by its height, the tighter side");
+check(screenScaleDown({ width: 1280, height: 720 }, { resolution: "1080p", frameRate: 30 }) === 1, "never enlarged");
+check(screenScaleDown({ width: 3840, height: 2160 }, { resolution: "source", frameRate: 30 }) === 1, "source: as it is");
+check(screenScaleDown({}, { resolution: "720p", frameRate: 30 }) === 1, "no size known: left alone");
 console.log("calls logic selftest ok");

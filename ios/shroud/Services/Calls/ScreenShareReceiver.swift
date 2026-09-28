@@ -10,6 +10,8 @@ import WebRTC
 /// Human: A still screen sends no frames, so the last one goes out again every half second:
 /// a picture that was lost on the way comes back without waiting for the screen to change.
 /// Closing the connection is how a Stop in Shroud, or the end of the call, ends the broadcast.
+/// The size and frame rate chosen for the share go to the broadcast as it connects, and again
+/// whenever they change (`ScreenShareWire.Settings`).
 /// Agent: sockets, decoding and the repeat timer run on one serial queue; `onEvent` hops to the
 /// main queue, in order (a first frame never overtakes its connection). A socket is closed in its
 /// dispatch source's cancel handler, never while the source may still read it. `feed` is where
@@ -41,6 +43,7 @@ nonisolated final class ScreenShareReceiver: @unchecked Sendable {
     private var pool: CVPixelBufferPool?
     private var poolSize = (width: 0, height: 0)
     private var target: ScreenFrameFeed?
+    private var settings = ScreenShareWire.Settings.standard
     /// One read buffer for the connection's life: a frame arrives in many reads.
     private var chunk = [UInt8](repeating: 0, count: 256 * 1024)
 
@@ -48,6 +51,17 @@ nonisolated final class ScreenShareReceiver: @unchecked Sendable {
     var feed: ScreenFrameFeed? {
         get { queue.sync { target } }
         set { queue.async { self.target = newValue } }
+    }
+
+    /// The size and frame rate the broadcast sends at: told to a connected one at once, and to
+    /// each that connects later.
+    func setQuality(_ quality: ScreenShareQuality) {
+        let settings = ScreenShareWire.Settings(quality)
+        queue.async { [self] in
+            guard settings != self.settings else { return }
+            self.settings = settings
+            tellSettings()
+        }
     }
 
     /// Nil without an app group container (a build without the entitlement).
@@ -154,6 +168,10 @@ nonisolated final class ScreenShareReceiver: @unchecked Sendable {
         timer.resume()
         repeatTimer = timer
         emit(.connected)
+        // Only once the connection is fully set up: a broadcast that already hung up fails this
+        // send, and closing it then cancels its source (which closes the socket) and says so
+        // after `.connected`, in order.
+        tellSettings()
     }
 
     private func readAvailable() {
@@ -178,6 +196,21 @@ nonisolated final class ScreenShareReceiver: @unchecked Sendable {
             sawFrame = true
             emit(.firstFrame)
         }
+    }
+
+    /// The connected broadcast's settings. Sixteen bytes into an empty socket buffer never block;
+    /// one that cannot take them (the extension stopped reading, or hung up) is dropped.
+    /// Agent: `MSG_NOSIGNAL`, not only the socket's `SO_NOSIGPIPE`: on a connection whose peer
+    /// hung up before the accept, setting that option can fail, and the send would then raise
+    /// SIGPIPE and end the app (ScreenShareWireTests caught it).
+    private func tellSettings() {
+        guard client >= 0 else { return }
+        let bytes = settings.encoded()
+        var sent: Int
+        repeat {
+            sent = bytes.withUnsafeBytes { send(client, $0.baseAddress, $0.count, MSG_NOSIGNAL) }
+        } while sent < 0 && errno == EINTR
+        if sent != bytes.count { closeClient(notify: true) }
     }
 
     /// The screen has not changed for a while: its last frame again.

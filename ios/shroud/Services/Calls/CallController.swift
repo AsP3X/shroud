@@ -79,6 +79,8 @@ final class CallController {
     private(set) var remoteScreenTrack: RTCVideoTrack?
     /// Their screen's frames are arriving since they started sharing: their screen shows.
     private(set) var remoteScreenLive = false
+    /// The resolution and frame rate our screen goes out at, in every call from this phone.
+    private(set) var screenShareQuality = ScreenShareQuality.saved
 
     struct RecentCall: Identifiable, Equatable {
         let id: UUID
@@ -190,6 +192,7 @@ final class CallController {
     init() {
         CallAudio.setUp()
         ensureCallKit()
+        engine.screenQuality = screenShareQuality
         // The call keeps the socket when the chats lock or the app backgrounds, and opens it
         // for a ring that woke a locked phone. Messaging forwards nothing: both would run.
         RealtimeClient.shared.setListener(.call) { [weak self] event in
@@ -1576,6 +1579,16 @@ final class CallController {
         #endif
     }
 
+    /// The resolution and frame rate for sharing our screen, kept for the next share too. While
+    /// we share, the broadcast and the encoder take it at once, with no new offer.
+    func setScreenShareQuality(_ quality: ScreenShareQuality) {
+        guard quality != screenShareQuality else { return }
+        screenShareQuality = quality
+        ScreenShareQuality.saved = quality
+        engine.screenQuality = quality
+        screenReceiver?.setQuality(quality)
+    }
+
     /// From the answer on, a broadcast started now (from Share, or from Control Center) goes
     /// on this call.
     private func listenForBroadcasts(_ machine: Machine) {
@@ -1584,6 +1597,7 @@ final class CallController {
             guard let self, let machine = self.machine, self.current(machine) else { return }
             self.broadcastEvent(event, machine)
         }
+        receiver?.setQuality(screenShareQuality)
         receiver?.start()
         screenReceiver = receiver
     }
@@ -1929,3 +1943,24 @@ extension CallController: CallKitManagerDelegate {
 
 /// "Always relay calls" is on, and the server handed out no TURN relay to go through.
 struct CallRelayUnavailable: Error, Equatable {}
+
+extension ScreenShareQuality {
+    private static let resolutionKey = "calls.screenShareResolution"
+    private static let frameRateKey = "calls.screenShareFrameRate"
+
+    /// The choice kept on this phone (UserDefaults: a preference, not a secret); `standard`
+    /// until one is made.
+    static var saved: ScreenShareQuality {
+        get {
+            let defaults = UserDefaults.standard
+            return ScreenShareQuality(
+                resolution: defaults.string(forKey: resolutionKey).flatMap(Resolution.init(rawValue:)) ?? standard.resolution,
+                frameRate: FrameRate(rawValue: defaults.integer(forKey: frameRateKey)) ?? standard.frameRate
+            )
+        }
+        set {
+            UserDefaults.standard.set(newValue.resolution.rawValue, forKey: resolutionKey)
+            UserDefaults.standard.set(newValue.frameRate.rawValue, forKey: frameRateKey)
+        }
+    }
+}

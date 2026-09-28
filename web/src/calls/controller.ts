@@ -59,6 +59,16 @@ import {
   type Signal,
   type SignalBody,
 } from "./logic";
+import {
+  SCREEN_CAPTURE_CEILING,
+  loadScreenQuality,
+  saveScreenQuality,
+  screenBitrate,
+  screenMotion,
+  screenScaleDown,
+  screenVideoConstraints,
+  type ScreenQuality,
+} from "./screenQuality";
 
 /*
  * One device's side of 1:1 calls (docs/calls.md, protocol 2).
@@ -174,25 +184,27 @@ const AUDIO: MediaTrackConstraints = {
   channelCount: { ideal: 1 },
 };
 /**
- * A shared screen: sharp text first (1080p at most), up to 30 fps for a video playing in it. The
- * sound comes as it is, without the processing a microphone gets. The browser's own tab is left
- * out of the picker: sharing the call into itself mirrors it without end.
+ * A shared screen, captured at the most any choice can use and then narrowed to the chosen size
+ * and frame rate (screenQuality.ts), so a later choice can go up as well as down. The sound comes
+ * as it is, without the processing a microphone gets. The browser's own tab is left out of the
+ * picker: sharing the call into itself mirrors it without end.
  */
-const DISPLAY: DisplayMediaStreamOptions & Record<string, unknown> = {
-  video: { width: { max: 1920 }, height: { max: 1080 }, frameRate: { max: 30 } },
-  // A system's sound would carry this page's own playback (their voice, their screen's sound)
-  // back to them; `restrictOwnAudio` leaves it out where the browser knows how.
-  audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, restrictOwnAudio: true } as MediaTrackConstraints,
-  selfBrowserSurface: "exclude",
-  surfaceSwitching: "include",
-  systemAudio: "include",
-  monitorTypeSurfaces: "include",
-};
+function displayOptions(): DisplayMediaStreamOptions & Record<string, unknown> {
+  return {
+    video: SCREEN_CAPTURE_CEILING,
+    // A system's sound would carry this page's own playback (their voice, their screen's sound)
+    // back to them; `restrictOwnAudio` leaves it out where the browser knows how.
+    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, restrictOwnAudio: true } as MediaTrackConstraints,
+    selfBrowserSurface: "exclude",
+    surfaceSwitching: "include",
+    systemAudio: "include",
+    monitorTypeSurfaces: "include",
+  };
+}
 const AUDIO_MAX_BPS = 32_000;
 const VIDEO_MAX_BPS = 1_200_000;
 /** Our camera while our screen is shared: they show it as a small tile, so a thumbnail's worth. */
 const TILE_MAX_BPS = 350_000;
-const SCREEN_MAX_BPS = 2_500_000;
 const SCREEN_SOUND_MAX_BPS = 128_000;
 
 type TimerKey =
@@ -380,14 +392,15 @@ function sectionOf(pc: RTCPeerConnection, transceiver: RTCRtpTransceiver): Secti
   return null;
 }
 
-/** Which of our senders carry the screen, and whether it goes out now. */
-type Sharing = { screen: RTCRtpSender | null; sound: RTCRtpSender | null; on: boolean };
+/** Which of our senders carry the screen, whether it goes out now, and at what quality. */
+type Sharing = { screen: RTCRtpSender | null; sound: RTCRtpSender | null; on: boolean; quality: ScreenQuality };
 
 /**
  * Speech at about 32 kbps, first in line. The camera at about 1.2 Mbps and 30 fps, shedding rate
  * and detail together; while our screen is shared, a thumbnail's worth (they show it as a tile).
- * The screen at about 2.5 Mbps, keeping its sharpness and giving up frames when the link is tight,
- * ahead of the camera and behind speech. Its sound at about 128 kbps.
+ * The screen at the chosen frame rate and a bitrate to match (2.5 Mbps at 1080p and 30 fps),
+ * ahead of the camera and behind speech: up to 30 fps it keeps its sharpness and gives up frames
+ * when the link is tight, at 60 it gives up some of each. Its sound at about 128 kbps.
  */
 function tuneSenders(pc: RTCPeerConnection, sharing: Sharing): void {
   if (typeof pc.getSenders !== "function") return;
@@ -403,11 +416,12 @@ function tuneSenders(pc: RTCPeerConnection, sharing: Sharing): void {
         encoding.priority = "medium";
         encoding.networkPriority = "medium";
       } else if (sender === sharing.screen) {
-        encoding.maxBitrate = SCREEN_MAX_BPS;
-        encoding.maxFramerate = 30;
+        encoding.maxBitrate = screenBitrate(sharing.quality);
+        encoding.maxFramerate = sharing.quality.frameRate;
+        encoding.scaleResolutionDownBy = screenScaleDown(track.getSettings?.() ?? {}, sharing.quality);
         encoding.priority = "medium";
         encoding.networkPriority = "medium";
-        params.degradationPreference = "maintain-resolution";
+        params.degradationPreference = screenMotion(sharing.quality).degradation;
       } else if (track.kind === "audio") {
         encoding.maxBitrate = AUDIO_MAX_BPS;
         encoding.priority = "high";
@@ -436,6 +450,8 @@ export class CallController {
   private nextKey = 1;
   /** Calls this device is done with: a replayed ring or a late event cannot bring one back. */
   private readonly finished: string[] = [];
+  /** How our screen goes out, in every call from this browser (screenQuality.ts). */
+  private screenQuality: ScreenQuality = loadScreenQuality();
 
   constructor(private readonly env: CallEnv) {}
 
@@ -771,9 +787,10 @@ export class CallController {
         return Promise.reject(err);
       }
     };
-    return pick(DISPLAY).catch((err: unknown) => {
+    const options = displayOptions();
+    return pick(options).catch((err: unknown) => {
       if (!(err instanceof TypeError)) throw err;
-      return pick({ ...DISPLAY, audio: false });
+      return pick({ ...options, audio: false });
     });
   }
 
@@ -800,8 +817,11 @@ export class CallController {
       else this.publish(call);
       return;
     }
-    // Text and edges stay sharp; the sound is whatever plays, not speech.
-    picture.contentHint = "detail";
+    // Text and edges stay sharp (or, at 60 fps, motion smooth); the sound is whatever plays, not speech.
+    picture.contentHint = screenMotion(this.screenQuality).hint;
+    // Opened at the ceiling: narrowed to the choice before it goes out. A browser that refuses
+    // sends it at full size, and the encoder shrinks it (tuneSenders).
+    await this.narrowScreen(picture, this.screenQuality);
     const sound = stream.getAudioTracks()[0] ?? null;
     if (sound) sound.contentHint = "music";
     const sent = await call.screen.sender.replaceTrack(picture).then(
@@ -866,7 +886,35 @@ export class CallController {
       screen: call.screen?.sender ?? null,
       sound: call.screenSound?.sender ?? null,
       on: call.display !== null,
+      quality: this.screenQuality,
     });
+  }
+
+  /**
+   * The resolution and frame rate our screen goes out at, kept for the next share too. While we
+   * share, the capture and the encoder take it at once, without a new picker or a new offer.
+   */
+  setScreenQuality(quality: ScreenQuality): void {
+    this.screenQuality = quality;
+    saveScreenQuality(quality);
+    const call = this.live();
+    if (!call) return;
+    const picture = call.display?.getVideoTracks()[0] ?? null;
+    if (picture && picture.readyState === "live") {
+      picture.contentHint = screenMotion(quality).hint;
+      // Tuned again once the capture has its new size: the encoder's own scaling depends on it.
+      void this.narrowScreen(picture, quality).then(() => {
+        if (!this.gone(call) && call.display?.getVideoTracks()[0] === picture) this.tune(call);
+      });
+    }
+    this.tune(call);
+    this.publish(call);
+  }
+
+  /** The capture brought to the chosen size and frame rate, where the browser allows it. */
+  private async narrowScreen(picture: MediaStreamTrack, quality: ScreenQuality): Promise<void> {
+    if (typeof picture.applyConstraints !== "function") return;
+    await picture.applyConstraints(screenVideoConstraints(quality)).catch(() => undefined);
   }
 
   /** With a second camera, Flip is offered. */
@@ -2102,6 +2150,7 @@ export class CallController {
       screenSound: (call.display?.getAudioTracks().length ?? 0) > 0,
       shareSupported: typeof this.env.getDisplayMedia === "function",
       canShare: this.screenSendable(call),
+      screenQuality: this.screenQuality,
       remoteScreen: call.remoteScreen,
       localStream: call.local,
       remoteStream: call.remote,

@@ -14,8 +14,9 @@ import SwiftUI
 /// Either person can share their screen next to their camera. Theirs fills the screen, fitted
 /// whole on black and zoomable (`SharedScreenView`), their camera moves into a tile above ours,
 /// and the controls step aside after a few seconds (a tap brings them back). Ours is the phone's
-/// whole screen, through the system's broadcast; a capsule over the controls says it is shared
-/// and stops it.
+/// whole screen, through the system's broadcast, started from a small Share capsule in the
+/// top-trailing corner (its arrow picks the resolution and frame rate); a red pill at the top
+/// says it is shared and stops it.
 struct InCallOverlay: View {
     @Environment(CallController.self) private var calls
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -186,12 +187,23 @@ struct InCallOverlay: View {
         }
     }
 
-    /// The pictures in the top-trailing corner: theirs above ours while their screen fills the
-    /// rest, ours alone otherwise. Tapping ours flips the camera.
+    /// The top-trailing corner: Share, then the pictures under it, theirs above ours while their
+    /// screen fills the rest, ours alone otherwise. Tapping ours flips the camera. Share keeps its
+    /// room while it steps aside over their screen, so the pictures never move for it.
     @ViewBuilder
     private func tiles(for call: CallController.ActiveCall, screen: Bool) -> some View {
         let size = screen ? Self.tileSize : Self.selfViewSize
+        // Ending, it goes at once but keeps its room, as the controls do.
+        let away = chromeAway || call.phase == .ending
         VStack(alignment: .trailing, spacing: 10) {
+            if call.phase != .incomingRinging {
+                shareControl(for: call)
+                    .opacity(away ? 0 : 1)
+                    .animation(.easeOut(duration: 0.25), value: away)
+                    .allowsHitTesting(!away)
+                    .accessibilityHidden(away)
+                    .transition(.opacity)
+            }
             if screen, showsRemoteVideo, let theirs = calls.remoteVideoTrack {
                 CallVideoView(track: theirs)
                     .frame(width: size.width, height: size.height)
@@ -302,10 +314,72 @@ struct InCallOverlay: View {
         chromeTouch += 1
     }
 
-    /// Share: the system's broadcast picker opens (the person starts the broadcast there), or
-    /// the broadcast stops.
+    /// Share, in the top-trailing corner above the pictures: a small glass button that opens a
+    /// menu. Share Screen (Stop Sharing while it runs) comes first, then the resolution and the
+    /// frame rate our screen goes out at, as Discord offers them, kept on this phone; a change
+    /// while sharing applies at once. It steps aside with the other controls over their screen.
+    /// Dimmed when sharing cannot be used yet, but Share Screen still takes the tap, which says why.
+    private func shareControl(for call: CallController.ActiveCall) -> some View {
+        let sharing = call.isSharingScreen || call.screenShareStarting
+        let available = call.canShareScreen || sharing
+        let quality = calls.screenShareQuality
+        // Toggles rather than inline pickers: a menu shows a section's title only over plain
+        // items, and a toggle that is on gets the menu's own checkmark.
+        return Menu {
+            Section {
+                if sharing {
+                    Button("Stop Sharing", systemImage: "stop.fill", role: .destructive) { toggleShare() }
+                } else {
+                    Button("Share Screen", systemImage: "rectangle.inset.filled.on.rectangle") { toggleShare() }
+                }
+            }
+            Section("Resolution") {
+                ForEach(ScreenShareQuality.Resolution.allCases, id: \.self) { resolution in
+                    Toggle(resolution.label, isOn: Binding(
+                        get: { quality.resolution == resolution },
+                        set: { if $0 { calls.setScreenShareQuality(ScreenShareQuality(resolution: resolution, frameRate: quality.frameRate)) } }
+                    ))
+                }
+            }
+            Section("Frame rate") {
+                ForEach(ScreenShareQuality.FrameRate.allCases, id: \.self) { rate in
+                    Toggle(rate.label, isOn: Binding(
+                        get: { quality.frameRate == rate },
+                        set: { if $0 { calls.setScreenShareQuality(ScreenShareQuality(resolution: quality.resolution, frameRate: rate)) } }
+                    ))
+                }
+            }
+        } label: {
+            Image(systemName: "rectangle.inset.filled.on.rectangle")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white)
+                .opacity(available ? 1 : 0.45)
+                .frame(width: Self.shareControlSize, height: Self.shareControlSize)
+                .contentShape(Circle())
+                .glassEffect(sharing ? .regular.tint(Theme.accent).interactive() : .regular.interactive(), in: .circle)
+        }
+        .menuOrder(.fixed)
+        // A menu that opens also keeps the controls up.
+        .simultaneousGesture(TapGesture().onEnded { chromeTouch += 1 })
+        .animation(Motion.snappy, value: sharing)
+        .accessibilityLabel(sharing ? "Screen sharing" : "Share your screen")
+        .accessibilityValue(sharing ? "On, \(quality.label)" : quality.label)
+        .accessibilityHint(available ? "" : "Not available yet.")
+    }
+
+    static let shareControlSize: CGFloat = 40
+
+    /// Share Screen or Stop Sharing, chosen in the menu. The system's broadcast picker opens (the
+    /// person starts the broadcast there) once the menu has gone: a sheet asked for while the
+    /// menu is still closing does not show. Not at all when the call ended or moved on meanwhile.
+    /// Stopping needs no picker.
     private func toggleShare() {
-        if calls.toggleScreenShare() { broadcastPicker.open() }
+        guard let callID = calls.active?.id, calls.toggleScreenShare() else { return }
+        Task {
+            try? await Task.sleep(for: .milliseconds(350))
+            guard let call = calls.active, call.id == callID, call.phase == .active || call.phase == .connecting else { return }
+            broadcastPicker.open()
+        }
     }
 
     /// The safety number, and a tap once it has been compared. It does not block the call.
@@ -488,20 +562,14 @@ struct InCallOverlay: View {
     /// a colour tint; the rest stay clear glass. One container, so neighbours morph together.
     @ViewBuilder
     private func controls(for call: CallController.ActiveCall) -> some View {
-        GlassEffectContainer(spacing: Self.controlSpacing(for: call.phase)) {
+        GlassEffectContainer(spacing: 22) {
             controlRow(for: call)
         }
     }
 
-    /// Five controls in a call (Share joined them) fit a narrow phone a little closer together;
-    /// the two answers of a ring keep their room.
-    private static func controlSpacing(for phase: CallController.Phase) -> CGFloat {
-        phase == .incomingRinging ? 22 : 14
-    }
-
     @ViewBuilder
     private func controlRow(for call: CallController.ActiveCall) -> some View {
-        HStack(spacing: Self.controlSpacing(for: call.phase)) {
+        HStack(spacing: 22) {
             if call.phase != .incomingRinging {
                 callButton(
                     icon: call.isMuted ? "mic.slash.fill" : "mic.fill",
@@ -523,22 +591,6 @@ struct InCallOverlay: View {
                 }
                 .disabled(!videoAvailable)
                 .opacity(videoAvailable ? 1 : 0.45)
-
-                // Next to the camera, never instead of it: the whole screen, through the system's
-                // broadcast. Their app must be able to show it.
-                // Dimmed when it cannot be used yet, but it still takes the tap, which says why.
-                let sharing = call.isSharingScreen || call.screenShareStarting
-                let shareAvailable = call.canShareScreen || sharing
-                callButton(
-                    icon: "rectangle.inset.filled.on.rectangle",
-                    label: "Share",
-                    tint: sharing ? Theme.accent : nil,
-                    accessibilityLabel: sharing ? "Stop sharing your screen" : "Share your screen"
-                ) {
-                    toggleShare()
-                }
-                .opacity(shareAvailable ? 1 : 0.45)
-                .accessibilityHint(shareAvailable ? "" : "Not available yet.")
 
                 callButton(
                     icon: call.speakerOn ? "speaker.wave.2.fill" : "speaker.fill",

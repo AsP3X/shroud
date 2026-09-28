@@ -11,9 +11,11 @@ import QuartzCore
 /// socket in the app group's container; the app puts the frames on the call. Only the app and
 /// its extensions can reach that folder. The app listens only while a call runs, so a broadcast
 /// started without one ends at once, and closing the socket is how the app ends a broadcast.
+/// The app says one thing the other way: the size and frame rate chosen for the share
+/// (`Settings`), as the broadcast connects and whenever the choice changes.
 /// Agent: compiled into the app and both extensions (ShroudShared); ShroudScreenShare and the app
 /// use it. A frame is `Header.size` bytes of header (little-endian) and then `length` bytes of
-/// JPEG. Covered by ScreenShareWireTests. The simulator's socket is in the Mac's /tmp, where any
+/// JPEG; a settings message is `Settings.size` bytes. Covered by ScreenShareWireTests. The simulator's socket is in the Mac's /tmp, where any
 /// process on the Mac could reach it: debug simulator builds only.
 nonisolated enum ScreenShareWire {
     /// The broadcast extension's bundle id, which the system picker offers.
@@ -37,10 +39,7 @@ nonisolated enum ScreenShareWire {
         #endif
     }
 
-    /// Frames a second at most. A phone screen is mostly still, and each frame costs the
-    /// extension a scale and a JPEG within its small memory.
-    static let framesPerSecond = 15.0
-    /// The longest side of a frame on the wire, in pixels.
+    /// The longest side of a frame on the wire, in pixels, until the app says otherwise.
     static let maxSide: CGFloat = 1920
     static let jpegQuality: CGFloat = 0.78
     /// Larger than any real frame; a header claiming more is not believed.
@@ -90,6 +89,85 @@ nonisolated enum ScreenShareWire {
         }
     }
 
+    /// What the app tells the extension: the longest side a frame may have (0 for the screen's
+    /// own size) and how many frames a second it may send at most.
+    nonisolated struct Settings: Equatable, Sendable {
+        static let size = 16
+        static let magic: UInt32 = 0x5348_5351 // "SHSQ"
+        static let version: UInt16 = 1
+
+        var maxSide: UInt32
+        var framesPerSecond: UInt32
+
+        init(maxSide: UInt32, framesPerSecond: UInt32) {
+            self.maxSide = maxSide
+            self.framesPerSecond = framesPerSecond
+        }
+
+        init(_ quality: ScreenShareQuality) {
+            maxSide = quality.resolution.maxSide.map { UInt32($0) } ?? 0
+            framesPerSecond = UInt32(quality.frameRate.rawValue)
+        }
+
+        /// What a broadcast does before the app has said anything.
+        static let standard = Settings(.standard)
+
+        /// The longest side, or nil for the screen's own size.
+        var longestSide: CGFloat? { maxSide == 0 ? nil : CGFloat(maxSide) }
+
+        func encoded() -> Data {
+            var data = Data(capacity: Self.size)
+            data.appendLittle(Self.magic)
+            data.appendLittle(Self.version)
+            data.appendLittle(UInt16(0))
+            data.appendLittle(maxSide)
+            data.appendLittle(framesPerSecond)
+            return data
+        }
+
+        /// The settings at the start of `data`; nil when they are not (wrong magic or version,
+        /// a frame rate outside 1–60, a side under 2 or past 8192 pixels).
+        static func decode(_ data: Data) -> Settings? {
+            guard data.count >= size else { return nil }
+            let base = data.startIndex
+            guard data.readLittle(UInt32.self, at: base) == magic,
+                  data.readLittle(UInt16.self, at: base + 4) == version
+            else { return nil }
+            let settings = Settings(
+                maxSide: data.readLittle(UInt32.self, at: base + 8),
+                framesPerSecond: data.readLittle(UInt32.self, at: base + 12)
+            )
+            guard (1...60).contains(settings.framesPerSecond),
+                  settings.maxSide == 0 || (2...8192).contains(settings.maxSide)
+            else { return nil }
+            return settings
+        }
+
+        /// Pulls whole settings messages out of what the app sends, in pieces or several at once.
+        nonisolated struct Reader: Sendable {
+            private var buffer = Data()
+            /// False once the app said something that is not settings.
+            private(set) var isBroken = false
+
+            /// Adds bytes and returns the newest settings now complete, if any.
+            mutating func append(_ bytes: Data) -> Settings? {
+                guard !isBroken else { return nil }
+                buffer.append(bytes)
+                var newest: Settings?
+                while buffer.count >= Settings.size {
+                    guard let settings = Settings.decode(buffer.prefix(Settings.size)) else {
+                        isBroken = true
+                        buffer = Data()
+                        return newest
+                    }
+                    newest = settings
+                    buffer = Data(buffer.dropFirst(Settings.size))
+                }
+                return newest
+            }
+        }
+    }
+
     /// Pulls whole frames out of a byte stream that arrives in pieces.
     ///
     /// Agent: a frame of a few hundred KB comes in many small reads (a local socket moves 8 KB at a
@@ -135,14 +213,87 @@ nonisolated enum ScreenShareWire {
     /// Socket buffers large enough for a frame or two, so one is not cut into 8 KB pieces.
     static let socketBuffer: Int32 = 1 << 20
 
-    /// The size a frame goes out at: at most `maxSide` on its longest side, never enlarged, and
-    /// even in both directions (video encoders want that).
-    static func wireSize(width: Int, height: Int) -> (width: Int, height: Int) {
+    /// The size a frame goes out at: at most `maxSide` on its longest side (nil: the screen's
+    /// own size), never enlarged, and even in both directions (video encoders want that).
+    static func wireSize(width: Int, height: Int, maxSide: CGFloat? = maxSide) -> (width: Int, height: Int) {
         let longest = CGFloat(max(width, height))
-        let scale = longest > maxSide ? maxSide / longest : 1
+        let scale = maxSide.map { longest > $0 ? $0 / longest : 1 } ?? 1
         let even = { (value: CGFloat) in max(2, Int((value * scale).rounded(.down)) & ~1) }
         return (even(CGFloat(width)), even(CGFloat(height)))
     }
+}
+
+/// The resolution and frame rate our shared screen goes out at, as Discord offers them. Chosen on
+/// Share's arrow in a call, before sharing or while it runs, and kept on this phone
+/// (docs/calls.md, "Screen sharing").
+///
+/// Human: A resolution names the longest side of the picture, as a landscape 720p or 1080p video
+/// has it: a phone's tall screen at 1080p is 1920 pixels high. Source is the screen's own pixels.
+/// Agent: the raw values match the web client's (`web/src/calls/screenQuality.ts`). The
+/// extension learns the choice as `ScreenShareWire.Settings`; the encoder takes `bitrate` and
+/// `frameRate` (CallMediaEngine).
+nonisolated struct ScreenShareQuality: Equatable, Hashable, Sendable {
+    enum Resolution: String, CaseIterable, Sendable {
+        case hd = "720p"
+        case fullHD = "1080p"
+        case source
+
+        var label: String {
+            switch self {
+            case .hd: "720p"
+            case .fullHD: "1080p"
+            case .source: "Source"
+            }
+        }
+
+        /// The longest side in pixels; nil for the screen's own size.
+        var maxSide: CGFloat? {
+            switch self {
+            case .hd: 1280
+            case .fullHD: 1920
+            case .source: nil
+            }
+        }
+    }
+
+    enum FrameRate: Int, CaseIterable, Sendable {
+        case fifteen = 15
+        case thirty = 30
+        case sixty = 60
+
+        var label: String { "\(rawValue) fps" }
+    }
+
+    var resolution: Resolution
+    var frameRate: FrameRate
+
+    /// 1080p at 15 fps, what sharing did before there was a choice: a phone screen is mostly
+    /// still, and every frame costs the extension a scale and a JPEG within its small memory.
+    static let standard = ScreenShareQuality(resolution: .fullHD, frameRate: .fifteen)
+
+    /// "1080p · 15 fps".
+    var label: String { "\(resolution.label) · \(frameRate.label)" }
+
+    /// The most the screen may use, in bits per second: more pixels and more frames need more to
+    /// stay sharp. The same table as the web's. 1080p at 15 fps had 2.5 Mbps before there was a
+    /// choice; 1.8 still gives each frame more than the web's 1080p at 30 fps gets.
+    var bitrate: Int {
+        switch (resolution, frameRate) {
+        case (.hd, .fifteen): 1_200_000
+        case (.hd, .thirty): 1_800_000
+        case (.hd, .sixty): 2_800_000
+        case (.fullHD, .fifteen): 1_800_000
+        case (.fullHD, .thirty): 2_500_000
+        case (.fullHD, .sixty): 4_000_000
+        case (.source, .fifteen): 3_000_000
+        case (.source, .thirty): 4_500_000
+        case (.source, .sixty): 6_500_000
+        }
+    }
+
+    /// Up to 30 fps a screen is text and edges: it keeps its sharpness and gives up frames. At 60
+    /// it was asked for motion, and gives up some of each.
+    var keepsResolution: Bool { frameRate != .sixty }
 }
 
 /// The extension's side: connects to the app, and sends frames as fast as it takes them.
@@ -150,7 +301,8 @@ nonisolated enum ScreenShareWire {
 /// Agent: the socket and the encoding live on one serial queue; the gate that drops frames is a
 /// lock, so the broadcast's own thread never waits for an encode. A frame that arrives while the
 /// previous one is still being written is dropped: a stalled app never piles frames up in the
-/// extension's memory.
+/// extension's memory. The app's settings (size, frame rate) are read on that queue and kept
+/// under the gate; until they come, `Settings.standard` holds.
 /// `onEnded` fires once, on that queue, when the app closes the socket (Stop, the call ended).
 nonisolated final class ScreenShareUploader: @unchecked Sendable {
     enum ConnectError: Error {
@@ -169,8 +321,10 @@ nonisolated final class ScreenShareUploader: @unchecked Sendable {
     private var busy = false
     private var lastSent: CFTimeInterval = 0
     private var ended = false
+    private var settings = ScreenShareWire.Settings.standard
     // Only touched on `queue`.
     private var onEnded: (@Sendable () -> Void)?
+    private var settingsReader = ScreenShareWire.Settings.Reader()
 
     init() {}
 
@@ -205,15 +359,9 @@ nonisolated final class ScreenShareUploader: @unchecked Sendable {
         queue.sync {
             socket = fd
             self.onEnded = onEnded
-            // The app says nothing on this socket: readable means it closed its end.
+            // The app says only its settings on this socket; an end of it means it closed its end.
             let watch = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
-            watch.setEventHandler { [weak self] in
-                guard let self else { return }
-                var byte: UInt8 = 0
-                let got = recv(fd, &byte, 1, MSG_PEEK | MSG_DONTWAIT)
-                // A wakeup with nothing to read is not a hang-up; only an end or an error is.
-                if got == 0 || (got < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) { self.end() }
-            }
+            watch.setEventHandler { [weak self] in self?.readFromApp(fd) }
             // Closed here, once the watch no longer reads it.
             watch.setCancelHandler { Darwin.close(fd) }
             watch.resume()
@@ -228,7 +376,7 @@ nonisolated final class ScreenShareUploader: @unchecked Sendable {
         let due = gate.withLock { () -> Bool in
             // A little slack: frames arrive on the display's beat (every 16.7 or 33.3 ms), and a
             // strict gate would take every third of them, not every other.
-            guard !busy, !ended, now - lastSent >= 0.9 / ScreenShareWire.framesPerSecond else { return false }
+            guard !busy, !ended, now - lastSent >= 0.9 / Double(settings.framesPerSecond) else { return false }
             busy = true
             lastSent = now
             return true
@@ -255,12 +403,35 @@ nonisolated final class ScreenShareUploader: @unchecked Sendable {
         queue.async { [self] in shut() }
     }
 
+    /// What the app said: new settings, or its end of the socket closing.
+    private func readFromApp(_ fd: Int32) {
+        var bytes = [UInt8](repeating: 0, count: 256)
+        let got = recv(fd, &bytes, bytes.count, MSG_DONTWAIT)
+        // A wakeup with nothing to read is not a hang-up; only an end or an error is.
+        if got == 0 || (got < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+            end()
+            return
+        }
+        guard got > 0 else { return }
+        let newest = settingsReader.append(Data(bytes[0..<got]))
+        if settingsReader.isBroken {
+            end()
+            return
+        }
+        if let newest { gate.withLock { settings = newest } }
+    }
+
     private func encode(_ pixels: CVPixelBuffer) -> (data: Data, width: Int, height: Int)? {
         let width = CVPixelBufferGetWidth(pixels)
         let height = CVPixelBufferGetHeight(pixels)
-        let size = ScreenShareWire.wireSize(width: width, height: height)
+        let longestSide = gate.withLock { settings.longestSide }
+        let size = ScreenShareWire.wireSize(width: width, height: height, maxSide: longestSide)
         var image = CIImage(cvPixelBuffer: pixels)
-        if size.width != width || size.height != height {
+        if abs(size.width - width) <= 1, abs(size.height - height) <= 1 {
+            // Only made even (Source on a screen with an odd side): a pixel cut off, not a
+            // resample of the whole screen, which would soften it and need a full-size buffer.
+            image = image.cropped(to: CGRect(x: 0, y: 0, width: size.width, height: size.height))
+        } else {
             // Lanczos keeps small text legible where plain resampling would blur or alias it;
             // the crop keeps the frame exactly the even size the header gives.
             let scale = CGFloat(size.height) / CGFloat(height)

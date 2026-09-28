@@ -2,6 +2,7 @@ import { ApiError, type CallModality, type CallSignalType } from "../api/client"
 import { b64ToBytes } from "../crypto/bytes";
 import { PeerKeyChanged } from "../crypto/peerIdentity";
 import type { CallRole } from "./crypto";
+import type { ScreenQuality } from "./screenQuality";
 
 /*
  * The parts of a call that need no browser: what each state says, which signals to believe, when
@@ -66,6 +67,8 @@ export type CallView = {
   shareSupported: boolean;
   /** This call can carry our screen and their app can show it. False with an older app on either side. */
   canShare: boolean;
+  /** The resolution and frame rate our screen goes out at (chosen on Share, kept per browser). */
+  screenQuality: ScreenQuality;
   /** What they say they send (`media_state`): their screen. */
   remoteScreen: boolean;
   localStream: MediaStream | null;

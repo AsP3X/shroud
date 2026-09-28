@@ -15,6 +15,7 @@ import {
 import { CallController, type CallEnv, type IdentityKeys } from "./controller";
 import type { CallPeer } from "./logic";
 import { alwaysRelaysCalls } from "./relay";
+import type { ScreenQuality } from "./screenQuality";
 import { publishCallView } from "./store";
 import { playCallTone, primeCallTones } from "./tones";
 
@@ -324,6 +325,11 @@ export function switchCallCamera(): void {
 /** Share the screen, or stop sharing it. Call it straight from the click: the picker needs it. */
 export function toggleCallScreen(): void {
   controller.toggleScreen();
+}
+
+/** The resolution and frame rate for sharing our screen; while we share, it applies at once. */
+export function setCallScreenQuality(quality: ScreenQuality): void {
+  controller.setScreenQuality(quality);
 }
 
 export function setCallMinimized(minimized: boolean): void {

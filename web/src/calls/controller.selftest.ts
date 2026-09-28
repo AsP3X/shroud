@@ -89,8 +89,18 @@ class FakeTrack {
   stop(): void {
     this.readyState = "ended";
   }
+  /** A captured screen's size, as the browser reports it (none for a camera here). */
+  size: { width: number; height: number } | null = null;
+  /** A browser that cannot change the capture once it is open. */
+  refusesConstraints = false;
   getSettings(): MediaTrackSettings {
-    return this.kind === "video" ? { facingMode: this.facing, deviceId: this.deviceId } : {};
+    return this.kind === "video" ? { facingMode: this.facing, deviceId: this.deviceId, ...this.size } : {};
+  }
+  /** What `applyConstraints` was given, in order. */
+  readonly applied: MediaTrackConstraints[] = [];
+  async applyConstraints(constraints: MediaTrackConstraints): Promise<void> {
+    this.applied.push(constraints);
+    if (this.refusesConstraints) throw Object.assign(new Error("over"), { name: "OverconstrainedError" });
   }
   /** The system pauses or resumes the capture, as a browser reports it. */
   pause(paused: boolean): void {
@@ -148,7 +158,7 @@ class FakeSender {
     return { encodings: [{}] };
   }
   async setParameters(params: {
-    encodings?: { maxBitrate?: number; priority?: string; scaleResolutionDownBy?: number }[];
+    encodings?: { maxBitrate?: number; maxFramerate?: number; priority?: string; scaleResolutionDownBy?: number }[];
     degradationPreference?: string;
   }): Promise<void> {
     const encoding = params.encodings?.[0];
@@ -156,6 +166,7 @@ class FakeSender {
       kind: this.track?.kind ?? "",
       track: this.track,
       maxBitrate: encoding?.maxBitrate,
+      maxFramerate: encoding?.maxFramerate,
       priority: encoding?.priority,
       scale: encoding?.scaleResolutionDownBy,
       degradation: params.degradationPreference,
@@ -208,6 +219,7 @@ class FakePeer {
     kind: string;
     track?: FakeTrack | null;
     maxBitrate?: number;
+    maxFramerate?: number;
     priority?: string;
     scale?: number;
     degradation?: string;
@@ -406,6 +418,11 @@ class Device {
   /** The picked window closes before its screen is on the call. */
   pickedEndsAtOnce = false;
   readonly displays: FakeStream[] = [];
+  /** What each picker was asked for. */
+  readonly pickOptions: DisplayMediaStreamOptions[] = [];
+  /** The next picked screen's size, and whether its browser refuses to narrow it. */
+  nextDisplaySize: { width: number; height: number } | null = null;
+  nextDisplayRefuses = false;
   awake = false;
   holds = 0;
   interrupted = 0;
@@ -466,10 +483,13 @@ class Device {
         if (!device.canPickScreen) return undefined;
         return async (options: DisplayMediaStreamOptions) => {
           device.picks += 1;
+          device.pickOptions.push(options);
           if (device.pickError) throw device.pickError;
           const tracks = [new FakeTrack("video")];
           if (options.audio && device.screenWithSound) tracks.push(new FakeTrack("audio"));
           if (device.pickedEndsAtOnce) tracks[0].readyState = "ended";
+          tracks[0].size = device.nextDisplaySize;
+          tracks[0].refusesConstraints = device.nextDisplayRefuses;
           const stream = new FakeStream(tracks);
           device.displays.push(stream);
           return stream as unknown as MediaStream;
@@ -1543,6 +1563,74 @@ const ICE = 150;
   check(a1.displays.every((d) => d.getTracks().every((t) => t.readyState === "ended")), "the capture ends with the call");
   check(b1.screenAudio === null, "the screen's sound slot is let go");
   await clock.advance(2_000);
+}
+
+/* --- 24b. the screen's resolution and frame rate, chosen before sharing and changed while it runs */
+{
+  const { clock, server, alice, bob } = world();
+  const a1 = new Device(alice, "a1", server, clock);
+  const b1 = new Device(bob, "b1", server, clock);
+  await connect(clock, a1, b1);
+  const offers = () => server.signals.filter((s) => s.type === "sdp_offer").length;
+  const offersBefore = offers();
+  check(a1.view?.screenQuality.resolution === "1080p" && a1.view.screenQuality.frameRate === 30, "1080p at 30 fps to begin with");
+
+  // Chosen before sharing: the picker opens the capture at the ceiling, and it is narrowed to the
+  // choice before it goes out (a browser may never raise a capture above what it was opened at).
+  a1.controller.setScreenQuality({ resolution: "720p", frameRate: 15 });
+  check(a1.view?.screenQuality.resolution === "720p" && a1.view.screenQuality.frameRate === 15, "the choice shows at once");
+  a1.controller.toggleScreen();
+  await clock.advance(0);
+  const asked = a1.pickOptions[0]?.video as MediaTrackConstraints;
+  check(JSON.stringify(asked) === JSON.stringify({ frameRate: { max: 60 } }), `the picker asks for the ceiling (${JSON.stringify(asked)})`);
+  const picture = a1.displays[0].getVideoTracks()[0];
+  check(
+    JSON.stringify(picture.applied[0]) === JSON.stringify({ width: { max: 1280 }, height: { max: 720 }, frameRate: { ideal: 15, max: 15 } }),
+    `narrowed to 720p at 15 fps (${JSON.stringify(picture.applied[0])})`,
+  );
+  const first = a1.peer.tuned.filter((t) => t.track === picture).at(-1);
+  check(first?.maxFramerate === 15 && first.maxBitrate === 1_200_000, `sent at 15 fps and 1.2 Mbps (${JSON.stringify(first)})`);
+  check(picture.contentHint === "detail", "sharp text");
+
+  // Changed while sharing: the capture and the encoder follow, without a new picker or offer.
+  a1.controller.setScreenQuality({ resolution: "source", frameRate: 60 });
+  await clock.advance(0);
+  check(a1.picks === 1, "no new picker");
+  check(JSON.stringify(picture.applied.at(-1)) === JSON.stringify({ frameRate: { ideal: 60, max: 60 } }), "the capture lifts its size limit, at 60 fps");
+  const second = a1.peer.tuned.filter((t) => t.track === picture).at(-1);
+  check(
+    second?.maxFramerate === 60 && second.maxBitrate === 6_500_000 && second.degradation === "balanced",
+    `sent at 60 fps and 6.5 Mbps, giving up some of each (${JSON.stringify(second)})`,
+  );
+  check(picture.contentHint === "motion", "encoded for motion");
+  check(offers() === offersBefore, "no new offer");
+  check(b1.view?.remoteScreen === true, "bob still sees it");
+
+  // Kept for the next share in this call.
+  a1.controller.toggleScreen();
+  await clock.advance(0);
+  a1.controller.toggleScreen();
+  await clock.advance(0);
+  const nextPicture = a1.displays[1].getVideoTracks()[0];
+  check(JSON.stringify(nextPicture.applied[0]) === JSON.stringify({ frameRate: { ideal: 60, max: 60 } }), "the next share is narrowed to the source at 60 fps");
+
+  // A browser that refuses to narrow the capture: the encoder shrinks the full-size picture.
+  a1.controller.toggleScreen();
+  await clock.advance(0);
+  a1.controller.setScreenQuality({ resolution: "1080p", frameRate: 30 });
+  a1.nextDisplaySize = { width: 3840, height: 2160 };
+  a1.nextDisplayRefuses = true;
+  a1.controller.toggleScreen();
+  await clock.advance(0);
+  const stubborn = a1.displays[2].getVideoTracks()[0];
+  const fitted = a1.peer.tuned.filter((t) => t.track === stubborn).at(-1);
+  check(a1.view?.screenOn === true, "shared all the same");
+  check(fitted?.scale === 2, `4K shrunk by 2 to fit 1080p (${JSON.stringify(fitted)})`);
+  a1.controller.setScreenQuality({ resolution: "source", frameRate: 30 });
+  await clock.advance(0);
+  check(a1.peer.tuned.filter((t) => t.track === stubborn).at(-1)?.scale === 1, "source: full size");
+  a1.controller.hangup();
+  await clock.advance(4_000);
 }
 
 /* --- 25. screens with an older app, and in a browser that cannot share ------------------------- */

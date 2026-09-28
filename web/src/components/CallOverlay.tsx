@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -11,6 +12,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import {
+  ChevronUp,
   Expand,
   Maximize2,
   Mic,
@@ -43,8 +45,15 @@ import {
   switchCallCamera,
   toggleCallCamera,
   toggleCallMute,
+  setCallScreenQuality,
   toggleCallScreen,
 } from "../calls/service";
+import {
+  SCREEN_FRAME_RATES,
+  SCREEN_RESOLUTIONS,
+  screenQualityText,
+  type ScreenQuality,
+} from "../calls/screenQuality";
 import { useCallView } from "../calls/store";
 import { Avatar, avatarPalette } from "./Avatar";
 import { SpeakingIndicator } from "./SpeakingIndicator";
@@ -517,6 +526,111 @@ function Control({
   );
 }
 
+/**
+ * The arrow on Share and the panel it opens: the resolution and the frame rate our screen goes
+ * out at, as Discord offers them. Chosen before sharing or while it runs (it applies at once), and
+ * kept for the next call. Escape (handled with the call's own keys), a press outside and focus
+ * moving on past it close it.
+ */
+function ScreenQualityPicker({
+  quality,
+  open,
+  dimmed,
+  onOpenChange,
+}: {
+  quality: ScreenQuality;
+  open: boolean;
+  /** Share cannot be used yet: the arrow looks off with it, and still opens. */
+  dimmed: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const wrap = useRef<HTMLDivElement>(null);
+  const toggle = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const panelId = useId();
+  const summary = screenQualityText(quality);
+  useEffect(() => {
+    const box = panel.current;
+    if (!open || !box) return;
+    // Into the panel, on the choice that is on, so the arrow keys move from there.
+    box.querySelector<HTMLInputElement>("input:checked")?.focus({ preventScroll: true });
+    let focusInside = box.contains(document.activeElement);
+    const onFocus = () => {
+      focusInside = box.contains(document.activeElement);
+      // Tabbed on past it: a panel left open behind the focus would be lost to the keyboard.
+      if (!wrap.current?.contains(document.activeElement)) onOpenChange(false);
+    };
+    const away = (event: PointerEvent) => {
+      if (!wrap.current?.contains(event.target as Node)) onOpenChange(false);
+    };
+    document.addEventListener("focusin", onFocus);
+    window.addEventListener("pointerdown", away, true);
+    return () => {
+      document.removeEventListener("focusin", onFocus);
+      window.removeEventListener("pointerdown", away, true);
+      // Focus that was in the panel (closed with Escape) goes back to the arrow, not to the page.
+      const lost = document.activeElement === null || document.activeElement === document.body;
+      if (focusInside && lost) toggle.current?.focus({ preventScroll: true });
+    };
+  }, [open, onOpenChange]);
+  return (
+    <div className="call-quality-wrap" ref={wrap}>
+      <button
+        type="button"
+        ref={toggle}
+        className={`call-share-more${open ? " is-open" : ""}${dimmed ? " is-dimmed" : ""}`}
+        aria-label={`Screen share quality: ${summary}`}
+        title={`Screen share quality: ${summary}`}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls={open ? panelId : undefined}
+        onClick={() => onOpenChange(!open)}
+      >
+        <ChevronUp size={14} strokeWidth={2.6} aria-hidden="true" />
+      </button>
+      {open ? (
+        <div className="call-quality" id={panelId} ref={panel} role="dialog" aria-label="Screen share quality">
+          <div className="call-quality-title">Screen share quality</div>
+          <fieldset className="call-quality-group">
+            <legend>Resolution</legend>
+            <div className="call-quality-options">
+              {SCREEN_RESOLUTIONS.map((option) => (
+                <label key={option.value} className="call-quality-option">
+                  <input
+                    type="radio"
+                    name="call-screen-resolution"
+                    checked={quality.resolution === option.value}
+                    onChange={() => setCallScreenQuality({ ...quality, resolution: option.value })}
+                  />
+                  <span>{option.label}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <fieldset className="call-quality-group">
+            <legend>Frame rate</legend>
+            <div className="call-quality-options">
+              {SCREEN_FRAME_RATES.map((rate) => (
+                <label key={rate} className="call-quality-option">
+                  <input
+                    type="radio"
+                    name="call-screen-frame-rate"
+                    checked={quality.frameRate === rate}
+                    onChange={() => setCallScreenQuality({ ...quality, frameRate: rate })}
+                  />
+                  <span>
+                    {rate} <small>fps</small>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /** Live transcription is a later feature: until it lands, the slot has no lines and stays hidden. */
 const NO_CAPTIONS: readonly string[] = [];
 
@@ -580,7 +694,12 @@ function CallScreen({ view }: { view: CallView }) {
   }, [screenUp]);
   /* The controls step aside only while nothing of ours needs seeing: not while their sound waits
      for a click, and a notice wakes them. Our own "sharing" pill stays through it. */
-  const idle = useIdle(root, screenUp && !view.audioBlocked, view.notice);
+  /* The screen's resolution and frame rate, chosen from the arrow on Share. */
+  const [qualityOpen, setQualityOpen] = useState(false);
+  const qualityShown = qualityOpen && live && view.shareSupported;
+  const qualityShownRef = useRef(qualityShown);
+  qualityShownRef.current = qualityShown;
+  const idle = useIdle(root, screenUp && !view.audioBlocked && !qualityShown, view.notice);
   const fullscreen = useFullscreen(root);
   /* Fullscreen was for their screen: it ends with it. */
   const leaveFullscreen = !screenUp && fullscreen.on;
@@ -616,7 +735,9 @@ function CallScreen({ view }: { view: CallView }) {
       if (event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();
-      if (live) setCallMinimized(true);
+      // An open quality panel closes first; the call stays where it is.
+      if (qualityShownRef.current) setQualityOpen(false);
+      else if (live) setCallMinimized(true);
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
@@ -866,17 +987,25 @@ function CallScreen({ view }: { view: CallView }) {
             {/* Next to the camera, never instead of it. A browser without a screen picker (a
                 phone's) has no button: it can still see theirs. */}
             {view.shareSupported ? (
-              <Control
-                label="Share"
-                ariaLabel={shareBlocked ? `${shareLabel}. ${shareWhy}` : shareLabel}
-                title={shareBlocked ? shareWhy : shareLabel}
-                on={view.screenOn}
-                pending={view.screenPending}
-                unavailable={shareBlocked}
-                iconKey={view.screenOn ? "share-on" : "share"}
-                icon={view.screenOn ? <ScreenShareOff size={24} /> : <ScreenShare size={24} />}
-                onClick={toggleCallScreen}
-              />
+              <div className="call-share">
+                <Control
+                  label="Share"
+                  ariaLabel={shareBlocked ? `${shareLabel}. ${shareWhy}` : shareLabel}
+                  title={shareBlocked ? shareWhy : shareLabel}
+                  on={view.screenOn}
+                  pending={view.screenPending}
+                  unavailable={shareBlocked}
+                  iconKey={view.screenOn ? "share-on" : "share"}
+                  icon={view.screenOn ? <ScreenShareOff size={24} /> : <ScreenShare size={24} />}
+                  onClick={toggleCallScreen}
+                />
+                <ScreenQualityPicker
+                  quality={view.screenQuality}
+                  open={qualityShown}
+                  dimmed={shareBlocked}
+                  onOpenChange={setQualityOpen}
+                />
+              </div>
             ) : null}
             <Control label="End" tone="end" icon={<PhoneOff size={26} />} onClick={hangUpCall} />
           </div>
