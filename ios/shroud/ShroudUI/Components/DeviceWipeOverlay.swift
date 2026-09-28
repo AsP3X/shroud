@@ -14,6 +14,21 @@ struct DeviceWipeOverlay: View {
 
     private typealias Step = DeviceDataWipe.Step
 
+    /// The phase this overlay draws: the controller's, except that it keeps the last one while
+    /// the overlay fades out.
+    ///
+    /// Human: The controller is back at `.idle` before the fade ends, and idle used to draw as
+    /// "running". That restarted the emblem's repeating breathe and particles inside the removal
+    /// transition, which then never finished: the invisible overlay stayed above Welcome and
+    /// took every touch until the app was restarted.
+    private var phase: DeviceWipeController.Phase {
+        wipe.phase == .idle ? lastShownPhase : wipe.phase
+    }
+
+    /// The controller's last phase before `.idle`. Only read while fading out: everywhere else
+    /// the overlay follows the controller directly, inside the controller's own animation.
+    @State private var lastShownPhase: DeviceWipeController.Phase = .running
+
     private var device: String {
         UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
     }
@@ -35,8 +50,14 @@ struct DeviceWipeOverlay: View {
         .frame(maxWidth: 520)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.backgroundGrouped.ignoresSafeArea())
+        // A leaving overlay never takes a touch meant for the screen it uncovers.
+        .allowsHitTesting(wipe.isPresented)
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isModal)
+        .accessibilityHidden(!wipe.isPresented)
+        .onChange(of: wipe.phase, initial: true) { _, new in
+            if new != .idle { lastShownPhase = new }
+        }
     }
 
     // MARK: - Heading
@@ -56,11 +77,11 @@ struct DeviceWipeOverlay: View {
                 .contentTransition(.opacity)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .animation(Motion.standard, value: wipe.phase)
+        .animation(Motion.standard, value: phase)
     }
 
     private var title: String {
-        switch wipe.phase {
+        switch phase {
         case .failed: "Couldn’t clear everything"
         case .done: "This \(device) is clear"
         default: "Clearing this \(device)"
@@ -68,7 +89,7 @@ struct DeviceWipeOverlay: View {
     }
 
     private var subtitle: String {
-        switch wipe.phase {
+        switch phase {
         case .failed:
             return "Still here: \(DeviceWipeController.labels(of: wipe.leftovers)). Try again — if it keeps failing, restart your \(device) and open Shroud; it finishes on its own."
         case .done:
@@ -125,7 +146,7 @@ struct DeviceWipeOverlay: View {
     }
 
     private func rowState(_ step: Step) -> WipeStepStatus.State {
-        if wipe.phase == .failed, step == .verify || wipe.leftovers.contains(where: { $0.step == step }) {
+        if phase == .failed, step == .verify || wipe.leftovers.contains(where: { $0.step == step }) {
             return .failed
         }
         if wipe.active == step || wipe.retrying.contains(step) { return .active }
@@ -141,13 +162,13 @@ struct DeviceWipeOverlay: View {
     }
 
     private var progress: Double {
-        if wipe.phase == .done { return 1 }
+        if phase == .done { return 1 }
         let done = Step.allCases.filter { rowState($0) == .done }.count
         return Double(done) / Double(Step.allCases.count)
     }
 
     private var emblemState: WipeEmblem.State {
-        switch wipe.phase {
+        switch phase {
         case .done: .done
         case .failed: .failed
         default: .running
@@ -158,7 +179,7 @@ struct DeviceWipeOverlay: View {
 
     @ViewBuilder
     private var footer: some View {
-        if wipe.phase == .failed {
+        if phase == .failed {
             VStack(spacing: 10) {
                 PrimaryButton(title: "Try Again", showsArrow: false) { wipe.retry() }
                 SecondaryButton(title: "Continue") { wipe.continueAfterFailure() }
@@ -166,7 +187,7 @@ struct DeviceWipeOverlay: View {
             .transition(.opacity.combined(with: .move(edge: .bottom)))
         } else {
             VStack(spacing: 6) {
-                if wipe.phase == .done {
+                if phase == .done {
                     ProgressView()
                         .controlSize(.small)
                 } else {
@@ -174,7 +195,7 @@ struct DeviceWipeOverlay: View {
                         .font(.system(size: 15))
                 }
                 Text(
-                    wipe.phase == .done
+                    phase == .done
                         ? "Taking you to the welcome screen…"
                         : "Your account and chats on other devices stay as they are."
                 )
