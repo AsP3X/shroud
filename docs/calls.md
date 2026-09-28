@@ -325,19 +325,20 @@ can share at once. Like video, it needs no new offer: ICE, DTLS and the sound ar
 - **Showing theirs.** Their screen fills the call from its first frame, fitted whole on black; their
   camera moves into a tile beside ours, and the name goes to the top. The web offers actual size
   (double-click, or the zoom button; drag, scroll or the arrow keys to pan), fullscreen (which ends
-  with their share), and lets the controls fade after 3 s without pointer movement — not while we
-  share as well (our "sharing" chip stays in sight) nor while their sound waits for a click, and a
-  notice brings them back. The iPhone zooms by pinching or double-tapping (sharp up to
-  the screen's own pixels), a tap shows or hides the controls, which also step aside after 4 s, and
-  turning the phone gives a laptop's screen more room. Its sound plays apart from their voice (its
+  with their share), and lets the controls fade after 3 s without pointer movement — not while their
+  sound waits for a click, and a notice brings them back; our own "sharing" pill stays through it.
+  The iPhone zooms by pinching or double-tapping (sharp up to the screen's own pixels), a tap shows
+  or hides the controls, which also step aside after 4 s, and turning the phone gives a laptop's
+  screen more room. Its sound plays apart from their voice (its
   own `<audio>` on the web; WebRTC mixes it on the iPhone, in mono through the voice processing).
 - **Sharing ours, web.** The browser's picker (`getDisplayMedia`) opens from the click on Share,
   asking for a tab's or the system's sound too (`restrictOwnAudio`, where the browser knows it, keeps
   this page's own playback out of a system's sound, so they do not hear themselves); Shroud's own
   tab is left out (it would mirror the call into itself). Its "Stop sharing" bar, or the shared window closing, ends the track, and the
   call stops sharing and says so. A browser without a picker (phones) has no Share button and still
-  shows the other side's screen. While sharing, a red "You're sharing your screen · Stop" chip
-  stays in sight, and a small tile shows what goes out.
+  shows the other side's screen. While sharing, a compact red "Sharing screen · Stop" pill sits in
+  the top-left corner beside the encryption badge (a sound glyph when sound goes along) and stays
+  when the rest fades; a small tile shows what goes out.
 - **Sharing ours, iPhone.** Share opens the system's broadcast picker with Shroud's extension
   (`ShroudScreenShare`, `de.corespace.shroud.ScreenShare`) chosen and the microphone switch
   hidden; the phone's whole screen is shared, whichever app is in front, until Stop. The
@@ -350,9 +351,10 @@ can share at once. Like video, it needs no new offer: ICE, DTLS and the sound ar
   frame again every half second while the screen is still, so a frame lost on the way is soon
   replaced. Stop in Shroud, or the call ending, closes the socket, and the extension ends the
   broadcast; a broadcast started without a call ends at once and says to start it from a call.
-  Nothing in the extension reaches the network or is kept. The call screen shows a "You're
-  sharing your screen · Stop" capsule over the controls ("Starting to share your screen…" from the
-  broadcast's connection to its first frame; Stop works in both). The simulator cannot broadcast: debug
+  Nothing in the extension reaches the network or is kept. The call screen shows a compact red
+  "Sharing screen" pill with a round stop button at the top centre, under the status bar ("Starting…"
+  from the broadcast's connection to its first frame; stop works in both). It stays when the
+  controls step aside, and the face, the name and the tiles move down by its height while it shows. The simulator cannot broadcast: debug
   simulator builds send a test pattern through the same socket instead (`SimulatedBroadcast`).
 - **Not yet:** the iPhone does not send its apps' sound (stock WebRTC has no way to feed it into
   the call; it needs its own audio capture). The sound section is there both ways already, so it

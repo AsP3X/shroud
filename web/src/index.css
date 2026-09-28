@@ -3491,6 +3491,36 @@ button.reply-quote { cursor: pointer; }
 .call-icon-btn:active { transform: scale(0.92); }
 .call-icon-btn.is-on, .call-icon-btn.is-on:hover { background: #fff; color: #111; }
 .call-top-actions { display: flex; align-items: center; gap: 8px; }
+.call-top-start { display: flex; align-items: center; gap: 8px; min-width: 0; }
+
+/* We share our screen: a compact red pill in the top-left corner, as tall as the badge beside
+   it, with Stop inside. Solid, so it reads over any picture, and it stays when the rest fades. */
+.call-sharing {
+  display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0;
+  height: 29px; padding: 0 3px 0 11px;
+  border-radius: var(--r-full);
+  background: var(--call-red); color: #fff;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  font-size: var(--fs-xs); font-weight: 650;
+  animation: call-status-in 0.3s var(--ease);
+}
+.call-sharing-dot {
+  width: 7px; height: 7px; flex-shrink: 0;
+  border-radius: 50%;
+  background: #fff;
+  animation: call-live 1.6s ease-in-out infinite;
+}
+.call-sharing-label { white-space: nowrap; }
+.call-sharing-sound { flex-shrink: 0; opacity: 0.9; }
+.call-sharing-stop {
+  height: 23px; padding: 0 10px;
+  border: 0; border-radius: var(--r-full);
+  background: #fff; color: var(--call-red);
+  font: inherit; font-weight: 700;
+  transition: background 0.15s ease, transform 0.12s ease;
+}
+.call-sharing-stop:hover { background: #ffe9e7; }
+.call-sharing-stop:active { transform: scale(0.94); }
 
 /* The middle: the person. The stage spans the whole screen behind the bar and the dock, so the
    avatar sits at the exact centre; the name and clock hang below it without moving it. */
@@ -3624,27 +3654,12 @@ button.reply-quote { cursor: pointer; }
   transform-origin: center;
   will-change: transform;
 }
-/* We share our screen: in sight for as long as it lasts, with a way to stop right there. */
-.call-chip.is-sharing { padding: 4px 4px 4px 11px; background: rgba(224, 53, 43, 0.28); border-color: rgba(255, 140, 130, 0.45); }
-.call-chip-dot {
-  width: 7px; height: 7px; flex-shrink: 0;
-  border-radius: 50%;
-  background: #ff6b60;
-  animation: call-live 1.6s ease-in-out infinite;
-}
-.call-chip-btn {
-  margin-left: 4px; padding: 3px 10px;
-  border: 0; border-radius: var(--r-full);
-  background: #fff; color: #111;
-  font: inherit; font-weight: 650;
-}
-.call-chip-btn:hover { background: #f1f1f4; }
-
 /* Watching their screen with nothing moving: the controls, the name and the shades step aside,
-   and come back with the pointer. The tiles stay. */
-.call-top, .call-stage, .call-dock { transition: opacity 0.3s ease; }
+   and come back with the pointer. The tiles stay, and so does our own "sharing" pill. */
+.call-e2e, .call-top-actions, .call-stage, .call-dock { transition: opacity 0.3s ease; }
 .call.is-idle { cursor: none; }
-.call.is-idle .call-top,
+.call.is-idle .call-e2e,
+.call.is-idle .call-top-actions,
 .call.is-idle .call-stage,
 .call.is-idle .call-dock,
 .call.is-idle .call-shade { opacity: 0; pointer-events: none; }
@@ -4051,6 +4066,6 @@ button.reply-quote { cursor: pointer; }
   .call-pill-dot { animation: none; }
   .call-self, .call-tile, .call-screen, .call-avatar, .call-shade, .call-remote { transition: none; }
   .call-self, .call-tile, .call-screen { transform: none; }
-  .call-chip-dot { animation: none; }
+  .call-sharing, .call-sharing-dot { animation: none; }
   .call-ctl.is-pending .call-ctl-disc { animation: none; background: rgba(255, 255, 255, 0.3); }
 }

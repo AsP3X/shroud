@@ -578,9 +578,9 @@ function CallScreen({ view }: { view: CallView }) {
   useEffect(() => {
     if (!screenUp) setActual(false);
   }, [screenUp]);
-  /* The controls step aside only while nothing of ours needs seeing: not while we share too (its
-     chip and Stop stay in sight), nor while their sound waits for a click; a notice wakes them. */
-  const idle = useIdle(root, screenUp && !view.screenOn && !view.audioBlocked, view.notice);
+  /* The controls step aside only while nothing of ours needs seeing: not while their sound waits
+     for a click, and a notice wakes them. Our own "sharing" pill stays through it. */
+  const idle = useIdle(root, screenUp && !view.audioBlocked, view.notice);
   const fullscreen = useFullscreen(root);
   /* Fullscreen was for their screen: it ends with it. */
   const leaveFullscreen = !screenUp && fullscreen.on;
@@ -623,18 +623,6 @@ function CallScreen({ view }: { view: CallView }) {
   }, [live]);
 
   const chips: ReactNode[] = [];
-  if (live && view.screenOn) {
-    /* Always in sight while it lasts: what we share, they see. */
-    chips.push(
-      <span className="call-chip is-sharing" key="sharing">
-        <span className="call-chip-dot" aria-hidden="true" />
-        {view.screenSound ? "Sharing your screen and its sound" : "You’re sharing your screen"}
-        <button type="button" className="call-chip-btn" aria-label="Stop sharing your screen" onClick={toggleCallScreen}>
-          Stop
-        </button>
-      </span>,
-    );
-  }
   if (live && screenUp) {
     chips.push(
       <span className="call-chip" key="their-screen">
@@ -712,10 +700,32 @@ function CallScreen({ view }: { view: CallView }) {
       <div className="call-shade call-shade-bottom" aria-hidden="true" />
 
       <header className="call-top">
-        <span className="call-e2e">
-          <ShieldCheck size={13} aria-hidden="true" />
-          End-to-end encrypted
-        </span>
+        <div className="call-top-start">
+          {/* We share a screen: in the top-left corner for as long as it lasts, through idle too,
+              with Stop right there. What we share, they see. */}
+          {live && view.screenOn ? (
+            <div className="call-sharing" role="status">
+              <span className="call-sharing-dot" aria-hidden="true" />
+              <span className="call-sharing-label">Sharing screen</span>
+              {view.screenSound ? (
+                <Volume2 size={13} className="call-sharing-sound" aria-label="with its sound" />
+              ) : null}
+              <button
+                type="button"
+                className="call-sharing-stop"
+                aria-label="Stop sharing your screen"
+                title="Stop sharing your screen"
+                onClick={toggleCallScreen}
+              >
+                Stop
+              </button>
+            </div>
+          ) : null}
+          <span className="call-e2e">
+            <ShieldCheck size={13} aria-hidden="true" />
+            End-to-end encrypted
+          </span>
+        </div>
         <div className="call-top-actions">
           {live && screenUp ? (
             <button

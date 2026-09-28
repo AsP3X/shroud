@@ -81002,6 +81002,7 @@
       "x": 6030,
       "y": 40,
       "name": "Screen Share — Sharing",
+      "context": "We share the phone's screen: a compact red pill at the top centre, under the status bar (“Sharing screen”, a round stop button at its end; “Starting…” until the first frame). It stays when the controls step aside, and the face, the name and the tiles move down by its height while it shows. Share is tinted.",
       "clip": true,
       "width": 390,
       "height": 844,
@@ -81080,7 +81081,7 @@
           "id": "gr4Hg",
           "layoutPosition": "absolute",
           "x": 0,
-          "y": 62,
+          "y": 102,
           "name": "Call Info",
           "width": 390,
           "layout": "vertical",
@@ -81229,6 +81230,12 @@
           "height": "fill_container",
           "layout": "vertical",
           "gap": 18,
+          "padding": [
+            40,
+            0,
+            0,
+            0
+          ],
           "justifyContent": "center",
           "alignItems": "center",
           "children": [
@@ -81551,73 +81558,78 @@
         },
         {
           "type": "frame",
-          "id": "YSImY",
+          "id": "W2coP",
           "layoutPosition": "absolute",
           "x": 0,
-          "y": 668,
-          "name": "Sharing Capsule Row",
+          "y": 66,
+          "name": "Sharing Pill Row",
           "width": 390,
           "justifyContent": "center",
           "children": [
             {
               "type": "frame",
-              "id": "R70pr0",
-              "name": "Sharing Capsule",
-              "fill": "#7A1E24D9",
-              "cornerRadius": 22,
-              "stroke": "#FF6B6080",
-              "strokeWidth": 1,
+              "id": "VE530",
+              "name": "Sharing Pill",
+              "fill": "#FF3B30C4",
+              "cornerRadius": 999,
               "effect": {
                 "type": "background_blur",
                 "radius": 12
               },
-              "gap": 10,
+              "gap": 7,
               "padding": [
-                6,
-                6,
-                6,
-                16
+                0,
+                0,
+                0,
+                12
               ],
               "alignItems": "center",
               "children": [
                 {
                   "type": "ellipse",
-                  "id": "vmC6P",
+                  "id": "qxlle",
                   "name": "Live Dot",
-                  "fill": "#FF3B30",
-                  "width": 8,
-                  "height": 8
+                  "fill": "#FFFFFF",
+                  "width": 7,
+                  "height": 7
                 },
                 {
                   "type": "text",
-                  "id": "uLB3K",
-                  "name": "Sharing Label",
+                  "id": "RUlnZ",
+                  "name": "Label",
                   "fill": "#FFFFFF",
-                  "content": "You’re sharing your screen",
+                  "content": "Sharing screen",
                   "fontFamily": "$font",
-                  "fontSize": 14,
+                  "fontSize": 13,
                   "fontWeight": "600"
                 },
                 {
                   "type": "frame",
-                  "id": "EihR5",
+                  "id": "SDj5M",
                   "name": "Stop Button",
-                  "fill": "#FFFFFF",
-                  "cornerRadius": 15,
-                  "padding": [
-                    6,
-                    14
-                  ],
+                  "padding": 4,
                   "children": [
                     {
-                      "type": "text",
-                      "id": "PC0Am",
-                      "name": "Stop Label",
-                      "fill": "#000000",
-                      "content": "Stop",
-                      "fontFamily": "$font",
-                      "fontSize": 14,
-                      "fontWeight": "600"
+                      "type": "frame",
+                      "id": "ETp6P",
+                      "name": "Stop Disc",
+                      "width": 22,
+                      "height": 22,
+                      "fill": "#FFFFFF",
+                      "cornerRadius": 11,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "rectangle",
+                          "cornerRadius": 1.5,
+                          "id": "FtD9R",
+                          "name": "Stop Glyph",
+                          "fill": "#FF3B30",
+                          "width": 8,
+                          "height": 8
+                        }
+                      ]
                     }
                   ]
                 }

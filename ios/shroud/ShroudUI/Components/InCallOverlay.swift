@@ -84,6 +84,7 @@ struct InCallOverlay: View {
     @ViewBuilder
     private func content(for call: CallController.ActiveCall) -> some View {
         let screen = showsRemoteScreen
+        let sharing = (call.isSharingScreen || call.screenShareStarting) && call.phase != .ending
         let picture = Self.nameBelongsInCorner(remotePicture: showsRemoteVideo || screen)
         // Ending can drop their picture at once. Hold the name where it already is for that last moment.
         let videoOn = call.phase == .ending && placedCall == call.id ? inCorner : picture
@@ -143,16 +144,9 @@ struct InCallOverlay: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                VStack(spacing: 18) {
-                    if call.isSharingScreen || call.screenShareStarting, !ending {
-                        sharingCapsule(starting: !call.isSharingScreen)
-                            .transition(.opacity.combined(with: .scale(scale: 0.92)))
-                    }
-                    controls(for: call)
-                }
+                controls(for: call)
                 .padding(.bottom, 48)
                 .animation(Motion.standard, value: call.phase)
-                .animation(Motion.snappy, value: call.isSharingScreen || call.screenShareStarting)
                 // Ending, the row goes at once but keeps its room, so the face and the name
                 // stay where they are for the last moment of the screen.
                 .opacity(ending || chromeAway ? 0 : 1)
@@ -161,8 +155,18 @@ struct InCallOverlay: View {
                 .allowsHitTesting(!ending && !chromeAway)
                 .accessibilityHidden(ending || chromeAway)
             }
+            // Clear of the sharing pill while it shows.
+            .padding(.top, sharing ? Self.sharingIndicatorInset : 0)
 
             tiles(for: call, screen: screen)
+                .padding(.top, sharing ? Self.sharingIndicatorInset : 0)
+
+            if sharing {
+                sharingIndicator(starting: !call.isSharingScreen)
+                    .padding(.top, 4)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
 
             // The system's broadcast picker, out of sight; Share opens it.
             BroadcastPickerHost(trigger: broadcastPicker)
@@ -173,6 +177,7 @@ struct InCallOverlay: View {
         }
         .animation(Motion.standard, value: showsLocalVideo(call))
         .animation(Motion.standard, value: screen)
+        .animation(Motion.snappy, value: sharing)
         .task(id: NamePlace(call: call.id, video: videoOn)) {
             await placeName(call.id, inCorner: videoOn)
         }
@@ -229,40 +234,45 @@ struct InCallOverlay: View {
         .padding(.trailing, Self.selfViewInsets.trailing)
     }
 
-    /// We share our screen: said over the controls for as long as it lasts, with Stop right there.
-    /// From the moment the broadcast connects, before its first frame, it says so too.
-    private func sharingCapsule(starting: Bool) -> some View {
-        HStack(spacing: 10) {
+    /// We share our screen: a small red pill at the top centre, under the status bar, for as long
+    /// as it lasts, with Stop at its end. It stays when the controls step aside, and says
+    /// "Starting…" from the broadcast's connection to its first frame.
+    private func sharingIndicator(starting: Bool) -> some View {
+        HStack(spacing: 7) {
             Circle()
-                .fill(Theme.danger)
-                .frame(width: 8, height: 8)
+                .fill(.white)
+                .frame(width: 7, height: 7)
                 .phaseAnimator([1.0, 0.35]) { dot, level in
                     dot.opacity(reduceMotion ? 1 : level)
                 } animation: { _ in .easeInOut(duration: 0.8) }
-            Text(starting ? "Starting to share your screen…" : "You’re sharing your screen")
-                .font(.system(size: 14, weight: .semibold))
+            Text(starting ? "Starting…" : "Sharing screen")
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.white)
                 .lineLimit(1)
-                .minimumScaleFactor(0.85)
+                .contentTransition(.opacity)
             Button {
                 _ = calls.toggleScreenShare()
             } label: {
-                Text("Stop")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.black)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 6)
-                    .background(.white, in: Capsule())
+                Image(systemName: "stop.fill")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Theme.danger)
+                    .frame(width: 22, height: 22)
+                    .background(.white, in: Circle())
+                    // A finger-sized target around the small disc.
+                    .padding(4)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(PressableButtonStyle(scale: 0.95, dimming: 0, haptic: .medium))
+            .buttonStyle(PressableButtonStyle(scale: 0.9, dimming: 0, haptic: .medium))
             .accessibilityLabel("Stop sharing your screen")
         }
-        .padding(.leading, 16)
-        .padding(.trailing, 6)
-        .padding(.vertical, 6)
-        .glassEffect(.regular.tint(Theme.danger.opacity(0.35)), in: .capsule)
+        .padding(.leading, 12)
+        .glassEffect(.regular.tint(Theme.danger.opacity(0.75)), in: .capsule)
         .accessibilityElement(children: .contain)
+        .accessibilityLabel(starting ? "Starting to share your screen" : "You’re sharing your screen")
     }
+
+    /// Room the pill takes at the top: the stage and the tiles move down by it while it shows.
+    static let sharingIndicatorInset: CGFloat = 40
 
     /// What the controls' timer follows: their screen coming or going, a tap, any touch.
     private struct ChromeClock: Equatable {

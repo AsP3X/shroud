@@ -93453,7 +93453,7 @@
       "x": 7640,
       "y": 8590,
       "name": "Desktop — Call · Sharing Your Screen",
-      "context": "We share a screen (the browser's picker, our own tab left out). A red chip under the clock says so, with its sound when the tab or system gave some, and stops it; a “Your screen” tile top right shows what goes out (contained on black); Share is white (on). The browser's own “Stop sharing” bar, or the shared window closing, ends it with a notice.",
+      "context": "We share a screen (the browser's picker, our own tab left out). A compact red pill in the top-left corner, beside the encryption badge and as tall as it, says so — “Sharing screen”, a sound glyph when the tab or system gave sound — with Stop inside. It stays when the controls fade over their screen. A “Your screen” tile top right shows what goes out (contained on black); Share is white (on). The browser's own “Stop sharing” bar, or the shared window closing, ends it with a notice.",
       "theme": {
         "mode": "dark"
       },
@@ -93530,40 +93530,130 @@
           "children": [
             {
               "type": "frame",
-              "id": "L8zss",
-              "name": "E2E",
-              "fill": "#FFFFFF1A",
-              "cornerRadius": 999,
-              "effect": {
-                "type": "background_blur",
-                "radius": 12
-              },
-              "gap": 6,
-              "padding": [
-                7,
-                12
-              ],
+              "id": "GV4zw",
+              "name": "Start",
+              "gap": 8,
               "alignItems": "center",
               "children": [
                 {
-                  "type": "icon",
-                  "id": "GVOrI",
-                  "name": "Glyph",
-                  "width": 13,
-                  "height": 13,
-                  "icon": "shield-check",
-                  "library": "lucide",
-                  "fill": "#FFFFFFD1"
+                  "type": "frame",
+                  "id": "It0ud",
+                  "name": "Sharing Pill",
+                  "height": 29,
+                  "fill": "#E0352B",
+                  "cornerRadius": 999,
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#00000059",
+                    "offset": {
+                      "x": 0,
+                      "y": 4
+                    },
+                    "blur": 14
+                  },
+                  "gap": 7,
+                  "padding": [
+                    0,
+                    3,
+                    0,
+                    11
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "P7NKwm",
+                      "name": "Live Dot",
+                      "fill": "#FFFFFF",
+                      "width": 7,
+                      "height": 7
+                    },
+                    {
+                      "type": "text",
+                      "id": "STFWB",
+                      "name": "Label",
+                      "fill": "#FFFFFF",
+                      "content": "Sharing screen",
+                      "fontFamily": "$font-ui",
+                      "fontSize": 12,
+                      "fontWeight": "650"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "ps4oY",
+                      "name": "Sound",
+                      "width": 13,
+                      "height": 13,
+                      "icon": "volume-2",
+                      "library": "lucide",
+                      "fill": "#FFFFFFE6"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "hOSLc",
+                      "name": "Stop",
+                      "height": 23,
+                      "fill": "#FFFFFF",
+                      "cornerRadius": 999,
+                      "padding": [
+                        0,
+                        10
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "r1Fez",
+                          "name": "Label",
+                          "fill": "#E0352B",
+                          "content": "Stop",
+                          "fontFamily": "$font-ui",
+                          "fontSize": 12,
+                          "fontWeight": "700"
+                        }
+                      ]
+                    }
+                  ]
                 },
                 {
-                  "type": "text",
-                  "id": "Shyga",
-                  "name": "Label",
-                  "fill": "#FFFFFFD1",
-                  "content": "End-to-end encrypted",
-                  "fontFamily": "$font-ui",
-                  "fontSize": 12,
-                  "fontWeight": "600"
+                  "type": "frame",
+                  "id": "L8zss",
+                  "name": "E2E",
+                  "fill": "#FFFFFF1A",
+                  "cornerRadius": 999,
+                  "effect": {
+                    "type": "background_blur",
+                    "radius": 12
+                  },
+                  "gap": 6,
+                  "padding": [
+                    7,
+                    12
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "GVOrI",
+                      "name": "Glyph",
+                      "width": 13,
+                      "height": 13,
+                      "icon": "shield-check",
+                      "library": "lucide",
+                      "fill": "#FFFFFFD1"
+                    },
+                    {
+                      "type": "text",
+                      "id": "Shyga",
+                      "name": "Label",
+                      "fill": "#FFFFFFD1",
+                      "content": "End-to-end encrypted",
+                      "fontFamily": "$font-ui",
+                      "fontSize": 12,
+                      "fontWeight": "600"
+                    }
+                  ]
                 }
               ]
             },
@@ -93772,78 +93862,6 @@
                           "fill": "#FFFFFF",
                           "width": 3,
                           "height": 4
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "yYf5U",
-                  "name": "Chips",
-                  "gap": 6,
-                  "children": [
-                    {
-                      "type": "frame",
-                      "id": "f3uWU8",
-                      "name": "Chip Sharing",
-                      "fill": "#E0352B47",
-                      "cornerRadius": 999,
-                      "stroke": "#FF8C8273",
-                      "strokeWidth": 1,
-                      "effect": {
-                        "type": "background_blur",
-                        "radius": 12
-                      },
-                      "gap": 6,
-                      "padding": [
-                        4,
-                        4,
-                        4,
-                        11
-                      ],
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "ellipse",
-                          "id": "eN9mF",
-                          "name": "Live Dot",
-                          "fill": "#FF6B60",
-                          "width": 7,
-                          "height": 7
-                        },
-                        {
-                          "type": "text",
-                          "id": "N5LCt",
-                          "name": "Label",
-                          "fill": "#FFFFFF",
-                          "content": "Sharing your screen and its sound",
-                          "fontFamily": "$font-ui",
-                          "fontSize": 12,
-                          "fontWeight": "600"
-                        },
-                        {
-                          "type": "frame",
-                          "id": "uB779",
-                          "name": "Stop",
-                          "fill": "#FFFFFF",
-                          "cornerRadius": 999,
-                          "padding": [
-                            3,
-                            10
-                          ],
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "h6A8E0",
-                              "name": "Label",
-                              "fill": "#111111",
-                              "content": "Stop",
-                              "fontFamily": "$font-ui",
-                              "fontSize": 12,
-                              "fontWeight": "650"
-                            }
-                          ]
                         }
                       ]
                     }
