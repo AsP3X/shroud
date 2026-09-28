@@ -1,15 +1,18 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { hasIdentity } from "./crypto/store";
 import { isVaultOpen } from "./crypto/vault";
 import { hasPin, needsPhrase } from "./crypto/vaultAccess";
+import { DeviceWipeDialog } from "./components/DeviceWipeDialog";
+import { clearRemovalMarker, onDeviceRemoved, removalPending, watchForRemoval } from "./deviceRemoval";
+import { finishWipeOnLoad } from "./deviceWipe";
 import { AppShell } from "./screens/AppShell";
 import { Auth } from "./screens/Auth";
 import { SignUp } from "./screens/SignUp";
 import { Unlock } from "./screens/Unlock";
 import { Welcome } from "./screens/Welcome";
 import { storageSealed } from "./storageSeal";
-import { installAutoLock, isLocked, loadSession } from "./session";
+import { installAutoLock, isLocked, loadSession, storedSessionMeta } from "./session";
 import type { Session } from "./api/client";
 
 export function App() {
@@ -31,12 +34,45 @@ export function App() {
   const needsPinSetup = sealing ? false : Boolean(keyed && session && !hasPin(session.user.id));
   const sessionToken = session?.token;
 
+  /*
+   * This browser was removed from the account on another device. The chat shell handles that
+   * itself while it is mounted; anywhere else — locked, choosing a PIN, entering the phrase,
+   * or a load that found the worker's marker — the wipe runs here, in place of every screen.
+   * The snapshot names the account (the token, if this page has one, ends the server session).
+   */
+  const [removal, setRemoval] = useState<Session | null>(() =>
+    removalPending() ? (loadSession() ?? storedSessionMeta()) : null,
+  );
+  const removed = useCallback(() => {
+    const snapshot = loadSession() ?? storedSessionMeta();
+    if (!snapshot) {
+      // Nobody is signed in here. Data without a session (a sign-in screen reached after the
+      // removal cleared the session) goes the way an interrupted wipe does.
+      void (finishWipeOnLoad() ?? Promise.resolve()).then(clearRemovalMarker);
+      return;
+    }
+    setRemoval((current) => current ?? snapshot);
+  }, []);
+  useEffect(() => onDeviceRemoved("app", removed), [removed]);
+
+  // Locked, the token is sealed: ask the server with its hash whether this browser was removed.
+  const inShell = Boolean(session && keyed && !locked && !needsPinSetup);
+  const probing = Boolean(session) && !inShell && !sealing && !removal;
   useEffect(() => {
-    if (!sessionToken || !keyed || needsPinSetup) return;
+    if (!probing) return;
+    return watchForRemoval(removed);
+  }, [probing, removed]);
+
+  useEffect(() => {
+    if (!sessionToken || !keyed || needsPinSetup || removal) return;
     return installAutoLock(() => {
       navigate("/unlock", { replace: true });
     });
-  }, [sessionToken, keyed, needsPinSetup, navigate]);
+  }, [sessionToken, keyed, needsPinSetup, navigate, removal]);
+
+  // No routes behind it: they would follow the emptied store into the shell or the welcome
+  // screen mid-wipe. The dialog ends with a reload onto the welcome screen.
+  if (removal) return <DeviceWipeDialog session={removal} reason="removed" />;
 
   return (
     <Routes>

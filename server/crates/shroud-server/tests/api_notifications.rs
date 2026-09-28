@@ -1375,3 +1375,373 @@ async fn a_reply_clears_the_chat_on_the_senders_other_devices() {
     send(&app, &b_laptop, &a.user_id, "text").await;
     assert_eq!(pushes_to(&state, b.device_id).len(), pushes);
 }
+
+/// Standard Base64 of SHA-256 over a session token: what a locked browser keeps readable.
+fn token_hash(token: &str) -> String {
+    BASE64.encode(ring::digest::digest(
+        &ring::digest::SHA256,
+        token.as_bytes(),
+    ))
+}
+
+async fn session_status(app: &axum::Router, token_hash: &str) -> (StatusCode, Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/session-status")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({ "token_hash": token_hash }).to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let status = response.status();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
+}
+
+#[tokio::test]
+async fn a_removed_device_is_woken_and_told_to_wipe() {
+    let Some((app, state)) = test_state().await else {
+        eprintln!("skipping a_removed_device_is_woken_and_told_to_wipe: no DATABASE_URL");
+        return;
+    };
+    let phone = register(&app).await;
+    let iphone = login_again(&app, &phone).await;
+    let browser = login_again(&app, &phone).await;
+    register_apns(&app, &iphone, &format!("{:064x}", Uuid::new_v4().as_u128())).await;
+    let endpoint = format!(
+        "https://updates.push.services.mozilla.com/wpush/v2/{}",
+        Uuid::new_v4()
+    );
+    assert_eq!(
+        register_web(&app, &browser, &endpoint).await,
+        StatusCode::NO_CONTENT
+    );
+    let (status, _) = call(
+        &app,
+        "PUT",
+        &format!("/api/v1/devices/{}/name", iphone.device_id),
+        &iphone.token,
+        Some(json!({ "sealed_name": BASE64.encode([7u8; 60]) })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    for removed in [&iphone, &browser] {
+        let (status, _) = call(
+            &app,
+            "DELETE",
+            &format!("/api/v1/devices/{}", removed.device_id),
+            &phone.token,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+    }
+
+    // One silent push each, sent after the registrations were purged.
+    let iphone_pushes: Vec<_> = state
+        .push
+        .recorded()
+        .into_iter()
+        .filter(|p| p.device_id == iphone.device_id)
+        .collect();
+    assert_eq!(iphone_pushes.len(), 1);
+    assert_eq!(iphone_pushes[0].channel, PushChannel::Apns);
+    assert_eq!(
+        iphone_pushes[0].apns_push_type,
+        Some(ApnsPushType::Background)
+    );
+    assert_eq!(
+        iphone_pushes[0].payload,
+        json!({ "aps": { "content-available": 1 }, "type": "device_removed" })
+    );
+    assert_eq!(
+        pushes_to(&state, browser.device_id),
+        vec![(
+            PushChannel::Web,
+            json!({ "v": 1, "kind": "device_removed" })
+        )]
+    );
+    assert!(pushes_to(&state, phone.device_id).is_empty());
+
+    // Every request it makes now says why, and so does its socket's heartbeat check.
+    for removed in [&iphone, &browser] {
+        let (status, body) = call(&app, "GET", "/api/v1/auth/me", &removed.token, None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body["error"]["code"], "DEVICE_REMOVED");
+        let (status, body) = call(&app, "GET", "/api/v1/conversations", &removed.token, None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body["error"]["code"], "DEVICE_REMOVED");
+    }
+    let session_id: Uuid =
+        sqlx::query_scalar("SELECT id FROM sessions WHERE device_id = $1 ORDER BY created_at DESC")
+            .bind(iphone.device_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        shroud_server::auth::session::session_state(&state.pool, session_id)
+            .await
+            .unwrap(),
+        shroud_server::auth::session::SessionState::Removed
+    );
+
+    // The wake went to registrations the removal had already deleted.
+    for removed in [&iphone, &browser] {
+        let left: i64 = sqlx::query_scalar(
+            r#"
+            SELECT (SELECT count(*) FROM push_tokens WHERE device_id = $1)
+                 + (SELECT count(*) FROM web_push_subscriptions WHERE device_id = $1)
+            "#,
+        )
+        .bind(removed.device_id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+        assert_eq!(left, 0);
+    }
+
+    // Nothing about it outlives the removal except the row its messages point at.
+    let name: Option<Vec<u8>> = sqlx::query_scalar("SELECT sealed_name FROM devices WHERE id = $1")
+        .bind(iphone.device_id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+    assert!(name.is_none());
+
+    // A locked browser asks with its token's hash.
+    for (hash, removed) in [
+        (token_hash(&browser.token), true),
+        (token_hash(&iphone.token), true),
+        (token_hash(&phone.token), false),
+        // Only a removal the server can point to wipes anything.
+        (token_hash("never-issued"), false),
+    ] {
+        let (status, body) = session_status(&app, &hash).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["removed"], removed);
+    }
+    for bad in ["", "not base64!", &BASE64.encode([1u8; 16])] {
+        let (status, _) = session_status(&app, bad).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+}
+
+#[tokio::test]
+async fn a_signed_out_device_is_not_told_to_wipe() {
+    let Some((app, _state)) = test_state().await else {
+        eprintln!("skipping a_signed_out_device_is_not_told_to_wipe: no DATABASE_URL");
+        return;
+    };
+    let phone = register(&app).await;
+    let laptop = login_again(&app, &phone).await;
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/api/v1/auth/password",
+        &laptop.token,
+        Some(json!({
+            "current_password": "correct-horse-battery",
+            "new_password": "another-horse-battery",
+        })),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {body}");
+
+    // Signed out, not removed: a plain 401, and the locked-browser check says keep.
+    let (status, body) = call(&app, "GET", "/api/v1/auth/me", &phone.token, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body["error"]["code"], "UNAUTHORIZED");
+    let (status, body) = session_status(&app, &token_hash(&phone.token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["removed"], false);
+    let (status, body) = call(&app, "GET", "/api/v1/auth/me", "garbage", None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body["error"]["code"], "UNAUTHORIZED");
+
+    // A logout is not a removal either.
+    let (status, _) = call(&app, "POST", "/api/v1/auth/logout", &laptop.token, None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, body) = call(&app, "GET", "/api/v1/auth/me", &laptop.token, None).await;
+    assert_eq!(body["error"]["code"], "UNAUTHORIZED");
+    let (_, body) = session_status(&app, &token_hash(&laptop.token)).await;
+    assert_eq!(body["removed"], false);
+}
+
+#[tokio::test]
+async fn a_removed_device_is_still_told_after_the_session_purge() {
+    let Some((app, state)) = test_state().await else {
+        eprintln!(
+            "skipping a_removed_device_is_still_told_after_the_session_purge: no DATABASE_URL"
+        );
+        return;
+    };
+    let phone = register(&app).await;
+    let removed = login_again(&app, &phone).await;
+    let signed_out = login_again(&app, &phone).await;
+    let (status, _) = call(
+        &app,
+        "DELETE",
+        &format!("/api/v1/devices/{}", removed.device_id),
+        &phone.token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = call(&app, "POST", "/api/v1/auth/logout", &signed_out.token, None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    // Both came back after months offline.
+    sqlx::query(
+        r#"
+        UPDATE sessions SET revoked_at = now() - interval '400 days'
+        WHERE device_id = ANY($1) AND revoked_at IS NOT NULL
+        "#,
+    )
+    .bind(vec![removed.device_id, signed_out.device_id])
+    .execute(&state.pool)
+    .await
+    .unwrap();
+    shroud_server::auth::session::purge_revoked_sessions(&state.pool)
+        .await
+        .expect("purge");
+
+    let kept: i64 = sqlx::query_scalar("SELECT count(*) FROM sessions WHERE device_id = $1")
+        .bind(removed.device_id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+    assert_eq!(kept, 1, "a removed device's session outlives the purge");
+    let (_, body) = call(&app, "GET", "/api/v1/auth/me", &removed.token, None).await;
+    assert_eq!(body["error"]["code"], "DEVICE_REMOVED");
+    let (_, body) = session_status(&app, &token_hash(&removed.token)).await;
+    assert_eq!(body["removed"], true);
+
+    // The signed-out one's session is gone, and an unknown token wipes nothing.
+    let purged: i64 = sqlx::query_scalar("SELECT count(*) FROM sessions WHERE device_id = $1")
+        .bind(signed_out.device_id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+    assert_eq!(purged, 0);
+    let (_, body) = call(&app, "GET", "/api/v1/auth/me", &signed_out.token, None).await;
+    assert_eq!(body["error"]["code"], "UNAUTHORIZED");
+    let (_, body) = session_status(&app, &token_hash(&signed_out.token)).await;
+    assert_eq!(body["removed"], false);
+}
+
+#[tokio::test]
+async fn a_device_without_an_alert_registration_gets_no_wake() {
+    let Some((app, state)) = test_state().await else {
+        eprintln!("skipping a_device_without_an_alert_registration_gets_no_wake: no DATABASE_URL");
+        return;
+    };
+    let phone = register(&app).await;
+    let voip_only = login_again(&app, &phone).await;
+    let bare = login_again(&app, &phone).await;
+    let (status, _) = call(
+        &app,
+        "PUT",
+        "/api/v1/push/token",
+        &voip_only.token,
+        Some(json!({
+            "token": format!("{:064x}", Uuid::new_v4().as_u128()),
+            "environment": "sandbox",
+            "kind": "voip",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    for device in [&voip_only, &bare] {
+        let (status, _) = call(
+            &app,
+            "DELETE",
+            &format!("/api/v1/devices/{}", device.device_id),
+            &phone.token,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        // A PushKit push must report a call, so it cannot carry a wipe; the socket, the next
+        // request and the next launch still do.
+        assert!(pushes_to(&state, device.device_id).is_empty());
+    }
+}
+
+#[tokio::test]
+async fn deleting_the_account_wakes_its_other_devices() {
+    let Some((app, state)) = test_state().await else {
+        eprintln!("skipping deleting_the_account_wakes_its_other_devices: no DATABASE_URL");
+        return;
+    };
+    let phone = register(&app).await;
+    let other = login_again(&app, &phone).await;
+    let browser = login_again(&app, &phone).await;
+    register_apns(&app, &phone, &format!("{:064x}", Uuid::new_v4().as_u128())).await;
+    register_apns(&app, &other, &format!("{:064x}", Uuid::new_v4().as_u128())).await;
+    let endpoint = format!(
+        "https://updates.push.services.mozilla.com/wpush/v2/{}",
+        Uuid::new_v4()
+    );
+    assert_eq!(
+        register_web(&app, &browser, &endpoint).await,
+        StatusCode::NO_CONTENT
+    );
+    // The iPhone signs the others out first: they keep their data and registrations until they
+    // open again, and must still be woken when the account goes.
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/api/v1/auth/password",
+        &phone.token,
+        Some(json!({
+            "current_password": "correct-horse-battery",
+            "new_password": "another-horse-battery",
+        })),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {body}");
+    let (status, body) = call(
+        &app,
+        "DELETE",
+        "/api/v1/auth/account",
+        &phone.token,
+        Some(json!({ "password": "another-horse-battery" })),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {body}");
+    assert_eq!(
+        pushes_to(&state, browser.device_id),
+        vec![(
+            PushChannel::Web,
+            json!({ "v": 1, "kind": "device_removed" })
+        )]
+    );
+    for device in [&other, &browser] {
+        let (_, body) = session_status(&app, &token_hash(&device.token)).await;
+        assert_eq!(body["removed"], true);
+    }
+    assert_eq!(
+        pushes_to(&state, other.device_id),
+        vec![(
+            PushChannel::Apns,
+            json!({ "aps": { "content-available": 1 }, "type": "device_removed" })
+        )]
+    );
+    // The device that deleted it wipes itself already.
+    assert!(pushes_to(&state, phone.device_id).is_empty());
+    let (_, body) = call(&app, "GET", "/api/v1/auth/me", &other.token, None).await;
+    assert_eq!(body["error"]["code"], "DEVICE_REMOVED");
+}

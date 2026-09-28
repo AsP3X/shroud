@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Delete, KeyRound, Lock, LockOpen, ShieldCheck } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
+import { askSessionRemoved, readTokenHash, signalDeviceRemoved } from "../deviceRemoval";
 import { Avatar } from "../components/Avatar";
 import { BrandMark } from "../components/BrandMark";
 import { abandonPin, clearPin, hasPin, pinLength, setPin, unlockWithPin } from "../crypto/vaultAccess";
@@ -17,6 +18,14 @@ const VERIFIED_MS = 300;
 const RELEASE_MS = 340;
 
 type Choreography = "idle" | "verified" | "releasing";
+
+/** Asked before the session is dropped: a removed browser is wiped, not sent to sign in. */
+async function removedFromAccount(): Promise<boolean> {
+  const hash = readTokenHash();
+  if (!hash || (await askSessionRemoved(hash)) !== true) return false;
+  signalDeviceRemoved();
+  return true;
+}
 
 export function Unlock() {
   const navigate = useNavigate();
@@ -135,6 +144,9 @@ export function Unlock() {
             return;
           }
           if (result.kind === "gone") {
+            // Removing this browser deletes the PIN guard too: that is a wipe, not a PIN
+            // problem, and the session must stay for the wipe to name it.
+            if (await removedFromAccount()) return;
             // Too many wrong PINs: the server deleted its half of the key. The token is sealed
             // in the vault too, so the way back is a full sign-in and the phrase.
             const username = session?.user.username;
@@ -195,6 +207,7 @@ export function Unlock() {
     inflight.current = true;
     setBusy(true);
     setError(null);
+    if (await removedFromAccount()) return;
     try {
       await abandonPin(session.user.id);
     } catch {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeft } from "lucide-react";
 import { api, ApiError, type Session } from "../api/client";
+import type { WipeReason } from "./DeviceWipeDialog";
 import type { IdentityMaterial } from "../crypto/identity";
 import { LogoutDialog } from "./LogoutDialog";
 import { DevicesView } from "./settings/DevicesView";
@@ -29,7 +30,7 @@ export function SettingsPane({
   /** Confirmed "Log Out": the shell clears this browser. */
   onLogout: () => void;
   /** The server no longer accepts the session: the same clearing, without asking. */
-  onSessionEnded: () => void;
+  onSessionEnded: (reason?: WipeReason) => void;
   onLockNow: () => void;
   onShowQr: () => void;
   onCacheCleared: () => void;
@@ -43,7 +44,11 @@ export function SettingsPane({
   const [deviceCount, setDeviceCount] = useState<number | null>(null);
   const [confirmLogout, setConfirmLogout] = useState(false);
 
-  const forceLogout = useCallback(() => onSessionEnded(), [onSessionEnded]);
+  const forceLogout = useCallback(
+    (err?: unknown) =>
+      onSessionEnded(err instanceof ApiError && err.isDeviceRemoved ? "removed" : "ended"),
+    [onSessionEnded],
+  );
   const forceLogoutRef = useRef(forceLogout);
   forceLogoutRef.current = forceLogout;
 
@@ -57,7 +62,7 @@ export function SettingsPane({
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        if (err instanceof ApiError && err.isAuthFailure) forceLogoutRef.current();
+        if (err instanceof ApiError && err.isAuthFailure) forceLogoutRef.current(err);
       });
     return () => {
       cancelled = true;

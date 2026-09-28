@@ -283,7 +283,7 @@ nonisolated final class APIClient: Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw APIError.transport("Invalid response")
         }
-        noteAuthOutcome(status: http.statusCode, bearerToken: bearerToken)
+        noteAuthOutcome(status: http.statusCode, data: data, bearerToken: bearerToken)
         try Self.throwIfNeeded(data: data, status: http.statusCode)
     }
 
@@ -308,7 +308,7 @@ nonisolated final class APIClient: Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw APIError.transport("Invalid response")
         }
-        noteAuthOutcome(status: http.statusCode, bearerToken: bearerToken)
+        noteAuthOutcome(status: http.statusCode, data: data, bearerToken: bearerToken)
         try Self.throwIfNeeded(data: data, status: http.statusCode)
         return data
     }
@@ -327,12 +327,17 @@ nonisolated final class APIClient: Sendable {
 
     /// Session policy: only authenticated requests contribute to the 401 streak.
     /// Login/register (no Bearer) must not force-logout an existing local session.
-    private func noteAuthOutcome(status: Int, bearerToken: String?) {
+    /// `DEVICE_REMOVED` is final on the first answer: the account removed this iPhone.
+    private func noteAuthOutcome(status: Int, data: Data, bearerToken: String?) {
         guard bearerToken.map({ !$0.isEmpty }) == true else { return }
         if (200 ..< 300).contains(status) {
             SessionAuthBridge.noteAuthenticationSuccess()
         } else if status == 401 {
-            SessionAuthBridge.noteAuthenticationFailure()
+            if let bearerToken, APIError.from(data: data, statusCode: status).isDeviceRemoval {
+                SessionAuthBridge.noteDeviceRemoved(token: bearerToken)
+            } else {
+                SessionAuthBridge.noteAuthenticationFailure()
+            }
         }
     }
 
@@ -370,7 +375,7 @@ nonisolated final class APIClient: Sendable {
             throw APIError.transport("Invalid response")
         }
 
-        noteAuthOutcome(status: http.statusCode, bearerToken: bearerToken)
+        noteAuthOutcome(status: http.statusCode, data: data, bearerToken: bearerToken)
 
         return (data, http)
     }

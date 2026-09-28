@@ -43,6 +43,7 @@ const PEER = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
 function signedIn(): Record<string, string> {
   return {
     "shroud.session": "{}",
+    "shroud.token-hash": "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=",
     "shroud.last-active": "1",
     "shroud.device-anchor": "{}",
     [`shroud.identity.${ME}`]: "secret",
@@ -69,6 +70,8 @@ check(
   "key material",
 );
 check(!isKeyMaterialKey("shroud.session") && !isKeyMaterialKey("shroud.device-anchor"), "not key material");
+// The lock screen's removal check reads it in the clear; the wipe removes it with the keys.
+check(isKeyMaterialKey("shroud.token-hash"), "the token hash goes with the keys");
 
 /* --- removal ------------------------------------------------------------- */
 
@@ -77,7 +80,7 @@ check(!isKeyMaterialKey("shroud.session") && !isKeyMaterialKey("shroud.device-an
   // Removing while iterating reindexes a real Storage; the helper must read all keys first.
   check(removeKeys(store, isMessageKey) === 2, "removeKeys counts what it removed");
   check(storageKeys(store).every((key) => !isMessageKey(key)), "message keys gone");
-  check(removeKeys(store, () => true) === 11, "everything else");
+  check(removeKeys(store, () => true) === 12, "everything else");
   check(store.length === 0, "store empty");
 }
 
@@ -108,6 +111,10 @@ check(
   hasOrphanedAccountData(new FakeStorage({ "transcription.languageStats": "{}" })),
   "language statistics come from the account's voice notes",
 );
+check(
+  hasOrphanedAccountData(new FakeStorage({ "shroud.token-hash": "x" })),
+  "a token hash without its session is left over from one",
+);
 
 /* --- what verify reports ------------------------------------------------- */
 
@@ -116,6 +123,10 @@ check(
   describeStoredLeftovers(new FakeStorage({ "shroud.device-anchor": "{}" })).length === 1,
   "the device anchor is a leftover",
 );
+{
+  const found = describeStoredLeftovers(new FakeStorage({ "shroud.token-hash": "x" }));
+  check(found.length === 1 && found[0].step === "keys", "verify reports a token hash against the keys step");
+}
 {
   const store = new FakeStorage({
     "shroud.device-anchor": "{\"deviceId\":\"x\"}",

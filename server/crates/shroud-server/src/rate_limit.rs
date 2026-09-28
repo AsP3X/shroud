@@ -50,6 +50,9 @@ pub mod budgets {
     /// PIN-guard unlocks per client IP. The guard's own counter is the real limit; this keeps
     /// one address from probing many guards.
     pub const PIN_GUARD_IP: (u64, Duration) = (20, Duration::from_secs(60));
+    /// Locked clients asking whether their device was removed (`POST /auth/session-status`):
+    /// each open tab asks about twice a minute.
+    pub const SESSION_STATUS_IP: (u64, Duration) = (60, Duration::from_secs(60));
     /// PIN changes per account.
     pub const PIN_GUARD_USER: (u64, Duration) = (10, Duration::from_secs(3600));
     /// Device renames per account: each unlock re-seals at most one name, renames are by hand.

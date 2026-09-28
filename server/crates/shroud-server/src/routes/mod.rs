@@ -43,6 +43,7 @@ pub fn router() -> Router<AppState> {
             .route("/auth/login", post(auth::login))
             .route("/auth/logout", post(auth::logout))
             .route("/auth/me", get(auth::me))
+            .route("/auth/session-status", post(auth::session_status))
             .route("/auth/password", post(auth::change_password))
             .route("/auth/account", delete(auth::delete_account))
             .route(

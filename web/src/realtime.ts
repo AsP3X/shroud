@@ -13,6 +13,13 @@ export function sessionEndedByAuthError(raw: Record<string, unknown>): boolean {
   return code !== "RATE_LIMITED";
 }
 
+/** `auth.error` because this device was removed from the account: the browser is wiped. */
+export function deviceRemovedByAuthError(raw: Record<string, unknown>): boolean {
+  const error = raw.error;
+  if (!error || typeof error !== "object") return false;
+  return (error as { code?: unknown }).code === "DEVICE_REMOVED";
+}
+
 /** The user is looking at this tab. A background tab does not count: its timers stall. */
 export function pageInForeground(): boolean {
   return (
@@ -41,7 +48,8 @@ export type Realtime = {
 export function connectRealtime(opts: {
   token: string;
   onEvent: (event: RealtimeEvent) => void;
-  onFatalAuth?: () => void;
+  /** The session is over; `deviceRemoved` when the server says this device was removed. */
+  onFatalAuth?: (deviceRemoved: boolean) => void;
   /** Keep the socket while the tab is hidden (a call still needs its signaling). */
   keepWhenHidden?: () => boolean;
 }): Realtime {
@@ -119,7 +127,7 @@ export function connectRealtime(opts: {
         if (!sessionEndedByAuthError(raw)) return;
         closed = true;
         ws.close();
-        opts.onFatalAuth?.();
+        opts.onFatalAuth?.(deviceRemovedByAuthError(raw));
         return;
       }
       if (type) opts.onEvent({ type, raw });

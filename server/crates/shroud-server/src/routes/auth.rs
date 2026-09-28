@@ -367,6 +367,46 @@ pub async fn logout(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SessionStatusRequest {
+    /// Standard Base64 of SHA-256 over the session token (what the server stores).
+    pub token_hash: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SessionStatusResponse {
+    /// The client should wipe the account's data: its device was removed or its account
+    /// deleted. Unknown and merely signed-out sessions answer false.
+    pub removed: bool,
+}
+
+/// `POST /auth/session-status` — may a locked client keep its data?
+///
+/// Human: A locked browser keeps its session token sealed in its vault, so it cannot ask an
+/// authenticated endpoint whether it still belongs to the account. It keeps the token's hash
+/// readable instead: the hash is what the server stores, and presenting it authenticates
+/// nothing. A removed browser learns it here while still on its lock screen and wipes itself.
+/// The answer says nothing about the account, only about the session the hash belongs to.
+/// Agent: UNAUTHENTICATED; RATE LIMITED per IP (`SESSION_STATUS_IP`); CALLS token_hash_removed.
+pub async fn session_status(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<SessionStatusRequest>,
+) -> Result<Json<SessionStatusResponse>, AppError> {
+    let ip = state.client_ip(&headers);
+    state
+        .rate_limiter
+        .check_budget("session_status_ip", &ip, budgets::SESSION_STATUS_IP)
+        .await?;
+    let token_hash = BASE64
+        .decode(body.token_hash.trim().as_bytes())
+        .ok()
+        .filter(|bytes| bytes.len() == 32)
+        .ok_or_else(|| AppError::validation("token_hash must be a Base64 SHA-256 digest."))?;
+    let removed = crate::auth::session::token_hash_removed(&state.pool, &token_hash).await?;
+    Ok(Json(SessionStatusResponse { removed }))
+}
+
 /// `GET /auth/me` — current user + device.
 pub async fn me(auth: AuthContext) -> Result<Json<MeResponse>, AppError> {
     Ok(Json(MeResponse {
@@ -422,8 +462,9 @@ pub async fn delete_account(
     .await
     .map_err(|err| AppError::Internal(format!("load user for delete failed: {err}")))?
     .flatten();
+    // Another device deleted the account a moment ago: this one is removed with it.
     let Some(password_hash) = password_hash else {
-        return Err(AppError::unauthorized());
+        return Err(AppError::device_removed());
     };
 
     if !verify_password(&body.password, &password_hash)? {
@@ -447,7 +488,7 @@ pub async fn delete_account(
     .await
     .map_err(|err| AppError::Internal(format!("lock user for delete failed: {err}")))?;
     if live.is_none() {
-        return Err(AppError::unauthorized());
+        return Err(AppError::device_removed());
     }
 
     // Devices first: `send_message` holds its device row while it inserts, so a send racing
@@ -460,9 +501,16 @@ pub async fn delete_account(
     .await
     .map_err(|err| AppError::Internal(format!("list devices for delete failed: {err}")))?;
     let mut revoked_sessions: Vec<Uuid> = Vec::new();
+    let mut wakes = Vec::new();
     for device_id in &device_ids {
-        revoked_sessions.extend(crate::routes::devices::revoke_device(&mut tx, *device_id).await?);
+        let revoked = crate::routes::devices::revoke_device(&mut tx, *device_id).await?;
+        revoked_sessions.extend(revoked.sessions);
+        // The device that asked wipes itself already.
+        if *device_id != auth.device_id {
+            wakes.extend(revoked.wake);
+        }
     }
+    // Rows revoked earlier kept their names before removals cleared them.
     sqlx::query(r#"UPDATE devices SET sealed_name = NULL WHERE user_id = $1"#)
         .bind(user_id)
         .execute(&mut *tx)
@@ -548,11 +596,13 @@ pub async fn delete_account(
         .await
         .map_err(|err| AppError::Internal(format!("commit account delete failed: {err}")))?;
 
-    // Every device of the account is signed out, so none keeps listening on an open socket.
+    // Every device of the account is signed out, so none keeps listening on an open socket,
+    // and the others wipe the account's data now (DEVICE_REMOVED, or the wake push).
     state
         .realtime
         .close_sessions(user_id, &revoked_sessions)
         .await;
+    state.push.wake_removed_devices(wakes).await;
 
     // The account is gone either way; blobs a failed purge leaves are unlinked, so the orphan
     // GC takes them.

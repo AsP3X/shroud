@@ -17,6 +17,9 @@ import { sealStorage, storageSealed } from "./storageSeal";
  *
  * A wipe that is interrupted (tab closed, crash) is finished on the next page load: a marker is
  * written as it starts and removed only once the verify step passes.
+ *
+ * The same wipe runs when the server ends the session, and when this browser is removed from
+ * the account's Devices list elsewhere (`deviceRemoval.ts`) — locked or not, open or closed.
  */
 
 export type WipeStepId = "session" | "messages" | "media" | "keys" | "settings" | "verify";
@@ -47,7 +50,16 @@ export type WipeInventory = { messages: number; media: number; keys: number; set
 
 const PENDING_KEY = "shroud.wipe-pending";
 const MESSAGE_PREFIXES = ["shroud.pt.", "shroud.preview."];
-const KEY_PREFIXES = ["shroud.identity.", "shroud.ratchet.", "shroud.boxauth.", "shroud.vault.", "shroud.token.", "shroud.pin."];
+const KEY_PREFIXES = [
+  "shroud.identity.",
+  "shroud.ratchet.",
+  "shroud.boxauth.",
+  "shroud.vault.",
+  "shroud.token.",
+  // The token's hash the lock screen asks `session-status` with (`deviceRemoval.ts`).
+  "shroud.token-hash",
+  "shroud.pin.",
+];
 /** Left behind by a session: on their own they say someone used this browser. */
 const ACCOUNT_PREFIXES = [
   ...MESSAGE_PREFIXES,
@@ -56,6 +68,7 @@ const ACCOUNT_PREFIXES = [
   "transcription.languageStats",
 ];
 const SESSION_KEY = "shroud.session";
+const TOKEN_HASH_KEY = "shroud.token-hash";
 
 /** The wipe marker: removed last, once `verify` finds nothing else. */
 export function isPreservedStorageKey(key: string): boolean {
@@ -269,7 +282,11 @@ export async function beginWipe(): Promise<WipeInventory> {
   closeVault();
   removeKeys(
     localStorage,
-    (key) => key === SESSION_KEY || key === "shroud.last-active" || key.startsWith("shroud.token."),
+    (key) =>
+      key === SESSION_KEY ||
+      key === TOKEN_HASH_KEY ||
+      key === "shroud.last-active" ||
+      key.startsWith("shroud.token."),
   );
   try {
     sessionStorage.clear();

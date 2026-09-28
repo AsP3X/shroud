@@ -120,6 +120,7 @@ struct RootView: View {
             SecurityPreferences.removeRetiredKeys()
             // Wire before any network call so 401s during validateSession count toward force-logout.
             SessionAuthBridge.controller = sessionController
+            SessionAuthBridge.deviceWipe = deviceWipe
             router.sessionController = sessionController
             router.cryptoController = cryptoController
             router.messagingController = messagingController
@@ -202,7 +203,7 @@ struct RootView: View {
         .onChange(of: router.isUnlocked) { _, unlocked in
             notifications.isUnlocked = unlocked
             if !unlocked { notifications.dismissBanner() }
-            if unlocked {
+            if unlocked, !deviceWipe.isPresented {
                 // Drop any leftover onboarding path before the main shell appears.
                 router.path = []
                 messagingController.start()
@@ -251,7 +252,9 @@ struct RootView: View {
             case .active:
                 lockIfAutoLockDue()
                 Task { await notifications.refreshAuthorization() }
-                guard sessionController.isSignedIn else { return }
+                // A wipe (one a removal's push started in the background) owns the stores:
+                // nothing may reconnect or refill them under it.
+                guard sessionController.isSignedIn, !deviceWipe.isPresented else { return }
                 // Face ID is opt-in via the lock screen's unlock button — never auto-prompt here
                 // (auto-prompt raced with Welcome and left the system sheet stuck).
                 if !cryptoController.isUnlocked {

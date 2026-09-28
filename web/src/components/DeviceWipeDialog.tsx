@@ -11,8 +11,17 @@ import {
   type WipeStepId,
 } from "../deviceWipe";
 
-/** Why the browser is being cleared: the user logged out, or the server ended the session. */
-export type WipeReason = "logout" | "ended";
+/**
+ * Why the browser is being cleared: the user logged out, the server ended the session, or this
+ * browser was removed from the account's Devices list on another device.
+ */
+export type WipeReason = "logout" | "ended" | "removed";
+
+const LEAD: Record<WipeReason, string> = {
+  logout: "",
+  ended: "Your session ended. ",
+  removed: "This browser was removed from your account. ",
+};
 
 type RowState = "pending" | "active" | "done" | "failed";
 
@@ -110,7 +119,8 @@ export function DeviceWipeDialog({
   const finish = useRef(onFinished);
   finish.current = onFinished;
   // A forced sign-out still has the token in memory. Logout revokes it and drops the push
-  // token; a 401 from that call means the server had already ended it.
+  // token; a 401 from that call means the server had already ended it. A locked page has no
+  // token to send (it is sealed): there is nothing left to end, and the step says so.
   const token = session.token;
 
   async function runStep(step: WipeStepId, reduce: boolean): Promise<StepResult> {
@@ -225,7 +235,7 @@ export function DeviceWipeDialog({
     ? `Still here: ${labelsOf(leftovers)}. Try again — if it keeps failing, clear this site’s data in your browser settings.`
     : done
       ? `Nothing from ${handle} is left on this device.`
-      : `${reason === "ended" ? "Your session ended. " : ""}Removing everything Shroud stored for ${handle}.`;
+      : `${LEAD[reason]}Removing everything Shroud stored for ${handle}.`;
 
   return (
     <div className={continued ? "modal-scrim wipe-scrim continued" : "modal-scrim wipe-scrim"}>

@@ -10,7 +10,8 @@ use crate::auth::hash_token;
 use crate::error::AppError;
 use crate::state::AppState;
 
-/// Keep revoked session rows this long for audit / debugging, then hard-delete.
+/// Keep revoked session rows this long for audit / debugging, then hard-delete (a removed
+/// device's are kept: see [`purge_revoked_sessions`]).
 pub const REVOKED_SESSION_RETENTION_DAYS: i64 = 30;
 /// How often the background purge task runs.
 const SESSION_PURGE_INTERVAL_SECS: u64 = 60 * 60;
@@ -83,8 +84,10 @@ impl FromRequestParts<AppState> for AuthContext {
         .bind(token_hash.as_slice())
         .fetch_optional(&state.pool)
         .await
-        .map_err(|err| AppError::Internal(format!("session lookup failed: {err}")))?
-        .ok_or_else(AppError::unauthorized)?;
+        .map_err(|err| AppError::Internal(format!("session lookup failed: {err}")))?;
+        let Some(row) = row else {
+            return Err(rejection_for(&state.pool, &token_hash).await);
+        };
 
         // Human: Touch at most every few minutes so hot auth paths are not two UPDATEs each request.
         // Agent: UPDATE sessions/devices only when last_* older than SESSION_TOUCH_THROTTLE_SECS.
@@ -141,14 +144,15 @@ pub struct AuthIds {
 /// Human: WebSockets authenticate with their first frame instead of a header, so the token
 /// never lands in a URL, a proxy log, or browser history. `/ws` and the link-preview relay
 /// share this lookup.
-/// Agent: DB SELECT by token_hash WHERE revoked_at IS NULL; RETURNS [`AuthIds`] or
-/// `AppError::unauthorized` for an empty, unknown, or revoked token.
+/// Agent: DB SELECT by token_hash WHERE revoked_at IS NULL; RETURNS [`AuthIds`],
+/// `AppError::device_removed` for a removed device's token, or `AppError::unauthorized` for an
+/// empty, unknown, or otherwise revoked token.
 pub async fn ids_for_token(pool: &sqlx::PgPool, token: &str) -> Result<AuthIds, AppError> {
     if token.is_empty() {
         return Err(AppError::unauthorized());
     }
     let token_hash = hash_token(token);
-    sqlx::query_as::<_, AuthIds>(
+    let ids = sqlx::query_as::<_, AuthIds>(
         r#"
         SELECT u.id AS user_id, d.id AS device_id, s.id AS session_id
         FROM sessions s
@@ -161,18 +165,53 @@ pub async fn ids_for_token(pool: &sqlx::PgPool, token: &str) -> Result<AuthIds, 
     .bind(token_hash.as_slice())
     .fetch_optional(pool)
     .await
-    .map_err(|err| AppError::Internal(format!("ws auth lookup failed: {err}")))?
-    .ok_or_else(AppError::unauthorized)
+    .map_err(|err| AppError::Internal(format!("ws auth lookup failed: {err}")))?;
+    match ids {
+        Some(ids) => Ok(ids),
+        None => Err(rejection_for(pool, &token_hash).await),
+    }
 }
 
-/// True while a session may keep its WebSocket open: not revoked, its device not removed, its
-/// account not deleted.
+/// Why a token that no longer authenticates was turned away: [`AppError::device_removed`] when
+/// its session belongs to a device the account removed (or an account that was deleted),
+/// otherwise a plain 401.
 ///
-/// Human: A socket authenticates once, so `/ws` re-checks on its heartbeat. A revocation the
-/// socket's replica never heard about (its Redis subscriber was reconnecting) still closes
-/// the socket within one tick.
-/// Agent: DB SELECT EXISTS by session id with the same filters as [`ids_for_token`].
-pub async fn session_is_live(pool: &sqlx::PgPool, session_id: Uuid) -> Result<bool, AppError> {
+/// Human: A removed device must wipe the account's data at once. A plain 401 cannot tell it
+/// so: clients wait for several before signing out, so a server hiccup never costs anyone
+/// their local history. A removed device's sessions are never purged
+/// ([`purge_revoked_sessions`]), so the answer holds however long the device was offline.
+/// Agent: DB SELECT EXISTS sessions ⋈ devices ⋈ users WHERE token_hash AND (device revoked OR
+/// user deleted); only on the rejection path. A lookup error falls back to the plain 401.
+async fn rejection_for(pool: &sqlx::PgPool, token_hash: &[u8]) -> AppError {
+    let removed: Result<bool, _> = sqlx::query_scalar(
+        r#"
+        SELECT EXISTS (
+            SELECT 1
+            FROM sessions s
+            INNER JOIN devices d ON d.id = s.device_id
+            INNER JOIN users u ON u.id = d.user_id
+            WHERE s.token_hash = $1 AND (d.revoked_at IS NOT NULL OR u.deleted_at IS NOT NULL)
+        )
+        "#,
+    )
+    .bind(token_hash)
+    .fetch_one(pool)
+    .await;
+    if matches!(removed, Ok(true)) {
+        AppError::device_removed()
+    } else {
+        AppError::unauthorized()
+    }
+}
+
+/// Whether a signed-out client's data should go: the session with this token hash belongs to
+/// a removed device or a deleted account. A session a password change or a logout signed out
+/// answers false (that device only has to log in again), and so does a hash the server does not
+/// know: only a removal the server can point to wipes anything.
+///
+/// Agent: DB SELECT EXISTS sessions ⋈ devices ⋈ users WHERE token_hash AND (device revoked OR
+/// user deleted).
+pub async fn token_hash_removed(pool: &sqlx::PgPool, token_hash: &[u8]) -> Result<bool, AppError> {
     sqlx::query_scalar(
         r#"
         SELECT EXISTS (
@@ -180,27 +219,75 @@ pub async fn session_is_live(pool: &sqlx::PgPool, session_id: Uuid) -> Result<bo
             FROM sessions s
             INNER JOIN devices d ON d.id = s.device_id
             INNER JOIN users u ON u.id = d.user_id
-            WHERE s.id = $1 AND s.revoked_at IS NULL AND d.revoked_at IS NULL
-              AND u.deleted_at IS NULL
+            WHERE s.token_hash = $1 AND (d.revoked_at IS NOT NULL OR u.deleted_at IS NOT NULL)
         )
         "#,
     )
-    .bind(session_id)
+    .bind(token_hash)
     .fetch_one(pool)
     .await
-    .map_err(|err| AppError::Internal(format!("session check failed: {err}")))
+    .map_err(|err| AppError::Internal(format!("session status failed: {err}")))
+}
+
+/// Where a WebSocket's session stands (see [`session_state`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionState {
+    /// Not revoked, its device not removed, its account not deleted.
+    Live,
+    /// Signed out (logout, a password change, a newer login): the device only logs in again.
+    SignedOut,
+    /// Its device was removed or its account deleted: the device wipes itself.
+    Removed,
+}
+
+/// Whether a session may keep its WebSocket open, and if not, why.
+///
+/// Human: A socket authenticates once, so `/ws` re-checks on its heartbeat. A revocation the
+/// socket's replica never heard about (its Redis subscriber was reconnecting) still closes
+/// the socket within one tick, and the close frame says whether the device was removed.
+/// Agent: DB one SELECT by session id over sessions ⋈ devices ⋈ users; a missing row counts
+/// as signed out.
+pub async fn session_state(
+    pool: &sqlx::PgPool,
+    session_id: Uuid,
+) -> Result<SessionState, AppError> {
+    let row: Option<(bool, bool)> = sqlx::query_as(
+        r#"
+        SELECT
+            d.revoked_at IS NOT NULL OR u.deleted_at IS NOT NULL AS removed,
+            s.revoked_at IS NULL AS live
+        FROM sessions s
+        INNER JOIN devices d ON d.id = s.device_id
+        INNER JOIN users u ON u.id = d.user_id
+        WHERE s.id = $1
+        "#,
+    )
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("session check failed: {err}")))?;
+    Ok(match row {
+        Some((true, _)) => SessionState::Removed,
+        Some((false, true)) => SessionState::Live,
+        _ => SessionState::SignedOut,
+    })
 }
 
 /// Hard-delete revoked sessions older than [`REVOKED_SESSION_RETENTION_DAYS`].
 ///
-/// Human: Live sessions (`revoked_at IS NULL`) are never removed by this job.
-/// Agent: DELETE FROM sessions WHERE revoked_at < now() - 30 days.
+/// Human: Live sessions (`revoked_at IS NULL`) are never removed by this job, and neither are
+/// the sessions of removed devices: a device that comes back online after months must still be
+/// told `DEVICE_REMOVED` so it wipes itself, and its row is only the hash of a dead token.
+/// Agent: DELETE FROM sessions WHERE revoked_at < now() - 30 days AND device not revoked.
 pub async fn purge_revoked_sessions(pool: &sqlx::PgPool) -> Result<u64, AppError> {
     let result = sqlx::query(
         r#"
-        DELETE FROM sessions
-        WHERE revoked_at IS NOT NULL
-          AND revoked_at < now() - ($1::text || ' days')::interval
+        DELETE FROM sessions s
+        WHERE s.revoked_at IS NOT NULL
+          AND s.revoked_at < now() - ($1::text || ' days')::interval
+          AND NOT EXISTS (
+              SELECT 1 FROM devices d WHERE d.id = s.device_id AND d.revoked_at IS NOT NULL
+          )
         "#,
     )
     .bind(REVOKED_SESSION_RETENTION_DAYS.to_string())

@@ -18,6 +18,10 @@ export class ApiError extends Error {
   get isAuthFailure(): boolean {
     return this.status === 401;
   }
+  /** A 401 because this device was removed from the account's Devices list: wipe, don't just sign out. */
+  get isDeviceRemoved(): boolean {
+    return this.status === 401 && this.code === "DEVICE_REMOVED";
+  }
 }
 
 export type Session = {
@@ -342,6 +346,16 @@ export const api = {
     }),
   me: (token: string) => request<{ user: Session["user"]; device: Session["device"] }>("/auth/me", { token }),
   logout: (token: string) => request<void>("/auth/logout", { method: "POST", token }),
+  /**
+   * No session: a locked page cannot read its token, only the token's SHA-256 (see
+   * `deviceRemoval.ts`). `removed` is true only when the session with that hash belongs to a
+   * removed device or a deleted account.
+   */
+  sessionStatus: (tokenHash: string) =>
+    request<{ removed: boolean }>("/auth/session-status", {
+      method: "POST",
+      body: JSON.stringify({ token_hash: tokenHash }),
+    }),
   /** New PIN: the server keeps the pepper and the auth-key verifier (see crypto/vault.ts). */
   createPinGuard: (token: string, verifier: string) =>
     request<{ guard_id: string; pepper: string; max_attempts: number }>("/pin-guard", {

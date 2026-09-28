@@ -12,7 +12,7 @@ use serde_json::json;
 use tokio::time::timeout;
 use uuid::Uuid;
 
-use crate::auth::session::{AuthIds, ids_for_token, session_is_live};
+use crate::auth::session::{AuthIds, SessionState, ids_for_token, session_state};
 use crate::error::AppError;
 use crate::rate_limit::budgets;
 use crate::realtime::Subscription;
@@ -84,14 +84,19 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         Ok(Ok(ids)) => ids,
         Ok(Err(err)) => {
             tracing::warn!(error = %err, "ws.auth failed");
+            // A removed device is told so, and wipes itself; anything else stays a plain
+            // UNAUTHORIZED, as clients have always seen it.
+            let removed = AppError::device_removed();
+            let error = if err.code() == removed.code() {
+                removed.body().error
+            } else {
+                AppError::unauthorized().body().error
+            };
             let _ = sink
                 .send(Message::Text(
-                    json!({
-                        "type": "auth.error",
-                        "error": { "code": "UNAUTHORIZED", "message": "Authentication required." }
-                    })
-                    .to_string()
-                    .into(),
+                    json!({ "type": "auth.error", "error": error })
+                        .to_string()
+                        .into(),
                 ))
                 .await;
             let _ = sink.close().await;
@@ -175,7 +180,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     // re-check the session: a revocation this replica never heard about still closes it. The
     // first tick fires at once, because a revocation that committed between the token lookup
     // and subscribe found no socket to close.
-    // Agent: CALLS session_is_live + refresh_online now, then every 30s; TTL is ONLINE_TTL_SECS.
+    // Agent: CALLS session_state + refresh_online now, then every 30s; TTL is ONLINE_TTL_SECS.
     let mut online_heartbeat = tokio::time::interval(Duration::from_secs(30));
     online_heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     // Human: A phone the OS suspended keeps its TCP connection open for a long time, and the
@@ -187,7 +192,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     let idle = tokio::time::sleep(IDLE_TIMEOUT);
     tokio::pin!(idle);
 
-    let mut revoked = false;
+    // Set when the session ended while the socket was open: signed out, or removed.
+    let mut ended: Option<SessionState> = None;
     loop {
         tokio::select! {
             outbound = rx.recv() => {
@@ -201,17 +207,19 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     // The hub let go of this socket: its session was revoked, or the device
                     // opened a newer socket.
                     None => {
-                        let live = session_is_live(&state.pool, session_id).await;
-                        revoked = matches!(live, Ok(false));
+                        ended = session_state(&state.pool, session_id)
+                            .await
+                            .ok()
+                            .filter(|state| *state != SessionState::Live);
                         break;
                     }
                 }
             }
             _ = online_heartbeat.tick() => {
-                match session_is_live(&state.pool, session_id).await {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        revoked = true;
+                match session_state(&state.pool, session_id).await {
+                    Ok(SessionState::Live) => {}
+                    Ok(over) => {
+                        ended = Some(over);
                         break;
                     }
                     Err(err) => tracing::warn!(error = %err, %device_id, "ws.session check failed"),
@@ -250,22 +258,21 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         }
     }
 
-    if revoked {
-        tracing::info!(%user_id, %device_id, "ws.session_revoked");
+    if let Some(over) = ended {
+        tracing::info!(%user_id, %device_id, ?over, "ws.session_revoked");
         // Clients take auth.error as final: they stop reconnecting with the dead token, and
-        // the web client signs out.
+        // the web client signs out. DEVICE_REMOVED also makes the iPhone wipe itself now.
+        let error = if over == SessionState::Removed {
+            json!(AppError::device_removed().body().error)
+        } else {
+            json!({ "code": "UNAUTHORIZED", "message": "This session was signed out." })
+        };
         let _ = timeout(REVOKED_CLOSE_TIMEOUT, async {
             let _ = sink
                 .send(Message::Text(
-                    json!({
-                        "type": "auth.error",
-                        "error": {
-                            "code": "UNAUTHORIZED",
-                            "message": "This session was signed out."
-                        }
-                    })
-                    .to_string()
-                    .into(),
+                    json!({ "type": "auth.error", "error": error })
+                        .to_string()
+                        .into(),
                 ))
                 .await;
             let _ = sink.close().await;

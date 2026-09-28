@@ -143,6 +143,14 @@ final class DeviceWipeController {
                 await wipe.wipeEverything()
                 found = await wipe.leftovers()
             }
+            if !found.isEmpty, !UIApplication.shared.isProtectedDataAvailable {
+                // A locked iPhone (a removal's push wakes it in a pocket): the files are gone,
+                // but Keychain items that open only while unlocked can be neither deleted nor
+                // counted yet. Finish at unlock instead of reporting a failure.
+                await Self.waitForProtectedData()
+                await wipe.wipeEverything()
+                found = await wipe.leftovers()
+            }
             await pace(since: started, step: step, reduce: reduce)
             guard found.isEmpty else {
                 fail(found)
@@ -194,6 +202,8 @@ final class DeviceWipeController {
 
     /// The app forgets the session only now, behind the overlay, so Welcome is what it reveals.
     private func endLocalSession() async {
+        // A 401 the wipe's own logout got may have asked for another wipe; this one covers it.
+        _ = session?.consumePendingFullLocalWipe()
         await session?.logout()
         crypto?.lock(wipeStore: true)
         messaging?.stop(wipeDisk: true)
@@ -210,6 +220,14 @@ final class DeviceWipeController {
         if phase == .failed { await endLocalSession() }
         withAnimation(reduce ? Motion.reduced : Motion.gentle) { phase = .idle }
         active = nil
+    }
+
+    /// Returns once the device is unlocked (data protection lifted). A suspended app resumes the
+    /// wait when it next runs.
+    private static func waitForProtectedData() async {
+        while !UIApplication.shared.isProtectedDataAvailable {
+            try? await Task.sleep(for: .seconds(1))
+        }
     }
 
     private func pace(since started: ContinuousClock.Instant, step: Step, reduce: Bool) async {
@@ -265,6 +283,7 @@ final class DeviceWipeController {
         guard pending || signedOut else { return false }
         // Killed before the server heard about it: the token is still in memory, so try again.
         if pending, let token = session?.bearerToken {
+            session?.beginInterruptedWipe()
             _ = await endServerSession(token: token)
         }
         await wipe.wipeEverything()

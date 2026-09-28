@@ -33,8 +33,8 @@ const DEVICE_LIMIT = 5;
  */
 function revokeConsequences(plural: boolean): string {
   return plural
-    ? "They are signed out right away and stop receiving messages. Messages and files already sent from them stay in your chats. Signing in there again takes your password and 12-word phrase."
-    : "It is signed out right away and stops receiving messages. Messages and files already sent from it stay in your chats. Signing in there again takes your password and 12-word phrase.";
+    ? "They are signed out right away and erase everything of your account on them: messages, keys and files, as soon as they are online or next opened. What they already sent stays in your chats. Signing in there again takes your password and 12-word phrase."
+    : "It is signed out right away and erases everything of your account on it: messages, keys and files, as soon as it is online or next opened. What it already sent stays in your chats. Signing in there again takes your password and 12-word phrase.";
 }
 
 type IconProps = { size?: number };
@@ -109,7 +109,8 @@ export function DevicesView({
   onCount,
 }: {
   session: Session;
-  onUnauthorized: () => void;
+  /** `err` tells a removed device (`DEVICE_REMOVED`) from a session that merely ended. */
+  onUnauthorized: (err?: unknown) => void;
   onCount?: (count: number) => void;
 }) {
   const [devices, setDevices] = useState<Device[] | null>(null);
@@ -141,7 +142,7 @@ export function DevicesView({
   const authFailed = useCallback(
     (err: unknown) => {
       if (err instanceof ApiError && err.isAuthFailure) {
-        onUnauthorized();
+        onUnauthorized(err);
         return true;
       }
       return false;

@@ -309,6 +309,12 @@ final class RealtimeClient {
             // Bad token — do not hammer reconnect with same token.
             intentionalDisconnect = true
             disconnect(reconnect: false)
+            // The account removed this iPhone while the socket was open: wipe it now.
+            if let error = json["error"] as? [String: Any],
+               error["code"] as? String == APIError.deviceRemovedCode,
+               let token {
+                SessionAuthBridge.noteDeviceRemoved(token: token)
+            }
         case "message.new":
             if let event = RealtimeEvent.parseMessageNew(from: data) {
                 emit(event)

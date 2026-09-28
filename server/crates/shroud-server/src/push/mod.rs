@@ -104,6 +104,48 @@ pub struct SentPush {
     pub payload: Value,
 }
 
+/// How to reach a device the account is removing, read before its registrations are purged.
+///
+/// Human: Removal deletes the device's push token and subscription with everything else, but
+/// the device still holds the account's messages. One last push, sent once the removal has
+/// committed, wakes it so it wipes itself now instead of whenever it is next opened.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct RemovedDeviceWake {
+    pub device_id: Uuid,
+    apns_token: Option<String>,
+    apns_environment: Option<String>,
+    endpoint: Option<String>,
+    p256dh: Option<Vec<u8>>,
+    auth: Option<Vec<u8>>,
+}
+
+impl RemovedDeviceWake {
+    /// The device's alert token and Web Push subscription; `None` when it registered neither.
+    ///
+    /// Agent: DB SELECT push_tokens (kind 'alert') + web_push_subscriptions for one device,
+    /// inside the removing transaction.
+    pub async fn load(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        device_id: Uuid,
+    ) -> Result<Option<Self>, sqlx::Error> {
+        sqlx::query_as::<_, Self>(
+            r#"
+            SELECT
+                d.id AS device_id,
+                pt.apns_token, pt.environment AS apns_environment,
+                w.endpoint, w.p256dh, w.auth
+            FROM devices d
+            LEFT JOIN push_tokens pt ON pt.device_id = d.id AND pt.kind = 'alert'
+            LEFT JOIN web_push_subscriptions w ON w.device_id = d.id
+            WHERE d.id = $1 AND (pt.device_id IS NOT NULL OR w.device_id IS NOT NULL)
+            "#,
+        )
+        .bind(device_id)
+        .fetch_optional(&mut **tx)
+        .await
+    }
+}
+
 /// What one device wants pushed. A device that never saved any gets [`Default`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::FromRow)]
 pub struct NotificationSettings {
@@ -295,6 +337,67 @@ impl PushService {
         }
         let service = self.clone();
         tokio::spawn(async move { service.deliver(event).await });
+    }
+
+    /// Wakes devices the account just removed (see [`RemovedDeviceWake`]). Their notification
+    /// settings no longer apply: this is not a notification, and the browser's is neutral.
+    ///
+    /// Agent: spawns (a recording service sends inline); APNs `background` priority 5 with
+    /// `apns_device_removed`, Web Push `web_device_removed`; nothing is read from the DB.
+    pub async fn wake_removed_devices(&self, wakes: Vec<RemovedDeviceWake>) {
+        if wakes.is_empty() {
+            return;
+        }
+        if self.inner.recorder.is_some() {
+            self.send_removal_wakes(wakes).await;
+            return;
+        }
+        let service = self.clone();
+        tokio::spawn(async move { service.send_removal_wakes(wakes).await });
+    }
+
+    async fn send_removal_wakes(&self, wakes: Vec<RemovedDeviceWake>) {
+        for wake in wakes {
+            if let (Some(token), Some(environment)) = (&wake.apns_token, &wake.apns_environment) {
+                let payload = payload::apns_device_removed();
+                self.send_apns(
+                    wake.device_id,
+                    token,
+                    ApnsEnvironment::parse(environment),
+                    PushChannel::Apns,
+                    ApnsRequest {
+                        // Apple takes background pushes only at priority 5.
+                        push_type: ApnsPushType::Background,
+                        priority: 5,
+                        expiration: Some(unix_now() + PUSH_LIFETIME_SECS),
+                        collapse_id: None,
+                        payload: &payload,
+                    },
+                )
+                .await;
+            }
+            if let (Some(endpoint), Some(p256dh), Some(auth)) =
+                (&wake.endpoint, &wake.p256dh, &wake.auth)
+            {
+                let subscription = WebSubscription {
+                    endpoint: endpoint.clone(),
+                    p256dh: p256dh.clone(),
+                    auth: auth.clone(),
+                };
+                let options = WebPushOptions {
+                    ttl_secs: u32::try_from(PUSH_LIFETIME_SECS).unwrap_or(u32::MAX),
+                    urgency: Urgency::High,
+                    topic: None,
+                };
+                self.send_web(
+                    wake.device_id,
+                    &subscription,
+                    &payload::web_device_removed(),
+                    &options,
+                )
+                .await;
+            }
+        }
     }
 
     async fn deliver(&self, event: PushEvent) {

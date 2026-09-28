@@ -7,6 +7,8 @@ import Foundation
 @MainActor
 enum SessionAuthBridge {
     static weak var controller: SessionController?
+    /// The overlay wipe, so a silent push can run it while the app is in the background.
+    static weak var deviceWipe: DeviceWipeController?
 
     /// A request that carried a Bearer token completed successfully (2xx).
     nonisolated static func noteAuthenticationSuccess() {
@@ -20,6 +22,14 @@ enum SessionAuthBridge {
     nonisolated static func noteAuthenticationFailure() {
         Task { @MainActor in
             await controller?.recordAuthenticationFailure()
+        }
+    }
+
+    /// The server said the account removed this iPhone (`DEVICE_REMOVED`, over HTTP or the
+    /// socket) when it was shown `token`: wipe now, not after the 401 streak.
+    nonisolated static func noteDeviceRemoved(token: String) {
+        Task { @MainActor in
+            controller?.recordDeviceRemoved(token: token)
         }
     }
 }
@@ -144,6 +154,36 @@ final class SessionController {
         guard consecutiveAuthenticationFailures >= Self.authenticationFailureLogoutThreshold else {
             return
         }
+        markSessionEnded()
+    }
+
+    /// The account removed this iPhone. Its messages, keys and media must go now.
+    ///
+    /// Human: A plain 401 waits for `authenticationFailureLogoutThreshold` in a row so a server
+    /// hiccup never costs anyone their history. `DEVICE_REMOVED` is the server saying on purpose
+    /// that this device no longer belongs to the account, so one answer is enough; the wipe is
+    /// the same one Log Out runs, and the marker finishes it on the next launch if iOS kills
+    /// the app mid-way.
+    ///
+    /// Only for the session that got the answer: the server keeps saying `DEVICE_REMOVED` about an
+    /// old token, and a late reply to a request made before a new login must not wipe it. While a
+    /// wipe is already running (Log Out on a removed iPhone), nothing is queued behind it.
+    func recordDeviceRemoved(token: String) {
+        guard let session, session.token == token, !isForceLoggingOut else { return }
+        if SessionAuthBridge.deviceWipe?.isPresented == true {
+            isForceLoggingOut = true
+            return
+        }
+        markSessionEnded()
+    }
+
+    /// Launch: a wipe the app was killed in is being finished. Its server call answers
+    /// `DEVICE_REMOVED` for a removed iPhone, which must not start a second wipe over it.
+    func beginInterruptedWipe() {
+        isForceLoggingOut = true
+    }
+
+    private func markSessionEnded() {
         isForceLoggingOut = true
         pendingFullLocalWipe = true
         consecutiveAuthenticationFailures = 0

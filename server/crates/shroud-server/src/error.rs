@@ -107,6 +107,16 @@ impl AppError {
         }
     }
 
+    /// The token belonged to a device the account removed. Clients take it as final and wipe
+    /// everything of the account at once, where a plain 401 only counts toward a sign-out.
+    pub fn device_removed() -> Self {
+        Self::Api {
+            status: StatusCode::UNAUTHORIZED,
+            code: "DEVICE_REMOVED",
+            message: "This device was removed from your account.".into(),
+        }
+    }
+
     pub fn forbidden(message: impl Into<String>) -> Self {
         Self::Api {
             status: StatusCode::FORBIDDEN,
@@ -229,7 +239,7 @@ impl AppError {
         }
     }
 
-    fn code(&self) -> &'static str {
+    pub(crate) fn code(&self) -> &'static str {
         match self {
             Self::Api { code, .. } => code,
             Self::RateLimited { .. } => "RATE_LIMITED",

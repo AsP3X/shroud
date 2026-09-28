@@ -192,6 +192,17 @@ pub fn apns_badge(badge: i64) -> Value {
     json!({ "aps": { "badge": badge } })
 }
 
+/// Wakes an iPhone the account just removed, so it wipes itself without being opened. It says
+/// nothing else: the app asks the server before it deletes anything.
+pub fn apns_device_removed() -> Value {
+    json!({ "aps": { "content-available": 1 }, "type": "device_removed" })
+}
+
+/// Tells a browser the account just removed it; its service worker starts the wipe.
+pub fn web_device_removed() -> Value {
+    json!({ "v": 1, "kind": "device_removed" })
+}
+
 /// The Web Push payload, before RFC 8291 encryption. The service worker writes the text;
 /// `silent` is the device's "no sound" (a service worker cannot read the page's settings).
 pub fn web(notification: &Notification, silent: bool) -> Value {

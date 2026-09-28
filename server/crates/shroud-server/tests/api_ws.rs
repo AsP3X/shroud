@@ -482,8 +482,10 @@ async fn events_until_closed(socket: &mut Socket) -> Vec<Value> {
     }
 }
 
-/// The socket is told its session ended and is closed, with no message reaching it first.
-async fn assert_signed_out(socket: &mut Socket) {
+/// The socket is told its session ended (`code`: `UNAUTHORIZED` for a sign-out,
+/// `DEVICE_REMOVED` when the device must wipe itself) and is closed, with no message reaching
+/// it first.
+async fn assert_closed_with(socket: &mut Socket, code: &str) {
     let events = events_until_closed(socket).await;
     assert!(
         !events.iter().any(|event| event["type"] == "message.new"),
@@ -491,7 +493,15 @@ async fn assert_signed_out(socket: &mut Socket) {
     );
     let last = events.last().expect("a final frame");
     assert_eq!(last["type"], "auth.error");
-    assert_eq!(last["error"]["code"], "UNAUTHORIZED");
+    assert_eq!(last["error"]["code"], code);
+}
+
+async fn assert_signed_out(socket: &mut Socket) {
+    assert_closed_with(socket, "UNAUTHORIZED").await;
+}
+
+async fn assert_removed(socket: &mut Socket) {
+    assert_closed_with(socket, "DEVICE_REMOVED").await;
 }
 
 /// Human: Settings → Devices promises a removed device "is signed out right away and stops
@@ -516,12 +526,27 @@ async fn removing_a_device_closes_its_socket() {
     assert_eq!(removed.status(), reqwest::StatusCode::NO_CONTENT);
     send_text(&client, addr, &two.bob_token, &two.alice_id).await;
 
-    assert_signed_out(&mut two.laptop).await;
+    assert_removed(&mut two.laptop).await;
     assert!(
         next_of_type(&mut two.phone, "message.new", Duration::from_secs(5))
             .await
             .is_some()
     );
+
+    // Reconnecting with its token is refused with the same reason, so the device wipes
+    // itself even when it missed the close.
+    let (mut again, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/api/v1/ws"))
+        .await
+        .expect("ws connect");
+    again
+        .send(Message::Text(
+            json!({ "type": "auth", "token": two.laptop_token })
+                .to_string()
+                .into(),
+        ))
+        .await
+        .expect("send auth");
+    assert_removed(&mut again).await;
 
     let _ = two.phone.close(None).await;
     let _ = shutdown_tx.send(());
@@ -649,8 +674,8 @@ async fn deleting_the_account_closes_its_sockets() {
         .expect("delete account");
     assert_eq!(deleted.status(), reqwest::StatusCode::NO_CONTENT);
 
-    assert_signed_out(&mut two.laptop).await;
-    assert_signed_out(&mut two.phone).await;
+    assert_removed(&mut two.laptop).await;
+    assert_removed(&mut two.phone).await;
 
     let _ = shutdown_tx.send(());
     let _ = server.await;
@@ -757,7 +782,7 @@ async fn removing_a_device_closes_its_socket_via_redis() {
     assert_eq!(removed.status(), reqwest::StatusCode::NO_CONTENT);
     send_text(&client, api, &two.bob_token, &two.alice_id).await;
 
-    assert_signed_out(&mut two.laptop).await;
+    assert_removed(&mut two.laptop).await;
     assert!(
         next_of_type(&mut two.phone, "message.new", Duration::from_secs(5))
             .await

@@ -300,3 +300,42 @@ async fn message_send_rate_limited_per_user() {
         "expected message send RATE_LIMITED within 125 tries"
     );
 }
+
+#[tokio::test]
+async fn session_status_rate_limited_by_ip() {
+    let Some(app) = test_app(RateLimiter::new()).await else {
+        eprintln!("skipping session_status_rate_limited_by_ip: DATABASE_URL unavailable");
+        return;
+    };
+
+    // A locked browser asks about twice a minute; a script probing hashes hits the budget.
+    let ip = format!("198.51.100.{}", Uuid::new_v4().as_u128() % 250 + 1);
+    let body = json!({ "token_hash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" }).to_string();
+    let mut statuses = Vec::new();
+    for _ in 0..70 {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/session-status")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header("x-forwarded-for", &ip)
+                    .body(Body::from(body.clone()))
+                    .expect("request"),
+            )
+            .await
+            .expect("oneshot");
+        statuses.push(response.status());
+    }
+    assert!(
+        statuses[..60]
+            .iter()
+            .all(|status| *status == StatusCode::OK)
+    );
+    assert!(
+        statuses[60..]
+            .iter()
+            .all(|status| *status == StatusCode::TOO_MANY_REQUESTS)
+    );
+}

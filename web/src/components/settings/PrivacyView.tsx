@@ -18,7 +18,8 @@ export function PrivacyView({
   session: Session;
   onLockNow: () => void;
   onShareCodeChanged: (shareCode: string) => void;
-  onUnauthorized: () => void;
+  /** `err` tells a removed device (`DEVICE_REMOVED`) from a session that merely ended. */
+  onUnauthorized: (err?: unknown) => void;
 }) {
   const [background, setBackground] = useState(() => lockOnHidden());
   const [linkPreviews, setLinkPreviews] = useState(() => generatesLinkPreviews());
@@ -42,11 +43,12 @@ export function PrivacyView({
       api.privacySettings(session.token),
       api.blocks(session.token),
     ]);
-    if (
-      (privacy.status === "rejected" && unauthorized(privacy.reason)) ||
-      (blocks.status === "rejected" && unauthorized(blocks.reason))
-    ) {
-      onUnauthorized();
+    if (privacy.status === "rejected" && unauthorized(privacy.reason)) {
+      onUnauthorized(privacy.reason);
+      return;
+    }
+    if (blocks.status === "rejected" && unauthorized(blocks.reason)) {
+      onUnauthorized(blocks.reason);
       return;
     }
     const messages: string[] = [];
@@ -69,7 +71,7 @@ export function PrivacyView({
       setPrivacySettings(await api.updatePrivacySettings(session.token, { [key]: next }));
     } catch (err) {
       if (unauthorized(err)) {
-        onUnauthorized();
+        onUnauthorized(err);
         return;
       }
       setError(err instanceof ApiError ? err.message : "Could not save that setting.");
@@ -99,7 +101,7 @@ export function PrivacyView({
       setNotice("New QR code ready. The old one no longer works.");
     } catch (err) {
       if (unauthorized(err)) {
-        onUnauthorized();
+        onUnauthorized(err);
         return;
       }
       setError(err instanceof ApiError ? err.message : "Could not reset your QR code.");
@@ -126,7 +128,7 @@ export function PrivacyView({
       setBlocked((prev) => prev.filter((b) => b.user_id !== item.user_id));
     } catch (err) {
       if (unauthorized(err)) {
-        onUnauthorized();
+        onUnauthorized(err);
         return;
       }
       setError(err instanceof ApiError ? err.message : "Could not unblock.");

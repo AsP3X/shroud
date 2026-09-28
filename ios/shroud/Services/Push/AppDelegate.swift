@@ -29,6 +29,22 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         }
     }
 
+    /// Silent pushes. The only one the server sends is `device_removed`.
+    /// The completion-handler form: the async one completes off the main thread.
+    func application(
+        _ application: UIApplication,
+        didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+        fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+    ) {
+        guard DeviceRemovalWake.isRemoval(userInfo) else {
+            completionHandler(.noData)
+            return
+        }
+        Task { @MainActor in
+            completionHandler(await DeviceRemovalWake.handle())
+        }
+    }
+
     func application(
         _ application: UIApplication,
         didFailToRegisterForRemoteNotificationsWithError error: Error

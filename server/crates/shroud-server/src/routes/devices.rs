@@ -141,8 +141,8 @@ pub async fn put_device_name(
 /// marked `revoked_at`: it leaves the device list, delivery fan-out, key bundles and the cap,
 /// and a login presenting its id gets a fresh device instead.
 /// Agent: UPDATE sessions + devices SET revoked_at; DELETE keys/push/PIN guard and undelivered
-/// delivery rows for the device; CLOSES its open WebSocket after commit; 404 for foreign or
-/// already-removed ids.
+/// delivery rows for the device; CLOSES its open WebSocket and SENDS it a wake push after
+/// commit; 404 for foreign or already-removed ids.
 pub async fn delete_device(
     State(state): State<AppState>,
     auth: AuthContext,
@@ -170,32 +170,47 @@ pub async fn delete_device(
         return Err(AppError::not_found("Device not found."));
     }
 
-    let revoked_sessions = revoke_device(&mut tx, device_id).await?;
+    let revoked = revoke_device(&mut tx, device_id).await?;
 
     tx.commit()
         .await
         .map_err(|err| AppError::Internal(format!("commit delete device failed: {err}")))?;
 
     // A removed (say, stolen) device must stop receiving the account's messages now, not
-    // whenever its socket happens to drop.
+    // whenever its socket happens to drop. Its socket is told DEVICE_REMOVED, and a device
+    // without one is woken by push: either way it wipes the account's data at once.
     state
         .realtime
-        .close_sessions(auth.user_id, &revoked_sessions)
+        .close_sessions(auth.user_id, &revoked.sessions)
+        .await;
+    state
+        .push
+        .wake_removed_devices(revoked.wake.into_iter().collect())
         .await;
 
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Signs a device out for good: sessions, keys, push token, PIN guard and undelivered delivery
-/// rows go, and the row is marked `revoked_at`. Also used by `DELETE /auth/account`. Returns
-/// the revoked sessions, whose sockets the caller closes once it commits.
+/// What the caller of [`revoke_device`] finishes once its transaction commits.
+pub(crate) struct RevokedDevice {
+    /// Sessions whose open sockets must close.
+    pub sessions: Vec<Uuid>,
+    /// Where the device was pushed to, for the push that makes it wipe itself.
+    pub wake: Option<crate::push::RemovedDeviceWake>,
+}
+
+/// Signs a device out for good: sessions, keys, push token, PIN guard, sealed name and
+/// undelivered delivery rows go, and the row is marked `revoked_at`. Also used by
+/// `DELETE /auth/account`. Returns the revoked sessions, whose sockets the caller closes once it
+/// commits, and the push registration read just before it was deleted.
 ///
-/// Agent: UPDATE sessions/devices SET revoked_at; DELETE key tables, push_tokens,
-/// device_pin_guards and undelivered message_deliveries for the device; RETURNS session ids.
+/// Agent: UPDATE sessions/devices SET revoked_at, sealed_name = NULL; DELETE key tables,
+/// push_tokens, device_pin_guards and undelivered message_deliveries for the device; RETURNS
+/// session ids + push wake target.
 pub(crate) async fn revoke_device(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     device_id: Uuid,
-) -> Result<Vec<Uuid>, AppError> {
+) -> Result<RevokedDevice, AppError> {
     let revoked_sessions: Vec<Uuid> = sqlx::query_scalar(
         r#"
         UPDATE sessions SET revoked_at = now()
@@ -207,6 +222,10 @@ pub(crate) async fn revoke_device(
     .fetch_all(&mut **tx)
     .await
     .map_err(|err| AppError::Internal(format!("revoke device sessions failed: {err}")))?;
+
+    let wake = crate::push::RemovedDeviceWake::load(tx, device_id)
+        .await
+        .map_err(|err| AppError::Internal(format!("load removed device push failed: {err}")))?;
 
     crate::routes::auth::purge_device_secrets(tx, device_id).await?;
 
@@ -221,11 +240,15 @@ pub(crate) async fn revoke_device(
     .await
     .map_err(|err| AppError::Internal(format!("drop pending deliveries failed: {err}")))?;
 
-    sqlx::query(r#"UPDATE devices SET revoked_at = now() WHERE id = $1"#)
+    // The row outlives the device only because messages point at it; its name has no reader.
+    sqlx::query(r#"UPDATE devices SET revoked_at = now(), sealed_name = NULL WHERE id = $1"#)
         .bind(device_id)
         .execute(&mut **tx)
         .await
         .map_err(|err| AppError::Internal(format!("revoke device failed: {err}")))?;
 
-    Ok(revoked_sessions)
+    Ok(RevokedDevice {
+        sessions: revoked_sessions,
+        wake,
+    })
 }

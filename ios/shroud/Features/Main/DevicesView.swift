@@ -119,8 +119,8 @@ struct DevicesView: View {
     /// confirmation in `web/src/components/settings/DevicesView.tsx` says the same.
     private static func revokeConsequences(plural: Bool) -> String {
         plural
-            ? "They are signed out right away and stop receiving messages. Messages and files already sent from them stay in your chats. Signing in there again takes your password and 12-word phrase."
-            : "It is signed out right away and stops receiving messages. Messages and files already sent from it stay in your chats. Signing in there again takes your password and 12-word phrase."
+            ? "They are signed out right away and erase everything of your account on them: messages, keys and files, as soon as they are online or next opened. What they already sent stays in your chats. Signing in there again takes your password and 12-word phrase."
+            : "It is signed out right away and erases everything of your account on it: messages, keys and files, as soon as it is online or next opened. What it already sent stays in your chats. Signing in there again takes your password and 12-word phrase."
     }
 
     /// A 404 means the device is already gone (removed elsewhere meanwhile) — the goal is met.

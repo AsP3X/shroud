@@ -27,6 +27,17 @@ nonisolated enum APIError: Error, Equatable, Sendable {
         return false
     }
 
+    /// The server removed this device from the account (`401 DEVICE_REMOVED`). Unlike a plain
+    /// 401 this is never a hiccup: the app wipes everything of the account at once.
+    var isDeviceRemoval: Bool {
+        if case let .server(code, _, statusCode) = self, statusCode == 401 {
+            return code == Self.deviceRemovedCode
+        }
+        return false
+    }
+
+    static let deviceRemovedCode = "DEVICE_REMOVED"
+
     /// Builds an `APIError` from a failed HTTP response body when possible.
     static func from(data: Data, statusCode: Int) -> APIError {
         if let envelope = try? JSONDecoder().decode(APIErrorResponse.self, from: data) {

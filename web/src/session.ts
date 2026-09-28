@@ -1,6 +1,7 @@
 import type { Session } from "./api/client";
 import { forgetPeerKeyCache } from "./crypto/peerIdentity";
-import { closeVault, hasVault, isVaultOpen, vaultGet, vaultSet } from "./crypto/vault";
+import { closeVault, hasVault, isVaultOpen, onVaultOpen, vaultGet, vaultSet } from "./crypto/vault";
+import { TOKEN_HASH_KEY, tokenHash } from "./deviceRemoval";
 import { storageSealed } from "./storageSeal";
 
 const TOKEN_KEY = "shroud.session";
@@ -149,6 +150,8 @@ export function saveSession(session: Session): void {
   // A new login supersedes whatever token the vault held; unlocking must not bring it back.
   localStorage.removeItem(sealedTokenKey(userId));
   localStorage.setItem(TOKEN_KEY, JSON.stringify(storedMeta(session)));
+  // Readable while locked, so the lock screen can ask whether this browser was removed.
+  localStorage.setItem(TOKEN_HASH_KEY, tokenHash(session.token));
   sealSessionToken();
   sessionStorage.setItem(TAB_LIVE_KEY, "1");
   touchLastActive(true);
@@ -188,6 +191,37 @@ export function sealSessionToken(): void {
   }
 }
 
+/**
+ * Who is signed in, without the token: what the removal wipe names when the session itself can
+ * no longer be loaded (the token was only ever in memory, and this page was reloaded).
+ */
+export function storedSessionMeta(): Session | null {
+  try {
+    const meta = readMeta();
+    return meta ? { ...meta, token: "" } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A session saved before `shroud.token-hash` existed gets one the first time the vault opens —
+ * the token is readable then. Until then a locked page cannot ask whether it was removed; the
+ * push, and the unlocked shell's 401, still reach it.
+ */
+function backfillTokenHash(): void {
+  if (storageSealed()) return;
+  try {
+    if (localStorage.getItem(TOKEN_HASH_KEY)) return;
+    const token = loadSession()?.token;
+    if (token) localStorage.setItem(TOKEN_HASH_KEY, tokenHash(token));
+  } catch {
+    /* storage unavailable: the next unlock tries again */
+  }
+}
+
+onVaultOpen(backfillTokenHash);
+
 /** Lock: the token leaves memory too, once the vault holds a sealed copy. */
 function forgetLiveToken(): void {
   if (liveToken && hasVault(liveToken.userId)) liveToken = null;
@@ -208,6 +242,7 @@ export function lockNow(): void {
 export function clearSession(): void {
   liveToken = null;
   localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(TOKEN_HASH_KEY);
   localStorage.removeItem(LAST_ACTIVE_KEY);
   for (let i = localStorage.length - 1; i >= 0; i--) {
     const key = localStorage.key(i);

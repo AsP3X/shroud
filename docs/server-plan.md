@@ -263,7 +263,7 @@ Indexes:
 - `(device_id)`
 - **Partial unique:** `UNIQUE (device_id) WHERE revoked_at IS NULL` — one live session per device
 
-**Retention:** keep revoked rows; purge job (`purge_revoked_sessions`, hourly) deletes where `revoked_at < now() - interval '30 days'`.
+**Retention:** keep revoked rows; purge job (`purge_revoked_sessions`, hourly) deletes where `revoked_at < now() - interval '30 days'`, except the sessions of removed devices (`devices.revoked_at` set): those stay so the device is told `DEVICE_REMOVED` however long it was offline.
 
 Auth lookup: `SELECT … FROM sessions JOIN devices … JOIN users … WHERE token_hash = $1 AND revoked_at IS NULL`.
 
@@ -573,6 +573,8 @@ Redis: pub/sub fan-out, online sets, future rate limits.
 | Link relay connect | 120/min per IP; 60/min per user (plus 6 open pipes per account) |
 | Test notification | 6/min per device |
 | Device name | 60/hour per user |
+| Session status (`POST /auth/session-status`) | 60/min per IP |
+| PIN-guard unlock | 20/min per IP |
 
 `Retry-After` mirrors the budget window (seconds). `TRUST_FORWARDED_HEADERS` must be true only behind a trusted reverse proxy. Key pattern: `rl:{scope}:{id}`.
 
@@ -717,6 +719,17 @@ Success body: same as register, plus `device.sealed_name` (Base64) when the reus
 }
 ```
 
+#### `POST /auth/session-status` → `200`
+
+**No session** — a locked browser keeps its token sealed in its vault, so it asks with the token's
+hash, which it keeps readable for this (the hash is what `sessions.token_hash` stores; presenting it
+authenticates nothing). Body `{ "token_hash": "<standard Base64 of SHA-256(token)>" }` →
+`{ "removed": true | false }`. `removed` is true only when the session with that hash belongs to a
+removed device or a deleted account; the client then wipes everything of the account. A session a
+logout or a password change signed out, and a hash the server does not know, answer `false`: only a
+removal the server can point to wipes anything. `400 VALIDATION_ERROR` unless the hash decodes to 32
+bytes. Rate limit: 60/min per IP.
+
 #### `POST /auth/password` → `204`
 
 ```json
@@ -759,7 +772,16 @@ Base64 or size. Budget: 60 per hour per user.
 
 #### `DELETE /devices/:id` → `204`
 
-Revokes sessions for that device, deletes its keys, push tokens, Web Push subscription, notification settings, PIN guard and undelivered delivery rows, and sets `devices.revoked_at`. The row is **not** deleted: messages, uploads and calls reference their sending device with `ON DELETE CASCADE`, so history the device sent stays for both participants. Its open WebSocket is closed at once. `404` for a foreign or already-removed id. Deleting the current device invalidates the caller’s token.
+Revokes sessions for that device, deletes its keys, push tokens, Web Push subscription, notification settings, PIN guard, sealed name and undelivered delivery rows, and sets `devices.revoked_at`. The row is **not** deleted: messages, uploads and calls reference their sending device with `ON DELETE CASCADE`, so history the device sent stays for both participants. `404` for a foreign or already-removed id. Deleting the current device invalidates the caller’s token.
+
+The removed device must wipe the account's data at once, wherever it is:
+
+- Its open WebSocket gets `auth.error` with code `DEVICE_REMOVED` and closes.
+- Every request it makes answers `401 DEVICE_REMOVED` (its session rows are never purged). Clients wipe on the first one; a plain `401 UNAUTHORIZED` still only counts toward the iPhone's three-in-a-row sign-out.
+- Once the removal commits, the server sends one last push to the registration it just deleted: APNs `background` (priority 5) `{ "aps": { "content-available": 1 }, "type": "device_removed" }`, or Web Push `{ "v": 1, "kind": "device_removed" }`. The iPhone confirms with `GET /auth/me` before it deletes anything.
+- A locked browser asks `POST /auth/session-status`.
+
+`DELETE /auth/account` does the same for the account's other devices.
 
 #### PIN guard (web vault)
 
@@ -781,6 +803,7 @@ The web client wraps its vault key under PIN **and** a server-held pepper, so a 
 | `INVALID_CREDENTIALS` | Failed login (no user enumeration) |
 | `DEVICE_LIMIT` | Would exceed 5 devices and all 5 are signed in |
 | `UNAUTHORIZED` | Missing / invalid / revoked token |
+| `DEVICE_REMOVED` | The token's device was removed from the account (401); the client wipes itself |
 | `FORBIDDEN` | Authenticated but not allowed |
 | `NOT_FOUND` | Device not found for user |
 | `RATE_LIMITED` | Budget exceeded |
@@ -1153,7 +1176,7 @@ Optional field: `"media_object_id": "<uuid>"` required when `content_type` is `m
    ```json
    { "type": "auth.error", "error": { "code": "UNAUTHORIZED", "message": "This session was signed out." } }
    ```
-   and closes the socket, on every replica (Redis `shroud:sessions:revoked`). The socket also re-checks its session right after `auth.ok` and every 30 s, so a revocation its replica missed still closes it. Clients treat `auth.error` as final and do not reconnect with that token. A newer socket from the same device replaces the older one, which closes without a frame.
+   (with code `DEVICE_REMOVED` and message "This device was removed from your account." when the device was removed or the account deleted; authenticating with such a token gets the same frame) and closes the socket, on every replica (Redis `shroud:sessions:revoked`). The socket also re-checks its session right after `auth.ok` and every 30 s, so a revocation its replica missed still closes it. Clients treat `auth.error` as final and do not reconnect with that token. A newer socket from the same device replaces the older one, which closes without a frame.
 6. The server pings every 30 s and closes a socket 75 s after the last frame it heard (any frame, a pong too). A write the socket does not take within 10 s closes it as well: a full send buffer must not stall the loop. Browsers and URLSession answer pings on their own (the iOS app also pings every 25 s to notice a dead socket). A device whose socket closed counts as offline and gets pushes again; with Redis, a closing socket clears the device's online entry only while it is still the one that socket wrote.
 7. Right after `auth.ok`, a call still ringing for the user reaches the new socket (see [Calls](#calls-m9)).
 

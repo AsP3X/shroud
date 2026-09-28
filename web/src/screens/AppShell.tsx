@@ -23,6 +23,7 @@ import { ChatMenu, muteSeconds, type ChatMenuAction } from "../components/ChatMe
 import type { MenuAnchor } from "../components/ContextMenu";
 import { TypingLabel } from "../components/Typing";
 import { DeviceWipeDialog, type WipeReason } from "../components/DeviceWipeDialog";
+import { onDeviceRemoved } from "../deviceRemoval";
 import { LogoutDialog } from "../components/LogoutDialog";
 import { Modal } from "../components/Modal";
 import { ProfileSheet } from "../components/ProfileSheet";
@@ -167,7 +168,10 @@ export function AppShell({ session }: { session: Session }) {
   const [confirmLogout, setConfirmLogout] = useState(false);
   /** Clearing this browser: after "Log Out", or because the server ended the session. */
   const [wipe, setWipe] = useState<WipeReason | null>(null);
-  const endSession = useCallback(() => setWipe((current) => current ?? "ended"), []);
+  const endSession = useCallback(
+    (reason: WipeReason = "ended") => setWipe((current) => current ?? reason),
+    [],
+  );
   const [showInfo, setShowInfo] = useState(false);
   const [invite, setInvite] = useState("");
   const [addBusy, setAddBusy] = useState(false);
@@ -616,7 +620,7 @@ export function AppShell({ session }: { session: Session }) {
       refresh().catch((err: unknown) => {
         if (cancelled) return;
         if (err instanceof ApiError && err.isAuthFailure) {
-          endSession();
+          endSession(err.isDeviceRemoved ? "removed" : "ended");
           return;
         }
         setLoading(false);
@@ -1321,6 +1325,10 @@ export function AppShell({ session }: { session: Session }) {
     [session.token, session.user.id, session.device.id],
   );
 
+  /* Removed from the account on another device (the worker relays the push): the shell runs
+     the wipe while it is mounted, so a call is hung up first. See `deviceRemoval.ts`. */
+  useEffect(() => onDeviceRemoved("shell", () => endSession("removed")), [endSession]);
+
   /* Signing out (or a session the server ended) hangs up before the browser is cleared. */
   useEffect(() => {
     if (wipe) endCallForLock();
@@ -1333,7 +1341,7 @@ export function AppShell({ session }: { session: Session }) {
   useEffect(() => {
     const connection = connectRealtime({
       token: session.token,
-      onFatalAuth: endSession,
+      onFatalAuth: (deviceRemoved) => endSession(deviceRemoved ? "removed" : "ended"),
       // A call's signaling stays up when the tab is in the background. Otherwise the socket
       // closes, and a message or a call arrives as a notification.
       keepWhenHidden: () => {

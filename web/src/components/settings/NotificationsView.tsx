@@ -59,7 +59,8 @@ export function NotificationsView({
   session: Session;
   mutedChats: MutedChat[];
   onUnmute: (peerId: string) => Promise<void>;
-  onUnauthorized: () => void;
+  /** `err` tells a removed device (`DEVICE_REMOVED`) from a session that merely ended. */
+  onUnauthorized: (err?: unknown) => void;
 }) {
   const prefs = useNotificationPrefs();
   const [permission, setPermission] = useState<Permission>(() => notificationPermission());
@@ -99,7 +100,7 @@ export function NotificationsView({
   const failed = useCallback(
     (err: unknown, fallback: string) => {
       if (err instanceof ApiError && err.isAuthFailure) {
-        onUnauthorized();
+        onUnauthorized(err);
         return;
       }
       setError(err instanceof ApiError ? err.message : fallback);
