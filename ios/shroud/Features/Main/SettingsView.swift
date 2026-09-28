@@ -8,6 +8,7 @@ enum SettingsRoute: Hashable {
     case notificationSound
     case privacySecurity
     case devices
+    case appearance
 }
 
 /// Settings tab — Telegram-style profile hero for the **title-only** sticky bar
@@ -197,6 +198,8 @@ struct SettingsView: View {
                         PrivacySecurityView(router: router)
                     case .devices:
                         DevicesView(onCount: { deviceCount = $0 })
+                    case .appearance:
+                        AppearanceSettingsView()
                     }
                 }
         }
@@ -440,8 +443,11 @@ struct SettingsView: View {
             SettingsRowView(
                 title: "Appearance",
                 systemImage: "paintpalette.fill",
-                iconBackground: Theme.accent
-            )
+                iconBackground: Theme.accent,
+                value: BrandLogoPreference.shared.style.title
+            ) {
+                navigationPath.append(.appearance)
+            }
             groupDivider()
             SettingsRowView(
                 title: "Language",

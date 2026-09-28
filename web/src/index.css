@@ -276,9 +276,10 @@ a { color: var(--accent-text); text-decoration: none; }
   max-width: 38ch;
 }
 
+/* Brand marks are the app icon itself (BrandMark draws its tile); these boxes only lay it out
+   and cast its shadow, rounded like the icon's corners. */
 .auth-mark {
-  width: 52px; height: 52px; border-radius: 16px;
-  background: var(--accent); color: var(--on-accent);
+  width: 52px; height: 52px; border-radius: 22.5%;
   display: grid; place-items: center;
   box-shadow: 0 10px 30px color-mix(in srgb, var(--accent) 35%, transparent);
 }
@@ -543,10 +544,8 @@ a { color: var(--accent-text); text-decoration: none; }
 .lock-ring-mid { width: 240px; height: 240px; border: 1.5px solid color-mix(in srgb, var(--accent) 28%, transparent); }
 .lock-ring-inner { width: 160px; height: 160px; background: var(--accent-soft); }
 .lock-mark {
-  width: 100px; height: 100px; border-radius: 29px;
+  width: 100px; height: 100px; border-radius: 22.5%;
   translate: -50% -50%;
-  background: linear-gradient(180deg, #7c7aff, #5e5ce6);
-  color: #fff;
   display: grid; place-items: center;
   box-shadow: 0 16px 40px color-mix(in srgb, var(--accent) 40%, transparent);
   transition: transform 0.5s var(--ease), opacity 0.3s ease, box-shadow 0.5s ease;
@@ -693,8 +692,7 @@ a { color: var(--accent-text); text-decoration: none; }
   border-right: 1px solid var(--separator);
 }
 .rail-mark {
-  width: 36px; height: 36px; border-radius: var(--r-md);
-  background: var(--accent); color: var(--on-accent);
+  width: 36px; height: 36px;
   display: grid; place-items: center;
 }
 .rail-tabs { display: flex; flex-direction: column; align-items: center; gap: 6px; }
@@ -1845,7 +1843,7 @@ button.reply-quote { cursor: pointer; }
 }
 .placeholder-card strong { font-size: var(--fs-lg); color: var(--text-primary); }
 .placeholder-card p { margin: 0; font-size: var(--fs-sm); line-height: 1.5; }
-.placeholder-card > svg { color: var(--text-tertiary); margin-bottom: 4px; }
+.placeholder-card > svg { margin-bottom: 4px; }
 
 /* ------------------------------------------------------------- settings -- */
 .settings {
@@ -2127,6 +2125,20 @@ button.reply-quote { cursor: pointer; }
 }
 .segment:hover { color: var(--text-primary); }
 .segment.active { background: var(--accent); color: var(--on-accent); }
+
+.logo-picker { display: flex; gap: 10px; width: 100%; }
+.logo-option {
+  flex: 1;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 14px 10px 10px; border: 0; border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--text-primary) 5%, var(--surface-2));
+  box-shadow: inset 0 0 0 1px var(--separator);
+  color: var(--text-secondary);
+  font-size: var(--fs-sm); font-weight: 600;
+  transition: box-shadow 0.15s ease, color 0.15s ease;
+}
+.logo-option:hover { color: var(--text-primary); }
+.logo-option.active { color: var(--accent-text); box-shadow: inset 0 0 0 2px var(--accent); }
 
 /* ------------------------------------------------------------ my qr code -- */
 /* Measurements follow the "Desktop — My QR code" and "Mobile — My QR code"

@@ -58,7 +58,7 @@ export function AuthLayout({
         <span className="auth-glow" aria-hidden="true" />
         <div className="auth-brand-inner">
           <span className="auth-mark" aria-hidden="true">
-            <BrandMark size={32} />
+            <BrandMark size={52} />
           </span>
           <p className="auth-brand-title">
             Private messaging,
@@ -87,7 +87,7 @@ export function AuthLayout({
       <main className="auth-panel">
         <div className="auth-card">
           <span className="auth-mark auth-mark-compact" aria-hidden="true">
-            <BrandMark size={32} />
+            <BrandMark size={52} />
           </span>
           <p className="auth-mobile-kicker">Private messaging, fully encrypted</p>
           {onBack ? (

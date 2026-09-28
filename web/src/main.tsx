@@ -5,6 +5,7 @@ import "@fontsource-variable/inter";
 import "./index.css";
 import { App } from "./App";
 import { finishWipeOnLoad, followWipesInOtherTabs } from "./deviceWipe";
+import { installLogo } from "./logo";
 import { installNotificationClicks } from "./notifications/push";
 import { installTheme } from "./theme";
 
@@ -13,6 +14,7 @@ import { installTheme } from "./theme";
 void finishWipeOnLoad();
 followWipesInOtherTabs();
 installTheme();
+installLogo();
 // A notification click routes to its chat — also the one that opened this window.
 installNotificationClicks();
 

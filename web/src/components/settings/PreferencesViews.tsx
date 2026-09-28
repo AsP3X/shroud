@@ -6,7 +6,9 @@ import { forgetImages } from "../../media/images";
 import { resetVideoWorker } from "../../media/prepareVideo";
 import { forgetVideos } from "../../media/videos";
 import { formatBytes } from "../../format";
+import { setLogoStyle, useLogoStyle, type LogoStyle } from "../../logo";
 import { setTheme, useThemePref, type ThemePref } from "../../theme";
+import { BrandMark } from "../BrandMark";
 import { SettingsCard, SettingsGroup, SettingsNote, SettingsRow } from "./SettingsRow";
 
 const THEMES: { value: ThemePref; label: string; Icon: typeof Sun }[] = [
@@ -15,12 +17,18 @@ const THEMES: { value: ThemePref; label: string; Icon: typeof Sun }[] = [
   { value: "dark", label: "Dark", Icon: Moon },
 ];
 
+const LOGOS: { value: LogoStyle; label: string }[] = [
+  { value: "detailed", label: "Detailed" },
+  { value: "simple", label: "Simple" },
+];
+
 export function themeLabel(pref: ThemePref): string {
   return THEMES.find((t) => t.value === pref)?.label ?? "System";
 }
 
 export function AppearanceView() {
   const pref = useThemePref();
+  const logo = useLogoStyle();
   return (
     <>
       <SettingsGroup title="Colour theme">
@@ -45,6 +53,28 @@ export function AppearanceView() {
       <SettingsNote>
         System follows your operating system’s light or dark setting. The choice is remembered on
         this browser only.
+      </SettingsNote>
+      <SettingsGroup title="Logo">
+        <div className="set-row">
+          <div className="logo-picker" role="radiogroup" aria-label="Logo">
+            {LOGOS.map(({ value, label }) => (
+              <button
+                key={value}
+                type="button"
+                role="radio"
+                aria-checked={logo === value}
+                className={logo === value ? "logo-option active" : "logo-option"}
+                onClick={() => setLogoStyle(value)}
+              >
+                <BrandMark size={56} variant={value} />
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </SettingsGroup>
+      <SettingsNote>
+        The mark in the app and the tab icon. Installed-app icons stay detailed.
       </SettingsNote>
     </>
   );

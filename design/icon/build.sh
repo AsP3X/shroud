@@ -33,13 +33,26 @@ render shroud-icon-dark.svg   $ios/AppIcon-Dark.png
 render shroud-icon-tinted.svg $ios/AppIcon-Tinted.png
 for f in $ios/AppIcon*.png; do opaque $f; done
 cp $ios/AppIcon.png preview.png
+
+# The simplified veil, offered as an alternate icon in Settings > Appearance.
+simple=$root/ios/shroud/Assets.xcassets/AppIconSimple.appiconset
+render shroud-icon-simple.svg        $simple/AppIcon.png
+render shroud-icon-simple-dark.svg   $simple/AppIcon-Dark.png
+render shroud-icon-simple-tinted.svg $simple/AppIcon-Tinted.png
+for f in $simple/AppIcon*.png; do opaque $f; done
 cp shroud-mark.svg $root/ios/shroud/Assets.xcassets/BrandMark.imageset/
+
+web=$root/web/public
+# Tab icons, detailed and simplified, each with an unread twin (a red dot in the corner).
+dot='  <circle cx="800" cy="224" r="200" fill="#FF3B30" stroke="#FFFFFF" stroke-width="44"/>'
+for name in favicon favicon-simple; do
+  cp shroud-$name.svg $web/$name.svg
+  { sed '$d' shroud-$name.svg; print -r -- $dot; print '</svg>'; } > $web/$name-unread.svg
+done
 
 # Web: the full-bleed square for iOS home screens; a smaller glyph for the
 # maskable PWA slots (Android masks down to a 40 % radius circle); the icon
 # with rounded, transparent corners for the "any" PWA slots.
-web=$root/web/public
-cp shroud-favicon.svg $web/favicon.svg
 sips -Z 180 $ios/AppIcon.png --out $web/apple-touch-icon.png >/dev/null
 sed 's/scale(0.9)/scale(0.78)/' shroud-icon.svg > $tmp/maskable.svg
 render $tmp/maskable.svg $tmp/maskable.png
@@ -49,5 +62,6 @@ sed 's/<rect width="1024" height="1024"/& rx="230"/' shroud-icon.svg > $tmp/roun
 render $tmp/rounded.svg $tmp/rounded.png transparent
 sips -Z 192 $tmp/rounded.png --out $web/icon-192.png >/dev/null
 sips -Z 512 $tmp/rounded.png --out $web/icon-512.png >/dev/null
-# web/src/components/BrandMark.tsx inlines the glyph path by hand: keep it in sync.
+# web/src/components/BrandMark.tsx and ios/shroud/ShroudUI/Components/BrandLogoMark.swift
+# draw the veil and its folds by hand: keep them in sync.
 echo "icons written"

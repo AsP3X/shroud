@@ -85,7 +85,7 @@ export function Rail({
   return (
     <nav className="rail" aria-label="Main">
       <div className="rail-mark" aria-hidden="true">
-        <BrandMark size={22} />
+        <BrandMark size={36} />
       </div>
       <div className="rail-tabs">
         {TABS.map(({ id, label, Icon }) => (

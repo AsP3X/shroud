@@ -2315,7 +2315,7 @@ export function AppShell({ session }: { session: Session }) {
             ) : (
               <section className="thread thread-placeholder hidden-mobile">
                 <div className="placeholder-card">
-                  <BrandMark size={34} />
+                  <BrandMark size={48} />
                   <strong>Select a conversation</strong>
                   <p>Your messages are end-to-end encrypted, on this device and on theirs.</p>
                 </div>

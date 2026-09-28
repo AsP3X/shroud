@@ -145,9 +145,9 @@ struct LogInFlowView: View {
                     .opacity(isCredentialsPhase ? 1 : 0)
 
                 ZStack {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(Theme.brandGradient)
+                    BrandTileBackground()
                         .frame(width: 64, height: 64)
+                        .clipShape(BrandLogoMark.tileShape(size: 64))
                     Image(systemName: "key.fill")
                         .font(.system(size: 28, weight: .semibold))
                         .foregroundStyle(Color.white)

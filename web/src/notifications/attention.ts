@@ -1,3 +1,4 @@
+import { faviconHref } from "../logo";
 import { loadNotificationPrefs, type NotificationPrefs } from "./prefs";
 import { notificationPermission, showPageNotification } from "./push";
 import { playSound } from "./sounds";
@@ -72,7 +73,7 @@ export function showUnreadCount(total: number): void {
   shownTotal = total;
   document.title = total > 0 ? `(${total > 999 ? "999+" : total}) Shroud` : "Shroud";
   const icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
-  if (icon) icon.href = total > 0 ? "/favicon-unread.svg" : "/favicon.svg";
+  if (icon) icon.href = faviconHref(total > 0);
   try {
     if (total > 0) void navigator.setAppBadge?.(total).catch(() => undefined);
     else void navigator.clearAppBadge?.().catch(() => undefined);
@@ -89,5 +90,5 @@ export function hideUnreadCount(): void {
   shownTotal = null;
   document.title = "Shroud";
   const icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
-  if (icon) icon.href = "/favicon.svg";
+  if (icon) icon.href = faviconHref(false);
 }

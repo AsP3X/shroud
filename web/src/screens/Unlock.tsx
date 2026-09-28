@@ -256,7 +256,7 @@ export function Unlock() {
             <span>{verified ? "Unlocked" : "Sealed"}</span>
           </span>
           <span className="lock-mark">
-            <BrandMark size={60} />
+            <BrandMark size={100} />
           </span>
           <span className="lock-badge">
             {verified ? <LockOpen size={18} strokeWidth={2.25} /> : <Lock size={18} strokeWidth={2.25} />}

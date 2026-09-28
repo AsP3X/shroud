@@ -101,8 +101,7 @@ export function QrCode({ value, label }: { value: string; label: string }) {
         </g>
       </g>
       <g className="qr-mark">
-        <rect x={mid - MARK / 2} y={mid - MARK / 2} width={MARK} height={MARK} rx={12} fill={ACCENT} />
-        <BrandMark x={mid - 12} y={mid - 12} size={24} color="#fff" />
+        <BrandMark x={mid - MARK / 2} y={mid - MARK / 2} size={MARK} />
       </g>
     </svg>
   );
