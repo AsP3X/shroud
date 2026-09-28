@@ -35,8 +35,9 @@ nonisolated enum CallSignal: Equatable, Sendable {
     case candidates([IceCandidatePayload])
     /// The callee asks the caller for an ICE restart.
     case restartRequest
-    /// What the sender sends now: the other side shows a muted mark or the avatar.
-    case media(mic: Bool, camera: Bool)
+    /// What the sender sends now: the other side shows a muted mark or the avatar. `screen` is
+    /// whether it shares its screen; nil from an app that cannot share or show one.
+    case media(mic: Bool, camera: Bool, screen: Bool? = nil)
 
     enum ParseError: Error, Equatable {
         case malformed
@@ -86,9 +87,10 @@ nonisolated enum CallSignal: Equatable, Sendable {
             }
         case .restartRequest:
             break
-        case let .media(mic, camera):
+        case let .media(mic, camera, screen):
             object["mic"] = mic
             object["camera"] = camera
+            if let screen { object["screen"] = screen }
         }
         return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     }
@@ -126,9 +128,13 @@ nonisolated enum CallSignal: Equatable, Sendable {
         case "restart":
             signal = .restartRequest
         case "media":
+            // Absent from an app that knows no screens; anything but a boolean is malformed.
+            let screen = object["screen"]
+            if screen != nil, Self.bool(screen) == nil { throw ParseError.malformed }
             signal = .media(
                 mic: Self.bool(object["mic"]) ?? true,
-                camera: Self.bool(object["camera"]) ?? false
+                camera: Self.bool(object["camera"]) ?? false,
+                screen: Self.bool(screen)
             )
         default:
             throw ParseError.malformed

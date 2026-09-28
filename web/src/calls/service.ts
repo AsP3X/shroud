@@ -29,29 +29,32 @@ const CALLS_TAG = "calls";
 
 /* --- the browser ------------------------------------------------------------------------------ */
 
-let audioOut: HTMLAudioElement | null = null;
+/** One hidden element per slot the call screen cannot unmount: their voice, their screen's sound. */
+const audioOut = new Map<"voice" | "screen", HTMLAudioElement>();
 
-/** The other side's audio, through one hidden element the call screen cannot unmount. */
-async function playAudio(stream: MediaStream | null): Promise<boolean> {
+/** The other side's audio in a slot of its own (their microphone, or their shared screen's sound). */
+async function playAudio(stream: MediaStream | null, slot: "voice" | "screen" = "voice"): Promise<boolean> {
+  let element = audioOut.get(slot);
   if (!stream) {
-    if (audioOut) {
-      audioOut.pause();
-      audioOut.srcObject = null;
-      audioOut.remove();
-      audioOut = null;
+    if (element) {
+      element.pause();
+      element.srcObject = null;
+      element.remove();
+      audioOut.delete(slot);
     }
     return true;
   }
-  if (!audioOut) {
-    audioOut = document.createElement("audio");
-    audioOut.autoplay = true;
-    audioOut.hidden = true;
-    audioOut.setAttribute("playsinline", "");
-    document.body.appendChild(audioOut);
+  if (!element) {
+    element = document.createElement("audio");
+    element.autoplay = true;
+    element.hidden = true;
+    element.setAttribute("playsinline", "");
+    document.body.appendChild(element);
+    audioOut.set(slot, element);
   }
-  if (audioOut.srcObject !== stream) audioOut.srcObject = stream;
+  if (element.srcObject !== stream) element.srcObject = stream;
   try {
-    await audioOut.play();
+    await element.play();
     return true;
   } catch (err) {
     // Only a refusal needs the click; an interrupted play() just starts over.
@@ -160,9 +163,13 @@ function unsupported(): string | null {
   return null;
 }
 
+/** Desktop browsers have a screen picker; phones' browsers have none. */
+const canPickScreen = typeof navigator !== "undefined" && typeof navigator.mediaDevices?.getDisplayMedia === "function";
+
 const env: CallEnv = {
   unsupported,
   getUserMedia: (constraints) => navigator.mediaDevices.getUserMedia(constraints),
+  ...(canPickScreen ? { getDisplayMedia: (options) => navigator.mediaDevices.getDisplayMedia(options) } : {}),
   cameras: async () =>
     (await navigator.mediaDevices.enumerateDevices())
       .filter((device) => device.kind === "videoinput")
@@ -312,6 +319,11 @@ export function toggleCallCamera(): void {
 
 export function switchCallCamera(): void {
   void controller.switchCamera();
+}
+
+/** Share the screen, or stop sharing it. Call it straight from the click: the picker needs it. */
+export function toggleCallScreen(): void {
+  controller.toggleScreen();
 }
 
 export function setCallMinimized(minimized: boolean): void {

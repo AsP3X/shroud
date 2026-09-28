@@ -7,7 +7,9 @@ import WebRTC
 /// Human: Every call carries a video section both ways from the start, a voice call too, with no
 /// camera on it. Turning video on or off mid-call puts the camera's track on that section's
 /// sender or takes it off: no new offer, so the call never drops or stalls for it
-/// (docs/calls.md, "Switching between voice and video").
+/// (docs/calls.md, "Switching between voice and video"). A shared screen works the same way on two
+/// sections of its own after the camera's, its picture and its sound (docs/calls.md, "Screen
+/// sharing"); the sections are told apart by their place among those of their kind.
 @MainActor
 final class CallMediaEngine: NSObject {
     enum EngineError: LocalizedError {
@@ -40,9 +42,16 @@ final class CallMediaEngine: NSObject {
     var onLocalFrame: (() -> Void)?
     /// The system paused our camera (true) or let it go on (false).
     var onCameraPaused: ((Bool) -> Void)?
+    var onRemoteScreen: ((RTCVideoTrack?) -> Void)?
+    /// The first frame of their shared screen since `awaitRemoteScreenFrame()`.
+    var onRemoteScreenFrame: (() -> Void)?
 
     private(set) var localVideoTrack: RTCVideoTrack?
     private(set) var remoteVideoTrack: RTCVideoTrack?
+    private(set) var remoteScreenTrack: RTCVideoTrack?
+    /// Where our shared screen's frames go in, from any thread: the broadcast's frames, while
+    /// the screen is on its section. Nil until the screen is first shared in this call.
+    private(set) var screenFeed: ScreenFrameFeed?
 
     private var peerConnection: RTCPeerConnection?
     private var iceServers: [RTCIceServer] = []
@@ -55,6 +64,12 @@ final class CallMediaEngine: NSObject {
     private var audioSender: RTCRtpSender?
     /// Our video section: the caller's from `start`, the callee's from the offer.
     private var videoTransceiver: RTCRtpTransceiver?
+    /// Our screen's picture and sound sections, found the same way. Nil in a call with an older
+    /// app. The sound's stays empty: this app shares the picture only (for now).
+    private var screenTransceiver: RTCRtpTransceiver?
+    private var screenSoundTransceiver: RTCRtpTransceiver?
+    private var screenTrack: RTCVideoTrack?
+    private var screenOn = false
     private var cameraOn = false
     private var camera: CallCamera?
     #if DEBUG && targetEnvironment(simulator)
@@ -62,6 +77,7 @@ final class CallMediaEngine: NSObject {
     #endif
     private let remoteFrames = FrameWatch()
     private let localFrames = FrameWatch()
+    private let remoteScreenFrames = FrameWatch()
 
     private static let factory = RTCPeerConnectionFactory(
         encoderFactory: RTCDefaultVideoEncoderFactory(),
@@ -72,6 +88,8 @@ final class CallMediaEngine: NSObject {
     var canSwitchCamera: Bool { camera != nil && cameraOn }
     /// Our camera is on and on the video section.
     var isCameraOn: Bool { cameraOn }
+    /// Our screen is on its section.
+    var isScreenOn: Bool { screenOn }
 
     /// True when the caller can set a new offer (the previous one has its answer).
     var canOffer: Bool {
@@ -81,10 +99,52 @@ final class CallMediaEngine: NSObject {
     /// Our video can go out in this call: its video section goes both ways (every current app
     /// offers one; an older app's voice call brought none, and then video stays off).
     var canSendVideo: Bool {
-        guard let video = videoTransceiver, !video.isStopped else { return false }
+        Self.sends(videoTransceiver)
+    }
+
+    /// Our screen can go out in this call: its section goes both ways (an older app's offer has
+    /// none). Whether they can show it is theirs to say (`media_state`).
+    var canSendScreen: Bool {
+        Self.sends(screenTransceiver)
+    }
+
+    private static func sends(_ transceiver: RTCRtpTransceiver?) -> Bool {
+        guard let transceiver, !transceiver.isStopped else { return false }
         var current = RTCRtpTransceiverDirection.inactive
-        let direction = video.currentDirection(&current) ? current : video.direction
+        let direction = transceiver.currentDirection(&current) ? current : transceiver.direction
         return direction == .sendRecv || direction == .sendOnly
+    }
+
+    /// What a section carries: by kind, then by place (docs/calls.md, "Screen sharing").
+    enum Section: Equatable {
+        case mic
+        case camera
+        case screen
+        case screenSound
+    }
+
+    /// Each transceiver with its section, in the offer's order: the first audio section is the
+    /// microphone and the first video the camera, the second of each the screen's sound and
+    /// picture. Both ends see them in that order, so both agree without naming them.
+    /// Agent: one pass over `transceivers`; the wrappers may be new objects on each read, so they
+    /// are never compared by identity.
+    private static func sections(of connection: RTCPeerConnection) -> [(section: Section, transceiver: RTCRtpTransceiver)] {
+        var audio = 0
+        var video = 0
+        var out: [(section: Section, transceiver: RTCRtpTransceiver)] = []
+        for transceiver in connection.transceivers {
+            switch transceiver.mediaType {
+            case .audio:
+                if let section = [Section.mic, .screenSound][safe: audio] { out.append((section, transceiver)) }
+                audio += 1
+            case .video:
+                if let section = [Section.camera, .screen][safe: video] { out.append((section, transceiver)) }
+                video += 1
+            default:
+                break
+            }
+        }
+        return out
     }
 
     /// Whether `servers` include a TURN relay (a `turn:` or `turns:` URL).
@@ -142,6 +202,7 @@ final class CallMediaEngine: NSObject {
 
         remoteFrames.setHandler { [weak self] in self?.onRemoteFrame?() }
         localFrames.setHandler { [weak self] in self?.onLocalFrame?() }
+        remoteScreenFrames.setHandler { [weak self] in self?.onRemoteScreenFrame?() }
         remoteFrames.arm()
 
         if video, let track = makeVideoTrack() {
@@ -156,8 +217,59 @@ final class CallMediaEngine: NSObject {
             parameters.streamIds = ["shroud"]
             videoTransceiver = connection.addTransceiver(of: .video, init: parameters)
         }
+        if offering {
+            // Then the screen's picture and sound, both ways and empty until someone shares:
+            // after the camera's, so each end tells the sections apart by their place.
+            let picture = RTCRtpTransceiverInit()
+            picture.direction = .sendRecv
+            picture.streamIds = ["shroud-screen"]
+            screenTransceiver = connection.addTransceiver(of: .video, init: picture)
+            let sound = RTCRtpTransceiverInit()
+            sound.direction = .sendRecv
+            sound.streamIds = ["shroud-screen"]
+            screenSoundTransceiver = connection.addTransceiver(of: .audio, init: sound)
+        }
         tuneSenders()
     }
+
+    /// Our screen goes on its section; its frames then come through `screenFeed`. False when
+    /// this call has no screen section to send on.
+    func startScreen() -> Bool {
+        guard peerConnection != nil, let screen = screenTransceiver, canSendScreen else { return false }
+        let track = screenTrack ?? makeScreenTrack()
+        track.isEnabled = true
+        screen.sender.track = track
+        screenOn = true
+        tuneSenders()
+        return true
+    }
+
+    /// Stop sharing: nothing more goes out on the screen's section.
+    func stopScreen() {
+        guard screenOn else { return }
+        screenOn = false
+        screenTransceiver?.sender.track = nil
+        screenTrack?.isEnabled = false
+        tuneSenders()
+    }
+
+    /// Their screen came on: `onRemoteScreenFrame` fires with its first frame.
+    func awaitRemoteScreenFrame() {
+        remoteScreenFrames.arm()
+    }
+
+    /// A screencast source: the encoder keeps text sharp rather than smoothing motion. Frames
+    /// arrive already scaled by the broadcast, so the source does not adapt them (its adapter
+    /// would crop a tall phone screen to 9:16).
+    private func makeScreenTrack() -> RTCVideoTrack {
+        let source = Self.factory.videoSource(forScreenCast: true)
+        let track = Self.factory.videoTrack(with: source, trackId: Self.screenTrackID)
+        screenFeed = ScreenFrameFeed(delegate: source)
+        screenTrack = track
+        return track
+    }
+
+    private static let screenTrackID = "shroud-screen"
 
     /// Video on mid-call: the camera goes on our video section (made now, or the one from
     /// before). False when there is no section to send on, or no camera.
@@ -269,7 +381,7 @@ final class CallMediaEngine: NSObject {
                 }
             }
         }
-        let tuned = CallSdp.withVoiceResilience(sdp)
+        let tuned = CallSdp.withScreenVideo(CallSdp.withScreenSound(CallSdp.withVoiceResilience(sdp)))
         try await setLocal(RTCSessionDescription(type: .offer, sdp: tuned), on: connection)
         tuneSenders()
         return tuned
@@ -279,7 +391,7 @@ final class CallMediaEngine: NSObject {
     func answer(offer: String) async throws -> String {
         guard let connection = peerConnection else { throw EngineError.notStarted }
         try await setRemote(RTCSessionDescription(type: .offer, sdp: offer), on: connection)
-        adoptOfferedVideo(on: connection)
+        adoptOfferedSections(on: connection)
         let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
         let sdp: String = try await withCheckedThrowingContinuation { cont in
             connection.answer(for: constraints) { description, error in
@@ -290,28 +402,41 @@ final class CallMediaEngine: NSObject {
                 }
             }
         }
-        let tuned = CallSdp.withVoiceResilience(sdp)
+        let tuned = CallSdp.withScreenVideo(CallSdp.withScreenSound(CallSdp.withVoiceResilience(sdp)))
         try await setLocal(RTCSessionDescription(type: .answer, sdp: tuned), on: connection)
         tuneSenders()
         refreshRemoteVideo()
+        refreshRemoteScreen()
         return tuned
     }
 
-    /// Callee: the offer's video section becomes ours both ways. With no camera on it WebRTC
-    /// would answer "receive only", and a camera switched on later would need a new offer.
-    /// An older caller's voice call brings none: video stays off in that call.
-    private func adoptOfferedVideo(on connection: RTCPeerConnection) {
-        guard videoTransceiver == nil else { return }
-        guard let video = connection.transceivers.first(where: { $0.mediaType == .video && !$0.isStopped }) else {
-            return
+    /// Callee: the offer's camera and screen sections become ours both ways. With no track on
+    /// one WebRTC would answer "receive only", and a camera or a screen switched on later would
+    /// need a new offer. An older caller's offer lacks the screen's (and, for its voice calls,
+    /// the camera's): those stay off in that call.
+    private func adoptOfferedSections(on connection: RTCPeerConnection) {
+        for (section, transceiver) in Self.sections(of: connection) where !transceiver.isStopped {
+            switch section {
+            case .camera where videoTransceiver == nil:
+                videoTransceiver = Self.bothWays(transceiver)
+            case .screen where screenTransceiver == nil:
+                screenTransceiver = Self.bothWays(transceiver)
+            case .screenSound where screenSoundTransceiver == nil:
+                screenSoundTransceiver = Self.bothWays(transceiver)
+            default:
+                break
+            }
         }
+    }
+
+    private static func bothWays(_ transceiver: RTCRtpTransceiver) -> RTCRtpTransceiver {
         var error: NSError?
-        switch video.direction {
-        case .recvOnly: video.setDirection(.sendRecv, error: &error)
-        case .inactive: video.setDirection(.sendOnly, error: &error)
+        switch transceiver.direction {
+        case .recvOnly: transceiver.setDirection(.sendRecv, error: &error)
+        case .inactive: transceiver.setDirection(.sendOnly, error: &error)
         default: break
         }
-        videoTransceiver = video
+        return transceiver
     }
 
     /// Caller: applies the callee's answer. False when no offer is waiting for one.
@@ -321,6 +446,7 @@ final class CallMediaEngine: NSObject {
         try await setRemote(RTCSessionDescription(type: .answer, sdp: sdp), on: connection)
         tuneSenders()
         refreshRemoteVideo()
+        refreshRemoteScreen()
         return true
     }
 
@@ -412,10 +538,17 @@ final class CallMediaEngine: NSObject {
         #endif
         cameraOn = false
         videoTransceiver = nil
+        screenOn = false
+        screenTransceiver = nil
+        screenSoundTransceiver = nil
+        screenTrack = nil
+        screenFeed = nil
         remoteFrames.disarm()
         localFrames.disarm()
+        remoteScreenFrames.disarm()
         localVideoTrack?.remove(localFrames)
         remoteVideoTrack?.remove(remoteFrames)
+        remoteScreenTrack?.remove(remoteScreenFrames)
         // Drop the connection before closing it. WebRTC reports "closed" and late candidates
         // after `close()` returns; those must not land on the next call.
         let connection = peerConnection
@@ -433,6 +566,10 @@ final class CallMediaEngine: NSObject {
         if remoteVideoTrack != nil {
             remoteVideoTrack = nil
             onRemoteVideo?(nil)
+        }
+        if remoteScreenTrack != nil {
+            remoteScreenTrack = nil
+            onRemoteScreen?(nil)
         }
     }
 
@@ -460,20 +597,30 @@ final class CallMediaEngine: NSObject {
         }
     }
 
-    /// Speech near 32 kbps; video near 1.2 Mbps at 30 fps, shedding rate and detail together.
+    /// Speech near 32 kbps, first in line. The camera near 1.2 Mbps at 30 fps, shedding rate and
+    /// detail together; while our screen is shared, a thumbnail's worth (they show it as a tile).
+    /// The screen near 2.5 Mbps at up to 15 fps, keeping its sharpness and giving up frames when
+    /// the link is tight, ahead of the camera and behind speech.
     private func tuneSenders() {
         guard let connection = peerConnection else { return }
         for sender in connection.senders {
             guard let track = sender.track else { continue }
             let parameters = sender.parameters
             guard let encoding = parameters.encodings.first else { continue }
-            if track.kind == kRTCMediaStreamTrackKindAudio {
+            if track.trackId == Self.screenTrackID {
+                encoding.maxBitrateBps = NSNumber(value: 2_500_000)
+                encoding.maxFramerate = NSNumber(value: 15)
+                encoding.networkPriority = .medium
+                encoding.bitratePriority = 2
+                parameters.degradationPreference = NSNumber(value: RTCDegradationPreference.maintainResolution.rawValue)
+            } else if track.kind == kRTCMediaStreamTrackKindAudio {
                 encoding.maxBitrateBps = NSNumber(value: 32_000)
                 encoding.networkPriority = .high
                 encoding.bitratePriority = 4
             } else if track.kind == kRTCMediaStreamTrackKindVideo {
-                encoding.maxBitrateBps = NSNumber(value: 1_200_000)
-                encoding.maxFramerate = NSNumber(value: 30)
+                encoding.maxBitrateBps = NSNumber(value: screenOn ? 350_000 : 1_200_000)
+                encoding.maxFramerate = NSNumber(value: screenOn ? 15 : 30)
+                encoding.scaleResolutionDownBy = NSNumber(value: screenOn ? 2 : 1)
                 // Below speech, so a tight link fills the microphone before the camera.
                 encoding.networkPriority = .low
                 encoding.bitratePriority = 1
@@ -499,6 +646,20 @@ final class CallMediaEngine: NSObject {
         remoteVideoTrack = track
         track?.add(remoteFrames)
         onRemoteVideo?(track)
+    }
+
+    /// Their screen's track, on the second video section, once a remote description made it.
+    /// Its sound needs nothing here: WebRTC plays every remote audio track.
+    private func refreshRemoteScreen() {
+        guard let connection = peerConnection else { return }
+        let track = Self.sections(of: connection)
+            .first { $0.section == .screen }?
+            .transceiver.receiver.track as? RTCVideoTrack
+        guard track?.trackId != remoteScreenTrack?.trackId else { return }
+        remoteScreenTrack?.remove(remoteScreenFrames)
+        remoteScreenTrack = track
+        track?.add(remoteScreenFrames)
+        onRemoteScreen?(track)
     }
 
     private var peerLink: Connection = .new
@@ -594,6 +755,7 @@ extension CallMediaEngine: RTCPeerConnectionDelegate {
         Task { @MainActor in
             guard self.peerConnection === peerConnection else { return }
             self.refreshRemoteVideo()
+            self.refreshRemoteScreen()
         }
     }
 }
@@ -666,5 +828,13 @@ private final class LevelGate: @unchecked Sendable {
         self.continuation = nil
         lock.unlock()
         continuation?.resume(returning: value)
+    }
+}
+
+/// Our shared screen's frames into its video source, from whichever thread they arrive on (the
+/// broadcast's socket queue). WebRTC's sources take frames from any thread.
+nonisolated final class ScreenFrameFeed: RTCVideoCapturer, @unchecked Sendable {
+    func push(_ frame: RTCVideoFrame) {
+        delegate?.capturer(self, didCapture: frame)
     }
 }

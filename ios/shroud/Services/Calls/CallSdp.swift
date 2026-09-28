@@ -62,6 +62,64 @@ nonisolated enum CallSdp {
         return lines.joined(separator: eol)
     }
 
+    /// Opus for a shared screen's sound: the second audio section (the first is the microphone),
+    /// stereo, never silenced, about 128 kbps. Each section has its own `a=fmtp`, so the
+    /// microphone keeps its speech settings. An SDP without that section is unchanged.
+    static func withScreenSound(_ sdp: String) -> String {
+        let eol = sdp.contains("\r\n") ? "\r\n" : "\n"
+        var lines = splitLines(sdp)
+        let starts = lines.indices.filter { lines[$0].lowercased().hasPrefix("m=audio ") }
+        guard starts.count >= 2 else { return lines.joined(separator: eol) }
+        let from = starts[1]
+        let to = lines.indices.first { $0 > from && lines[$0].lowercased().hasPrefix("m=") } ?? lines.endIndex
+        let section = from..<to
+        guard let payload = lines[section].lazy.compactMap(opusPayload).first else {
+            return lines.joined(separator: eol)
+        }
+        if let index = section.first(where: { isFmtp(lines[$0], payload: payload) }) {
+            lines[index] = applying(screenSoundExtras, to: lines[index])
+        } else if let map = section.first(where: { isRtpmap(lines[$0], payload: payload) }) {
+            lines.insert("a=fmtp:\(payload) \(screenSoundExtras.joined(separator: ";"))", at: lines.index(after: map))
+        }
+        return lines.joined(separator: eol)
+    }
+
+    /// VP8 first on the screen's picture (the second video section; the first is the camera).
+    /// A phone shares its screen from the background, where its hardware H.264 encoder may not
+    /// run; VP8 is encoded in software everywhere. Both sides put it first in their own
+    /// descriptions, so it is what either one sends there, whoever offers. Unchanged without
+    /// that section or without VP8. The web does the same (`screenVideoSdp`).
+    static func withScreenVideo(_ sdp: String) -> String {
+        let eol = sdp.contains("\r\n") ? "\r\n" : "\n"
+        var lines = splitLines(sdp)
+        let starts = lines.indices.filter { lines[$0].lowercased().hasPrefix("m=video ") }
+        guard starts.count >= 2 else { return lines.joined(separator: eol) }
+        let from = starts[1]
+        let to = lines.indices.first { $0 > from && lines[$0].lowercased().hasPrefix("m=") } ?? lines.endIndex
+        let vp8 = Set(lines[from..<to].compactMap { line -> String? in
+            let lower = line.lowercased()
+            guard lower.hasPrefix("a=rtpmap:"), lower.contains(" vp8/90000") else { return nil }
+            let payload = line.dropFirst("a=rtpmap:".count).prefix { $0.isNumber }
+            return payload.isEmpty ? nil : String(payload)
+        })
+        guard !vp8.isEmpty else { return lines.joined(separator: eol) }
+        let parts = lines[from].split(separator: " ", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count > 3 else { return lines.joined(separator: eol) }
+        // m=video <port> <proto> <payload types…>
+        let types = parts.dropFirst(3)
+        lines[from] = (parts.prefix(3) + types.filter { vp8.contains($0) } + types.filter { !vp8.contains($0) })
+            .joined(separator: " ")
+        return lines.joined(separator: eol)
+    }
+
+    private static let screenSoundExtras = [
+        "useinbandfec=1",
+        "usedtx=0",
+        "stereo=1",
+        "sprop-stereo=1",
+        "maxaveragebitrate=128000",
+    ]
+
     private static func splitLines(_ sdp: String) -> [String] {
         sdp.replacingOccurrences(of: "\r\n", with: "\n")
             .split(separator: "\n", omittingEmptySubsequences: false)

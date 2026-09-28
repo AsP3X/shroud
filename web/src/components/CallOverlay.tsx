@@ -1,18 +1,34 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { createPortal } from "react-dom";
 import {
+  Expand,
   Maximize2,
   Mic,
   MicOff,
   Minimize2,
   Phone,
   PhoneOff,
+  ScreenShare,
+  ScreenShareOff,
   ShieldCheck,
+  Shrink,
   SwitchCamera,
   Video,
   VideoOff,
   Volume2,
   X,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { incomingStaysInBanner, statusLine, videoLayout, type CallView } from "../calls/logic";
 import {
@@ -27,6 +43,7 @@ import {
   switchCallCamera,
   toggleCallCamera,
   toggleCallMute,
+  toggleCallScreen,
 } from "../calls/service";
 import { useCallView } from "../calls/store";
 import { Avatar, avatarPalette } from "./Avatar";
@@ -282,6 +299,171 @@ function useFaceReveal(
   return { stage, onFace };
 }
 
+/** How long the call's controls stay up over a shared screen once the pointer and keys are still. */
+const IDLE_MS = 3_000;
+
+/**
+ * True once nothing has moved in the call for `IDLE_MS` while `active` (their screen is up): the
+ * controls step aside so all of it shows. Any pointer movement, touch, key or focus brings them
+ * back, and so does a new `wake` (a notice to read). They stay up while the pointer rests on one
+ * of them or the keyboard is in them. Going idle takes focus off a button the mouse left it on,
+ * so the key that wakes the controls cannot press a button nobody sees.
+ */
+function useIdle(root: RefObject<HTMLElement | null>, active: boolean, wake: unknown): boolean {
+  const [idle, setIdle] = useState(false);
+  useEffect(() => {
+    const element = root.current;
+    setIdle(false);
+    if (!active || !element) return;
+    let timer = 0;
+    const busy = () => {
+      if (element.querySelector(".call-bar:hover, .call-top-actions:hover, .call-e2e:hover, .call-who:hover")) return true;
+      const focused = document.activeElement;
+      return focused instanceof HTMLElement && focused !== element && element.contains(focused) && focused.matches(":focus-visible");
+    };
+    const arm = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(function rest() {
+        if (busy()) {
+          timer = window.setTimeout(rest, IDLE_MS);
+          return;
+        }
+        const focused = document.activeElement;
+        if (focused instanceof HTMLElement && focused !== element && element.contains(focused)) {
+          element.focus({ preventScroll: true });
+        }
+        setIdle(true);
+      }, IDLE_MS);
+    };
+    const wake = () => {
+      setIdle(false);
+      arm();
+    };
+    const events = ["pointermove", "pointerdown", "keydown", "focusin", "wheel"] as const;
+    for (const name of events) element.addEventListener(name, wake, { passive: true });
+    arm();
+    return () => {
+      window.clearTimeout(timer);
+      for (const name of events) element.removeEventListener(name, wake);
+    };
+  }, [root, active, wake]);
+  return idle && active;
+}
+
+/**
+ * Their shared screen. All of it shows, letterboxed on black ("fit"), or at full size (a pixel of
+ * theirs to a point of ours) to read small text, panned by dragging, scrolling, swiping or the
+ * arrow keys. Double-clicking switches
+ * between the two, keeping the point clicked under the pointer.
+ */
+function SharedScreen({
+  picture,
+  shown,
+  actual,
+  onZoom,
+}: {
+  picture: RefObject<HTMLVideoElement | null>;
+  shown: boolean;
+  actual: boolean;
+  onZoom: () => void;
+}) {
+  const box = useRef<HTMLDivElement>(null);
+  /** Where a double-click landed, as a fraction of the picture, and where in the box. */
+  const aim = useRef<{ fx: number; fy: number; x: number; y: number } | null>(null);
+  const drag = useRef<{ id: number; x: number; y: number; left: number; top: number } | null>(null);
+
+  useLayoutEffect(() => {
+    const element = box.current;
+    const at = aim.current;
+    aim.current = null;
+    if (!element || !actual) return;
+    if (at) {
+      element.scrollLeft = at.fx * element.scrollWidth - at.x;
+      element.scrollTop = at.fy * element.scrollHeight - at.y;
+    } else {
+      element.scrollLeft = (element.scrollWidth - element.clientWidth) / 2;
+      element.scrollTop = (element.scrollHeight - element.clientHeight) / 2;
+    }
+  }, [actual]);
+
+  const onDoubleClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    const element = box.current;
+    const video = picture.current;
+    if (!element || !video) return;
+    const rect = element.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    if (!actual && video.videoWidth > 0 && video.videoHeight > 0) {
+      // The picture as it is letterboxed now: where in it the click fell.
+      const scale = Math.min(rect.width / video.videoWidth, rect.height / video.videoHeight);
+      const width = video.videoWidth * scale;
+      const height = video.videoHeight * scale;
+      const clamp = (value: number) => Math.min(1, Math.max(0, value));
+      aim.current = {
+        fx: clamp((x - (rect.width - width) / 2) / width),
+        fy: clamp((y - (rect.height - height) / 2) / height),
+        x,
+        y,
+      };
+    }
+    onZoom();
+  };
+
+  /* A mouse drags the picture around; touch scrolls it natively. */
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const element = box.current;
+    if (!actual || !element || event.pointerType === "touch" || event.button !== 0) return;
+    element.setPointerCapture(event.pointerId);
+    drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY, left: element.scrollLeft, top: element.scrollTop };
+  };
+  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const element = box.current;
+    const from = drag.current;
+    if (!element || !from || from.id !== event.pointerId) return;
+    element.scrollLeft = from.left - (event.clientX - from.x);
+    element.scrollTop = from.top - (event.clientY - from.y);
+  };
+  const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (drag.current?.id === event.pointerId) drag.current = null;
+  };
+
+  return (
+    <div
+      ref={box}
+      className={`call-screen${shown ? " is-shown" : ""}${actual ? " is-actual" : ""}`}
+      // At full size the arrow keys pan it.
+      tabIndex={actual ? 0 : undefined}
+      aria-label={actual ? "Their screen at full size" : undefined}
+      onDoubleClick={onDoubleClick}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+    >
+      <video ref={picture} autoPlay playsInline muted aria-hidden="true" />
+    </div>
+  );
+}
+
+/** Follows the browser's fullscreen, and switches the call screen in and out of it. */
+function useFullscreen(root: RefObject<HTMLElement | null>): { on: boolean; toggle: (() => void) | null } {
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    const update = () => setOn(document.fullscreenElement !== null && document.fullscreenElement === root.current);
+    update();
+    document.addEventListener("fullscreenchange", update);
+    return () => document.removeEventListener("fullscreenchange", update);
+  }, [root]);
+  if (!document.fullscreenEnabled) return { on: false, toggle: null };
+  return {
+    on,
+    toggle: () => {
+      if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+      else void root.current?.requestFullscreen().catch(() => undefined);
+    },
+  };
+}
+
 function Control({
   label,
   ariaLabel,
@@ -293,6 +475,7 @@ function Control({
   on = false,
   pending = false,
   disabled = false,
+  unavailable = false,
 }: {
   label: string;
   /** Spoken name when the visible label does not say the action ("Video"). */
@@ -309,13 +492,16 @@ function Control({
   /** Turning on takes a moment (a camera opening): the disc breathes until it is. */
   pending?: boolean;
   disabled?: boolean;
+  /** Looks off but still takes the press, which says why it cannot be used (a notice). */
+  unavailable?: boolean;
 }) {
   return (
     <button
       type="button"
-      className={`call-ctl call-ctl-${tone}${on ? " is-on" : ""}${pending ? " is-pending" : ""}`}
+      className={`call-ctl call-ctl-${tone}${on ? " is-on" : ""}${pending ? " is-pending" : ""}${unavailable ? " is-unavailable" : ""}`}
       onClick={onClick}
       disabled={disabled}
+      aria-disabled={unavailable || undefined}
       title={title}
       aria-label={ariaLabel}
       aria-busy={pending || undefined}
@@ -361,14 +547,21 @@ function CallScreen({ view }: { view: CallView }) {
   const live = view.phase === "outgoing" || view.phase === "connecting" || view.phase === "active";
   const ringing = view.phase === "outgoing" || view.phase === "connecting";
   const clock = view.phase === "active" && !view.reconnecting;
+  /* Their shared screen fills the stage once its first frame is in; their camera then moves into
+     a tile beside ours. Their screen goes first: over it, the camera would cover what they show. */
+  const screen = usePicture(
+    view.remoteScreenStream,
+    live && view.remoteScreen && view.remoteScreenStream !== null,
+    view.remoteScreenStream?.getVideoTracks().length ?? 0,
+  );
+  const screenUp = screen.shown;
   /* Voice or video is whatever the cameras say right now: either side can switch its own on or
      off mid-call, and the screen follows, back to the face when both are off. */
-  const remote = usePicture(
-    view.remoteStream,
-    live && view.remoteVideo && view.remoteCamera && view.remoteStream !== null,
-    view.remoteVideo,
-  );
+  const theirCamera = live && view.remoteVideo && view.remoteCamera && view.remoteStream !== null;
+  const remote = usePicture(view.remoteStream, theirCamera && !screenUp, view.remoteVideo);
+  const peerTile = usePicture(view.remoteStream, theirCamera && screenUp, view.remoteVideo);
   const self = usePicture(view.localStream, live && view.cameraOn && view.localStream !== null, null);
+  const ownScreen = usePicture(view.screenStream, live && view.screenOn && view.screenStream !== null, null);
   const layout = videoLayout(view, self.shown, remote.shown);
   /* Their picture opens out of their face as a growing circle, and closes back into it. The name
      moves up into the pill only once the circle has opened (it came from the face), and comes
@@ -379,6 +572,28 @@ function CallScreen({ view }: { view: CallView }) {
   /* While the call is placed, our picture fills the screen (as FaceTime does); after that it sits
      in the corner, over their picture or their face. */
   const selfFull = layout === "mine";
+  const overPicture = theirVideo || selfFull || screenUp;
+  /* Over their screen: fit or pixel for pixel, fullscreen, and the controls out of the way. */
+  const [actual, setActual] = useState(false);
+  useEffect(() => {
+    if (!screenUp) setActual(false);
+  }, [screenUp]);
+  /* The controls step aside only while nothing of ours needs seeing: not while we share too (its
+     chip and Stop stay in sight), nor while their sound waits for a click; a notice wakes them. */
+  const idle = useIdle(root, screenUp && !view.screenOn && !view.audioBlocked, view.notice);
+  const fullscreen = useFullscreen(root);
+  /* Fullscreen was for their screen: it ends with it. */
+  const leaveFullscreen = !screenUp && fullscreen.on;
+  useEffect(() => {
+    if (leaveFullscreen) void document.exitFullscreen().catch(() => undefined);
+  }, [leaveFullscreen]);
+  /* The tiles down the right side, top to bottom: their camera beside their screen, our camera,
+     our own screen while it goes out. Each knows its place, so the others close up around it. */
+  let slots = 0;
+  const peerSlot = peerTile.shown ? slots++ : 0;
+  const selfSlot = self.shown && !selfFull ? slots++ : 0;
+  const ownScreenSlot = ownScreen.shown ? slots++ : 0;
+  const slot = (index: number) => ({ "--slot": index }) as CSSProperties;
   const name = view.peer.username;
   /* The backdrop carries a faint wash of the peer's avatar colour, so each call looks like its person. */
   const tint = { "--call-tint": avatarPalette(view.peer.id)[0] } as CSSProperties;
@@ -408,6 +623,26 @@ function CallScreen({ view }: { view: CallView }) {
   }, [live]);
 
   const chips: ReactNode[] = [];
+  if (live && view.screenOn) {
+    /* Always in sight while it lasts: what we share, they see. */
+    chips.push(
+      <span className="call-chip is-sharing" key="sharing">
+        <span className="call-chip-dot" aria-hidden="true" />
+        {view.screenSound ? "Sharing your screen and its sound" : "You’re sharing your screen"}
+        <button type="button" className="call-chip-btn" aria-label="Stop sharing your screen" onClick={toggleCallScreen}>
+          Stop
+        </button>
+      </span>,
+    );
+  }
+  if (live && screenUp) {
+    chips.push(
+      <span className="call-chip" key="their-screen">
+        <ScreenShare size={13} aria-hidden="true" />
+        {name}’s screen
+      </span>,
+    );
+  }
   if (live && !view.remoteMic) {
     chips.push(
       <span className="call-chip" key="mic">
@@ -420,15 +655,21 @@ function CallScreen({ view }: { view: CallView }) {
   const classes = [
     "call",
     `call-${view.phase}`,
-    remote.shown || self.shown ? "is-video" : "is-voice",
+    remote.shown || self.shown || screenUp ? "is-video" : "is-voice",
     theirVideo ? "has-video" : "",
+    screenUp ? "has-screen" : "",
     selfFull ? "self-full" : "",
     ringing ? "is-ringing" : "",
+    idle ? "is-idle" : "",
     view.reconnecting && view.phase === "active" ? "is-reconnecting" : "",
   ]
     .filter(Boolean)
     .join(" ");
   const videoLabel = view.cameraOn ? "Turn video off" : "Turn video on";
+  const shareLabel = view.screenOn ? "Stop sharing your screen" : "Share your screen";
+  /* Why Share cannot be used yet: said on hover, and in a notice when it is pressed anyway. */
+  const shareBlocked = !view.canShare && !view.screenOn;
+  const shareWhy = view.phase === "active" ? "Screen sharing isn’t available in this call" : "You can share once the call has connected";
 
   return (
     <div
@@ -452,11 +693,20 @@ function CallScreen({ view }: { view: CallView }) {
         muted
         aria-hidden="true"
       />
+      <SharedScreen picture={screen.ref} shown={screenUp} actual={actual} onZoom={() => setActual((on) => !on)} />
+      <div className={`call-tile call-peer-tile${peerTile.shown ? " is-shown" : ""}`} style={slot(peerSlot)} aria-hidden="true">
+        <video ref={peerTile.ref} autoPlay playsInline muted />
+      </div>
       <div
         className={`call-self${selfFull ? " full" : ""}${self.shown ? " is-shown" : ""}`}
+        style={selfFull ? undefined : slot(selfSlot)}
         aria-hidden="true"
       >
         <video ref={self.ref} className={view.mirrorSelf ? "mirrored" : undefined} autoPlay playsInline muted />
+      </div>
+      <div className={`call-tile call-own-screen${ownScreen.shown ? " is-shown" : ""}`} style={slot(ownScreenSlot)} aria-hidden="true">
+        <video ref={ownScreen.ref} autoPlay playsInline muted />
+        <span className="call-tile-label">Your screen</span>
       </div>
       <div className="call-shade call-shade-top" aria-hidden="true" />
       <div className="call-shade call-shade-bottom" aria-hidden="true" />
@@ -466,21 +716,46 @@ function CallScreen({ view }: { view: CallView }) {
           <ShieldCheck size={13} aria-hidden="true" />
           End-to-end encrypted
         </span>
-        {live ? (
-          <button
-            type="button"
-            className="call-icon-btn"
-            aria-label="Minimize call"
-            title="Minimize (Esc)"
-            onClick={() => setCallMinimized(true)}
-          >
-            <Minimize2 size={18} />
-          </button>
-        ) : view.phase === "ended" ? (
-          <button type="button" className="call-icon-btn" aria-label="Close" title="Close" onClick={dismissCall}>
-            <X size={18} />
-          </button>
-        ) : null}
+        <div className="call-top-actions">
+          {live && screenUp ? (
+            <button
+              type="button"
+              className={`call-icon-btn${actual ? " is-on" : ""}`}
+              aria-label={actual ? "Fit their screen to the window" : "Show their screen at actual size"}
+              aria-pressed={actual}
+              title={actual ? "Fit to window (double-click)" : "Actual size (double-click)"}
+              onClick={() => setActual((on) => !on)}
+            >
+              {actual ? <ZoomOut size={18} /> : <ZoomIn size={18} />}
+            </button>
+          ) : null}
+          {fullscreen.toggle && (fullscreen.on || (live && screenUp)) ? (
+            <button
+              type="button"
+              className="call-icon-btn"
+              aria-label={fullscreen.on ? "Exit full screen" : "Full screen"}
+              title={fullscreen.on ? "Exit full screen" : "Full screen"}
+              onClick={fullscreen.toggle}
+            >
+              {fullscreen.on ? <Shrink size={18} /> : <Expand size={18} />}
+            </button>
+          ) : null}
+          {live ? (
+            <button
+              type="button"
+              className="call-icon-btn"
+              aria-label="Minimize call"
+              title="Minimize (Esc)"
+              onClick={() => setCallMinimized(true)}
+            >
+              <Minimize2 size={18} />
+            </button>
+          ) : view.phase === "ended" ? (
+            <button type="button" className="call-icon-btn" aria-label="Close" title="Close" onClick={dismissCall}>
+              <X size={18} />
+            </button>
+          ) : null}
+        </div>
       </header>
 
       {/* The person: the avatar at the exact centre of the screen, name and clock hanging below it
@@ -490,7 +765,7 @@ function CallScreen({ view }: { view: CallView }) {
             its new place (the pill at the top, or under the face) instead of jumping there. */}
         <div
           className={`call-who${reveal.stage === "opening" && reveal.onFace ? " is-leaving" : ""}`}
-          key={theirVideo || selfFull ? "over-picture" : "under-face"}
+          key={overPicture ? "over-picture" : "under-face"}
         >
           <div
             ref={face}
@@ -577,6 +852,21 @@ function CallScreen({ view }: { view: CallView }) {
             />
             {view.cameraOn && view.canSwitchCamera ? (
               <Control label="Flip" icon={<SwitchCamera size={24} />} onClick={switchCallCamera} />
+            ) : null}
+            {/* Next to the camera, never instead of it. A browser without a screen picker (a
+                phone's) has no button: it can still see theirs. */}
+            {view.shareSupported ? (
+              <Control
+                label="Share"
+                ariaLabel={shareBlocked ? `${shareLabel}. ${shareWhy}` : shareLabel}
+                title={shareBlocked ? shareWhy : shareLabel}
+                on={view.screenOn}
+                pending={view.screenPending}
+                unavailable={shareBlocked}
+                iconKey={view.screenOn ? "share-on" : "share"}
+                icon={view.screenOn ? <ScreenShareOff size={24} /> : <ScreenShare size={24} />}
+                onClick={toggleCallScreen}
+              />
             ) : null}
             <Control label="End" tone="end" icon={<PhoneOff size={26} />} onClick={hangUpCall} />
           </div>
@@ -701,6 +991,18 @@ function CallPill({ view }: { view: CallView }) {
           >
             {view.micOn ? <Mic size={17} /> : <MicOff size={17} />}
           </button>
+          {/* Still sharing with the call tucked away: one click stops it. */}
+          {view.screenOn ? (
+            <button
+              type="button"
+              className="call-pill-btn is-sharing"
+              aria-label="Stop sharing your screen"
+              title="Stop sharing your screen"
+              onClick={toggleCallScreen}
+            >
+              <ScreenShareOff size={17} />
+            </button>
+          ) : null}
           {/* Still on camera with the call tucked away: one click stops it. */}
           {view.cameraOn ? (
             <button

@@ -10,11 +10,12 @@ and video never pass through it.
 | Signaling API | `server/crates/shroud-server/src/routes/calls.rs` |
 | TURN logins | `server/crates/shroud-server/src/turn.rs`; coturn in `docker-compose.yml` (profile `calls`) |
 | iPhone | `ios/shroud/Services/Calls/` (native WebRTC, CallKit, PushKit) |
+| iPhone screen broadcast | `ios/ShroudScreenShare/` (extension), `ios/ShroudShared/ScreenShareWire.swift` |
 | Web | `web/src/calls/` |
 
 A call is voice or video by what its two cameras do, not by how it was placed: either side can
 switch its camera on or off at any time without restarting the call (below, "Switching between
-voice and video").
+voice and video"). Either side can also share its screen next to its camera ("Screen sharing").
 
 ## Flow
 
@@ -173,7 +174,7 @@ compared, the call says so. Comparing it does not delay the call.
 | `sdp_answer` | `{"t":"answer","sdp":"…","n":1,"ek":"…"}` — `ek` on the first answer only |
 | `ice_candidate` | `{"t":"ice","cs":[{"candidate":"…","sdpMid":"0","sdpMLineIndex":0}],"n":2}` |
 | `renegotiate` | `{"t":"restart","n":3}`: the callee asks the caller for an ICE restart |
-| `media_state` | `{"t":"media","mic":true,"camera":false,"n":4}`: what the sender sends now; `camera` switches the call between voice and video |
+| `media_state` | `{"t":"media","mic":true,"camera":false,"screen":false,"n":4}`: what the sender sends now; `camera` switches the call between voice and video, `screen` says whether it shares its screen (absent from apps that predate screen sharing) |
 
 Candidates are batched (up to ~100 ms) to keep requests down. Candidates that arrive before the
 remote description is set wait for it.
@@ -282,7 +283,7 @@ never touched, and a switch takes as long as a camera needs to open.
   such an app answers ours "receive only". Video then stays off on the side that cannot send (the
   button says why), and the call goes on as before.
 
-**The server's part.** A switch is a sealed `media_state` like any other, so the server does not
+**The server's part.** A switch (a camera, or a screen) is a sealed `media_state` like any other, so the server does not
 learn of it. It keeps each device's latest one (`calls.caller_media_state` /
 `callee_media_state`, at most 4 KiB, cleared when the call ends) and hands the other device's to
 the two devices in the call as `peer_media_state` on `GET /calls/{id}` and on every heartbeat. A
@@ -290,6 +291,77 @@ device whose socket missed a switch catches up there: at once when its socket is
 reads the call), else with the next heartbeat. The copy is opened and checked like any signal,
 and a device takes a `media_state` only if its `n` is newer than the last one it took from that
 device: a kept copy that arrives after a newer signal changes nothing.
+
+## Screen sharing
+
+Either person shares their screen at any time, next to their camera and never instead of it; both
+can share at once. Like video, it needs no new offer: ICE, DTLS and the sound are never touched.
+
+- **Two more sections in every call.** After the camera's, the caller's offer brings a video
+  section for the screen and an audio section for its sound, both `sendrecv` and empty until
+  someone shares. The callee sets both to send and receive before answering, as it does the
+  camera's. The sections carry no names: each end tells them apart by their place among those of
+  their kind — the first audio section is the microphone, the first video the camera, the second
+  video the screen, the second audio its sound (`sectionOf` on the web, `CallMediaEngine.sections`
+  on the iPhone). An empty section sends nothing.
+- **Share on** puts the captured screen on its section (`replaceTrack` / `RTCRtpSender.track`) and
+  sends `media_state` with `screen: true`; **off** takes it off at once and sends `screen: false`.
+  `screen` is always sent by an app that knows screens, so its presence also says "I can show
+  yours": Share works only once the other side's `media_state` carried it and the screen's section
+  can carry ours. Until then Share looks off, and pressing it says why: "once the call has
+  connected" while it connects, "their app needs an update" with an older app on either side (the
+  call goes on as before).
+- **Codec.** Both sides list VP8 first on the screen's picture section, in the offer and in the
+  answer (`screenVideoSdp` / `CallSdp.withScreenVideo`), so VP8 is what goes out there whoever
+  offers: an iPhone shares from the background, where its hardware H.264 encoder may not run, and
+  VP8 is encoded in software. The camera's section keeps each client's own order.
+- **Encoding.** The screen goes out as screen content (`contentHint: detail` on the web, a
+  screencast source on the iPhone) at up to 1080p and about 2.5 Mbps, keeping its sharpness and
+  giving up frames when the link is tight (`maintain-resolution`), behind speech and ahead of the
+  camera. The web captures up to 30 fps, the iPhone sends up to 15. While a side shares, its camera
+  drops to a thumbnail's worth (about 350 kbps, half size, 15 fps), since the other side shows it
+  as a tile. The screen's sound is Opus in stereo at about 128 kbps, never silenced (`usedtx=0`),
+  set in its own section's `a=fmtp` so the microphone keeps its speech settings.
+- **Showing theirs.** Their screen fills the call from its first frame, fitted whole on black; their
+  camera moves into a tile beside ours, and the name goes to the top. The web offers actual size
+  (double-click, or the zoom button; drag, scroll or the arrow keys to pan), fullscreen (which ends
+  with their share), and lets the controls fade after 3 s without pointer movement — not while we
+  share as well (our "sharing" chip stays in sight) nor while their sound waits for a click, and a
+  notice brings them back. The iPhone zooms by pinching or double-tapping (sharp up to
+  the screen's own pixels), a tap shows or hides the controls, which also step aside after 4 s, and
+  turning the phone gives a laptop's screen more room. Its sound plays apart from their voice (its
+  own `<audio>` on the web; WebRTC mixes it on the iPhone, in mono through the voice processing).
+- **Sharing ours, web.** The browser's picker (`getDisplayMedia`) opens from the click on Share,
+  asking for a tab's or the system's sound too (`restrictOwnAudio`, where the browser knows it, keeps
+  this page's own playback out of a system's sound, so they do not hear themselves); Shroud's own
+  tab is left out (it would mirror the call into itself). Its "Stop sharing" bar, or the shared window closing, ends the track, and the
+  call stops sharing and says so. A browser without a picker (phones) has no Share button and still
+  shows the other side's screen. While sharing, a red "You're sharing your screen · Stop" chip
+  stays in sight, and a small tile shows what goes out.
+- **Sharing ours, iPhone.** Share opens the system's broadcast picker with Shroud's extension
+  (`ShroudScreenShare`, `de.corespace.shroud.ScreenShare`) chosen and the microphone switch
+  hidden; the phone's whole screen is shared, whichever app is in front, until Stop. The
+  extension runs in its own process with about 50 MB: it scales each frame to at most 1920 pixels
+  on its longest side, compresses it as JPEG, and sends it over a Unix socket in the app group's
+  container (`ScreenShareWire`, 1 MB socket buffers) — at most 15 a second, dropping frames while
+  the last is still on its way; a write that stalls for 3 s (the app stopped reading) ends the
+  broadcast. The app listens on that socket only while a call runs, decodes the frames onto the
+  screen's section with the broadcast's orientation as the frame's rotation, and sends the last
+  frame again every half second while the screen is still, so a frame lost on the way is soon
+  replaced. Stop in Shroud, or the call ending, closes the socket, and the extension ends the
+  broadcast; a broadcast started without a call ends at once and says to start it from a call.
+  Nothing in the extension reaches the network or is kept. The call screen shows a "You're
+  sharing your screen · Stop" capsule over the controls ("Starting to share your screen…" from the
+  broadcast's connection to its first frame; Stop works in both). The simulator cannot broadcast: debug
+  simulator builds send a test pattern through the same socket instead (`SimulatedBroadcast`).
+- **Not yet:** the iPhone does not send its apps' sound (stock WebRTC has no way to feed it into
+  the call; it needs its own audio capture). The sound section is there both ways already, so it
+  can come without changing the protocol.
+- **Audio route and CallKit.** A screen on either side counts as video: the sound moves from the
+  earpiece to the speaker (unless chosen by hand) and CallKit shows a video call.
+
+The server learns nothing of it: `screen` is sealed in `media_state`, and the frames are
+DTLS-SRTP like the camera's. The TURN relay sees more traffic while a screen is shared.
 
 ## Pushes
 

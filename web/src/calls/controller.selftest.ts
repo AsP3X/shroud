@@ -11,7 +11,16 @@ import type { RealtimeEvent } from "../realtime";
 import { CallController, type CallApi, type CallEnv } from "./controller";
 import { callKeys, deriveCallSecret, openSignal, sealSignal } from "./crypto";
 import { sdpWithoutCandidates } from "./logic";
-import { CAMERA_RELEASE_MS, CAMERA_UNAVAILABLE, VIDEO_UNAVAILABLE, type CallPeer, type CallView } from "./logic";
+import {
+  CAMERA_RELEASE_MS,
+  CAMERA_UNAVAILABLE,
+  SCREEN_ENDED,
+  SCREEN_NOT_YET,
+  SCREEN_UNAVAILABLE,
+  VIDEO_UNAVAILABLE,
+  type CallPeer,
+  type CallView,
+} from "./logic";
 import { RELAY_UNAVAILABLE } from "./relay";
 
 function check(ok: boolean, what: string): void {
@@ -67,6 +76,7 @@ class FakeTrack {
   enabled = true;
   muted = false;
   readyState: "live" | "ended" = "live";
+  contentHint = "";
   readonly id = `track-${++trackIds}`;
   onmute: (() => void) | null = null;
   onunmute: (() => void) | null = null;
@@ -137,9 +147,19 @@ class FakeSender {
   getParameters(): { encodings: { maxBitrate?: number; priority?: string }[] } {
     return { encodings: [{}] };
   }
-  async setParameters(params: { encodings?: { maxBitrate?: number; priority?: string }[] }): Promise<void> {
+  async setParameters(params: {
+    encodings?: { maxBitrate?: number; priority?: string; scaleResolutionDownBy?: number }[];
+    degradationPreference?: string;
+  }): Promise<void> {
     const encoding = params.encodings?.[0];
-    this.peer.tuned.push({ kind: this.track?.kind ?? "", maxBitrate: encoding?.maxBitrate, priority: encoding?.priority });
+    this.peer.tuned.push({
+      kind: this.track?.kind ?? "",
+      track: this.track,
+      maxBitrate: encoding?.maxBitrate,
+      priority: encoding?.priority,
+      scale: encoding?.scaleResolutionDownBy,
+      degradation: params.degradationPreference,
+    });
   }
 }
 
@@ -176,7 +196,7 @@ class FakePeer {
   connectionState = "new";
   iceConnectionState = "new";
   onicecandidate: ((event: { candidate: unknown }) => void) | null = null;
-  ontrack: ((event: { track: FakeTrack; streams: FakeStream[] }) => void) | null = null;
+  ontrack: ((event: { track: FakeTrack; streams: FakeStream[]; transceiver: FakeTransceiver }) => void) | null = null;
   onconnectionstatechange: (() => void) | null = null;
   oniceconnectionstatechange: (() => void) | null = null;
   readonly list: FakeTransceiver[] = [];
@@ -184,12 +204,21 @@ class FakePeer {
   readonly transceivers: string[] = [];
   readonly remoteCandidates: unknown[] = [];
   readonly descriptionsSet: string[] = [];
-  readonly tuned: { kind: string; maxBitrate?: number; priority?: string }[] = [];
+  readonly tuned: {
+    kind: string;
+    track?: FakeTrack | null;
+    maxBitrate?: number;
+    priority?: string;
+    scale?: number;
+    degradation?: string;
+  }[] = [];
   closed = false;
   /** The network refuses every path (for timeouts). */
   blocked = false;
   /** Offers leave video out, as an older app's voice call did. */
   legacyVoice = false;
+  /** Offers carry one section of each kind, as apps from before screen sharing did. */
+  legacyScreen = false;
   private generation = 0;
 
   constructor(
@@ -225,13 +254,28 @@ class FakePeer {
   get videoSender(): FakeSender | undefined {
     return this.list.find((t) => t.kind === "video")?.sender;
   }
+  /** The senders of the screen's sections: the second video and the second audio. */
+  get screenSender(): FakeSender | undefined {
+    return this.list.filter((t) => t.kind === "video")[1]?.sender;
+  }
+  get soundSender(): FakeSender | undefined {
+    return this.list.filter((t) => t.kind === "audio")[1]?.sender;
+  }
+  /** What an offer carries, in order. */
+  private offered(): FakeTransceiver[] {
+    const seen = { audio: 0, video: 0 };
+    return this.list.filter((t) => {
+      const place = seen[t.kind]++;
+      if (this.legacyVoice && t.kind === "video") return false;
+      return !(this.legacyScreen && place > 0);
+    });
+  }
   private describe(type: string, lines: string[]): string {
     return `v=0\r\nfake-${type} peer=${this.name} gen=${this.generation}\r\n${lines.map((l) => `${l}\r\n`).join("")}`;
   }
   async createOffer(options?: { iceRestart?: boolean }): Promise<Description> {
     if (options?.iceRestart) this.generation += 1;
-    const offered = this.list.filter((t) => !(this.legacyVoice && t.kind === "video"));
-    return { type: "offer", sdp: this.describe("offer", offered.map((t) => `m=${t.kind} ${t.direction}`)) };
+    return { type: "offer", sdp: this.describe("offer", this.offered().map((t) => `m=${t.kind} ${t.direction}`)) };
   }
   async createAnswer(): Promise<Description> {
     const remoteGeneration = /gen=(\d+)/.exec(this.remoteDescription?.sdp ?? "")?.[1];
@@ -255,10 +299,7 @@ class FakePeer {
     this.descriptionsSet.push(`local:${description.type}`);
     if (description.type === "offer") {
       let index = 0;
-      for (const t of this.list) {
-        if (this.legacyVoice && t.kind === "video") continue;
-        t.mid = String(index++);
-      }
+      for (const t of this.offered()) t.mid = String(index++);
     } else {
       sections(description.sdp).forEach((section, index) => {
         const t = this.list.find((x) => x.mid === String(index));
@@ -309,7 +350,7 @@ class FakePeer {
       // The other end sends on it: its track shows up here (once).
       if (sends(section.direction) && !t.announced) {
         t.announced = true;
-        this.ontrack?.({ track: t.receiver.track, streams: [] });
+        this.ontrack?.({ track: t.receiver.track, streams: [], transceiver: t });
       }
     });
     this.maybeConnect();
@@ -354,6 +395,17 @@ class Device {
   readonly toldTabs: string[] = [];
   tone: string | null = null;
   audio: unknown = null;
+  /** What plays in the screen's sound slot. */
+  screenAudio: unknown = null;
+  /** The browser can share a screen; picks made, and how the picker answers. */
+  canPickScreen = true;
+  picks = 0;
+  pickError: { name: string; message: string } | null = null;
+  /** The picked screen comes with sound. */
+  screenWithSound = true;
+  /** The picked window closes before its screen is on the call. */
+  pickedEndsAtOnce = false;
+  readonly displays: FakeStream[] = [];
   awake = false;
   holds = 0;
   interrupted = 0;
@@ -364,6 +416,8 @@ class Device {
   blockPeers = false;
   /** Offers leave video out, as an older app's voice call did. */
   legacyVoice = false;
+  /** Offers leave the screen's sections out, as apps from before screen sharing did. */
+  legacyScreen = false;
   /** Settings → Privacy → Always relay calls. */
   alwaysRelay = false;
   cameras = ["cam-front", "cam-back"];
@@ -388,6 +442,7 @@ class Device {
 
   private env(): CallEnv {
     const clock = this.clock;
+    const device = this;
     return {
       unsupported: () => null,
       getUserMedia: async (constraints) => {
@@ -406,10 +461,25 @@ class Device {
         return stream as unknown as MediaStream;
       },
       cameras: async () => this.cameras,
+      // A getter, so a device can be made a browser without a picker after it was built.
+      get getDisplayMedia() {
+        if (!device.canPickScreen) return undefined;
+        return async (options: DisplayMediaStreamOptions) => {
+          device.picks += 1;
+          if (device.pickError) throw device.pickError;
+          const tracks = [new FakeTrack("video")];
+          if (options.audio && device.screenWithSound) tracks.push(new FakeTrack("audio"));
+          if (device.pickedEndsAtOnce) tracks[0].readyState = "ended";
+          const stream = new FakeStream(tracks);
+          device.displays.push(stream);
+          return stream as unknown as MediaStream;
+        };
+      },
       createPeer: (config) => {
         const peer = new FakePeer(this.id, config);
         peer.blocked = this.blockPeers;
         peer.legacyVoice = this.legacyVoice;
+        peer.legacyScreen = this.legacyScreen;
         this.peers.push(peer);
         return peer as unknown as RTCPeerConnection;
       },
@@ -427,8 +497,9 @@ class Device {
       tone: (kind) => {
         this.tone = kind;
       },
-      playAudio: async (stream) => {
-        this.audio = stream;
+      playAudio: async (stream, slot) => {
+        if (slot === "screen") this.screenAudio = stream;
+        else this.audio = stream;
         return true;
       },
       keepAwake: (on) => {
@@ -755,7 +826,10 @@ const ICE = 150;
   check(a1.audio !== null && b1.audio !== null, "each plays the other's audio");
   check(b1.peer.transceivers.length === 0, "the callee adds no section of its own");
   check(b1.peer.list.find((t) => t.kind === "audio")?.sender.track?.kind === "audio", "the callee sends its microphone");
-  check(a1.peer.transceivers.join() === "video:sendrecv", "a voice call still offers video, both ways");
+  check(
+    a1.peer.transceivers.join() === "video:sendrecv,video:sendrecv,audio:sendrecv",
+    `a voice call still offers video, and the screen's picture and sound, both ways (${a1.peer.transceivers.join()})`,
+  );
   const calleeVideo = b1.peer.list.find((t) => t.kind === "video");
   check(
     calleeVideo?.direction === "sendrecv" && calleeVideo.currentDirection === "sendrecv" && calleeVideo.sender.track === null,
@@ -935,7 +1009,7 @@ const ICE = 150;
   a1.controller.start({ id: bob.id, username: "bob" }, "video");
   await clock.advance(0);
   check(a1.view?.notice === CAMERA_UNAVAILABLE && a1.view.cameraOn === false, "told the camera is unavailable");
-  check(a1.peer.transceivers.join() === "video:sendrecv", "still offers video both ways, to turn on later");
+  check(a1.peer.transceivers[0] === "video:sendrecv", "still offers video both ways, to turn on later");
   b1.controller.accept();
   await clock.advance(ICE);
   await clock.advance(ICE);
@@ -1361,6 +1435,154 @@ const ICE = 150;
   await clock.advance(0);
   check(a1.view?.cameraOn === true && b1.view?.remoteCamera === true, "a camera that comes back can be turned on again");
   a1.controller.hangup();
+  await clock.advance(2_000);
+}
+
+/* --- 24. a screen shared next to the camera, from either side, without a new offer ------------- */
+{
+  const { clock, server, alice, bob } = world();
+  const a1 = new Device(alice, "a1", server, clock);
+  const b1 = new Device(bob, "b1", server, clock);
+  await connect(clock, a1, b1);
+  const offers = () => server.signals.filter((s) => s.type === "sdp_offer").length;
+  const offersBefore = offers();
+  check(a1.view?.canShare === true && b1.view?.canShare === true, "both can share: the sections go both ways and both apps show screens");
+  check(a1.view?.shareSupported === true && a1.view.remoteScreen === false, "nothing shared yet");
+  const calleeScreen = b1.peer.list.filter((t) => t.kind === "video")[1];
+  check(calleeScreen?.direction === "sendrecv", `the callee takes the screen's section both ways (${calleeScreen?.direction})`);
+  check(b1.view?.remoteScreenStream?.getVideoTracks().length === 1, "their screen's picture is there, apart from the camera");
+  check(b1.view?.remoteStream?.getVideoTracks().length === 1, "and the camera's stream keeps one picture");
+  check(b1.view?.remoteScreenStream?.getAudioTracks().length === 1 && b1.screenAudio !== null, "the screen's sound plays in its own slot");
+  check(b1.audio !== b1.screenAudio, "apart from the microphone");
+
+  // Alice shares a tab with its sound.
+  a1.controller.toggleScreen();
+  check(a1.picks === 1 && a1.view?.screenPending === true, "the picker opens within the click");
+  await clock.advance(0);
+  const display = a1.displays[0];
+  const picture = display.getVideoTracks()[0];
+  const sound = display.getAudioTracks()[0];
+  check(a1.view?.screenOn === true && a1.view.screenPending === false && a1.view.screenSound, "sharing, with sound");
+  check(a1.peer.screenSender?.track === picture && a1.peer.soundSender?.track === sound, "on the screen's own sections");
+  check(a1.peer.videoSender?.track === null, "the camera's section is left alone");
+  check(picture.contentHint === "detail" && sound.contentHint === "music", "sharp text; sound as it is");
+  check(a1.view?.screenStream === (display as unknown as MediaStream), "her own preview");
+  check(b1.view?.remoteScreen === true && b1.view.remoteCamera === false, "bob is told: a screen, no camera");
+  const screenTune = a1.peer.tuned.filter((t) => t.track === picture).at(-1);
+  check(
+    screenTune?.maxBitrate === 2_500_000 && screenTune.degradation === "maintain-resolution" && screenTune.priority === "medium",
+    `the screen keeps its sharpness at about 2.5 Mbps (${JSON.stringify(screenTune)})`,
+  );
+  check(a1.peer.tuned.some((t) => t.track === sound && t.maxBitrate === 128_000), "its sound at about 128 kbps");
+
+  // With her camera on as well, the camera drops to a tile's worth.
+  a1.controller.toggleCamera();
+  await clock.advance(0);
+  const camera = a1.peer.videoSender?.track;
+  const cameraTune = a1.peer.tuned.filter((t) => t.track === camera).at(-1);
+  check(a1.view?.cameraOn === true && b1.view?.remoteCamera === true && b1.view.remoteScreen, "camera and screen together");
+  check(cameraTune?.maxBitrate === 350_000 && cameraTune.scale === 2, `the camera as a thumbnail (${JSON.stringify(cameraTune)})`);
+
+  // Bob shares too: both at once.
+  b1.controller.toggleScreen();
+  await clock.advance(0);
+  check(b1.view?.screenOn === true && a1.view?.remoteScreen === true, "bob shares as well");
+  check(b1.peer.screenSender?.track === b1.displays[0].getVideoTracks()[0], "on the section he took from the offer");
+
+  // Alice stops from the call screen: no notice, the capture ends, bob is told.
+  a1.controller.toggleScreen();
+  await clock.advance(0);
+  check(a1.view?.screenOn === false && a1.view.notice === null && a1.view.screenStream === null, "alice stopped sharing");
+  check(picture.readyState === "ended" && sound.readyState === "ended", "the capture ends");
+  check(a1.peer.screenSender?.track === null && a1.peer.soundSender?.track === null, "nothing more goes out");
+  check(b1.view?.remoteScreen === false && b1.view.remoteCamera === true, "bob sees her camera again, full size");
+  const cameraBack = a1.peer.tuned.filter((t) => t.track === camera).at(-1);
+  check(cameraBack?.maxBitrate === 1_200_000 && cameraBack.scale === 1, "the camera gets its full rate back");
+
+  // Bob stops from the browser's own bar (the track ends): he is told why.
+  const bobPicture = b1.displays[0].getVideoTracks()[0];
+  bobPicture.readyState = "ended";
+  bobPicture.onended?.();
+  await clock.advance(0);
+  check(b1.view?.screenOn === false && b1.view.notice === SCREEN_ENDED, "the browser's stop is noticed");
+  check(a1.view?.remoteScreen === false, "and alice is told");
+
+  // A closed picker says nothing; a system refusal says what to do.
+  a1.pickError = { name: "NotAllowedError", message: "Permission denied" };
+  a1.controller.toggleScreen();
+  await clock.advance(0);
+  check(a1.view?.screenOn === false && a1.view.screenPending === false && a1.view.notice === null, "a closed picker is not an error");
+  a1.pickError = { name: "NotAllowedError", message: "Permission denied by system" };
+  a1.controller.toggleScreen();
+  await clock.advance(0);
+  check(a1.view?.notice?.startsWith("Allow screen recording") === true, `a system refusal says what to do (${a1.view?.notice})`);
+  a1.pickError = null;
+
+  // The chosen window closes while it is being put on the call: nothing stays "shared".
+  a1.pickedEndsAtOnce = true;
+  a1.controller.toggleScreen();
+  await clock.advance(0);
+  check(a1.view?.screenOn === false && a1.view.notice === SCREEN_ENDED, `a capture that ended in setup is not left on (${a1.view?.notice})`);
+  check(a1.peer.screenSender?.track === null && b1.view?.remoteScreen === false, "nothing goes out, and bob hears nothing of it");
+  check(a1.displays.at(-1)!.getTracks().every((t) => t.readyState === "ended"), "and the capture is released");
+  a1.pickedEndsAtOnce = false;
+
+  // A screen without sound (a window, a browser that offers none).
+  a1.screenWithSound = false;
+  a1.controller.toggleScreen();
+  await clock.advance(0);
+  check(a1.view?.screenOn === true && a1.view.screenSound === false, "shared without sound");
+  check(a1.peer.soundSender?.track === null && b1.view?.remoteScreen === true, "the sound's section stays empty");
+
+  check(offers() === offersBefore, "no new offer for any of it");
+  check(a1.peers.length === 1 && b1.peers.length === 1, "on the same connection");
+
+  // Hung up while sharing: everything closes.
+  a1.controller.hangup();
+  await clock.advance(0);
+  check(a1.displays.every((d) => d.getTracks().every((t) => t.readyState === "ended")), "the capture ends with the call");
+  check(b1.screenAudio === null, "the screen's sound slot is let go");
+  await clock.advance(2_000);
+}
+
+/* --- 25. screens with an older app, and in a browser that cannot share ------------------------- */
+{
+  const { clock, server, alice, bob } = world();
+  // Before the call connects, Share says to wait rather than blaming their app.
+  const early = new Device(alice, "a0", server, clock);
+  const other = new Device(bob, "b0", server, clock);
+  early.controller.start({ id: bob.id, username: "bob" }, "voice");
+  await clock.advance(0);
+  early.controller.toggleScreen();
+  check(early.picks === 0 && early.view?.notice === SCREEN_NOT_YET, `not yet (${early.view?.notice})`);
+  early.controller.hangup();
+  await clock.advance(2_000);
+  other.connected = false;
+
+  const old = new Device(alice, "a1", server, clock);
+  const b1 = new Device(bob, "b1", server, clock);
+  old.legacyScreen = true;
+  await connect(clock, old, b1);
+  check(b1.view?.canShare === false, "an older caller's offer brings no screen section");
+  b1.controller.toggleScreen();
+  await clock.advance(0);
+  check(b1.picks === 0 && b1.view?.notice === SCREEN_UNAVAILABLE, "the picker does not even open, and why");
+  check(phase(b1) === "active" && b1.view?.canVideo === true, "the call and its video go on");
+  old.controller.hangup();
+  await clock.advance(2_000);
+
+  const phone = new Device(alice, "a2", server, clock);
+  phone.canPickScreen = false;
+  await connect(clock, phone, b1);
+  check(phone.view?.shareSupported === false, "a browser without a screen picker cannot share");
+  phone.controller.toggleScreen();
+  await clock.advance(0);
+  check(phone.view?.screenOn === false && phone.view.notice === null, "and nothing happens");
+  check(b1.view?.canShare === true, "but can still see a screen: the other side may share");
+  b1.controller.toggleScreen();
+  await clock.advance(0);
+  check(phone.view?.remoteScreen === true && phone.view.remoteScreenStream?.getVideoTracks().length === 1, "it shows bob's");
+  phone.controller.hangup();
   await clock.advance(2_000);
 }
 

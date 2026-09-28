@@ -20,6 +20,9 @@ import {
   mediaErrorText,
   fingerprintsMatch,
   readSignal,
+  screenErrorText,
+  screenSoundSdp,
+  screenVideoSdp,
   sameId,
   sdpFingerprint,
   sdpWithoutCandidates,
@@ -109,8 +112,16 @@ const base: CallView = {
   remoteMic: true,
   remoteCamera: false,
   remoteVideo: false,
+  screenOn: false,
+  screenPending: false,
+  screenSound: false,
+  shareSupported: true,
+  canShare: false,
+  remoteScreen: false,
   localStream: null,
   remoteStream: null,
+  screenStream: null,
+  remoteScreenStream: null,
   audioBlocked: false,
   endedText: null,
   notice: null,
@@ -187,6 +198,77 @@ check(readSignal("ice_candidate", { t: "ice", cs: "no", n: 2 }) === null, "candi
 check(readSignal("renegotiate", { t: "restart", n: 3 })?.t === "restart", "a restart request");
 const media = readSignal("media_state", { t: "media", mic: false, camera: true, n: 4 });
 check(media?.t === "media" && !media.mic && media.camera, "media state");
+check(media?.t === "media" && media.screen === undefined, "an older app says nothing about screens");
+const sharing = readSignal("media_state", { t: "media", mic: true, camera: false, screen: true, n: 5 });
+check(sharing?.t === "media" && sharing.screen === true, "a shared screen");
+const notSharing = readSignal("media_state", { t: "media", mic: true, camera: false, screen: false, n: 6 });
+check(notSharing?.t === "media" && notSharing.screen === false, "an app that knows screens and shares none");
+check(readSignal("media_state", { t: "media", mic: true, camera: false, screen: "yes", n: 7 }) === null, "screen is a boolean");
+
+/* --- the screen's sound: its own section, its own Opus settings --- */
+{
+  const offer = [
+    "v=0",
+    "m=audio 9 UDP/TLS/RTP/SAVPF 111",
+    "a=rtpmap:111 opus/48000/2",
+    "a=fmtp:111 minptime=10;useinbandfec=1",
+    "m=video 9 UDP/TLS/RTP/SAVPF 96",
+    "a=rtpmap:96 VP8/90000",
+    "m=video 9 UDP/TLS/RTP/SAVPF 96",
+    "a=rtpmap:96 VP8/90000",
+    "m=audio 9 UDP/TLS/RTP/SAVPF 111",
+    "a=rtpmap:111 opus/48000/2",
+    "a=fmtp:111 minptime=10;useinbandfec=1",
+    "",
+  ].join("\r\n");
+  const tuned = screenSoundSdp(voiceSdp(offer));
+  const fmtps = tuned.split("\r\n").filter((line) => line.startsWith("a=fmtp:111"));
+  check(fmtps.length === 2, "one fmtp per audio section");
+  check(fmtps[0].includes("stereo=0") && fmtps[0].includes("maxaveragebitrate=32000"), `the microphone stays speech (${fmtps[0]})`);
+  check(
+    fmtps[1].includes("stereo=1") && fmtps[1].includes("sprop-stereo=1") && fmtps[1].includes("maxaveragebitrate=128000") && fmtps[1].includes("usedtx=0"),
+    `the screen's sound is stereo music (${fmtps[1]})`,
+  );
+  check(screenSoundSdp(tuned) === tuned, "a second pass changes nothing");
+  const bare = offer.replace(/a=fmtp:111 minptime=10;useinbandfec=1\r\n(?![\s\S]*m=audio)/, "");
+  const inserted = screenSoundSdp(bare).split("\r\n");
+  const at = inserted.lastIndexOf("a=rtpmap:111 opus/48000/2");
+  check(inserted[at + 1]?.startsWith("a=fmtp:111 ") && inserted[at + 1].includes("stereo=1"), "an fmtp is added where there was none");
+  const older = offer.split("\r\nm=video")[0] + "\r\n";
+  check(screenSoundSdp(older) === older, "an sdp with one audio section is unchanged");
+}
+
+/* --- VP8 first on the screen's picture, the camera's order left alone --- */
+{
+  const sdp = [
+    "v=0",
+    "m=audio 9 UDP/TLS/RTP/SAVPF 111",
+    "a=rtpmap:111 opus/48000/2",
+    "m=video 9 UDP/TLS/RTP/SAVPF 102 103 96 97",
+    "a=rtpmap:102 H264/90000",
+    "a=rtpmap:103 rtx/90000",
+    "a=rtpmap:96 VP8/90000",
+    "a=rtpmap:97 rtx/90000",
+    "m=video 9 UDP/TLS/RTP/SAVPF 102 103 96 97",
+    "a=rtpmap:102 H264/90000",
+    "a=rtpmap:103 rtx/90000",
+    "a=rtpmap:96 VP8/90000",
+    "a=rtpmap:97 rtx/90000",
+    "m=audio 9 UDP/TLS/RTP/SAVPF 111",
+    "",
+  ].join("\r\n");
+  const tuned = screenVideoSdp(sdp);
+  const mlines = tuned.split("\r\n").filter((line) => line.startsWith("m=video"));
+  check(mlines[0] === "m=video 9 UDP/TLS/RTP/SAVPF 102 103 96 97", "the camera keeps its order");
+  check(mlines[1] === "m=video 9 UDP/TLS/RTP/SAVPF 96 102 103 97", `VP8 leads the screen's section (${mlines[1]})`);
+  check(screenVideoSdp(tuned) === tuned, "a second pass changes nothing");
+  const older = sdp.split("\r\nm=video")[0] + "\r\n";
+  check(screenVideoSdp(older) === older, "an sdp without the screen's section is unchanged");
+}
+
+check(screenErrorText({ name: "NotAllowedError", message: "Permission denied" }) === null, "a closed picker says nothing");
+check(screenErrorText({ name: "NotAllowedError", message: "Permission denied by system" })?.includes("screen recording") === true, "the system's refusal says what to do");
+check(screenErrorText({ name: "NotReadableError", message: "" })?.includes("couldn’t be captured") === true, "a failed capture");
 check(readSignal("media_state", { t: "media", mic: "no", camera: true, n: 4 }) === null, "flags are booleans");
 
 const ek = btoa(String.fromCharCode(...new Uint8Array(32)));

@@ -11,6 +11,14 @@ Native SwiftUI client for the E2E encrypted messenger.
 | `shroud/ShroudUI/` | Reusable components + `Theme` tokens |
 | `shroud/Services/` | API client, crypto, persistence (no keys in views) |
 | `shroud/Resources/` | Asset catalog (design tokens) |
+| `ShroudNotificationService/` | Notification service extension (sealed sender names) |
+| `ShroudScreenShare/` | Broadcast upload extension: shares the whole screen into a call (docs/calls.md, "Screen sharing") |
+| `ShroudShared/` | Code compiled into the app and its extensions |
+
+Both extensions sign with the team's automatic signing and need the app group
+`group.de.corespace.shroud` on their App IDs (`de.corespace.shroud.NotificationService`,
+`de.corespace.shroud.ScreenShare`). Xcode registers a new one on the first device build; if it
+reports a missing app group, add it to that App ID in the developer portal.
 
 ## Run
 

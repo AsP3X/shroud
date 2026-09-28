@@ -48,6 +48,15 @@ final class CallController {
         var reconnecting: Bool
         var remoteMicMuted: Bool
         var remoteCameraOff: Bool
+        /// Our screen goes out (a broadcast runs and its frames arrive), next to the camera.
+        var isSharingScreen: Bool
+        /// A broadcast has connected and its first frame is not here yet: Share already stops it.
+        var screenShareStarting: Bool
+        /// This call can carry our screen and their app can show it. False with an older app on
+        /// either side.
+        var canShareScreen: Bool
+        /// They say they share their screen (`media_state`).
+        var remoteSharingScreen: Bool
         var notice: String?
         var speakerOn: Bool
         /// The safety number has been compared on this phone. The call still connects either way.
@@ -67,6 +76,9 @@ final class CallController {
     private(set) var localVideoLive = false
     private(set) var usesFrontCamera = true
     private(set) var canSwitchCamera = false
+    private(set) var remoteScreenTrack: RTCVideoTrack?
+    /// Their screen's frames are arriving since they started sharing: their screen shows.
+    private(set) var remoteScreenLive = false
 
     struct RecentCall: Identifiable, Equatable {
         let id: UUID
@@ -88,6 +100,12 @@ final class CallController {
     private var finished: [String] = []
     private var ignoreKitEnd = false
     private var dismissTask: Task<Void, Never>?
+    /// The app's end of a screen broadcast, listening while a call runs.
+    private var screenReceiver: ScreenShareReceiver?
+    #if DEBUG && targetEnvironment(simulator)
+    /// The simulator cannot broadcast its screen: a pattern goes through the same socket instead.
+    private var simulatedBroadcast: SimulatedBroadcast?
+    #endif
 
     /// One live call's signaling. Replaced wholesale when the call ends.
     private final class Machine {
@@ -143,6 +161,11 @@ final class CallController {
         var cameraBusy = false
         /// Video moved the sound to the speaker; it goes back to the earpiece with the video.
         var speakerForVideo = false
+        /// Their app can show a screen: its `media_state` carries `screen`.
+        var peerShowsScreens = false
+        /// A broadcast is connected and our screen is on its section (its first frame may not be
+        /// here yet).
+        var broadcasting = false
         /// What CallKit was last told: a video call or not.
         var reportedVideo: Bool?
         var noticeTask: Task<Void, Never>?
@@ -188,6 +211,12 @@ final class CallController {
         }
         engine.onLocalFrame = { [weak self] in
             self?.localVideoLive = true
+        }
+        engine.onRemoteScreen = { [weak self] track in
+            self?.remoteScreenTrack = track
+        }
+        engine.onRemoteScreenFrame = { [weak self] in
+            self?.remoteScreenLive = true
         }
         engine.onCameraPaused = { [weak self] paused in
             guard let self, let machine = self.machine, self.current(machine) else { return }
@@ -854,18 +883,31 @@ final class CallController {
         case .restartRequest:
             guard machine.role == .caller else { return }
             restartIce(machine)
-        case let .media(mic, camera):
+        case let .media(mic, camera, screen):
             // The latest wins: the server's kept copy can arrive after a newer one.
             guard machine.mediaOrder.isNewer(parsed.n, from: from), var call = active else { return }
             let cameraWasOn = !call.remoteCameraOff
+            let screenWasOn = call.remoteSharingScreen
+            // An app that knows screens always says whether it shares one; an older one never does.
+            if screen != nil { machine.peerShowsScreens = true }
             call.remoteMicMuted = !mic
             call.remoteCameraOff = !camera
+            call.remoteSharingScreen = screen == true
             active = call
             if camera != cameraWasOn {
                 // Their picture shows again from its first new frame, never a stale one.
                 remoteVideoLive = false
                 if camera { engine.awaitRemoteFrame() }
             }
+            if call.remoteSharingScreen != screenWasOn {
+                remoteScreenLive = false
+                if call.remoteSharingScreen {
+                    engine.awaitRemoteScreenFrame()
+                    // Their screen is to be looked at, not listened to at the ear.
+                    preferSpeaker(machine)
+                }
+            }
+            refreshCanVideo()
             videoChanged(machine)
         }
     }
@@ -1033,13 +1075,15 @@ final class CallController {
         machine.negotiated = true
         flushGathered(machine)
         sendMedia(machine)
+        listenForBroadcasts(machine)
     }
 
     /// What we send now. A camera the system paused counts as off: they see our face, not a still.
+    /// `screen` always goes along: it also tells them this app can show theirs.
     private func sendMedia(_ machine: Machine) {
         guard machine.negotiated, let call = active else { return }
         let camera = call.isVideoEnabled && engine.isCameraOn && !machine.cameraPaused
-        send(.media(mic: !call.isMuted, camera: camera), machine)
+        send(.media(mic: !call.isMuted, camera: camera, screen: call.isSharingScreen), machine)
     }
 
     private func send(_ signal: CallSignal, _ machine: Machine) {
@@ -1434,12 +1478,15 @@ final class CallController {
     }
 
     private func teardownMedia() {
+        stopBroadcasts()
         engine.close()
         localVideoTrack = nil
         remoteVideoTrack = nil
         remoteVideoLive = false
         localVideoLive = false
         canSwitchCamera = false
+        remoteScreenTrack = nil
+        remoteScreenLive = false
     }
 
     // MARK: - Switching between voice and video
@@ -1452,18 +1499,23 @@ final class CallController {
         active = call
         sendMedia(machine)
         // The phone is away from the ear now: the sound leaves the earpiece for the speaker.
-        if on, !call.speakerOn, CallAudio.isOnReceiver {
-            machine.speakerForVideo = true
-            setSpeaker(true)
-        }
+        if on { preferSpeaker(machine) }
         videoChanged(machine)
     }
 
-    /// Either camera changed. CallKit shows a video call while any picture is on, and once no
-    /// video is left the sound goes back to the earpiece, if it was video that moved it.
+    /// The phone is held away from the ear (a camera, a screen): the sound leaves the earpiece
+    /// for the speaker, and comes back once nothing is left to look at.
+    private func preferSpeaker(_ machine: Machine) {
+        guard let call = active, !call.speakerOn, CallAudio.isOnReceiver else { return }
+        machine.speakerForVideo = true
+        setSpeaker(true)
+    }
+
+    /// A camera or a screen changed. CallKit shows a video call while any picture is on, and once
+    /// no video is left the sound goes back to the earpiece, if it was video that moved it.
     private func videoChanged(_ machine: Machine) {
         guard let call = active, call.phase != .ending else { return }
-        let hasVideo = call.isVideoEnabled || !call.remoteCameraOff
+        let hasVideo = call.isVideoEnabled || !call.remoteCameraOff || call.isSharingScreen || call.remoteSharingScreen
         if let id = machine.serverID, machine.reportedVideo != hasVideo {
             machine.reportedVideo = hasVideo
             ensureCallKit().update(id, callerName: call.peerUsername, video: hasVideo)
@@ -1481,11 +1533,124 @@ final class CallController {
         CallAudio.setSpeaker(on)
     }
 
-    /// The answer settled whether our video can go out in this call.
+    /// The answer settled whether our video can go out in this call; their `media_state`,
+    /// whether they can show our screen.
     private func refreshCanVideo() {
-        guard var call = active, call.canVideo != engine.canSendVideo else { return }
+        guard var call = active else { return }
+        let canShare = engine.canSendScreen && machine?.peerShowsScreens == true
+        guard call.canVideo != engine.canSendVideo || call.canShareScreen != canShare else { return }
         call.canVideo = engine.canSendVideo
+        call.canShareScreen = canShare
         active = call
+    }
+
+    // MARK: - Sharing the screen
+
+    /// What Share does. True when the system's broadcast picker should open: Shroud cannot start
+    /// a broadcast itself, the person starts it there. Stopping needs no picker: closing the
+    /// broadcast's connection ends it (docs/calls.md, "Screen sharing").
+    func toggleScreenShare() -> Bool {
+        guard let machine, current(machine), let call = active, call.phase == .active || call.phase == .connecting else {
+            return false
+        }
+        if call.isSharingScreen || machine.broadcasting {
+            screenReceiver?.dropBroadcast()
+            #if DEBUG && targetEnvironment(simulator)
+            simulatedBroadcast?.stop()
+            simulatedBroadcast = nil
+            #endif
+            broadcastEnded(machine)
+            return false
+        }
+        guard call.canShareScreen, screenReceiver != nil else {
+            note(shareUnavailableText(call), machine)
+            return false
+        }
+        #if DEBUG && targetEnvironment(simulator)
+        let broadcast = SimulatedBroadcast()
+        simulatedBroadcast = broadcast
+        broadcast.start()
+        return false
+        #else
+        return true
+        #endif
+    }
+
+    /// From the answer on, a broadcast started now (from Share, or from Control Center) goes
+    /// on this call.
+    private func listenForBroadcasts(_ machine: Machine) {
+        guard screenReceiver == nil else { return }
+        let receiver = ScreenShareReceiver { [weak self] event in
+            guard let self, let machine = self.machine, self.current(machine) else { return }
+            self.broadcastEvent(event, machine)
+        }
+        receiver?.start()
+        screenReceiver = receiver
+    }
+
+    private func broadcastEvent(_ event: ScreenShareReceiver.Event, _ machine: Machine) {
+        switch event {
+        case .connected:
+            guard var call = active, call.phase != .ending else {
+                screenReceiver?.dropBroadcast()
+                return
+            }
+            guard call.canShareScreen, engine.startScreen() else {
+                // Nowhere to send it (yet): the broadcast ends, and the screen says why.
+                screenReceiver?.dropBroadcast()
+                note(call.canShareScreen ? "Couldn’t share your screen." : shareUnavailableText(call), machine)
+                return
+            }
+            machine.broadcasting = true
+            screenReceiver?.feed = engine.screenFeed
+            call.screenShareStarting = true
+            active = call
+        case .firstFrame:
+            guard machine.broadcasting, var call = active, !call.isSharingScreen else { return }
+            call.isSharingScreen = true
+            call.screenShareStarting = false
+            call.notice = nil
+            active = call
+            sendMedia(machine)
+            preferSpeaker(machine)
+            videoChanged(machine)
+        case .disconnected:
+            broadcastEnded(machine)
+        }
+    }
+
+    /// The broadcast is over: nothing more goes out, and they are told.
+    private func broadcastEnded(_ machine: Machine) {
+        machine.broadcasting = false
+        screenReceiver?.feed = nil
+        engine.stopScreen()
+        guard var call = active, call.isSharingScreen || call.screenShareStarting else { return }
+        let wasShared = call.isSharingScreen
+        call.isSharingScreen = false
+        call.screenShareStarting = false
+        active = call
+        guard wasShared else { return }
+        sendMedia(machine)
+        videoChanged(machine)
+    }
+
+    /// Why Share cannot be used in this call right now.
+    private func shareUnavailableText(_ call: ActiveCall) -> String {
+        if screenReceiver == nil, call.phase == .active, call.canShareScreen {
+            return "Screen sharing isn’t available on this iPhone."
+        }
+        // Their app says whether it shows screens as the call connects.
+        guard call.phase == .active else { return "You can share your screen once the call has connected." }
+        return "Screen sharing isn’t available in this call. Their app needs an update."
+    }
+
+    private func stopBroadcasts() {
+        #if DEBUG && targetEnvironment(simulator)
+        simulatedBroadcast?.stop()
+        simulatedBroadcast = nil
+        #endif
+        screenReceiver?.stop()
+        screenReceiver = nil
     }
 
     /// The other device's latest media state as the server kept it: a camera switch whose
@@ -1615,6 +1780,10 @@ final class CallController {
             remoteMicMuted: false,
             // Until they say otherwise: a video call's other side sends video, a voice call's not.
             remoteCameraOff: modality != .video,
+            isSharingScreen: false,
+            screenShareStarting: false,
+            canShareScreen: false,
+            remoteSharingScreen: false,
             notice: nil,
             speakerOn: modality == .video,
             safetyVerified: messagingController?.peerSafetyVerified(peerUserID) ?? false

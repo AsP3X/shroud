@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		739D7554305DCFD500302FD6 /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = 73WK0002305C000000000002 /* WhisperKit */; };
 		73A0B0020000000000000002 /* ShroudNotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 73A0B0010000000000000001 /* ShroudNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		73A0C0020000000000000002 /* ShroudScreenShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 73A0C0010000000000000001 /* ShroudScreenShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		73WR0003305C000000000003 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = 73WR0002305C000000000002 /* WebRTC */; };
 /* End PBXBuildFile section */
 
@@ -34,6 +35,13 @@
 			remoteGlobalIDString = 73A0B0100000000000000010;
 			remoteInfo = ShroudNotificationService;
 		};
+		73A0C0030000000000000003 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 736BA3553007DFB8005F6B14 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 73A0C0100000000000000010;
+			remoteInfo = ShroudScreenShare;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -44,6 +52,7 @@
 			dstSubfolderSpec = 13;
 			files = (
 				73A0B0020000000000000002 /* ShroudNotificationService.appex in Embed Foundation Extensions */,
+				73A0C0020000000000000002 /* ShroudScreenShare.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -55,6 +64,7 @@
 		736BA36C3007DFB9005F6B14 /* shroudTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = shroudTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		736BA3763007DFB9005F6B14 /* shroudUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = shroudUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		73A0B0010000000000000001 /* ShroudNotificationService.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ShroudNotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		73A0C0010000000000000001 /* ShroudScreenShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ShroudScreenShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -64,6 +74,13 @@
 				Info.plist,
 			);
 			target = 73A0B0100000000000000010 /* ShroudNotificationService */;
+		};
+		73A0C0060000000000000006 /* Exceptions for "ShroudScreenShare" folder in "ShroudScreenShare" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 73A0C0100000000000000010 /* ShroudScreenShare */;
 		};
 		73DA6988305B04FA008322B9 /* Exceptions for "shroud" folder in "shroud" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
@@ -106,6 +123,14 @@
 			path = ShroudShared;
 			sourceTree = "<group>";
 		};
+		73A0C0070000000000000007 /* ShroudScreenShare */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				73A0C0060000000000000006 /* Exceptions for "ShroudScreenShare" folder in "ShroudScreenShare" target */,
+			);
+			path = ShroudScreenShare;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -139,6 +164,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		73A0C00B000000000000000B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -150,6 +182,7 @@
 				736BA3793007DFB9005F6B14 /* shroudUITests */,
 				73A0B0080000000000000008 /* ShroudShared */,
 				73A0B0070000000000000007 /* ShroudNotificationService */,
+				73A0C0070000000000000007 /* ShroudScreenShare */,
 				736BA35E3007DFB8005F6B14 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -161,6 +194,7 @@
 				736BA36C3007DFB9005F6B14 /* shroudTests.xctest */,
 				736BA3763007DFB9005F6B14 /* shroudUITests.xctest */,
 				73A0B0010000000000000001 /* ShroudNotificationService.appex */,
+				73A0C0010000000000000001 /* ShroudScreenShare.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -181,6 +215,7 @@
 			);
 			dependencies = (
 				73A0B0040000000000000004 /* PBXTargetDependency */,
+				73A0C0040000000000000004 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				736BA35F3007DFB8005F6B14 /* shroud */,
@@ -264,6 +299,29 @@
 			productReference = 73A0B0010000000000000001 /* ShroudNotificationService.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		73A0C0100000000000000010 /* ShroudScreenShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 73A0C0130000000000000013 /* Build configuration list for PBXNativeTarget "ShroudScreenShare" */;
+			buildPhases = (
+				73A0C00A000000000000000A /* Sources */,
+				73A0C00B000000000000000B /* Frameworks */,
+				73A0C00C000000000000000C /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				73A0B0080000000000000008 /* ShroudShared */,
+				73A0C0070000000000000007 /* ShroudScreenShare */,
+			);
+			name = ShroudScreenShare;
+			packageProductDependencies = (
+			);
+			productName = ShroudScreenShare;
+			productReference = 73A0C0010000000000000001 /* ShroudScreenShare.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -286,6 +344,9 @@
 						TestTargetID = 736BA35C3007DFB8005F6B14;
 					};
 					73A0B0100000000000000010 = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					73A0C0100000000000000010 = {
 						CreatedOnToolsVersion = 26.6;
 					};
 				};
@@ -312,6 +373,7 @@
 				736BA36B3007DFB9005F6B14 /* shroudTests */,
 				736BA3753007DFB9005F6B14 /* shroudUITests */,
 				73A0B0100000000000000010 /* ShroudNotificationService */,
+				73A0C0100000000000000010 /* ShroudScreenShare */,
 			);
 		};
 /* End PBXProject section */
@@ -339,6 +401,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		73A0B00C000000000000000C /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		73A0C00C000000000000000C /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -376,6 +445,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		73A0C00A000000000000000A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -393,6 +469,11 @@
 			isa = PBXTargetDependency;
 			target = 73A0B0100000000000000010 /* ShroudNotificationService */;
 			targetProxy = 73A0B0030000000000000003 /* PBXContainerItemProxy */;
+		};
+		73A0C0040000000000000004 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 73A0C0100000000000000010 /* ShroudScreenShare */;
+			targetProxy = 73A0C0030000000000000003 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -750,6 +831,66 @@
 			};
 			name = Release;
 		};
+		73A0C0110000000000000011 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ShroudScreenShare/ShroudScreenShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2G3936C5F4;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ShroudScreenShare/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Shroud;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = de.corespace.shroud.ScreenShare;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		73A0C0120000000000000012 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ShroudScreenShare/ShroudScreenShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2G3936C5F4;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ShroudScreenShare/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Shroud;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = de.corespace.shroud.ScreenShare;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -794,6 +935,15 @@
 			buildConfigurations = (
 				73A0B0110000000000000011 /* Debug */,
 				73A0B0120000000000000012 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		73A0C0130000000000000013 /* Build configuration list for PBXNativeTarget "ShroudScreenShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				73A0C0110000000000000011 /* Debug */,
+				73A0C0120000000000000012 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

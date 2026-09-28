@@ -69,6 +69,31 @@ struct CallSignalTests {
     }
 
     @Test
+    func aSharedScreenIsSaidAndAnOlderAppSaysNothing() throws {
+        let sharing = try CallSignal.parse(
+            CallSignal.media(mic: true, camera: false, screen: true).plaintext(n: 5),
+            signalType: "media_state"
+        )
+        #expect(sharing.signal == .media(mic: true, camera: false, screen: true))
+        let notSharing = try CallSignal.parse(
+            CallSignal.media(mic: true, camera: false, screen: false).plaintext(n: 6),
+            signalType: "media_state"
+        )
+        #expect(notSharing.signal == .media(mic: true, camera: false, screen: false))
+        // An app from before screen sharing sends no `screen`, and none is written for it.
+        let older = Data(#"{"t":"media","mic":true,"camera":true,"n":7}"#.utf8)
+        #expect(try CallSignal.parse(older, signalType: "media_state").signal == .media(mic: true, camera: true, screen: nil))
+        let written = try JSONSerialization.jsonObject(with: CallSignal.media(mic: true, camera: true).plaintext(n: 8)) as? [String: Any]
+        #expect(written?["screen"] == nil)
+        // The web writes the same shape.
+        let web = Data(#"{"t":"media","mic":false,"camera":false,"screen":true,"n":9}"#.utf8)
+        #expect(try CallSignal.parse(web, signalType: "media_state").signal == .media(mic: false, camera: false, screen: true))
+        #expect(throws: CallSignal.ParseError.malformed) {
+            try CallSignal.parse(Data(#"{"t":"media","mic":true,"camera":true,"screen":"yes","n":10}"#.utf8), signalType: "media_state")
+        }
+    }
+
+    @Test
     func anEphemeralKeyRoundTripsAndABadOneDoesNot() throws {
         let key = Data(repeating: 7, count: 32)
         let offer = CallSignal.offer(sdp: "v=0\r\n", restart: false, ephemeral: key)

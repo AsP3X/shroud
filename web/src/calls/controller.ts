@@ -30,6 +30,9 @@ import {
   OUTGOING_RING_LIMIT_MS,
   RECONNECT_LIMIT_MS,
   RestartGate,
+  SCREEN_ENDED,
+  SCREEN_NOT_YET,
+  SCREEN_UNAVAILABLE,
   SeenSignals,
   VIDEO_UNAVAILABLE,
   cameraErrorText,
@@ -43,6 +46,9 @@ import {
   readSignal,
   sameId,
   sdpFingerprint,
+  screenErrorText,
+  screenSoundSdp,
+  screenVideoSdp,
   sdpWithoutCandidates,
   signalTypeOf,
   voiceSdp,
@@ -68,7 +74,9 @@ import {
  *
  * Voice or video is not fixed: every call negotiates a video section both ways from the start, so
  * either side turns its camera on or off at any time by swapping the track on that section and
- * saying so in `media_state`. No new offer, so the call never drops or stalls for it.
+ * saying so in `media_state`. No new offer, so the call never drops or stalls for it. A shared
+ * screen works the same way on two sections of its own (its picture and its sound), next to the
+ * camera: the sections are told apart by their place in the offer (`sectionOf`).
  *
  * Browser APIs come in through `CallEnv`, so the selftest can run two controllers against a fake
  * server and fake peer connections.
@@ -112,6 +120,11 @@ export type CallEnv = {
   /** Why this browser cannot call at all, or null. */
   unsupported(): string | null;
   getUserMedia(constraints: MediaStreamConstraints): Promise<MediaStream>;
+  /**
+   * The browser's screen picker. Absent where a browser cannot share a screen (phones). It must be
+   * called within the click that asked for it, so nothing is awaited before it.
+   */
+  getDisplayMedia?(options: DisplayMediaStreamOptions): Promise<MediaStream>;
   /** Device ids of the cameras. */
   cameras(): Promise<string[]>;
   createPeer(config: RTCConfiguration): RTCPeerConnection;
@@ -123,8 +136,11 @@ export type CallEnv = {
   clearInterval(id: number): void;
   publish(view: CallView | null): void;
   tone(kind: "ringtone" | "ringback" | null): void;
-  /** Plays the other side's audio (null stops it); false when the browser wants a click first. */
-  playAudio(stream: MediaStream | null): Promise<boolean>;
+  /**
+   * Plays the other side's audio (null stops it); false when the browser wants a click first.
+   * Their microphone and their shared screen's sound each play in a slot of their own.
+   */
+  playAudio(stream: MediaStream | null, slot?: "voice" | "screen"): Promise<boolean>;
   keepAwake(on: boolean): void;
   holdAutoLock(): () => void;
   /** A call takes the microphone: voice notes stop playing and recording. */
@@ -157,8 +173,27 @@ const AUDIO: MediaTrackConstraints = {
   autoGainControl: true,
   channelCount: { ideal: 1 },
 };
+/**
+ * A shared screen: sharp text first (1080p at most), up to 30 fps for a video playing in it. The
+ * sound comes as it is, without the processing a microphone gets. The browser's own tab is left
+ * out of the picker: sharing the call into itself mirrors it without end.
+ */
+const DISPLAY: DisplayMediaStreamOptions & Record<string, unknown> = {
+  video: { width: { max: 1920 }, height: { max: 1080 }, frameRate: { max: 30 } },
+  // A system's sound would carry this page's own playback (their voice, their screen's sound)
+  // back to them; `restrictOwnAudio` leaves it out where the browser knows how.
+  audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, restrictOwnAudio: true } as MediaTrackConstraints,
+  selfBrowserSurface: "exclude",
+  surfaceSwitching: "include",
+  systemAudio: "include",
+  monitorTypeSurfaces: "include",
+};
 const AUDIO_MAX_BPS = 32_000;
 const VIDEO_MAX_BPS = 1_200_000;
+/** Our camera while our screen is shared: they show it as a small tile, so a thumbnail's worth. */
+const TILE_MAX_BPS = 350_000;
+const SCREEN_MAX_BPS = 2_500_000;
+const SCREEN_SOUND_MAX_BPS = 128_000;
 
 type TimerKey =
   | "ringTimer"
@@ -170,6 +205,8 @@ type TimerKey =
   | "noticeTimer"
   | "cameraTimer"
   | "endTimer";
+/** What a section carries: by kind, then by place (docs/calls.md, "Screen sharing"). */
+type Section = "mic" | "camera" | "screen" | "screenSound";
 type IntervalKey = "heartbeat" | "ringCheck";
 
 type Call = {
@@ -223,6 +260,17 @@ type Call = {
   /** The browser or the system paused the camera (another app took it, the page went away). */
   cameraMuted: boolean;
   cameraPending: boolean;
+  /** Our screen's two sections: its picture and its sound. Null in a call with an older app. */
+  screen: RTCRtpTransceiver | null;
+  screenSound: RTCRtpTransceiver | null;
+  /** What the browser captures while we share (picture, and sound when it offers some). */
+  display: MediaStream | null;
+  screenPending: boolean;
+  /** Their app can show a screen: its `media_state` carries `screen`. */
+  peerShows: boolean;
+  remoteScreen: boolean;
+  /** Their screen's picture and sound, apart from their camera. */
+  remoteDisplay: MediaStream | null;
   /** Caller: the offer made while it rang; true once it is the local description. */
   offerReady: Promise<boolean> | null;
   /** The offer (caller) or answer (callee) went: candidates and media state may follow. */
@@ -290,6 +338,13 @@ function hasTurnServer(servers: RTCIceServer[]): boolean {
   return false;
 }
 
+/** A section that goes both ways (or out only) can carry what we send. */
+function sendable(transceiver: RTCRtpTransceiver | null): boolean {
+  if (!transceiver) return false;
+  const direction = transceiver.currentDirection ?? transceiver.direction;
+  return direction === "sendrecv" || direction === "sendonly";
+}
+
 function peerConfig(servers: RTCIceServer[], relay: boolean): RTCConfiguration {
   return {
     iceServers: servers,
@@ -300,12 +355,41 @@ function peerConfig(servers: RTCIceServer[], relay: boolean): RTCConfiguration {
   };
 }
 
+/** Opus as each audio section needs it (speech on the microphone's, music on the screen's), and
+ *  VP8 first for the screen's picture. */
 function withVoice(description: RTCSessionDescriptionInit): RTCSessionDescriptionInit {
-  return { type: description.type, sdp: voiceSdp(description.sdp ?? "") };
+  return { type: description.type, sdp: screenVideoSdp(screenSoundSdp(voiceSdp(description.sdp ?? ""))) };
 }
 
-/** Speech at about 32 kbps; video at about 1.2 Mbps, 30 fps, shedding rate and detail together. */
-function tuneSenders(pc: RTCPeerConnection): void {
+/**
+ * What a transceiver carries, by its place among those of its kind: the first audio section is
+ * the microphone and the first video the camera, the second of each the shared screen's sound and
+ * picture. Both ends see the sections in the offer's order, so both agree without naming them.
+ */
+function sectionOf(pc: RTCPeerConnection, transceiver: RTCRtpTransceiver): Section | null {
+  let audio = 0;
+  let video = 0;
+  for (const t of pc.getTransceivers()) {
+    const kind = t.receiver.track?.kind;
+    const place = kind === "audio" ? audio++ : kind === "video" ? video++ : -1;
+    if (t !== transceiver) continue;
+    if (kind === "audio") return place === 0 ? "mic" : place === 1 ? "screenSound" : null;
+    if (kind === "video") return place === 0 ? "camera" : place === 1 ? "screen" : null;
+    return null;
+  }
+  return null;
+}
+
+/** Which of our senders carry the screen, and whether it goes out now. */
+type Sharing = { screen: RTCRtpSender | null; sound: RTCRtpSender | null; on: boolean };
+
+/**
+ * Speech at about 32 kbps, first in line. The camera at about 1.2 Mbps and 30 fps, shedding rate
+ * and detail together; while our screen is shared, a thumbnail's worth (they show it as a tile).
+ * The screen at about 2.5 Mbps, keeping its sharpness and giving up frames when the link is tight,
+ * ahead of the camera and behind speech. Its sound at about 128 kbps.
+ */
+function tuneSenders(pc: RTCPeerConnection, sharing: Sharing): void {
   if (typeof pc.getSenders !== "function") return;
   for (const sender of pc.getSenders()) {
     const track = sender.track;
@@ -314,13 +398,24 @@ function tuneSenders(pc: RTCPeerConnection): void {
       const params = sender.getParameters();
       const encoding = params.encodings?.[0];
       if (!encoding) continue;
-      if (track.kind === "audio") {
+      if (sender === sharing.sound) {
+        encoding.maxBitrate = SCREEN_SOUND_MAX_BPS;
+        encoding.priority = "medium";
+        encoding.networkPriority = "medium";
+      } else if (sender === sharing.screen) {
+        encoding.maxBitrate = SCREEN_MAX_BPS;
+        encoding.maxFramerate = 30;
+        encoding.priority = "medium";
+        encoding.networkPriority = "medium";
+        params.degradationPreference = "maintain-resolution";
+      } else if (track.kind === "audio") {
         encoding.maxBitrate = AUDIO_MAX_BPS;
         encoding.priority = "high";
         encoding.networkPriority = "high";
       } else if (track.kind === "video") {
-        encoding.maxBitrate = VIDEO_MAX_BPS;
-        encoding.maxFramerate = 30;
+        encoding.maxBitrate = sharing.on ? TILE_MAX_BPS : VIDEO_MAX_BPS;
+        encoding.maxFramerate = sharing.on ? 15 : 30;
+        encoding.scaleResolutionDownBy = sharing.on ? 2 : 1;
         // Below speech, so a tight link fills the microphone before the camera.
         encoding.priority = "low";
         encoding.networkPriority = "low";
@@ -567,7 +662,7 @@ export class CallController {
     }
     if (track !== call.camera) this.useCamera(call, track);
     call.cameraOn = true;
-    if (call.pc) tuneSenders(call.pc);
+    this.tune(call);
     this.sendMediaState(call);
     this.publish(call);
     this.findCameras(call);
@@ -630,10 +725,148 @@ export class CallController {
 
   /** Our video can go out in this call: its section was offered both ways (every current app does). */
   private videoSendable(call: Call): boolean {
-    const video = call.video;
-    if (!video) return false;
-    const direction = video.currentDirection ?? video.direction;
-    return direction === "sendrecv" || direction === "sendonly";
+    return sendable(call.video);
+  }
+
+  /**
+   * Our screen can go out and they can show it: its section goes both ways (an older app's offer
+   * has none), and their app said it knows screens.
+   */
+  private screenSendable(call: Call): boolean {
+    return sendable(call.screen) && call.peerShows;
+  }
+
+  /**
+   * Share the screen, or stop sharing it. The browser's picker opens from the click that got here,
+   * so it must open before anything is awaited.
+   */
+  toggleScreen(): void {
+    const call = this.live();
+    if (!call || call.screenPending) return;
+    if (call.display) {
+      this.screenOff(call);
+      return;
+    }
+    if (!this.env.getDisplayMedia) return;
+    if (!call.screen || !this.screenSendable(call)) {
+      // Before the call connects, their app has not said yet whether it shows screens.
+      this.note(call, call.screen && call.phase !== "active" ? SCREEN_NOT_YET : SCREEN_UNAVAILABLE);
+      return;
+    }
+    call.screenPending = true;
+    const picked = this.pickScreen();
+    this.publish(call);
+    void this.screenOnNow(call, picked);
+  }
+
+  /**
+   * The picker, asked for the screen's sound too. A browser that cannot capture sound and says so
+   * at once (a TypeError) is asked again for the picture alone, still inside the same click.
+   */
+  private pickScreen(): Promise<MediaStream> {
+    const pick = (options: DisplayMediaStreamOptions) => {
+      try {
+        return this.env.getDisplayMedia!(options);
+      } catch (err) {
+        return Promise.reject(err);
+      }
+    };
+    return pick(DISPLAY).catch((err: unknown) => {
+      if (!(err instanceof TypeError)) throw err;
+      return pick({ ...DISPLAY, audio: false });
+    });
+  }
+
+  /** The chosen screen goes on its sections, its sound with it when the browser offered some. */
+  private async screenOnNow(call: Call, picked: Promise<MediaStream>): Promise<void> {
+    let stream: MediaStream | null = null;
+    let failure: unknown = null;
+    try {
+      stream = await picked;
+    } catch (err) {
+      failure = err;
+    }
+    if (this.gone(call)) {
+      stopTracks(stream);
+      return;
+    }
+    const picture = stream?.getVideoTracks()[0] ?? null;
+    if (!stream || !picture || !call.screen) {
+      stopTracks(stream);
+      call.screenPending = false;
+      // A closed picker says nothing; a refusal says why.
+      const why = stream ? "Couldn’t share your screen." : screenErrorText(failure);
+      if (why) this.note(call, why);
+      else this.publish(call);
+      return;
+    }
+    // Text and edges stay sharp; the sound is whatever plays, not speech.
+    picture.contentHint = "detail";
+    const sound = stream.getAudioTracks()[0] ?? null;
+    if (sound) sound.contentHint = "music";
+    const sent = await call.screen.sender.replaceTrack(picture).then(
+      () => true,
+      () => false,
+    );
+    const withSound =
+      sent && sound !== null && call.screenSound !== null &&
+      (await call.screenSound.sender.replaceTrack(sound).then(
+        () => true,
+        () => false,
+      ));
+    if (this.gone(call)) {
+      stopTracks(stream);
+      return;
+    }
+    call.screenPending = false;
+    // Stopped from the browser's bar, or the window closed, while it was being put on the call.
+    const ended = picture.readyState === "ended";
+    if (!sent || ended) {
+      void call.screen.sender.replaceTrack(null).catch(() => undefined);
+      void call.screenSound?.sender.replaceTrack(null).catch(() => undefined);
+      stopTracks(stream);
+      this.note(call, ended ? SCREEN_ENDED : "Couldn’t share your screen.");
+      return;
+    }
+    // Sound that could not go out is not shared, and not said to be.
+    if (sound && !withSound) {
+      sound.stop();
+      stream.removeTrack(sound);
+    }
+    call.display = stream;
+    // The browser's own "Stop sharing", or the shared window closing.
+    picture.onended = () => {
+      if (!this.gone(call) && call.display === stream) this.screenOff(call, SCREEN_ENDED);
+    };
+    this.tune(call);
+    this.sendMediaState(call);
+    this.publish(call);
+  }
+
+  /** Stop sharing: nothing more goes out, they are told, and the capture ends. */
+  private screenOff(call: Call, notice: string | null = null): void {
+    const stream = call.display;
+    if (!stream) return;
+    call.display = null;
+    void call.screen?.sender.replaceTrack(null).catch(() => undefined);
+    void call.screenSound?.sender.replaceTrack(null).catch(() => undefined);
+    for (const track of stream.getTracks()) {
+      track.onended = null;
+      track.stop();
+    }
+    this.tune(call);
+    this.sendMediaState(call);
+    if (notice) this.note(call, notice);
+    else this.publish(call);
+  }
+
+  private tune(call: Call): void {
+    if (!call.pc) return;
+    tuneSenders(call.pc, {
+      screen: call.screen?.sender ?? null,
+      sound: call.screenSound?.sender ?? null,
+      on: call.display !== null,
+    });
   }
 
   /** With a second camera, Flip is offered. */
@@ -658,7 +891,7 @@ export class CallController {
   /** A click the browser can count as permission to play the other side's audio. */
   resumeAudio(): void {
     const call = this.call;
-    if (call && !this.gone(call) && call.remote) void this.playRemote(call);
+    if (call && !this.gone(call) && (call.remote || call.remoteDisplay)) void this.playRemote(call);
   }
 
   /** Closes the ended screen early. */
@@ -835,6 +1068,13 @@ export class CallController {
       camera: null,
       cameraMuted: false,
       cameraPending: false,
+      screen: null,
+      screenSound: null,
+      display: null,
+      screenPending: false,
+      peerShows: false,
+      remoteScreen: false,
+      remoteDisplay: null,
       offerReady: null,
       negotiated: false,
       outbox: Promise.resolve(),
@@ -1097,9 +1337,15 @@ export class CallController {
     } else if (call.role === "caller") {
       call.video = pc.addTransceiver("video", { direction: "sendrecv", streams: local ? [local] : [] });
     }
-    tuneSenders(pc);
+    // Then the screen's picture and sound, both ways and empty until someone shares: after the
+    // camera, so each end tells the sections apart by their place (sectionOf).
+    if (call.role === "caller") {
+      call.screen = pc.addTransceiver("video", { direction: "sendrecv" });
+      call.screenSound = pc.addTransceiver("audio", { direction: "sendrecv" });
+    }
+    this.tune(call);
     pc.onicecandidate = (event) => this.gatheredCandidate(call, event.candidate);
-    pc.ontrack = (event) => this.remoteTrack(call, event.track);
+    pc.ontrack = (event) => this.remoteTrack(call, event.track, event.transceiver);
     pc.onconnectionstatechange = () => this.linkChanged(call);
     pc.oniceconnectionstatechange = () => this.linkChanged(call);
   }
@@ -1112,7 +1358,7 @@ export class CallController {
       const offer = withVoice(await pc.createOffer());
       if (this.gone(call)) return false;
       await pc.setLocalDescription(offer);
-      tuneSenders(pc);
+      this.tune(call);
       return !this.gone(call);
     } catch {
       if (!this.gone(call)) this.finish(call, "Couldn’t start the call.", "hangup", ERROR_VISIBLE_MS);
@@ -1318,6 +1564,9 @@ export class CallController {
           if (!call.seen.newerMedia(from, signal.n)) return;
           call.remoteMic = signal.mic;
           call.remoteCamera = signal.camera;
+          // An app that knows screens always says whether it shares one; an older one never does.
+          if (signal.screen !== undefined) call.peerShows = true;
+          call.remoteScreen = signal.screen === true;
           this.publish(call);
           return;
       }
@@ -1339,11 +1588,11 @@ export class CallController {
       this.noteFingerprint(call, sdp);
       await pc.setRemoteDescription({ type: "offer", sdp });
       if (this.gone(call)) return;
-      this.adoptVideo(call, pc);
+      this.adoptSections(call, pc);
       await this.flushRemoteCandidates(call);
       const answer = withVoice(await pc.createAnswer());
       await pc.setLocalDescription(answer);
-      tuneSenders(pc);
+      this.tune(call);
       if (this.gone(call)) return;
       const described = sdpWithoutCandidates(pc.localDescription?.sdp ?? answer.sdp ?? "");
       const ours = !call.sentAnswer && call.ephPublic ? bytesToB64(call.ephPublic) : undefined;
@@ -1361,17 +1610,21 @@ export class CallController {
   }
 
   /**
-   * Callee: the offer's video section becomes ours, both ways. Without a camera on it the
-   * browser would answer "receive only", and turning video on later would need a new offer.
-   * An older caller whose voice call brings no video section leaves the call without one.
+   * Callee: the offer's camera and screen sections become ours, both ways. Without a track on one
+   * the browser would answer "receive only", and turning video on or sharing later would need a
+   * new offer. An older caller's offer lacks the screen's (or, for its voice calls, also the
+   * camera's): those stay off in that call.
    */
-  private adoptVideo(call: Call, pc: RTCPeerConnection): void {
-    if (call.video) return;
-    const video = pc.getTransceivers().find((t) => t.receiver.track?.kind === "video" && t.direction !== "stopped");
-    if (!video) return;
-    if (video.direction === "recvonly") video.direction = "sendrecv";
-    else if (video.direction === "inactive") video.direction = "sendonly";
-    call.video = video;
+  private adoptSections(call: Call, pc: RTCPeerConnection): void {
+    for (const t of pc.getTransceivers()) {
+      if (t.direction === "stopped") continue;
+      const section = sectionOf(pc, t);
+      const slot = section === "camera" ? "video" : section === "screen" ? "screen" : section === "screenSound" ? "screenSound" : null;
+      if (!slot || call[slot]) continue;
+      if (t.direction === "recvonly") t.direction = "sendrecv";
+      else if (t.direction === "inactive") t.direction = "sendonly";
+      call[slot] = t;
+    }
   }
 
   private async takeAnswer(call: Call, sdp: string, ek?: string): Promise<void> {
@@ -1384,7 +1637,7 @@ export class CallController {
     }
     this.noteFingerprint(call, sdp);
     await pc.setRemoteDescription({ type: "answer", sdp });
-    tuneSenders(pc);
+    this.tune(call);
     await this.flushRemoteCandidates(call);
     this.flushHeld(call);
     // The answer settles whether our video can go out (an older app may have taken it one way).
@@ -1441,13 +1694,25 @@ export class CallController {
   private sendMediaState(call: Call): void {
     if (!call.negotiated) return;
     const camera = call.cameraOn && call.camera !== null && !call.cameraMuted;
-    this.send(call, { t: "media", mic: call.micOn, camera });
+    this.send(call, { t: "media", mic: call.micOn, camera, screen: call.display !== null });
   }
 
   /* --- media and the connection ------------------------------------------------------------ */
 
-  private remoteTrack(call: Call, track: MediaStreamTrack): void {
+  private remoteTrack(call: Call, track: MediaStreamTrack, transceiver?: RTCRtpTransceiver): void {
     if (this.gone(call)) return;
+    const section = call.pc && transceiver ? sectionOf(call.pc, transceiver) : null;
+    // A section this app does not know (a later protocol's third of a kind) is not shown.
+    if (call.pc && transceiver && section === null) return;
+    if (section === "screen" || section === "screenSound") {
+      // Their screen goes to a stream of its own; its sound plays in its own slot, so their
+      // microphone and a video they share never get in each other's way.
+      const display = call.remoteDisplay ?? (call.remoteDisplay = this.env.createStream([]));
+      if (!display.getTracks().includes(track)) display.addTrack(track);
+      if (section === "screenSound") void this.playRemote(call);
+      this.publish(call);
+      return;
+    }
     const stream = call.remote ?? (call.remote = this.env.createStream([]));
     if (!stream.getTracks().includes(track)) stream.addTrack(track);
     if (track.kind === "video") call.remoteVideo = true;
@@ -1456,7 +1721,12 @@ export class CallController {
   }
 
   private async playRemote(call: Call): Promise<void> {
-    const played = await this.env.playAudio(call.remote);
+    const sound = call.remoteDisplay?.getAudioTracks().length ? call.remoteDisplay : null;
+    const [voice, screen] = await Promise.all([
+      call.remote ? this.env.playAudio(call.remote) : Promise.resolve(true),
+      sound ? this.env.playAudio(sound, "screen") : Promise.resolve(true),
+    ]);
+    const played = voice && screen;
     if (this.gone(call) || call.audioBlocked === !played) return;
     call.audioBlocked = !played;
     this.publish(call);
@@ -1547,7 +1817,7 @@ export class CallController {
       if (pc.signalingState === "have-local-offer") await pc.setLocalDescription({ type: "rollback" });
       const offer = withVoice(await pc.createOffer({ iceRestart: true }));
       await pc.setLocalDescription(offer);
-      tuneSenders(pc);
+      this.tune(call);
       if (this.gone(call)) return;
       this.send(call, {
         t: "offer",
@@ -1710,10 +1980,19 @@ export class CallController {
       camera.onended = null;
       camera.stop();
     }
+    for (const track of call.display?.getTracks() ?? []) track.onended = null;
     stopTracks(call.local);
     stopTracks(call.remote);
+    stopTracks(call.display);
+    stopTracks(call.remoteDisplay);
     call.local = null;
     call.remote = null;
+    call.display = null;
+    call.remoteDisplay = null;
+    call.screen = null;
+    call.screenSound = null;
+    call.screenPending = false;
+    call.remoteScreen = false;
     call.video = null;
     call.camera = null;
     call.cameraOn = false;
@@ -1721,6 +2000,7 @@ export class CallController {
     call.remoteVideo = false;
     call.audioBlocked = false;
     void this.env.playAudio(null);
+    void this.env.playAudio(null, "screen");
     call.ephPrivate?.fill(0);
     call.identitySecret?.fill(0);
     call.ephPrivate = null;
@@ -1817,8 +2097,16 @@ export class CallController {
       remoteMic: call.remoteMic,
       remoteCamera: call.remoteCamera,
       remoteVideo: call.remoteVideo,
+      screenOn: call.display !== null,
+      screenPending: call.screenPending,
+      screenSound: (call.display?.getAudioTracks().length ?? 0) > 0,
+      shareSupported: typeof this.env.getDisplayMedia === "function",
+      canShare: this.screenSendable(call),
+      remoteScreen: call.remoteScreen,
       localStream: call.local,
       remoteStream: call.remote,
+      screenStream: call.display,
+      remoteScreenStream: call.remoteDisplay,
       audioBlocked: call.audioBlocked,
       endedText: call.endedText,
       notice: call.notice,

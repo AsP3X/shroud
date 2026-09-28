@@ -56,8 +56,24 @@ export type CallView = {
   remoteCamera: boolean;
   /** The other side's video track is there (every call has one; it carries frames while their camera is on). */
   remoteVideo: boolean;
+  /** We share our screen (a tab, a window or a whole screen), next to the camera. */
+  screenOn: boolean;
+  /** The browser's picker is open, or the chosen screen is being put on the call. */
+  screenPending: boolean;
+  /** Our share carries the tab's or the system's sound. */
+  screenSound: boolean;
+  /** This browser can share a screen at all (phones cannot). */
+  shareSupported: boolean;
+  /** This call can carry our screen and their app can show it. False with an older app on either side. */
+  canShare: boolean;
+  /** What they say they send (`media_state`): their screen. */
+  remoteScreen: boolean;
   localStream: MediaStream | null;
   remoteStream: MediaStream | null;
+  /** Our shared screen, for the small preview while it goes out. */
+  screenStream: MediaStream | null;
+  /** Their shared screen (and its sound), apart from their camera. */
+  remoteScreenStream: MediaStream | null;
   /** The browser refused to play the other side's audio until a click. */
   audioBlocked: boolean;
   /** Said once it ended; the screen closes at once when there is nothing to say. */
@@ -186,6 +202,32 @@ export function cameraOnlyFailure(err: unknown): boolean {
 
 export const CAMERA_UNAVAILABLE = "Your camera isn’t available, so your video is off.";
 export const VIDEO_UNAVAILABLE = "Video isn’t available in this call. Their app needs an update.";
+export const SCREEN_UNAVAILABLE = "Screen sharing isn’t available in this call. Their app needs an update.";
+export const SCREEN_ENDED = "Your screen is no longer shared.";
+export const SCREEN_NOT_YET = "You can share your screen once the call has connected.";
+
+/**
+ * Why the screen could not be shared, or null when the person closed the picker (nothing to say).
+ * Browsers report both a cancelled picker and a refusal by the system as NotAllowedError; only
+ * the system's names it.
+ */
+export function screenErrorText(err: unknown): string | null {
+  switch (errorName(err)) {
+    case "NotAllowedError":
+    case "SecurityError": {
+      const message = err && typeof err === "object" && "message" in err ? String(err.message) : "";
+      return /system/i.test(message)
+        ? "Allow screen recording for your browser in your computer’s settings, then try again."
+        : null;
+    }
+    case "NotFoundError":
+      return "There’s no screen to share.";
+    case "NotReadableError":
+    case "AbortError":
+      return "Your screen couldn’t be captured. Try again.";
+  }
+  return "Couldn’t share your screen.";
+}
 
 /** Why the camera would not open when Video was pressed mid-call. */
 export function cameraErrorText(err: unknown): string {
@@ -254,7 +296,7 @@ export type Signal =
   | { t: "answer"; sdp: string; n: number; ek?: string }
   | { t: "ice"; cs: IceCandidateJson[]; n: number }
   | { t: "restart"; n: number }
-  | { t: "media"; mic: boolean; camera: boolean; n: number };
+  | { t: "media"; mic: boolean; camera: boolean; screen?: boolean; n: number };
 
 /** A signal's body before the sender numbers it. */
 export type SignalBody =
@@ -262,7 +304,7 @@ export type SignalBody =
   | { t: "answer"; sdp: string; ek?: string }
   | { t: "ice"; cs: IceCandidateJson[] }
   | { t: "restart" }
-  | { t: "media"; mic: boolean; camera: boolean };
+  | { t: "media"; mic: boolean; camera: boolean; screen: boolean };
 
 const SIGNAL_TYPE: Record<Signal["t"], CallSignalType> = {
   offer: "sdp_offer",
@@ -278,6 +320,8 @@ export function signalTypeOf(t: Signal["t"]): CallSignalType {
 }
 
 const VOICE_FMTP = ["useinbandfec=1", "usedtx=1", "stereo=0", "sprop-stereo=0", "maxaveragebitrate=32000"];
+/** A shared screen's sound is music as often as speech: stereo, never silenced, room to breathe. */
+const SCREEN_SOUND_FMTP = ["useinbandfec=1", "usedtx=0", "stereo=1", "sprop-stereo=1", "maxaveragebitrate=128000"];
 
 /**
  * Opus for a voice call: error correction and silence suppression, mono, about 32 kbps.
@@ -297,6 +341,61 @@ export function voiceSdp(sdp: string): string {
     return lines.join(eol);
   }
   lines[index] = VOICE_FMTP.reduce(applyParam, lines[index]);
+  return lines.join(eol);
+}
+
+/**
+ * VP8 first on the screen's picture (the second video section; the first is the camera). A
+ * phone shares its screen from the background, where its hardware H.264 encoder may not run; VP8
+ * is encoded in software everywhere. Both sides put it first in their own descriptions, so it is
+ * what either one sends there whoever offers. An SDP without that section, or without VP8, is
+ * unchanged.
+ */
+export function screenVideoSdp(sdp: string): string {
+  const eol = sdp.includes("\r\n") ? "\r\n" : "\n";
+  const lines = sdp.split(/\r\n|\n/);
+  const starts = lines.flatMap((line, index) => (/^m=video[ \t]/i.test(line) ? [index] : []));
+  if (starts.length < 2) return lines.join(eol);
+  const from = starts[1];
+  let to = lines.findIndex((line, index) => index > from && /^m=/i.test(line));
+  if (to < 0) to = lines.length;
+  const vp8 = new Set(
+    lines.slice(from, to).flatMap((line) => {
+      const match = /^a=rtpmap:(\d+) VP8\/90000/i.exec(line);
+      return match ? [match[1]] : [];
+    }),
+  );
+  if (vp8.size === 0) return lines.join(eol);
+  const parts = lines[from].split(" ");
+  // m=video <port> <proto> <payload types…>
+  const types = parts.slice(3);
+  lines[from] = [...parts.slice(0, 3), ...types.filter((pt) => vp8.has(pt)), ...types.filter((pt) => !vp8.has(pt))].join(" ");
+  return lines.join(eol);
+}
+
+/**
+ * Opus for the screen's sound: the second audio section (the first is the microphone), stereo at
+ * about 128 kbps. Each section has its own `a=fmtp`, so the microphone keeps its speech settings.
+ * An SDP without that section (an older app) is unchanged.
+ */
+export function screenSoundSdp(sdp: string): string {
+  const eol = sdp.includes("\r\n") ? "\r\n" : "\n";
+  const lines = sdp.split(/\r\n|\n/);
+  const starts = lines.flatMap((line, index) => (/^m=audio[ \t]/i.test(line) ? [index] : []));
+  if (starts.length < 2) return lines.join(eol);
+  const from = starts[1];
+  let to = lines.findIndex((line, index) => index > from && /^m=/i.test(line));
+  if (to < 0) to = lines.length;
+  const map = lines.slice(from, to).map(opusPayload).find((pt) => pt);
+  if (!map) return lines.join(eol);
+  const index = lines.findIndex((line, at) => at > from && at < to && isFmtp(line, map));
+  if (index < 0) {
+    const at = lines.findIndex((line, i) => i > from && i < to && isRtpmap(line, map));
+    if (at < 0) return lines.join(eol);
+    lines.splice(at + 1, 0, `a=fmtp:${map} ${SCREEN_SOUND_FMTP.join(";")}`);
+    return lines.join(eol);
+  }
+  lines[index] = SCREEN_SOUND_FMTP.reduce(applyParam, lines[index]);
   return lines.join(eol);
 }
 
@@ -421,7 +520,9 @@ export function readSignal(signalType: string, value: Record<string, unknown>): 
       return { t, n };
     case "media":
       if (typeof value.mic !== "boolean" || typeof value.camera !== "boolean") return null;
-      return { t, mic: value.mic, camera: value.camera, n };
+      // Absent from an app that cannot share or show a screen; anything else but a boolean is wrong.
+      if (value.screen !== undefined && typeof value.screen !== "boolean") return null;
+      return { t, mic: value.mic, camera: value.camera, ...(value.screen !== undefined ? { screen: value.screen } : {}), n };
   }
   return null;
 }

@@ -10,6 +10,12 @@ import SwiftUI
 /// tile and does not cover them. Their picture moves the three together, up and across at once,
 /// into the top-leading corner, and back under the face when their camera turns off
 /// (`CallStageLayout`).
+///
+/// Either person can share their screen next to their camera. Theirs fills the screen, fitted
+/// whole on black and zoomable (`SharedScreenView`), their camera moves into a tile above ours,
+/// and the controls step aside after a few seconds (a tap brings them back). Ours is the phone's
+/// whole screen, through the system's broadcast; a capsule over the controls says it is shared
+/// and stops it.
 struct InCallOverlay: View {
     @Environment(CallController.self) private var calls
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -23,9 +29,18 @@ struct InCallOverlay: View {
     @State private var inCorner = false
     /// Reduce Motion only: the name block is faded out while it changes places.
     @State private var blockHidden = false
+    /// Over their shared screen, the controls and the name step aside.
+    @State private var chromeHidden = false
+    /// Bumped by every touch on the call screen: the controls stay up a while longer.
+    @State private var chromeTouch = 0
+    @State private var broadcastPicker = BroadcastPickerTrigger()
 
     /// Our own picture, in the top-trailing corner of the safe area.
     static let selfViewSize = CGSize(width: 108, height: 164)
+    /// Beside a shared screen the pictures are tiles, theirs above ours, a little smaller.
+    static let tileSize = CGSize(width: 90, height: 136)
+    /// How long the controls stay up over a shared screen once nothing is touched.
+    static let chromeLinger: Duration = .seconds(4)
     static let selfViewInsets = EdgeInsets(top: 12, leading: 0, bottom: 0, trailing: 16)
     /// What the docked name block leaves free at the trailing edge: our picture, its inset and a
     /// 12 pt gap. Kept free whether or not our camera is on, so turning it on never resizes the block.
@@ -49,6 +64,18 @@ struct InCallOverlay: View {
         calls.remoteVideoTrack != nil && calls.active?.remoteCameraOff == false && calls.remoteVideoLive
     }
 
+    /// Their shared screen: they share it and its frames arrive. It takes the whole screen, and
+    /// their camera goes into a tile.
+    private var showsRemoteScreen: Bool {
+        calls.remoteScreenTrack != nil && calls.active?.remoteSharingScreen == true && calls.remoteScreenLive
+            && calls.active?.phase != .ending
+    }
+
+    /// The controls and the name are out of the way over their screen.
+    private var chromeAway: Bool {
+        chromeHidden && showsRemoteScreen
+    }
+
     /// Our own picture, in the corner, from the camera's first frame.
     private func showsLocalVideo(_ call: CallController.ActiveCall) -> Bool {
         call.isVideoEnabled && call.phase != .ending && calls.localVideoTrack != nil && calls.localVideoLive
@@ -56,7 +83,8 @@ struct InCallOverlay: View {
 
     @ViewBuilder
     private func content(for call: CallController.ActiveCall) -> some View {
-        let picture = Self.nameBelongsInCorner(remotePicture: showsRemoteVideo)
+        let screen = showsRemoteScreen
+        let picture = Self.nameBelongsInCorner(remotePicture: showsRemoteVideo || screen)
         // Ending can drop their picture at once. Hold the name where it already is for that last moment.
         let videoOn = call.phase == .ending && placedCall == call.id ? inCorner : picture
         let docked = placedCall == call.id ? inCorner : videoOn
@@ -77,15 +105,30 @@ struct InCallOverlay: View {
             if let track = calls.remoteVideoTrack {
                 CallVideoView(
                     track: track,
-                    reveal: .init(open: showsRemoteVideo, warm: call.remoteCameraOff == false, face: face)
+                    // Over their screen their camera is a tile; the full picture closes onto the face.
+                    reveal: .init(open: showsRemoteVideo && !screen, warm: call.remoteCameraOff == false, face: face)
                 )
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
             }
 
+            // Mounted as soon as they say they share, so its renderer has a frame by the time the
+            // first one is announced; shown from then, fading in, and out when they stop.
+            if let track = calls.remoteScreenTrack, call.remoteSharingScreen, call.phase != .ending {
+                SharedScreenView(track: track) { toggleChrome() }
+                    .ignoresSafeArea()
+                    .opacity(screen ? 1 : 0)
+                    .scaleEffect(screen || reduceMotion ? 1 : 0.97)
+                    .animation(.easeOut(duration: 0.28), value: screen)
+                    .allowsHitTesting(screen)
+                    .accessibilityHidden(!screen)
+                    .transition(.opacity)
+            }
+
             topShade
-                .opacity(showsRemoteVideo ? 1 : 0)
-                .animation(.easeOut(duration: 0.3), value: showsRemoteVideo)
+                .opacity((showsRemoteVideo || screen) && !chromeAway ? 1 : 0)
+                .animation(.easeOut(duration: 0.3), value: showsRemoteVideo || screen)
+                .animation(.easeOut(duration: 0.3), value: chromeAway)
 
             VStack(spacing: 28) {
                 CallStageLayout(progress: docked ? 1 : 0) {
@@ -95,24 +138,70 @@ struct InCallOverlay: View {
                     info(for: call)
                         .animation(Motion.snappy, value: call.phase)
                         .animation(Motion.snappy, value: call.isMuted)
-                        .opacity(blockHidden ? 0 : 1)
+                        .opacity(blockHidden || chromeAway ? 0 : 1)
+                        .animation(.easeOut(duration: 0.25), value: chromeAway)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                controls(for: call)
-                    .padding(.bottom, 48)
-                    .animation(Motion.standard, value: call.phase)
-                    // Ending, the row goes at once but keeps its room, so the face and the name
-                    // stay where they are for the last moment of the screen.
-                    .opacity(ending ? 0 : 1)
-                    .animation(nil, value: ending)
-                    .allowsHitTesting(!ending)
-                    .accessibilityHidden(ending)
+                VStack(spacing: 18) {
+                    if call.isSharingScreen || call.screenShareStarting, !ending {
+                        sharingCapsule(starting: !call.isSharingScreen)
+                            .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                    }
+                    controls(for: call)
+                }
+                .padding(.bottom, 48)
+                .animation(Motion.standard, value: call.phase)
+                .animation(Motion.snappy, value: call.isSharingScreen || call.screenShareStarting)
+                // Ending, the row goes at once but keeps its room, so the face and the name
+                // stay where they are for the last moment of the screen.
+                .opacity(ending || chromeAway ? 0 : 1)
+                .animation(nil, value: ending)
+                .animation(.easeOut(duration: 0.25), value: chromeAway)
+                .allowsHitTesting(!ending && !chromeAway)
+                .accessibilityHidden(ending || chromeAway)
             }
 
+            tiles(for: call, screen: screen)
+
+            // The system's broadcast picker, out of sight; Share opens it.
+            BroadcastPickerHost(trigger: broadcastPicker)
+                .frame(width: 1, height: 1)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+        }
+        .animation(Motion.standard, value: showsLocalVideo(call))
+        .animation(Motion.standard, value: screen)
+        .task(id: NamePlace(call: call.id, video: videoOn)) {
+            await placeName(call.id, inCorner: videoOn)
+        }
+        .task(id: ChromeClock(screen: screen, hidden: chromeHidden, touch: chromeTouch)) {
+            await lingerChrome(screen: screen)
+        }
+    }
+
+    /// The pictures in the top-trailing corner: theirs above ours while their screen fills the
+    /// rest, ours alone otherwise. Tapping ours flips the camera.
+    @ViewBuilder
+    private func tiles(for call: CallController.ActiveCall, screen: Bool) -> some View {
+        let size = screen ? Self.tileSize : Self.selfViewSize
+        VStack(alignment: .trailing, spacing: 10) {
+            if screen, showsRemoteVideo, let theirs = calls.remoteVideoTrack {
+                CallVideoView(track: theirs)
+                    .frame(width: size.width, height: size.height)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .strokeBorder(.white.opacity(0.35), lineWidth: 1)
+                    }
+                    .allowsHitTesting(false)
+                    .accessibilityLabel("\(call.peerUsername)’s camera")
+                    .transition(.scale(scale: 0.8, anchor: .topTrailing).combined(with: .opacity))
+            }
             if showsLocalVideo(call), let local = calls.localVideoTrack {
                 CallVideoView(track: local, mirror: calls.usesFrontCamera)
-                    .frame(width: Self.selfViewSize.width, height: Self.selfViewSize.height)
+                    .frame(width: size.width, height: size.height)
                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .overlay(alignment: .bottom) {
                         if calls.canSwitchCamera {
@@ -133,15 +222,80 @@ struct InCallOverlay: View {
                     }
                     // Video on grows it out of the corner; off shrinks it back there.
                     .transition(.scale(scale: 0.8, anchor: .topTrailing).combined(with: .opacity))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                    .padding(.top, Self.selfViewInsets.top)
-                    .padding(.trailing, Self.selfViewInsets.trailing)
             }
         }
-        .animation(Motion.standard, value: showsLocalVideo(call))
-        .task(id: NamePlace(call: call.id, video: videoOn)) {
-            await placeName(call.id, inCorner: videoOn)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+        .padding(.top, Self.selfViewInsets.top)
+        .padding(.trailing, Self.selfViewInsets.trailing)
+    }
+
+    /// We share our screen: said over the controls for as long as it lasts, with Stop right there.
+    /// From the moment the broadcast connects, before its first frame, it says so too.
+    private func sharingCapsule(starting: Bool) -> some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(Theme.danger)
+                .frame(width: 8, height: 8)
+                .phaseAnimator([1.0, 0.35]) { dot, level in
+                    dot.opacity(reduceMotion ? 1 : level)
+                } animation: { _ in .easeInOut(duration: 0.8) }
+            Text(starting ? "Starting to share your screen…" : "You’re sharing your screen")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+            Button {
+                _ = calls.toggleScreenShare()
+            } label: {
+                Text("Stop")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .background(.white, in: Capsule())
+            }
+            .buttonStyle(PressableButtonStyle(scale: 0.95, dimming: 0, haptic: .medium))
+            .accessibilityLabel("Stop sharing your screen")
         }
+        .padding(.leading, 16)
+        .padding(.trailing, 6)
+        .padding(.vertical, 6)
+        .glassEffect(.regular.tint(Theme.danger.opacity(0.35)), in: .capsule)
+        .accessibilityElement(children: .contain)
+    }
+
+    /// What the controls' timer follows: their screen coming or going, a tap, any touch.
+    private struct ChromeClock: Equatable {
+        let screen: Bool
+        let hidden: Bool
+        let touch: Int
+    }
+
+    /// Over their screen, the controls go after a few seconds untouched. Never with VoiceOver,
+    /// which needs them in reach. Without their screen they are always up.
+    private func lingerChrome(screen: Bool) async {
+        guard screen else {
+            if chromeHidden { chromeHidden = false }
+            return
+        }
+        guard !chromeHidden, !UIAccessibility.isVoiceOverRunning else { return }
+        do {
+            try await Task.sleep(for: Self.chromeLinger)
+        } catch {
+            return
+        }
+        chromeHidden = true
+    }
+
+    private func toggleChrome() {
+        chromeHidden.toggle()
+        chromeTouch += 1
+    }
+
+    /// Share: the system's broadcast picker opens (the person starts the broadcast there), or
+    /// the broadcast stops.
+    private func toggleShare() {
+        if calls.toggleScreenShare() { broadcastPicker.open() }
     }
 
     /// The safety number, and a tap once it has been compared. It does not block the call.
@@ -287,7 +441,7 @@ struct InCallOverlay: View {
     /// opens out of it, and comes back in front as the circle closes onto it.
     @ViewBuilder
     private func face(for call: CallController.ActiveCall) -> some View {
-        let open = showsRemoteVideo
+        let open = showsRemoteVideo || showsRemoteScreen
         ZStack {
             avatar(for: call)
                 .overlay(alignment: .bottomTrailing) {
@@ -324,14 +478,20 @@ struct InCallOverlay: View {
     /// a colour tint; the rest stay clear glass. One container, so neighbours morph together.
     @ViewBuilder
     private func controls(for call: CallController.ActiveCall) -> some View {
-        GlassEffectContainer(spacing: 22) {
+        GlassEffectContainer(spacing: Self.controlSpacing(for: call.phase)) {
             controlRow(for: call)
         }
     }
 
+    /// Five controls in a call (Share joined them) fit a narrow phone a little closer together;
+    /// the two answers of a ring keep their room.
+    private static func controlSpacing(for phase: CallController.Phase) -> CGFloat {
+        phase == .incomingRinging ? 22 : 14
+    }
+
     @ViewBuilder
     private func controlRow(for call: CallController.ActiveCall) -> some View {
-        HStack(spacing: 22) {
+        HStack(spacing: Self.controlSpacing(for: call.phase)) {
             if call.phase != .incomingRinging {
                 callButton(
                     icon: call.isMuted ? "mic.slash.fill" : "mic.fill",
@@ -353,6 +513,22 @@ struct InCallOverlay: View {
                 }
                 .disabled(!videoAvailable)
                 .opacity(videoAvailable ? 1 : 0.45)
+
+                // Next to the camera, never instead of it: the whole screen, through the system's
+                // broadcast. Their app must be able to show it.
+                // Dimmed when it cannot be used yet, but it still takes the tap, which says why.
+                let sharing = call.isSharingScreen || call.screenShareStarting
+                let shareAvailable = call.canShareScreen || sharing
+                callButton(
+                    icon: "rectangle.inset.filled.on.rectangle",
+                    label: "Share",
+                    tint: sharing ? Theme.accent : nil,
+                    accessibilityLabel: sharing ? "Stop sharing your screen" : "Share your screen"
+                ) {
+                    toggleShare()
+                }
+                .opacity(shareAvailable ? 1 : 0.45)
+                .accessibilityHint(shareAvailable ? "" : "Not available yet.")
 
                 callButton(
                     icon: call.speakerOn ? "speaker.wave.2.fill" : "speaker.fill",
@@ -453,7 +629,7 @@ struct InCallOverlay: View {
         return String(format: "%d:%02d", m, s)
     }
 
-    /// One call control: a 64 pt glass circle (tinted when `tint` is set) over its caption.
+    /// One call control: a 60 pt glass circle (tinted when `tint` is set) over its caption.
     private func callButton(
         icon: String,
         label: String,
@@ -461,14 +637,18 @@ struct InCallOverlay: View {
         accessibilityLabel: String? = nil,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
+        Button {
+            // A control used over their screen keeps the controls up a while longer.
+            chromeTouch += 1
+            action()
+        } label: {
             VStack(spacing: 8) {
                 Image(systemName: icon)
-                    .font(.system(size: 22, weight: .semibold))
+                    .font(.system(size: 21, weight: .semibold))
                     .foregroundStyle(.white)
                     // Mute / video glyphs morph through their slashed variant.
                     .contentTransition(.symbolEffect(.replace))
-                    .frame(width: 64, height: 64)
+                    .frame(width: 60, height: 60)
                     .contentShape(Circle())
                     // Interactive glass swells under the finger; a tint marks an "on" state.
                     .glassEffect(callGlass(tint: tint), in: .circle)
