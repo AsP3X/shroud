@@ -87,8 +87,9 @@ private struct MessageContextLongPress: ViewModifier {
     @State private var rowFrame: CGRect = .zero
     /// Suppresses the trailing tap so a hold that opened the menu doesn't also fire `onTap`.
     /// Cleared on every new touch-down: a hold held past the tap's cut-off never produces that
-    /// trailing tap, and the next real tap on the bubble must not be the one swallowed.
-    @State private var didLongPress = false
+    /// trailing tap, and the next real tap on the bubble must not be the one swallowed. Not view
+    /// state: nothing draws from it, and it changes on every touch.
+    @State private var press = PressMemory()
 
     func body(content: Content) -> some View {
         content
@@ -101,20 +102,22 @@ private struct MessageContextLongPress: ViewModifier {
                 .allowsHitTesting(false)
             }
             .background { ScrollTouchDelayDisabler() }
+            // Only the tap reads the flag, so only rows with a tap listen for touch-downs.
+            .gesture(TouchDownGesture(isEnabled: onTap != nil) { press.didLongPress = false })
             .simultaneousGesture(
+                // No `onChanged` here: it made the press claim the touch at touch-down, so a drag
+                // that started on a bubble never scrolled the thread.
                 LongPressGesture(minimumDuration: minimumDuration)
-                    // Fires at touch-down, before this press can end as a tap.
-                    .onChanged { _ in didLongPress = false }
                     .onEnded { _ in
-                        didLongPress = true
+                        press.didLongPress = true
                         perform(rowFrame)
                     }
             )
             .simultaneousGesture(
                 TapGesture().onEnded {
                     // A hold that already opened the menu must not also open the image viewer.
-                    guard !didLongPress else {
-                        didLongPress = false
+                    guard !press.didLongPress else {
+                        press.didLongPress = false
                         return
                     }
                     afterInnerControls {
@@ -139,6 +142,48 @@ private struct MessageContextLongPress: ViewModifier {
             // VoiceOver's double-tap-and-hold is hard to find; the menu (reply, copy, delete,
             // every reaction) is a named action on the bubble too.
             .accessibilityAction(named: "Message options") { perform(rowFrame) }
+    }
+}
+
+/// Whether the current press on a row opened its menu. A reference type so that writing it
+/// redraws nothing.
+@MainActor
+private final class PressMemory {
+    var didLongPress = false
+}
+
+/// Reports every touch that lands on a row, then steps aside.
+///
+/// Human: The row needs to know when a new press starts (see `PressMemory`), but anything
+/// SwiftUI offers for that — an `onChanged` on the long press, a zero-distance drag — takes the
+/// touch, and the thread no longer scrolls when the drag starts on a bubble. This recogniser
+/// fails in `touchesBegan`: it hears the touch-down and competes with nothing.
+/// Agent: CALLS `onTouchDown` on the main thread at each touch-down; never begins.
+private final class TouchDownRecognizer: UIGestureRecognizer {
+    var onTouchDown: () -> Void = {}
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        onTouchDown()
+        state = .failed
+    }
+}
+
+private struct TouchDownGesture: UIGestureRecognizerRepresentable {
+    let isEnabled: Bool
+    let onTouchDown: () -> Void
+
+    func makeUIGestureRecognizer(context: Context) -> TouchDownRecognizer {
+        let recognizer = TouchDownRecognizer()
+        recognizer.cancelsTouchesInView = false
+        recognizer.delaysTouchesEnded = false
+        recognizer.isEnabled = isEnabled
+        recognizer.onTouchDown = onTouchDown
+        return recognizer
+    }
+
+    func updateUIGestureRecognizer(_ recognizer: TouchDownRecognizer, context: Context) {
+        recognizer.isEnabled = isEnabled
+        recognizer.onTouchDown = onTouchDown
     }
 }
 
