@@ -10,7 +10,8 @@ import UIKit
 ///
 /// Agent: CALLS MessagingController.haltForDeviceWipe / stop, CallController, CryptoController,
 /// VoicePlaybackCoordinator, `POST auth/logout`, DeviceDataWipe; WRITES SessionController
-/// (logout) and AppRouter (unlock state, path) when done. One run at a time.
+/// (logout), AppRouter (unlock state, path) and ColorThemePreference (back to System) when done.
+/// One run at a time.
 @MainActor
 @Observable
 final class DeviceWipeController {
@@ -211,6 +212,7 @@ final class DeviceWipeController {
         PushNotificationService.shared.stop()
         PushNotificationService.shared.forgetRegistration()
         NotificationsController.shared.forgetAccount()
+        ColorThemePreference.shared.forget()
         router?.postAuthToast = nil
         router?.hasUnlockedMessaging = false
         router?.path = []
@@ -288,6 +290,7 @@ final class DeviceWipeController {
         }
         await wipe.wipeEverything()
         NotificationsController.shared.forgetAccount()
+        ColorThemePreference.shared.forget()
         if await wipe.leftovers().isEmpty { wipe.clearPending() }
         guard pending else { return false }
         if session?.isSignedIn == true { await session?.logout() }

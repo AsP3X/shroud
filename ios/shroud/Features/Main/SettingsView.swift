@@ -471,7 +471,7 @@ struct SettingsView: View {
                 title: "Appearance",
                 systemImage: "paintpalette.fill",
                 iconBackground: Theme.accent,
-                value: BrandLogoPreference.shared.style.title
+                value: ColorThemePreference.shared.theme.title
             ) {
                 navigationPath.append(.appearance)
             }

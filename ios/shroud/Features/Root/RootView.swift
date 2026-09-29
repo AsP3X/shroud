@@ -41,6 +41,7 @@ struct RootView: View {
     @State private var router = AppRouter()
     @State private var deviceWipe = DeviceWipeController()
     @State private var notifications = NotificationsController.shared
+    @State private var colorTheme = ColorThemePreference.shared
     /// Set when the scene leaves `.active` with the chats open. See `showsPrivacyCover`.
     @State private var privacyCoverArmed = false
     /// The screen is being recorded, mirrored or shared (`UITraitCollection.sceneCaptureState`).
@@ -118,6 +119,8 @@ struct RootView: View {
                 if isScreenCaptured != captured { isScreenCaptured = captured }
             }
         }
+        // Light or dark from Settings › Appearance, on the window itself: see ColorThemePreference.
+        .background { WindowColorTheme(theme: colorTheme.theme) }
         .environment(\.onboardingNamespace, onboardingNamespace)
         .environment(sessionController)
         .environment(cryptoController)
