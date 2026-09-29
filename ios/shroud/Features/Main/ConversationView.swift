@@ -97,6 +97,9 @@ struct ConversationView: View {
     @State private var threadScroll = ScrollPosition(edge: .bottom)
     /// Scroll geometry, kept out of view state so scrolling doesn't redraw the thread.
     @State private var scrollState = ThreadScrollState()
+    /// The reader is up in the history, and what landed under them since; only the jump
+    /// control reads it.
+    @State private var jumpToLatest = JumpToLatestState()
 
     private var messages: [MessagingController.ChatMessage] {
         messaging.threads[peerUserID] ?? []
@@ -210,6 +213,7 @@ struct ConversationView: View {
 
     var body: some View {
         chatSurface
+            .overlay(alignment: .bottomTrailing) { jumpToLatestLayer }
             .overlay {
                 if let focusedMenu {
                     messageMenuOverlay(session: focusedMenu)
@@ -605,6 +609,24 @@ struct ConversationView: View {
         }
     }
 
+    /// Telegram's jump-to-latest control, over the composer's send / mic slot while the reader
+    /// is up in the history. Not over a full-screen layer, nor during a voice take, whose lock
+    /// rises into the same spot.
+    private var jumpToLatestLayer: some View {
+        JumpToLatestLayer(
+            state: jumpToLatest,
+            messages: messages,
+            isAllowed: !coversComposer && !voiceRecorder.isRecording,
+            // A long animated run through the history is what Reduce Motion asks to skip.
+            action: { scrollToBottom(animated: !reduceMotion) }
+        )
+        // Centred over the composer's 44 pt trailing slot (12 pt bar inset + 2), 8 pt above the bar.
+        .padding(.trailing, 14)
+        .padding(.bottom, composerBarHeight + 8)
+        // Rides up and down with the reply and link strips.
+        .animation(Motion.respecting(reduceMotion, Motion.snappy), value: composerBarHeight)
+    }
+
     private struct ProfileDestination: Identifiable, Hashable {
         let peerUserID: UUID
         let peerUsername: String
@@ -981,6 +1003,10 @@ struct ConversationView: View {
                 )
             } action: { old, new in
                 scrollState.metrics = new
+                // Last, once this pass has decided whether it follows the bottom.
+                defer { updateJumpToLatest() }
+                // On the newest message: whatever scroll there was under way has landed.
+                if new.atBottom { scrollState.headingToBottom = false }
                 // Rows went in above the reader: put back the distance to the bottom so the
                 // message they were reading stays where it was.
                 if let hold = scrollState.holdFromBottom, new.contentHeight != old.contentHeight {
@@ -1000,8 +1026,10 @@ struct ConversationView: View {
                 // arrival, a transcript unfolding) scrolls along; the keyboard just re-pins.
                 if old.atBottom, renderFrom != nil {
                     if new.contentHeight > old.contentHeight {
+                        scrollState.headingToBottom = !new.atBottom
                         withAnimation(Self.followAnimation) { threadScroll.scrollTo(edge: .bottom) }
                     } else if new.containerHeight != old.containerHeight {
+                        scrollState.headingToBottom = !new.atBottom
                         threadScroll.scrollTo(edge: .bottom)
                     }
                 }
@@ -1047,8 +1075,17 @@ struct ConversationView: View {
                 // The ink bubble joins the bottom; it only pulls a reader who is already there.
                 if activity != nil, scrollState.metrics.atBottom { scrollToBottom() }
             }
+            .onScrollPhaseChange { old, new in
+                // The reader's finger went down or came up: where the thread sits is their doing
+                // now, not a scroll to the bottom still under way.
+                guard old == .interacting || new == .interacting else { return }
+                scrollState.headingToBottom = false
+                updateJumpToLatest()
+            }
             .onChange(of: jumpTarget) { _, target in
                 guard let target else { return }
+                // Up to the quoted message: the reader leaves the bottom as if they had scrolled.
+                scrollState.headingToBottom = false
                 withAnimation(Motion.standard) {
                     proxy.scrollTo(target.id, anchor: .center)
                 }
@@ -1094,6 +1131,18 @@ struct ConversationView: View {
         } else if hasOlderOnServer, !messaging.isLoadingOlderHistory(for: peerUserID) {
             Task { await messaging.loadOlderMessages(peerUserID: peerUserID) }
         }
+    }
+
+    /// Shows the jump-to-latest control once the reader is off the bottom by their own doing:
+    /// not before the opening pin has landed, not while a scroll to the bottom is under way,
+    /// and not in a thread too short to scroll (pulling it past its edge reads as "off the
+    /// bottom" too).
+    private func updateJumpToLatest() {
+        let state = scrollState
+        let away = state.settled && state.pinning == 0 && !state.headingToBottom
+            && !state.metrics.atBottom && state.metrics.contentHeight > state.metrics.containerHeight
+        guard away != jumpToLatest.isAway else { return }
+        jumpToLatest.setAway(away, newest: messages.last)
     }
 
     private var headerChips: some View {
@@ -1150,6 +1199,9 @@ struct ConversationView: View {
     /// Pins the thread to the newest content (bottom).
     /// - Parameter force: When true, retries after layout so open/load always lands on the latest message.
     private func scrollToBottom(animated: Bool = true, force: Bool = false) {
+        // Off the bottom until this lands, but not by the reader's doing: the jump control goes.
+        if !scrollState.metrics.atBottom { scrollState.headingToBottom = true }
+        updateJumpToLatest()
         // The content's real end (typing bubble and bottom padding included). Scrolling to the
         // last bubble stopped 16 pt short, which also read as "not at the bottom" afterwards.
         let pin = { threadScroll.scrollTo(edge: .bottom) }
@@ -1176,6 +1228,7 @@ struct ConversationView: View {
             scrollState.pinning -= 1
             scrollState.settled = true
             revealOlder()
+            updateJumpToLatest()
         }
     }
 
@@ -2430,6 +2483,65 @@ private final class ThreadScrollState {
     var pinning = 0
     /// The opening pin has landed; before that the offset says nothing about the reader.
     var settled = false
+    /// A scroll to the newest message is under way (a follow, a pin, the jump control), so
+    /// being off the bottom right now is not the reader's doing.
+    var headingToBottom = false
+}
+
+/// The jump-to-latest control's state: whether the reader is up in the history, and what has
+/// landed under them since they left the bottom.
+///
+/// Human: Observable, unlike `ThreadScrollState`, but only `JumpToLatestLayer` reads it, so
+/// leaving the bottom or a message arriving under the reader redraws the control and not the
+/// thread.
+/// Agent: WRITTEN from the scroll callbacks through `setAway`; the count is derived from the
+/// thread on every read, so deletes and re-keyed sends can't leave it stale.
+@Observable
+@MainActor
+final class JumpToLatestState {
+    /// The reader has scrolled off the newest message.
+    private(set) var isAway = false
+    /// The newest message when they left; what lands after it is counted.
+    private var leftAt: RenderAnchor?
+
+    /// The reader left the bottom (`newest` being the newest message then) or got back to it.
+    func setAway(_ away: Bool, newest: MessagingController.ChatMessage?) {
+        guard away != isAway else { return }
+        leftAt = away ? newest.map { RenderAnchor(id: $0.id, createdAt: $0.createdAt) } : nil
+        isAway = away
+    }
+
+    /// Messages from the other side that arrived after the reader left the bottom. The newest
+    /// message back then is found again by its date if it has been deleted since. Tombstones
+    /// don't count, nor do our own sends, which take the reader to the bottom anyway.
+    func unseenCount(in messages: [MessagingController.ChatMessage]) -> Int {
+        guard isAway else { return 0 }
+        var start = 0
+        if let leftAt {
+            start = messages.lastIndex { $0.id == leftAt.id }.map { $0 + 1 }
+                ?? messages.firstIndex { $0.createdAt > leftAt.createdAt }
+                ?? messages.count
+        }
+        return messages[start...].count { !$0.isMine && !$0.deleted }
+    }
+}
+
+/// Reads `JumpToLatestState`, so that only this control redraws when the reader leaves the
+/// bottom or a message lands under them.
+private struct JumpToLatestLayer: View {
+    let state: JumpToLatestState
+    let messages: [MessagingController.ChatMessage]
+    /// False while something else owns the bottom of the screen.
+    let isAllowed: Bool
+    let action: () -> Void
+
+    var body: some View {
+        ChatJumpToLatestButton(
+            isVisible: isAllowed && state.isAway,
+            count: state.unseenCount(in: messages),
+            action: action
+        )
+    }
 }
 
 /// Everything a thread row's bubble is drawn from.
