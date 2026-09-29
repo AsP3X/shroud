@@ -14,8 +14,7 @@ struct SignUpView: View {
     @State private var phraseWords: [String] = Array(repeating: "", count: 12)
     @State private var revealedWordCount = 0
     @State private var revealTask: Task<Void, Never>?
-    @State private var toastMessage: String?
-    @State private var toastDismissTask: Task<Void, Never>?
+    @State private var toast: Toast?
     @State private var isSubmitting = false
     @State private var errorMessage: String?
 
@@ -43,6 +42,7 @@ struct SignUpView: View {
                         Text("Create Account")
                             .font(.system(size: 32, weight: .bold))
                             .foregroundStyle(Theme.textPrimary)
+                            .accessibilityAddTraits(.isHeader)
 
                         sectionHeader(number: 1, title: "Choose your identity")
                         identityCard
@@ -64,14 +64,18 @@ struct SignUpView: View {
                     if let errorMessage {
                         Text(errorMessage)
                             .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(Theme.danger)
+                            .foregroundStyle(Theme.dangerText)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     confirmRow
-                    PrimaryButton(title: isSubmitting ? "Creating…" : "Create Account") {
+                    PrimaryButton(
+                        title: isSubmitting ? "Creating…" : "Create Account",
+                        isLoading: isSubmitting
+                    ) {
                         Task { await createAccount() }
                     }
-                    .opacity(canCreateAccount ? 1 : 0.45)
+                    // In flight the button shows its spinner at full strength, not the invalid-form dim.
+                    .opacity(canCreateAccount || isSubmitting ? 1 : 0.45)
                     .disabled(!canCreateAccount)
                 }
                 .screenContent()
@@ -80,13 +84,18 @@ struct SignUpView: View {
         }
         .navigationBarHidden(true)
         .onboardingHeroDestination()
-        .toast($toastMessage)
+        .toast($toast)
         .task {
             await startPhraseGeneration()
         }
         .onDisappear {
             revealTask?.cancel()
-            toastDismissTask?.cancel()
+        }
+        // The error appears above the button while focus stays on it: say it out loud.
+        .onChange(of: errorMessage) { _, message in
+            if let message {
+                AccessibilityNotification.Announcement(message).post()
+            }
         }
     }
 
@@ -126,15 +135,22 @@ struct SignUpView: View {
                 .foregroundStyle(Theme.textPrimary)
             Spacer()
             if showsCopy {
-                Button("Copy", action: { onCopy?() })
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Theme.accent)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 4)
-                    .background(Theme.accentSoft)
-                    .clipShape(Capsule())
-                    .disabled(revealedWordCount < EncryptionPhraseGenerator.wordCount)
-                    .opacity(revealedWordCount < EncryptionPhraseGenerator.wordCount ? 0.45 : 1)
+                Button {
+                    onCopy?()
+                } label: {
+                    Text("Copy")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.accentText)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(Theme.accentSoft)
+                        .clipShape(Capsule())
+                        // The pill is ~22 pt tall; the target reaches 10 pt past it on every side.
+                        .contentShape(Rectangle().inset(by: -10))
+                }
+                .pressable()
+                .disabled(revealedWordCount < EncryptionPhraseGenerator.wordCount)
+                .opacity(revealedWordCount < EncryptionPhraseGenerator.wordCount ? 0.45 : 1)
             }
         }
         .padding(.top, 6)
@@ -142,9 +158,15 @@ struct SignUpView: View {
 
     private var identityCard: some View {
         VStack(spacing: 0) {
-            credentialRow(icon: "at", placeholder: "Username", text: $username)
+            credentialRow(icon: "at", placeholder: "Username", text: $username, contentType: .username)
             Divider().padding(.leading, 42)
-            credentialRow(icon: "lock.fill", placeholder: "Password", text: $password, isSecure: true)
+            credentialRow(
+                icon: "lock.fill",
+                placeholder: "Password",
+                text: $password,
+                contentType: .newPassword,
+                isSecure: true
+            )
             Divider().padding(.leading, 42)
             PasswordStrengthMeter(evaluation: passwordEvaluation)
         }
@@ -173,7 +195,7 @@ struct SignUpView: View {
 
     private func copyPhraseToPasteboard() {
         guard revealedWordCount == EncryptionPhraseGenerator.wordCount else {
-            showToast("Wait until all 12 words appear")
+            toast = .info("Wait until all 12 words appear")
             return
         }
 
@@ -183,28 +205,16 @@ struct SignUpView: View {
             .joined(separator: " ")
 
         guard phrase.split(separator: " ").count == EncryptionPhraseGenerator.wordCount else {
-            showToast("Phrase isn’t ready to copy yet")
+            toast = .info("Phrase isn’t ready to copy yet")
             return
         }
 
         if EncryptionPhrasePasteboard.copy(phrase) {
             Haptics.notification(.success)
-            showToast("Encryption phrase copied")
+            toast = Toast("Encryption phrase copied")
         } else {
             Haptics.notification(.error)
-            showToast("Couldn’t copy phrase — try again")
-        }
-    }
-
-    private func showToast(_ message: String) {
-        toastDismissTask?.cancel()
-        toastMessage = message
-        toastDismissTask = Task {
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            if Task.isCancelled { return }
-            await MainActor.run {
-                toastMessage = nil
-            }
+            toast = .failure("Couldn’t copy phrase — try again")
         }
     }
 
@@ -234,13 +244,15 @@ struct SignUpView: View {
                         .fill(wroteDownPhrase ? Theme.accent : Color.clear)
                         .frame(width: 22, height: 22)
                         .overlay(
+                            // Unchecked outline in secondary grey: the separator tone was ~1.1:1.
                             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .stroke(wroteDownPhrase ? Theme.accent : Theme.separator, lineWidth: 1.5)
+                                .stroke(wroteDownPhrase ? Theme.accent : Theme.textSecondary, lineWidth: 1.5)
                         )
                     if wroteDownPhrase {
                         Image(systemName: "checkmark")
                             .font(.system(size: 12, weight: .bold))
                             .foregroundStyle(Color.white)
+                            .accessibilityHidden(true)
                     }
                 }
                 Text("I wrote down my encryption phrase")
@@ -249,14 +261,19 @@ struct SignUpView: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 4)
+            // The whole row, ~44 pt tall, without changing the stack's spacing.
+            .contentShape(Rectangle().inset(by: -11))
         }
         .pressable(scale: 0.97)
+        .accessibilityAddTraits(.isToggle)
+        .accessibilityValue(wroteDownPhrase ? "Checked" : "Not checked")
     }
 
     private func credentialRow(
         icon: String,
         placeholder: String,
         text: Binding<String>,
+        contentType: UITextContentType? = nil,
         isSecure: Bool = false
     ) -> some View {
         HStack(spacing: 10) {
@@ -266,8 +283,10 @@ struct SignUpView: View {
                 .frame(width: 18)
             if isSecure {
                 SecureField(placeholder, text: text)
+                    .textContentType(contentType)
             } else {
                 TextField(placeholder, text: text)
+                    .textContentType(contentType)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
             }

@@ -5,21 +5,38 @@ import UIKit
 /// Pushed from Settings (not a sheet). Back returns to Settings; Save may sign out if endpoint changes.
 ///
 /// Human: Official vs self-hosted endpoint while logged in.
-/// Agent: WRITES ServerConfigurationController; may CALL router.logOut when endpoint changes.
+/// Agent: WRITES ServerConfigurationController; when the endpoint changes, CALLS
+/// router.logOut(switchingTo:) instead, which saves it after the wipe.
 struct ServerSettingsView: View {
     let router: AppRouter
 
     @Environment(ServerConfigurationController.self) private var serverConfig
     @Environment(SessionController.self) private var sessionController
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var draft: ServerConfiguration
     @State private var errorMessage: String?
+    /// Bumped by every failed Save, so the error line scrolls into view even when the
+    /// message is the same one already showing (`errorMessage` itself wouldn't change).
+    @State private var errorScrollToken = 0
     @State private var savePhase: SavePhase = .idle
     @State private var showSignOutConfirm = false
     @Namespace private var modeNamespace
 
-    private let spring = Animation.spring(response: 0.42, dampingFraction: 0.86)
+    /// Layout changes on this screen (mode switch, HTTPS toggle, error line); a plain fade
+    /// under Reduce Motion.
+    private var spring: Animation {
+        Motion.respecting(reduceMotion, Motion.standard)
+    }
+
+    /// Save label swaps (Save → Saving… → Saved); no scaling under Reduce Motion.
+    private var labelSwap: AnyTransition {
+        reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.92))
+    }
+
+    /// Scroll id of the error line, so a failed Save brings it into view.
+    private static let errorAnchor = "serverError"
 
     /// Bottom Save button lifecycle — idle → spinner → success check, then pop.
     private enum SavePhase: Equatable {
@@ -32,6 +49,8 @@ struct ServerSettingsView: View {
         savePhase != .idle
     }
 
+    /// `initial` is the saved configuration the draft starts from, so the screen opens on it
+    /// rather than animating the self-hosted section in on appear; `.default` when nil.
     init(router: AppRouter, initial: ServerConfiguration? = nil) {
         self.router = router
         _draft = State(initialValue: initial ?? .default)
@@ -44,34 +63,53 @@ struct ServerSettingsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    header
-                    modePicker
-                    selfHostedSection
-                    signedInWarning
-                    infoCard
-                    if let errorMessage {
-                        Text(errorMessage)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(Theme.danger)
-                            .transition(.opacity.combined(with: .move(edge: .top)))
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        header
+                        modePicker
+                        selfHostedSection
+                        // Right under the fields it's about, not below the cards; every
+                        // validation error comes from the self-hosted fields.
+                        if let errorMessage {
+                            Text(errorMessage)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(Theme.danger)
+                                .transition(
+                                    reduceMotion
+                                        ? AnyTransition.opacity
+                                        : .opacity.combined(with: .move(edge: .top))
+                                )
+                                .id(Self.errorAnchor)
+                        }
+                        signedInWarning
+                        infoCard
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+                    .padding(.bottom, 16)
+                    .animation(spring, value: draft.mode)
+                    .opacity(isBusy ? 0.55 : 1)
+                    .allowsHitTesting(!isBusy)
+                }
+                .scrollDismissesKeyboard(.interactively)
+                .onChange(of: errorScrollToken) {
+                    guard errorMessage != nil else { return }
+                    // A main-queue turn later, once the new line has a frame to scroll to.
+                    DispatchQueue.main.async {
+                        withAnimation(spring) {
+                            proxy.scrollTo(Self.errorAnchor, anchor: .center)
+                        }
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 16)
-                .animation(spring, value: draft.mode)
-                .opacity(isBusy ? 0.55 : 1)
-                .allowsHitTesting(!isBusy)
             }
-            .scrollDismissesKeyboard(.interactively)
 
             bottomSave
         }
         .background(Theme.backgroundGrouped)
-        // System navigation bar: Liquid Glass back button, large title, Save capsule.
+        // System navigation bar: Liquid Glass back button, inline title, Save capsule.
         .navigationTitle("Server")
-        .navigationBarTitleDisplayMode(.large)
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         // No way back while a save is in flight — it may end in a sign-out.
         .navigationBarBackButtonHidden(isBusy)
@@ -97,9 +135,6 @@ struct ServerSettingsView: View {
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(Theme.accent)
             }
-        }
-        .onAppear {
-            draft = serverConfig.configuration
         }
         .confirmationDialog(
             "Change server?",
@@ -137,7 +172,7 @@ struct ServerSettingsView: View {
                     case .idle:
                         Text("Save")
                             .font(.system(size: 17, weight: .semibold))
-                            .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                            .transition(labelSwap)
                     case .saving:
                         ProgressView()
                             .progressViewStyle(.circular)
@@ -145,23 +180,30 @@ struct ServerSettingsView: View {
                             .scaleEffect(0.95)
                         Text("Saving…")
                             .font(.system(size: 17, weight: .semibold))
-                            .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                            .transition(labelSwap)
                     case .success:
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 20, weight: .semibold))
                             .symbolEffect(.bounce, value: savePhase == .success)
                         Text("Saved")
                             .font(.system(size: 17, weight: .semibold))
-                            .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                            .transition(labelSwap)
                     }
                 }
                 .foregroundStyle(Color.white)
                 .frame(maxWidth: .infinity)
                 .frame(height: 50)
-                .background(savePhase == .success ? Theme.online : Theme.accent)
+                .background {
+                    // Saved sits on successFill in both modes (5.4:1 behind the white label).
+                    ZStack {
+                        Theme.accent
+                        Theme.successFill
+                            .opacity(savePhase == .success ? 1 : 0)
+                    }
+                }
                 .clipShape(Capsule())
                 .shadow(
-                    color: (savePhase == .success ? Theme.online : Theme.accent).opacity(0.28),
+                    color: (savePhase == .success ? Theme.successFill : Theme.accent).opacity(0.28),
                     radius: 16,
                     y: 8
                 )
@@ -169,7 +211,7 @@ struct ServerSettingsView: View {
             }
             .pressable(scale: 0.98, dimming: 0.05, haptic: .medium)
             .disabled(isBusy)
-            .animation(.spring(response: 0.38, dampingFraction: 0.82), value: savePhase)
+            .animation(Motion.respecting(reduceMotion, Motion.snappy), value: savePhase)
             .padding(.horizontal, 16)
             .padding(.top, 8)
             .padding(.bottom, 8)
@@ -217,13 +259,18 @@ struct ServerSettingsView: View {
             HStack(spacing: 12) {
                 ZStack {
                     Circle()
-                        .stroke(selected ? Theme.accent : Theme.separator, lineWidth: selected ? 0 : 2)
+                        .stroke(selected ? Theme.accent : Theme.textSecondary, lineWidth: selected ? 0 : 2)
                         .frame(width: 22, height: 22)
                     if selected {
                         Circle()
                             .fill(Theme.accent)
                             .frame(width: 22, height: 22)
-                            .matchedGeometryEffect(id: "modeRadioFull", in: modeNamespace)
+                            // Reduce Motion: one id per card, so nothing pairs up and the dot
+                            // fades across instead of flying.
+                            .matchedGeometryEffect(
+                                id: reduceMotion ? "modeRadioFull.\(mode)" : "modeRadioFull",
+                                in: modeNamespace
+                            )
                         Circle()
                             .fill(Color.white)
                             .frame(width: 8, height: 8)
@@ -255,7 +302,8 @@ struct ServerSettingsView: View {
                     .stroke(selected ? Theme.accent.opacity(0.35) : Color.clear, lineWidth: 1.5)
             )
         }
-        .pressable(scale: 0.98)
+        // selectMode fires its own soft tick when the mode actually changes.
+        .pressable(scale: 0.98, haptic: nil)
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityLabel("\(title). \(subtitle)")
     }
@@ -319,12 +367,14 @@ struct ServerSettingsView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
             .transition(
-                .asymmetric(
-                    insertion: .opacity
-                        .combined(with: .move(edge: .top))
-                        .combined(with: .scale(scale: 0.98, anchor: .top)),
-                    removal: .opacity.combined(with: .move(edge: .top))
-                )
+                reduceMotion
+                    ? AnyTransition.opacity
+                    : .asymmetric(
+                        insertion: .opacity
+                            .combined(with: .move(edge: .top))
+                            .combined(with: .scale(scale: 0.98, anchor: .top)),
+                        removal: .opacity.combined(with: .move(edge: .top))
+                    )
             )
         }
     }
@@ -353,7 +403,8 @@ struct ServerSettingsView: View {
                 .foregroundStyle(Theme.accent)
             Text(infoCopy)
                 .font(.system(size: 12))
-                .foregroundStyle(Theme.accent)
+                // accentText keeps 4.5:1 on accentSoft in dark mode; the icon stays accent.
+                .foregroundStyle(Theme.accentText)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 12)
@@ -383,14 +434,17 @@ struct ServerSettingsView: View {
         autocapitalization: TextInputAutocapitalization
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
+            // Hidden from VoiceOver, like the glyph: the text field already reads the title.
             Text(title)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(Theme.textPrimary)
+                .accessibilityHidden(true)
             HStack(spacing: 10) {
                 Image(systemName: systemImage)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Theme.accent)
                     .frame(width: 18)
+                    .accessibilityHidden(true)
                 TextField(title, text: text)
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(Theme.textPrimary)
@@ -423,6 +477,7 @@ struct ServerSettingsView: View {
             withAnimation(spring) {
                 errorMessage = validation
             }
+            errorScrollToken += 1
             return
         }
 
@@ -440,7 +495,7 @@ struct ServerSettingsView: View {
         // Human: Persist is instant; deliberate phases make Save feel finished before pop.
         // Agent: savePhase idle→saving→success; then dismiss / logOut with animation.
         Task { @MainActor in
-            withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+            withAnimation(Motion.respecting(reduceMotion, Motion.snappy)) {
                 savePhase = .saving
             }
             Haptics.impact(.soft)
@@ -449,17 +504,21 @@ struct ServerSettingsView: View {
             try? await Task.sleep(for: .milliseconds(480))
 
             do {
-                try serverConfig.save(draft)
+                // Signing out, the Log Out saves it once the wipe is over: saved now, the session
+                // would be revoked on the new server and the old one would keep this iPhone's
+                // push tokens (`AppRouter.logOut(switchingTo:)`).
+                if !signOutAfter { try serverConfig.save(draft) }
             } catch {
                 Haptics.notification(.error)
                 withAnimation(spring) {
                     savePhase = .idle
                     errorMessage = error.localizedDescription
                 }
+                errorScrollToken += 1
                 return
             }
 
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.78)) {
+            withAnimation(Motion.respecting(reduceMotion, Motion.bouncy)) {
                 savePhase = .success
             }
             Haptics.notification(.success)
@@ -469,9 +528,9 @@ struct ServerSettingsView: View {
 
             if signOutAfter {
                 // Human: Endpoint change invalidates the current session.
-                router.logOut()
+                router.logOut(switchingTo: draft)
             } else {
-                withAnimation(.spring(response: 0.48, dampingFraction: 0.9)) {
+                withAnimation(Motion.respecting(reduceMotion, Motion.gentle)) {
                     dismiss()
                 }
             }

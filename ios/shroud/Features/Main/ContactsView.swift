@@ -13,6 +13,9 @@ struct ContactsView: View {
     @State private var showAdd = false
     @State private var showMyQR = false
     @State private var sortAscending = true
+    /// Pending requests with an Accept or Reject on the wire; their buttons wait for it.
+    @State private var respondingRequestIDs: Set<UUID> = []
+    @State private var toast: Toast?
 
     init(path: Binding<[ChatRoute]> = .constant([]), searchText: Binding<String> = .constant("")) {
         _path = path
@@ -33,6 +36,10 @@ struct ContactsView: View {
             $0.username.localizedCaseInsensitiveContains(query)
                 || $0.userId.uuidString.localizedCaseInsensitiveContains(query)
         }
+    }
+
+    private var isSearching: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var sections: [(letter: String, items: [ContactItemDTO])] {
@@ -58,9 +65,8 @@ struct ContactsView: View {
                         sortAscending.toggle()
                     }
                 } label: {
+                    // GlassBarButton's capsule supplies the label font and padding.
                     Text(sortAscending ? "A–Z" : "Z–A")
-                        .font(GlassBarMetrics.labelFont)
-                        .padding(.horizontal, 16)
                         .contentTransition(.opacity)
                 }
                 .accessibilityLabel(sortAscending ? "Sorted A to Z" : "Sorted Z to A")
@@ -158,11 +164,16 @@ struct ContactsView: View {
                 }
             }
             .sheet(isPresented: $showAdd) {
-                AddContactSheet()
+                // A sent request shows up nowhere in the list, so the toast is the only sign
+                // that it went out.
+                AddContactSheet(onAdded: { message in
+                    toast = Toast(message, duration: .seconds(2.4))
+                })
             }
             .sheet(isPresented: $showMyQR) {
                 MyQRCodeSheet()
             }
+            .toast($toast)
         }
         .task {
             await messaging.refreshContacts()
@@ -174,44 +185,76 @@ struct ContactsView: View {
 
     private func requestRow(_ request: ContactRequestDTO) -> some View {
         let name = request.user?.username ?? request.fromUserId.uuidString
+        let isResponding = respondingRequestIDs.contains(request.id)
         return HStack(spacing: 12) {
             AvatarView(initials: AvatarView.initials(for: name), gradient: AvatarView.gradient(for: name))
             VStack(alignment: .leading, spacing: 2) {
+                // Handles have no spaces to wrap at, and the fallback is a 36-character id.
                 Text(name)
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                 Text("wants to connect")
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.textSecondary)
             }
+            .accessibilityElement(children: .combine)
             Spacer()
             Button {
-                Task { await messaging.rejectRequest(request) }
+                respond(to: request, accept: false)
             } label: {
                 Text("Reject")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(Theme.danger)
-                    .padding(.vertical, 10)
+                    .frame(minHeight: 44)
                     .contentShape(Rectangle())
             }
             .pressable(scale: 0.9)
+            .disabled(isResponding)
+            // The labels set their own colour, so a disabled button has to dim itself.
+            .opacity(isResponding ? 0.4 : 1)
 
             Button {
-                // Success tick on accept — the row then animates out of the Pending section.
-                Haptics.notification(.success)
-                Task { await messaging.acceptRequest(request) }
+                respond(to: request, accept: true)
             } label: {
                 Text("Accept")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(Theme.accent)
-                    .padding(.vertical, 10)
+                    .frame(minHeight: 44)
                     .contentShape(Rectangle())
             }
-            .pressable(scale: 0.9, haptic: nil)
+            .pressable(scale: 0.9)
+            .disabled(isResponding)
+            .opacity(isResponding ? 0.4 : 1)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+        .animation(Motion.fade, value: isResponding)
         .transition(.opacity.combined(with: .move(edge: .top)))
+    }
+
+    /// Human: Accept or Reject once; both buttons wait while the answer is on its way. The
+    /// success tick only comes when the server took it (the row then animates out of
+    /// Pending); a failure keeps the row and says why.
+    /// Agent: CALLS messaging.acceptRequest / rejectRequest; WRITES respondingRequestIDs
+    /// and `toast`.
+    private func respond(to request: ContactRequestDTO, accept: Bool) {
+        guard respondingRequestIDs.insert(request.id).inserted else { return }
+        Task {
+            let error = if accept {
+                await messaging.acceptRequest(request)
+            } else {
+                await messaging.rejectRequest(request)
+            }
+            respondingRequestIDs.remove(request.id)
+            if let error {
+                toast = .failure(error)
+                Haptics.notification(.error)
+            } else if accept {
+                Haptics.notification(.success)
+            }
+        }
     }
 
     private func sectionHeader(_ title: String) -> some View {
@@ -222,17 +265,13 @@ struct ContactsView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 3)
             .background(.ultraThinMaterial)
+            // VoiceOver's Headings rotor then jumps letter by letter.
+            .accessibilityAddTraits(.isHeader)
     }
 
+    /// "online" / "last seen …" / "offline"; "contact" until the server has told us anything.
     private func contactStatus(_ contact: ContactItemDTO) -> String {
-        if let presence = messaging.presenceByUser[contact.userId] {
-            if presence.online { return "online" }
-            if let last = presence.lastSeenAt {
-                return "last seen \(messaging.timeLabel(for: last))"
-            }
-            return "offline"
-        }
-        return "contact"
+        ChatListFormatting.presenceLabel(for: messaging.presenceByUser[contact.userId]) ?? "contact"
     }
 
     private var emptyState: some View {
@@ -242,10 +281,13 @@ struct ContactsView: View {
                 .foregroundStyle(Theme.accent.opacity(0.85))
                 .symbolEffect(.bounce, options: .nonRepeating)
                 .padding(.bottom, 6)
-            Text("No contacts yet")
+                // Decorative: the title says what's going on.
+                .accessibilityHidden(true)
+            // A search that misses must not tell a full roster it has no contacts.
+            Text(isSearching ? "No matches" : "No contacts yet")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
-            Text("Scan a QR code or enter a share code to add someone.")
+            Text(isSearching ? "Try a different name." : "Scan a QR code or enter a share code to add someone.")
                 .font(.system(size: 14))
                 .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)

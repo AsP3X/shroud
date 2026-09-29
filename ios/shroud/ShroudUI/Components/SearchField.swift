@@ -18,6 +18,7 @@ struct SearchField: View {
                 .foregroundStyle(Theme.textPrimary)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
+                .submitLabel(.search)
                 .focused($focused)
             if !text.isEmpty {
                 Button {
@@ -27,7 +28,8 @@ struct SearchField: View {
                         .font(.system(size: 14))
                         .foregroundStyle(Theme.textSecondary)
                         .frame(width: 24, height: 24)
-                        .contentShape(Rectangle())
+                        // 44 pt to the finger without moving the 24 pt glyph box.
+                        .contentShape(Rectangle().inset(by: -10))
                 }
                 .pressable(scale: 0.8)
                 .accessibilityLabel("Clear search")

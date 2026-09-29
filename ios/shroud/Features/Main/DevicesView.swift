@@ -16,6 +16,7 @@ struct DevicesView: View {
     @Environment(SessionController.self) private var sessionController
     @Environment(CryptoController.self) private var cryptoController
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var devices: [LinkedDeviceDTO]?
     @State private var loadError: String?
@@ -29,7 +30,7 @@ struct DevicesView: View {
     /// Remove tapped in the detail sheet; the confirmation waits until the sheet is gone,
     /// since an alert presented mid-dismissal is dropped.
     @State private var revokeAfterSheet: LinkedDeviceDTO?
-    @State private var toast: String?
+    @State private var toast: Toast?
 
     private let service = DevicesService()
 
@@ -50,6 +51,12 @@ struct DevicesView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     if let devices {
                         loadedContent(devices)
+                    } else if let loadError {
+                        ListLoadErrorView(
+                            title: "Can't load devices",
+                            message: loadError,
+                            retry: { await load() }
+                        )
                     } else {
                         loadingCard
                     }
@@ -57,8 +64,17 @@ struct DevicesView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
+                // Like the sibling lists: the loaded list fades in, a removed row folds away
+                // instead of the rows below jumping, and the error lines fade.
+                .animation(Motion.respecting(reduceMotion, Motion.standard), value: devices?.map(\.id))
+                .animation(Motion.fade, value: loadError)
+                .animation(Motion.fade, value: actionError)
             }
-            .refreshable { await load() }
+            // A new pull starts clean; a failure sets the error again.
+            .refreshable {
+                actionError = nil
+                await load()
+            }
         }
         // System navigation bar: Liquid Glass back button, inline title, scroll edge fade.
         .navigationTitle("Devices")
@@ -207,7 +223,7 @@ struct DevicesView: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Theme.accent)
                 Text(
-                    "Every device unlocks with your 12-word phrase, which never leaves it. Device names are encrypted with it too, so only your own devices can read them. The server records when each device was linked and when it was last active — both shown here. Removing a device does not erase what is already stored on it."
+                    "Every device unlocks with your 12-word phrase, which never leaves it. Device names are encrypted with it too, so only your own devices can read them. The server records when each device was linked and when it was last active — both shown here. A removed device erases everything of your account on it as soon as it is online or next opened."
                 )
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.textSecondary)
@@ -222,26 +238,10 @@ struct DevicesView: View {
     private var loadingCard: some View {
         settingsCard {
             VStack(spacing: 10) {
-                if let loadError {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 22))
-                        .foregroundStyle(Theme.warningIcon)
-                    Text(loadError)
-                        .font(.system(size: 14))
-                        .foregroundStyle(Theme.textSecondary)
-                        .multilineTextAlignment(.center)
-                    Button("Try Again") {
-                        self.loadError = nil
-                        Task { await load() }
-                    }
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Theme.accent)
-                } else {
-                    ProgressView()
-                    Text("Loading devices…")
-                        .font(.system(size: 14))
-                        .foregroundStyle(Theme.textSecondary)
-                }
+                ProgressView()
+                Text("Loading devices…")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Theme.textSecondary)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 24)
@@ -271,9 +271,12 @@ struct DevicesView: View {
                     if current {
                         Image(systemName: "chevron.right")
                             .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Color(red: 199 / 255, green: 199 / 255, blue: 204 / 255))
+                            .foregroundStyle(Theme.chevron)
                     }
                 }
+                // The row's padding sits inside the button, so its whole height opens the details.
+                .padding(.leading, 14)
+                .padding(.vertical, 10)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -284,18 +287,22 @@ struct DevicesView: View {
                         .controlSize(.small)
                         .frame(minWidth: 60)
                 } else {
-                    Button("Remove") {
+                    Button {
                         Haptics.impact(.light)
                         pendingRevoke = device
+                    } label: {
+                        // 44 pt tall target; still shorter than the row, so the row keeps its height.
+                        Text("Remove")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(Theme.danger)
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
                     }
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(Theme.danger)
                     .accessibilityLabel("Remove \(displayName(device))")
                 }
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.trailing, 14)
     }
 
     @ViewBuilder
@@ -318,8 +325,8 @@ struct DevicesView: View {
     }
 
     private var revokeAllButton: some View {
+        // HighlightRowButtonStyle gives the press-down tick; no second haptic on release.
         Button {
-            Haptics.impact(.light)
             showRevokeAllConfirm = true
         } label: {
             HStack(spacing: 12) {
@@ -358,7 +365,8 @@ struct DevicesView: View {
                 Spacer()
                 Text("\(count) of \(limit)")
                     .font(.system(size: 16).monospacedDigit())
-                    .foregroundStyle(full ? Theme.warningIcon : Theme.textSecondary)
+                    // warningText, not warningIcon: text needs 4.5:1 on the card in both modes.
+                    .foregroundStyle(full ? Theme.warningText : Theme.textSecondary)
             }
             HStack(spacing: 4) {
                 ForEach(0 ..< limit, id: \.self) { index in
@@ -395,6 +403,7 @@ struct DevicesView: View {
             .padding(.horizontal, 14)
             .padding(.bottom, 6)
             .padding(.top, 6)
+            .accessibilityAddTraits(.isHeader)
     }
 
     private func sectionFooter(_ text: String) -> some View {
@@ -484,10 +493,10 @@ struct DevicesView: View {
                 try await service.revoke(deviceID: device.id, token: token)
                 removeLocally([device.id])
                 Haptics.notification(.success)
-                showToast("\(displayName(device)) removed")
+                toast = Toast("\(displayName(device)) removed")
             } catch where Self.isAlreadyRemoved(error) {
                 removeLocally([device.id])
-                showToast("\(displayName(device)) was already removed")
+                toast = .info("\(displayName(device)) was already removed")
             } catch {
                 actionError = SessionController.userMessage(for: error)
                 Haptics.notification(.error)
@@ -521,12 +530,14 @@ struct DevicesView: View {
             isRevokingAll = false
             if let lastError {
                 let failed = targets.count - removed.count
-                actionError = "\(failed) of \(targets.count) devices could not be removed. "
-                    + SessionController.userMessage(for: lastError)
+                let lead = targets.count == 1
+                    ? "The device could not be removed. "
+                    : "\(failed) of \(targets.count) devices could not be removed. "
+                actionError = lead + SessionController.userMessage(for: lastError)
                 Haptics.notification(.error)
             } else {
                 Haptics.notification(.success)
-                showToast(removed.count == 1 ? "1 device removed" : "\(removed.count) devices removed")
+                toast = Toast(removed.count == 1 ? "1 device removed" : "\(removed.count) devices removed")
             }
             await load()
         }
@@ -567,17 +578,9 @@ struct DevicesView: View {
     }
 
     private func copyID(of device: LinkedDeviceDTO) {
+        // The row's HighlightRowButtonStyle already ticks on press-down; the detail sheet
+        // shows the confirmation, since this screen's toast would sit under it.
         UIPasteboard.general.string = device.id.uuidString.lowercased()
-        Haptics.impact(.light)
-        showToast("Device ID copied")
-    }
-
-    private func showToast(_ message: String) {
-        toast = message
-        Task {
-            try? await Task.sleep(nanoseconds: 1_800_000_000)
-            if toast == message { toast = nil }
-        }
     }
 }
 
@@ -598,6 +601,7 @@ private struct DeviceDetailSheet: View {
     @State private var draft = ""
     @State private var isSavingName = false
     @State private var renameError: String?
+    @State private var toast: Toast?
 
     var body: some View {
         ScrollView {
@@ -652,7 +656,10 @@ private struct DeviceDetailSheet: View {
                             : device.lastSeenAt?.formatted(date: .long, time: .shortened) ?? "Never"
                     )
                     divider
-                    Button(action: onCopyID) {
+                    Button {
+                        onCopyID()
+                        toast = Toast("Device ID copied")
+                    } label: {
                         HStack(alignment: .firstTextBaseline, spacing: 12) {
                             Text("Device ID")
                                 .font(.system(size: 16))
@@ -713,6 +720,11 @@ private struct DeviceDetailSheet: View {
             .padding(.bottom, 24)
         }
         .background(Theme.backgroundGrouped)
+        // The sheet stays open after a copy and covers the Devices screen, so the
+        // confirmation floats on the sheet's own bottom edge.
+        .toast($toast)
+        // Like MyQRCodeSheet: the sheet covers the tab bar it inherits this from.
+        .environment(\.tabBarClearance, 0)
         .alert("Rename Device", isPresented: $isRenaming) {
             TextField("Name", text: $draft)
                 .textInputAutocapitalization(.words)

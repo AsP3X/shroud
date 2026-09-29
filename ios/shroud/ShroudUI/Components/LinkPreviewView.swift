@@ -57,12 +57,14 @@ struct LinkPreviewView: View {
         return false
     }
 
+    /// The stripe; `accentText` on the incoming bubble, like the reply quote's.
     private var accentColor: Color {
-        style == .outgoing ? Color.white : Theme.accent
+        style == .outgoing ? Color.white : Theme.accentText
     }
 
+    /// Outgoing darkens rather than lightens: white text on a lightened accent falls below 4.5:1.
     private var tint: Color {
-        style == .outgoing ? Color.white.opacity(0.15) : Theme.accent.opacity(0.1)
+        style == .outgoing ? Color.black.opacity(0.12) : Theme.accent.opacity(0.1)
     }
 
     var body: some View {
@@ -140,7 +142,8 @@ struct LinkPreviewView: View {
                         .resizable()
                         .scaledToFill()
                         // The envelope placeholder is a few KB; soften it like a photo's.
-                        .blur(radius: full == nil ? 10 : 0)
+                        // Opaque, or the blur fades its edges into the card tint.
+                        .blur(radius: full == nil ? 10 : 0, opaque: full == nil)
                 } else {
                     tint
                 }
@@ -216,8 +219,9 @@ struct LinkPreviewTextView: UIViewRepresentable {
     /// The block's text in Telegram's type: 14 pt semibold site name and title, 14 pt body.
     static func attributedText(for preview: LinkPreview, style: LinkPreviewStyle) -> NSAttributedString {
         let accent = style == .outgoing ? UIColor.white : (UIColor(named: "AccentText") ?? .systemIndigo)
+        // The description is plain white on outgoing too: dimmed white misses 4.5:1 there, and
+        // the semibold site name and title keep the order.
         let primary = style == .outgoing ? UIColor.white : (UIColor(named: "TextPrimary") ?? .label)
-        let body = style == .outgoing ? UIColor.white.withAlphaComponent(0.9) : primary
         let semibold = UIFont.systemFont(ofSize: LinkPreviewView.fontSize, weight: .semibold)
         let regular = UIFont.systemFont(ofSize: LinkPreviewView.fontSize, weight: .regular)
 
@@ -239,7 +243,7 @@ struct LinkPreviewTextView: UIViewRepresentable {
         }
         append(preview.displaySiteName, font: semibold, color: accent)
         if let title = preview.title { append(title, font: semibold, color: primary) }
-        if let summary = preview.summary { append(summary, font: regular, color: body) }
+        if let summary = preview.summary { append(summary, font: regular, color: primary) }
         return result
     }
 }
@@ -346,7 +350,7 @@ final class CutoutTextView: UITextView {
             )
             .frame(width: 260)
             .padding(6)
-            .background(Theme.accent)
+            .background(Theme.bubbleOutgoing)
             .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
         }
         .padding(20)

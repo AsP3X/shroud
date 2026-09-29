@@ -9,8 +9,7 @@ struct WelcomeView: View {
     @State private var showServerSettings = false
     /// Drives the one-shot arrival choreography (logo → copy → tiles → actions).
     @State private var hasArrived = false
-    @State private var toastMessage: String?
-    @State private var toastDismissTask: Task<Void, Never>?
+    @State private var toast: Toast?
 
     var body: some View {
         GroupedScreen {
@@ -44,7 +43,7 @@ struct WelcomeView: View {
             }
         }
         .navigationBarHidden(true)
-        .toast($toastMessage)
+        .toast($toast)
         .onAppear {
             if !hasArrived {
                 // The app's first frame: elements settle in reading order, then the CTAs arrive.
@@ -63,9 +62,6 @@ struct WelcomeView: View {
         .onChange(of: router.postAuthToast) { _, _ in
             presentPostAuthToastIfNeeded()
         }
-        .onDisappear {
-            toastDismissTask?.cancel()
-        }
         .serverSettingsSheet(
             isPresented: $showServerSettings,
             context: .onboarding,
@@ -76,34 +72,23 @@ struct WelcomeView: View {
     private func presentPostAuthToastIfNeeded() {
         guard let message = router.postAuthToast else { return }
         router.postAuthToast = nil
-        toastDismissTask?.cancel()
-        toastMessage = message
-        toastDismissTask = Task {
-            try? await Task.sleep(nanoseconds: 2_400_000_000)
-            guard !Task.isCancelled else { return }
-            toastMessage = nil
-        }
+        // A notice about what happened to this iPhone ("Signed out · … cleared"), not a result
+        // of a tap here: it stays long enough to be read.
+        toast = .info(message, duration: .seconds(2.4))
     }
 
+    /// The server gear as a glass circle — the same bar recipe as Sign Up and Log In.
     private var navRow: some View {
-        HStack {
-            Spacer(minLength: 0)
-            Button {
+        GlassBarRow {
+            EmptyView()
+        } center: {
+            EmptyView()
+        } trailing: {
+            GlassBarButton(systemImage: "gearshape.fill") {
                 showServerSettings = true
-            } label: {
-                Image(systemName: "gearshape.fill")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(Theme.accent)
-                    .frame(width: 44, height: 44)
-                    .background(Theme.backgroundGrouped)
-                    .clipShape(Circle())
             }
-            // Press haptic comes from the style now.
-            .pressable(scale: 0.88)
             .accessibilityLabel("Server settings")
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 4)
     }
 
     private var hero: some View {
@@ -120,6 +105,7 @@ struct WelcomeView: View {
                     .font(.system(size: 32, weight: .bold))
                     .foregroundStyle(Theme.textPrimary)
                     .multilineTextAlignment(.center)
+                    .accessibilityAddTraits(.isHeader)
                 Text("No phone number. No email. Just your username and a 12-word encryption phrase.")
                     .font(.system(size: 15))
                     .foregroundStyle(Theme.textSecondary)
@@ -159,6 +145,7 @@ struct WelcomeView: View {
         .padding(.vertical, 10)
         .background(Theme.background)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel("Current server \(connectionLabel)")
     }
 
@@ -181,6 +168,7 @@ struct WelcomeView: View {
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(Theme.accent)
             }
+            .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.system(size: 15, weight: .semibold))
@@ -194,6 +182,8 @@ struct WelcomeView: View {
         .padding(14)
         .background(Theme.background)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        // One stop per tile: "End-to-end encrypted, Messages decrypt only on your devices".
+        .accessibilityElement(children: .combine)
     }
 }
 

@@ -63,7 +63,7 @@ struct VoiceRecordingBar: View {
         .opacity(1 - Double(cancelProgress) * 0.45)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "Recording, \(Int(elapsed)) seconds. Release to send, slide left to cancel."
+            "Recording, \(VoiceTimeFormat.spoken(elapsed)). Release to send, slide left to cancel."
         )
     }
 
@@ -122,7 +122,9 @@ struct VoiceLockedBar: View {
                     .frame(width: ChatComposerView.controlSize, height: ChatComposerView.controlSize)
                     .contentShape(Circle())
             }
-            .buttonStyle(PressableButtonStyle(scale: 1, dimming: 0, haptic: .medium))
+            // No press haptic on either button: each outcome fires its own (rigid on discard,
+            // light on send), so a second tick would double up.
+            .buttonStyle(PressableButtonStyle(scale: 1, dimming: 0, haptic: nil))
             .glassEffect(.regular.interactive(), in: .circle)
             .accessibilityLabel("Discard recording")
 
@@ -150,6 +152,11 @@ struct VoiceLockedBar: View {
             .padding(.horizontal, 14)
             .frame(height: ChatComposerView.controlSize)
             .glassEffect(.regular, in: .capsule)
+            // One element instead of a bare, ever-changing "0:07,32". No `.updatesFrequently`:
+            // VoiceOver would re-read it every second.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Recording")
+            .accessibilityValue(VoiceTimeFormat.spoken(elapsed))
 
             Button(action: onSend) {
                 Image(systemName: "arrow.up")
@@ -158,7 +165,7 @@ struct VoiceLockedBar: View {
                     .frame(width: ChatComposerView.controlSize, height: ChatComposerView.controlSize)
                     .contentShape(Circle())
             }
-            .buttonStyle(PressableButtonStyle(scale: 1, dimming: 0, haptic: .medium))
+            .buttonStyle(PressableButtonStyle(scale: 1, dimming: 0, haptic: nil))
             .glassEffect(.regular.tint(Theme.accent).interactive(), in: .circle)
             .accessibilityLabel("Send recording")
         }
@@ -221,6 +228,13 @@ enum VoiceTimeFormat {
     static func duration(_ interval: TimeInterval) -> String {
         let total = max(0, interval.rounded())
         return String(format: "%d:%02d", Int(total) / 60, Int(total) % 60)
+    }
+
+    /// "7 seconds", "1 minute, 35 seconds" — for VoiceOver, which reads "0:07" as a clock time.
+    /// Rounds down like the on-screen timer, so both agree.
+    static func spoken(_ interval: TimeInterval) -> String {
+        Duration.seconds(max(0, interval).rounded(.down))
+            .formatted(.units(allowed: [.minutes, .seconds], width: .wide))
     }
 }
 

@@ -34,6 +34,11 @@ final class AppRouter {
     /// One-shot toast after returning to Welcome (e.g. "Signed out · local data cleared").
     var postAuthToast: String?
 
+    /// A server picked on the lock screen, saved by `RootView` once the logout wipe is over.
+    /// Human: The wipe revokes the session on the server that issued it; the new server only
+    /// ever sees a signed-out iPhone, never this session's token.
+    var pendingServerConfiguration: ServerConfiguration?
+
     /// Ready for the main shell: API session present **and** local crypto unlocked.
     var isUnlocked: Bool {
         hasUnlockedMessaging
@@ -77,19 +82,19 @@ final class AppRouter {
     }
 
     func showSignUp() {
-        withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
+        withAnimation(Motion.standard) {
             path = [.signUp]
         }
     }
 
     func showLogIn() {
-        withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
+        withAnimation(Motion.standard) {
             path = [.logIn]
         }
     }
 
     func pop() {
-        withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
+        withAnimation(Motion.standard) {
             if !path.isEmpty {
                 path.removeLast()
             }
@@ -167,5 +172,13 @@ final class AppRouter {
         guard !isLoggingOut else { return }
         postAuthToast = nil
         deviceWipe?.start(reason: .logout)
+    }
+
+    /// Log Out for a server change while signed in (the lock screen's server sheet): the same
+    /// wipe, then `configuration` becomes the server (see `pendingServerConfiguration`).
+    func logOut(switchingTo configuration: ServerConfiguration) {
+        guard !isLoggingOut else { return }
+        pendingServerConfiguration = configuration
+        logOut()
     }
 }

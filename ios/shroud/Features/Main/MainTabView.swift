@@ -12,6 +12,7 @@ struct MainTabView: View {
 
     @Environment(MessagingController.self) private var messaging
     @Environment(NotificationsController.self) private var notifications
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var selection: MainTab = .chats
     @State private var chatsPath: [ChatRoute] = []
@@ -94,7 +95,8 @@ struct MainTabView: View {
             tabRoot(for: selection)
                 .id(selection)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .transition(tabContentTransition)
+                // Reduce Motion: a plain cross-fade, no slide or scale.
+                .transition(reduceMotion ? AnyTransition.opacity : tabContentTransition)
                 // Always the same modifier shape; only the edges flag changes.
                 // Ignore the keyboard while the bar is showing (clearance covers it).
                 // Header search hides the bar — let the list sit above the keyboard.
@@ -130,7 +132,9 @@ struct MainTabView: View {
                 }
         }
         // Tab switches only — never animate off `showsTabBar` here (that cancelled pushes).
-        .animation(tabAnimation, value: selection)
+        // This replaces the bar's own animation for the whole subtree, so it has to respect
+        // Reduce Motion itself, or the lens and the content would still spring.
+        .animation(Motion.respecting(reduceMotion, tabAnimation), value: selection)
         .navigationBarHidden(true)
         .environment(\.hideFloatingTabBar, hideBinding)
         .environment(\.isTabBarSearchActive, isSearching)
@@ -287,7 +291,7 @@ struct MainTabView: View {
         case .calls:
             CallsView()
         case .settings:
-            SettingsView(router: router, navigationPath: $settingsPath)
+            SettingsView(router: router, navigationPath: $settingsPath, onOpenCalls: { select(.calls) })
         }
     }
 }

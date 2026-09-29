@@ -86,6 +86,8 @@ private struct MessageContextLongPress: ViewModifier {
     /// Live global frame of the row — the menu hero flies from and back to it.
     @State private var rowFrame: CGRect = .zero
     /// Suppresses the trailing tap so a hold that opened the menu doesn't also fire `onTap`.
+    /// Cleared on every new touch-down: a hold held past the tap's cut-off never produces that
+    /// trailing tap, and the next real tap on the bubble must not be the one swallowed.
     @State private var didLongPress = false
 
     func body(content: Content) -> some View {
@@ -101,6 +103,8 @@ private struct MessageContextLongPress: ViewModifier {
             .background { ScrollTouchDelayDisabler() }
             .simultaneousGesture(
                 LongPressGesture(minimumDuration: minimumDuration)
+                    // Fires at touch-down, before this press can end as a tap.
+                    .onChanged { _ in didLongPress = false }
                     .onEnded { _ in
                         didLongPress = true
                         perform(rowFrame)
@@ -132,6 +136,9 @@ private struct MessageContextLongPress: ViewModifier {
                 },
                 isEnabled: onDoubleTap != nil
             )
+            // VoiceOver's double-tap-and-hold is hard to find; the menu (reply, copy, delete,
+            // every reaction) is a named action on the bubble too.
+            .accessibilityAction(named: "Message options") { perform(rowFrame) }
     }
 }
 

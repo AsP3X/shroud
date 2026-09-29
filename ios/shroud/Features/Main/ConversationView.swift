@@ -23,8 +23,10 @@ struct ConversationView: View {
     @State private var showAttach = false
     /// Owns the mic session for this thread. The composer only reads its live state.
     @State private var voiceRecorder = VoiceRecorder()
-    @State private var toast: String?
-    /// Notes only: the header menu's "Delete Saved Messages" confirmation.
+    @State private var toast: Toast?
+    /// Height of the composer bar (plus the Notes toolbar), so toasts land above it.
+    @State private var composerBarHeight: CGFloat = 0
+    /// Notes only: the header menu's "Delete All Notes" confirmation.
     @State private var showNotesDeleteConfirm = false
     /// A reaction on its way from the bar or a double tap to its chip (`ReactionFlight`).
     @State private var reactionFlight: ReactionFlight?
@@ -61,8 +63,18 @@ struct ConversationView: View {
     @State private var isSendingMedia = false
     /// Message IDs currently downloading full media (Telegram-style manual download).
     @State private var mediaDownloadIDs: Set<UUID> = []
+    /// Downloads the reader stopped with the bubble's ring — ending empty-handed is no failure.
+    @State private var cancelledDownloadIDs: Set<UUID> = []
     /// Bumped after thread load / open so we re-pin to the newest message once layout is ready.
     @State private var pinToBottomToken = 0
+    /// The chat has been on screen before. Coming back from a pushed screen (the profile) keeps
+    /// the reader's place instead of pinning to the newest message again.
+    @State private var didOpen = false
+    /// The first page of a chat that isn't on this device yet is on its way.
+    @State private var loadingFirstPage = false
+    /// Why that first page couldn't be fetched, so the chat has nothing to show but a retry.
+    /// Kept from the load itself: the shared `lastError` is overwritten and cleared by any action.
+    @State private var firstLoadError: String?
     /// Thread width, so bubbles size themselves to the device instead of a fixed column.
     @State private var threadWidth: CGFloat = 0
     /// Message being answered. The composer shows its quote until the reply is sent or dropped.
@@ -117,6 +129,15 @@ struct ConversationView: View {
         !messages.isEmpty && messaging.hasOlderHistory(for: peerUserID)
     }
 
+    /// Loads the chat and keeps the outcome for the failed-first-load state: the error, read
+    /// right after the load, when it left the chat empty (a load that fails over a thread
+    /// already on the device just goes offline instead).
+    private func loadThreadKeepingFailure() async {
+        await messaging.loadThread(peerUserID: peerUserID, reconcile: true)
+        guard !Task.isCancelled else { return }
+        firstLoadError = messages.isEmpty ? messaging.lastError : nil
+    }
+
     /// Stable identity of the newest bubble (count alone misses same-count reloads).
     private var newestMessageID: UUID? {
         messages.last?.id
@@ -141,17 +162,13 @@ struct ConversationView: View {
     }
 
     private var presenceLabel: String {
-        if isNotes { return "Only you · stored on this device" }
+        // Notes are sealed to the account and sync to its other devices, so this says who can
+        // read them, not where they are kept.
+        if isNotes { return "Only you · end-to-end encrypted" }
         if let peerActivity { return "\(peerActivity.label)…" }
         if isOnline { return "online" }
         if messaging.isOffline { return "offline · local copy" }
-        if let presence = messaging.presenceByUser[peerUserID] {
-            if let last = presence.lastSeenAt {
-                return "last seen \(messaging.timeLabel(for: last))"
-            }
-            return "offline"
-        }
-        return "…"
+        return ChatListFormatting.presenceLabel(for: messaging.presenceByUser[peerUserID]) ?? "…"
     }
 
     /// True when this id is still in the thread as a delete-for-everyone tombstone.
@@ -177,6 +194,18 @@ struct ConversationView: View {
 
     private var presenceAccent: Bool {
         peerActivity != nil || isOnline
+    }
+
+    /// A full-screen layer (viewer, editors, player) hides the composer. The sending HUD is a
+    /// centred card, so the composer stays visible under it.
+    private var coversComposer: Bool {
+        viewingMedia != nil || viewingVideo != nil || composeDraft != nil || videoDraft != nil
+    }
+
+    /// Toasts sit above the composer; while a full-screen layer hides it they drop back to the
+    /// screen's bottom edge.
+    private var toastBottomInset: CGFloat {
+        coversComposer ? 0 : composerBarHeight
     }
 
     var body: some View {
@@ -210,16 +239,16 @@ struct ConversationView: View {
                 Button("Cancel", role: .cancel) { pendingDelete = nil }
             }
             .confirmationDialog(
-                "Delete Saved Messages?",
+                "Delete all notes?",
                 isPresented: $showNotesDeleteConfirm,
                 titleVisibility: .visible
             ) {
                 Button("Delete", role: .destructive) { deleteNotes() }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Removes every saved message from this device and your account.")
+                Text("Removes every note from this device and your account.")
             }
-            .toast($toast)
+            .toast($toast, bottomInset: toastBottomInset)
             .animation(Motion.scrim, value: viewingMedia != nil)
             .animation(Motion.scrim, value: viewingVideo != nil)
             .animation(Motion.scrim, value: composeDraft != nil)
@@ -301,6 +330,8 @@ struct ConversationView: View {
                         }
                     )
                 }
+                // The toast overlay sits outside this bar's inset; it lifts itself by this much.
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { composerBarHeight = $0 }
             }
             .navigationBarBackButtonHidden(true)
             .toolbar(.hidden, for: .navigationBar)
@@ -308,21 +339,29 @@ struct ConversationView: View {
             // Hiding the bar also kills the system edge swipe; bring it back.
             .interactivePopGesture(enabled: allowsSwipeBack)
             .task {
-                // Pin immediately if the thread is already in memory, then again after network load.
-                pinToBottomToken &+= 1
-                await messaging.loadThread(peerUserID: peerUserID, reconcile: true)
-                pinToBottomToken &+= 1
+                // Pin immediately if the thread is already in memory, then again after network
+                // load. Back from the profile, only the reconcile runs: the reader keeps their place.
+                let opening = !didOpen
+                didOpen = true
+                if opening { pinToBottomToken &+= 1 }
+                // Nothing on this device yet: a spinner rather than the brand-new-chat header
+                // (back from the profile, only in place of a failed first load).
+                loadingFirstPage = messages.isEmpty && (opening || firstLoadError != nil)
+                await loadThreadKeepingFailure()
+                loadingFirstPage = false
+                if opening { pinToBottomToken &+= 1 }
             }
             .onAppear {
                 messaging.setActivePeer(peerUserID)
                 // Opening a chat should always start at the newest message (Telegram/Signal/WhatsApp).
-                pinToBottomToken &+= 1
+                if !didOpen { pinToBottomToken &+= 1 }
             }
             .onDisappear {
                 // Leaving the thread throws away an in-flight take and silences playback —
                 // there is no mini-player to hand either off to.
                 highlightTask?.cancel()
-                linkComposer.reset()
+                // A pushed profile comes back to the same draft, so its link preview stays.
+                if profileDestination == nil { linkComposer.reset() }
                 voiceRecorder.cancel()
                 VoicePlaybackCoordinator.shared.stop()
                 menuAnimationTask?.cancel()
@@ -364,9 +403,11 @@ struct ConversationView: View {
             .photosPicker(
                 isPresented: $showPhotoPicker,
                 selection: $photoPickerItems,
-                maxSelectionCount: Self.maxPhotosPerSend,
+                maxSelectionCount: pickerAppendsToDraft
+                    ? max(1, Self.maxPhotosPerSend - pickerStagedCount)
+                    : Self.maxPhotosPerSend,
                 selectionBehavior: .ordered,
-                matching: .any(of: [.images, .videos]),
+                matching: pickerFilter,
                 preferredItemEncoding: .current,
                 photoLibrary: .shared()
             )
@@ -376,9 +417,8 @@ struct ConversationView: View {
             }
             .onChange(of: messaging.reactionFailure) { _, failure in
                 guard let failure else { return }
-                toast = failure.message
+                toast = .failure(failure.message)
                 Haptics.notification(.error)
-                scheduleToastClear()
             }
             .fullScreenCover(isPresented: $showCamera) {
                 CameraPicker { capture in
@@ -390,6 +430,10 @@ struct ConversationView: View {
                     case .movie(let movie):
                         Task { await presentCapturedMovie(movie) }
                     }
+                } onFailure: { message in
+                    // A capture that couldn't be read isn't a Cancel: say it was lost.
+                    toast = .failure(message)
+                    Haptics.notification(.error)
                 }
                 .ignoresSafeArea()
             }
@@ -439,15 +483,12 @@ struct ConversationView: View {
                         self.viewingMedia = nil
                     }
                 },
-                onLoad: { messageID in
-                    // Viewer only loads pages that were already downloaded (no silent fetch).
-                    guard let message = messages.first(where: { $0.id == messageID }),
-                          message.imageData != nil
-                    else { return }
-                },
-                onComingSoon: { feature in
-                    toast = "\(feature) coming soon"
-                    scheduleToastClear()
+                // The thread's own "Delete message?" dialog, with its scope choice; a delete
+                // closes the viewer (`performDelete`), Cancel leaves it open.
+                onDelete: { id in
+                    if let message = messages.first(where: { $0.id == id }) {
+                        pendingDelete = PendingDelete(message: message)
+                    }
                 }
             )
             // Cover chat header + composer + status bar (true Telegram overlay).
@@ -486,17 +527,12 @@ struct ConversationView: View {
                         )
                     }
                 },
-                onAddMore: {
-                    pickerAppendsToDraft = true
-                    photoPickerItems = []
-                    showPhotoPicker = true
-                },
+                // A full album has no room: Add shows disabled.
+                onAddMore: composeDraft.photos.count < Self.maxPhotosPerSend
+                    ? { openPickerToAppend() }
+                    : nil,
                 onRemovePhoto: { index in
                     removeComposePhoto(at: index)
-                },
-                onComingSoon: { feature in
-                    toast = "\(feature) coming soon"
-                    scheduleToastClear()
                 }
             )
             .ignoresSafeArea()
@@ -525,11 +561,9 @@ struct ConversationView: View {
                     pinToBottomToken &+= 1
                     Task { await sendVideoPlans(plans, movies: movies, replyTo: reference) }
                 },
-                onAddMore: {
-                    pickerAppendsToDraft = true
-                    photoPickerItems = []
-                    showPhotoPicker = true
-                },
+                onAddMore: videoDraft.videos.count < Self.maxPhotosPerSend
+                    ? { openPickerToAppend() }
+                    : nil,
                 onRemoveVideo: { index in
                     removeComposeVideo(at: index)
                 }
@@ -559,13 +593,15 @@ struct ConversationView: View {
         }
     }
 
-    @ViewBuilder
     private var sendingMediaLayer: some View {
-        if isSendingMedia {
-            ProgressView("Sending media…")
-                .padding(16)
-                .glassEffect(.regular, in: .rect(cornerRadius: 14))
-                .transition(.scale(scale: 0.9).combined(with: .opacity))
+        // In its own container: glass outside one leaves at once, whatever the transition says.
+        GlassEffectContainer {
+            if isSendingMedia {
+                ProgressView("Sending media…")
+                    .padding(16)
+                    .glassEffect(.regular, in: .rect(cornerRadius: 14))
+                    .transition(.scale(scale: 0.9).combined(with: .opacity))
+            }
         }
     }
 
@@ -609,6 +645,27 @@ struct ConversationView: View {
     /// Telegram caps an album at 10; matching that keeps one send from ballooning.
     private static let maxPhotosPerSend = 10
 
+    /// Items already in the compose screen that "Add" extends.
+    private var pickerStagedCount: Int {
+        videoDraft?.videos.count ?? composeDraft?.photos.count ?? 0
+    }
+
+    /// "Add" picks more of what the open compose screen holds: a photo can't join a video
+    /// send, and one picked there would open a second compose screen hidden under it.
+    private var pickerFilter: PHPickerFilter {
+        guard pickerAppendsToDraft else { return .any(of: [.images, .videos]) }
+        if videoDraft != nil { return .videos }
+        if composeDraft != nil { return .images }
+        return .any(of: [.images, .videos])
+    }
+
+    /// "Add" on a compose screen: the picker again, its picks joining that send.
+    private func openPickerToAppend() {
+        pickerAppendsToDraft = true
+        photoPickerItems = []
+        showPhotoPicker = true
+    }
+
     // MARK: - Top chrome (Liquid Glass bar)
 
     /// Back on the left, the contact (avatar + name + presence) centred on the screen, and
@@ -618,7 +675,7 @@ struct ConversationView: View {
     /// like a title, and it is centred like one. Video and Call fuse into one capsule, the way
     /// the system toolbar groups neighbouring items. A peer chat is deleted from the chat
     /// list's long-press menu, so its bar holds nothing else; Notes keeps a More menu because
-    /// that is the only place its saved messages can be cleared from inside the thread. There
+    /// that is the only place its notes can be cleared from inside the thread. There
     /// is no backdrop: `glassTopBar` fades the thread under it.
     /// Agent: RETURNS the bar row; presence animation lives on the centre block.
     private var topChrome: some View {
@@ -648,12 +705,12 @@ struct ConversationView: View {
                     .accessibilityLabel("Call")
                 }
             } else {
-                // Notes are local Saved Messages, so the menu only clears them.
+                // Notes have no one on the other side, so the menu only clears them.
                 Menu {
                     Button(role: .destructive) {
                         showNotesDeleteConfirm = true
                     } label: {
-                        Label("Delete Saved Messages", systemImage: "trash")
+                        Label("Delete All Notes", systemImage: "trash")
                     }
                 } label: {
                     Image(systemName: "ellipsis")
@@ -685,6 +742,9 @@ struct ConversationView: View {
                         .lineLimit(1)
                 }
             }
+            // One heading ("Notes to me, Only you · …"), not two loose fragments.
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
         } else {
             Button {
                 profileDestination = ProfileDestination(
@@ -745,8 +805,7 @@ struct ConversationView: View {
                 modality: modality
             )
             if let err = calls.lastError {
-                toast = err
-                scheduleToastClear()
+                toast = .failure(err)
             }
         }
     }
@@ -766,6 +825,18 @@ struct ConversationView: View {
                     // oldest message is on screen; until then the top row loads more.
                     if hiddenCount > 0 || hasOlderOnServer {
                         olderHistoryRow
+                    } else if messages.isEmpty, loadingFirstPage {
+                        // Not the new-chat header: this chat's history is still on its way.
+                        ProgressView()
+                            .controlSize(.small)
+                            .accessibilityLabel("Loading messages")
+                            .frame(maxWidth: .infinity, minHeight: 28)
+                    } else if messages.isEmpty, let firstLoadError {
+                        ListLoadErrorView(
+                            title: "Can't load messages",
+                            message: firstLoadError,
+                            retry: { await loadThreadKeepingFailure() }
+                        )
                     } else {
                         headerChips
                             .padding(.bottom, 6)
@@ -784,6 +855,10 @@ struct ConversationView: View {
                                 messageRow(message, key: key)
                             }
                                 .equatable()
+                                // The menu's actions for VoiceOver and Switch Control, which can't
+                                // hold. Reply comes from `swipeToReply`, the whole menu from
+                                // `messageContextLongPress` ("Message options").
+                                .accessibilityActions { messageActions(for: message) }
                                 .id(message.id)
                                 // Flashes after a jump from a reply header, full-bleed so the
                                 // eye catches the row rather than the bubble alone.
@@ -813,8 +888,11 @@ struct ConversationView: View {
                                 ) {
                                     startReply(to: message)
                                 }
-                                // Arriving bubbles grow out of the corner they were "spoken" from.
-                                .transition(Motion.bubbleIn(isMine: message.isMine))
+                                // Arriving bubbles grow out of the corner they were "spoken" from;
+                                // under Reduce Motion they fade in where they sit.
+                                .transition(
+                                    reduceMotion ? AnyTransition.opacity : Motion.bubbleIn(isMine: message.isMine)
+                                )
                                 // Keep layout space while focused so the list doesn’t jump.
                                 // Hero sits on this slot at progress 0, so handoff is seamless.
                                 .opacity(focusedMenu?.message.id == message.id ? 0 : 1)
@@ -862,9 +940,12 @@ struct ConversationView: View {
                 // just `count`) so a same-count reload still resolves without re-animating
                 // the whole thread. The bottom-pin below runs on the same change. Not for the
                 // first messages shown: a chat opens settled, it doesn't pop in bubble by bubble.
-                .animation(renderFrom == nil ? nil : Motion.bouncy, value: newestMessageID)
+                .animation(
+                    renderFrom == nil ? nil : Motion.respecting(reduceMotion, Motion.bouncy),
+                    value: newestMessageID
+                )
                 // Springy, so the ink bubble pops out of its tail corner like a message landing.
-                .animation(Motion.bouncy, value: peerActivity)
+                .animation(Motion.respecting(reduceMotion, Motion.bouncy), value: peerActivity)
                 // Chips spring in and out and bubbles grow instead of jumping — for our taps and
                 // for the other side's reactions arriving over the socket alike.
                 .animation(
@@ -929,13 +1010,28 @@ struct ConversationView: View {
             .onChange(of: messages.isEmpty, initial: true) { _, isEmpty in
                 // Freeze the window on the first messages shown; it only grows from here.
                 if renderFrom == nil, !isEmpty { moveRenderStart(to: renderStart) }
+                // Messages came in anyway (an event, a background reload): no failed load left.
+                if !isEmpty { firstLoadError = nil }
+            }
+            .onChange(of: messaging.lastError == nil) { _, cleared in
+                // The reconnect and poll reloads report only through the shared `lastError`, and
+                // a chat that is really new stays empty. Once something succeeds again, reload
+                // it here and take that outcome, rather than keep the error over a chat with
+                // nothing in it. Only while it's on screen: loading activates the chat.
+                guard cleared, firstLoadError != nil, messaging.activePeerID == peerUserID else { return }
+                Task { await loadThreadKeepingFailure() }
             }
             .onChange(of: messages.count) { _, _ in
                 // An older page landed (or a send went out) while the reader sits at the top.
                 revealOlder()
             }
             .onChange(of: newestMessageID) { old, _ in
-                // The first messages shown are already at the bottom; only later ones scroll.
+                // The first messages shown are already at the bottom; later ones scroll only for a
+                // reader already there (the geometry follow covers that too) or for our own send.
+                // Someone reading history stays where they are.
+                guard old == nil || !scrollState.settled || scrollState.metrics.atBottom
+                    || messages.last?.isMine == true
+                else { return }
                 scrollToBottom(animated: old != nil, force: old == nil)
             }
             .onChange(of: transcriptTail) { old, new in
@@ -948,7 +1044,8 @@ struct ConversationView: View {
                 }
             }
             .onChange(of: peerActivity) { _, activity in
-                if activity != nil { scrollToBottom() }
+                // The ink bubble joins the bottom; it only pulls a reader who is already there.
+                if activity != nil, scrollState.metrics.atBottom { scrollToBottom() }
             }
             .onChange(of: jumpTarget) { _, target in
                 guard let target else { return }
@@ -963,7 +1060,8 @@ struct ConversationView: View {
                 scrollToBottom(animated: false, force: true)
             }
             .onAppear {
-                scrollToBottom(animated: false, force: true)
+                // Only on opening; back from the profile the reader keeps their place.
+                if !didOpen { scrollToBottom(animated: false, force: true) }
             }
         }
     }
@@ -1130,7 +1228,7 @@ struct ConversationView: View {
     ///
     /// Human: Taken from the snapshot captured when the reply started, not the live
     /// bubble. If the original is deleted for everyone while we are still typing, the
-    /// header reads "Deleted message" but the send still carries the quote we started with.
+    /// header reads "Message deleted" but the send still carries the quote we started with.
     private var outgoingReplyReference: MessageReplyReference? {
         replyTarget?.replyReference
     }
@@ -1151,9 +1249,8 @@ struct ConversationView: View {
     /// (older than the local window, or deleted just for us).
     private func jumpToQuoted(_ messageID: UUID) {
         guard let index = messages.firstIndex(where: { $0.id == messageID }) else {
-            toast = "The original message isn't in this chat any more."
+            toast = .failure("The original message isn't in this chat any more.")
             Haptics.notification(.warning)
-            scheduleToastClear()
             return
         }
         jumpNonce &+= 1
@@ -1280,9 +1377,8 @@ struct ConversationView: View {
             Task.detached(priority: .utility) { await VoiceTranscriber.prepareModel() }
             return true
         } catch {
-            toast = SessionController.userMessage(for: error)
+            toast = .failure(SessionController.userMessage(for: error))
             Haptics.notification(.error)
-            scheduleToastClear()
             return false
         }
     }
@@ -1311,9 +1407,8 @@ struct ConversationView: View {
                 if !isNotes {
                     messaging.setRecording(peerUserID: peerUserID, isRecording: false)
                 }
-                toast = "Hold to record, release to send"
+                toast = .info("Hold to record, release to send")
                 Haptics.notification(.warning)
-                scheduleToastClear()
                 return
             }
             Haptics.impact(.light)
@@ -1346,17 +1441,15 @@ struct ConversationView: View {
                     }
                 )
                 if let error {
-                    toast = error
+                    toast = .failure(error)
                     Haptics.notification(.error)
-                    scheduleToastClear()
                 } else {
                     Haptics.notification(.success)
                 }
             }
         } catch {
-            toast = SessionController.userMessage(for: error)
+            toast = .failure(SessionController.userMessage(for: error))
             Haptics.notification(.error)
-            scheduleToastClear()
         }
     }
 
@@ -1383,7 +1476,7 @@ struct ConversationView: View {
                 },
                 transfer: key.transfer,
                 onCancelDownload: {
-                    messaging.cancelMediaDownload(messageID: message.id)
+                    cancelDownload(message)
                 },
                 onRetry: {
                     Task {
@@ -1394,9 +1487,8 @@ struct ConversationView: View {
                         )
                         isSendingMedia = false
                         if let error {
-                            toast = error
+                            toast = .failure(error)
                             Haptics.notification(.error)
-                            scheduleToastClear()
                         } else {
                             Haptics.notification(.success)
                         }
@@ -1422,7 +1514,7 @@ struct ConversationView: View {
                 },
                 transfer: key.transfer,
                 onCancelDownload: {
-                    messaging.cancelMediaDownload(messageID: message.id)
+                    cancelDownload(message)
                 },
                 onRetry: {
                     Task {
@@ -1432,9 +1524,8 @@ struct ConversationView: View {
                             peerUserID: peerUserID
                         )
                         if let error {
-                            toast = error
+                            toast = .failure(error)
                             Haptics.notification(.error)
-                            scheduleToastClear()
                         } else {
                             Haptics.notification(.success)
                         }
@@ -1455,8 +1546,10 @@ struct ConversationView: View {
             VoiceMessageBubble(
                 message: message,
                 time: messaging.clockTimeLabel(for: message.createdAt),
+                // Returns once the fetch is over, so the bubble can tell a failure (retry
+                // glyph) from a load still running (spinner).
                 onAppearLoad: {
-                    Task { await messaging.ensureVoiceLoaded(for: message) }
+                    await messaging.ensureVoiceLoaded(for: message)
                 },
                 onRequestTranscript: {
                     guard let data = message.voiceData else { return nil }
@@ -1479,9 +1572,8 @@ struct ConversationView: View {
                         }
                         return transcript
                     } catch {
-                        toast = error.localizedDescription
+                        toast = .failure(error.localizedDescription)
                         Haptics.notification(.error)
-                        scheduleToastClear()
                         return nil
                     }
                 },
@@ -1534,14 +1626,10 @@ struct ConversationView: View {
 
     private var notesHeaderAvatar: some View {
         ZStack {
+            // The accent gradient, as on the chat list's row: fading to `accentSoft` left the
+            // white bookmark at 2.3:1 in light mode.
             Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [Theme.accent, Theme.accentSoft],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+                .fill(Theme.brandGradient)
                 .frame(width: 40, height: 40)
             Image(systemName: "bookmark.fill")
                 .font(.system(size: 16, weight: .semibold))
@@ -1555,8 +1643,7 @@ struct ConversationView: View {
             Button {
                 let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty else {
-                    toast = "Type a todo, then tap Todo."
-                    scheduleToastClear()
+                    toast = .info("Type a todo, then tap Todo.")
                     return
                 }
                 messaging.sendTodo(text, to: peerUserID)
@@ -1575,9 +1662,6 @@ struct ConversationView: View {
             .glassEffect(.regular.interactive(), in: .capsule)
             .accessibilityLabel("Add as todo")
 
-            Text("Saved only on this device")
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.textSecondary)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 14)
@@ -1586,13 +1670,14 @@ struct ConversationView: View {
     private func handleAttach(_ option: ChatAttachOption) {
         switch option {
         case .photos:
+            // A fresh pick, even if an "Add" picker was closed without picking.
+            pickerAppendsToDraft = false
             showPhotoPicker = true
         case .camera:
             if UIImagePickerController.isSourceTypeAvailable(.camera) {
                 showCamera = true
             } else {
-                toast = "Camera is not available on this device."
-                scheduleToastClear()
+                toast = .failure("Camera is not available on this device.")
             }
         case .file, .location, .contact, .music, .gift, .stickers:
             showComingSoon(option.title)
@@ -1631,18 +1716,22 @@ struct ConversationView: View {
         }
 
         guard !pickedPhotos.isEmpty || !pickedVideos.isEmpty else {
-            toast = items.count > 1 ? "Could not load those items." : "Could not load that item."
-            scheduleToastClear()
+            toast = .failure(items.count > 1 ? "Could not load those items." : "Could not load that item.")
             return
         }
 
         // "Add" from an open compose screen extends that send instead of starting a new one.
+        // The picker only offered that screen's kind, up to the room left in it; anything past
+        // that still gets its temp file removed.
         if appending, var draft = videoDraft, !pickedVideos.isEmpty {
-            draft.videos = Array((draft.videos + pickedVideos).prefix(Self.maxPhotosPerSend))
+            let merged = draft.videos + pickedVideos
+            merged.dropFirst(Self.maxPhotosPerSend).forEach { $0.movie.cleanup() }
+            draft.videos = Array(merged.prefix(Self.maxPhotosPerSend))
             withAnimation(Motion.standard) { videoDraft = draft }
             return
         }
         if appending, var draft = composeDraft, !pickedPhotos.isEmpty {
+            pickedVideos.forEach { $0.movie.cleanup() }
             draft.photos = Array((draft.photos + pickedPhotos).prefix(Self.maxPhotosPerSend))
             withAnimation(Motion.standard) { composeDraft = draft }
             return
@@ -1686,12 +1775,9 @@ struct ConversationView: View {
         }
 
         if let firstError {
-            toast = firstError
+            // Keep the reason up longer so it can be read.
+            toast = .failure(firstError, duration: .seconds(4))
             Haptics.notification(.error)
-            Task {
-                try? await Task.sleep(nanoseconds: 4_000_000_000)
-                if toast == firstError { toast = nil }
-            }
         } else {
             Haptics.notification(.success)
         }
@@ -1713,8 +1799,7 @@ struct ConversationView: View {
     private func presentCapturedMovie(_ movie: PickedMovie) async {
         guard let probe = await VideoMedia.probe(url: movie.url) else {
             movie.cleanup()
-            toast = "Could not load that video."
-            scheduleToastClear()
+            toast = .failure("Could not load that video.")
             return
         }
         let poster = await VideoMedia.posterImage(url: movie.url)
@@ -1781,28 +1866,18 @@ struct ConversationView: View {
         }
 
         if let firstError {
-            // Bubbles stay in the thread with Retry; also surface the reason.
-            toast = firstError
+            // Bubbles stay in the thread with Retry; also surface the reason, up longer so it
+            // can be read.
+            toast = .failure(firstError, duration: .seconds(4))
             Haptics.notification(.error)
-            // Keep error visible longer so it can be read.
-            Task {
-                try? await Task.sleep(nanoseconds: 4_000_000_000)
-                if toast == firstError { toast = nil }
-            }
         } else {
             Haptics.notification(.success)
         }
     }
 
     private func showComingSoon(_ feature: String) {
-        toast = "\(feature) coming soon"
+        toast = .info("\(feature) coming soon")
         Haptics.impact(.light)
-        Task {
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            if toast?.contains(feature) == true {
-                toast = nil
-            }
-        }
     }
 
     /// How long after opening the backdrop ignores taps (see `MessageMenuBackdrop` above).
@@ -1864,6 +1939,8 @@ struct ConversationView: View {
             menuProgress = 1
         }
         menuOpenedAt = Date()
+        // VoiceOver moves into the (modal) menu; a turn later, once the overlay is in the tree.
+        Task { @MainActor in AccessibilityNotification.ScreenChanged(nil).post() }
 
         Haptics.impact(.medium)
     }
@@ -1901,11 +1978,19 @@ struct ConversationView: View {
     /// first, then acts.
     private func messageMenuOverlay(session: FocusedMessageMenu) -> some View {
         let message = session.message
-        let hasLink = copyableLink(in: message) != nil
+        let live = liveMessage(message)
+        // Your own message's ticks, spelled out; a note has no reader, a tombstone no receipt.
+        let receipt: MessageReceiptStatus? = live.isMine && !isNotes && !live.deleted ? live.receipt : nil
+        // Only what this message can do: no Reply before it is sent, no Copy of a stand-in.
+        let actions = MessageMenuAction.primary(
+            canReply: live.canBeQuoted,
+            canCopy: copyableText(live) != nil,
+            hasLink: copyableLink(in: message) != nil
+        )
         return MessageMenuOverlay(
             sourceGlobalFrame: session.sourceGlobalFrame,
             isMine: message.isMine,
-            cardHeight: MessageContextMenuCard.height(isMine: message.isMine, hasLink: hasLink),
+            cardHeight: MessageContextMenuCard.height(receipt: receipt, actions: actions),
             progress: menuProgress,
             onReaction: { emoji, source in
                 dismissMessageMenu()
@@ -1934,13 +2019,13 @@ struct ConversationView: View {
             )
         } card: {
             MessageContextMenuCard(
-                isMine: message.isMine,
+                receipt: receipt,
+                actions: actions,
                 onAction: { action in
                     dismissMessageMenu()
                     handleMenu(action, message: message)
                 },
-                progress: menuProgress,
-                hasLink: hasLink
+                progress: menuProgress
             )
         }
         // A new message is a new menu: no scroll position carries over from the last one.
@@ -2056,8 +2141,7 @@ struct ConversationView: View {
     /// already ours.
     private func react(_ emoji: String, to message: MessagingController.ChatMessage) {
         guard messaging.canReact(to: message) else {
-            toast = "You can react once the message is sent."
-            scheduleToastClear()
+            toast = .info("You can react once the message is sent.")
             return
         }
         Haptics.impact(.light)
@@ -2067,16 +2151,15 @@ struct ConversationView: View {
     private func handleMenu(_ action: MessageMenuAction, message: MessagingController.ChatMessage) {
         switch action {
         case .copy:
-            UIPasteboard.general.string = message.text
-            toast = "Copied"
+            guard let text = copyableText(liveMessage(message)) else { return }
+            UIPasteboard.general.string = text
+            toast = Toast("Copied")
             Haptics.notification(.success)
-            scheduleToastClear()
         case .copyLink:
             guard let link = copyableLink(in: message) else { return }
             UIPasteboard.general.string = link
-            toast = "Link copied"
+            toast = Toast("Link copied")
             Haptics.notification(.success)
-            scheduleToastClear()
         case .reply:
             startReply(to: message)
         case .edit, .pin, .forward, .select, .moreReactions:
@@ -2084,6 +2167,37 @@ struct ConversationView: View {
         case .delete:
             pendingDelete = PendingDelete(message: message)
         }
+    }
+
+    /// What "Copy" copies: the words the reader sees, never a stand-in (web's `copyableText`).
+    ///
+    /// Human: Media bubbles keep a stand-in label in `text` ("Photo", "Video", "Media",
+    /// "Voice message") and a tombstone keeps "Message deleted"; putting those on the clipboard
+    /// and saying "Copied" copies nothing the reader wanted. A photo or clip offers its caption,
+    /// a voice note its transcript.
+    /// Agent: nil means no Copy — the menu hides the row and VoiceOver gets no action.
+    private func copyableText(_ m: MessagingController.ChatMessage) -> String? {
+        guard !m.deleted else { return nil }
+        let raw: String = switch m.kind {
+        case .text, .todo: (m.text == "[Unable to decrypt]" || m.text == "[Binary message]") ? "" : m.text
+        case .image: (m.text == "Photo" || m.text == "Media") ? "" : m.text
+        case .video: (m.text == "Video" || m.text == "Media") ? "" : m.text
+        case .voice: m.transcript ?? ""
+        }
+        return raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : raw
+    }
+
+    /// A thread row's accessibility actions: the menu's Copy, Copy Link and Delete, for
+    /// VoiceOver and Switch Control, which can't hold a bubble.
+    @ViewBuilder
+    private func messageActions(for message: MessagingController.ChatMessage) -> some View {
+        if copyableText(message) != nil {
+            Button("Copy") { handleMenu(.copy, message: message) }
+        }
+        if copyableLink(in: message) != nil {
+            Button("Copy Link") { handleMenu(.copyLink, message: message) }
+        }
+        Button("Delete") { handleMenu(.delete, message: message) }
     }
 
     /// Delete-for-everyone is the sender's call only, and only once the server has the
@@ -2101,26 +2215,29 @@ struct ConversationView: View {
         scope: MessageDeleteScope
     ) {
         pendingDelete = nil
+        // Asked from the photo viewer: it leaves before the photo does, whichever the scope
+        // (just for us, the row goes rather than turning into a tombstone).
+        if viewingMedia != nil {
+            withAnimation(.easeOut(duration: 0.2)) { viewingMedia = nil }
+        }
         Task {
             if let error = await messaging.deleteMessage(message, scope: scope) {
-                toast = error
+                toast = .failure(error)
                 Haptics.notification(.error)
             } else {
-                toast = scope == .everyone ? "Deleted for everyone" : "Deleted"
+                toast = Toast(scope == .everyone ? "Deleted for everyone" : "Deleted")
                 Haptics.notification(.success)
             }
-            scheduleToastClear()
         }
     }
 
-    /// Clears Saved Messages and leaves the screen — there is nothing left to show here.
+    /// Clears every note and leaves the screen — there is nothing left to show here.
     private func deleteNotes() {
         Task {
             let outcome = await messaging.deleteConversation(peerUserID: peerUserID, scope: .me)
             if case let .failed(message) = outcome {
-                toast = message
+                toast = .failure(message)
                 Haptics.notification(.error)
-                scheduleToastClear()
                 return
             }
             Haptics.notification(.success)
@@ -2132,20 +2249,15 @@ struct ConversationView: View {
         }
     }
 
-    private func scheduleToastClear() {
-        Task {
-            try? await Task.sleep(nanoseconds: 1_800_000_000)
-            toast = nil
-        }
-    }
-
     /// Every photo in the thread, so the viewer can page through them the way Telegram does.
     ///
-    /// Pages that haven't been decrypted yet come through with `image == nil` and load on demand;
-    /// their aspect ratio is already known from the message metadata, so nothing reflows.
+    /// Only downloaded photos are listed — the viewer never fetches one on its own, and a page
+    /// with nothing to load would spin forever; one downloaded while the viewer is open joins on
+    /// the next render. `image` is the cached full decode when there is one, never the envelope
+    /// preview.
     private var mediaViewerItems: [MediaImageViewerOverlay.Item] {
         messages
-            .filter { $0.kind == .image && !$0.deleted && $0.receipt != .failed }
+            .filter { $0.kind == .image && !$0.deleted && $0.receipt != .failed && $0.imageData != nil }
             .map { message in
                 let caption = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 let width = CGFloat(message.imageWidth ?? 0)
@@ -2157,7 +2269,7 @@ struct ConversationView: View {
                     caption: caption == "Photo" ? nil : caption,
                     // Cache-only — decoding every photo in the thread here would block the
                     // main thread the moment the viewer opens. Pages decode their own.
-                    image: DecodedImageCache.image(for: message.id),
+                    image: message.imageData.flatMap { DecodedImageCache.image(for: message.id, decodedFrom: $0) },
                     data: message.imageData,
                     aspect: height > 0 ? width / height : 1
                 )
@@ -2167,6 +2279,8 @@ struct ConversationView: View {
     /// Tap on media: download if needed, otherwise open.
     private func handleMediaTap(_ message: MessagingController.ChatMessage) {
         guard !message.deleted else { return }
+        // A failed send has only Retry; its caption footer still reaches the row.
+        guard message.receipt != .failed else { return }
         if message.needsMediaDownload {
             downloadMedia(message)
             return
@@ -2191,21 +2305,22 @@ struct ConversationView: View {
             switch message.kind {
             case .image:
                 await messaging.ensureImageLoaded(for: message)
+                // Stopped from the ring: nothing went wrong.
+                if cancelledDownloadIDs.remove(message.id) != nil { return }
                 let live = messaging.threads[peerUserID]?.first(where: { $0.id == message.id })
                 if live?.imageData == nil {
-                    toast = "Could not download that photo."
+                    toast = .failure("Could not download that photo.")
                     Haptics.notification(.error)
-                    scheduleToastClear()
                 } else {
                     Haptics.impact(.light)
                 }
             case .video:
                 await messaging.ensureVideoLoaded(for: message)
+                if cancelledDownloadIDs.remove(message.id) != nil { return }
                 let live = messaging.threads[peerUserID]?.first(where: { $0.id == message.id })
                 if live?.videoData == nil {
-                    toast = "Could not download that video."
+                    toast = .failure("Could not download that video.")
                     Haptics.notification(.error)
-                    scheduleToastClear()
                 } else {
                     Haptics.impact(.light)
                 }
@@ -2213,6 +2328,16 @@ struct ConversationView: View {
                 break
             }
         }
+    }
+
+    /// The bubble's ring X: stops the download without the "Could not download" that an
+    /// empty-handed download ends with otherwise.
+    ///
+    /// Agent: Claims the tap, so the row's deferred tap doesn't start the download again.
+    private func cancelDownload(_ message: MessagingController.ChatMessage) {
+        MessageTapClaim.claim()
+        if mediaDownloadIDs.contains(message.id) { cancelledDownloadIDs.insert(message.id) }
+        messaging.cancelMediaDownload(messageID: message.id)
     }
 
     /// Presents the Telegram-style media **overlay** over the conversation (not a push).
@@ -2247,11 +2372,16 @@ struct ConversationView: View {
         }
     }
 
-    private static func viewerDateLine(for date: Date) -> String {
+    /// Built once: the viewer's list formats every photo in the thread on each pass.
+    private static let viewerDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_GB")
         formatter.dateFormat = "dd.MM.yy"
-        return formatter.string(from: date)
+        return formatter
+    }()
+
+    private static func viewerDateLine(for date: Date) -> String {
+        viewerDateFormatter.string(from: date)
     }
 }
 

@@ -55,6 +55,8 @@ final class NotificationsController {
     /// Banners that come this soon after another replace it silently.
     private let quietInterval: TimeInterval = 1.2
     private let bannerLifetime: Duration = .seconds(4)
+    /// VoiceOver hears the banner announced, then needs time to reach its open and Dismiss actions.
+    private let voiceOverBannerLifetime: Duration = .seconds(10)
 
     private init() {}
 
@@ -130,7 +132,8 @@ final class NotificationsController {
     func show(_ notification: InAppNotification) {
         banner = notification
         bannerDismissTask?.cancel()
-        bannerDismissTask = Task { [weak self, lifetime = bannerLifetime] in
+        let lifetime = UIAccessibility.isVoiceOverRunning ? voiceOverBannerLifetime : bannerLifetime
+        bannerDismissTask = Task { [weak self] in
             try? await Task.sleep(for: lifetime)
             guard !Task.isCancelled else { return }
             self?.dismissBanner(id: notification.id)
@@ -270,15 +273,15 @@ final class NotificationsController {
             case "sent": return "Sent. It should arrive in a moment."
             case "not_registered":
                 UIApplication.shared.registerForRemoteNotifications()
-                return "This iPhone was not registered for notifications. Shroud registered it now — try again in a moment."
-            case "not_configured": return "This server is not set up to send iPhone notifications."
+                return "This \(UIDevice.current.model) was not registered for notifications. Shroud registered it now — try again in a moment."
+            case "not_configured": return "This server is not set up to send Apple push notifications."
             case "misconfigured":
                 // Apple answered, and refused the server's own key or topic: not this iPhone.
                 let reason = outcome.detail.map { " (\($0))" } ?? ""
                 return "Apple refused this server's push setup\(reason). Whoever runs the server needs to check its APNs key, team and topic."
             case "rejected":
                 UIApplication.shared.registerForRemoteNotifications()
-                return "Apple refused this iPhone's notification token. Shroud registered again — try again in a moment."
+                return "Apple refused this \(UIDevice.current.model)'s notification token. Shroud registered again — try again in a moment."
             default: return "Apple's notification service could not be reached. Try again in a moment."
             }
         } catch {

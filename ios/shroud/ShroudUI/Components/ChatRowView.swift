@@ -48,7 +48,7 @@ struct ChatRowView: View {
                         if isMuted {
                             Image(systemName: "bell.slash.fill")
                                 .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(Theme.textSecondary.opacity(0.8))
+                                .foregroundStyle(Theme.textSecondary)
                                 .transition(Motion.iconSwap)
                                 .accessibilityHidden(true)
                         }
@@ -101,7 +101,7 @@ struct ChatRowView: View {
                             .monospacedDigit()
                             .padding(.horizontal, 7)
                             .padding(.vertical, 3)
-                            .background(isMuted ? Theme.textSecondary.opacity(0.55) : Theme.accent)
+                            .background(isMuted ? Theme.mutedBadge : Theme.accent)
                             .clipShape(Capsule())
                             .animation(Motion.fade, value: isMuted)
                             .transition(Motion.iconSwap)

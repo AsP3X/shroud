@@ -18,10 +18,13 @@ struct ListLoadErrorView: View {
                 .font(.system(size: 32, weight: .semibold))
                 .foregroundStyle(Theme.danger.opacity(0.85))
                 .padding(.bottom, 6)
+                // Decorative: the title says what went wrong.
+                .accessibilityHidden(true)
 
             Text(title)
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
+                .accessibilityAddTraits(.isHeader)
 
             Text(message)
                 .font(.system(size: 14))
@@ -47,13 +50,13 @@ struct ListLoadErrorView: View {
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(Theme.accent)
                 }
-                .frame(height: 32)
+                // A full 44 pt target: the only way back from a failed load.
+                .frame(height: 44)
                 .contentShape(Rectangle())
             }
             .disabled(isRetrying)
-            .padding(.top, 4)
             .pressable(scale: 0.94)
-            .accessibilityLabel("Try again")
+            .accessibilityLabel(isRetrying ? "Retrying" : "Try again")
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 48)

@@ -53,7 +53,6 @@ struct MediaTransferControl: View {
             .scaleEffect(pulse)
             .animation(Motion.snappy, value: transfer?.phase)
         }
-        .buttonStyle(.plain)
         .pressable(scale: 0.92, haptic: .light)
         .disabled(onTap == nil)
         .accessibilityLabel(accessibilityLabel)
@@ -151,7 +150,13 @@ struct MediaTransferControl: View {
     }
 
     private var accessibilityValue: String {
-        guard let transfer else { return "" }
+        guard let transfer else {
+            // The size drawn under the arrow: worth hearing before a large download on mobile data.
+            if case let .idle(byteCount?) = mode, byteCount > 0 {
+                return MediaCrypto.byteCountLabel(byteCount)
+            }
+            return ""
+        }
         switch transfer.phase {
         case .preparing: return "Compressing"
         case .transferring: return "\(Int(transfer.ringFraction * 100)) percent"

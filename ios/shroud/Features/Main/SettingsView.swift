@@ -9,6 +9,8 @@ enum SettingsRoute: Hashable {
     case privacySecurity
     case devices
     case appearance
+    /// The notes chat ("Notes to me" in Chats), opened from the Saved Messages row.
+    case savedMessages
 }
 
 /// Settings tab — Telegram-style profile hero for the **title-only** sticky bar
@@ -23,6 +25,8 @@ struct SettingsView: View {
     let router: AppRouter
     /// When non-empty, the floating tab bar should hide (detail is covering Settings).
     @Binding var navigationPath: [SettingsRoute]
+    /// Switches to the Calls tab (the Recent Calls row); nil leaves the row as "Soon".
+    let onOpenCalls: (() -> Void)?
 
     @Environment(SessionController.self) private var sessionController
     @Environment(ServerConfigurationController.self) private var serverConfig
@@ -138,9 +142,14 @@ struct SettingsView: View {
         min(1, max(0, (collapseProgress - 0.85) / 0.15))
     }
 
-    init(router: AppRouter, navigationPath: Binding<[SettingsRoute]> = .constant([])) {
+    init(
+        router: AppRouter,
+        navigationPath: Binding<[SettingsRoute]> = .constant([]),
+        onOpenCalls: (() -> Void)? = nil
+    ) {
         self.router = router
         _navigationPath = navigationPath
+        self.onOpenCalls = onOpenCalls
     }
 
     private var displayName: String {
@@ -187,7 +196,8 @@ struct SettingsView: View {
                 .navigationDestination(for: SettingsRoute.self) { route in
                     switch route {
                     case .server:
-                        ServerSettingsView(router: router)
+                        // Opens on the saved server rather than the build default.
+                        ServerSettingsView(router: router, initial: serverConfig.configuration)
                     case .transcription:
                         TranscriptionLanguageView()
                     case .notifications:
@@ -200,6 +210,11 @@ struct SettingsView: View {
                         DevicesView(onCount: { deviceCount = $0 })
                     case .appearance:
                         AppearanceSettingsView()
+                    case .savedMessages:
+                        ConversationView(
+                            peerUserID: MessagingController.notesPeerID,
+                            peerUsername: MessagingController.notesDisplayName
+                        )
                     }
                 }
         }
@@ -259,6 +274,8 @@ struct SettingsView: View {
 
                 stickyChrome(midX: midX)
                     .allowsHitTesting(false)
+                    // Drawn after the cards, but it is the screen's header: read it first.
+                    .accessibilitySortPriority(1)
             }
         }
         .background(Theme.backgroundGrouped)
@@ -340,6 +357,7 @@ struct SettingsView: View {
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(Theme.accent)
                     .frame(width: 22)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Profile personalization")
                         .font(.system(size: 16))
@@ -352,6 +370,8 @@ struct SettingsView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 13)
+            // Static card: one VoiceOver stop, not icon + title + subtitle.
+            .accessibilityElement(children: .combine)
         }
     }
 
@@ -365,6 +385,7 @@ struct SettingsView: View {
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(Color.white)
             }
+            .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Signed in as \(handle)")
                     .font(.system(size: 16))
@@ -380,22 +401,28 @@ struct SettingsView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
+        .accessibilityElement(children: .combine)
         .background(Theme.background)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private var primaryGroup: some View {
         settingsCard {
+            // The notes chat, also pinned at the top of Chats.
             SettingsRowView(
                 title: "Saved Messages",
                 systemImage: "bookmark.fill",
                 iconBackground: Color(red: 46 / 255, green: 143 / 255, blue: 224 / 255)
-            )
+            ) {
+                navigationPath.append(.savedMessages)
+            }
             groupDivider()
+            // Recent calls are the Calls tab.
             SettingsRowView(
                 title: "Recent Calls",
                 systemImage: "phone.fill",
-                iconBackground: Color(red: 47 / 255, green: 168 / 255, blue: 91 / 255)
+                iconBackground: Color(red: 47 / 255, green: 168 / 255, blue: 91 / 255),
+                action: onOpenCalls
             )
             groupDivider()
             SettingsRowView(
@@ -464,7 +491,7 @@ struct SettingsView: View {
             }
             groupDivider()
             Button {
-                Haptics.impact(.light)
+                // HighlightRowButtonStyle already ticks on press-down.
                 navigationPath.append(.server)
             } label: {
                 HStack(spacing: 12) {
@@ -488,7 +515,7 @@ struct SettingsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     Image(systemName: "chevron.right")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Color(red: 199 / 255, green: 199 / 255, blue: 204 / 255))
+                        .foregroundStyle(Theme.chevron)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)

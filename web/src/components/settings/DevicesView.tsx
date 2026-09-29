@@ -292,7 +292,11 @@ export function DevicesView({
     if (lastError) {
       const failed = targets.length - removed.length;
       const reason = lastError instanceof ApiError ? lastError.message : "Try again.";
-      setActionError(`${failed} of ${targets.length} devices could not be removed. ${reason}`);
+      const lead =
+        targets.length === 1
+          ? "The device could not be removed."
+          : `${failed} of ${targets.length} devices could not be removed.`;
+      setActionError(`${lead} ${reason}`);
     } else {
       setToast(removed.length === 1 ? "1 device removed" : `${removed.length} devices removed`);
     }
@@ -456,8 +460,8 @@ export function DevicesView({
         <p>
           Every device unlocks with your 12-word phrase, which never leaves it. Device names are
           encrypted with it too, so only your own devices can read them. The server records when
-          each device was linked and when it was last active — both shown here. Removing a device
-          does not erase what is already stored on it.
+          each device was linked and when it was last active — both shown here. A removed device
+          erases everything of your account on it as soon as it is online or next opened.
         </p>
       </div>
 

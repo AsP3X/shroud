@@ -150,7 +150,14 @@ final class SharedScreenContainer: UIView, UIScrollViewDelegate, RTCVideoViewDel
     nonisolated func videoView(_ videoView: any RTCVideoRenderer, didChangeVideoSize size: CGSize) {
         Task { @MainActor in
             guard size != self.pictureSize else { return }
+            let old = self.pictureSize
             self.pictureSize = size
+            // A new resolution of the same picture (the sharer's choice, or the encoder adapting)
+            // keeps the zoom; only a new shape (turned, another window) is fitted whole again.
+            if old.width > 0, old.height > 0, size.width > 0, size.height > 0,
+               abs((size.width / size.height) / (old.width / old.height) - 1) < 0.01 {
+                return
+            }
             self.fit()
         }
     }

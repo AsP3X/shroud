@@ -5,12 +5,15 @@ import SwiftUI
 /// Human: Telegram's rule is simple: a link is drawn in the link colour, and underlined only
 /// when that colour is the same as the text's. Incoming bubbles therefore show accent-coloured
 /// links (`accentText`, which stays readable in dark mode) without an underline; outgoing
-/// (accent) bubbles show white, underlined links. A tap goes through SwiftUI's `openURL`,
-/// which `ConversationView` routes to the in-app browser.
+/// (accent) bubbles show white, underlined links. With Differentiate Without Color on, incoming
+/// links are underlined as well, since their colour alone is too close to the text's in dark
+/// mode. A tap goes through SwiftUI's `openURL`, which `ConversationView` routes to the in-app
+/// browser.
 /// Agent: Pure; detection is `LinkDetector` (same rules as the web client), cached per string.
 enum MessageLinkText {
-    /// `text` with a `.link` run for every detected link.
-    static func attributed(_ text: String, isMine: Bool) -> AttributedString {
+    /// `text` with a `.link` run for every detected link. `underlined` underlines incoming links
+    /// too (Differentiate Without Color).
+    static func attributed(_ text: String, isMine: Bool, underlined: Bool = false) -> AttributedString {
         var result = AttributedString(text)
         let links = self.links(in: text)
         guard !links.isEmpty else { return result }
@@ -20,7 +23,7 @@ enum MessageLinkText {
             else { continue }
             result[range].link = link.url
             result[range].swiftUI.foregroundColor = isMine ? Color.white : Theme.accentText
-            if isMine {
+            if isMine || underlined {
                 result[range].swiftUI.underlineStyle = .single
             }
         }

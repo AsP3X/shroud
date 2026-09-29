@@ -25,7 +25,8 @@ struct SkeletonChatRow: View {
             bar(width: 34, height: 10)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 14)
+        // Same 72 pt as `ChatRowView` (52 pt avatar + 10 pt above and below).
+        .padding(.vertical, 10)
         .accessibilityHidden(true)
     }
 
@@ -53,6 +54,9 @@ struct SkeletonChatList: View {
                 SkeletonChatRow(titleWidth: size.0, subtitleWidth: size.1)
             }
         }
+        // The rows stay hidden; VoiceOver hears one "Loading" instead of an empty screen.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Loading")
         .shimmering()
         .transition(.opacity)
     }

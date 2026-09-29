@@ -13,8 +13,25 @@ struct PickedPhoto: Identifiable {
 
     /// Camera captures and other in-memory images, which have no original file to preserve.
     init(image: UIImage) {
-        preview = image
         source = .image(image)
+        // Same 2048-px screen-sized preview the library path makes; the full capture stays in `source`.
+        let longEdge = max(image.size.width, image.size.height)
+        guard longEdge > 2048 else {
+            preview = image
+            return
+        }
+        let scale = 2048 / longEdge
+        let size = CGSize(
+            width: (image.size.width * scale).rounded(),
+            height: (image.size.height * scale).rounded()
+        )
+        let format = UIGraphicsImageRendererFormat.preferred()
+        format.scale = 1
+        format.opaque = true
+        preview = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            // Drawing through UIImage also bakes in the EXIF orientation.
+            image.draw(in: CGRect(origin: .zero, size: size))
+        }
     }
 
     init(preview: UIImage, source: MediaImageSource) {
@@ -73,7 +90,6 @@ struct MediaComposeOverlay: View {
     /// Asks the host to open the picker again so more photos can join this send.
     var onAddMore: (() -> Void)?
     var onRemovePhoto: ((Int) -> Void)?
-    var onComingSoon: ((String) -> Void)?
 
     @State private var caption = ""
     @State private var quality: MediaComposeQuality = .original
@@ -81,15 +97,24 @@ struct MediaComposeOverlay: View {
     @State private var keyboardHeight: CGFloat = 0
     @FocusState private var captionFocused: Bool
 
-    /// Index into `photos` currently on screen.
-    @State private var selection = 0
+    /// The photo on screen, by identity — an index would slide onto a neighbour when a photo to
+    /// its left leaves the strip. Nil until the user picks one, which means the first.
+    @State private var selectedID: UUID?
     /// Non-destructive edits per photo id — keyed by identity, not position, so removing one
     /// photo from the strip can't hand its crop to a different picture.
     @State private var edits: [UUID: MediaEdits] = [:]
     /// Rendered previews (edits baked into the screen-sized copy), keyed by photo id.
     @State private var renderedPreviews: [UUID: UIImage] = [:]
     @State private var activeEditor: Editor?
+    /// The draw/text editor's canvas, rendered off the main actor before the cover rises.
+    @State private var editorBase: UIImage?
     @State private var showFilters = false
+    @State private var confirmClearEdits = false
+
+    /// Index into `photos` currently on screen.
+    private var selection: Int {
+        photos.firstIndex { $0.id == selectedID } ?? 0
+    }
 
     private enum Editor: String, Identifiable {
         case crop, draw, text
@@ -147,7 +172,7 @@ struct MediaComposeOverlay: View {
                         .scaledToFit()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .clipped()
-                        .id(selection)
+                        .id(currentPhoto?.id)
                         // Edits land as a cross-dissolve rather than a snap.
                         .transition(.opacity)
                         .animation(Motion.fade, value: currentEdits)
@@ -155,27 +180,29 @@ struct MediaComposeOverlay: View {
                         .onTapGesture { dismissCaptionKeyboard() }
 
                     bottomChrome(bottomPadding: bottomChromePadding(homeInset: homeInset))
+                        // Rides 12 pt above the caption row, so it clears the keyboard and the
+                        // filter strip in every state.
+                        .overlay(alignment: .top) {
+                            if let toolBanner {
+                                Text(toolBanner)
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(Color.white)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 10)
+                                    .background(chrome.opacity(0.95))
+                                    .clipShape(Capsule())
+                                    .alignmentGuide(.top) { $0[.bottom] + 12 }
+                                    .transition(.opacity)
+                                    .allowsHitTesting(false)
+                            }
+                        }
                 }
-
-                if let toolBanner {
-                    VStack {
-                        Spacer()
-                        Text(toolBanner)
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(Color.white)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                            .background(chrome.opacity(0.95))
-                            .clipShape(Capsule())
-                            .padding(.bottom, 220 + (keyboardHeight > 0 ? keyboardHeight * 0.25 : 0))
-                    }
-                    .transition(.opacity)
-                    .allowsHitTesting(false)
-                }
-
+                // Focus changes arrive without a transaction; animate the whole column so the chip
+                // row, top bar and photo move with the bottom chrome instead of snapping.
+                .animation(Motion.scrim, value: isFocused)
             }
         }
-        .fullScreenCover(item: $activeEditor) { editor in
+        .fullScreenCover(item: $activeEditor, onDismiss: { editorBase = nil }) { editor in
             editorScreen(editor)
         }
         .ignoresSafeArea()
@@ -220,7 +247,6 @@ struct MediaComposeOverlay: View {
 
                 Button {
                     dismissCaptionKeyboard()
-                    Haptics.impact(.light)
                     onAddMore?()
                 } label: {
                     HStack(spacing: 5) {
@@ -234,8 +260,13 @@ struct MediaComposeOverlay: View {
                     .frame(height: 30)
                     .background(chrome)
                     .clipShape(Capsule())
+                    // A 44 pt target without making the capsule itself taller.
+                    .contentShape(Capsule().inset(by: -7))
                 }
                 .pressable(scale: 0.9, dimming: 0)
+                // The host passes nil once the send is full, so Add reads as unavailable.
+                .disabled(onAddMore == nil)
+                .opacity(onAddMore == nil ? 0.4 : 1)
                 .accessibilityLabel("Add more photos")
             }
             .padding(.horizontal, 16)
@@ -253,16 +284,31 @@ struct MediaComposeOverlay: View {
                     chip(icon: "wand.and.stars", text: "NO EDITS", active: false)
                 } else {
                     Button {
-                        Haptics.impact(.light)
-                        withAnimation(Motion.standard) {
-                            setEdits(MediaEdits())
-                        }
-                        flashToolBanner("Edits cleared")
+                        // Crop, drawing, text and filter go in one tap, so ask first.
+                        confirmClearEdits = true
                     } label: {
                         chip(icon: "arrow.uturn.backward", text: "EDITED", active: true)
+                            .contentShape(Capsule().inset(by: -10))
                     }
                     .pressable(scale: 0.9)
                     .accessibilityLabel("Clear edits")
+                    // iOS 26 draws this as a callout on the chip and omits Cancel; tapping
+                    // outside cancels.
+                    .confirmationDialog(
+                        "Clear all edits to this photo?",
+                        isPresented: $confirmClearEdits,
+                        titleVisibility: .visible
+                    ) {
+                        Button("Clear Edits", role: .destructive) {
+                            withAnimation(Motion.standard) {
+                                setEdits(MediaEdits())
+                            }
+                            flashToolBanner("Edits cleared")
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("The crop, drawing, text and filter on this photo will be removed.")
+                    }
                     .transition(.scale(scale: 0.85).combined(with: .opacity))
                 }
 
@@ -301,9 +347,8 @@ struct MediaComposeOverlay: View {
             HStack(spacing: 8) {
                 ForEach(Array(photos.enumerated()), id: \.element.id) { index, photo in
                     Button {
-                        Haptics.impact(.light)
                         dismissCaptionKeyboard()
-                        withAnimation(Motion.standard) { selection = index }
+                        withAnimation(Motion.standard) { selectedID = photo.id }
                     } label: {
                         Image(uiImage: renderedPreviews[photo.id] ?? photo.preview)
                             .resizable()
@@ -322,18 +367,35 @@ struct MediaComposeOverlay: View {
                     .pressable(scale: 0.9, dimming: 0)
                     .contextMenu {
                         Button(role: .destructive) {
-                            onRemovePhoto?(index)
+                            removePhoto(at: index)
                         } label: {
                             Label("Remove", systemImage: "trash")
                         }
                     }
                     .accessibilityLabel("Photo \(index + 1) of \(photos.count)")
+                    .accessibilityAddTraits(index == selection ? [.isSelected] : [])
+                    .accessibilityAction(named: "Remove") { removePhoto(at: index) }
                 }
             }
-            .padding(.vertical, 2)
+            // Margin inside the scroll content, so the selected ring at either end isn't clipped.
+            .padding(.horizontal, 16)
+            .padding(.vertical, 4)
         }
         .frame(height: 62)
+        // Cancels editChipRow's gutter: the strip scrolls edge to edge, thumbnails still line
+        // up with the chip.
+        .padding(.horizontal, -16)
         .animation(Motion.snappy, value: selection)
+    }
+
+    /// Keeps the photo on screen when another one leaves; removing the one on screen moves to
+    /// its right-hand neighbour (or the left one at the end).
+    private func removePhoto(at index: Int) {
+        guard let onRemovePhoto else { return }
+        if index == selection {
+            selectedID = (photos[safe: index + 1] ?? photos[safe: index - 1])?.id
+        }
+        onRemovePhoto(index)
     }
 
     // MARK: - Bottom (single TextField; chrome morphs around it)
@@ -381,18 +443,20 @@ struct MediaComposeOverlay: View {
         .padding(.top, 10)
         .frame(maxWidth: .infinity)
         .background(Color.black)
-        .animation(.easeOut(duration: 0.22), value: isFocused)
+        // Same as the column's; kept here so it outranks the keyboard-height animation below.
+        .animation(Motion.scrim, value: isFocused)
         .animation(.easeOut(duration: 0.25), value: keyboardHeight)
     }
 
+    /// Idle: no leading control beside the field (tools are below). Absent rather than zero-width,
+    /// so the HStack adds no spacing and the field lines up with the tools row.
     @ViewBuilder
     private var leadingControl: some View {
         if isFocused {
             // Caption options (captions_focused.PNG left circle)
             Button {
-                Haptics.impact(.light)
+                // The banner alone: the host's toast would land on top of the caption row.
                 flashToolBanner("Caption options coming soon")
-                onComingSoon?("Caption options")
             } label: {
                 Image(systemName: "list.bullet")
                     .font(.system(size: 17, weight: .semibold))
@@ -404,9 +468,6 @@ struct MediaComposeOverlay: View {
             .pressable(scale: 0.85, dimming: 0)
             .accessibilityLabel("Caption options")
             .transition(.scale.combined(with: .opacity))
-        } else {
-            // Idle: no leading control beside field (tools are below).
-            Color.clear.frame(width: 0, height: 44)
         }
     }
 
@@ -415,7 +476,6 @@ struct MediaComposeOverlay: View {
         if isFocused {
             // White check = Done (dismiss keyboard)
             Button {
-                Haptics.impact(.light)
                 dismissCaptionKeyboard()
             } label: {
                 Image(systemName: "checkmark")
@@ -432,7 +492,6 @@ struct MediaComposeOverlay: View {
             // Idle: blue send (same arrow.up as chat composer)
             Button {
                 dismissCaptionKeyboard()
-                Haptics.impact(.medium)
                 onSend(caption, quality, photos.map { edits[$0.id] ?? MediaEdits() })
             } label: {
                 Image(systemName: "arrow.up")
@@ -467,6 +526,7 @@ struct MediaComposeOverlay: View {
                         .font(.system(size: 20, weight: .regular))
                         .foregroundStyle(Color.white.opacity(0.85))
                         .frame(width: 28, height: 28)
+                        .contentShape(Rectangle().inset(by: -8))
                 }
                 .pressable(scale: 0.85, haptic: nil)
                 .accessibilityLabel("Emoji")
@@ -541,10 +601,26 @@ struct MediaComposeOverlay: View {
 
     // MARK: - Editors
 
+    /// Crop opens at once. Draw and Text first render their canvas off the main actor, so the tap
+    /// doesn't stall and the cover's builder never renders (it re-runs on every overlay update).
     private func openEditor(_ editor: Editor) {
-        Haptics.impact(.light)
         withAnimation(Motion.standard) { showFilters = false }
-        activeEditor = editor
+        guard editor != .crop, let photo = currentPhoto else {
+            activeEditor = editor
+            return
+        }
+        let base = annotationEdits(includingDrawing: editor == .text)
+        let source = photo.preview
+        let photoID = photo.id
+        Task {
+            let image = await Task.detached(priority: .userInitiated) {
+                MediaEditRenderer.render(source, edits: base)
+            }.value
+            // A second tap, or a switch to another photo, may have landed meanwhile.
+            guard activeEditor == nil, currentPhoto?.id == photoID else { return }
+            editorBase = image
+            activeEditor = editor
+        }
     }
 
     /// Editors are presented as full-screen covers rather than stacked layers — they are modal
@@ -568,9 +644,9 @@ struct MediaComposeOverlay: View {
                 )
             case .draw:
                 // The canvas re-draws the existing strokes itself, so the base must not
-                // already contain them.
+                // already contain them. `openEditor` renders it; the fallback never normally runs.
                 MediaDrawEditor(
-                    image: annotationBase(includingDrawing: false),
+                    image: editorBase ?? annotationBase(includingDrawing: false),
                     edits: binding,
                     onCancel: closeEditor,
                     onDone: closeEditor
@@ -578,7 +654,7 @@ struct MediaComposeOverlay: View {
             case .text:
                 // Stickers sit above the markup, so the markup belongs in the base here.
                 MediaTextEditor(
-                    image: annotationBase(includingDrawing: true),
+                    image: editorBase ?? annotationBase(includingDrawing: true),
                     edits: binding,
                     onCancel: closeEditor,
                     onDone: closeEditor
@@ -595,16 +671,21 @@ struct MediaComposeOverlay: View {
     /// onto. Existing stickers are always dropped; the markup is optional (see call sites).
     private func annotationBase(includingDrawing: Bool) -> UIImage {
         guard let photo = photos[safe: selection] else { return UIImage() }
+        return MediaEditRenderer.render(photo.preview, edits: annotationEdits(includingDrawing: includingDrawing))
+    }
+
+    /// The edits baked into an annotation canvas: everything but the stickers, and the markup
+    /// only when asked for.
+    private func annotationEdits(includingDrawing: Bool) -> MediaEdits {
         var base = currentEdits
         if !includingDrawing { base.drawing = nil }
         base.texts = []
-        return MediaEditRenderer.render(photo.preview, edits: base)
+        return base
     }
 
     private var qualityBadge: some View {
         Button {
             dismissCaptionKeyboard()
-            Haptics.impact(.light)
             withAnimation(.easeInOut(duration: 0.15)) {
                 // Default is Original (100%); tap toggles down to HD.
                 quality = quality == .original ? .hd : .original
@@ -618,9 +699,10 @@ struct MediaComposeOverlay: View {
                 .minimumScaleFactor(0.7)
                 .lineLimit(1)
                 .foregroundStyle(quality == .original ? telegramBlue : Color.white)
+                // Inset so "Original" scales down inside the ring instead of touching it.
+                .padding(.horizontal, 4)
                 .frame(width: 44, height: 44)
-                .background(chrome)
-                .clipShape(Circle())
+                .contentShape(Circle())
                 .overlay {
                     Circle()
                         .stroke(
@@ -629,7 +711,9 @@ struct MediaComposeOverlay: View {
                         )
                 }
         }
-        .pressable(scale: 0.9)
+        // Glass like the tool circles beside it.
+        .buttonStyle(PressableButtonStyle(scale: 1, dimming: 0))
+        .glassEffect(.regular.interactive(), in: .circle)
         .accessibilityLabel("Quality \(quality.label)")
         .accessibilityHint("Tap to switch between Original and HD")
     }
@@ -689,12 +773,12 @@ struct MediaComposeOverlay: View {
         setEdits(value)
     }
 
-    /// Drops edits and renders for photos that have left the strip, and keeps `selection` valid.
+    /// Drops edits and renders for photos that have left the strip. `selection` needs no fix-up:
+    /// it follows `selectedID`, and falls back to the first photo if that one is gone.
     private func syncEdits() {
         let live = Set(photos.map(\.id))
         edits = edits.filter { live.contains($0.key) }
         renderedPreviews = renderedPreviews.filter { live.contains($0.key) }
-        selection = min(selection, max(0, photos.count - 1))
     }
 
     /// Identity of a render request — a new value means the visible photo needs re-rendering.
@@ -711,6 +795,10 @@ struct MediaComposeOverlay: View {
             renderedPreviews[photo.id] = photo.preview
             return
         }
+        // Coalesce slider scrubs: .task(id:) cancels this on the next key, so only a settled edit
+        // renders (the detached render below can't be cancelled once it starts).
+        try? await Task.sleep(for: .milliseconds(40))
+        guard !Task.isCancelled else { return }
         let source = photo.preview
         let rendered = await Task.detached(priority: .userInitiated) {
             MediaEditRenderer.render(source, edits: snapshot)

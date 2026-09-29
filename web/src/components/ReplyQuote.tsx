@@ -8,7 +8,7 @@ import { thumbnailUrl } from "./ImageBubble";
 export type QuotePreview = {
   author: string;
   text: string;
-  /** True when `text` is a stand-in ("Photo", "Deleted message") rather than typed words. */
+  /** True when `text` is a stand-in ("Photo", "Message deleted") rather than typed words. */
   isStandIn: boolean;
   thumbnail: string | null;
   icon: "photo" | "video" | "voice" | null;
@@ -18,7 +18,7 @@ export type QuotePreview = {
  * Resolves a quote for display.
  *
  * Prefers the live message when it is still in the thread, so quoting something that is later
- * deleted for everyone reads "Deleted message" instead of keeping a copy of withdrawn text.
+ * deleted for everyone reads "Message deleted" instead of keeping a copy of withdrawn text.
  * Falls back to the snippet sealed with the reply when the original is not on this device.
  */
 export function resolveQuote(

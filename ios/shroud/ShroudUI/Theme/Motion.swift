@@ -221,8 +221,18 @@ extension View {
 /// Agent: Uses TimelineView so the sweep keeps time with the display link and pauses off-screen.
 private struct Shimmer: ViewModifier {
     var active: Bool = true
+    /// Off for placeholders that are dark in both appearances (a video plate, the forced-dark
+    /// editors), which keep the full-strength sweep.
+    var adaptsToAppearance: Bool = true
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// Peak of the sweep. `plusLighter` adds it to the fill: the light bars just clip to white,
+    /// while the dark bars would flash near-white at full strength.
+    private var peakOpacity: Double {
+        adaptsToAppearance && colorScheme == .dark ? 0.12 : 0.65
+    }
 
     private let period: TimeInterval = 1.4
 
@@ -236,7 +246,7 @@ private struct Shimmer: ViewModifier {
                         LinearGradient(
                             stops: [
                                 .init(color: .white.opacity(0), location: 0),
-                                .init(color: .white.opacity(0.65), location: 0.5),
+                                .init(color: .white.opacity(peakOpacity), location: 0.5),
                                 .init(color: .white.opacity(0), location: 1),
                             ],
                             startPoint: .leading,
@@ -258,8 +268,9 @@ private struct Shimmer: ViewModifier {
 }
 
 extension View {
-    /// Adds the shared skeleton shimmer sweep (no-op under Reduce Motion).
-    func shimmering(_ active: Bool = true) -> some View {
-        modifier(Shimmer(active: active))
+    /// Adds the shared skeleton shimmer sweep (no-op under Reduce Motion). Pass
+    /// `adaptsToAppearance: false` on a surface that is dark in light mode too.
+    func shimmering(_ active: Bool = true, adaptsToAppearance: Bool = true) -> some View {
+        modifier(Shimmer(active: active, adaptsToAppearance: adaptsToAppearance))
     }
 }

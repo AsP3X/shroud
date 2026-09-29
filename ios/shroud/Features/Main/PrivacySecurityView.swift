@@ -7,13 +7,14 @@ struct PrivacySecurityView: View {
     @Environment(CryptoController.self) private var crypto
     @Environment(MessagingController.self) private var messaging
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var autoLockDelay = SecurityPreferences.autoLockDelay
     @State private var hidesDuringScreenCapture = SecurityPreferences.hidesDuringScreenCapture
     @State private var blocksThirdPartyKeyboards = SecurityPreferences.blocksThirdPartyKeyboards
     @State private var generatesLinkPreviews = SecurityPreferences.generatesLinkPreviews
     @State private var alwaysRelayCalls = SecurityPreferences.alwaysRelayCalls
-    @State private var toast: String?
+    @State private var toast: Toast?
     /// True while the server round-trip for the chat-delete consent flag is in flight.
     @State private var isSavingChatDeleteConsent = false
     /// Visibility switches with a server write in flight.
@@ -23,6 +24,16 @@ struct PrivacySecurityView: View {
     @State private var isResettingShareCode = false
     /// Unblock calls in flight, so a row can't be tapped twice.
     @State private var unblockingUserIDs: Set<UUID> = []
+    /// Where a server switch was flipped to while its write is in flight, so it doesn't slide
+    /// back and forth again. Cleared when the request ends; the server value then takes over,
+    /// which reverts the switch if the write failed.
+    @State private var pendingVisibility: [VisibilitySwitch: Bool] = [:]
+    @State private var pendingDiscoverable: Bool?
+    @State private var pendingChatDelete: Bool?
+    /// The last load of the server switches failed; they stay disabled until a retry works.
+    @State private var privacyLoadFailed = false
+    /// Face ID, Touch ID or Optic ID (the lock screen's probe); nil when the device has none set up.
+    @State private var biometryName = LockScreenView.detectBiometry()?.name
 
     var body: some View {
         GroupedScreen {
@@ -34,6 +45,12 @@ struct PrivacySecurityView: View {
 
                     settingsCard {
                         deviceProtectionSection
+                    }
+
+                    // The switches below wait for the server's values; say so instead of
+                    // showing the defaults as if they were yours.
+                    if !messaging.hasLoadedPrivacySettings {
+                        privacyLoadStatus
                     }
 
                     settingsCard {
@@ -69,11 +86,13 @@ struct PrivacySecurityView: View {
                                         .font(.system(size: 14, weight: .semibold))
                                         .foregroundStyle(Color.white)
                                 }
+                                // Decorative: the title says what the row does.
+                                .accessibilityHidden(true)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text("Lock chats now")
                                         .font(.system(size: 16))
                                         .foregroundStyle(Theme.textPrimary)
-                                    Text("Leave the chat shell until you unlock again.")
+                                    Text("Clears messages from memory until you unlock again.")
                                         .font(.system(size: 13))
                                         .foregroundStyle(Theme.textSecondary)
                                 }
@@ -90,6 +109,7 @@ struct PrivacySecurityView: View {
                         settingsCard {
                             blockedContactsSection
                         }
+                        .transition(.opacity)
                     }
 
                     settingsCard {
@@ -109,6 +129,11 @@ struct PrivacySecurityView: View {
 
                     Color.clear.frame(height: 24)
                 }
+                // An unblocked row (or the whole card, for the last one) and the load status
+                // leave by fading while the cards below close the gap.
+                .animation(Motion.respecting(reduceMotion, Motion.standard), value: messaging.blockedUsers.map(\.id))
+                .animation(Motion.respecting(reduceMotion, Motion.standard), value: messaging.hasLoadedPrivacySettings)
+                .animation(Motion.fade, value: privacyLoadFailed)
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
             }
@@ -128,9 +153,50 @@ struct PrivacySecurityView: View {
         .task {
             // The flag lives on the server (only it can enforce a peer's request), so the
             // switch reflects stored state rather than a local default.
-            await messaging.refreshPrivacySettings()
-            await messaging.refreshBlocks()
+            await loadServerSettings()
         }
+    }
+
+    /// Loads the server-backed switches and the blocked list.
+    /// Agent: CALLS refreshPrivacySettings / refreshBlocks (both silent on failure); WRITES
+    /// privacyLoadFailed from whether the switches' values arrived.
+    private func loadServerSettings() async {
+        privacyLoadFailed = false
+        await messaging.refreshPrivacySettings()
+        privacyLoadFailed = !messaging.hasLoadedPrivacySettings
+        await messaging.refreshBlocks()
+    }
+
+    /// Stands above the server switches until their values arrive: a spinner while loading,
+    /// and a way to try again when the load failed (offline, or the server didn't answer).
+    private var privacyLoadStatus: some View {
+        HStack(spacing: 8) {
+            if privacyLoadFailed {
+                Text("Couldn't load these settings.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.dangerText)
+                Spacer(minLength: 8)
+                Button {
+                    Task { await loadServerSettings() }
+                } label: {
+                    // The slop reaches into the gaps between the cards, not over them.
+                    Text("Try Again")
+                        .contentShape(Rectangle().inset(by: -13))
+                }
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Theme.accent)
+            } else {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(Theme.accent)
+                Text("Loading your privacy settings…")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.textSecondary)
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(.horizontal, 14)
+        .transition(.opacity)
     }
 
     /// Blocked users with a way back out. Blocking happens on the contact profile; this is
@@ -157,17 +223,25 @@ struct PrivacySecurityView: View {
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1)
                     Spacer(minLength: 0)
-                    Button("Unblock") {
+                    Button {
                         unblock(blocked)
+                    } label: {
+                        // A full-height target: the label alone is 18 pt tall. The row's
+                        // padding shrinks to match, so the row stays 48 pt.
+                        Text("Unblock")
+                            .padding(.leading, 12)
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
                     }
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(Theme.accent)
                     .disabled(unblockingUserIDs.contains(blocked.userId))
                 }
                 .padding(.horizontal, 14)
-                .padding(.vertical, 8)
+                .padding(.vertical, 2)
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel("\(blocked.username), blocked")
+                // Activating the row unblocks, so the label names the action.
+                .accessibilityLabel("Unblock \(blocked.username)")
 
                 if blocked.id != messaging.blockedUsers.last?.id {
                     Rectangle()
@@ -186,10 +260,10 @@ struct PrivacySecurityView: View {
             let error = await messaging.unblockUser(blocked.userId)
             unblockingUserIDs.remove(blocked.userId)
             if let error {
-                toast = error
+                toast = .failure(error)
                 Haptics.notification(.error)
             } else {
-                toast = "\(blocked.username) unblocked"
+                toast = Toast("\(blocked.username) unblocked")
                 Haptics.impact(.light)
             }
         }
@@ -217,12 +291,10 @@ struct PrivacySecurityView: View {
                 .labelsHidden()
                 .tint(Theme.accent)
             }
-            Text(
-                "When you leave the app, decrypted messages are cleared from memory — right away, or once the time you pick has passed. Re-open with Face ID, device passcode, or your encryption phrase."
-            )
-            .font(.system(size: 13))
-            .foregroundStyle(Theme.textSecondary)
-            .fixedSize(horizontal: false, vertical: true)
+            Text(autoLockFootnote)
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
@@ -230,6 +302,13 @@ struct PrivacySecurityView: View {
             SecurityPreferences.autoLockDelay = value
             Haptics.impact(.light)
         }
+    }
+
+    /// Names the biometry this device actually has, like the lock screen does; a device
+    /// without one is left with the passcode and the phrase.
+    private var autoLockFootnote: String {
+        let ways = biometryName.map { "\($0), device passcode," } ?? "your device passcode"
+        return "When you leave the app, decrypted messages are cleared from memory — right away, or once the time you pick has passed. Re-open with \(ways) or your encryption phrase."
     }
 
     /// Protections against other things on this iPhone: screen recording and keyboards.
@@ -317,15 +396,19 @@ struct PrivacySecurityView: View {
 
     private func visibilityToggle(_ item: VisibilitySwitch) -> some View {
         Toggle(isOn: Binding(
-            get: { item.value(in: messaging.privacySettings) },
+            get: { pendingVisibility[item] ?? item.value(in: messaging.privacySettings) },
             set: { newValue in
                 guard newValue != item.value(in: messaging.privacySettings) else { return }
+                pendingVisibility[item] = newValue
                 savingVisibility.insert(item)
                 Task {
                     let error = await messaging.updatePrivacySettings(item.change(to: newValue))
                     savingVisibility.remove(item)
+                    withAnimation(Motion.respecting(reduceMotion, Motion.snappy)) {
+                        pendingVisibility[item] = nil
+                    }
                     if let error {
-                        toast = error
+                        toast = .failure(error)
                         Haptics.notification(.error)
                     } else {
                         Haptics.impact(.light)
@@ -362,7 +445,7 @@ struct PrivacySecurityView: View {
                     .font(.system(size: 16))
                     .foregroundStyle(Theme.textPrimary)
                 Text(
-                    "When you send a link, this iPhone loads the page to build a preview and seals it into the message. The website sees your IP address, as if you had opened the link. People you send it to never contact the website."
+                    "When you send a link, this \(UIDevice.current.model) loads the page to build a preview and seals it into the message. The website sees your IP address, as if you had opened the link. People you send it to never contact the website."
                 )
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.textSecondary)
@@ -387,17 +470,21 @@ struct PrivacySecurityView: View {
     private var findingYouSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             Toggle(isOn: Binding(
-                get: { messaging.privacySettings.discoverableByUsername },
+                get: { pendingDiscoverable ?? messaging.privacySettings.discoverableByUsername },
                 set: { newValue in
                     guard newValue != messaging.privacySettings.discoverableByUsername else { return }
+                    pendingDiscoverable = newValue
                     isSavingDiscoverable = true
                     Task {
                         let error = await messaging.updatePrivacySettings(
                             UpdatePrivacySettingsBody(discoverableByUsername: newValue)
                         )
                         isSavingDiscoverable = false
+                        withAnimation(Motion.respecting(reduceMotion, Motion.snappy)) {
+                            pendingDiscoverable = nil
+                        }
                         if let error {
-                            toast = error
+                            toast = .failure(error)
                             Haptics.notification(.error)
                         } else {
                             Haptics.impact(.light)
@@ -453,10 +540,10 @@ struct PrivacySecurityView: View {
             let error = await messaging.rotateShareCode()
             isResettingShareCode = false
             if let error {
-                toast = error
+                toast = .failure(error)
                 Haptics.notification(.error)
             } else {
-                toast = "New QR code ready"
+                toast = Toast("New QR code ready")
                 Haptics.notification(.success)
             }
         }
@@ -475,7 +562,7 @@ struct PrivacySecurityView: View {
                     .font(.system(size: 16))
                     .foregroundStyle(Theme.textPrimary)
                 Text(
-                    "Calls from this iPhone go through the Shroud server's relay, so the person you call never sees your IP address. Calls may lag slightly. If the server has no relay, calls won't connect until you turn this off."
+                    "Calls from this \(UIDevice.current.model) go through the Shroud server's relay, so the person you call never sees your IP address. Calls may lag slightly. If the server has no relay, calls won't connect until you turn this off."
                 )
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.textSecondary)
@@ -498,15 +585,19 @@ struct PrivacySecurityView: View {
     /// Agent: READS messaging.allowsPeerChatDelete; CALLS setAllowsPeerChatDelete (HTTP PUT).
     private var chatDeleteConsentToggle: some View {
         Toggle(isOn: Binding(
-            get: { messaging.allowsPeerChatDelete },
+            get: { pendingChatDelete ?? messaging.allowsPeerChatDelete },
             set: { newValue in
                 guard newValue != messaging.allowsPeerChatDelete else { return }
+                pendingChatDelete = newValue
                 isSavingChatDeleteConsent = true
                 Task {
                     let error = await messaging.setAllowsPeerChatDelete(newValue)
                     isSavingChatDeleteConsent = false
+                    withAnimation(Motion.respecting(reduceMotion, Motion.snappy)) {
+                        pendingChatDelete = nil
+                    }
                     if let error {
-                        toast = error
+                        toast = .failure(error)
                         Haptics.notification(.error)
                     } else {
                         Haptics.impact(.light)
@@ -539,7 +630,7 @@ struct PrivacySecurityView: View {
         messaging.stop(wipeDisk: false)
         crypto.lockHistoryInMemory()
         router.hasUnlockedMessaging = false
-        toast = "Chats locked"
+        toast = Toast("Chats locked")
     }
 
     private func settingsCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {

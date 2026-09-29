@@ -5,6 +5,10 @@ struct AddContactSheet: View {
     @Environment(MessagingController.self) private var messaging
     @Environment(\.dismiss) private var dismiss
 
+    /// Called with the confirmation to show ("Request sent to jane") just before the sheet
+    /// closes; the presenter owns the toast, since the sheet is gone by then.
+    var onAdded: (String) -> Void = { _ in }
+
     @State private var inviteText = ""
     @State private var errorMessage: String?
     @State private var isAdding = false
@@ -67,6 +71,9 @@ struct AddContactSheet: View {
                     }
                 )
                 .ignoresSafeArea()
+                // Always-dark camera surface: keeps the status bar light over the black
+                // preview in light mode, as the other full-screen dark covers do.
+                .preferredColorScheme(.dark)
             }
         }
         .presentationDetents([.medium, .large])
@@ -75,13 +82,22 @@ struct AddContactSheet: View {
     private func submit(_ raw: String) async {
         isAdding = true
         errorMessage = nil
-        let result = await messaging.addContact(fromInvite: raw)
+        let outcome = await messaging.addContact(fromInvite: raw)
         isAdding = false
-        if let result {
-            errorMessage = result
+        switch outcome {
+        case let .failed(message):
+            errorMessage = message
             Haptics.notification(.error)
-        } else {
+            // The red section appears silently otherwise.
+            AccessibilityNotification.Announcement(message).post()
+        case let .requested(username):
             Haptics.notification(.success)
+            onAdded("Request sent to \(username)")
+            dismiss()
+        case let .added(username):
+            // They had already asked us: the server accepted both, and the contact is in.
+            Haptics.notification(.success)
+            onAdded("\(username) added")
             dismiss()
         }
     }

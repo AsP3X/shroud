@@ -60,16 +60,24 @@ struct RootView: View {
                         .opacity(router.isUnlocked ? 1 : 0)
                         .scaleEffect(router.isUnlocked || reduceMotion ? 1 : 0.96)
                         .allowsHitTesting(router.isUnlocked)
-                        .accessibilityHidden(!router.isUnlocked)
+                        // Also out of VoiceOver's reach under the call screen and under the
+                        // screen-capture cover: both hide the chats only visually.
+                        .accessibilityHidden(
+                            !router.isUnlocked || coversForScreenCapture || callController.active != nil
+                        )
                         .onAppear { router.mainShellMounted = true }
                         .onDisappear { router.mainShellMounted = false }
                         .transition(.asymmetric(
-                            insertion: .scale(scale: 0.96).combined(with: .opacity),
+                            insertion: reduceMotion
+                                ? AnyTransition.opacity
+                                : AnyTransition.scale(scale: 0.96).combined(with: .opacity),
                             removal: .opacity
                         ))
                 }
                 if !router.isUnlocked {
                     onboardingStack
+                        // A call answered while the chats are locked covers the lock screen.
+                        .accessibilityHidden(callController.active != nil)
                         .transition(.opacity)
                         .zIndex(1)
                 }
@@ -82,16 +90,19 @@ struct RootView: View {
                 InAppNotificationHost()
                     .zIndex(90)
                     .allowsHitTesting(notifications.banner != nil)
+                    .accessibilityHidden(coversForScreenCapture || callController.active != nil)
             }
 
             InCallOverlay()
-                .zIndex(100)
+                .zIndex(callAboveCaptureCover ? 160 : 100)
                 .allowsHitTesting(callController.active != nil)
 
             // The app switcher snapshots the screen as the app leaves; this covers the chats
             // first, so the snapshot on disk shows the mark, not a conversation.
             if showsPrivacyCover {
                 AppSwitcherPrivacyCover()
+                    // Under a call's screen VoiceOver stays on the call.
+                    .accessibilityHidden(callAboveCaptureCover && callController.active != nil)
                     .zIndex(150)
             }
 
@@ -182,6 +193,13 @@ struct RootView: View {
             _ = sessionController.consumePendingFullLocalWipe()
             deviceWipe.start(reason: .sessionEnded)
         }
+        // A server picked on the lock screen takes effect once its Log Out is over: the wipe
+        // revoked the session on the old server, and nothing of it is left for the new one.
+        .onChange(of: deviceWipe.isPresented) { _, presented in
+            guard !presented, let next = router.pendingServerConfiguration else { return }
+            router.pendingServerConfiguration = nil
+            try? serverConfig.save(next)
+        }
         .onChange(of: sessionController.isSignedIn) { _, signedIn in
             notifications.isSignedIn = signedIn
             if !signedIn {
@@ -216,6 +234,12 @@ struct RootView: View {
             } else {
                 messagingController.stop(wipeDisk: true)
                 PushNotificationService.shared.stop()
+            }
+        }
+        // The call screen is modal for VoiceOver: move focus onto it when a call appears.
+        .onChange(of: callController.active?.id) { old, new in
+            if new != nil, old == nil {
+                AccessibilityNotification.ScreenChanged(nil).post()
             }
         }
         // A call that ends while the app is in the background: nothing needs the socket now,
@@ -328,8 +352,26 @@ struct RootView: View {
     /// over the reveal — a second mark on a dark screen — and vanished once Face ID let go.
     private var showsPrivacyCover: Bool {
         guard router.isUnlocked else { return false }
-        if isScreenCaptured, SecurityPreferences.hidesDuringScreenCapture { return true }
+        if coversForScreenCapture { return true }
         return privacyCoverArmed && scenePhase != .active
+    }
+
+    /// The chats are recorded, mirrored or shared and "Hide chats during screen recording" is on.
+    ///
+    /// Human: Also during a call, under the call screen (`callAboveCaptureCover`).
+    private var coversForScreenCapture: Bool {
+        router.isUnlocked
+            && isScreenCaptured
+            && SecurityPreferences.hidesDuringScreenCapture
+    }
+
+    /// The call screen goes over the screen-capture cover, which stays up under it.
+    ///
+    /// Human: Sharing your screen in a call must show the call, not the mark. Dropping the
+    /// cover for the call instead let the chats show through the call screen while it faded in.
+    /// The app switcher's cover still goes over a call.
+    private var callAboveCaptureCover: Bool {
+        coversForScreenCapture && !(privacyCoverArmed && scenePhase != .active)
     }
 
     /// Temp files untouched this long are no playback or recording in progress: locking clears them.
@@ -450,6 +492,9 @@ private struct AppSwitcherPrivacyCover: View {
             Theme.background.ignoresSafeArea()
             BrandLogoMark(size: 72)
         }
-        .accessibilityHidden(true)
+        // Only reachable during a screen capture (the chats under it are hidden from VoiceOver
+        // then); in the app switcher nothing is being read.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Chats are hidden while the screen is recorded or mirrored")
     }
 }

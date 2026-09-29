@@ -4,14 +4,17 @@ import UIKit
 /// Long-press focus stack — reaction bar + context menu from `Conversation — * Message Menu`.
 /// Layout order is owned by the host: emoji bar → **message** → menu (Telegram).
 struct MessageActionMenu: View {
-    let isMine: Bool
+    /// See `MessageContextMenuCard.receipt`.
+    var receipt: MessageReceiptStatus? = nil
+    /// See `MessageContextMenuCard.actions`.
+    var actions: [MessageMenuAction] = MessageMenuAction.primary()
     var onReaction: (String) -> Void
     var onAction: (MessageMenuAction) -> Void
 
     var body: some View {
         VStack(spacing: 9) {
             MessageReactionBar(onReaction: { emoji, _ in onReaction(emoji) }, onMore: { onAction(.moreReactions) })
-            MessageContextMenuCard(isMine: isMine, onAction: onAction)
+            MessageContextMenuCard(receipt: receipt, actions: actions, onAction: onAction)
         }
         .frame(width: 250)
     }
@@ -246,7 +249,8 @@ struct MessageReactionGrid: View {
                             .font(.system(size: 14))
                             .foregroundStyle(Color.white.opacity(0.55))
                             .frame(width: 24, height: 24)
-                            .contentShape(Rectangle())
+                            // 44 pt to the finger without moving the 24 pt glyph box.
+                            .contentShape(Rectangle().inset(by: -10))
                     }
                     .pressable(scale: 0.8, dimming: 0)
                     .accessibilityLabel("Clear search")
@@ -401,57 +405,70 @@ private extension View {
 
 // MARK: - Context menu card (below the focused bubble)
 
+/// The action card under the lifted bubble (`Conversation — * Message Menu`).
+///
+/// Human: Only what the message can actually do is offered — no "Reply" on a message that is
+/// still sending, no "Copy" of a stand-in like "Photo" — and your own message's muted top row
+/// says what its ticks say ("sent", "delivered", "read"), never more.
+/// Agent: The host decides both: it passes the message's `receipt` (nil for someone else's
+/// message or a note to yourself) and its `actions`, and sizes the slot with
+/// `height(receipt:actions:)` from the same two values.
 struct MessageContextMenuCard: View {
-    let isMine: Bool
+    /// Your own message's delivery state, drawn as the muted top row; nil for someone else's
+    /// message or a note to yourself. Still sending or failed draws no row — the bubble's own
+    /// mark already says so, and "read" there would be a false receipt.
+    var receipt: MessageReceiptStatus? = nil
+    /// The actions above "Select", in order: only what this message can do
+    /// (`MessageMenuAction.primary(canReply:canCopy:hasLink:)`).
+    var actions: [MessageMenuAction] = MessageMenuAction.primary()
     var onAction: (MessageMenuAction) -> Void
     /// 0…1 continuous progress (drives opacity + offset; avoid Bool for smooth close).
     var progress: CGFloat = 1
-    /// The message contains a link: adds "Copy Link" under "Copy" (`Conversation — Link Message Menu`).
-    var hasLink: Bool = false
 
     static let width: CGFloat = 250
     private static let rowHeight: CGFloat = 44
 
-    /// The card's height: the muted "read" row on your own messages, the primary actions
-    /// ("Copy Link" only with a link), "Select", and a 1 pt hairline between rows.
-    static func height(isMine: Bool, hasLink: Bool) -> CGFloat {
-        let rows: CGFloat = (isMine ? 1 : 0) + (hasLink ? 6 : 5) + 1
+    /// The card's height: the muted receipt row when there is one, the actions, "Select", and a
+    /// 1 pt hairline between rows.
+    static func height(receipt: MessageReceiptStatus?, actions: [MessageMenuAction]) -> CGFloat {
+        let rows = CGFloat((receiptTitle(for: receipt) == nil ? 0 : 1) + actions.count + 1)
         return rows * rowHeight + (rows - 1)
+    }
+
+    /// The muted row's words, lower case as in the design; nil draws no row.
+    static func receiptTitle(for receipt: MessageReceiptStatus?) -> String? {
+        guard let receipt else { return nil }
+        switch receipt {
+        case .sent: return "sent"
+        case .delivered: return "delivered"
+        case .read: return "read"
+        case .sending, .failed: return nil
+        }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            if isMine {
-                menuRow(
-                    title: "read",
-                    systemImage: "checkmark",
-                    destructive: false,
-                    muted: true,
-                    action: {}
-                )
+            if let receiptTitle = Self.receiptTitle(for: receipt) {
+                // Information, not an action: plain text rather than a dimmed button.
+                rowLabel(title: receiptTitle, systemImage: "checkmark", destructive: false, muted: true)
+                    .accessibilityElement(children: .combine)
                 separator
             }
 
-            ForEach(Array(primaryActions.enumerated()), id: \.element.id) { index, action in
+            ForEach(Array((actions + [.select]).enumerated()), id: \.element.id) { index, action in
                 if index > 0 { separator }
-                menuRow(
-                    title: action.title,
-                    systemImage: action.systemImage,
-                    destructive: action.isDestructive,
-                    muted: false
-                ) {
+                Button {
                     onAction(action)
+                } label: {
+                    rowLabel(
+                        title: action.title,
+                        systemImage: action.systemImage,
+                        destructive: action.isDestructive,
+                        muted: false
+                    )
                 }
-            }
-
-            separator
-            menuRow(
-                title: MessageMenuAction.select.title,
-                systemImage: MessageMenuAction.select.systemImage,
-                destructive: false,
-                muted: false
-            ) {
-                onAction(.select)
+                // Dark menu — highlight with a light wash rather than the grouped-background token.
+                .buttonStyle(HighlightRowButtonStyle(fill: Color.white.opacity(0.1)))
             }
         }
         .frame(width: Self.width)
@@ -464,15 +481,12 @@ struct MessageContextMenuCard: View {
                 .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
         }
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        // The card is dark in both appearances, so theme colours (Delete's red) take their
+        // dark-surface variant; the light one misses 4.5:1 on it.
+        .environment(\.colorScheme, .dark)
         // Fade with the hero flight (no extra slide — hero owns the travel).
         .opacity(progress)
         .allowsHitTesting(progress > 0.5)
-    }
-
-    private var primaryActions: [MessageMenuAction] {
-        hasLink
-            ? [.reply, .copy, .copyLink, .pin, .forward, .delete]
-            : [.reply, .copy, .pin, .forward, .delete]
     }
 
     private var separator: some View {
@@ -481,39 +495,35 @@ struct MessageContextMenuCard: View {
             .frame(height: 1)
     }
 
-    private func menuRow(
+    private func rowLabel(
         title: String,
         systemImage: String,
         destructive: Bool,
-        muted: Bool,
-        action: @escaping () -> Void
+        muted: Bool
     ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(
-                        destructive
-                            ? Theme.danger
-                            : (muted ? Color.white.opacity(0.45) : Color.white.opacity(0.85))
-                    )
-                    .frame(width: 22)
-                Text(title)
-                    .font(.system(size: 16))
-                    .foregroundStyle(
-                        destructive
-                            ? Theme.danger
-                            : (muted ? Color.white.opacity(0.55) : Color.white)
-                    )
-                Spacer()
-            }
-            .padding(.horizontal, 14)
-            .frame(height: Self.rowHeight)
-            .contentShape(Rectangle())
+        HStack(spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(
+                    destructive
+                        ? Theme.danger
+                        : (muted ? Color.white.opacity(0.45) : Color.white.opacity(0.85))
+                )
+                .frame(width: 22)
+                // The title names the row; the glyph's own label would be read as well.
+                .accessibilityHidden(true)
+            Text(title)
+                .font(.system(size: 16))
+                .foregroundStyle(
+                    destructive
+                        ? Theme.danger
+                        : (muted ? Color.white.opacity(0.55) : Color.white)
+                )
+            Spacer()
         }
-        // Dark menu — highlight with a light wash rather than the grouped-background token.
-        .buttonStyle(HighlightRowButtonStyle(fill: Color.white.opacity(0.1)))
-        .disabled(muted)
+        .padding(.horizontal, 14)
+        .frame(height: Self.rowHeight)
+        .contentShape(Rectangle())
     }
 }
 
@@ -631,7 +641,7 @@ struct MessageMenuOverlay<Hero: View, Card: View>: View {
     /// The bubble's frame in global coordinates when the hold began.
     let sourceGlobalFrame: CGRect
     let isMine: Bool
-    /// Height of `card` (see `MessageContextMenuCard.height(isMine:hasLink:)`).
+    /// Height of `card` (see `MessageContextMenuCard.height(receipt:actions:)`).
     let cardHeight: CGFloat
     /// 0 = bubble in its list slot, 1 = menu open.
     let progress: CGFloat
@@ -725,6 +735,11 @@ struct MessageMenuOverlay<Hero: View, Card: View>: View {
             }
         }
         .frame(width: proxy.size.width, height: proxy.size.height)
+        // VoiceOver stays inside the menu, as with the app's other overlays, and the two-finger
+        // scrub closes it the way a tap on the dimmed thread does.
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(.isModal)
+        .accessibilityAction(.escape) { onBackdropTap() }
     }
 
     /// Extra width offered to the lifted bubble beyond its measured frame.
@@ -802,6 +817,17 @@ enum MessageMenuAction: String, Identifiable {
     }
 
     var isDestructive: Bool { self == .delete }
+
+    /// The card's actions above "Select", in the design's order, leaving out what the message
+    /// can't do: "Reply" on one that can't be quoted (sending, failed, deleted), "Copy" when it
+    /// has no real text (a photo's "Photo" stand-in), "Copy Link" when it has no link.
+    static func primary(canReply: Bool = true, canCopy: Bool = true, hasLink: Bool = false) -> [MessageMenuAction] {
+        var actions: [MessageMenuAction] = []
+        if canReply { actions.append(.reply) }
+        if canCopy { actions.append(.copy) }
+        if hasLink { actions.append(.copyLink) }
+        return actions + [.pin, .forward, .delete]
+    }
 }
 
 // MARK: - Backdrop
@@ -834,12 +860,20 @@ enum DecodedImageCache {
     /// Byte count of the data that produced the cached image — so preview → full replaces correctly.
     nonisolated(unsafe) private static var dataCounts: [UUID: Int] = [:]
 
-    static func store(_ id: UUID, image: UIImage) {
+    /// Pass `data` when `image` was decoded from it, so `image(for:decodedFrom:)` can hand it back.
+    static func store(_ id: UUID, image: UIImage, decodedFrom data: Data? = nil) {
         storage[id] = image
+        if let data { dataCounts[id] = data.count }
     }
 
     static func image(for id: UUID) -> UIImage? {
         storage[id]
+    }
+
+    /// The cached image only if it was decoded from `data` (same byte count), so a small
+    /// envelope preview never stands in for the full photo; no decode here.
+    static func image(for id: UUID, decodedFrom data: Data) -> UIImage? {
+        dataCounts[id] == data.count ? storage[id] : nil
     }
 
     /// Chats locked: every decoded photo leaves memory with the history it came from.
@@ -948,7 +982,7 @@ struct MessageMenuHeroContent: View {
                 isMine: true,
                 receipt: .read
             )
-            MessageContextMenuCard(isMine: true, onAction: { _ in }, progress: 1)
+            MessageContextMenuCard(receipt: .read, onAction: { _ in }, progress: 1)
         }
         .padding(24)
     }

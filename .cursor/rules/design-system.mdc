@@ -29,7 +29,9 @@ Modern, clean, iOS-native (Telegram-class polish): white surfaces, one confident
 | `separator` | `#E5E5EA` | Hairlines (1 px) |
 | `online` | `#34C759` | Presence, success, strength meter |
 | danger | `#FF3B30` (`#E0342C` on white) | Destructive rows, recording, end call |
+| `dangerText` | `#C4261D` light / `#FF6961` dark | Danger for small text (errors, weak strength label); keeps 4.5:1. Keep `danger` for fills |
 | warning | bg `#FDF1DC`, icon `#B97D10`, text `#8A5E0C` | Warning callouts |
+| success | bg `#E6F7EC`, text `successText` `#1D7A3E` (`#7ED69A` dark) | Success chips and labels |
 
 In SwiftUI these become a single `Theme` (asset catalog colors named after the tokens). Feature code references `Theme.accent`, never hex literals.
 
@@ -56,7 +58,7 @@ In SwiftUI these become a single `Theme` (asset catalog colors named after the t
 - **Top bar (Liquid Glass)**: no strip. A 44 pt row inset 16, title 17 semibold `text-primary` centred on the screen (plain, no glass); each control is a 44 pt glass circle (glyph 17 semibold, `accent`) or a glass capsule (word 16 medium, `accent`, 16 side padding); related controls (QR + Add, Video + Call) fuse into one capsule. The chat header centres the contact block (avatar, name, presence) on the screen between Back and Video + Call; only Notes keeps a More menu on the right (its only in-thread way to clear saved messages). `prominent` = accent-tinted glass with a white glyph, for the one action the bar wants (Save, Send). Content scrolls under the bar and the status bar with the soft scroll edge effect. Pushed settings screens use the *system* navigation bar (inline or large title), which is the same recipe. SwiftUI: `GlassBarRow` / `GlassBarButton` / `GlassBarGroup` pinned with `glassTopBar`.
 - **Composer (Liquid Glass)**: a 40 pt glass `+` circle, a glass field capsule (radius 20, grows to 5 lines, accent-tinted 12 % while focused), and a 40 pt glass mic circle that becomes an accent-tinted glass send circle; a reply / link strip is one more glass panel (radius 20) above the row; 12 side / 8 bottom padding, pinned with `glassBottomBar`. Recording: timer capsule, locked bar = danger-glyph circle · readout capsule · accent send circle. Floating controls over media (viewer, player, compose, calls) are glass circles too.
 - **Sheets/overlays**: scrim `#0B0B1247` (+ background blur for context menus), sheet radius 20 top corners, 36×5 grab handle; context menus 250 wide, 42 pt rows, label left / icon right, destructive row red. Toasts and the in-app banner are glass (capsule / radius 24).
-- **Badges/chips**: capsule `accent-soft` + accent 11–12 semibold text (info) or `#E6F7EC` + `online` (success, e.g. "Available", "Verified").
+- **Badges/chips**: capsule `accent-soft` + accent 11–12 semibold text (info) or `#E6F7EC` + `successText` `#1D7A3E` (success, e.g. "Available", "Verified"). Strength badges label in `successText` / `warningText` / `dangerText`.
 
 ## Screen composition
 

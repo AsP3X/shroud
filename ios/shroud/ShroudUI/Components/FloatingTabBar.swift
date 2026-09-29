@@ -135,6 +135,8 @@ struct FloatingTabBar: View {
         .glassEffect(.regular.interactive(), in: .capsule)
         .glassEffectID("tabs", in: glassNamespace)
         .accessibilityElement(children: .contain)
+        // VoiceOver reads the items as tabs ("tab, 1 of 4"), like the system bar this replaces.
+        .accessibilityAddTraits(.isTabBar)
     }
 
     private func itemRow(itemWidth: CGFloat, color: Color, magnification: CGFloat) -> some View {
@@ -275,7 +277,8 @@ struct FloatingTabBar: View {
                         .font(.system(size: 17))
                         .foregroundStyle(Theme.textSecondary)
                         .frame(width: 28, height: 28)
-                        .contentShape(Rectangle())
+                        // 44 pt to the finger without moving the 28 pt glyph box.
+                        .contentShape(Rectangle().inset(by: -8))
                 }
                 .pressable(scale: 0.8)
                 .accessibilityLabel("Clear search")
@@ -315,12 +318,14 @@ struct FloatingTabBar: View {
 private struct TabItemLabel: View {
     let tab: MainTab
     let isSelected: Bool
+    /// Counts selections only: bouncing on `isSelected` itself also bounced the tab being left.
+    @State private var bounceTrigger = 0
 
     var body: some View {
         VStack(spacing: 1) {
             Image(systemName: tab.systemImage)
                 .font(.system(size: tab.symbolPointSize, weight: .medium))
-                .symbolEffect(.bounce, value: isSelected)
+                .symbolEffect(.bounce, value: bounceTrigger)
                 .frame(height: 32)
             Text(tab.title)
                 .font(.system(size: 10, weight: .semibold))
@@ -330,6 +335,9 @@ private struct TabItemLabel: View {
         }
         .padding(.top, 4)
         .padding(.bottom, 7)
+        .onChange(of: isSelected) { _, selected in
+            if selected { bounceTrigger += 1 }
+        }
     }
 }
 

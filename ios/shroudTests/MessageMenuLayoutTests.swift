@@ -133,8 +133,31 @@ struct MessageMenuLayoutTests {
     }
 
     @Test func cardHeightCountsItsRows() {
-        #expect(MessageContextMenuCard.height(isMine: false, hasLink: false) == CGFloat(6 * 44 + 5))
-        #expect(MessageContextMenuCard.height(isMine: true, hasLink: false) == CGFloat(7 * 44 + 6))
-        #expect(MessageContextMenuCard.height(isMine: true, hasLink: true) == CGFloat(8 * 44 + 7))
+        let all = MessageMenuAction.primary()
+        let withLink = MessageMenuAction.primary(hasLink: true)
+        #expect(MessageContextMenuCard.height(receipt: nil, actions: all) == CGFloat(6 * 44 + 5))
+        #expect(MessageContextMenuCard.height(receipt: .read, actions: all) == CGFloat(7 * 44 + 6))
+        #expect(MessageContextMenuCard.height(receipt: .delivered, actions: withLink) == CGFloat(8 * 44 + 7))
+        // A photo still sending: no receipt row, no Reply, no Copy of its "Photo" stand-in.
+        let sendingPhoto = MessageMenuAction.primary(canReply: false, canCopy: false)
+        #expect(MessageContextMenuCard.height(receipt: .sending, actions: sendingPhoto) == CGFloat(4 * 44 + 3))
+    }
+
+    /// The muted row says what the ticks say, and nothing while the server hasn't confirmed the
+    /// message — "read" on every own message was a false read receipt.
+    @Test func receiptRowFollowsTheTicks() {
+        #expect(MessageContextMenuCard.receiptTitle(for: nil) == nil)
+        #expect(MessageContextMenuCard.receiptTitle(for: .failed) == nil)
+        #expect(MessageContextMenuCard.receiptTitle(for: .sending) == nil)
+        #expect(MessageContextMenuCard.receiptTitle(for: .sent) == "sent")
+        #expect(MessageContextMenuCard.receiptTitle(for: .delivered) == "delivered")
+        #expect(MessageContextMenuCard.receiptTitle(for: .read) == "read")
+    }
+
+    /// Only what the message can do, in the design's order.
+    @Test func cardOffersOnlyWhatTheMessageCanDo() {
+        #expect(MessageMenuAction.primary() == [.reply, .copy, .pin, .forward, .delete])
+        #expect(MessageMenuAction.primary(hasLink: true) == [.reply, .copy, .copyLink, .pin, .forward, .delete])
+        #expect(MessageMenuAction.primary(canReply: false, canCopy: false, hasLink: true) == [.copyLink, .pin, .forward, .delete])
     }
 }

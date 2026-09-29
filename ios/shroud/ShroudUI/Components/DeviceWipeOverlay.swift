@@ -34,7 +34,9 @@ struct DeviceWipeOverlay: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        // Scrolls when it doesn't fit (an SE, landscape, a long failed subtitle); the footer
+        // stays pinned so Try Again and Continue are always on screen.
+        ScrollView {
             VStack(spacing: 28) {
                 WipeEmblem(state: emblemState, progress: progress, device: device)
                 heading
@@ -42,12 +44,21 @@ struct DeviceWipeOverlay: View {
             }
             .padding(.horizontal, 20)
             .padding(.top, 44)
-            Spacer(minLength: 24)
+            .padding(.bottom, 24)
+            .frame(maxWidth: 520)
+            .frame(maxWidth: .infinity)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             footer
+                .animation(Motion.respecting(reduceMotion, Motion.standard), value: phase)
                 .padding(.horizontal, 20)
                 .padding(.bottom, 24)
+                .frame(maxWidth: 520)
+                .frame(maxWidth: .infinity)
+                // Rows scrolled under the pinned buttons don't show through.
+                .background(Theme.backgroundGrouped.ignoresSafeArea(edges: .bottom))
         }
-        .frame(maxWidth: 520)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.backgroundGrouped.ignoresSafeArea())
         // A leaving overlay never takes a touch meant for the screen it uncovers.
@@ -135,6 +146,9 @@ struct DeviceWipeOverlay: View {
                     .font(.system(size: 14))
                     .foregroundStyle(Theme.textSecondary)
                     .lineLimit(1)
+                    // The detail keeps its full width ("Ended here · server offline"); the
+                    // short title gives way and may wrap.
+                    .layoutPriority(1)
                     .transition(.opacity)
             }
         }
@@ -184,7 +198,7 @@ struct DeviceWipeOverlay: View {
                 PrimaryButton(title: "Try Again", showsArrow: false) { wipe.retry() }
                 SecondaryButton(title: "Continue") { wipe.continueAfterFailure() }
             }
-            .transition(.opacity.combined(with: .move(edge: .bottom)))
+            .transition(reduceMotion ? AnyTransition.opacity : .opacity.combined(with: .move(edge: .bottom)))
         } else {
             VStack(spacing: 6) {
                 if phase == .done {
@@ -193,6 +207,7 @@ struct DeviceWipeOverlay: View {
                 } else {
                     Image(systemName: "checkmark.shield")
                         .font(.system(size: 15))
+                        .accessibilityHidden(true)
                 }
                 Text(
                     phase == .done

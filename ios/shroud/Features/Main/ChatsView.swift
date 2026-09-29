@@ -12,7 +12,7 @@ struct ChatsView: View {
     @State private var showNewChat = false
     /// Chat waiting on the delete-scope confirmation (scope is picked in the dialog).
     @State private var pendingChatDelete: PendingChatDelete?
-    @State private var toast: String?
+    @State private var toast: Toast?
 
     init(path: Binding<[ChatRoute]> = .constant([]), searchText: Binding<String> = .constant("")) {
         _path = path
@@ -150,8 +150,9 @@ struct ChatsView: View {
 
                     if showsSkeleton {
                         SkeletonChatList()
-                    } else if let error = messaging.chatsError, messaging.conversations.isEmpty, !showsNotesRow {
+                    } else if let error = messaging.chatsError, messaging.conversations.isEmpty {
                         // Nothing loaded *and* the load failed — don't claim the account is empty.
+                        // Shown under the Notes row too: Notes are local and always there.
                         ListLoadErrorView(
                             title: "Can't load chats",
                             message: error,
@@ -170,6 +171,13 @@ struct ChatsView: View {
                 .animation(Motion.standard, value: filtered.map(\.id))
                 .animation(Motion.fade, value: showsSkeleton)
                 .animation(Motion.fade, value: messaging.chatsError)
+            }
+            // On the list itself, not the NavigationStack: `\.refresh` would otherwise reach
+            // the pushed conversation's scroll view and the New Chat sheet, and a pull there
+            // would reload the chat list. Explicit pull always fetches, even if a background
+            // poll is mid-flight.
+            .refreshable {
+                await messaging.refreshConversations(force: true)
             }
             // Re-arms the staggered entrance the moment the first page of chats lands.
             .listEntranceHost(resetOn: messaging.conversations.isEmpty)
@@ -208,10 +216,6 @@ struct ChatsView: View {
                 Text(chatDeleteExplanation(pending))
             }
             .toast($toast)
-        }
-        .refreshable {
-            // Explicit pull always fetches, even if a background poll is mid-flight.
-            await messaging.refreshConversations(force: true)
         }
         .task {
             await messaging.refreshConversations()
@@ -257,14 +261,12 @@ struct ChatsView: View {
                 await messaging.unmuteChat(peerUserID: peerID)
             }
             if let error {
-                toast = error
+                toast = .failure(error)
                 Haptics.notification(.error)
             } else {
-                toast = duration == nil ? "Notifications on" : (MuteDuration.label(for: messaging.mute(for: peerID)) ?? "Muted")
+                toast = Toast(duration == nil ? "Notifications on" : (MuteDuration.label(for: messaging.mute(for: peerID)) ?? "Muted"))
                 Haptics.impact(.light)
             }
-            try? await Task.sleep(nanoseconds: 1_800_000_000)
-            toast = nil
         }
     }
 
@@ -279,7 +281,7 @@ struct ChatsView: View {
                 isNotes: isNotes
             )
         } label: {
-            Label(isNotes ? "Delete Saved Messages" : "Delete Chat", systemImage: "trash")
+            Label(isNotes ? "Delete All Notes" : "Delete Chat", systemImage: "trash")
         }
     }
 
@@ -292,14 +294,14 @@ struct ChatsView: View {
 
     private var chatDeleteTitle: String {
         guard let pending = pendingChatDelete else { return "Delete chat?" }
-        return pending.isNotes ? "Delete Saved Messages?" : "Delete chat with \(pending.username)?"
+        return pending.isNotes ? "Delete all notes?" : "Delete chat with \(pending.username)?"
     }
 
     /// Spells out the asymmetric outcome up front: deleting for both unsends your messages,
     /// and the peer's own messages only disappear if they allowed it. The contact stays.
     private func chatDeleteExplanation(_ pending: PendingChatDelete) -> String {
         if pending.isNotes {
-            return "Removes every saved message from this device and your account."
+            return "Removes every note from this device and your account."
         }
         return """
         Deleting for both unsends your messages in \(pending.username)'s chat. Their own \
@@ -314,22 +316,21 @@ struct ChatsView: View {
                 peerUserID: pending.peerID,
                 scope: scope
             )
+            // Deletion toasts stay a little longer: the outcome differs by scope and is read.
             switch outcome {
             case .clearedForMe:
-                toast = "Chat deleted"
+                toast = Toast("Chat deleted", duration: .seconds(2.4))
                 Haptics.notification(.success)
             case .clearedForBoth:
-                toast = "Chat deleted for both"
+                toast = Toast("Chat deleted for both", duration: .seconds(2.4))
                 Haptics.notification(.success)
             case .unsentForPeer:
-                toast = "Deleted · \(pending.username) keeps their own messages"
+                toast = Toast("Deleted · \(pending.username) keeps their own messages", duration: .seconds(2.4))
                 Haptics.notification(.success)
             case let .failed(message):
-                toast = message
+                toast = .failure(message)
                 Haptics.notification(.error)
             }
-            try? await Task.sleep(nanoseconds: 2_400_000_000)
-            toast = nil
         }
     }
 
@@ -337,12 +338,10 @@ struct ChatsView: View {
         messaging.preview(for: conversation)
     }
 
+    /// The design system's avatar gradient: the white bookmark keeps its contrast in light
+    /// mode, where fading to `accentSoft` washed the lower half out to near white.
     private var notesAvatarGradient: LinearGradient {
-        LinearGradient(
-            colors: [Theme.accent, Theme.accentSoft],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
+        Theme.brandGradient
     }
 
     private var offlineBanner: some View {
@@ -377,6 +376,8 @@ struct ChatsView: View {
                 // Gentle one-shot bounce so the empty screen still feels alive on arrival.
                 .symbolEffect(.bounce, options: .nonRepeating)
                 .padding(.bottom, 4)
+                // Decorative: the title says what's going on.
+                .accessibilityHidden(true)
             Text(searchText.isEmpty ? "No chats yet" : "No matches")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)

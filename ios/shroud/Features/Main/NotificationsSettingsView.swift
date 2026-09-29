@@ -19,7 +19,7 @@ struct NotificationsSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
 
-    @State private var toast: String?
+    @State private var toast: Toast?
     @State private var testResult: String?
     @State private var isTesting = false
     @State private var showResetConfirm = false
@@ -67,8 +67,10 @@ struct NotificationsSettingsView: View {
         ) {
             Button("Reset", role: .destructive) {
                 preferences.reset()
+                // Show Badge and Include Muted Chats may have changed: recount the icon badge.
+                messaging.updateBadge()
                 saveToServer()
-                toast = "Notification settings reset"
+                toast = Toast("Notification settings reset")
                 Haptics.notification(.success)
             }
             Button("Cancel", role: .cancel) {}
@@ -92,10 +94,14 @@ struct NotificationsSettingsView: View {
                         .font(.system(size: 13))
                         .foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    Button("Open Settings") {
+                    Button {
                         if let url = URL(string: UIApplication.openNotificationSettingsURLString) {
                             UIApplication.shared.open(url)
                         }
+                    } label: {
+                        // A 44 pt target without moving the text; the slop stays inside the card.
+                        Text("Open Settings")
+                            .contentShape(Rectangle().inset(by: -13))
                     }
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Theme.accent)
@@ -112,12 +118,15 @@ struct NotificationsSettingsView: View {
                     Text("So you hear about new messages while Shroud is closed.")
                         .font(.system(size: 13))
                         .foregroundStyle(Theme.textSecondary)
-                    Button("Allow") {
+                    Button {
                         Task {
                             if await notifications.requestAuthorizationIfNeeded() {
                                 UIApplication.shared.registerForRemoteNotifications()
                             }
                         }
+                    } label: {
+                        Text("Allow")
+                            .contentShape(Rectangle().inset(by: -13))
                     }
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Theme.accent)
@@ -136,7 +145,7 @@ struct NotificationsSettingsView: View {
         card {
             toggleRow(
                 "Show Notifications",
-                subtitle: "New messages on this iPhone while Shroud is closed or locked.",
+                subtitle: "New messages on this \(UIDevice.current.model) while Shroud is closed or locked.",
                 isOn: binding(\.enabled, server: true)
             )
             divider
@@ -160,7 +169,7 @@ struct NotificationsSettingsView: View {
                         .foregroundStyle(Theme.textSecondary)
                     Image(systemName: "chevron.right")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Theme.textSecondary.opacity(0.6))
+                        .foregroundStyle(Theme.chevron)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 13)
@@ -263,8 +272,12 @@ struct NotificationsSettingsView: View {
                     .foregroundStyle(Theme.textSecondary)
             }
             Spacer(minLength: 0)
-            Button("Unmute") {
+            Button {
                 unmute(peer)
+            } label: {
+                // About 46 pt tall without growing the row; the label alone is 18 pt.
+                Text("Unmute")
+                    .contentShape(Rectangle().inset(by: -14))
             }
             .font(.system(size: 15, weight: .medium))
             .foregroundStyle(Theme.accent)
@@ -276,7 +289,8 @@ struct NotificationsSettingsView: View {
     }
 
     private var testCard: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        // 14, like the screen's stack, so the footer's -6 pull-up leaves the usual 8 pt gap.
+        VStack(alignment: .leading, spacing: 14) {
             card {
                 Button {
                     sendTest()
@@ -290,6 +304,8 @@ struct NotificationsSettingsView: View {
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundStyle(Color.white)
                         }
+                        // Decorative: the title says what the row does.
+                        .accessibilityHidden(true)
                         Text(isTesting ? "Sending…" : "Send a Test Notification")
                             .font(.system(size: 16))
                             .foregroundStyle(Theme.textPrimary)
@@ -336,7 +352,7 @@ struct NotificationsSettingsView: View {
             let error = await messaging.unmuteChat(peerUserID: peer.id)
             unmuting.remove(peer.id)
             if let error {
-                toast = error
+                toast = .failure(error)
                 Haptics.notification(.error)
             } else {
                 Haptics.impact(.light)
@@ -366,7 +382,8 @@ struct NotificationsSettingsView: View {
             do {
                 try await notifications.pushSettings(token: token)
             } catch {
-                toast = "Saved on this iPhone — the server gets it next time"
+                // A long sentence: give it the time an error gets.
+                toast = .info("Saved on this \(UIDevice.current.model) — the server gets it next time", duration: .seconds(2.4))
             }
         }
     }
@@ -417,6 +434,7 @@ struct NotificationsSettingsView: View {
             .font(.system(size: 13))
             .foregroundStyle(Theme.textSecondary)
             .padding(.horizontal, 14)
+            .accessibilityAddTraits(.isHeader)
     }
 
     private func sectionFooter(_ text: String) -> some View {
@@ -465,7 +483,7 @@ struct NotificationSoundPicker: View {
                     .background(Theme.background)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
 
-                    Text("Plays for notifications, and for banners while Shroud is open (unless the iPhone is on silent).")
+                    Text("Plays for notifications, and for banners while Shroud is open (unless the \(UIDevice.current.model) is on silent).")
                         .font(.system(size: 13))
                         .foregroundStyle(Theme.textSecondary)
                         .frame(maxWidth: .infinity, alignment: .leading)

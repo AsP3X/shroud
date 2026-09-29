@@ -146,6 +146,9 @@ nonisolated struct TextOverlay: Identifiable, Equatable, Sendable {
         Color(red: 0.66, green: 0.35, blue: 0.95),
     ]
 
+    /// VoiceOver names for `palette`, index for index.
+    static let paletteNames = ["White", "Black", "Red", "Orange", "Green", "Blue", "Purple"]
+
     static let uiPalette: [UIColor] = [
         .white,
         .black,
@@ -305,9 +308,17 @@ nonisolated enum MediaEditRenderer {
             image.draw(in: CGRect(origin: .zero, size: size))
 
             if let data = edits.drawing, let drawing = try? PKDrawing(data: data) {
-                // Strokes were authored over the cropped photo in a unit square, so stretching
-                // the drawing's own unit bounds back over the output keeps them aligned.
-                let strokes = drawing.image(from: CGRect(x: 0, y: 0, width: 1, height: 1), scale: size.width)
+                // Strokes were authored over the cropped photo in a unit square. Scale them onto the
+                // output's own pixel grid (as DrawingCanvas does on restore) rather than rasterising a
+                // width×width square and stretching it, which blurred strokes on portrait photos.
+                // Ink resolves in light mode, as the editor's canvas shows it; off-main the current
+                // traits are unspecified, and PencilKit would otherwise adapt colours per thread.
+                var strokes = UIImage()
+                UITraitCollection(userInterfaceStyle: .light).performAsCurrent {
+                    strokes = drawing
+                        .transformed(using: CGAffineTransform(scaleX: size.width, y: size.height))
+                        .image(from: CGRect(origin: .zero, size: size), scale: 1)
+                }
                 strokes.draw(in: CGRect(origin: .zero, size: size))
             }
 
@@ -325,11 +336,6 @@ nonisolated enum MediaEditRenderer {
             .font: font,
             .foregroundColor: overlay.uiColor,
         ]
-        if overlay.style == .outlined {
-            attributes[.strokeColor] = overlay.contrastUIColor
-            // Negative width strokes *and* fills; positive would hollow the glyphs out.
-            attributes[.strokeWidth] = -6.0
-        }
         if overlay.style == .plain {
             let shadow = NSShadow()
             shadow.shadowColor = UIColor.black.withAlphaComponent(0.45)
@@ -339,15 +345,18 @@ nonisolated enum MediaEditRenderer {
         }
 
         let string = NSAttributedString(string: overlay.string, attributes: attributes)
+        // Match MediaTextEditor's sticker exactly: the slab pads 0.28·size across and 0.18·size
+        // down, and the text wraps at the photo width minus the slab padding.
+        let hPad = overlay.style == .filled ? pointSize * 0.28 : 0
+        let vPad = overlay.style == .filled ? pointSize * 0.18 : 0
         let bounds = string.boundingRect(
-            with: CGSize(width: size.width * 0.92, height: .greatestFiniteMagnitude),
+            with: CGSize(width: max(1, size.width - hPad * 2), height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             context: nil
         )
-        let padding = overlay.style == .filled ? pointSize * 0.28 : 0
         let boxSize = CGSize(
-            width: bounds.width + padding * 2,
-            height: bounds.height + padding * 2
+            width: bounds.width + hPad * 2,
+            height: bounds.height + vPad * 2
         )
 
         context.saveGState()
@@ -366,19 +375,32 @@ nonisolated enum MediaEditRenderer {
             path.fill()
         }
 
+        let textRect = CGRect(
+            x: -bounds.width / 2,
+            y: -bounds.height / 2,
+            width: bounds.width,
+            height: bounds.height
+        )
+        let options: NSStringDrawingOptions = [.usesLineFragmentOrigin, .usesFontLeading]
+
+        if overlay.style == .outlined {
+            // Core Text centres the stroke on the glyph path, so half of it would eat into the
+            // letters. A contrast silhouette goes down first (negative width strokes *and* fills,
+            // reaching 3 % of the size outside the glyph); the full-weight text then covers its
+            // core, leaving the outline wholly outside, as MediaTextEditor previews it.
+            var silhouette = attributes
+            silhouette[.foregroundColor] = overlay.contrastUIColor
+            silhouette[.strokeColor] = overlay.contrastUIColor
+            silhouette[.strokeWidth] = -6.0
+            NSAttributedString(string: overlay.string, attributes: silhouette)
+                .draw(with: textRect, options: options, context: nil)
+        }
+
         let textColor = overlay.style == .filled ? overlay.contrastUIColor : overlay.uiColor
         var drawAttributes = attributes
         drawAttributes[.foregroundColor] = textColor
-        NSAttributedString(string: overlay.string, attributes: drawAttributes).draw(
-            with: CGRect(
-                x: -bounds.width / 2,
-                y: -bounds.height / 2,
-                width: bounds.width,
-                height: bounds.height
-            ),
-            options: [.usesLineFragmentOrigin, .usesFontLeading],
-            context: nil
-        )
+        NSAttributedString(string: overlay.string, attributes: drawAttributes)
+            .draw(with: textRect, options: options, context: nil)
         context.restoreGState()
     }
 }

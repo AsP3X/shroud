@@ -20,8 +20,15 @@ struct ChatAttachSheet: View {
 
     @State private var recentPhotos: [RecentPhoto] = []
     @State private var photoAccessDenied = false
+    /// Set once the library has answered, so an empty library reads as empty, not as loading.
+    @State private var recentsLoaded = false
     /// Asset whose original is being fetched (may be an iCloud download).
     @State private var loadingAssetID: String?
+    /// The original fetch in flight. Cancelled when the user leaves or picks something else,
+    /// so a slow iCloud download can't open compose with a photo they abandoned.
+    @State private var pickTask: Task<Void, Never>?
+
+    @Environment(\.colorScheme) private var colorScheme
 
     private let row1: [ChatAttachOption] = [.camera, .photos, .file, .location]
     private let row2: [ChatAttachOption] = [.contact, .music, .gift, .stickers]
@@ -38,8 +45,10 @@ struct ChatAttachSheet: View {
                     Text("RECENTS")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Theme.textSecondary)
+                        .accessibilityAddTraits(.isHeader)
                     Spacer()
                     Button {
+                        pickTask?.cancel()
                         onSelect(.photos)
                     } label: {
                         HStack(spacing: 2) {
@@ -47,6 +56,7 @@ struct ChatAttachSheet: View {
                                 .font(.system(size: 13, weight: .semibold))
                             Image(systemName: "chevron.right")
                                 .font(.system(size: 11, weight: .semibold))
+                                .accessibilityHidden(true)
                         }
                         .foregroundStyle(Theme.accent)
                         .padding(.vertical, 4)
@@ -56,12 +66,26 @@ struct ChatAttachSheet: View {
                 }
 
                 if photoAccessDenied {
-                    Text("Allow Photos access in Settings to see recent images here.")
-                        .font(.system(size: 13))
-                        .foregroundStyle(Theme.textSecondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 12)
-                } else if recentPhotos.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Allow Photos access in Settings to see recent images here.")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Theme.textSecondary)
+                        Button {
+                            if let url = URL(string: UIApplication.openSettingsURLString) {
+                                UIApplication.shared.open(url)
+                            }
+                        } label: {
+                            Text("Open Settings")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Theme.accent)
+                                .padding(.vertical, 4)
+                                .contentShape(Rectangle())
+                        }
+                        .pressable(scale: 0.94)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 12)
+                } else if !recentsLoaded {
                     // Shimmering tiles instead of spinners — the strip's shape is already known.
                     HStack(spacing: 8) {
                         ForEach(0 ..< 4, id: \.self) { _ in
@@ -73,6 +97,15 @@ struct ChatAttachSheet: View {
                     }
                     .shimmering()
                     .transition(.opacity)
+                } else if recentPhotos.isEmpty {
+                    // Empty library, or Limited access with nothing selected — "All Photos" still
+                    // reaches the whole library.
+                    Text("No recent photos")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 12)
+                        .transition(.opacity)
                 } else {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
@@ -102,6 +135,8 @@ struct ChatAttachSheet: View {
                                 .pressable(scale: 0.93, dimming: 0.12)
                                 // One fetch at a time — an iCloud original can take a moment.
                                 .disabled(loadingAssetID != nil)
+                                .accessibilityLabel("Recent photo \(index + 1) of \(recentPhotos.count)")
+                                .accessibilityValue(loadingAssetID == photo.id ? "Loading" : "")
                                 .entranceRow(index: index)
                             }
                         }
@@ -110,12 +145,16 @@ struct ChatAttachSheet: View {
                 }
             }
             .animation(Motion.fade, value: recentPhotos.isEmpty)
+            .animation(Motion.fade, value: recentsLoaded)
             .animation(Motion.fade, value: loadingAssetID)
 
             optionRow(row1, startIndex: 0)
             optionRow(row2, startIndex: row1.count)
 
-            Button(action: onCancel) {
+            Button {
+                pickTask?.cancel()
+                onCancel()
+            } label: {
                 Text("Cancel")
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(Theme.accent)
@@ -144,6 +183,8 @@ struct ChatAttachSheet: View {
         .task {
             await loadRecentPhotos()
         }
+        // Swipe-to-dismiss skips Cancel; drop a fetch that is still running.
+        .onDisappear { pickTask?.cancel() }
     }
 
     /// `startIndex` continues the entrance stagger across both rows.
@@ -151,17 +192,22 @@ struct ChatAttachSheet: View {
         HStack(spacing: 8) {
             ForEach(Array(options.enumerated()), id: \.element.id) { index, option in
                 Button {
+                    pickTask?.cancel()
                     onSelect(option)
                 } label: {
                     VStack(spacing: 6) {
                         ZStack {
+                            // The light pastels would be bright discs on the black sheet; in dark
+                            // mode a dim wash of the icon's own colour stands in.
                             Circle()
-                                .fill(option.circleFill)
+                                .fill(colorScheme == .dark ? option.iconColor.opacity(0.2) : option.circleFill)
                                 .frame(width: 52, height: 52)
                             Image(systemName: option.systemImage)
                                 .font(.system(size: 20, weight: .semibold))
                                 .foregroundStyle(option.iconColor)
                         }
+                        // The title alone names the button.
+                        .accessibilityHidden(true)
                         Text(option.title)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(Theme.textPrimary)
@@ -220,15 +266,18 @@ struct ChatAttachSheet: View {
         }.value
 
         recentPhotos = photos
+        recentsLoaded = true
     }
 
     /// Fetches the tapped asset's original file before handing it to compose.
     private func pickOriginal(_ photo: RecentPhoto) {
         guard loadingAssetID == nil else { return }
         loadingAssetID = photo.id
-        Task {
+        pickTask = Task {
             let picked = await Self.originalPhoto(localIdentifier: photo.id, fallback: photo.thumbnail)
             loadingAssetID = nil
+            // Cancelled while it loaded (Cancel, swipe-away, another option): drop the photo.
+            guard !Task.isCancelled else { return }
             onPickImage?(picked)
         }
     }
@@ -309,7 +358,7 @@ enum ChatAttachOption: String, Identifiable, CaseIterable {
 
     var circleFill: Color {
         switch self {
-        case .camera: Color(red: 0.925, green: 0.925, blue: 0.988)
+        case .camera: Theme.accentSoft
         case .photos: Color(red: 0.902, green: 0.969, blue: 0.925)
         case .file: Color(red: 0.894, green: 0.945, blue: 0.988)
         case .location: Color(red: 0.996, green: 0.937, blue: 0.890)

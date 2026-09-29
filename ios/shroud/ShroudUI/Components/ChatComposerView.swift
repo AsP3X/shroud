@@ -59,6 +59,12 @@ struct ChatComposerView: View {
     @State private var isStarting = false
     /// Set when the finger lifts before start() resolved — we discard whatever arrives.
     @State private var abandonedDuringStart = false
+    /// True while a finger is on the mic. Resets on release *and* on cancellation, which
+    /// `onEnded` never sees (a system alert such as the first mic-permission prompt).
+    @GestureState private var micHeld = false
+    /// One start attempt per touch: a failed start, or a slide-to-cancel, must not restart
+    /// while the finger is still down.
+    @State private var attemptedThisTouch = false
     @Namespace private var glassNamespace
 
     private var canSend: Bool {
@@ -110,6 +116,20 @@ struct ChatComposerView: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
+            // Lock affordance floats above the thumb while the finger is down — and above the
+            // reply strip, which stays up while recording. On the stack rather than the mic so
+            // it clears whatever sits on top; still inside the container so the glass dematerialises.
+            .overlay(alignment: .topTrailing) {
+                ZStack {
+                    if phase.isActive, !phase.isLocked {
+                        VoiceLockIndicator(progress: lockProgress)
+                            .padding(.trailing, 4) // centred over the 44 pt trailing slot
+                            .offset(y: -74) // bottom 14 pt above the top-most row or strip
+                            .transition(.scale(scale: 0.6, anchor: .bottom).combined(with: .opacity))
+                    }
+                }
+                .animation(Motion.snappy, value: phase.isActive)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.top, 4)
@@ -120,6 +140,21 @@ struct ChatComposerView: View {
         .animation(Motion.snappy, value: linkBar)
         .onChange(of: focusToken) { _, _ in
             focused = true
+        }
+        // The host can stop the take itself (a call taking the mic); drop back to idle with it.
+        .onChange(of: recorder.isRecording) { _, recording in
+            guard !recording, phase.isActive else { return }
+            withAnimation(Motion.standard) { phase = .idle }
+        }
+        // The finger left the mic — released, or the touch was cancelled.
+        .onChange(of: micHeld) { _, held in
+            guard !held else { return }
+            attemptedThisTouch = false
+            if isStarting {
+                abandonedDuringStart = true
+            } else if case .recording = phase {
+                finishRecording(send: cancelProgress < 1)
+            }
         }
     }
 
@@ -156,7 +191,8 @@ struct ChatComposerView: View {
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundStyle(Theme.accent)
                 .frame(width: Self.controlSize, height: Self.controlSize)
-                .contentShape(Circle())
+                // 44 pt hit target around the 40 pt glass.
+                .contentShape(Circle().inset(by: -2))
         }
         // Interactive glass swells under the finger; the style only adds the haptic tick.
         .buttonStyle(PressableButtonStyle(scale: 1, dimming: 0))
@@ -180,10 +216,18 @@ struct ChatComposerView: View {
                 .font(.system(size: 18, weight: .regular))
                 .foregroundStyle(focused ? Theme.accent : Theme.textSecondary)
                 .accessibilityHidden(true)
+                .allowsHitTesting(false)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .frame(minHeight: Self.controlSize)
+        // Taps on the capsule's padding or the smiley focus the field, like the system composer.
+        // Behind the text, so taps on the text itself still place the cursor.
+        .background {
+            Color.clear
+                .contentShape(.rect(cornerRadius: Self.fieldRadius))
+                .onTapGesture { focused = true }
+        }
         // A whisper of accent in the glass while the field is live, instead of a stroke.
         .glassEffect(
             focused ? .regular.tint(Theme.accent.opacity(0.12)) : .regular,
@@ -204,7 +248,8 @@ struct ChatComposerView: View {
                         .font(.system(size: 15, weight: .bold))
                         .foregroundStyle(Color.white)
                         .frame(width: Self.controlSize, height: Self.controlSize)
-                        .contentShape(Circle())
+                        // Fills the 44 pt slot, like the mic it replaces.
+                        .contentShape(Circle().inset(by: -2))
                 }
                 .buttonStyle(PressableButtonStyle(scale: 1, dimming: 0, haptic: nil))
                 .glassEffect(.regular.tint(Theme.accent).interactive(), in: .circle)
@@ -219,14 +264,6 @@ struct ChatComposerView: View {
         // 44pt so the hit target survives the first points of drag travel; the glass
         // inside stays `controlSize` to match the other composer controls.
         .frame(width: 44, height: 44)
-        // Lock affordance floats above the thumb while the finger is down.
-        .overlay(alignment: .bottom) {
-            if phase.isActive, !phase.isLocked {
-                VoiceLockIndicator(progress: lockProgress)
-                    .offset(y: -58)
-                    .transition(.scale(scale: 0.6, anchor: .bottom).combined(with: .opacity))
-            }
-        }
         .animation(Motion.snappy, value: phase.isActive)
     }
 
@@ -257,32 +294,32 @@ struct ChatComposerView: View {
             .contentShape(Rectangle())
             .gesture(recordGesture)
             .animation(Motion.snappy, value: phase.isActive)
-            .accessibilityLabel("Hold to record a voice message")
-            .accessibilityAddTraits(.startsMediaSession)
+            .accessibilityLabel("Record voice message")
+            .accessibilityHint("Starts a hands-free recording. Send or discard it when you're done.")
+            .accessibilityAddTraits([.isButton, .startsMediaSession])
+            .accessibilityAction { startLockedRecording() }
     }
 
     // MARK: - Gesture
 
+    /// Human: Global space, because the composer itself moves under a still finger — the take
+    /// swaps the focused field out, the keyboard drops, and the bar slides down ~300 pt, which
+    /// in local space reads as a slide up to lock.
+    /// Agent: Release is handled by `.onChange(of: micHeld)` in `body`, not `onEnded`, so a
+    /// cancelled touch lands there too.
     private var recordGesture: some Gesture {
-        DragGesture(minimumDistance: 0)
+        DragGesture(minimumDistance: 0, coordinateSpace: .global)
+            .updating($micHeld) { _, held, _ in held = true }
             .onChanged { value in
                 switch phase {
                 case .idle:
+                    guard !attemptedThisTouch else { return }
+                    attemptedThisTouch = true
                     beginRecording()
                 case .recording:
                     updateDrag(translation: value.translation)
                 case .locked:
                     // The finger is irrelevant once locked; explicit buttons take over.
-                    break
-                }
-            }
-            .onEnded { _ in
-                switch phase {
-                case .idle:
-                    if isStarting { abandonedDuringStart = true }
-                case .recording:
-                    finishRecording(send: cancelProgress < 1)
-                case .locked:
                     break
                 }
             }
@@ -313,12 +350,29 @@ struct ChatComposerView: View {
         }
     }
 
+    /// Assistive tech can't hold and slide, so its activation goes straight to the hands-free
+    /// state; the locked bar's labelled Send and Discard finish the take.
+    private func startLockedRecording() {
+        guard phase == .idle, !isStarting else { return }
+        isStarting = true
+        abandonedDuringStart = false
+
+        Task {
+            let started = await onRecordStart()
+            isStarting = false
+            guard started else { return }
+            withAnimation(Motion.standard) { phase = .locked }
+        }
+    }
+
     private func updateDrag(translation: CGSize) {
         let cancel = min(1, max(0, -translation.width / VoiceRecordingThresholds.cancel))
         let lock = min(1, max(0, -translation.height / VoiceRecordingThresholds.lock))
 
         if lock >= 1 {
             Haptics.notification(.success)
+            // The mic leaves the tree with this touch still down; the next touch starts fresh.
+            attemptedThisTouch = false
             withAnimation(Motion.standard) { phase = .locked }
             return
         }

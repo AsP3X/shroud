@@ -94,6 +94,7 @@ struct ReactionChipView: View {
     private static let maxAvatars = 3
 
     @Environment(\.reactionFlightTarget) private var flightTarget
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// A reaction of ours is flying in to this emoji of our chip: it waits, and says where it is.
     private func isFlightTarget(_ emoji: String) -> Bool {
@@ -115,7 +116,7 @@ struct ReactionChipView: View {
             ReactionEmojiFlow(spacing: 2) {
                 ForEach(chip.emojis, id: \.self) { emoji in
                     emojiButton(emoji)
-                        .transition(.scale(scale: 0.4).combined(with: .opacity))
+                        .transition(reduceMotion ? .opacity : .scale(scale: 0.4).combined(with: .opacity))
                 }
             }
             HStack(spacing: Self.avatarStep - Self.avatarSize) {
@@ -131,12 +132,26 @@ struct ReactionChipView: View {
                 }
             }
             .frame(height: Self.height)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                // The faces are the chip too: the photo underneath must not open, and a
+                // one-emoji chip takes the tap as its emoji's (Telegram's whole button is one
+                // target).
+                MessageTapClaim.claim()
+                guard chip.emojis.count == 1, let emoji = chip.emojis.first, acts(emoji) else { return }
+                onTap?(emoji)
+            }
+            // The emoji buttons already name the reactors.
+            .accessibilityHidden(true)
         }
         .padding(.leading, 6)
         .padding(.trailing, chip.reactors.isEmpty ? 6 : 3)
         .frame(minHeight: Self.height)
         // A capsule while it is one line; a wrapped set keeps the same corners.
         .background(RoundedRectangle(cornerRadius: Self.height / 2).fill(fill))
+        // The padding around the emoji and the faces only claims, so the photo stays shut.
+        .contentShape(RoundedRectangle(cornerRadius: Self.height / 2))
+        .onTapGesture { MessageTapClaim.claim() }
     }
 
     /// Ours: taken back. Theirs: added to ours — unless we have it already.
@@ -194,9 +209,13 @@ struct ReactionChipView: View {
 /// too. A claim made in the button's action comes too late — the row reads the release first —
 /// so it is made on touch-down, well inside `MessageTapClaim`'s window when the release comes.
 private struct ReactionChipButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? 0.88 : 1)
+            // Under Reduce Motion it dims instead of squashing.
+            .scaleEffect(reduceMotion ? 1 : (configuration.isPressed ? 0.88 : 1))
+            .opacity(reduceMotion && configuration.isPressed ? 0.6 : 1)
             .animation(configuration.isPressed ? Motion.press : Motion.release, value: configuration.isPressed)
             .onChange(of: configuration.isPressed) { _, pressed in
                 if pressed { MessageTapClaim.claim() }

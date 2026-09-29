@@ -31,7 +31,9 @@ struct ChatReplyBar: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Theme.textSecondary)
                     .frame(width: 34, height: 34)
-                    .contentShape(Rectangle())
+                    // 44 pt hit area without moving the 34 pt glyph box (5 pt into the 8 pt gap
+                    // and the 6 pt trailing padding).
+                    .contentShape(Rectangle().inset(by: -5))
             }
             .pressable(scale: 0.86)
             .accessibilityLabel("Cancel reply")

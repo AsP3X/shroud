@@ -615,7 +615,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = shroud/Info.plist;
 				INFOPLIST_KEY_NSAppTransportSecurity_AllowsLocalNetworking = YES;
-				INFOPLIST_KEY_NSCameraUsageDescription = "Shroud uses the camera for photos, video messages, and video calls.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Shroud uses the camera for photos, video messages, video calls, and scanning a contact's QR code.";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Face ID unlocks your encrypted chats on this device.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Shroud uses the microphone for voice messages and calls.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Photos you save from a chat are added to your photo library.";
@@ -658,7 +658,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = shroud/Info.plist;
 				INFOPLIST_KEY_NSAppTransportSecurity_AllowsLocalNetworking = YES;
-				INFOPLIST_KEY_NSCameraUsageDescription = "Shroud uses the camera for photos, video messages, and video calls.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Shroud uses the camera for photos, video messages, video calls, and scanning a contact's QR code.";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Face ID unlocks your encrypted chats on this device.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Shroud uses the microphone for voice messages and calls.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Photos you save from a chat are added to your photo library.";

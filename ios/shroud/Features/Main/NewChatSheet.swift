@@ -20,11 +20,27 @@ struct NewChatSheet: View {
     var body: some View {
         NavigationStack {
             Group {
-                if messaging.contacts.isEmpty {
+                // Same order as the Contacts tab: never claim "No contacts" before the first
+                // load has answered, or when it failed.
+                if !messaging.hasLoadedContacts && messaging.contacts.isEmpty {
+                    SkeletonChatList(count: 6)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                } else if let error = messaging.contactsError, messaging.contacts.isEmpty {
+                    ListLoadErrorView(
+                        title: "Can't load contacts",
+                        message: error,
+                        retry: { await messaging.refreshContacts(force: true) }
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                } else if messaging.contacts.isEmpty {
                     ContentUnavailableView(
                         "No contacts",
                         systemImage: "person.2",
                         description: Text("Add a contact first, then start a chat.")
+                    )
+                } else if filtered.isEmpty {
+                    ContentUnavailableView.search(
+                        text: searchText.trimmingCharacters(in: .whitespacesAndNewlines)
                     )
                 } else {
                     List(filtered) { contact in
@@ -42,6 +58,7 @@ struct NewChatSheet: View {
                                     Text(contact.username)
                                         .font(.system(size: 16, weight: .semibold))
                                         .foregroundStyle(Theme.textPrimary)
+                                        .lineLimit(1)
                                     Text(statusLine(for: contact.userId))
                                         .font(.system(size: 13))
                                         .foregroundStyle(
@@ -52,15 +69,25 @@ struct NewChatSheet: View {
                                 }
                                 Spacer(minLength: 0)
                             }
+                            // Inset inside the label so the highlight spans the whole row.
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
                             .contentShape(Rectangle())
                         }
-                        .pressable(scale: 0.98, dimming: 0.15)
+                        // Full-width rows highlight like the Chats and Contacts lists; a
+                        // scaling row reads as a glitch. The default backgroundGrouped fill is
+                        // #1C1C1E in dark mode, the same as this sheet's elevated row background,
+                        // so the press would be invisible there; systemGray5 shows in both modes.
+                        .buttonStyle(HighlightRowButtonStyle(fill: Color(uiColor: .systemGray5)))
+                        .listRowInsets(EdgeInsets())
                     }
                     .listStyle(.plain)
                 }
             }
             // Search narrows the list — animate rows out instead of hard-cutting.
             .animation(Motion.standard, value: filtered.map(\.id))
+            .animation(Motion.fade, value: messaging.hasLoadedContacts)
+            .animation(Motion.fade, value: messaging.contactsError)
             .searchable(text: $searchText, prompt: "Search contacts")
             .navigationTitle("New Chat")
             .navigationBarTitleDisplayMode(.inline)
@@ -77,13 +104,9 @@ struct NewChatSheet: View {
         }
     }
 
+    /// Same wording as the Contacts list: "online" / "last seen …" / "offline", and
+    /// "contact" until the server has told us anything.
     private func statusLine(for userID: UUID) -> String {
-        if messaging.presenceByUser[userID]?.online == true {
-            return "online"
-        }
-        if let last = messaging.presenceByUser[userID]?.lastSeenAt {
-            return "last seen \(messaging.timeLabel(for: last))"
-        }
-        return "contact"
+        ChatListFormatting.presenceLabel(for: messaging.presenceByUser[userID]) ?? "contact"
     }
 }

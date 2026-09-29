@@ -44,6 +44,13 @@ struct InCallOverlay: View {
     @State private var safetyShownFor: UUID?
     /// The call whose "Not verified" badge has closed down to its round shield.
     @State private var safetyBadgeClosedFor: UUID?
+    /// The phase the call was last in, kept once it is gone. The screen fades out only from "Call
+    /// ended"; straight from ringing (decline, cancel, sign-out) it goes at once, because the
+    /// breathing avatar's repeating animation would keep a removal transition from finishing.
+    @State private var lastPhase: CallController.Phase?
+    /// The call screen has faded in and covers the app: only then does the window take the dark
+    /// scheme, for a light status bar (`body`).
+    @State private var windowDark = false
 
     /// Our own picture, in the top-trailing corner of the safe area.
     static let selfViewSize = CGSize(width: 108, height: 164)
@@ -63,10 +70,42 @@ struct InCallOverlay: View {
     }
 
     var body: some View {
-        if let active = calls.active {
-            content(for: active)
-                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+        ZStack {
+            if let active = calls.active {
+                content(for: active)
+                    .transition(.opacity.combined(with: .scale(scale: reduceMotion ? 1 : 0.98)))
+            }
         }
+        // The call screen fades in over the app, and out after "Call ended" (see `lastPhase`).
+        .animation(
+            calls.active != nil || lastPhase == .ending ? Motion.respecting(reduceMotion, Motion.gentle) : nil,
+            value: calls.active == nil
+        )
+        .onChange(of: calls.active?.phase) { _, phase in
+            if let phase { lastPhase = phase }
+        }
+        // A light status bar over the dark screen. `preferredColorScheme` flips the whole window,
+        // the app behind included, so only while the screen covers it: from the end of the fade
+        // in (`darkenWindow`) until the call goes, when the app shows through the fade out light.
+        .preferredColorScheme(calls.active != nil && windowDark ? .dark : nil)
+        .onChange(of: calls.active == nil) { _, gone in
+            if gone { windowDark = false }
+        }
+    }
+
+    /// How long the screen takes to cover the app as it fades in (`Motion.gentle`, near enough).
+    static let fadeInCover: Duration = .milliseconds(600)
+
+    /// Once the call screen has faded in, the window goes dark under it. A call that follows on
+    /// from an ending one finds it dark already.
+    private func darkenWindow() async {
+        guard !windowDark else { return }
+        do {
+            try await Task.sleep(for: Self.fadeInCover)
+        } catch {
+            return
+        }
+        if calls.active != nil { windowDark = true }
     }
 
     /// Their picture: their camera is on and its frames arrive (never a black or stale frame).
@@ -139,7 +178,8 @@ struct InCallOverlay: View {
                     .transition(.opacity)
             }
 
-            topShade
+            // Down as far as the docked name goes: under the badge, and under the sharing pill.
+            topShade(drop: (badgeRoom ? Self.safetyBadgeReserve : 0) + (sharing ? Self.sharingIndicatorInset : 0))
                 .opacity((showsRemoteVideo || screen) && !chromeAway ? 1 : 0)
                 .animation(.easeOut(duration: 0.3), value: showsRemoteVideo || screen)
                 .animation(.easeOut(duration: 0.3), value: chromeAway)
@@ -153,6 +193,7 @@ struct InCallOverlay: View {
                     info(for: call)
                         .animation(Motion.snappy, value: call.phase)
                         .animation(Motion.snappy, value: call.isMuted)
+                        .animation(Motion.snappy, value: call.remoteMicMuted)
                         .opacity(blockHidden || chromeAway ? 0 : 1)
                         .animation(.easeOut(duration: 0.25), value: chromeAway)
                 }
@@ -191,12 +232,17 @@ struct InCallOverlay: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding(.top, sharing ? Self.sharingIndicatorInset : 0)
 
-            if sharing {
-                sharingIndicator(starting: !call.isSharingScreen)
-                    .padding(.top, 4)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+            ZStack {
+                if sharing {
+                    sharingIndicator(starting: !call.isSharingScreen)
+                        .padding(.top, 4)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
             }
+            // Ending, it goes at once: its dot's repeating pulse would keep a removal from
+            // finishing, and the screen's own fade out after it (`lastPhase`).
+            .animation(nil, value: ending)
 
             // The system's broadcast picker, out of sight; Share opens it.
             BroadcastPickerHost(trigger: broadcastPicker)
@@ -205,16 +251,33 @@ struct InCallOverlay: View {
                 .accessibilityHidden(true)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
         }
+        // Covers the whole app: VoiceOver stays on the call screen while it is up.
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(.isModal)
         .animation(Motion.standard, value: showsLocalVideo(call))
         .animation(Motion.standard, value: screen)
         .animation(Motion.snappy, value: sharing)
         // Compared: the badge goes and the docked name rises into its place.
         .animation(Motion.respecting(reduceMotion, Motion.standard), value: call.safetyVerified)
+        // Dark inside the screen only, as the media viewers are: dark menus, popovers and glass
+        // over the dark screen. The status bar follows the window (`body`).
+        .environment(\.colorScheme, .dark)
+        .task(id: call.id) { await darkenWindow() }
         .task(id: NamePlace(call: call.id, video: videoOn)) {
             await placeName(call.id, inCorner: videoOn)
         }
         // The number stays in reach while it is read out; the timer starts over once it closes.
         .onChange(of: safetyShownFor) { chromeTouch += 1 }
+        // What the screen says in passing is read out too: a notice, reconnecting, how it ended.
+        .onChange(of: call.notice) { _, notice in
+            if let notice { AccessibilityNotification.Announcement(notice).post() }
+        }
+        .onChange(of: call.reconnecting) { _, on in
+            if on, call.phase == .active { AccessibilityNotification.Announcement("Reconnecting").post() }
+        }
+        .onChange(of: call.phase) { _, phase in
+            if phase == .ending { AccessibilityNotification.Announcement(statusLine(for: call)).post() }
+        }
         .task(id: ChromeClock(screen: screen, hidden: chromeHidden, touch: chromeTouch)) {
             await lingerChrome(screen: screen)
         }
@@ -265,7 +328,11 @@ struct InCallOverlay: View {
                         }
                     }
                     .onTapGesture { calls.switchCamera() }
-                    .accessibilityLabel("Switch camera")
+                    // One element with the glyph: a button while the camera can be switched.
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(calls.canSwitchCamera ? "Switch camera" : "Your camera")
+                    .accessibilityAddTraits(calls.canSwitchCamera ? .isButton : .isImage)
+                    .accessibilityAction { calls.switchCamera() }
                     .overlay {
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
                             .strokeBorder(.white.opacity(0.35), lineWidth: 1)
@@ -303,9 +370,10 @@ struct InCallOverlay: View {
                     .foregroundStyle(Theme.danger)
                     .frame(width: 22, height: 22)
                     .background(.white, in: Circle())
-                    // A finger-sized target around the small disc.
+                    // A finger-sized target around the small disc: 30 pt drawn, 44 pt to touch. The
+                    // extra reaches past the pill's edge, so the pill stays small.
                     .padding(4)
-                    .contentShape(Rectangle())
+                    .contentShape(Rectangle().inset(by: -7))
             }
             .buttonStyle(PressableButtonStyle(scale: 0.9, dimming: 0, haptic: .medium))
             .accessibilityLabel("Stop sharing your screen")
@@ -466,6 +534,8 @@ struct InCallOverlay: View {
                 calls.confirmSafety()
             }
             .presentationCompactAdaptation(.popover)
+            // Dark whenever it opens, the window perhaps not yet: this reaches the popover only.
+            .preferredColorScheme(.dark)
         }
         .task(id: SafetyBadgeClock(call: call.id, open: shown.wrappedValue)) {
             guard !shown.wrappedValue, safetyBadgeClosedFor != call.id else { return }
@@ -512,6 +582,16 @@ struct InCallOverlay: View {
                 // Tighter than the name's: the smaller, dimmer line needs a firm edge over a
                 // bright picture.
                 .shadow(color: .black.opacity(0.5), radius: 3, y: 1)
+            // Their picture hides the face and the muted badge on it, so it is said here instead.
+            if call.remoteMicMuted, call.phase == .active, showsRemoteVideo || showsRemoteScreen {
+                Label("\(call.peerUsername) is muted", systemImage: "mic.slash.fill")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .shadow(color: .black.opacity(0.5), radius: 3, y: 1)
+                    .transition(.opacity)
+            }
             // "You're speaking": only while the call runs with an open mic. Muting hides it; the
             // Mute control already says so in red.
             if call.phase == .active, !call.isMuted {
@@ -522,7 +602,8 @@ struct InCallOverlay: View {
             if let notice = call.notice, call.phase != .ending {
                 Text(notice)
                     .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.8))
+                    // As bright as the status line: it sits lower in the shade still.
+                    .foregroundStyle(.white.opacity(0.85))
                     .multilineTextAlignment(.center)
                     .shadow(color: .black.opacity(0.5), radius: 3, y: 1)
             }
@@ -533,16 +614,21 @@ struct InCallOverlay: View {
     /// text readable on any frame, and the status bar with it: it holds its depth down past the
     /// clock (4.5:1 there even on a blown-out white wall) and then falls away. A plain gradient:
     /// fading it in and out with the picture blends one layer, nothing is redrawn.
-    private var topShade: some View {
-        Color.clear
+    /// Agent: `drop` is how far the docked block sits lower than usual (the "Not verified" badge,
+    /// the sharing pill). The hold and the fall move down by it, so the timer keeps its 4.5:1.
+    /// The stops are tuned on a 59 pt safe-area top plus the 220 pt below it; at `drop` 0 they
+    /// come out at the measured 0.42 and 0.7.
+    private func topShade(drop: CGFloat) -> some View {
+        let span: CGFloat = 279 + drop
+        return Color.clear
             .frame(maxWidth: .infinity)
-            .frame(height: 220)
+            .frame(height: 220 + drop)
             .background(
                 LinearGradient(
                     stops: [
                         .init(color: .black.opacity(0.62), location: 0),
-                        .init(color: .black.opacity(0.58), location: 0.42),
-                        .init(color: .black.opacity(0.3), location: 0.7),
+                        .init(color: .black.opacity(0.58), location: (117 + drop) / span),
+                        .init(color: .black.opacity(0.3), location: (195 + drop) / span),
                         .init(color: .black.opacity(0), location: 1),
                     ],
                     startPoint: .top,
@@ -614,6 +700,9 @@ struct InCallOverlay: View {
         let open = showsRemoteVideo || showsRemoteScreen
         ZStack {
             avatar(for: call)
+                // Breathing to still at once, never through a removal: the repeating animation
+                // would keep it from finishing, and the screen's own fade out after it (`lastPhase`).
+                .animation(nil, value: isRinging(call.phase))
                 .overlay(alignment: .bottomTrailing) {
                     if call.remoteMicMuted {
                         Image(systemName: "mic.slash.fill")
@@ -623,6 +712,7 @@ struct InCallOverlay: View {
                             .background(Theme.danger)
                             .clipShape(Circle())
                             .offset(x: 4, y: 4)
+                            .accessibilityLabel("\(call.peerUsername) is muted")
                     }
                 }
                 .scaleEffect(open && !reduceMotion ? 1.14 : 1)
@@ -681,7 +771,8 @@ struct InCallOverlay: View {
                 callButton(
                     icon: call.speakerOn ? "speaker.wave.2.fill" : "speaker.fill",
                     label: "Speaker",
-                    tint: call.speakerOn ? Theme.accent : nil
+                    tint: call.speakerOn ? Theme.accent : nil,
+                    accessibilityLabel: call.speakerOn ? "Turn speaker off" : "Turn speaker on"
                 ) {
                     calls.toggleSpeaker()
                 }
@@ -703,7 +794,8 @@ struct InCallOverlay: View {
     }
 
     /// Human: While ringing, the avatar breathes so the screen never looks frozen on a
-    /// slow network; once connected it settles to a steady state.
+    /// slow network; once connected it settles to a steady state. Under Reduce Motion it holds
+    /// still, dimmed a little until connected; the status line says the call is on its way.
     @ViewBuilder
     private func avatar(for call: CallController.ActiveCall) -> some View {
         let base = AvatarView(
@@ -713,7 +805,7 @@ struct InCallOverlay: View {
             fontSize: 36
         )
 
-        if isRinging(call.phase) {
+        if isRinging(call.phase), !reduceMotion {
             base.phaseAnimator([false, true]) { view, big in
                 view
                     .scaleEffect(big ? 1.05 : 0.97)
@@ -770,11 +862,13 @@ struct InCallOverlay: View {
         }
     }
 
+    /// "0:42", "12:05", then "1:02:03" past an hour, as the web client's clock reads.
     private func elapsed(from start: Date, now: Date) -> String {
         let seconds = max(0, Int(now.timeIntervalSince(start)))
-        let m = seconds / 60
+        let h = seconds / 3600
+        let m = (seconds % 3600) / 60
         let s = seconds % 60
-        return String(format: "%d:%02d", m, s)
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
     }
 
     /// One call control: a 60 pt glass circle (tinted when `tint` is set) over its caption.

@@ -9,17 +9,21 @@ struct TodoMessageBubble: View {
 
     var body: some View {
         HStack {
-            Spacer(minLength: 48)
+            Spacer(minLength: MessageBubbleMetrics.oppositeGutter)
             HStack(alignment: .top, spacing: 10) {
                 Button(action: onToggle) {
                     Image(systemName: isDone ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 22, weight: .semibold))
                         .foregroundStyle(isDone ? Theme.accent : Theme.textSecondary)
                         .frame(width: 28, height: 28)
+                        // 44 pt of target around the 28 pt circle; the negative padding below
+                        // keeps the glyph and the bubble where they were.
+                        .padding(8)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .pressable(scale: 0.88)
+                // The host's onToggle plays the haptic.
+                .pressable(scale: 0.88, haptic: nil)
+                .padding(-8)
                 .accessibilityLabel(isDone ? "Mark incomplete" : "Mark complete")
 
                 VStack(alignment: .leading, spacing: 4) {
@@ -42,8 +46,6 @@ struct TodoMessageBubble: View {
             .background(Theme.bubbleIncoming.opacity(0.92))
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Todo, \(text), \(isDone ? "done" : "open")")
     }

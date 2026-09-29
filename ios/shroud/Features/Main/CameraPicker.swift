@@ -10,7 +10,12 @@ enum CameraCapture {
 
 /// UIImagePickerController wrapper. The person can switch the shutter between photo and video.
 struct CameraPicker: UIViewControllerRepresentable {
+    /// The capture, or `nil` when there is nothing to show: cancelled, or failed (after `onFailure`).
     var onFinish: (CameraCapture?) -> Void
+    /// A capture that couldn't be read (the movie copy failed, no image came back), with the
+    /// message to show. Called just before `onFinish(nil)`, so the host can tell a lost photo or
+    /// video from Cancel instead of dropping it silently.
+    var onFailure: (String) -> Void = { _ in }
 
     func makeUIViewController(context: Context) -> UIImagePickerController {
         let picker = UIImagePickerController()
@@ -36,14 +41,16 @@ struct CameraPicker: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onFinish: onFinish)
+        Coordinator(onFinish: onFinish, onFailure: onFailure)
     }
 
     final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
         let onFinish: (CameraCapture?) -> Void
+        let onFailure: (String) -> Void
 
-        init(onFinish: @escaping (CameraCapture?) -> Void) {
+        init(onFinish: @escaping (CameraCapture?) -> Void, onFailure: @escaping (String) -> Void) {
             self.onFinish = onFinish
+            self.onFailure = onFailure
         }
 
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
@@ -62,14 +69,23 @@ struct CameraPicker: UIViewControllerRepresentable {
                 guard let source = info[.mediaURL] as? URL,
                       let movie = Self.copyMovie(from: source)
                 else {
-                    onFinish(nil)
+                    fail("Could not load that video.")
                     return
                 }
                 onFinish(.movie(movie))
                 return
             }
-            let image = info[.originalImage] as? UIImage
-            onFinish(image.map { .photo($0) })
+            guard let image = info[.originalImage] as? UIImage else {
+                fail("Could not load that photo.")
+                return
+            }
+            onFinish(.photo(image))
+        }
+
+        /// Closes the camera like Cancel, but tells the host first so the loss is explained.
+        private func fail(_ message: String) {
+            onFailure(message)
+            onFinish(nil)
         }
 
         /// PhotosPicker copies library movies so export survives picker teardown; camera tmp files need the same.

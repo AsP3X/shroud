@@ -37,26 +37,35 @@ struct MediaImageViewerOverlay: View {
     var onClose: () -> Void
     /// Asks the host to fetch a page that hasn't been decrypted yet.
     var onLoad: ((UUID) -> Void)?
-    var onComingSoon: ((String) -> Void)?
+    /// Asks the host to delete a photo's message. The host confirms (for me / for everyone)
+    /// and closes the viewer once the message is gone.
+    var onDelete: ((UUID) -> Void)?
 
     @State private var currentID: UUID
     @State private var dragOffset: CGSize = .zero
     @State private var dimOpacity: Double = 1
     @State private var chromeVisible = true
     @State private var banner: String?
+    /// Measured bar heights, window inset included; zero until the bars are first laid out.
+    @State private var topBarHeight: CGFloat = 0
+    @State private var bottomBarHeight: CGFloat = 0
+    /// The caption's own height, so a one-line caption doesn't claim the whole 96 pt box.
+    @State private var captionHeight: CGFloat = 0
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(
         items: [Item],
         initialID: UUID,
         onClose: @escaping () -> Void,
         onLoad: ((UUID) -> Void)? = nil,
-        onComingSoon: ((String) -> Void)? = nil
+        onDelete: ((UUID) -> Void)? = nil
     ) {
         self.items = items
         self.initialID = initialID
         self.onClose = onClose
         self.onLoad = onLoad
-        self.onComingSoon = onComingSoon
+        self.onDelete = onDelete
         _currentID = State(initialValue: initialID)
     }
 
@@ -95,38 +104,60 @@ struct MediaImageViewerOverlay: View {
                     .offset(x: dragOffset.width * 0.4, y: dragOffset.height)
                     .scaleEffect(dragScale)
 
-                if chromeVisible {
-                    VStack(spacing: 0) {
-                        topChrome(topInset: topInset, containerSize: size)
-                        Spacer(minLength: 0)
-                        bottomChrome(bottomInset: bottomInset, containerSize: size)
+                // In its own container: glass outside one leaves at once, whatever the transition
+                // says. Spacing 0 so the pill and the circles never fuse on a narrow screen.
+                GlassEffectContainer(spacing: 0) {
+                    if chromeVisible {
+                        VStack(spacing: 0) {
+                            topChrome(topInset: topInset, containerSize: size)
+                                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { topBarHeight = $0 }
+                            Spacer(minLength: 0)
+                            bottomChrome(bottomInset: bottomInset, containerSize: size)
+                                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { bottomBarHeight = $0 }
+                        }
+                        .transition(.opacity)
                     }
-                    .opacity(chromeOpacity)
-                    .allowsHitTesting(abs(dragOffset.height) < 1)
-                    .transition(.opacity)
                 }
+                .opacity(chromeOpacity)
+                .allowsHitTesting(abs(dragOffset.height) < 1)
 
-                if let banner {
-                    VStack {
-                        Spacer()
-                        Text(banner)
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(Color.white)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                            .glassEffect(chromeGlass, in: .capsule)
-                            .padding(.bottom, bottomInset + 96)
+                GlassEffectContainer {
+                    if let banner {
+                        VStack {
+                            Spacer()
+                            Text(banner)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(Color.white)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                                .glassEffect(chromeGlass, in: .capsule)
+                                // Clear of the bottom bar, caption included.
+                                .padding(.bottom, bottomBarExtent(bottomInset: bottomInset) + 12)
+                        }
+                        .transition(.opacity)
+                        .allowsHitTesting(false)
                     }
-                    .transition(.opacity)
-                    .allowsHitTesting(false)
                 }
             }
         }
         .ignoresSafeArea()
-        .preferredColorScheme(.dark)
+        // Dark inside the viewer only: `preferredColorScheme` would flip the whole window,
+        // the chat behind included, for as long as the viewer is up.
+        .environment(\.colorScheme, .dark)
+        // Hidden rather than recoloured: in light mode the status bar would draw dark on black.
+        .statusBarHidden(true)
+        .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isModal)
+        // VoiceOver's two-finger scrub closes the viewer, as the Close button does.
+        .accessibilityAction(.escape) { dismissAnimated() }
         .onChange(of: currentID) { _, id in
             onLoad?(id)
+        }
+        // The photo on screen left the list (deleted for everyone, say): the viewer leaves with
+        // it, as the host closes it for the photo it opened on, rather than the pager falling
+        // through to a neighbour while `currentID` still names the gone one.
+        .onChange(of: items.contains(where: { $0.id == currentID })) { _, listed in
+            if !listed { onClose() }
         }
     }
 
@@ -140,6 +171,23 @@ struct MediaImageViewerOverlay: View {
             }
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
+        // The photo is a UIKit view VoiceOver can't see into: the pager is one element, and
+        // swiping up or down pages the way a sideways swipe does. On the pager rather than on
+        // each page, so focus never slides offscreen with the old page and the value read back
+        // after a swipe is the new position.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Photo")
+        .accessibilityValue(pagerPosition)
+        .accessibilityAddTraits(.isImage)
+        .accessibilityAdjustableAction { direction in
+            step(by: direction == .increment ? 1 : -1)
+        }
+    }
+
+    /// "3 of 10" — where the pager stands, for VoiceOver.
+    private var pagerPosition: String {
+        guard let index = items.firstIndex(where: { $0.id == currentID }) else { return "" }
+        return "\(index + 1) of \(items.count)"
     }
 
     private func page(_ item: Item, containerSize: CGSize) -> some View {
@@ -210,7 +258,7 @@ struct MediaImageViewerOverlay: View {
                     UIImage(data: data)
                 }.value
                 guard let image else { return }
-                DecodedImageCache.store(item.id, image: image)
+                DecodedImageCache.store(item.id, image: image, decodedFrom: data)
                 decoded = image
             }
         }
@@ -236,14 +284,24 @@ struct MediaImageViewerOverlay: View {
     }
 
 
-    /// True when the photo runs under the chrome — that's when it needs a scrim to stay legible.
-    private func imageReachesChrome(_ item: Item?, containerSize: CGSize, inset: CGFloat) -> Bool {
+    /// True when the photo runs under a bar `barHeight` tall (window inset included) — that's
+    /// when it needs a scrim to stay legible.
+    private func imageReachesChrome(_ item: Item?, containerSize: CGSize, barHeight: CGFloat) -> Bool {
         guard let item else { return false }
         // An edge-to-edge vertical always sits under both bars.
         if MediaViewerLayout.opensFullBleed(aspect: item.aspect, in: containerSize) { return true }
         let fitted = MediaViewerLayout.fittedSize(aspect: item.aspect, in: containerSize)
         let margin = (containerSize.height - fitted.height) / 2
-        return margin < inset + 52
+        return margin < barHeight
+    }
+
+    /// The bars as measured, or their caption-less height before the first layout.
+    private func topBarExtent(topInset: CGFloat) -> CGFloat {
+        topBarHeight > 0 ? topBarHeight : topInset + 62
+    }
+
+    private func bottomBarExtent(bottomInset: CGFloat) -> CGFloat {
+        bottomBarHeight > 0 ? bottomBarHeight : max(bottomInset, 8) + 78
     }
 
     /// Solid black when the photo letterboxes clear of the chrome, a scrim when it runs underneath.
@@ -295,14 +353,19 @@ struct MediaImageViewerOverlay: View {
 
                 moreMenu
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 4)
+            // 12 + the circles' 4 pt target padding keeps the glass 16 pt from the edges.
+            .padding(.horizontal, 12)
+            .padding(.top, 2)
             .padding(.bottom, 12)
         }
         .frame(maxWidth: .infinity)
         .background {
             chromeBackground(
-                fading: imageReachesChrome(currentItem, containerSize: containerSize, inset: topInset),
+                fading: imageReachesChrome(
+                    currentItem,
+                    containerSize: containerSize,
+                    barHeight: topBarExtent(topInset: topInset)
+                ),
                 fromTop: true
             )
         }
@@ -323,7 +386,7 @@ struct MediaImageViewerOverlay: View {
         .padding(.vertical, 6)
         .glassEffect(chromeGlass, in: .capsule)
         // The pill re-reads on every page, so cross-fade instead of snapping the name.
-        .animation(.easeOut(duration: 0.18), value: currentID)
+        .animation(Motion.fade, value: currentID)
         .accessibilityElement(children: .combine)
     }
 
@@ -350,8 +413,11 @@ struct MediaImageViewerOverlay: View {
                 .foregroundStyle(Color.white)
                 .frame(width: 40, height: 40)
                 .contentShape(Circle())
+                .glassEffect(controlGlass, in: .circle)
+                // Keeps the 40 pt Telegram look with a 48 pt target.
+                .padding(4)
+                .contentShape(Rectangle())
         }
-        .glassEffect(controlGlass, in: .circle)
         .accessibilityLabel("More")
     }
 
@@ -365,8 +431,12 @@ struct MediaImageViewerOverlay: View {
                         .font(.system(size: 16))
                         .foregroundStyle(Color.white)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { captionHeight = $0 }
                 }
-                .frame(maxHeight: 96)
+                .scrollBounceBehavior(.basedOnSize)
+                // A scroll view takes all the height it's offered: size it to the text, so a short
+                // caption hugs its line and a long one stops at 96 pt and scrolls.
+                .frame(height: min(max(captionHeight, 20), 96))
                 .padding(.horizontal, 20)
                 .padding(.top, 12)
             }
@@ -380,11 +450,12 @@ struct MediaImageViewerOverlay: View {
 
                 // Telegram groups the two edit tools into one capsule (see image_viewer.PNG).
                 HStack(spacing: 4) {
+                    // The viewer's own banner, not the chat's toast: that one sits under this bar.
                     capsuleAction(systemName: "pencil.tip.crop.circle", label: "Draw") {
-                        onComingSoon?("Drawing")
+                        flashBanner("Drawing coming soon")
                     }
                     capsuleAction(systemName: "text.viewfinder", label: "Text recognition") {
-                        onComingSoon?("Text recognition")
+                        flashBanner("Text recognition coming soon")
                     }
                 }
                 .glassEffect(chromeGlass, in: .capsule)
@@ -392,7 +463,7 @@ struct MediaImageViewerOverlay: View {
                 Spacer(minLength: 0)
 
                 actionCircle(systemName: "trash", label: "Delete") {
-                    onComingSoon?("Delete")
+                    deleteCurrent()
                 }
             }
             .padding(.horizontal, 28)
@@ -404,7 +475,11 @@ struct MediaImageViewerOverlay: View {
         .frame(maxWidth: .infinity)
         .background {
             chromeBackground(
-                fading: imageReachesChrome(currentItem, containerSize: containerSize, inset: bottomInset),
+                fading: imageReachesChrome(
+                    currentItem,
+                    containerSize: containerSize,
+                    barHeight: bottomBarExtent(bottomInset: bottomInset)
+                ),
                 fromTop: false
             )
         }
@@ -423,9 +498,13 @@ struct MediaImageViewerOverlay: View {
                 .foregroundStyle(Color.white)
                 .frame(width: 40, height: 40)
                 .contentShape(Circle())
+                .glassEffect(controlGlass, in: .circle)
+                // Keeps the 40 pt Telegram look with a 48 pt target.
+                .padding(4)
+                .contentShape(Rectangle())
         }
-        .buttonStyle(PressableButtonStyle(scale: 1, dimming: 0))
-        .glassEffect(controlGlass, in: .circle)
+        // No press haptic: its one use, Close, fires its own in `dismissAnimated`.
+        .buttonStyle(PressableButtonStyle(scale: 1, dimming: 0, haptic: nil))
         .accessibilityLabel(accessibility)
     }
 
@@ -469,6 +548,7 @@ struct MediaImageViewerOverlay: View {
     // MARK: - Dismiss
 
     private var dragScale: CGFloat {
+        guard !reduceMotion else { return 1 }
         let t = min(1, abs(dragOffset.height) / 500)
         return 1 - t * 0.12
     }
@@ -483,7 +563,7 @@ struct MediaImageViewerOverlay: View {
         if travelled > 110 || flick > 900 {
             dismissAnimated(direction: translation.height >= 0 ? 1 : -1)
         } else {
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+            withAnimation(Motion.standard) {
                 dragOffset = .zero
                 dimOpacity = 1
             }
@@ -499,6 +579,16 @@ struct MediaImageViewerOverlay: View {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
             onClose()
+        }
+    }
+
+    /// VoiceOver's swipe up / down on a photo: the neighbouring page, as a sideways swipe gives.
+    private func step(by offset: Int) {
+        guard let index = items.firstIndex(where: { $0.id == currentID }),
+              items.indices.contains(index + offset)
+        else { return }
+        withAnimation(Motion.respecting(reduceMotion, Motion.standard)) {
+            currentID = items[index + offset].id
         }
     }
 
@@ -549,10 +639,33 @@ struct MediaImageViewerOverlay: View {
     }
 
     private func copyCurrent() {
-        guard let image = currentItem?.image else { return }
+        // `item.image` is only what the host had cached; a page that decoded itself put its
+        // image in the cache, and the bytes are the last resort.
+        guard let item = currentItem,
+              let image = item.image
+                ?? DecodedImageCache.image(for: item.id)
+                ?? item.data.flatMap({ UIImage(data: $0) })
+        else {
+            Haptics.notification(.error)
+            flashBanner("Could not copy that photo.")
+            return
+        }
         UIPasteboard.general.image = image
         Haptics.notification(.success)
         flashBanner("Copied")
+    }
+
+    /// The host asks "Delete message?" (for me / for everyone) and closes the viewer once the
+    /// message is gone; Cancel leaves the viewer as it was.
+    private func deleteCurrent() {
+        // The exact photo on screen, never `currentItem`'s first-photo fallback: a stale id must
+        // not hand the host some other message to delete.
+        guard let item = items.first(where: { $0.id == currentID }) else { return }
+        guard let onDelete else {
+            flashBanner("Delete coming soon")
+            return
+        }
+        onDelete(item.id)
     }
 
     private func saveCurrentToPhotos() {

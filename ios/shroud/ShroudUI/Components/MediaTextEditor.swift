@@ -41,9 +41,12 @@ struct MediaTextEditor: View {
 
     var body: some View {
         GeometryReader { geo in
-            let area = CGSize(width: geo.size.width, height: geo.size.height - 220)
+            // Clear of the status bar and Dynamic Island, like the compose screen; the bottom
+            // edge stays 180 pt up for the controls.
+            let top = max(geo.safeAreaInsets.top, Self.keyWindowSafeArea.top, 47) + 8
+            let area = CGSize(width: geo.size.width, height: geo.size.height - 180 - top)
             let frame = fittedSize(in: area)
-            let origin = CGPoint(x: geo.size.width / 2, y: area.height / 2 + 40)
+            let origin = CGPoint(x: geo.size.width / 2, y: top + area.height / 2)
 
             ZStack {
                 Color.black.ignoresSafeArea()
@@ -53,10 +56,12 @@ struct MediaTextEditor: View {
                     }
 
                 ZStack {
+                    // Not hit-testable, so a tap on the photo reaches the deselect tap behind it.
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFit()
                         .frame(width: frame.width, height: frame.height)
+                        .allowsHitTesting(false)
 
                     ForEach(overlays) { overlay in
                         stickerView(overlay, in: frame)
@@ -65,9 +70,7 @@ struct MediaTextEditor: View {
                 .frame(width: frame.width, height: frame.height)
                 .position(origin)
 
-                if editingID != nil {
-                    composerLayer
-                } else {
+                if editingID == nil {
                     VStack(spacing: 0) {
                         Spacer()
                         controls
@@ -76,8 +79,22 @@ struct MediaTextEditor: View {
             }
         }
         .ignoresSafeArea()
+        // Outside the safe-area-ignoring subtree, so the field rides on top of the keyboard
+        // instead of sitting behind it.
+        .overlay {
+            if editingID != nil {
+                composerLayer
+            }
+        }
         .preferredColorScheme(.dark)
         .accessibilityAddTraits(.isModal)
+    }
+
+    private static var keyWindowSafeArea: UIEdgeInsets {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let window = scenes.flatMap(\.windows).first(where: \.isKeyWindow)
+            ?? scenes.flatMap(\.windows).first
+        return window?.safeAreaInsets ?? UIEdgeInsets(top: 59, left: 0, bottom: 34, right: 0)
     }
 
     private func fittedSize(in area: CGSize) -> CGSize {
@@ -100,6 +117,23 @@ struct MediaTextEditor: View {
         Text(overlay.string.isEmpty ? " " : overlay.string)
             .font(.system(size: fontSize, weight: .bold))
             .foregroundStyle(overlay.style == .filled ? Color(overlay.contrastUIColor) : overlay.color)
+            .background {
+                // SwiftUI can't stroke glyphs, so eight offset copies in the contrast colour draw
+                // the outline the renderer's −6 stroke gives (3 % of the size outside the glyph).
+                if overlay.style == .outlined {
+                    let width = fontSize * 0.03
+                    ZStack {
+                        ForEach(0 ..< 8, id: \.self) { step in
+                            let angle = CGFloat(step) * .pi / 4
+                            Text(overlay.string.isEmpty ? " " : overlay.string)
+                                .font(.system(size: fontSize, weight: .bold))
+                                .foregroundStyle(Color(overlay.contrastUIColor))
+                                .offset(x: cos(angle) * width, y: sin(angle) * width)
+                        }
+                    }
+                    .accessibilityHidden(true)
+                }
+            }
             .shadow(
                 color: overlay.style == .plain ? Color.black.opacity(0.45) : .clear,
                 radius: fontSize * 0.12,
@@ -120,6 +154,13 @@ struct MediaTextEditor: View {
                         .padding(-8)
                 }
             }
+            // A 20 pt hit margin so both pinch / rotate fingers can land around small stickers.
+            // A content shape rather than padding: padding would narrow the width the text wraps
+            // at, and the renderer wraps at the photo width.
+            .contentShape(Rectangle().inset(by: -20))
+            .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+            .accessibilityAction { withAnimation(Motion.snappy) { selectedID = overlay.id } }
+            .accessibilityAction(named: "Edit text") { beginEditing(overlay) }
             .rotationEffect(.radians(overlay.rotation + liveAngle))
             .position(
                 x: overlay.center.x * frame.width + offset.width,
@@ -187,8 +228,10 @@ struct MediaTextEditor: View {
 
     private func beginEditing(_ overlay: TextOverlay) {
         draftText = overlay.string
-        editingID = overlay.id
-        selectedID = overlay.id
+        withAnimation(Motion.snappy) {
+            editingID = overlay.id
+            selectedID = overlay.id
+        }
         keyboardFocused = true
     }
 
@@ -232,8 +275,11 @@ struct MediaTextEditor: View {
                             .frame(width: 34, height: 34)
                             .background(Color.white)
                             .clipShape(Circle())
+                            // 44 pt to the finger, 34 pt to the eye.
+                            .contentShape(Circle().inset(by: -5))
                     }
-                    .pressable(scale: 0.85, dimming: 0)
+                    .pressable(scale: 0.85, dimming: 0, haptic: nil)
+                    .accessibilityLabel("Done")
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
@@ -266,7 +312,9 @@ struct MediaTextEditor: View {
     private var controls: some View {
         VStack(spacing: 14) {
             if let selected {
-                HStack(spacing: 10) {
+                // Each 26 pt dot sits in a 36 × 44 pt cell (same 10 pt visual gap); the negative
+                // padding keeps the row's layout height as it was.
+                HStack(spacing: 0) {
                     ForEach(Array(TextOverlay.palette.enumerated()), id: \.offset) { index, color in
                         Button {
                             Haptics.impact(.light)
@@ -284,11 +332,15 @@ struct MediaTextEditor: View {
                                     )
                                 }
                                 .scaleEffect(selected.colorIndex == index ? 1.15 : 1)
+                                .frame(width: 36, height: 44)
+                                .contentShape(Rectangle())
                         }
-                        .pressable(scale: 0.85, dimming: 0)
-                        .accessibilityLabel("Colour \(index + 1)")
+                        .pressable(scale: 0.85, dimming: 0, haptic: nil)
+                        .accessibilityLabel(TextOverlay.paletteNames[index])
+                        .accessibilityAddTraits(selected.colorIndex == index ? .isSelected : [])
                     }
                 }
+                .padding(.vertical, -9)
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
 
@@ -304,6 +356,7 @@ struct MediaTextEditor: View {
                         update(selected.id) { $0.style = $0.style.next }
                     }
                 }
+                .accessibilityValue(selected.map { $0.style.rawValue.capitalized } ?? "")
                 toolButton(systemName: "trash", label: "Delete", enabled: selected != nil) {
                     guard let id = selectedID else { return }
                     withAnimation(Motion.snappy) {
@@ -324,7 +377,7 @@ struct MediaTextEditor: View {
                         .frame(height: 44)
                         .padding(.horizontal, 8)
                 }
-                .pressable(scale: 0.92, dimming: 0)
+                .pressable(scale: 0.92, dimming: 0, haptic: nil)
 
                 Spacer()
 
@@ -339,7 +392,7 @@ struct MediaTextEditor: View {
                         .frame(height: 44)
                         .padding(.horizontal, 8)
                 }
-                .pressable(scale: 0.92, dimming: 0)
+                .pressable(scale: 0.92, dimming: 0, haptic: nil)
             }
             .padding(.horizontal, 20)
         }

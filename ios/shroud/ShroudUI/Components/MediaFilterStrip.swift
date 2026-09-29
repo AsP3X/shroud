@@ -20,16 +20,21 @@ struct MediaFilterStrip: View {
         VStack(spacing: 12) {
             if filter != .none {
                 HStack(spacing: 12) {
+                    // The captions are for the eye; VoiceOver reads the slider's own name and value.
                     Text("Intensity")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(Color.white.opacity(0.7))
-                    Slider(value: $intensity, in: 0 ... 1)
-                        .tint(telegramBlue)
+                        .accessibilityHidden(true)
+                    Slider(value: $intensity, in: 0 ... 1) {
+                        Text("Filter intensity")
+                    }
+                    .tint(telegramBlue)
                     Text("\(Int(intensity * 100))%")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(Color.white.opacity(0.7))
                         .monospacedDigit()
                         .frame(width: 40, alignment: .trailing)
+                        .accessibilityHidden(true)
                 }
                 .padding(.horizontal, 20)
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -73,12 +78,15 @@ struct MediaFilterStrip: View {
                                     )
                             }
                         }
-                        .pressable(scale: 0.9, dimming: 0)
+                        .pressable(scale: 0.9, dimming: 0, haptic: nil)
                         .accessibilityLabel(preset.label)
+                        .accessibilityAddTraits(filter == preset ? .isSelected : [])
                     }
                 }
                 .padding(.horizontal, 20)
             }
+            // The selected thumbnail scales past the strip's top edge; don't cut its ring off.
+            .scrollClipDisabled()
         }
         .animation(Motion.standard, value: filter)
         .task(id: image) {

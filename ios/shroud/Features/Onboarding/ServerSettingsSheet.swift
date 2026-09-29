@@ -5,7 +5,8 @@ import UIKit
 enum ServerSettingsContext: Equatable {
     /// Welcome gear — not signed in yet.
     case onboarding
-    /// Settings → Server while logged in (`iOS-App.pen` Server Settings).
+    /// Signed in: the lock screen gear (`iOS-App.pen` Server Settings). Warns, and an endpoint
+    /// change is a full Log Out (`onSignOut`). Settings → Server has its own `ServerSettingsView`.
     case accountSettings
 }
 
@@ -13,27 +14,37 @@ enum ServerSettingsContext: Equatable {
 /// Official (no extra fields) vs Self-hosted (host / port / path).
 ///
 /// Human: Animates field reveal when switching modes; persists non-secret endpoint settings.
-/// Agent: WRITES ServerConfigurationController; may CALL SessionController.logout when endpoint changes while signed in.
+/// Agent: WRITES ServerConfigurationController; when the endpoint changes while signed in, CALLS
+/// `onSignOut` instead and saves nothing itself.
 struct ServerSettingsSheet: View {
     @Environment(ServerConfigurationController.self) private var serverConfig
     @Environment(SessionController.self) private var sessionController: SessionController?
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var context: ServerSettingsContext = .onboarding
+    /// `.accountSettings` only: "Save and sign out" hands the new configuration here. The caller
+    /// runs the app's Log Out and saves it afterwards (`AppRouter.logOut(switchingTo:)`), so the
+    /// old server hears the sign-out and the new one never sees this session's token.
+    var onSignOut: ((ServerConfiguration) -> Void)?
 
     @State private var draft: ServerConfiguration
     @State private var errorMessage: String?
-    @State private var savePulse = false
     @State private var showSignOutConfirm = false
     @Namespace private var modeNamespace
 
-    private let spring = Animation.spring(response: 0.42, dampingFraction: 0.86)
+    private var spring: Animation { Motion.respecting(reduceMotion, Motion.standard) }
+
+    /// Scroll id of the error line, so a failed Save brings it into view.
+    private static let errorAnchor = "serverError"
 
     init(
         context: ServerSettingsContext = .onboarding,
-        initial: ServerConfiguration? = nil
+        initial: ServerConfiguration? = nil,
+        onSignOut: ((ServerConfiguration) -> Void)? = nil
     ) {
         self.context = context
+        self.onSignOut = onSignOut
         _draft = State(initialValue: initial ?? .default)
     }
 
@@ -47,34 +58,51 @@ struct ServerSettingsSheet: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                header
-                modePicker
-                selfHostedSection
-                infoCard
-                if isSignedInContext {
-                    signedInWarning
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    header
+                    modePicker
+                    selfHostedSection
+                    // Right under the fields it's about, not below the cards; every
+                    // validation error comes from the self-hosted fields.
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(Theme.dangerText)
+                            .transition(
+                                reduceMotion ? AnyTransition.opacity : .opacity.combined(with: .move(edge: .top))
+                            )
+                            .id(Self.errorAnchor)
+                    }
+                    infoCard
+                    if isSignedInContext {
+                        signedInWarning
+                    }
+                    actions
                 }
-                if let errorMessage {
-                    Text(errorMessage)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(Theme.danger)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-                actions
+                .padding(.horizontal, 20)
+                .padding(.top, 4)
+                .padding(.bottom, 28)
+                .animation(spring, value: draft.mode)
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 4)
-            .padding(.bottom, 28)
-            .animation(spring, value: draft.mode)
+            .onChange(of: errorMessage) { _, message in
+                guard message != nil else { return }
+                // A main-queue turn later, once the new line has a frame to scroll to.
+                DispatchQueue.main.async {
+                    withAnimation(spring) {
+                        proxy.scrollTo(Self.errorAnchor, anchor: .center)
+                    }
+                }
+            }
         }
         .background(Theme.background)
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .top, spacing: 0) {
-            // Design drag handle (system indicator is also shown).
+            // Design drag handle; the system indicator is hidden (see
+            // `.presentationDragIndicator(.hidden)`). Secondary grey keeps it quiet in dark mode.
             Capsule()
-                .fill(Color(red: 216 / 255, green: 216 / 255, blue: 220 / 255))
+                .fill(Theme.textSecondary.opacity(0.35))
                 .frame(width: 36, height: 5)
                 .padding(.top, 10)
                 .padding(.bottom, 8)
@@ -95,9 +123,6 @@ struct ServerSettingsSheet: View {
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(Theme.accent)
             }
-        }
-        .onAppear {
-            draft = serverConfig.configuration
         }
         .confirmationDialog(
             "Change server?",
@@ -120,6 +145,7 @@ struct ServerSettingsSheet: View {
             Text("Server")
                 .font(.system(size: 28, weight: .bold))
                 .foregroundStyle(Theme.textPrimary)
+                .accessibilityAddTraits(.isHeader)
             Text("Use the official Shroud network or connect to your own self-hosted server.")
                 .font(.system(size: 14))
                 .foregroundStyle(Theme.textSecondary)
@@ -165,8 +191,9 @@ struct ServerSettingsSheet: View {
         } label: {
             HStack(spacing: 12) {
                 ZStack {
+                    // Unselected ring in secondary grey: the separator tone was ~1.1:1.
                     Circle()
-                        .stroke(selected ? Theme.accent : Theme.separator, lineWidth: selected ? 0 : 2)
+                        .stroke(selected ? Theme.accent : Theme.textSecondary, lineWidth: selected ? 0 : 2)
                         .frame(width: 22, height: 22)
                     if selected {
                         Circle()
@@ -268,12 +295,14 @@ struct ServerSettingsSheet: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
             .transition(
-                .asymmetric(
-                    insertion: .opacity
-                        .combined(with: .move(edge: .top))
-                        .combined(with: .scale(scale: 0.98, anchor: .top)),
-                    removal: .opacity.combined(with: .move(edge: .top))
-                )
+                reduceMotion
+                    ? AnyTransition.opacity
+                    : .asymmetric(
+                        insertion: .opacity
+                            .combined(with: .move(edge: .top))
+                            .combined(with: .scale(scale: 0.98, anchor: .top)),
+                        removal: .opacity.combined(with: .move(edge: .top))
+                    )
             )
         }
     }
@@ -282,10 +311,10 @@ struct ServerSettingsSheet: View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "info.circle.fill")
                 .font(.system(size: 16))
-                .foregroundStyle(Theme.accent)
+                .foregroundStyle(Theme.accentText)
             Text(infoCopy)
                 .font(.system(size: 12))
-                .foregroundStyle(Theme.accent)
+                .foregroundStyle(Theme.accentText)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 12)
@@ -323,35 +352,15 @@ struct ServerSettingsSheet: View {
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
+    /// The shared CTA pair, as on Welcome: the press style gives Save its scale and haptic.
     private var actions: some View {
         VStack(spacing: 8) {
-            Button {
+            PrimaryButton(title: "Save", showsArrow: false) {
                 attemptSave()
-            } label: {
-                Text("Save")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(Color.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 50)
-                    .background(Theme.accent)
-                    .clipShape(Capsule())
-                    .shadow(color: Theme.accent.opacity(0.25), radius: 16, y: 8)
-                    .scaleEffect(savePulse ? 0.97 : 1)
             }
-            .pressable(scale: 0.98, dimming: 0.05, haptic: .medium)
-
-            Button {
+            SecondaryButton(title: "Cancel") {
                 dismiss()
-            } label: {
-                Text("Cancel")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(Theme.accent)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 46)
-                    .background(Theme.backgroundGrouped)
-                    .clipShape(Capsule())
             }
-            .pressable(scale: 0.98, dimming: 0.06)
         }
         .padding(.top, 4)
     }
@@ -418,22 +427,18 @@ struct ServerSettingsSheet: View {
 
     private func performSave(signOutAfter: Bool) {
         do {
-            try serverConfig.save(draft)
+            // Signing out, nothing is saved here: saved now, Log Out would revoke the session
+            // on the new server, and the old one would keep this iPhone's push tokens.
+            if !signOutAfter { try serverConfig.save(draft) }
             Haptics.notification(.success)
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.7)) {
-                savePulse = true
-            }
+            // A beat for the confirmation dialog to finish leaving before the sheet goes.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-                savePulse = false
                 if signOutAfter {
-                    // Human: New endpoint needs a fresh session; log out then dismiss to Welcome.
-                    Task {
-                        await sessionController?.logout()
-                        dismiss()
-                    }
-                } else {
-                    dismiss()
+                    // Human: New endpoint needs a fresh session. The full Log Out (the wipe and
+                    // its overlay) starts under the leaving sheet and ends on Welcome.
+                    onSignOut?(draft)
                 }
+                dismiss()
             }
         } catch {
             Haptics.notification(.error)
@@ -448,15 +453,19 @@ struct ServerSettingsSheet: View {
 
 extension View {
     /// Presents `Server Settings` as designed in `iOS-App.pen`.
+    ///
+    /// Human: Opens on the saved configuration (not the build default animating over to it),
+    /// and only as a large card: at the medium detent Save and Cancel started below the fold.
     func serverSettingsSheet(
         isPresented: Binding<Bool>,
         context: ServerSettingsContext,
-        serverConfig: ServerConfigurationController
+        serverConfig: ServerConfigurationController,
+        onSignOut: ((ServerConfiguration) -> Void)? = nil
     ) -> some View {
         sheet(isPresented: isPresented) {
-            ServerSettingsSheet(context: context)
+            ServerSettingsSheet(context: context, initial: serverConfig.configuration, onSignOut: onSignOut)
                 .environment(serverConfig)
-                .presentationDetents([.medium, .large])
+                .presentationDetents([.large])
                 .presentationDragIndicator(.hidden) // custom handle in sheet content
                 .presentationCornerRadius(22)
                 .presentationBackground(Theme.background)
@@ -478,7 +487,8 @@ extension View {
         .serverSettingsSheet(
             isPresented: .constant(true),
             context: .accountSettings,
-            serverConfig: ServerConfigurationController()
+            serverConfig: ServerConfigurationController(),
+            onSignOut: { _ in }
         )
         .environment(SessionController())
 }

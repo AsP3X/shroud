@@ -39,6 +39,16 @@ struct VideoPlayerOverlay: View {
         max(0.35, 1 - abs(dragOffset) / 420)
     }
 
+    /// The chrome lets go with the clip, as the photo viewer's does.
+    private var chromeOpacity: Double {
+        max(0, 1 - abs(dragOffset) / 180)
+    }
+
+    /// VoiceOver and Switch Control need the controls in reach, so they never hide by themselves.
+    private var assistiveTechRunning: Bool {
+        UIAccessibility.isVoiceOverRunning || UIAccessibility.isSwitchControlRunning
+    }
+
     private var dragScale: CGFloat {
         guard !reduceMotion else { return 1 }
         return max(0.86, 1 - abs(dragOffset) / 1600)
@@ -58,21 +68,40 @@ struct VideoPlayerOverlay: View {
                     .offset(y: dragOffset)
                     .scaleEffect(dragScale)
 
-                if chromeVisible {
-                    VStack(spacing: 0) {
-                        topChrome(topInset: topInset)
-                        Spacer(minLength: 0)
-                        bottomChrome(bottomInset: bottomInset)
+                // In its own container: glass outside one leaves at once, whatever the transition says.
+                GlassEffectContainer {
+                    if chromeVisible {
+                        VStack(spacing: 0) {
+                            topChrome(topInset: topInset)
+                            Spacer(minLength: 0)
+                            bottomChrome(bottomInset: bottomInset)
+                        }
+                        .transition(.opacity)
                     }
-                    .allowsHitTesting(abs(dragOffset) < 1)
-                    .transition(.opacity)
                 }
+                .opacity(chromeOpacity)
+                .allowsHitTesting(abs(dragOffset) < 1)
             }
         }
         .ignoresSafeArea()
-        .preferredColorScheme(.dark)
-        .statusBarHidden(!chromeVisible)
+        // Dark inside the player only: `preferredColorScheme` would flip the whole window,
+        // the chat behind included, for as long as the player is up.
+        .environment(\.colorScheme, .dark)
+        // Hidden throughout: in light mode the status bar would draw dark on black.
+        .statusBarHidden(true)
+        .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isModal)
+        // VoiceOver's two-finger scrub closes the player; its two-finger double-tap plays or pauses.
+        .accessibilityAction(.escape) { onClose() }
+        .accessibilityAction(.magicTap) {
+            guard playback.isReady else { return }
+            playback.toggle()
+            showChrome()
+        }
+        // VoiceOver turned on mid-clip: bring back the controls it needs.
+        .onReceive(NotificationCenter.default.publisher(for: UIAccessibility.voiceOverStatusDidChangeNotification)) { _ in
+            if UIAccessibility.isVoiceOverRunning { showChrome() }
+        }
         .task {
             await playback.start(data: data)
             scheduleChromeHide()
@@ -91,10 +120,9 @@ struct VideoPlayerOverlay: View {
     @ViewBuilder
     private var stage: some View {
         ZStack {
-            if let player = playback.player {
-                PlayerLayerView(player: player)
-                    .transition(.opacity)
-            } else if playback.failed {
+            // Failure first: the player exists before the clip is known to be playable, and
+            // stays after it turns out not to be.
+            if playback.failed {
                 VStack(spacing: 10) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 30))
@@ -103,28 +131,37 @@ struct VideoPlayerOverlay: View {
                 }
                 .foregroundStyle(Color.white.opacity(0.85))
             } else {
-                ProgressView().tint(.white)
+                if let player = playback.player {
+                    PlayerLayerView(player: player)
+                        .transition(.opacity)
+                }
+                if !playback.isReady {
+                    ProgressView().tint(.white)
+                }
             }
 
             // Centre play control: always up while paused, otherwise it follows the chrome.
-            if playback.isReady, !playback.isPlaying || chromeVisible {
-                Button {
-                    playback.toggle()
-                    Haptics.impact(.light)
-                    showChrome()
-                } label: {
-                    Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 30, weight: .semibold))
-                        .foregroundStyle(Color.white)
-                        .offset(x: playback.isPlaying ? 0 : 2)
-                        .contentTransition(.symbolEffect(.replace))
-                        .frame(width: 74, height: 74)
-                        .contentShape(Circle())
+            // In its own container: glass outside one leaves at once, whatever the transition says.
+            GlassEffectContainer {
+                if playback.isReady, !playback.isPlaying || chromeVisible {
+                    Button {
+                        playback.toggle()
+                        Haptics.impact(.light)
+                        showChrome()
+                    } label: {
+                        Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
+                            .font(.system(size: 30, weight: .semibold))
+                            .foregroundStyle(Color.white)
+                            .offset(x: playback.isPlaying ? 0 : 2)
+                            .contentTransition(.symbolEffect(.replace))
+                            .frame(width: 74, height: 74)
+                            .contentShape(Circle())
+                    }
+                    // A large glass disc over the frame; interactive glass swells under the finger.
+                    .buttonStyle(PressableButtonStyle(scale: 1, dimming: 0, haptic: nil))
+                    .glassEffect(.regular.interactive(), in: .circle)
+                    .transition(.scale(scale: 0.8).combined(with: .opacity))
                 }
-                // A large glass disc over the frame; interactive glass swells under the finger.
-                .buttonStyle(PressableButtonStyle(scale: 1, dimming: 0, haptic: nil))
-                .glassEffect(.regular.interactive(), in: .circle)
-                .transition(.scale(scale: 0.8).combined(with: .opacity))
             }
         }
         .animation(Motion.fade, value: playback.isPlaying)
@@ -140,7 +177,7 @@ struct VideoPlayerOverlay: View {
     // MARK: - Chrome
 
     private func topChrome(topInset: CGFloat) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Button {
                 Haptics.impact(.light)
                 onClose()
@@ -149,10 +186,13 @@ struct VideoPlayerOverlay: View {
                     .font(.system(size: 15, weight: .bold))
                     .foregroundStyle(Color.white)
                     .frame(width: 40, height: 40)
-                    .contentShape(Circle())
+                    .glassEffect(.regular.interactive(), in: .circle)
+                    // Keeps the 40 pt circle with a 44 pt target; the paddings below give the
+                    // 2 pt back, so the circle and the title stay where they were.
+                    .padding(2)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(PressableButtonStyle(scale: 1, dimming: 0, haptic: nil))
-            .glassEffect(.regular.interactive(), in: .circle)
             .accessibilityLabel("Close video")
 
             if !title.isEmpty {
@@ -172,9 +212,9 @@ struct VideoPlayerOverlay: View {
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 14)
-        .padding(.bottom, 12)
-        .padding(.top, topInset)
+        .padding(.horizontal, 12)
+        .padding(.bottom, 10)
+        .padding(.top, topInset - 2)
         .background {
             LinearGradient(
                 colors: [Color.black.opacity(0.6), .clear],
@@ -200,8 +240,9 @@ struct VideoPlayerOverlay: View {
                 .frame(minWidth: 42, alignment: .trailing)
         }
         .padding(.horizontal, 18)
-        .padding(.top, 14)
-        .padding(.bottom, bottomInset + 10)
+        // The scrubber's 44 pt touch band takes 8 pt of each; the bar itself doesn't move.
+        .padding(.top, 6)
+        .padding(.bottom, bottomInset + 2)
         .background {
             LinearGradient(
                 colors: [.clear, Color.black.opacity(0.65)],
@@ -257,9 +298,20 @@ struct VideoPlayerOverlay: View {
                     }
             )
         }
-        .frame(height: 28)
+        .frame(height: 44)
+        // One adjustable element: VoiceOver's swipe up / down seeks a twentieth of the clip.
+        .accessibilityElement()
         .accessibilityLabel("Playback position")
         .accessibilityValue("\(elapsedLabel) of \(ChatVideoPlayer.timeLabel(playback.duration))")
+        .accessibilityAdjustableAction { direction in
+            guard playback.duration > 0 else { return }
+            let step = max(1, playback.duration / 20)
+            let target = direction == .increment
+                ? min(playback.duration, shownTime + step)
+                : max(0, shownTime - step)
+            playback.seek(to: target, precise: true)
+            showChrome()
+        }
     }
 
     // MARK: - Gestures
@@ -298,13 +350,14 @@ struct VideoPlayerOverlay: View {
         withAnimation(.easeInOut(duration: 0.18)) { chromeVisible = false }
     }
 
-    /// Chrome only auto-hides while something is actually playing.
+    /// Chrome only auto-hides while something is actually playing — and never with VoiceOver or
+    /// Switch Control, which would be left in a modal with nothing to reach.
     private func scheduleChromeHide() {
         hideChromeTask?.cancel()
-        guard playback.isPlaying else { return }
+        guard playback.isPlaying, !assistiveTechRunning else { return }
         hideChromeTask = Task {
             try? await Task.sleep(for: Self.chromeIdleDelay)
-            guard !Task.isCancelled, playback.isPlaying, scrubTime == nil else { return }
+            guard !Task.isCancelled, playback.isPlaying, scrubTime == nil, !assistiveTechRunning else { return }
             withAnimation(.easeInOut(duration: 0.18)) { chromeVisible = false }
         }
     }

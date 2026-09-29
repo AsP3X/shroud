@@ -29,16 +29,33 @@ struct TranscriptionLanguageView: View {
                     Color.clear.frame(height: 24)
                 }
                 .padding(.horizontal, 16)
+                .padding(.top, 8)
             }
         }
-        // System navigation bar: Liquid Glass back button, large title, scroll edge fade.
+        // System navigation bar: Liquid Glass back button, inline title (like the other
+        // screens pushed from Settings), scroll edge fade.
         .navigationTitle("Transcription")
-        .navigationBarTitleDisplayMode(.large)
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .onAppear {
-            available = TranscriptionLanguage.whisperLocales
+            available = Self.pickerOrder(TranscriptionLanguage.whisperLocales)
             selection = TranscriptionLanguage.override
         }
+    }
+
+    /// The device's own languages first, as `whisperLocales` lists them, then the rest A–Z by
+    /// their shown name, so a language can be found without reading all thirty rows.
+    /// Only the picker is sorted: the transcriber reads `whisperLocales` in its own order.
+    private static func pickerOrder(_ all: [Locale]) -> [Locale] {
+        let preferred = Set(TranscriptionLanguage.preferredLanguageTags.compactMap {
+            Locale(identifier: $0).language.languageCode?.identifier
+        })
+        let head = all.prefix(while: { preferred.contains($0.language.languageCode?.identifier ?? "") })
+        let rest = all.dropFirst(head.count).sorted {
+            TranscriptionLanguage.displayName(for: $0)
+                .localizedStandardCompare(TranscriptionLanguage.displayName(for: $1)) == .orderedAscending
+        }
+        return Array(head) + rest
     }
 
     // MARK: - Header
@@ -156,14 +173,16 @@ struct TranscriptionLanguageView: View {
         .buttonStyle(HighlightRowButtonStyle())
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityLabel(title)
+        // The label skips the checkmark; the explanation stays reachable as the hint.
+        .accessibilityHint(subtitle ?? "")
     }
 
     private func choose(_ locale: Locale?) {
         withAnimation(Motion.snappy) {
             selection = locale
         }
+        // No haptic here: HighlightRowButtonStyle already ticks on press-down.
         TranscriptionLanguage.override = locale
-        Haptics.impact(.light)
     }
 }
 

@@ -881,14 +881,23 @@ final class MessagingController {
         if merged != presenceByUser { presenceByUser = merged }
     }
 
+    /// What sending a contact request did, so the sheet can say so. Payloads are the
+    /// other person's username, or the user-facing error.
+    enum AddContactOutcome: Equatable, Sendable {
+        /// The request is waiting for them; nothing shows in Contacts until they accept.
+        case requested(String)
+        /// They had already asked us, so the server accepted both at once.
+        case added(String)
+        case failed(String)
+    }
+
     /// Resolves share code, username, UUID, or invite link and sends a contact request.
-    /// Returns `nil` on success, otherwise a user-facing error string.
-    func addContact(fromInvite raw: String) async -> String? {
+    func addContact(fromInvite raw: String) async -> AddContactOutcome {
         guard let token = sessionController?.bearerToken else {
-            return "Not signed in."
+            return .failed("Not signed in.")
         }
         guard let invite = ContactInviteParser.parse(raw) else {
-            return "Enter a share code, username, link, or user ID."
+            return .failed("Enter a share code, username, link, or user ID.")
         }
         do {
             let card: UserCardDTO
@@ -901,38 +910,48 @@ final class MessagingController {
                 card = try await contactsService.getUserByUsername(name, token: token)
             }
             if card.id == sessionController?.userID {
-                return "You can't add yourself."
+                return .failed("You can't add yourself.")
             }
-            _ = try await contactsService.createRequest(userID: card.id, token: token)
+            let request = try await contactsService.createRequest(userID: card.id, token: token)
             await refreshContacts(force: true)
-            return nil
+            return request.status == "accepted" ? .added(card.username) : .requested(card.username)
         } catch {
-            return SessionController.userMessage(for: error)
+            return .failed(SessionController.userMessage(for: error))
         }
     }
 
     /// Legacy UUID-only entry point (kept for call sites / tests).
-    func addContact(byUserIDString raw: String) async -> String? {
+    func addContact(byUserIDString raw: String) async -> AddContactOutcome {
         await addContact(fromInvite: raw)
     }
 
-    func acceptRequest(_ request: ContactRequestDTO) async {
-        guard let token = sessionController?.bearerToken else { return }
+    /// Returns `nil` once the contact is in the roster, otherwise a user-facing error.
+    @discardableResult
+    func acceptRequest(_ request: ContactRequestDTO) async -> String? {
+        guard let token = sessionController?.bearerToken else { return "Not signed in." }
         do {
             try await contactsService.acceptRequest(id: request.id, token: token)
             await refreshContacts(force: true)
+            return nil
         } catch {
-            lastError = SessionController.userMessage(for: error)
+            let message = SessionController.userMessage(for: error)
+            lastError = message
+            return message
         }
     }
 
-    func rejectRequest(_ request: ContactRequestDTO) async {
-        guard let token = sessionController?.bearerToken else { return }
+    /// Returns `nil` once the request is gone, otherwise a user-facing error.
+    @discardableResult
+    func rejectRequest(_ request: ContactRequestDTO) async -> String? {
+        guard let token = sessionController?.bearerToken else { return "Not signed in." }
         do {
             try await contactsService.rejectRequest(id: request.id, token: token)
             await refreshContacts(force: true)
+            return nil
         } catch {
-            lastError = SessionController.userMessage(for: error)
+            let message = SessionController.userMessage(for: error)
+            lastError = message
+            return message
         }
     }
 

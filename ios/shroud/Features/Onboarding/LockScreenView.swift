@@ -36,8 +36,7 @@ struct LockScreenView: View {
     @State private var phase: Phase = .idle
     @State private var hasArrived = false
     @State private var showServerSettings = false
-    @State private var toastMessage: String?
-    @State private var toastDismissTask: Task<Void, Never>?
+    @State private var toast: Toast?
     /// Which control is running the vault prompt (nil = idle).
     @State private var unlockingMethod: HistoryKeyVault.UnlockMethod?
     /// Drives the badge's breathing while the system sheet is up.
@@ -55,7 +54,8 @@ struct LockScreenView: View {
     private var isBusy: Bool { phase != .idle }
 
     /// Name and SF Symbol of the biometry this device can evaluate; nil when it has none.
-    private static func detectBiometry() -> (name: String, symbol: String)? {
+    /// Privacy and Security reads its name from here too.
+    static func detectBiometry() -> (name: String, symbol: String)? {
         let context = LAContext()
         var error: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else {
@@ -76,19 +76,31 @@ struct LockScreenView: View {
 
     private var deviceName: String { UIDevice.current.model }
 
+    /// Everything but the hero: nav row 50 + hero top padding 4 + copy ≈150 + actions ≈222
+    /// (two buttons and the phrase fallback).
+    private static let nonHeroHeight: CGFloat = 426
+
+    /// 1 on every notched iPhone; ≈0.74 on a 4.7" iPhone SE, so the gear and the footer stay
+    /// on screen. The screen does not scroll: a scroll view would clip the release rings.
+    private static func heroScale(forHeight height: CGFloat) -> CGFloat {
+        min(1, max(0.6, (height - nonHeroHeight) / 300))
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            navRow
-            hero
-                .padding(.top, 4)
-            content
-                .frame(maxHeight: .infinity, alignment: .top)
-            actions
+        GeometryReader { proxy in
+            VStack(spacing: 0) {
+                navRow
+                hero(scale: Self.heroScale(forHeight: proxy.size.height))
+                    .padding(.top, 4)
+                content
+                    .frame(maxHeight: .infinity, alignment: .top)
+                actions
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.background)
         .navigationBarHidden(true)
-        .toast($toastMessage)
+        .toast($toast)
         .onAppear {
             if !hasArrived {
                 withAnimation(Motion.respecting(reduceMotion, Motion.gentle).delay(0.05)) {
@@ -119,35 +131,32 @@ struct LockScreenView: View {
         .onChange(of: scenePhase) { _, new in
             if new == .active { recheckDevicePasscode(announce: false) }
         }
-        .onDisappear { toastDismissTask?.cancel() }
+        // Signed in here: the sheet warns, and an endpoint change is Log Out. The wipe revokes
+        // the session on the server that issued it, and only then is the new server saved, so
+        // it is never asked about this session (its 401s would end in a forced wipe).
         .serverSettingsSheet(
             isPresented: $showServerSettings,
-            context: .onboarding,
-            serverConfig: serverConfig
+            context: .accountSettings,
+            serverConfig: serverConfig,
+            onSignOut: { router.logOut(switchingTo: $0) }
         )
     }
 
     // MARK: - Chrome
 
+    /// The server gear as a glass circle — the same bar recipe as the other onboarding screens.
     private var navRow: some View {
-        HStack {
-            Spacer(minLength: 0)
-            Button {
+        GlassBarRow {
+            EmptyView()
+        } center: {
+            EmptyView()
+        } trailing: {
+            GlassBarButton(systemImage: "gearshape.fill") {
                 showServerSettings = true
-            } label: {
-                Image(systemName: "gearshape.fill")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(Theme.accent)
-                    .frame(width: 44, height: 44)
-                    .background(Theme.backgroundGrouped)
-                    .clipShape(Circle())
             }
-            .pressable(scale: 0.88)
             .disabled(isBusy)
             .accessibilityLabel("Server settings")
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 4)
         .opacity(phase == .idle || phase == .checking ? 1 : 0)
     }
 
@@ -156,7 +165,9 @@ struct LockScreenView: View {
     private var verified: Bool { phase == .verified || phase == .releasing || phase == .revealing }
     private var released: Bool { phase == .releasing || phase == .revealing }
 
-    private var hero: some View {
+    /// `scale` shrinks the whole hero (rings, chips, mark, badge and their offsets) on short
+    /// screens; see `heroScale(forHeight:)`.
+    private func hero(scale: CGFloat) -> some View {
         ZStack {
             // Rings ripple outward on release.
             Circle()
@@ -200,8 +211,9 @@ struct LockScreenView: View {
                 .scaleEffect(badgeScale)
                 .opacity(released ? 0 : 1)
         }
+        .scaleEffect(scale)
         .frame(maxWidth: .infinity)
-        .frame(height: 300)
+        .frame(height: 300 * scale)
         .scaleEffect(hasArrived || reduceMotion ? 1 : 0.9)
         .opacity(hasArrived ? 1 : 0)
         .animation(Motion.respecting(reduceMotion, Motion.gentle), value: released)
@@ -309,6 +321,7 @@ struct LockScreenView: View {
                     .tracking(-0.6)
                     .foregroundStyle(Theme.textPrimary)
                     .multilineTextAlignment(.center)
+                    .accessibilityAddTraits(.isHeader)
                 Text(
                     canUseDeviceAuth
                         ? "Your messages stay encrypted on this \(deviceName) until you unlock them."
@@ -425,9 +438,17 @@ struct LockScreenView: View {
             .foregroundStyle(Color.white)
             .frame(maxWidth: .infinity)
             .frame(height: 54)
-            .background(verified ? Theme.online : Theme.accent)
+            .background {
+                // Unlocked sits on successFill in both modes (5.4:1 behind the white label).
+                // Same as Server Settings' Saved.
+                ZStack {
+                    Theme.accent
+                    Theme.successFill
+                        .opacity(verified ? 1 : 0)
+                }
+            }
             .clipShape(Capsule())
-            .shadow(color: (verified ? Theme.online : Theme.accent).opacity(0.25), radius: 20, y: 8)
+            .shadow(color: (verified ? Theme.successFill : Theme.accent).opacity(0.25), radius: 20, y: 8)
             .animation(Motion.respecting(reduceMotion, Motion.bouncy), value: verified)
             .animation(Motion.snappy, value: title)
         }
@@ -470,6 +491,8 @@ struct LockScreenView: View {
             return
         }
         unlockingMethod = method
+        // A leftover failure toast would sit over the prompt and the unlock choreography.
+        toast = nil
         withAnimation(Motion.snappy) { phase = .checking }
         let ok = await cryptoController.unlockHistoryIfPossible(
             for: userID,
@@ -485,8 +508,10 @@ struct LockScreenView: View {
                 _ = await router.reconcileOrphanedSessionIfNeeded()
                 presentPostAuthToastIfNeeded()
             } else {
-                toastMessage = cryptoController.lastUnlockErrorMessage
-                    ?? CryptoController.userMessage(for: CryptoControllerError.historyLocked)
+                toast = .failure(
+                    cryptoController.lastUnlockErrorMessage
+                        ?? CryptoController.userMessage(for: CryptoControllerError.historyLocked)
+                )
             }
             return
         }
@@ -537,20 +562,16 @@ struct LockScreenView: View {
         }
         if announce, !hasPasscode {
             Haptics.notification(.warning)
-            toastMessage = "No device passcode yet."
+            toast = .info("No device passcode yet.")
         }
     }
 
     private func presentPostAuthToastIfNeeded() {
         guard let message = router.postAuthToast else { return }
         router.postAuthToast = nil
-        toastDismissTask?.cancel()
-        toastMessage = message
-        toastDismissTask = Task {
-            try? await Task.sleep(nanoseconds: 2_400_000_000)
-            guard !Task.isCancelled else { return }
-            toastMessage = nil
-        }
+        // A notice about what happened to this iPhone, not a result of a tap here: it stays
+        // long enough to be read.
+        toast = .info(message, duration: .seconds(2.4))
     }
 }
 

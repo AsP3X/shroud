@@ -22,6 +22,17 @@ enum MessageReceiptStatus: Equatable, Sendable, Comparable {
     static func < (lhs: MessageReceiptStatus, rhs: MessageReceiptStatus) -> Bool {
         lhs.rank < rhs.rank
     }
+
+    /// What VoiceOver says for the ticks — delivered and read are both "checkmark" otherwise.
+    var spokenLabel: String {
+        switch self {
+        case .failed: "Failed"
+        case .sending: "Sending"
+        case .sent: "Sent"
+        case .delivered: "Delivered"
+        case .read: "Read"
+        }
+    }
 }
 
 // Note: `failed` is used for outbound media that stayed local after a send error.
@@ -46,6 +57,10 @@ struct MessageReceiptIcon: View {
                 .transition(Motion.iconSwap)
         }
         .animation(Motion.snappy, value: receipt)
+        // Photo and video time chips don't combine their children; a bubble that does
+        // overrides this with its own label.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(receipt.spokenLabel)
     }
 
     @ViewBuilder
@@ -395,6 +410,7 @@ struct MessageBubbleView: View {
     var onReactionTap: ((String) -> Void)? = nil
 
     @Environment(\.chatRowWidth) private var chatRowWidth
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
 
     /// Max width of the full bubble (including padding) — the row minus the opposite gutter.
     private var maxBubbleWidth: CGFloat {
@@ -418,7 +434,7 @@ struct MessageBubbleView: View {
     }
 
     private var bubbleFill: Color {
-        isMine ? Theme.accent : Theme.bubbleIncoming
+        isMine ? Theme.bubbleOutgoing : Theme.bubbleIncoming
     }
 
     private var textColor: Color {
@@ -459,9 +475,12 @@ struct MessageBubbleView: View {
         }
     }
 
-    /// Body with tappable links (Telegram colours: accent in, white + underline out).
+    /// Body with tappable links (Telegram colours: accent in, white + underline out; underlined
+    /// in as well under Differentiate Without Color).
     private var styledBody: AttributedString {
-        isDeleted ? AttributedString(displayText) : MessageLinkText.attributed(displayText, isMine: isMine)
+        isDeleted
+            ? AttributedString(displayText)
+            : MessageLinkText.attributed(displayText, isMine: isMine, underlined: differentiateWithoutColor)
     }
 
     /// Link runs follow the tint; the attributed colour alone is not enough for `Text`.
@@ -500,6 +519,15 @@ struct MessageBubbleView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
         .reactionAccessibilityActions(isDeleted ? [] : reactions, onTap: onReactionTap)
+        // The quote and the preview are taps inside the combined element; name them.
+        .accessibilityActions {
+            if reply != nil, let onReplyTap {
+                Button("Show replied message", action: onReplyTap)
+            }
+            if !isDeleted, linkPreview != nil, let onOpenLinkPreview {
+                Button("Open link", action: onOpenLinkPreview)
+            }
+        }
     }
 
     /// Compact single-line when it fits; otherwise multi-line body with meta on the last line.
@@ -787,7 +815,13 @@ struct MessageBubbleView: View {
     }
 
     private var accessibilityLabel: String {
-        var parts = [isMine ? "You" : "Them", displayText]
+        var parts = [isMine ? "You" : "Them"]
+        // The quote's own label is replaced by this one, so it has to be spoken here. It is
+        // drawn over deleted bubbles too.
+        if let reply {
+            parts.append("Reply to \(reply.author): \(reply.text)")
+        }
+        parts.append(displayText)
         if let linkPreview, !isDeleted {
             parts.append("Link preview: " + ([linkPreview.displaySiteName, linkPreview.title].compactMap { $0 }.joined(separator: ", ")))
         }
@@ -796,13 +830,7 @@ struct MessageBubbleView: View {
         }
         parts.append(time)
         if isMine {
-            switch receipt {
-            case .failed: parts.append("Failed")
-            case .sending: parts.append("Sending")
-            case .sent: parts.append("Sent")
-            case .delivered: parts.append("Delivered")
-            case .read: parts.append("Read")
-            }
+            parts.append(receipt.spokenLabel)
         }
         return parts.joined(separator: ", ")
     }

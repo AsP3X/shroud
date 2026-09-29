@@ -51,14 +51,14 @@ struct TypingIndicatorBubble: View {
                 switch activity {
                 case .typing:
                     TypingInk(isAnimated: !reduceMotion)
-                        .transition(Self.swap)
+                        .transition(reduceMotion ? .opacity : Self.swap)
                 case .recording:
                     RecordingInk(isAnimated: !reduceMotion)
-                        .transition(Self.swap)
+                        .transition(reduceMotion ? .opacity : Self.swap)
                 }
             }
             .frame(width: TypingInk.size.width, height: TypingInk.size.height)
-            .animation(Motion.snappy, value: activity)
+            .animation(Motion.respecting(reduceMotion, Motion.snappy), value: activity)
             .padding(.horizontal, 13)
             .padding(.top, 8)
             .padding(.bottom, 9)
@@ -76,8 +76,9 @@ struct TypingIndicatorBubble: View {
 
             Spacer(minLength: 56)
         }
+        // Under Reduce Motion it fades in where it will sit instead.
         .transition(
-            .scale(scale: 0.4, anchor: .bottomLeading).combined(with: .opacity)
+            reduceMotion ? .opacity : .scale(scale: 0.4, anchor: .bottomLeading).combined(with: .opacity)
         )
         .accessibilityElement()
         .accessibilityLabel(activity.accessibilityBubble)

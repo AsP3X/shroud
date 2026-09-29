@@ -30,10 +30,12 @@ struct AppearanceSettingsView: View {
                     Color.clear.frame(height: 24)
                 }
                 .padding(.horizontal, 16)
+                .padding(.top, 8)
             }
         }
+        // Inline, like the other screens pushed from Settings.
         .navigationTitle("Appearance")
-        .navigationBarTitleDisplayMode(.large)
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
     }
 
@@ -85,6 +87,8 @@ struct AppearanceSettingsView: View {
         .buttonStyle(HighlightRowButtonStyle())
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityLabel(style.title)
+        // The description is all that tells the two apart without seeing the marks.
+        .accessibilityHint(subtitle(style))
     }
 
     private func subtitle(_ style: BrandLogoStyle) -> String {
@@ -95,8 +99,8 @@ struct AppearanceSettingsView: View {
     }
 
     private func choose(_ style: BrandLogoStyle) {
+        // No haptic here: HighlightRowButtonStyle already ticks on press-down.
         guard style != preference.style, !preference.isChanging else { return }
-        Haptics.impact(.light)
         failure = nil
         Task {
             do {

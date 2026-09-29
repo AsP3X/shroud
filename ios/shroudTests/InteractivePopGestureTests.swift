@@ -103,6 +103,21 @@ final class InteractivePopGestureTests: XCTestCase {
         XCTAssertEqual(try shouldBegin(), true)
     }
 
+    /// On the chat itself the content recogniser only takes touches on the leading edge, so a
+    /// rightward drag across a message is not a request to leave.
+    func testChatKeepsTheSwipeToItsLeadingEdge() async throws {
+        try await push(.chat, depth: 1)
+        XCTAssertEqual(try shouldReceive(atX: 10), true)
+        XCTAssertEqual(try shouldReceive(atX: 200), false)
+    }
+
+    /// A screen pushed above the chat must not inherit its edge band: it swipes from anywhere.
+    func testScreenPushedFromChatSwipesFromAnywhere() async throws {
+        try await push(.chat, depth: 1)
+        try await push(.plain, depth: 2)
+        XCTAssertEqual(try shouldReceive(atX: 200), true)
+    }
+
     /// The iOS 26 content recogniser drives the swipe, so it must not keep UIKit's delegate
     /// (which refuses whenever the back button is hidden).
     func testBothPopRecognizersAreTakenOver() async throws {
@@ -147,6 +162,24 @@ final class InteractivePopGestureTests: XCTestCase {
         let recognizer = try XCTUnwrap(nav.interactiveContentPopGestureRecognizer)
         guard recognizer.isEnabled else { return false }
         return recognizer.delegate?.gestureRecognizerShouldBegin?(recognizer) ?? true
+    }
+
+    /// Whether the content pop recogniser would take a touch that lands at `x` (mid-height).
+    private func shouldReceive(atX x: CGFloat) throws -> Bool {
+        let nav = try XCTUnwrap(navigationController)
+        let recognizer = try XCTUnwrap(nav.interactiveContentPopGestureRecognizer)
+        let touch = FixedTouch(location: CGPoint(x: x, y: nav.view.bounds.midY))
+        return recognizer.delegate?.gestureRecognizer?(recognizer, shouldReceive: touch) ?? true
+    }
+
+    /// A touch that reports one fixed point in any view (UIKit builds no real ones in tests).
+    private final class FixedTouch: UITouch {
+        let point: CGPoint
+        init(location: CGPoint) {
+            point = location
+            super.init()
+        }
+        override func location(in view: UIView?) -> CGPoint { point }
     }
 
     private func settle(

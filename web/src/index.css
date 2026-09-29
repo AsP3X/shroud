@@ -1107,9 +1107,10 @@ button.reply-quote { cursor: pointer; }
 }
 .bubble.in .reply-quote-bubble .reply-quote-text { color: var(--text-primary); }
 .bubble.in .reply-quote-bubble .reply-quote-text.muted { color: var(--text-secondary); }
+/* Outgoing darkens rather than lightens: white text on a lightened accent falls below 4.5:1. */
 .bubble.out .reply-quote-bubble {
   color: var(--on-accent);
-  background: rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.12);
 }
 .bubble.out .reply-quote-bubble .reply-quote-text { color: rgba(255, 255, 255, 0.92); }
 .bubble.out .reply-quote-bubble .reply-quote-text.muted { color: rgba(255, 255, 255, 0.72); }
@@ -1190,7 +1191,7 @@ button.reply-quote { cursor: pointer; }
 }
 .bubble.out .link-preview {
   color: var(--on-accent);
-  background: rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.12);
 }
 .link-preview-site,
 .link-preview-title,
@@ -1199,7 +1200,8 @@ button.reply-quote { cursor: pointer; }
 .link-preview-title { font-weight: 600; }
 .bubble.in .link-preview-title,
 .bubble.in .link-preview-desc { color: var(--text-primary); }
-.bubble.out .link-preview-desc { color: rgba(255, 255, 255, 0.9); }
+/* Plain white: dimmed white on the accent misses 4.5:1. */
+.bubble.out .link-preview-desc { color: var(--on-accent); }
 .link-preview:hover .link-preview-title { text-decoration: underline; }
 .link-preview.has-thumb { min-height: 76px; padding-right: 6px; }
 .link-preview-thumb {

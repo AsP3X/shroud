@@ -4,7 +4,7 @@ import UIKit
 /// What a reply header actually draws — resolved once by the host, never by the bubble.
 ///
 /// Human: The quote prefers the *live* message when it is still in the thread, so quoting
-/// something that is later deleted for everyone reads "Deleted message" rather than keeping a
+/// something that is later deleted for everyone reads "Message deleted" rather than keeping a
 /// copy of text the sender withdrew. Only when the original is not on this device (older than
 /// the local window, or deleted for me) does it fall back to the snippet sealed with the reply.
 struct ReplyQuoteContent: Equatable {
@@ -12,7 +12,7 @@ struct ReplyQuoteContent: Equatable {
     var author: String
     /// One line of the quoted message.
     var text: String
-    /// True when `text` is a stand-in ("Photo", "Deleted message") rather than the words
+    /// True when `text` is a stand-in ("Photo", "Message deleted") rather than the words
     /// someone typed — drawn in the muted colour.
     var isStandIn: Bool
     /// Thumbnail of a quoted photo/video, when the original is on this device.
@@ -67,7 +67,7 @@ extension ReplyQuoteContent {
         if original.deleted {
             return ReplyQuoteContent(
                 author: author,
-                text: "Deleted message",
+                text: "Message deleted",
                 isStandIn: true,
                 thumbnail: nil,
                 symbolName: nil
@@ -157,8 +157,14 @@ struct ReplyQuoteView: View {
     private static let thumbnailSide: CGFloat = 32
     static let defaultFontSize: CGFloat = 14
 
+    /// Author, stripe and glyph. On the incoming bubble it is `accentText`, which keeps the
+    /// author readable in dark mode; the composer bar sits on the chat background.
     private var accentColor: Color {
-        style == .outgoing ? Color.white : Theme.accent
+        switch style {
+        case .outgoing: Color.white
+        case .incoming: Theme.accentText
+        case .composer: Theme.accent
+        }
     }
 
     private var bodyColor: Color {
@@ -170,7 +176,8 @@ struct ReplyQuoteView: View {
 
     private var tint: Color {
         switch style {
-        case .outgoing: Color.white.opacity(0.15)
+        // A darkening tint: white text on a lightened accent falls below 4.5:1.
+        case .outgoing: Color.black.opacity(0.12)
         case .incoming: Theme.accent.opacity(0.1)
         // The composer bar draws the line only — a filled block there would read as a message.
         case .composer: Color.clear
@@ -265,7 +272,7 @@ struct ReplyQuoteView: View {
         )
         .frame(width: 250)
         .padding(6)
-        .background(Theme.accent)
+        .background(Theme.bubbleOutgoing)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
 
         ReplyQuoteView(

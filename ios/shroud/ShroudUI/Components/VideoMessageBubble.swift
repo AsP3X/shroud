@@ -145,6 +145,30 @@ struct VideoMessageBubble: View {
                 bubbleCore
             }
         }
+        // One element, like the text and voice bubbles, instead of a poster, a badge, the time,
+        // each tick and the disc read one by one.
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityAddTraits(hasDefaultAction ? .isButton : [])
+        .accessibilityAction {
+            // A failed clip can't play, so a double tap retries, as the footer's button did
+            // when it was its own element.
+            if isFailed {
+                onRetry?()
+            } else {
+                handleTap()
+            }
+        }
+        .accessibilityActions {
+            if isFailed, let onRetry {
+                Button("Retry", action: onRetry)
+            }
+            // The default action above replaces the quote's own tap.
+            if reply != nil, !message.deleted, let onReplyTap {
+                Button("Show replied message", action: onReplyTap)
+            }
+        }
+        .reactionAccessibilityActions(hasReactions ? reactions : [], onTap: onReactionTap)
         .task(id: mediaEpoch) {
             await loadPoster()
         }
@@ -169,7 +193,8 @@ struct VideoMessageBubble: View {
             }
             .overlay {
                 if isFailed {
-                    RoundedRectangle(cornerRadius: 17.5, style: .continuous)
+                    // The bubble's own outline, tail corner included.
+                    corners
                         .stroke(Theme.danger.opacity(0.7), lineWidth: 1.5)
                 }
             }
@@ -213,7 +238,7 @@ struct VideoMessageBubble: View {
         )
         .padding(6)
         .frame(width: displaySize.width, alignment: .leading)
-        .background(isMine ? Theme.accent : Theme.bubbleIncoming)
+        .background(isMine ? Theme.bubbleOutgoing : Theme.bubbleIncoming)
         .clipShape(
             UnevenRoundedRectangle(
                 topLeadingRadius: 17.5,
@@ -261,6 +286,9 @@ struct VideoMessageBubble: View {
                     onTap: transferAction,
                     diameter: 54
                 )
+                // The bubble's label already speaks the state and the badge's size or phase, and
+                // its default action is this tap; merged in, the disc's value would repeat them.
+                .accessibilityHidden(true)
                 .transition(.scale(scale: 0.8).combined(with: .opacity))
             } else if !message.deleted {
                 playDisc
@@ -330,15 +358,18 @@ struct VideoMessageBubble: View {
                     .font(.system(size: 11, weight: .medium).monospacedDigit())
                     .foregroundStyle(Color.white.opacity(0.9))
                     .lineLimit(1)
-                    .contentTransition(.numericText())
+                    // Not numericText: its per-frame blur would run back to back for the whole
+                    // transfer. Monospaced digits keep the width steady as the bytes tick.
+                    .contentTransition(.opacity)
             }
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 3.5)
         .background(Color.black.opacity(0.45), in: Capsule())
-        .animation(Motion.snappy, value: sizeLabel)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Video, \(durationLabel)")
+        // Springs when a transfer starts, changes phase or ends, and when the size comes or
+        // goes; the byte ticks in between update in place.
+        .animation(Motion.snappy, value: transfer?.phase)
+        .animation(Motion.snappy, value: sizeLabel == nil)
     }
 
     /// The centre play control — Telegram's is a blurred disc, not a filled SF symbol.
@@ -360,11 +391,13 @@ struct VideoMessageBubble: View {
 
     private var metaColor: Color { Color.white.opacity(0.8) }
 
+    /// The time is brighter than `metaColor`, which stays dimmer for the ticks so delivered and
+    /// read still differ; with the fill and the scrim under it, it keeps 4.5:1 on a white poster.
     private var timeChip: some View {
         HStack(spacing: 3) {
             Text(time)
                 .font(.system(size: 11, weight: .regular))
-                .foregroundStyle(metaColor)
+                .foregroundStyle(Color.white.opacity(0.9))
                 .monospacedDigit()
                 .fixedSize()
             if isMine, !message.deleted {
@@ -378,7 +411,7 @@ struct VideoMessageBubble: View {
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 3)
-        .background(Color.black.opacity(0.35), in: Capsule())
+        .background(Color.black.opacity(0.5), in: Capsule())
     }
 
     // MARK: - States
@@ -393,7 +426,9 @@ struct VideoMessageBubble: View {
                 .foregroundStyle(Color.white)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.black.opacity(0.35))
+        // The dimmed poster lets the light chat background through; this much black keeps
+        // "Not sent" at 4.5:1 even over a white poster.
+        .background(Color.black.opacity(0.55))
     }
 
     private var failedFooter: some View {
@@ -406,15 +441,19 @@ struct VideoMessageBubble: View {
                     .frame(maxWidth: displaySize.width, alignment: isMine ? .trailing : .leading)
             }
             Button {
+                // The row's own tap sees this touch too; unclaimed, it would open the player.
+                MessageTapClaim.claim()
                 onRetry?()
             } label: {
                 Label("Retry", systemImage: "arrow.clockwise")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.accent)
-                    .padding(.vertical, 4)
+                    // 44 pt of target; the negative padding below keeps the footer's height.
+                    .padding(.vertical, 14)
                     .contentShape(Rectangle())
             }
             .pressable(scale: 0.92, haptic: .medium)
+            .padding(.vertical, -10)
         }
         .padding(.horizontal, 2)
         .transition(.opacity.combined(with: .move(edge: .top)))
@@ -433,7 +472,8 @@ struct VideoMessageBubble: View {
                 .foregroundStyle(Color.white.opacity(0.35))
         }
         .frame(width: displaySize.width, height: displaySize.height)
-        .shimmering(transfer != nil)
+        // The plate is dark in both appearances, so it keeps the bright sweep in dark mode too.
+        .shimmering(transfer != nil, adaptsToAppearance: false)
     }
 
     // MARK: - Caption
@@ -453,7 +493,12 @@ struct VideoMessageBubble: View {
                         .padding(.trailing, MessageBubbleMetrics.textTrailingPad)
                         .padding(.top, 7)
                 }
-                ReactionFooter(chips: reactions, onOutgoingBubble: isMine, onTap: onReactionTap) {
+                ReactionFooter(
+                    chips: reactions,
+                    onOutgoingBubble: isMine,
+                    onTap: onReactionTap,
+                    chipsAccessible: false
+                ) {
                     captionMetaRow
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -480,7 +525,7 @@ struct VideoMessageBubble: View {
             }
         }
         .frame(width: displaySize.width, alignment: .leading)
-        .background(isMine ? Theme.accent : Theme.bubbleIncoming)
+        .background(isMine ? Theme.bubbleOutgoing : Theme.bubbleIncoming)
         .clipShape(
             UnevenRoundedRectangle(
                 topLeadingRadius: 0,
@@ -527,10 +572,13 @@ struct VideoMessageBubble: View {
                 .fixedSize()
 
             if showsCaptionReceipt {
+                // Only outgoing bubbles show ticks, so this is always on the accent strip,
+                // where the default red failed glyph all but disappears.
                 MessageReceiptIcon(
                     receipt: message.receipt,
                     metaColor: captionMetaColor,
-                    readColor: Color.white.opacity(0.95)
+                    readColor: Color.white.opacity(0.95),
+                    failedColor: Color.white
                 )
             }
         }
@@ -538,7 +586,10 @@ struct VideoMessageBubble: View {
 
     // MARK: - Actions
 
+    /// The poster owns every tap on it, including the ones it declines: the row's own tap would
+    /// otherwise open a failed or still-uploading clip, or open this one a second time.
     private func handleTap() {
+        MessageTapClaim.claim()
         if isSending { return }
         if needsDownload {
             Haptics.impact(.light)
@@ -553,8 +604,44 @@ struct VideoMessageBubble: View {
     /// The disc's own tap: start a download, or cancel the one in flight. Nil while sending —
     /// an upload is already committed to the wire.
     private var transferAction: (() -> Void)? {
-        guard !isSending else { return nil }
-        return transfer == nil ? onDownload : onCancelDownload
+        guard !isSending, let action = transfer == nil ? onDownload : onCancelDownload else { return nil }
+        return {
+            // Claimed like the poster's tap, or the row would restart a download just cancelled.
+            MessageTapClaim.claim()
+            action()
+        }
+    }
+
+    /// A double tap does something: retry, download or cancel, or play.
+    private var hasDefaultAction: Bool {
+        (isFailed && onRetry != nil) || needsDownload || canOpen
+    }
+
+    /// The whole bubble as VoiceOver reads it, in the text bubble's order.
+    private var accessibilityLabel: String {
+        var parts = [isMine ? "You" : "Them"]
+        // The quote's own label is replaced by this one, so it is spoken here.
+        if let reply, !message.deleted {
+            parts.append("Reply to \(reply.author): \(reply.text)")
+        }
+        parts.append("Video")
+        parts.append(durationLabel)
+        if hasCaption, !message.deleted { parts.append(caption) }
+        if isFailed {
+            parts.append("Not sent")
+            if let error = message.sendError, !error.isEmpty { parts.append(error) }
+        } else {
+            if needsDownload { parts.append(transfer == nil ? "Not downloaded" : "Downloading") }
+            // The badge's size or progress; "1.1 MB of 4.2 MB" reads better than its slash.
+            if let sizeLabel { parts.append(sizeLabel.replacingOccurrences(of: " / ", with: " of ")) }
+        }
+        if hasReactions, let summary = reactions.spokenSummary { parts.append(summary) }
+        parts.append(time)
+        // A failed send already said "Not sent".
+        if isMine, !message.deleted, !isFailed {
+            parts.append(message.receipt.spokenLabel)
+        }
+        return parts.joined(separator: ", ")
     }
 
     private func loadPoster() async {

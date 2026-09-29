@@ -109,6 +109,32 @@ struct ImageMessageBubble: View {
                 bubbleCore
             }
         }
+        // One element, like the text and voice bubbles. Otherwise VoiceOver reads an unlabelled
+        // image, each tick by its symbol name, and the clear reservation after the caption.
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityAddTraits(hasDefaultAction ? [.isImage, .isButton] : [.isImage])
+        .accessibilityAction {
+            // A failed photo can't open, so a double tap retries, as the footer's button did
+            // when it was its own element.
+            if isFailed {
+                onRetry?()
+            } else if needsDownload {
+                transfer == nil ? onDownload?() : onCancelDownload?()
+            } else if canOpen {
+                onOpen?()
+            }
+        }
+        .accessibilityActions {
+            if isFailed, let onRetry {
+                Button("Retry", action: onRetry)
+            }
+            // The default action above replaces the quote's own tap.
+            if reply != nil, !message.deleted, let onReplyTap {
+                Button("Show replied message", action: onReplyTap)
+            }
+        }
+        .reactionAccessibilityActions(hasReactions ? reactions : [], onTap: onReactionTap)
     }
 
     private var bubbleCore: some View {
@@ -144,8 +170,16 @@ struct ImageMessageBubble: View {
                     } else if needsDownload {
                         MediaTransferControl(
                             mode: transfer.map { .busy($0) } ?? .idle(byteCount: message.mediaByteCount),
-                            onTap: { transfer == nil ? onDownload?() : onCancelDownload?() }
+                            onTap: {
+                                // The row's own tap would start the download a cancel just stopped.
+                                MessageTapClaim.claim()
+                                transfer == nil ? onDownload?() : onCancelDownload?()
+                            }
                         )
+                        // The bubble's label already speaks the state, size and progress and
+                        // its default action is this tap; merged in, the disc's value would
+                        // repeat the size after the label.
+                        .accessibilityHidden(true)
                         .transition(.scale(scale: 0.8).combined(with: .opacity))
                     } else if !hasFooter {
                         VStack {
@@ -162,16 +196,7 @@ struct ImageMessageBubble: View {
                 .frame(width: displaySize.width, height: displaySize.height)
                 .clipShape(mediaShape)
                 .contentShape(Rectangle())
-                .onTapGesture {
-                    if needsDownload {
-                        Haptics.impact(.light)
-                        onDownload?()
-                        return
-                    }
-                    guard canOpen else { return }
-                    Haptics.impact(.light)
-                    onOpen?()
-                }
+                .onTapGesture(perform: handleTap)
 
                 if hasFooter, !message.deleted {
                     captionFooter
@@ -179,7 +204,8 @@ struct ImageMessageBubble: View {
             }
             .overlay {
                 if isFailed {
-                    RoundedRectangle(cornerRadius: 17.5, style: .continuous)
+                    // The bubble's own outline, tail corner included.
+                    corners
                         .stroke(Theme.danger.opacity(0.7), lineWidth: 1.5)
                 }
             }
@@ -223,7 +249,7 @@ struct ImageMessageBubble: View {
         )
         .padding(6)
         .frame(width: displaySize.width, alignment: .leading)
-        .background(isMine ? Theme.accent : Theme.bubbleIncoming)
+        .background(isMine ? Theme.bubbleOutgoing : Theme.bubbleIncoming)
         .clipShape(
             UnevenRoundedRectangle(
                 topLeadingRadius: 17.5,
@@ -238,11 +264,14 @@ struct ImageMessageBubble: View {
     private var metaColor: Color { Color.white.opacity(0.75) }
     private var readTickColor: Color { Color.white.opacity(0.95) }
 
+    /// The time is brighter than `metaColor`, which stays dimmer for the ticks so delivered and
+    /// read still differ. A photo has no scrim under the chip, so its fill is darker than the
+    /// video chip's; on a white photo both land on the same shade and keep the time at 4.5:1.
     private var timeChip: some View {
         HStack(spacing: 3) {
             Text(time)
                 .font(.system(size: 11, weight: .regular))
-                .foregroundStyle(metaColor)
+                .foregroundStyle(Color.white.opacity(0.9))
                 .monospacedDigit()
                 .fixedSize()
             if isMine, !message.deleted {
@@ -256,7 +285,7 @@ struct ImageMessageBubble: View {
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 3)
-        .background(Color.black.opacity(0.35))
+        .background(Color.black.opacity(0.6))
         .clipShape(Capsule())
         .padding(8)
     }
@@ -271,7 +300,9 @@ struct ImageMessageBubble: View {
                 .foregroundStyle(Color.white)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.black.opacity(0.35))
+        // The dimmed photo lets the light chat background through; this much black keeps
+        // "Not sent" at 4.5:1 even over a white photo.
+        .background(Color.black.opacity(0.55))
     }
 
     private var failedFooter: some View {
@@ -284,15 +315,19 @@ struct ImageMessageBubble: View {
                     .frame(maxWidth: displaySize.width, alignment: isMine ? .trailing : .leading)
             }
             Button {
+                // The row's own tap sees this touch too; unclaimed, it would open the viewer.
+                MessageTapClaim.claim()
                 onRetry?()
             } label: {
                 Label("Retry", systemImage: "arrow.clockwise")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.accent)
-                    .padding(.vertical, 4)
+                    // 44 pt of target; the negative padding below keeps the footer's height.
+                    .padding(.vertical, 14)
                     .contentShape(Rectangle())
             }
             .pressable(scale: 0.92, haptic: .medium)
+            .padding(.vertical, -10)
         }
         .padding(.horizontal, 2)
         .transition(.opacity.combined(with: .move(edge: .top)))
@@ -300,7 +335,7 @@ struct ImageMessageBubble: View {
 
     private var emptyPlaceholder: some View {
         ZStack {
-            (isMine ? Theme.accent : Theme.bubbleIncoming)
+            (isMine ? Theme.bubbleOutgoing : Theme.bubbleIncoming)
             Image(systemName: "photo")
                 .font(.system(size: 28, weight: .medium))
                 .foregroundStyle(isMine ? Color.white.opacity(0.7) : Theme.textSecondary)
@@ -323,7 +358,12 @@ struct ImageMessageBubble: View {
                         .padding(.trailing, MessageBubbleMetrics.textTrailingPad)
                         .padding(.top, 7)
                 }
-                ReactionFooter(chips: reactions, onOutgoingBubble: isMine, onTap: onReactionTap) {
+                ReactionFooter(
+                    chips: reactions,
+                    onOutgoingBubble: isMine,
+                    onTap: onReactionTap,
+                    chipsAccessible: false
+                ) {
                     captionMetaRow
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -350,7 +390,7 @@ struct ImageMessageBubble: View {
             }
         }
         .frame(width: displaySize.width, alignment: .leading)
-        .background(isMine ? Theme.accent : Theme.bubbleIncoming)
+        .background(isMine ? Theme.bubbleOutgoing : Theme.bubbleIncoming)
         .clipShape(
             UnevenRoundedRectangle(
                 topLeadingRadius: 0,
@@ -397,12 +437,74 @@ struct ImageMessageBubble: View {
                 .fixedSize()
 
             if showsCaptionReceipt {
+                // Only outgoing bubbles show ticks, so this is always on the accent strip,
+                // where the default red failed glyph all but disappears.
                 MessageReceiptIcon(
                     receipt: message.receipt,
                     metaColor: captionMetaColor,
-                    readColor: Color.white.opacity(0.95)
+                    readColor: Color.white.opacity(0.95),
+                    failedColor: Color.white
                 )
             }
         }
+    }
+
+    // MARK: - Actions
+
+    /// The photo owns every tap on it, including the ones it declines: the row's own tap would
+    /// otherwise open a failed photo, or open this one a second time.
+    private func handleTap() {
+        MessageTapClaim.claim()
+        if needsDownload {
+            Haptics.impact(.light)
+            onDownload?()
+            return
+        }
+        guard canOpen else { return }
+        Haptics.impact(.light)
+        onOpen?()
+    }
+
+    // MARK: - Accessibility
+
+    /// A double tap does something: retry, download or cancel, or open.
+    private var hasDefaultAction: Bool {
+        (isFailed && onRetry != nil) || needsDownload || canOpen
+    }
+
+    /// The whole bubble as VoiceOver reads it, in the text bubble's order.
+    private var accessibilityLabel: String {
+        var parts = [isMine ? "You" : "Them"]
+        // The quote's own label is replaced by this one, so it is spoken here.
+        if let reply, !message.deleted {
+            parts.append("Reply to \(reply.author): \(reply.text)")
+        }
+        parts.append("Photo")
+        if hasCaption, !message.deleted { parts.append(caption) }
+        if isFailed {
+            parts.append("Not sent")
+            if let error = message.sendError, !error.isEmpty { parts.append(error) }
+        } else if needsDownload {
+            if let transfer {
+                parts.append("Downloading")
+                // The ring's fill; the disc itself is hidden from VoiceOver.
+                if !transfer.isIndeterminate {
+                    parts.append("\(Int(transfer.ringFraction * 100)) percent")
+                }
+            } else {
+                parts.append("Not downloaded")
+                // The size under the download arrow, before committing to it on mobile data.
+                if let bytes = message.mediaByteCount, bytes > 0 {
+                    parts.append(MediaCrypto.byteCountLabel(bytes))
+                }
+            }
+        }
+        if hasReactions, let summary = reactions.spokenSummary { parts.append(summary) }
+        parts.append(time)
+        // A failed send already said "Not sent".
+        if isMine, !message.deleted, !isFailed {
+            parts.append(message.receipt.spokenLabel)
+        }
+        return parts.joined(separator: ", ")
     }
 }

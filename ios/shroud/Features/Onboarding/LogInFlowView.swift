@@ -6,8 +6,12 @@ struct LogInFlowView: View {
 
     @Environment(SessionController.self) private var sessionController
     @Environment(CryptoController.self) private var cryptoController
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var phase: Phase = .credentials
+    /// Opened from the lock screen with a session already in place: only the phrase step
+    /// applies, so Back leaves the screen instead of showing a login form.
+    @State private var startedSignedIn = false
     @State private var username = ""
     @State private var password = ""
     @State private var isPasswordVisible = false
@@ -16,10 +20,20 @@ struct LogInFlowView: View {
     @State private var revealTask: Task<Void, Never>?
     @State private var isSubmitting = false
     @State private var errorMessage: String?
+    @FocusState private var focusedField: Field?
 
     private enum Phase {
         case credentials
         case encryptionPhrase
+    }
+
+    /// Every text field on the screen. The password has two: a secure one and the revealed
+    /// twin the eye swaps in (see `credentialRow`).
+    private enum Field: Hashable {
+        case username
+        case password
+        case revealedPassword
+        case word(Int)
     }
 
     private var isCredentialsPhase: Bool { phase == .credentials }
@@ -79,15 +93,27 @@ struct LogInFlowView: View {
         }
         .navigationBarHidden(true)
         .onboardingHeroDestination()
-        .animation(.spring(response: 0.42, dampingFraction: 0.86), value: phase)
+        .animation(Motion.respecting(reduceMotion, Motion.standard), value: phase)
         .onAppear {
-            // Already have a server session (e.g. locked chats) — jump to phrase unlock.
+            // Already have a server session (e.g. locked chats) — jump to phrase unlock. Without
+            // animation: the push lands on the phrase step instead of morphing into it.
             if sessionController.isSignedIn {
-                phase = .encryptionPhrase
+                startedSignedIn = true
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    phase = .encryptionPhrase
+                }
             }
         }
         .onDisappear {
             revealTask?.cancel()
+        }
+        // The error appears above the button while focus stays on it: say it out loud.
+        .onChange(of: errorMessage) { _, message in
+            if let message {
+                AccessibilityNotification.Announcement(message).post()
+            }
         }
     }
 
@@ -95,9 +121,12 @@ struct LogInFlowView: View {
     private var navRow: some View {
         GlassBarRow {
             GlassBarButton(systemImage: "chevron.left") {
-                if isCredentialsPhase {
+                if isCredentialsPhase || startedSignedIn {
                     router.pop()
                 } else {
+                    // The phrase step's error belongs to the phrase step.
+                    errorMessage = nil
+                    focusedField = nil
                     phase = .credentials
                 }
             }
@@ -125,7 +154,12 @@ struct LogInFlowView: View {
             Text("Signed in as @\(signedInUsername)")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Theme.successText)
+                // Usernames run to 32 characters: one line, inside the strip's rounded ends.
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .truncationMode(.middle)
         }
+        .padding(.horizontal, 12)
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8)
         .background(Theme.successBackground)
@@ -140,8 +174,9 @@ struct LogInFlowView: View {
     private var heroSection: some View {
         VStack(spacing: 10) {
             ZStack {
+                // Reduce Motion turns the morph into a plain cross-fade: no scaling.
                 BrandLogoMark(size: 64)
-                    .scaleEffect(isCredentialsPhase ? 1 : 0.82)
+                    .scaleEffect(isCredentialsPhase || reduceMotion ? 1 : 0.82)
                     .opacity(isCredentialsPhase ? 1 : 0)
 
                 ZStack {
@@ -154,7 +189,7 @@ struct LogInFlowView: View {
                         .rotationEffect(.degrees(-45))
                 }
                 .shadow(color: Theme.accent.opacity(0.25), radius: 10, y: 8)
-                .scaleEffect(isCredentialsPhase ? 0.82 : 1)
+                .scaleEffect(!isCredentialsPhase || reduceMotion ? 1 : 0.82)
                 .opacity(isCredentialsPhase ? 0 : 1)
             }
 
@@ -164,6 +199,7 @@ struct LogInFlowView: View {
                     .foregroundStyle(Theme.textPrimary)
                     .multilineTextAlignment(.center)
                     .contentTransition(.interpolate)
+                    .accessibilityAddTraits(.isHeader)
 
                 Text(isCredentialsPhase
                     ? "Log in with your account to continue. You'll unlock your messages in the next step."
@@ -183,12 +219,12 @@ struct LogInFlowView: View {
         ZStack(alignment: .top) {
             credentialsCard
                 .opacity(isCredentialsPhase ? 1 : 0)
-                .scaleEffect(isCredentialsPhase ? 1 : 0.96, anchor: .top)
+                .scaleEffect(isCredentialsPhase || reduceMotion ? 1 : 0.96, anchor: .top)
                 .allowsHitTesting(isCredentialsPhase)
 
             phraseCard
                 .opacity(isCredentialsPhase ? 0 : 1)
-                .scaleEffect(isCredentialsPhase ? 0.96 : 1, anchor: .top)
+                .scaleEffect(!isCredentialsPhase || reduceMotion ? 1 : 0.96, anchor: .top)
                 .allowsHitTesting(!isCredentialsPhase)
         }
     }
@@ -198,14 +234,15 @@ struct LogInFlowView: View {
             if let errorMessage {
                 Text(errorMessage)
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Theme.danger)
+                    .foregroundStyle(Theme.dangerText)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             PrimaryButton(
                 title: isCredentialsPhase
                     ? (isSubmitting ? "Signing in…" : "Log In")
-                    : (isSubmitting ? "Unlocking…" : "Unlock Messages")
+                    : (isSubmitting ? "Unlocking…" : "Unlock Messages"),
+                isLoading: isSubmitting
             ) {
                 if isCredentialsPhase {
                     Task { await submitCredentials() }
@@ -228,21 +265,40 @@ struct LogInFlowView: View {
 
     private var credentialsCard: some View {
         VStack(spacing: 0) {
-            credentialRow(icon: "at", placeholder: "Username", text: $username)
+            credentialRow(
+                icon: "at",
+                placeholder: "Username",
+                text: $username,
+                field: .username,
+                contentType: .username
+            )
             Divider().padding(.leading, 42)
             credentialRow(
                 icon: "lock.fill",
                 placeholder: "Password",
                 text: $password,
-                isSecure: !isPasswordVisible,
+                field: .password,
+                contentType: .password,
                 trailing: {
                     Button {
+                        // Hand the keyboard to the twin that is about to show, so it stays up.
+                        let wasEditing = focusedField == .password || focusedField == .revealedPassword
                         isPasswordVisible.toggle()
+                        if wasEditing {
+                            focusedField = isPasswordVisible ? .revealedPassword : .password
+                        }
                     } label: {
                         Image(systemName: isPasswordVisible ? "eye" : "eye.slash")
                             .font(.system(size: 18))
                             .foregroundStyle(Theme.textSecondary)
+                            // 44 pt target around the glyph; the row is 50 pt tall.
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
                     }
+                    .pressable(scale: 0.88)
+                    .accessibilityLabel(isPasswordVisible ? "Hide password" : "Show password")
+                    // The wider target reaches into the row's inset; the glyph stays where it was.
+                    .padding(.trailing, -11)
                 }
             )
         }
@@ -267,12 +323,15 @@ struct LogInFlowView: View {
                         Text("Paste")
                             .font(.system(size: 12, weight: .semibold))
                     }
-                    .foregroundStyle(Theme.accent)
+                    .foregroundStyle(Theme.accentText)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(Theme.accentSoft)
                     .clipShape(Capsule())
+                    // The pill is ~24 pt tall; the target reaches 10 pt past it on every side.
+                    .contentShape(Rectangle().inset(by: -10))
                 }
+                .pressable()
                 .disabled(isPhraseRevealInProgress)
                 .opacity(isPhraseRevealInProgress ? 0.45 : 1)
             }
@@ -298,9 +357,14 @@ struct LogInFlowView: View {
     private func pastePhraseFromPasteboard() {
         guard let pastedText = EncryptionPhrasePasteboard.read(),
               let words = EncryptionPhraseParser.parse(pastedText) else {
+            // Empty clipboard, "Don't Allow" on the paste prompt, or not a valid phrase.
+            Haptics.notification(.error)
+            errorMessage = "The clipboard doesn’t hold a valid 12-word phrase."
             return
         }
 
+        errorMessage = nil
+        focusedField = nil
         revealTask?.cancel()
         phraseWords = words
         revealedWordCount = 0
@@ -316,7 +380,9 @@ struct LogInFlowView: View {
         let isRevealed = index < revealedWordCount
 
         return HStack(spacing: 6) {
+            // The field names its own position ("Word 3"), so VoiceOver skips the badge.
             PhraseWordNumberBadge(number: index + 1, isRevealed: isRevealed)
+                .accessibilityHidden(true)
 
             Group {
                 if isRevealed {
@@ -327,6 +393,10 @@ struct LogInFlowView: View {
                     .font(.system(size: 14, weight: .medium, design: .monospaced))
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+                    .accessibilityLabel("Word \(index + 1)")
+                    .focused($focusedField, equals: .word(index))
+                    .submitLabel(index < phraseWords.count - 1 ? .next : .go)
+                    .onSubmit { submitPhraseWord(at: index) }
                     .transition(
                         .asymmetric(
                             insertion: .opacity.combined(with: .scale(scale: 0.86, anchor: .leading)),
@@ -342,9 +412,26 @@ struct LogInFlowView: View {
         }
         .padding(.horizontal, 12)
         .frame(height: 40)
+        // The whole cell focuses its word, not only the text line.
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if isRevealed { focusedField = .word(index) }
+        }
         .background(Theme.backgroundGrouped)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .animation(EncryptionPhraseReveal.wordRevealSpring, value: isRevealed)
+    }
+
+    /// Return moves on to the next word; on the last one it unlocks once all 12 are in.
+    private func submitPhraseWord(at index: Int) {
+        if index < phraseWords.count - 1 {
+            focusedField = .word(index + 1)
+        } else {
+            focusedField = nil
+            if canUnlockWithPhrase {
+                Task { await submitPhraseUnlock() }
+            }
+        }
     }
 
     private var privacyHint: some View {
@@ -362,11 +449,17 @@ struct LogInFlowView: View {
         .clipped()
     }
 
+    // Human: A tap anywhere on the 50 pt row focuses its field; Return goes username → password
+    // → Log In. The eye swaps the password's two fields without dropping the keyboard.
+    // Agent: The password row keeps a SecureField and a plain TextField mounted and shows one
+    // (`isPasswordVisible`); `focusedField` moves between them. The hidden twin is out of
+    // hit-testing and accessibility.
     private func credentialRow<Trailing: View>(
         icon: String,
         placeholder: String,
         text: Binding<String>,
-        isSecure: Bool = false,
+        field: Field,
+        contentType: UITextContentType? = nil,
         @ViewBuilder trailing: () -> Trailing = { EmptyView() }
     ) -> some View {
         HStack(spacing: 10) {
@@ -374,21 +467,57 @@ struct LogInFlowView: View {
                 .font(.system(size: 18))
                 .foregroundStyle(Theme.textSecondary)
                 .frame(width: 18)
-            if isSecure {
-                SecureField(placeholder, text: text)
+            if field == .password {
+                ZStack {
+                    SecureField(placeholder, text: text)
+                        .textContentType(contentType)
+                        .focused($focusedField, equals: .password)
+                        .opacity(isPasswordVisible ? 0 : 1)
+                        .allowsHitTesting(!isPasswordVisible)
+                        .accessibilityHidden(isPasswordVisible)
+                    TextField(placeholder, text: text)
+                        .textContentType(contentType)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .focused($focusedField, equals: .revealedPassword)
+                        .opacity(isPasswordVisible ? 1 : 0)
+                        .allowsHitTesting(isPasswordVisible)
+                        .accessibilityHidden(!isPasswordVisible)
+                }
             } else {
                 TextField(placeholder, text: text)
+                    .textContentType(contentType)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+                    .focused($focusedField, equals: field)
             }
             trailing()
         }
         .font(.system(size: 16))
+        .submitLabel(field == .username ? .next : .go)
+        .onSubmit { submitCredentialField(field) }
         .padding(.horizontal, 14)
         .frame(height: 50)
+        .contentShape(Rectangle())
+        .onTapGesture { focusedField = focusTarget(for: field) }
+    }
+
+    /// The field that takes the keyboard for a credential row: the visible password twin.
+    private func focusTarget(for field: Field) -> Field {
+        field == .password && isPasswordVisible ? .revealedPassword : field
+    }
+
+    private func submitCredentialField(_ field: Field) {
+        if field == .username {
+            focusedField = focusTarget(for: .password)
+        } else if canSubmitCredentials {
+            Task { await submitCredentials() }
+        }
     }
 
     private var primaryButtonDimmed: Bool {
+        // In flight the button shows its spinner at full strength, not the invalid-form dim.
+        if isSubmitting { return false }
         if isCredentialsPhase {
             return !canSubmitCredentials
         }
@@ -413,7 +542,9 @@ struct LogInFlowView: View {
         do {
             try await sessionController.login(username: username, password: password)
             // Stay on this screen — RootView must not treat session alone as messaging unlock.
-            withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
+            // The credentials card hides without resigning its field: drop the keyboard here.
+            focusedField = nil
+            withAnimation(Motion.respecting(reduceMotion, Motion.standard)) {
                 phase = .encryptionPhrase
             }
         } catch {
@@ -432,6 +563,7 @@ struct LogInFlowView: View {
               let token = sessionController.bearerToken
         else {
             errorMessage = "Session expired. Log in again."
+            focusedField = nil
             phase = .credentials
             return
         }

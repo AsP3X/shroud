@@ -8,12 +8,15 @@ import SwiftUI
 /// `VoicePlaybackCoordinator`, so scrolling a playing note off-screen does not kill it and
 /// starting a second note stops the first — both Telegram behaviours. The transcript starts
 /// folded; the toggle unfolds it inside the bubble, transcribing on device first when needed.
-/// Agent: READS coordinator state + `message.voiceData`; CALLS onAppearLoad to trigger decrypt.
+/// Agent: READS coordinator state + `message.voiceData`; CALLS onAppearLoad to trigger decrypt
+/// (again from the disc when an attempt ended without the audio).
 /// Scrubbing writes only to the coordinator; the fold lives in `VoiceTranscriptDisclosure`.
 struct VoiceMessageBubble: View {
     let message: MessagingController.ChatMessage
     let time: String
-    var onAppearLoad: () -> Void = {}
+    /// Fetches and decrypts the audio, returning once that attempt is over, loaded or not.
+    /// Nil (the long-press hero) keeps the spinner up and offers no retry.
+    var onAppearLoad: (() async -> Void)? = nil
     var onRequestTranscript: (() async -> String?)? = nil
     /// One of the newest voice notes with nothing newer under it: a short transcript unfolds unasked.
     var inTranscriptTail = false
@@ -47,6 +50,8 @@ struct VoiceMessageBubble: View {
     @State private var isLanding: Bool?
     /// Text revealed once the bubble is on screen streams in; text there from the start doesn't.
     @State private var hasAppeared = false
+    /// The last fetch of the audio ended without it, so the disc offers a retry, not a spinner.
+    @State private var loadFailed = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -77,9 +82,14 @@ struct VoiceMessageBubble: View {
         return resolvedDurationMs ?? stated
     }
 
+    /// The audio is on the server and not on this device yet.
+    private var needsAudio: Bool {
+        message.voiceData == nil && message.mediaObjectId != nil && !message.deleted
+    }
+
     /// Audio is still being fetched/decrypted — the disc shows a spinner instead of play.
     private var isLoading: Bool {
-        message.voiceData == nil && message.mediaObjectId != nil && !message.deleted
+        needsAudio && !loadFailed
     }
 
     private var isPlaying: Bool { playback.isPlaying(message.id) }
@@ -192,7 +202,7 @@ struct VoiceMessageBubble: View {
         // Covers the automatic fold too: a new message below, or a fresh note done landing.
         .animation(Motion.respecting(reduceMotion, Motion.standard), value: isTranscriptOpen)
         .onAppear {
-            onAppearLoad()
+            loadAudio()
             hasAppeared = true
         }
         .task {
@@ -216,15 +226,23 @@ struct VoiceMessageBubble: View {
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel([accessibilityLabel, message.deleted ? nil : reactions.spokenSummary]
-            .compactMap { $0 }
-            .joined(separator: ", "))
+        .accessibilityLabel(accessibilityLabel)
         .reactionAccessibilityActions(message.deleted ? [] : reactions, onTap: onReactionTap)
         .accessibilityAddTraits(.isButton)
-        .accessibilityAction(named: isPlaying ? "Pause" : "Play") { togglePlayback() }
+        // The play disc is hidden, so without a default action a double tap would land on
+        // whatever child SwiftUI merged in (the quote) or seek the waveform.
+        .accessibilityAction { togglePlayback() }
+        .accessibilityAction(named: playActionName) { togglePlayback() }
         .accessibilityActions {
             if showsTranscriptButton, transcriptButtonEnabled {
                 Button(transcriptActionName) { toggleTranscript() }
+            }
+            // The default action above replaces the quote's own tap; the speed chip is hidden.
+            if reply != nil, let onReplyTap {
+                Button("Show replied message", action: onReplyTap)
+            }
+            if playback.isActive(message.id) {
+                Button("Playback speed \(rateLabel)") { playback.cycleRate() }
             }
         }
     }
@@ -293,7 +311,7 @@ struct VoiceMessageBubble: View {
         }
         .padding(.horizontal, Self.horizontalPadding)
         .padding(.vertical, 8)
-        .background(isMine ? Theme.accent : Theme.bubbleIncoming)
+        .background(isMine ? Theme.bubbleOutgoing : Theme.bubbleIncoming)
         .clipShape(
             UnevenRoundedRectangle(
                 topLeadingRadius: 17.5,
@@ -319,6 +337,11 @@ struct VoiceMessageBubble: View {
                     ProgressView()
                         .controlSize(.small)
                         .tint(Color.white)
+                } else if needsAudio {
+                    // The last fetch came back without the audio; a tap tries again.
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(Color.white)
                 } else {
                     Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 15, weight: .bold))
@@ -331,7 +354,8 @@ struct VoiceMessageBubble: View {
             }
         }
         .pressable(scale: 0.88, dimming: 0)
-        .disabled(isLoading || message.voiceData == nil)
+        // Live in the retry state: the tap goes through `togglePlayback`'s reload branch.
+        .disabled(isLoading || (message.voiceData == nil && !needsAudio))
         .animation(Motion.snappy, value: isPlaying)
         .animation(Motion.snappy, value: isLoading)
         .accessibilityHidden(true)
@@ -350,12 +374,15 @@ struct VoiceMessageBubble: View {
             .frame(height: 26)
             // Full-height target: the bars are 3pt wide, the gesture area must not be.
             .contentShape(Rectangle())
-            .gesture(scrubGesture(width: geo.size.width))
+            // Only the loaded note scrubs (Telegram). A zero-distance drag on every note would
+            // take swipe-to-reply and the thread's scroll from most of each bubble; an inactive
+            // note leaves those drags alone and starts from its play disc.
+            .gesture(scrubGesture(width: geo.size.width), isEnabled: playback.isActive(message.id))
         }
         .frame(height: 26)
     }
 
-    /// Drag anywhere on the waveform to seek; the playhead follows the finger live.
+    /// Drag anywhere on the loaded note's waveform to seek; the playhead follows the finger live.
     private func scrubGesture(width: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
@@ -458,15 +485,20 @@ struct VoiceMessageBubble: View {
             Text(rateLabel)
                 .font(.system(size: 10, weight: .bold))
                 .monospacedDigit()
-                .foregroundStyle(isMine ? Color.white : Theme.accent)
+                .foregroundStyle(isMine ? Color.white : Theme.accentText)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
                 .background(isMine ? Color.white.opacity(0.22) : Theme.accentSoft)
                 .clipShape(Capsule())
+                // A bigger target than the 16 pt chip, without moving the footer; it wins over
+                // the waveform above where the two overlap.
+                .contentShape(Rectangle().inset(by: -8))
                 .contentTransition(.numericText())
         }
         .pressable(scale: 0.85, dimming: 0, haptic: nil)
-        .accessibilityLabel("Playback speed \(rateLabel)")
+        // Reached through the bubble's "Playback speed" action instead, like the transcript
+        // toggle; merged in, it would only compete with the bubble's default action.
+        .accessibilityHidden(true)
     }
 
     private var rateLabel: String {
@@ -537,7 +569,7 @@ struct VoiceMessageBubble: View {
         VoiceTranscriptButton(
             isOpen: isTranscriptOpen,
             isWorking: isWorkingOnTranscript,
-            ink: isMine ? Color.white : Theme.accent,
+            ink: isMine ? Color.white : Theme.accentText,
             fill: isMine ? Color.white.opacity(0.2) : Theme.accent.opacity(0.12),
             isEnabled: transcriptButtonEnabled,
             action: toggleTranscript
@@ -677,20 +709,50 @@ struct VoiceMessageBubble: View {
 
     private func togglePlayback() {
         guard let data = message.voiceData else {
-            // Not decrypted yet — nudge the load and let the spinner explain the wait.
-            onAppearLoad()
+            // Not decrypted yet, or the last fetch failed: load again and let the spinner
+            // explain the wait.
+            loadAudio()
             return
         }
         Haptics.impact(.light)
         playback.toggle(id: message.id, data: data)
     }
 
+    /// Asks the host for the audio. The host returns once that attempt is over; if the audio
+    /// still isn't here then, the disc turns into a retry instead of spinning forever.
+    private func loadAudio() {
+        guard let onAppearLoad else { return }
+        loadFailed = false
+        Task {
+            await onAppearLoad()
+            // `message` is a stale copy after the await, so don't check it here: a successful
+            // load set `voiceData` in the same main-actor turn, `needsAudio` is false, and the
+            // flag goes unread.
+            loadFailed = true
+        }
+    }
+
+    private var playActionName: String {
+        if needsAudio, loadFailed { return "Retry download" }
+        return isPlaying ? "Pause" : "Play"
+    }
+
     private var accessibilityLabel: String {
-        var parts = [isMine ? "You" : "Them", "voice message"]
+        var parts = [isMine ? "You" : "Them"]
+        // The quote's own label is replaced by this one, so it is spoken here.
+        if let reply {
+            parts.append("Reply to \(reply.author): \(reply.text)")
+        }
+        parts.append("voice message")
         parts.append(VoiceTimeFormat.duration(Double(durationMs) / 1000))
         if showsUnplayedDot { parts.append("unplayed") }
+        if needsAudio, loadFailed { parts.append("Download failed") }
         if let transcript, !transcript.isEmpty { parts.append(transcript) }
+        if !message.deleted, let reactionsSummary = reactions.spokenSummary {
+            parts.append(reactionsSummary)
+        }
         parts.append(time)
+        if isMine { parts.append(message.receipt.spokenLabel) }
         return parts.joined(separator: ", ")
     }
 }

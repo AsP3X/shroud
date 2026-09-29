@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Telegram's in-app notification: a card that drops in from the top when something arrives in
-/// another chat. Tap opens the chat; a flick up (or four seconds) sends it away.
+/// another chat. Tap opens the chat; a flick up (or four seconds, ten with VoiceOver) sends it away.
 ///
 /// Human: It lives only on screen — nothing of it reaches the system's notification centre, so
 /// it may show the message text (Settings → Notifications and Sounds → Message Preview).
@@ -96,6 +96,11 @@ struct InAppNotificationHost: View {
             Spacer(minLength: 0)
         }
         .animation(Motion.respecting(reduceMotion, Motion.standard), value: notifications.banner?.id)
+        // VoiceOver hears the arrival the way it hears a system banner; focus stays where it was.
+        .onChange(of: notifications.banner?.id) { _, id in
+            guard id != nil, let banner = notifications.banner else { return }
+            AccessibilityNotification.Announcement("\(banner.title): \(banner.body)").post()
+        }
     }
 }
 

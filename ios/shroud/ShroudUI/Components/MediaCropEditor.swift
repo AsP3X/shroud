@@ -88,12 +88,13 @@ struct MediaCropEditor: View {
 
     var body: some View {
         GeometryReader { geo in
-            // Leaves room for the status bar above and the control stack below.
+            // Leaves 80 pt for the status bar above, and the ~197 pt control stack plus a 13 pt
+            // gap below, so a tall photo's bottom edge and corners stay clear of the ratio chips.
             let canvas = CGRect(
                 x: 20,
                 y: 80,
                 width: max(1, geo.size.width - 40),
-                height: max(1, geo.size.height - 240)
+                height: max(1, geo.size.height - 290)
             )
             let preview = self.preview
             let frame = imageFrame(for: preview, in: canvas)
@@ -170,7 +171,13 @@ struct MediaCropEditor: View {
 
     /// Punches the crop window out of a full-bleed rectangle (even-odd fill).
     private struct ScrimMask: Shape {
-        let crop: CGRect
+        var crop: CGRect
+
+        /// Animates with the crop border, so presets, Rotate and Reset move the cut-out with it.
+        var animatableData: CGRect.AnimatableData {
+            get { crop.animatableData }
+            set { crop.animatableData = newValue }
+        }
 
         func path(in rect: CGRect) -> Path {
             var path = Path(rect)
@@ -211,19 +218,22 @@ struct MediaCropEditor: View {
         }
         .frame(width: window.width, height: window.height)
         .position(x: window.midX, y: window.midY)
-        .animation(Motion.snappy, value: ratio)
         .animation(Motion.fade, value: activeHandle != nil)
         .allowsHitTesting(false)
     }
 
     private var corners: [Handle] { [.topLeft, .topRight, .bottomLeft, .bottomRight] }
 
+    /// Centre of a corner's 26 pt bracket box, pulled inside the window so the 3 pt L sits flush
+    /// on the border: 13 (half the box) − 0.75 (outer half of the 1.5 pt border) − 1.5 (half the
+    /// bracket stroke).
     private func cornerPoint(_ handle: Handle, in rect: CGRect) -> CGPoint {
-        switch handle {
-        case .topLeft: CGPoint(x: rect.minX, y: rect.minY)
-        case .topRight: CGPoint(x: rect.maxX, y: rect.minY)
-        case .bottomLeft: CGPoint(x: rect.minX, y: rect.maxY)
-        case .bottomRight: CGPoint(x: rect.maxX, y: rect.maxY)
+        let inset: CGFloat = 10.75
+        return switch handle {
+        case .topLeft: CGPoint(x: rect.minX + inset, y: rect.minY + inset)
+        case .topRight: CGPoint(x: rect.maxX - inset, y: rect.minY + inset)
+        case .bottomLeft: CGPoint(x: rect.minX + inset, y: rect.maxY - inset)
+        case .bottomRight: CGPoint(x: rect.maxX - inset, y: rect.maxY - inset)
         default: CGPoint(x: rect.midX, y: rect.midY)
         }
     }
@@ -371,31 +381,57 @@ struct MediaCropEditor: View {
     }
 
     /// Re-shapes a dragged rect to the locked ratio, pinning the corner the user isn't holding.
+    ///
+    /// Edges drive their own axis and stay centred on the other one; corners follow whichever
+    /// axis the finger moved further, so a vertical drag resizes as well as a horizontal one.
     private func constrained(_ input: CGRect, to target: CGFloat, anchor: Handle) -> CGRect {
         // The crop rect is normalised to the photo, so a 1:1 window is only square once the
         // photo's own aspect is divided back out.
         let normalised = target / imageAspect
 
-        var width = input.width
+        let drivesHeight: Bool
+        switch anchor {
+        case .top, .bottom:
+            drivesHeight = true
+        case .leading, .trailing:
+            drivesHeight = false
+        default:
+            drivesHeight = abs(input.height - dragStartCrop.height) * normalised
+                > abs(input.width - dragStartCrop.width)
+        }
+
+        var width = drivesHeight ? input.height * normalised : input.width
         var height = width / normalised
         if height > 1 {
             height = 1
             width = height * normalised
         }
-        width = min(width, 1)
-        height = min(height, 1)
+        if width > 1 {
+            width = 1
+            height = width / normalised
+        }
 
         var x = input.minX
         var y = input.minY
         switch anchor {
-        case .topLeft, .leading, .top:
+        case .topLeft:
             x = input.maxX - width
             y = input.maxY - height
         case .topRight:
             y = input.maxY - height
         case .bottomLeft:
             x = input.maxX - width
-        default:
+        case .top:
+            x = input.midX - width / 2
+            y = input.maxY - height
+        case .bottom:
+            x = input.midX - width / 2
+        case .leading:
+            x = input.maxX - width
+            y = input.midY - height / 2
+        case .trailing:
+            y = input.midY - height / 2
+        case .bottomRight, .move:
             break
         }
 
@@ -439,7 +475,8 @@ struct MediaCropEditor: View {
                                 .background(ratio == preset ? Color.white : chrome)
                                 .clipShape(Capsule())
                         }
-                        .pressable(scale: 0.9, dimming: 0)
+                        .pressable(scale: 0.9, dimming: 0, haptic: nil)
+                        .accessibilityAddTraits(ratio == preset ? .isSelected : [])
                     }
                 }
                 .padding(.horizontal, 20)
@@ -477,7 +514,7 @@ struct MediaCropEditor: View {
                         .frame(height: 44)
                         .padding(.horizontal, 8)
                 }
-                .pressable(scale: 0.92, dimming: 0)
+                .pressable(scale: 0.92, dimming: 0, haptic: nil)
 
                 Spacer()
 
@@ -494,7 +531,7 @@ struct MediaCropEditor: View {
                         .frame(height: 44)
                         .padding(.horizontal, 8)
                 }
-                .pressable(scale: 0.92, dimming: 0)
+                .pressable(scale: 0.92, dimming: 0, haptic: nil)
             }
             .padding(.horizontal, 20)
         }

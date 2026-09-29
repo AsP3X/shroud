@@ -21,7 +21,9 @@ struct VideoComposeOverlay: View {
     var onRemoveVideo: ((Int) -> Void)?
 
     @State private var caption = ""
-    @State private var selection = 0
+    /// The clip on screen, by identity — an index would slide onto a neighbour when a clip to its
+    /// left leaves the strip. Nil until the user picks one, which means the first.
+    @State private var selectedID: UUID?
     /// Trim window per clip id, so removing one can't hand its handles to another.
     @State private var trims: [UUID: VideoTrim] = [:]
     @State private var muted: Set<UUID> = []
@@ -39,6 +41,11 @@ struct VideoComposeOverlay: View {
 
     /// Filmstrip tile count — enough to read the clip, few enough to generate quickly.
     private static let stripTileCount = 14
+
+    /// Index into `videos` currently on screen.
+    private var selection: Int {
+        videos.firstIndex { $0.id == selectedID } ?? 0
+    }
 
     private var current: PickedVideo? { videos[safe: selection] }
 
@@ -125,6 +132,9 @@ struct VideoComposeOverlay: View {
 
                     bottomChrome(bottomPadding: keyboardHeight > 0 ? keyboardHeight : max(homeInset, 8))
                 }
+                // Focus changes arrive without a transaction; animate the whole column so the strip,
+                // top bar and preview move with the bottom chrome instead of snapping.
+                .animation(Motion.scrim, value: isFocused)
 
                 if let banner {
                     VStack {
@@ -146,10 +156,8 @@ struct VideoComposeOverlay: View {
         .preferredColorScheme(.dark)
         .accessibilityAddTraits(.isModal)
         .onAppear { syncTrims() }
-        .onChange(of: videos.count) { _, _ in
-            syncTrims()
-            if selection >= videos.count { selection = max(0, videos.count - 1) }
-        }
+        // `selection` needs no clamp: it follows `selectedID`, and falls back to the first clip.
+        .onChange(of: videos.count) { _, _ in syncTrims() }
         // Re-arm the player and the filmstrip whenever the shown clip changes.
         .task(id: current?.id) {
             await loadCurrent()
@@ -186,7 +194,6 @@ struct VideoComposeOverlay: View {
 
                 Button {
                     dismissCaptionKeyboard()
-                    Haptics.impact(.light)
                     onAddMore?()
                 } label: {
                     HStack(spacing: 5) {
@@ -199,8 +206,13 @@ struct VideoComposeOverlay: View {
                     .padding(.horizontal, 12)
                     .frame(height: 30)
                     .background(chrome, in: Capsule())
+                    // A 44 pt target without making the capsule itself taller.
+                    .contentShape(Capsule().inset(by: -7))
                 }
                 .pressable(scale: 0.9, dimming: 0)
+                // The host passes nil once the send is full, so Add reads as unavailable.
+                .disabled(onAddMore == nil)
+                .opacity(onAddMore == nil ? 0.4 : 1)
                 .accessibilityLabel("Add more videos")
             }
             .padding(.horizontal, 16)
@@ -216,9 +228,8 @@ struct VideoComposeOverlay: View {
             HStack(spacing: 8) {
                 ForEach(Array(videos.enumerated()), id: \.element.id) { index, video in
                     Button {
-                        Haptics.impact(.light)
                         dismissCaptionKeyboard()
-                        withAnimation(Motion.standard) { selection = index }
+                        withAnimation(Motion.standard) { selectedID = video.id }
                     } label: {
                         ZStack(alignment: .bottomLeading) {
                             Group {
@@ -250,12 +261,18 @@ struct VideoComposeOverlay: View {
                     .pressable(scale: 0.9, dimming: 0)
                     .contextMenu {
                         Button(role: .destructive) {
-                            onRemoveVideo?(index)
+                            removeVideo(at: index)
                         } label: {
                             Label("Remove", systemImage: "trash")
                         }
                     }
                     .accessibilityLabel("Video \(index + 1) of \(videos.count)")
+                    // The label hides the duration pill, so VoiceOver gets it spelled out.
+                    .accessibilityValue(
+                        Duration.seconds(video.probe.durationSeconds.rounded(.down))
+                            .formatted(.units(allowed: [.minutes, .seconds], width: .wide))
+                    )
+                    .accessibilityAddTraits(index == selection ? [.isSelected] : [])
                 }
             }
             .padding(.horizontal, 16)
@@ -263,6 +280,16 @@ struct VideoComposeOverlay: View {
         }
         .frame(height: 78)
         .animation(Motion.snappy, value: selection)
+    }
+
+    /// Keeps the clip on screen when another one leaves; removing the one on screen moves to its
+    /// right-hand neighbour (or the left one at the end).
+    private func removeVideo(at index: Int) {
+        guard let onRemoveVideo else { return }
+        if index == selection {
+            selectedID = (videos[safe: index + 1] ?? videos[safe: index - 1])?.id
+        }
+        onRemoveVideo(index)
     }
 
     // MARK: - Preview
@@ -313,9 +340,23 @@ struct VideoComposeOverlay: View {
         .animation(Motion.snappy, value: isCurrentMuted)
         .contentShape(Rectangle())
         .onTapGesture {
-            dismissCaptionKeyboard()
+            // While typing, a tap on the clip only drops the keyboard, as on the photo screen.
+            if captionFocused {
+                dismissCaptionKeyboard()
+                return
+            }
             player.toggle()
             Haptics.impact(.light)
+        }
+        // One element for VoiceOver: the play glyph is gone while the clip plays, which left
+        // nothing to focus to pause it.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Video preview")
+        .accessibilityValue((player.isPlaying ? "Playing" : "Paused") + (isCurrentMuted ? ", sound off" : ""))
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction {
+            dismissCaptionKeyboard()
+            player.toggle()
         }
     }
 
@@ -346,7 +387,8 @@ struct VideoComposeOverlay: View {
         .padding(.top, 10)
         .frame(maxWidth: .infinity)
         .background(Color.black)
-        .animation(.easeOut(duration: 0.22), value: isFocused)
+        // Same as the column's; kept here so it outranks the keyboard-height animation below.
+        .animation(Motion.scrim, value: isFocused)
         .animation(.easeOut(duration: 0.25), value: keyboardHeight)
     }
 
@@ -372,22 +414,26 @@ struct VideoComposeOverlay: View {
                 )
                 .padding(.horizontal, 2)
 
+                let isTrimmed = currentTrim.duration < current.probe.durationSeconds - 0.05
                 HStack(spacing: 6) {
                     Text(selectionLabel)
                         .font(.system(size: 12, weight: .medium).monospacedDigit())
                         .foregroundStyle(currentPlan == nil ? Color(red: 1, green: 0.62, blue: 0.55) : Color.white.opacity(0.75))
                         .lineLimit(2)
-                        .contentTransition(.numericText())
+                        // A cross-fade, not numericText: that morph is a main-thread CPU blur.
+                        .contentTransition(.opacity)
                     Spacer(minLength: 0)
                     qualityMenu
-                    if currentTrim.duration < current.probe.durationSeconds - 0.05 {
+                    if isTrimmed {
                         Text("TRIMMED")
                             .font(.system(size: 10, weight: .bold))
                             .foregroundStyle(telegramBlue)
                             .transition(.opacity)
                     }
                 }
-                .animation(Motion.snappy, value: currentTrim)
+                // Keyed on the badge, not the trim: a handle drag writes the trim every tick, and
+                // the numbers should follow the finger in place.
+                .animation(Motion.snappy, value: isTrimmed)
                 .animation(Motion.snappy, value: quality)
 
                 if let sendBlocked {
@@ -431,7 +477,6 @@ struct VideoComposeOverlay: View {
     private var trailingControl: some View {
         if isFocused {
             Button {
-                Haptics.impact(.light)
                 dismissCaptionKeyboard()
             } label: {
                 Image(systemName: "checkmark")
@@ -605,7 +650,6 @@ struct VideoComposeOverlay: View {
 
     private func toggleMute() {
         guard let current else { return }
-        Haptics.impact(.light)
         withAnimation(Motion.snappy) {
             if muted.contains(current.id) {
                 muted.remove(current.id)
@@ -620,7 +664,6 @@ struct VideoComposeOverlay: View {
 
     private func resetTrim() {
         guard let current else { return }
-        Haptics.impact(.light)
         withAnimation(Motion.standard) {
             trims[current.id] = VideoTrim(start: 0, end: current.probe.durationSeconds)
         }
@@ -633,7 +676,7 @@ struct VideoComposeOverlay: View {
             flash(sendBlocked)
             return
         }
-        Haptics.impact(.medium)
+        // The Send button's press-down `.medium` is the haptic; no second one here.
         player.pause()
         let text = caption.trimmingCharacters(in: .whitespacesAndNewlines)
         let plans = videos.enumerated().map { index, video -> VideoSendPlan in

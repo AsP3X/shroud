@@ -218,6 +218,12 @@ struct SwipeToReplyModifier: ViewModifier {
                     onEnded: handleEnd
                 )
             )
+            // VoiceOver and Switch Control can't perform the pan; the same reply is a named action.
+            .accessibilityActions {
+                if isEnabled {
+                    Button("Reply", action: onReply)
+                }
+            }
             // A row that stops being swipeable mid-gesture (menu opened, message deleted)
             // must not stay parked off to the left.
             .onChange(of: isEnabled) { _, enabled in

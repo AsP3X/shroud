@@ -22,6 +22,8 @@ struct SettingsRowView: View {
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(Color.white)
                 }
+                // Decorative, like the chevron: VoiceOver reads the title, value or "Soon".
+                .accessibilityHidden(true)
                 Text(title)
                     .font(.system(size: 16))
                     .foregroundStyle(Theme.textPrimary)
@@ -34,7 +36,8 @@ struct SettingsRowView: View {
                 if action != nil {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Color(red: 199 / 255, green: 199 / 255, blue: 204 / 255))
+                        .foregroundStyle(Theme.chevron)
+                        .accessibilityHidden(true)
                 } else {
                     Text("Soon")
                         .font(.system(size: 13, weight: .medium))

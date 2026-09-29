@@ -11,7 +11,7 @@ struct ContactProfileView: View {
     @Environment(MessagingController.self) private var messaging
     @Environment(CallController.self) private var calls
     @Environment(\.dismiss) private var dismiss
-    @State private var toast: String?
+    @State private var toast: Toast?
     @State private var showBlockConfirm = false
     @State private var showAcceptIdentityConfirm = false
     @State private var isBlocking = false
@@ -30,12 +30,10 @@ struct ContactProfileView: View {
         messaging.peerActivity(for: peerUserID)
     }
 
+    /// Same presence wording as the chat header and the lists ("offline" when the contact
+    /// hides it); "Shroud contact" only until the server has answered.
     private var statusLine: String {
-        if isOnline { return "online" }
-        if let last = messaging.presenceByUser[peerUserID]?.lastSeenAt {
-            return "last seen \(messaging.timeLabel(for: last))"
-        }
-        return "Shroud contact"
+        ChatListFormatting.presenceLabel(for: messaging.presenceByUser[peerUserID]) ?? "Shroud contact"
     }
 
     var body: some View {
@@ -63,8 +61,7 @@ struct ContactProfileView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Edit") {
-                    toast = "Edit coming soon"
-                    scheduleClear()
+                    toast = .info("Edit coming soon")
                 }
                 .tint(Theme.accent)
             }
@@ -88,9 +85,12 @@ struct ContactProfileView: View {
             .padding(.top, 8)
 
             VStack(spacing: 2) {
+                // A long handle has no spaces to wrap at: shrink it, as the call screen does.
                 Text(peerUsername)
                     .font(.system(size: 22, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                 if let peerActivity {
                     TypingLabel(activity: peerActivity, font: .system(size: 14))
                 } else {
@@ -114,8 +114,7 @@ struct ContactProfileView: View {
                         modality: .voice
                     )
                     if let err = calls.lastError {
-                        toast = err
-                        scheduleClear()
+                        toast = .failure(err)
                     }
                 }
             }
@@ -127,8 +126,7 @@ struct ContactProfileView: View {
                         modality: .video
                     )
                     if let err = calls.lastError {
-                        toast = err
-                        scheduleClear()
+                        toast = .failure(err)
                     }
                 }
             }
@@ -151,8 +149,7 @@ struct ContactProfileView: View {
             .pressable(scale: 0.93)
             .accessibilityLabel(isMuted ? "Unmute" : "Mute")
             profileAction(title: "Search", icon: "magnifyingglass") {
-                toast = "Search coming soon"
-                scheduleClear()
+                toast = .info("Search coming soon")
             }
         }
         .padding(.top, 6)
@@ -190,6 +187,8 @@ struct ContactProfileView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 9)
+            // One VoiceOver stop per fact: "username, @jane".
+            .accessibilityElement(children: .combine)
 
             Rectangle()
                 .fill(Theme.separator)
@@ -206,6 +205,7 @@ struct ContactProfileView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 9)
+            .accessibilityElement(children: .combine)
 
             if let number = messaging.safetyNumber(for: peerUserID) {
                 Rectangle()
@@ -222,16 +222,27 @@ struct ContactProfileView: View {
                         .foregroundStyle(Theme.textPrimary)
                         .textSelection(.enabled)
                     if messaging.identityChange(for: peerUserID) == nil {
+                        // "Verified", as on the call screen's badge and its Mark as Verified.
                         if messaging.peerSafetyVerified(peerUserID) {
-                            Text("Compared")
+                            Text("Verified")
                                 .font(.system(size: 13))
                                 .foregroundStyle(Theme.textSecondary)
                         } else {
-                            Button("I've compared this number") {
+                            Button {
                                 messaging.confirmPeerSafety(peerUserID)
+                            } label: {
+                                // A full-width target that grows down, and up only into the 4 pt
+                                // gap: a tap on the selectable number above must never verify.
+                                Text("Mark as Verified")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(Theme.accent)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.top, 4)
+                                    .padding(.bottom, 12)
+                                    .contentShape(Rectangle())
+                                    .padding(.top, -4)
+                                    .padding(.bottom, -12)
                             }
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(Theme.accent)
                         }
                     }
                 }
@@ -259,8 +270,7 @@ struct ContactProfileView: View {
         } else if !messaging.canMute(peerUserID) {
             // No chat yet: a mute shows in the chat list, and there is none to show it in.
             Button {
-                toast = "A chat can be muted once it has messages."
-                scheduleClear()
+                toast = .info("A chat can be muted once it has messages.")
             } label: {
                 label()
             }
@@ -283,13 +293,13 @@ struct ContactProfileView: View {
                 await messaging.unmuteChat(peerUserID: peerUserID)
             }
             if let error {
-                toast = error
+                toast = .failure(error)
                 Haptics.notification(.error)
             } else {
-                toast = duration == nil ? "Notifications on" : "Muted"
+                // Same wording as the chat list's menu: "Muted until 14:30".
+                toast = Toast(duration == nil ? "Notifications on" : (MuteDuration.label(for: messaging.mute(for: peerUserID)) ?? "Muted"))
                 Haptics.impact(.light)
             }
-            scheduleClear()
         }
     }
 
@@ -308,13 +318,16 @@ struct ContactProfileView: View {
                 .fill(Theme.separator)
                 .frame(height: 1)
                 .padding(.leading, 56)
-            optionsRow(icon: "lock.fill", title: "Encryption", value: "On")
+            // Status only, not a control: no chevron, and read as one VoiceOver stop.
+            optionsRow(icon: "lock.fill", title: "Encryption", value: "On", showsChevron: false)
+                .accessibilityElement(children: .combine)
         }
         .background(Theme.background)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
-    private func optionsRow(icon: String, title: String, value: String) -> some View {
+    /// `showsChevron` is for rows that open something; a status row leaves it out.
+    private func optionsRow(icon: String, title: String, value: String, showsChevron: Bool = true) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 15, weight: .semibold))
@@ -322,16 +335,26 @@ struct ContactProfileView: View {
                 .frame(width: 30, height: 30)
                 .background(Theme.accentSoft)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .accessibilityHidden(true)
+            // One line each: "Muted until Mon 2:30 PM" scales down a little instead of
+            // wrapping the row.
             Text(title)
                 .font(.system(size: 16))
                 .foregroundStyle(Theme.textPrimary)
-            Spacer()
+                .lineLimit(1)
+                .layoutPriority(1)
+            Spacer(minLength: 0)
             Text(value)
                 .font(.system(size: 15))
                 .foregroundStyle(Theme.textSecondary)
-            Image(systemName: "chevron.right")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Theme.textSecondary.opacity(0.7))
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+            if showsChevron {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.chevron)
+                    .accessibilityHidden(true)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -348,11 +371,17 @@ struct ContactProfileView: View {
             .font(.system(size: 14))
             .foregroundStyle(Theme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
-            Button("I verified this contact") {
+            Button {
                 showAcceptIdentityConfirm = true
+            } label: {
+                // Only static text sits above, and this just opens a confirmation, so the
+                // target can grow 10 pt on every side.
+                Text("I verified this contact")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle().inset(by: -10))
             }
-            .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(Theme.accent)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -365,8 +394,7 @@ struct ContactProfileView: View {
         ) {
             Button("Trust new key", role: .destructive) {
                 messaging.acceptNewPeerIdentity(peerUserID)
-                toast = "New encryption key saved"
-                scheduleClear()
+                toast = Toast("New encryption key saved")
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -475,9 +503,8 @@ struct ContactProfileView: View {
             let outcome = await messaging.deleteConversation(peerUserID: peerUserID, scope: scope)
             isDeletingChat = false
             if case let .failed(message) = outcome {
-                toast = message
+                toast = .failure(message)
                 Haptics.notification(.error)
-                scheduleClear()
                 return
             }
             Haptics.notification(.success)
@@ -497,20 +524,12 @@ struct ContactProfileView: View {
                 : await messaging.unblockUser(peerUserID)
             isBlocking = false
             if let error {
-                toast = error
+                toast = .failure(error)
                 Haptics.notification(.error)
             } else {
-                toast = block ? "\(peerUsername) blocked" : "\(peerUsername) unblocked"
+                toast = Toast(block ? "\(peerUsername) blocked" : "\(peerUsername) unblocked")
                 Haptics.notification(.success)
             }
-            scheduleClear()
-        }
-    }
-
-    private func scheduleClear() {
-        Task {
-            try? await Task.sleep(nanoseconds: 1_800_000_000)
-            toast = nil
         }
     }
 }

@@ -2,6 +2,7 @@ import AVFoundation
 import CallKit
 import CryptoKit
 import Foundation
+import UIKit
 import WebRTC
 
 extension Notification.Name {
@@ -88,7 +89,12 @@ final class CallController {
         let peerUsername: String
         let modality: CallModality
         let isOutgoing: Bool
+        /// How it ended, in the server's words ("ended", "missed", "rejected", "cancelled", "busy";
+        /// `recentStatus`), or "answered_elsewhere" when another of our devices took the call.
         let status: String
+        /// Media connected at some point. An "ended" call that never did (couldn't connect, lost
+        /// while connecting, hung up before it connected) is not a completed one.
+        let connected: Bool
         let at: Date
     }
 
@@ -644,7 +650,7 @@ final class CallController {
         // Still ringing here: another of our devices answered. A call this phone already
         // accepted is `active` on the server too, and must keep going.
         if call.callStatus == .active, active?.phase == .incomingRinging {
-            finish(machine, text: "Answered on another device", notify: nil, status: "ended", close: .report(.answeredElsewhere))
+            finish(machine, text: "Answered on another device", notify: nil, status: "answered_elsewhere", close: .report(.answeredElsewhere))
             return
         }
         if call.callStatus == .active { return }
@@ -653,7 +659,7 @@ final class CallController {
             machine,
             text: text,
             notify: nil,
-            status: call.status,
+            status: Self.recentStatus(call.status, reason: call.endedReason),
             close: .report(kitReason(status: call.status, reason: call.endedReason))
         )
     }
@@ -701,12 +707,12 @@ final class CallController {
                 if let info = try? await service.getCall(id: id, token: token) {
                     if info.callStatus == .active, let mine = sessionController?.session?.deviceID,
                        !same(info.calleeDeviceId, mine) {
-                        finish(machine, text: "Answered on another device", notify: nil, status: "ended", close: .report(.answeredElsewhere))
+                        finish(machine, text: "Answered on another device", notify: nil, status: "answered_elsewhere", close: .report(.answeredElsewhere))
                         return
                     }
                     if !info.isLive {
                         let text = CallEndReason.from(status: info.status, reason: info.endedReason, isOutgoing: false)?.announcement
-                        finish(machine, text: text, notify: nil, status: info.status, close: .report(.remoteEnded))
+                        finish(machine, text: text, notify: nil, status: Self.recentStatus(info.status, reason: info.endedReason), close: .report(.remoteEnded))
                         return
                     }
                 }
@@ -763,7 +769,7 @@ final class CallController {
         if machine.role == .caller {
             callerAnswered(machine, call)
         } else if let mine = sessionController?.session?.deviceID, !same(call.calleeDeviceId, mine) {
-            finish(machine, text: "Answered on another device", notify: nil, status: "ended", close: .report(.answeredElsewhere))
+            finish(machine, text: "Answered on another device", notify: nil, status: "answered_elsewhere", close: .report(.answeredElsewhere))
         }
     }
 
@@ -771,7 +777,13 @@ final class CallController {
         guard let machine, let call = parseCall(json["call"]), machine.serverID == call.id else { return }
         let outgoing = active?.isOutgoing ?? (machine.role == .caller)
         let text = CallEndReason.from(status: call.status, reason: call.endedReason, isOutgoing: outgoing)?.announcement
-        finish(machine, text: text, notify: nil, status: call.status, close: .report(kitReason(status: call.status, reason: call.endedReason)))
+        finish(
+            machine,
+            text: text,
+            notify: nil,
+            status: Self.recentStatus(call.status, reason: call.endedReason),
+            close: .report(kitReason(status: call.status, reason: call.endedReason))
+        )
     }
 
     private func handleSignal(_ json: [String: Any]) {
@@ -1331,7 +1343,7 @@ final class CallController {
         if info.callStatus == .active {
             if machine.role == .caller { callerAnswered(machine, info) }
             else if active?.phase == .incomingRinging {
-                finish(machine, text: "Answered on another device", notify: nil, status: "ended", close: .report(.answeredElsewhere))
+                finish(machine, text: "Answered on another device", notify: nil, status: "answered_elsewhere", close: .report(.answeredElsewhere))
                 return
             }
             catchUpMedia(info, machine)
@@ -1339,7 +1351,13 @@ final class CallController {
         }
         let outgoing = active?.isOutgoing ?? (machine.role == .caller)
         let text = CallEndReason.from(status: info.status, reason: info.endedReason, isOutgoing: outgoing)?.announcement
-        finish(machine, text: text, notify: nil, status: info.status, close: .report(kitReason(status: info.status, reason: info.endedReason)))
+        finish(
+            machine,
+            text: text,
+            notify: nil,
+            status: Self.recentStatus(info.status, reason: info.endedReason),
+            close: .report(kitReason(status: info.status, reason: info.endedReason))
+        )
     }
 
     // MARK: - Ending
@@ -1406,6 +1424,7 @@ final class CallController {
                     modality: call.modality,
                     isOutgoing: call.isOutgoing,
                     status: status,
+                    connected: call.startedAt != nil,
                     at: Date()
                 ),
                 at: 0
@@ -1553,7 +1572,10 @@ final class CallController {
     /// a broadcast itself, the person starts it there. Stopping needs no picker: closing the
     /// broadcast's connection ends it (docs/calls.md, "Screen sharing").
     func toggleScreenShare() -> Bool {
-        guard let machine, current(machine), let call = active, call.phase == .active || call.phase == .connecting else {
+        guard let machine, current(machine), let call = active else { return false }
+        guard call.phase == .active || call.phase == .connecting else {
+            // Share shows, dimmed, while our call rings out: the tap says why it does nothing.
+            if call.phase == .outgoingRinging { note(shareUnavailableText(call), machine) }
             return false
         }
         if call.isSharingScreen || machine.broadcasting {
@@ -1651,7 +1673,7 @@ final class CallController {
     /// Why Share cannot be used in this call right now.
     private func shareUnavailableText(_ call: ActiveCall) -> String {
         if screenReceiver == nil, call.phase == .active, call.canShareScreen {
-            return "Screen sharing isn’t available on this iPhone."
+            return "Screen sharing isn’t available on this \(UIDevice.current.model)."
         }
         // Their app says whether it shows screens as the call connects.
         guard call.phase == .active else { return "You can share your screen once the call has connected." }
@@ -1898,6 +1920,12 @@ final class CallController {
         if status == "rejected" || reason == "declined" { return .declinedElsewhere }
         if status == "cancelled" { return .unanswered }
         return .remoteEnded
+    }
+
+    /// How Recents files a call the server ended: as the server has it, except a decline it files
+    /// as missed, which reads "Declined" there as on the call screen.
+    private static func recentStatus(_ status: String, reason: String?) -> String {
+        reason == "declined" ? "rejected" : status
     }
 }
 

@@ -18,6 +18,9 @@ struct VideoTrimStrip: View {
     var onScrubEnd: (() -> Void)?
 
     @State private var activeHandle: Handle?
+    /// Where the finger landed relative to the cut it grabbed, so a drag moves the cut by the
+    /// finger's travel instead of snapping it under the touch.
+    @State private var grabOffset: CGFloat = 0
     /// Width of the seekable track (the strip minus one handle at each end).
     @State private var trackWidth: CGFloat = 0
 
@@ -34,18 +37,23 @@ struct VideoTrimStrip: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
+            // Tiles span the track only, so each one sits under the time it shows and the handles
+            // (outside the kept range) never cover a kept frame.
             filmstrip
+                .padding(.horizontal, Self.handleWidth)
                 .frame(height: Self.stripHeight)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .accessibilityHidden(true)
 
             // Everything that will be cut away reads as "off".
-            dim(from: 0, to: startX)
-            dim(from: endX, to: trackWidth + Self.handleWidth * 2)
+            dim(from: Self.handleWidth, to: startX)
+            dim(from: endX, to: Self.handleWidth + trackWidth)
 
+            // The kept region's frame wraps the handles too.
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(Color.white, lineWidth: 2.5)
-                .frame(width: max(0, endX - startX), height: Self.stripHeight)
-                .offset(x: startX)
+                .frame(width: max(0, endX - startX) + Self.handleWidth * 2, height: Self.stripHeight)
+                .offset(x: startX - Self.handleWidth)
                 .allowsHitTesting(false)
 
             if let playhead, playhead >= trim.start, playhead <= trim.end, activeHandle == nil {
@@ -55,6 +63,7 @@ struct VideoTrimStrip: View {
                     .shadow(color: .black.opacity(0.45), radius: 2)
                     .offset(x: Self.handleWidth + x(for: playhead) - 1.25, y: 4)
                     .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
 
             handle(.start, at: startX)
@@ -76,7 +85,8 @@ struct VideoTrimStrip: View {
                 if frames.isEmpty {
                     Rectangle()
                         .fill(Color.white.opacity(0.09))
-                        .shimmering()
+                        // The compose screen is dark in both appearances.
+                        .shimmering(adaptsToAppearance: false)
                 } else {
                     let tileWidth = geo.size.width / CGFloat(frames.count)
                     ForEach(Array(frames.enumerated()), id: \.offset) { _, frame in
@@ -109,14 +119,22 @@ struct VideoTrimStrip: View {
                     .fill(Color.black.opacity(0.35))
                     .frame(width: 2, height: 16)
             }
-            .scaleEffect(x: isActive ? 1.2 : 1, anchor: .center)
-            .offset(x: position - Self.handleWidth / 2)
-            // Generous slop so a 16pt bar is still a comfortable target.
+            // Generous slop so a 16pt bar is still a comfortable target. Before the offset, so
+            // the slop travels with the handle.
             .contentShape(Rectangle().inset(by: -12))
+            .scaleEffect(x: isActive ? 1.2 : 1, anchor: .center)
+            // Outside the kept range: the start handle ends at its cut, the end handle begins at it.
+            .offset(x: which == .start ? position - Self.handleWidth : position)
             .gesture(dragGesture(for: which))
             .animation(Motion.snappy, value: isActive)
+            .accessibilityElement()
             .accessibilityLabel(which == .start ? "Trim start" : "Trim end")
             .accessibilityValue(ChatVideoPlayer.timeLabel(which == .start ? trim.start : trim.end))
+            // Swipe up/down steps the cut, so trimming doesn't depend on dragging.
+            .accessibilityAdjustableAction { direction in
+                let step = max(0.5, duration / 20)
+                nudge(which, by: direction == .increment ? step : -step)
+            }
     }
 
     // MARK: - Dragging
@@ -126,9 +144,10 @@ struct VideoTrimStrip: View {
             .onChanged { value in
                 if activeHandle == nil {
                     activeHandle = which
+                    grabOffset = value.startLocation.x - (which == .start ? startX : endX)
                     Haptics.impact(.light)
                 }
-                move(which, toX: value.location.x)
+                move(which, toX: value.location.x - grabOffset)
             }
             .onEnded { _ in
                 activeHandle = nil
@@ -148,6 +167,22 @@ struct VideoTrimStrip: View {
             trim.end = min(duration, max(raw, trim.start + minimum))
             onSeek?(trim.end)
         }
+    }
+
+    /// VoiceOver's step: moves a cut by `delta` seconds under the same limits as a drag, then
+    /// ends the "scrub" so the host re-arms its loop and plays.
+    private func nudge(_ which: Handle, by delta: Double) {
+        guard duration > 0 else { return }
+        let minimum = min(Self.minimumDuration, duration)
+        switch which {
+        case .start:
+            trim.start = max(0, min(trim.start + delta, trim.end - minimum))
+            onSeek?(trim.start)
+        case .end:
+            trim.end = min(duration, max(trim.end + delta, trim.start + minimum))
+            onSeek?(trim.end)
+        }
+        onScrubEnd?()
     }
 
     private func x(for seconds: Double) -> CGFloat {

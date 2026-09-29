@@ -8,8 +8,9 @@ extension View {
     /// pushed screen here draws its own chrome instead. Since iOS 26 the swipe is driven by
     /// `interactiveContentPopGestureRecognizer` (the classic edge recogniser never starts on its
     /// own), so both get a delegate that only asks "is there something to pop, and is the screen
-    /// willing to let go right now?". The content recogniser is kept to the leading edge: a
-    /// rightward drag in the middle of a chat is not a request to leave it.
+    /// willing to let go right now?". The content recogniser is kept to the leading edge while this
+    /// screen is on top: a rightward drag in the middle of a chat is not a request to leave it.
+    /// Screens pushed above it swipe back from anywhere, as they would without it.
     /// Agent: Pass `enabled: false` while a gesture-heavy state is up (menus, recording) so the
     /// swipe cannot tear the screen away mid-interaction.
     func interactivePopGesture(enabled: Bool = true) -> some View {
@@ -72,6 +73,9 @@ private struct InteractivePopGestureInstaller: UIViewControllerRepresentable {
             lastNavigationController = navigationController
             let delegate = InteractivePopGestureDelegate.attached(to: navigationController)
             delegate.isEnabled = enabled
+            // The stack entry this screen lives in (SwiftUI nests it in a hosting controller).
+            delegate.owner = sequence(first: self as UIViewController, next: \.parent)
+                .first { $0.parent === navigationController }
             for recognizer in [
                 navigationController.interactivePopGestureRecognizer,
                 navigationController.interactiveContentPopGestureRecognizer,
@@ -91,6 +95,9 @@ private final class InteractivePopGestureDelegate: NSObject, UIGestureRecognizer
 
     weak var navigationController: UINavigationController?
     var isEnabled = true
+    /// The stack entry that asked for the edge band (the chat); screens pushed above it keep
+    /// UIKit's swipe from anywhere. Weak: a popped chat must not live on in its delegate.
+    weak var owner: UIViewController?
 
     static func attached(to navigationController: UINavigationController) -> InteractivePopGestureDelegate {
         if let existing = objc_getAssociatedObject(navigationController, &key) as? InteractivePopGestureDelegate {
@@ -109,11 +116,13 @@ private final class InteractivePopGestureDelegate: NSObject, UIGestureRecognizer
         return navigationController.viewControllers.count > 1
     }
 
-    /// The full-width content recogniser only takes touches that start on the leading edge.
+    /// The full-width content recogniser only takes touches that start on the leading edge — and
+    /// only while the screen that asked for it is on top.
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         guard let navigationController, let view = navigationController.view,
               gestureRecognizer === navigationController.interactiveContentPopGestureRecognizer
         else { return true }
+        guard navigationController.topViewController === owner else { return true }
         let x = touch.location(in: view).x
         return view.effectiveUserInterfaceLayoutDirection == .rightToLeft
             ? x >= view.bounds.width - Self.edgeWidth

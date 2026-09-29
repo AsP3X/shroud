@@ -82,4 +82,10 @@ final class LinkDetectorTests: XCTestCase {
         let incoming = MessageLinkText.attributed("example.com", isMine: false)
         XCTAssertNil(incoming.runs.first?.swiftUI.underlineStyle)
     }
+
+    /// Differentiate Without Color: incoming links get the underline too.
+    func testIncomingLinksAreUnderlinedWhenAsked() {
+        let incoming = MessageLinkText.attributed("example.com", isMine: false, underlined: true)
+        XCTAssertEqual(incoming.runs.first?.swiftUI.underlineStyle, .single)
+    }
 }
