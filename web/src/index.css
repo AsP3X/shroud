@@ -3681,11 +3681,58 @@ button.reply-quote { cursor: pointer; }
   cursor: pointer;
 }
 .call-safety:hover { background: rgba(255, 255, 255, 0.2); }
-.call-safety-num {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px; letter-spacing: 0.02em; opacity: 0.9;
-  text-wrap: balance;
+/* A safety number not compared yet: the corner badge says "Not verified" in amber and opens the
+   number below it. Nothing on the stage moves for it. */
+.call-safety-wrap { position: relative; display: inline-flex; flex-shrink: 0; }
+.call-e2e.is-unverified {
+  border: 1px solid rgba(255, 196, 110, 0.35);
+  padding: 6px 11px;
+  background: rgba(255, 176, 64, 0.16);
+  color: #ffd9a8;
+  font: inherit; font-size: var(--fs-xs); font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, opacity 0.3s ease;
+  -webkit-tap-highlight-color: transparent;
 }
+.call-e2e.is-unverified:hover,
+.call-e2e.is-unverified.is-open { background: rgba(255, 176, 64, 0.26); }
+.call-safety-panel {
+  position: absolute; top: calc(100% + 10px); left: 0; z-index: 2;
+  width: min(300px, calc(100vw - 32px)); padding: 14px;
+  display: grid; gap: 10px;
+  border-radius: 20px;
+  background: rgba(24, 24, 34, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  color: #fff; text-align: left;
+  animation: call-safety-in 0.2s var(--ease);
+}
+.call-safety-panel:focus { outline: none; }
+@keyframes call-safety-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.97); }
+}
+.call-safety-title { font-size: var(--fs-sm); font-weight: 650; }
+.call-safety-text { margin: 0; font-size: var(--fs-xs); line-height: 1.45; color: rgba(255, 255, 255, 0.7); }
+/* Twelve groups of five, four to a row, so each is easy to find again while reading them out. */
+.call-safety-num {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px 4px;
+  padding: 10px 8px; border-radius: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px; font-weight: 500; letter-spacing: 0.04em; text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.call-safety-confirm {
+  height: 36px; border: 0; border-radius: var(--r-full);
+  background: #fff; color: #111;
+  font: inherit; font-size: var(--fs-sm); font-weight: 650;
+  cursor: pointer;
+  transition: opacity 0.15s ease, transform 0.12s ease;
+}
+.call-safety-confirm:hover { opacity: 0.9; }
+.call-safety-confirm:active { transform: scale(0.97); }
 .thread-banner-action {
   display: inline-block; margin-left: 8px;
   border: 0; background: none; padding: 0;
@@ -4132,6 +4179,6 @@ button.reply-quote { cursor: pointer; }
   .call-pill-dot { animation: none; }
   .call-self, .call-tile, .call-screen, .call-avatar, .call-shade, .call-remote { transition: none; }
   .call-self, .call-tile, .call-screen { transform: none; }
-  .call-sharing, .call-sharing-dot, .call-quality { animation: none; }
+  .call-sharing, .call-sharing-dot, .call-quality, .call-safety-panel { animation: none; }
   .call-ctl.is-pending .call-ctl-disc { animation: none; background: rgba(255, 255, 255, 0.3); }
 }

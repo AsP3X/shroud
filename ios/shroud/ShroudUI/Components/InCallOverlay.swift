@@ -17,6 +17,10 @@ import SwiftUI
 /// whole screen, through the system's broadcast, started from a small Share capsule in the
 /// top-trailing corner (its arrow picks the resolution and frame rate); a red pill at the top
 /// says it is shared and stops it.
+///
+/// A contact whose safety number has not been compared gets an amber "Not verified" badge in the
+/// top-leading corner, opposite Share. It closes down to a round shield after a few seconds and
+/// opens the number in a popover; the docked name sits under it (`safetyBadge(for:number:)`).
 struct InCallOverlay: View {
     @Environment(CallController.self) private var calls
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -35,6 +39,11 @@ struct InCallOverlay: View {
     /// Bumped by every touch on the call screen: the controls stay up a while longer.
     @State private var chromeTouch = 0
     @State private var broadcastPicker = BroadcastPickerTrigger()
+    /// The call whose safety number is open in the popover from the "Not verified" badge. Tied to
+    /// the call, so a popover still open when one call ends never opens by itself on the next.
+    @State private var safetyShownFor: UUID?
+    /// The call whose "Not verified" badge has closed down to its round shield.
+    @State private var safetyBadgeClosedFor: UUID?
 
     /// Our own picture, in the top-trailing corner of the safe area.
     static let selfViewSize = CGSize(width: 108, height: 164)
@@ -91,6 +100,9 @@ struct InCallOverlay: View {
         let videoOn = call.phase == .ending && placedCall == call.id ? inCorner : picture
         let docked = placedCall == call.id ? inCorner : videoOn
         let ending = call.phase == .ending
+        // The badge goes at once when the call ends; the name keeps its place for that moment.
+        let badgeRoom = !call.safetyVerified && calls.safetyNumberForActiveCall() != nil
+        let unverified = badgeRoom && !ending
         ZStack {
             LinearGradient(
                 colors: [
@@ -133,7 +145,8 @@ struct InCallOverlay: View {
                 .animation(.easeOut(duration: 0.3), value: chromeAway)
 
             VStack(spacing: 28) {
-                CallStageLayout(progress: docked ? 1 : 0) {
+                // The docked name sits under the "Not verified" badge while it shows.
+                CallStageLayout(progress: docked ? 1 : 0, cornerDrop: badgeRoom ? Self.safetyBadgeReserve : 0) {
                     face(for: call)
                         // On top: a name too long to clear the face passes behind it.
                         .zIndex(1)
@@ -162,6 +175,22 @@ struct InCallOverlay: View {
             tiles(for: call, screen: screen)
                 .padding(.top, sharing ? Self.sharingIndicatorInset : 0)
 
+            // In its own container: glass outside one leaves at once, whatever the transition says.
+            GlassEffectContainer {
+                if unverified, let number = calls.safetyNumberForActiveCall() {
+                    safetyBadge(for: call, number: number)
+                        .transition(.scale(scale: 0.6, anchor: .topLeading).combined(with: .opacity))
+                }
+            }
+            .opacity(chromeAway ? 0 : 1)
+            .animation(.easeOut(duration: 0.25), value: chromeAway)
+            .allowsHitTesting(!chromeAway)
+            .accessibilityHidden(chromeAway)
+            .padding(.top, Self.selfViewInsets.top)
+            .padding(.leading, Self.selfViewInsets.trailing)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding(.top, sharing ? Self.sharingIndicatorInset : 0)
+
             if sharing {
                 sharingIndicator(starting: !call.isSharingScreen)
                     .padding(.top, 4)
@@ -179,9 +208,13 @@ struct InCallOverlay: View {
         .animation(Motion.standard, value: showsLocalVideo(call))
         .animation(Motion.standard, value: screen)
         .animation(Motion.snappy, value: sharing)
+        // Compared: the badge goes and the docked name rises into its place.
+        .animation(Motion.respecting(reduceMotion, Motion.standard), value: call.safetyVerified)
         .task(id: NamePlace(call: call.id, video: videoOn)) {
             await placeName(call.id, inCorner: videoOn)
         }
+        // The number stays in reach while it is read out; the timer starts over once it closes.
+        .onChange(of: safetyShownFor) { chromeTouch += 1 }
         .task(id: ChromeClock(screen: screen, hidden: chromeHidden, touch: chromeTouch)) {
             await lingerChrome(screen: screen)
         }
@@ -300,7 +333,8 @@ struct InCallOverlay: View {
             if chromeHidden { chromeHidden = false }
             return
         }
-        guard !chromeHidden, !UIAccessibility.isVoiceOverRunning else { return }
+        let safetyShown = safetyShownFor != nil && safetyShownFor == calls.active?.id
+        guard !chromeHidden, !safetyShown, !UIAccessibility.isVoiceOverRunning else { return }
         do {
             try await Task.sleep(for: Self.chromeLinger)
         } catch {
@@ -382,26 +416,81 @@ struct InCallOverlay: View {
         }
     }
 
-    /// The safety number, and a tap once it has been compared. It does not block the call.
-    @ViewBuilder
-    private func safetyCompare(for call: CallController.ActiveCall) -> some View {
-        if let number = calls.safetyNumberForActiveCall() {
-            Text(number)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.85))
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .shadow(color: .black.opacity(0.5), radius: 3, y: 1)
-        }
-        Button {
-            calls.confirmSafety()
+    /// Human: A safety number not compared yet: an amber "Not verified" badge in the top-leading
+    /// corner, a round glass control like Share opposite it. It reads out in full for a moment,
+    /// then closes down to the shield alone: the capsule narrows onto the shield, which never
+    /// moves, while the words fade out ahead of its edge. A tap opens the number in a popover to
+    /// read out on the call and mark as compared. It stays open while the popover is up, and
+    /// closes a few seconds after it goes.
+    /// Agent: WRITES safetyShownFor and safetyBadgeClosedFor, both keyed by call id so neither
+    /// carries over to the next call.
+    private func safetyBadge(for call: CallController.ActiveCall, number: String) -> some View {
+        let shown = Binding(
+            get: { safetyShownFor == call.id },
+            set: { safetyShownFor = $0 ? call.id : nil }
+        )
+        let closed = safetyBadgeClosedFor == call.id
+        let size = Self.shareControlSize
+        return Button {
+            shown.wrappedValue = true
         } label: {
-            Text("Safety number not compared")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.white.opacity(0.9))
+            HStack(spacing: 0) {
+                Image(systemName: "exclamationmark.shield.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .frame(width: size, height: size)
+                Text("Not verified")
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                    .fixedSize()
+                    .padding(.trailing, 14)
+                    // Gone before the narrowing edge reaches the words, so they are never cut.
+                    .opacity(closed ? 0 : 1)
+                    .blur(radius: closed && !reduceMotion ? 3 : 0)
+                    .animation(Motion.respecting(reduceMotion, .easeOut(duration: 0.2)), value: closed)
+            }
+            .foregroundStyle(Self.unverifiedTint)
+            // Open, as wide as the words; closed, a circle round the shield. The shield keeps its
+            // place, so only the trailing edge travels.
+            .frame(width: closed ? size : nil, height: size, alignment: .leading)
+            .clipShape(.capsule)
+            .contentShape(.capsule)
+            .glassEffect(.regular.tint(Self.unverifiedTint.opacity(0.12)).interactive(), in: .capsule)
+            .animation(Motion.respecting(reduceMotion, Motion.gentle), value: closed)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Not verified")
+        .accessibilityHint("Shows the safety number to compare with \(call.peerUsername).")
+        .popover(isPresented: shown, arrowEdge: .top) {
+            SafetyNumberPopover(name: call.peerUsername, number: number) {
+                shown.wrappedValue = false
+                calls.confirmSafety()
+            }
+            .presentationCompactAdaptation(.popover)
+        }
+        .task(id: SafetyBadgeClock(call: call.id, open: shown.wrappedValue)) {
+            guard !shown.wrappedValue, safetyBadgeClosedFor != call.id else { return }
+            do {
+                try await Task.sleep(for: Self.safetyBadgeLinger)
+            } catch {
+                return
+            }
+            safetyBadgeClosedFor = call.id
+        }
     }
+
+    /// What the badge's timer follows: a new call, and its popover opening or closing.
+    private struct SafetyBadgeClock: Equatable {
+        let call: UUID
+        let open: Bool
+    }
+
+    /// How long the badge reads "Not verified" before it closes down to the shield.
+    static let safetyBadgeLinger: Duration = .seconds(3)
+    /// What the badge takes at the top of the corner: the docked name block sits below it.
+    static let safetyBadgeReserve: CGFloat = shareControlSize + 10
+
+    /// The badge's amber, the web client's `#ffd9a8`: readable over any picture.
+    static let unverifiedTint = Color(red: 1, green: 217 / 255, blue: 168 / 255)
 
     /// Human: The name, the status line and the speaking meter, centred on each other in both
     /// places. The whole group travels as one piece: nothing inside it re-aligns on the way, so
@@ -423,9 +512,6 @@ struct InCallOverlay: View {
                 // Tighter than the name's: the smaller, dimmer line needs a firm edge over a
                 // bright picture.
                 .shadow(color: .black.opacity(0.5), radius: 3, y: 1)
-            if !call.safetyVerified, call.phase != .ending {
-                safetyCompare(for: call)
-            }
             // "You're speaking": only while the call runs with an open mic. Muting hides it; the
             // Mute control already says so in red.
             if call.phase == .active, !call.isMuted {
@@ -755,10 +841,15 @@ struct InCallOverlay: View {
 struct CallStageLayout: Layout {
     /// 0: the block hangs under the face. 1: it sits in the corner.
     var progress: CGFloat
+    /// How far below `corner` the docked block sits, clear of what is above it (the safety badge).
+    var cornerDrop: CGFloat = 0
 
-    var animatableData: CGFloat {
-        get { progress }
-        set { progress = newValue }
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(progress, cornerDrop) }
+        set {
+            progress = newValue.first
+            cornerDrop = newValue.second
+        }
     }
 
     /// Between the face and the block under it.
@@ -784,7 +875,7 @@ struct CallStageLayout: Layout {
         let offered = ProposedViewSize(width: Self.blockWidth(stage: bounds.width), height: nil)
         let face = subviews[0].sizeThatFits(.unspecified)
         let block = subviews[1].sizeThatFits(offered)
-        let frames = Self.frames(stage: bounds, face: face, block: block, progress: progress)
+        let frames = Self.frames(stage: bounds, face: face, block: block, progress: progress, cornerDrop: cornerDrop)
         subviews[0].place(at: frames.face.origin, proposal: ProposedViewSize(frames.face.size))
         // The measured size, not the max width offered above. A wider proposal would let the
         // stack re-align its lines inside a box the geometry does not move, and redraw the text
@@ -800,9 +891,15 @@ struct CallStageLayout: Layout {
 
     /// Where the face and the block are in `stage` (the space above the controls) at `progress`.
     /// Both ends sit on whole points, so text at rest is on the pixel grid.
-    static func frames(stage: CGRect, face: CGSize, block: CGSize, progress: CGFloat) -> (face: CGRect, block: CGRect) {
+    static func frames(
+        stage: CGRect,
+        face: CGSize,
+        block: CGSize,
+        progress: CGFloat,
+        cornerDrop: CGFloat = 0
+    ) -> (face: CGRect, block: CGRect) {
         let under = underFace(stage: stage, face: face, block: block)
-        let docked = inCorner(stage: stage, face: face, block: block)
+        let docked = inCorner(stage: stage, face: face, block: block, drop: cornerDrop)
         // The dock spring can run a little past 0 or 1. Past either end the block would leave
         // the corner, so the ends hold while it settles.
         let progress = min(1, max(0, progress))
@@ -834,8 +931,8 @@ struct CallStageLayout: Layout {
     }
 
     /// Docked: the block in the corner, the face alone in the middle.
-    private static func inCorner(stage: CGRect, face: CGSize, block: CGSize) -> (face: CGRect, block: CGRect) {
-        let blockFrame = CGRect(origin: CGPoint(x: stage.minX + corner.x, y: stage.minY + corner.y), size: block)
+    private static func inCorner(stage: CGRect, face: CGSize, block: CGSize, drop: CGFloat) -> (face: CGRect, block: CGRect) {
+        let blockFrame = CGRect(origin: CGPoint(x: stage.minX + corner.x, y: stage.minY + corner.y + drop), size: block)
         var faceOrigin = CGPoint(x: stage.midX - face.width / 2, y: stage.midY - face.height / 2)
         // A short stage (landscape) with a long name: the face moves out from under the block,
         // beside it where there is room, else below it.
@@ -875,4 +972,54 @@ struct CallStageLayout: Layout {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     .onTapGesture { withAnimation(Motion.standard) { docked.toggle() } }
+}
+
+/// The safety number from the call screen's badge: twelve groups of five, four to a row so each is
+/// easy to find again while reading them out, and a button once they match.
+private struct SafetyNumberPopover: View {
+    let name: String
+    let number: String
+    let confirm: () -> Void
+
+    private var rows: [[String]] {
+        let groups = number.split(separator: " ").map(String.init)
+        return stride(from: 0, to: groups.count, by: 4).map { Array(groups[$0..<min($0 + 4, groups.count)]) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Safety number")
+                .font(.system(size: 15, weight: .semibold))
+            Text("Compare it with \(name): read it out on this call, or check it in person. If it matches, nobody else can listen in.")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Grid(horizontalSpacing: 14, verticalSpacing: 6) {
+                ForEach(rows.indices, id: \.self) { row in
+                    GridRow {
+                        ForEach(rows[row].indices, id: \.self) { column in
+                            Text(rows[row][column])
+                        }
+                    }
+                }
+            }
+            .font(.system(size: 15, weight: .medium, design: .monospaced))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(number)
+            Button(action: confirm) {
+                Text("Mark as Verified")
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 4)
+            }
+            .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.capsule)
+            .tint(Theme.accent)
+        }
+        .padding(16)
+        .frame(width: 300)
+    }
 }

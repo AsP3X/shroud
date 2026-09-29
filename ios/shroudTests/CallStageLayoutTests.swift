@@ -43,6 +43,18 @@ struct CallStageLayoutTests {
         #expect(frames.face.midY == stage.midY)
     }
 
+    /// The "Not verified" badge takes the top of the corner: the docked block sits under it, and
+    /// the block under the face does not move for it.
+    @Test func theSafetyBadgeDropsOnlyTheDockedBlock() {
+        let drop = InCallOverlay.safetyBadgeReserve
+        let docked = CallStageLayout.frames(stage: stage, face: face, block: block, progress: 1, cornerDrop: drop)
+        #expect(docked.block.origin == CGPoint(x: 20, y: 12 + drop))
+        #expect(docked.face == frames(1).face)
+        let under = CallStageLayout.frames(stage: stage, face: face, block: block, progress: 0, cornerDrop: drop)
+        #expect(under.block == frames(0).block)
+        #expect(drop == InCallOverlay.shareControlSize + 10)
+    }
+
     @Test func onlyTheBlockMoves() {
         let face = frames(0).face
         for progress: CGFloat in [0.1, 0.5, 0.9, 1] {

@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -22,6 +23,7 @@ import {
   PhoneOff,
   ScreenShare,
   ScreenShareOff,
+  ShieldAlert,
   ShieldCheck,
   Shrink,
   SwitchCamera,
@@ -527,6 +529,123 @@ function Control({
 }
 
 /**
+ * A small panel that opens from a button on the call screen. Focus goes into it (onto `first`, or
+ * the panel itself), a press outside and focus moving on past it close it, and focus that was in
+ * it goes back to the button once it closes. Escape is the call's own key handler.
+ */
+function usePanelDismiss(
+  open: boolean,
+  onOpenChange: (open: boolean) => void,
+  refs: {
+    wrap: RefObject<HTMLElement | null>;
+    panel: RefObject<HTMLElement | null>;
+    toggle: RefObject<HTMLElement | null>;
+  },
+  first: string | null,
+) {
+  const { wrap, panel, toggle } = refs;
+  useEffect(() => {
+    const box = panel.current;
+    if (!open || !box) return;
+    // Where focus goes when the button went with the panel (a safety number marked as compared).
+    const screen = box.closest<HTMLElement>(".call");
+    (first ? box.querySelector<HTMLElement>(first) : box)?.focus({ preventScroll: true });
+    let focusInside = box.contains(document.activeElement);
+    const onFocus = () => {
+      focusInside = box.contains(document.activeElement);
+      // Tabbed on past it: a panel left open behind the focus would be lost to the keyboard.
+      if (!wrap.current?.contains(document.activeElement)) onOpenChange(false);
+    };
+    const away = (event: PointerEvent) => {
+      if (!wrap.current?.contains(event.target as Node)) onOpenChange(false);
+    };
+    document.addEventListener("focusin", onFocus);
+    window.addEventListener("pointerdown", away, true);
+    return () => {
+      document.removeEventListener("focusin", onFocus);
+      window.removeEventListener("pointerdown", away, true);
+      // Focus that was in the panel (closed with Escape) goes back to the button, not to the page.
+      const lost = document.activeElement === null || document.activeElement === document.body;
+      if (focusInside && lost) (toggle.current ?? screen)?.focus({ preventScroll: true });
+    };
+  }, [open, onOpenChange, wrap, panel, toggle, first]);
+}
+
+/**
+ * The badge in the top-left corner. A contact whose safety number has not been compared shows
+ * "Not verified" there instead of "End-to-end encrypted", and the badge opens the number, to
+ * read out on the call and mark as compared. Nothing else on the screen moves for it.
+ */
+function SafetyBadge({
+  name,
+  number,
+  open,
+  onOpenChange,
+}: {
+  name: string;
+  /** The number to compare, or null once it is compared (or cannot be shown). */
+  number: string | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const wrap = useRef<HTMLDivElement>(null);
+  const toggle = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const panelId = useId();
+  // Onto the panel, not its button: a stray Enter must not mark the number as compared.
+  usePanelDismiss(open && number !== null, onOpenChange, { wrap, panel, toggle }, null);
+  if (number === null) {
+    return (
+      <span className="call-e2e">
+        <ShieldCheck size={13} aria-hidden="true" />
+        End-to-end encrypted
+      </span>
+    );
+  }
+  return (
+    <div className="call-safety-wrap" ref={wrap}>
+      <button
+        type="button"
+        ref={toggle}
+        className={`call-e2e is-unverified${open ? " is-open" : ""}`}
+        aria-label={`Not verified: safety number not compared with ${name}`}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls={open ? panelId : undefined}
+        onClick={() => onOpenChange(!open)}
+      >
+        <ShieldAlert size={13} aria-hidden="true" />
+        Not verified
+      </button>
+      {open ? (
+        <div className="call-safety-panel" id={panelId} ref={panel} role="dialog" aria-label="Safety number" tabIndex={-1}>
+          <div className="call-safety-title">Safety number</div>
+          <p className="call-safety-text">
+            Compare it with {name}: read it out on this call, or check it in person. If it matches, nobody else can
+            listen in.
+          </p>
+          <div className="call-safety-num">
+            {number.split(" ").map((group, index) => (
+              <span key={index}>{group}</span>
+            ))}
+          </div>
+          <button
+            type="button"
+            className="call-safety-confirm"
+            onClick={() => {
+              onOpenChange(false);
+              confirmCallSafety();
+            }}
+          >
+            Mark as verified
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
  * The arrow on Share and the panel it opens: the resolution and the frame rate our screen goes
  * out at, as Discord offers them. Chosen before sharing or while it runs (it applies at once), and
  * kept for the next call. Escape (handled with the call's own keys), a press outside and focus
@@ -549,30 +668,8 @@ function ScreenQualityPicker({
   const panel = useRef<HTMLDivElement>(null);
   const panelId = useId();
   const summary = screenQualityText(quality);
-  useEffect(() => {
-    const box = panel.current;
-    if (!open || !box) return;
-    // Into the panel, on the choice that is on, so the arrow keys move from there.
-    box.querySelector<HTMLInputElement>("input:checked")?.focus({ preventScroll: true });
-    let focusInside = box.contains(document.activeElement);
-    const onFocus = () => {
-      focusInside = box.contains(document.activeElement);
-      // Tabbed on past it: a panel left open behind the focus would be lost to the keyboard.
-      if (!wrap.current?.contains(document.activeElement)) onOpenChange(false);
-    };
-    const away = (event: PointerEvent) => {
-      if (!wrap.current?.contains(event.target as Node)) onOpenChange(false);
-    };
-    document.addEventListener("focusin", onFocus);
-    window.addEventListener("pointerdown", away, true);
-    return () => {
-      document.removeEventListener("focusin", onFocus);
-      window.removeEventListener("pointerdown", away, true);
-      // Focus that was in the panel (closed with Escape) goes back to the arrow, not to the page.
-      const lost = document.activeElement === null || document.activeElement === document.body;
-      if (focusInside && lost) toggle.current?.focus({ preventScroll: true });
-    };
-  }, [open, onOpenChange]);
+  // Into the panel on the choice that is on, so the arrow keys move from there.
+  usePanelDismiss(open, onOpenChange, { wrap, panel, toggle }, "input:checked");
   return (
     <div className="call-quality-wrap" ref={wrap}>
       <button
@@ -699,7 +796,16 @@ function CallScreen({ view }: { view: CallView }) {
   const qualityShown = qualityOpen && live && view.shareSupported;
   const qualityShownRef = useRef(qualityShown);
   qualityShownRef.current = qualityShown;
-  const idle = useIdle(root, screenUp && !view.audioBlocked && !qualityShown, view.notice);
+  /* The safety number, from the badge in the top-left corner, until it is compared. Open for one
+     call only: a panel left open as a call ends never opens by itself on the next. */
+  const [safetyOpenKey, setSafetyOpenKey] = useState<number | null>(null);
+  const setSafetyOpen = useCallback((open: boolean) => setSafetyOpenKey(open ? view.key : null), [view.key]);
+  const safetyNumber =
+    view.safety && !view.safety.verified && !view.keyChanged && view.phase !== "ended" ? view.safety.number : null;
+  const safetyShown = safetyOpenKey === view.key && safetyNumber !== null;
+  const safetyShownRef = useRef(safetyShown);
+  safetyShownRef.current = safetyShown;
+  const idle = useIdle(root, screenUp && !view.audioBlocked && !qualityShown && !safetyShown, view.notice);
   const fullscreen = useFullscreen(root);
   /* Fullscreen was for their screen: it ends with it. */
   const leaveFullscreen = !screenUp && fullscreen.on;
@@ -735,8 +841,9 @@ function CallScreen({ view }: { view: CallView }) {
       if (event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();
-      // An open quality panel closes first; the call stays where it is.
+      // An open panel closes first; the call stays where it is.
       if (qualityShownRef.current) setQualityOpen(false);
+      else if (safetyShownRef.current) setSafetyOpen(false);
       else if (live) setCallMinimized(true);
     };
     window.addEventListener("keydown", onKey, true);
@@ -842,10 +949,7 @@ function CallScreen({ view }: { view: CallView }) {
               </button>
             </div>
           ) : null}
-          <span className="call-e2e">
-            <ShieldCheck size={13} aria-hidden="true" />
-            End-to-end encrypted
-          </span>
+          <SafetyBadge name={name} number={safetyNumber} open={safetyShown} onOpenChange={setSafetyOpen} />
         </div>
         <div className="call-top-actions">
           {live && screenUp ? (
@@ -931,11 +1035,6 @@ function CallScreen({ view }: { view: CallView }) {
             {view.keyChanged ? (
               <button type="button" className="call-safety" onClick={acceptChangedCallKey}>
                 Trust new key
-              </button>
-            ) : view.safety && !view.safety.verified && view.phase !== "ended" ? (
-              <button type="button" className="call-safety" onClick={confirmCallSafety}>
-                <span>Safety number not compared</span>
-                <span className="call-safety-num">{view.safety.number}</span>
               </button>
             ) : null}
           </div>
