@@ -26,21 +26,24 @@ RUN touch crates/shroud-server/src/main.rs crates/shroud-server/src/lib.rs \
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libssl3 \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get install -y --no-install-recommends ca-certificates libssl3 gosu curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /data/shroud-media \
+    && chown -R nobody:nogroup /data
 
 WORKDIR /app
 
 COPY --from=builder /app/target/release/shroud-server /usr/local/bin/shroud-server
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 ENV HOST=0.0.0.0
 ENV PORT=8080
+ENV MEDIA_DATA_DIR=/data/shroud-media
 # Overridden by compose to debug for local; keep info as image default for prod-like runs.
 ENV RUST_LOG=shroud_server=info,tower_http=info,sqlx=warn
 
-
 EXPOSE 8080
 
-USER nobody:nogroup
-
-CMD ["shroud-server"]
+# Entrypoint starts as root only to chown the media volume, then drops to nobody.
+ENTRYPOINT ["/entrypoint.sh"]

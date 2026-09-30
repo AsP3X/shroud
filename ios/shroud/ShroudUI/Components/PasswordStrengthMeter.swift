@@ -4,6 +4,8 @@ import SwiftUI
 struct PasswordStrengthMeter: View {
     let evaluation: PasswordStrengthEvaluation
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             strengthHeader
@@ -14,6 +16,8 @@ struct PasswordStrengthMeter: View {
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.strengthPanelBackground)
+        // The track grows, the badge pops and the checks tick instead of snapping as you type.
+        .animation(Motion.respecting(reduceMotion, Motion.snappy), value: evaluation)
     }
 
     private var strengthHeader: some View {
@@ -27,8 +31,13 @@ struct PasswordStrengthMeter: View {
 
             if evaluation.level != .empty {
                 strengthBadge
+                    .transition(reduceMotion ? .opacity : Motion.iconSwap)
             }
         }
+        // One stop: "Password strength, Strong" instead of the caption and badge apart.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Password strength")
+        .accessibilityValue(evaluation.level == .empty ? "None" : evaluation.level.rawValue)
     }
 
     private var strengthBadge: some View {
@@ -71,10 +80,15 @@ struct PasswordStrengthMeter: View {
             Image(systemName: isMet ? "checkmark.circle.fill" : "circle")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(isMet ? Theme.online : Theme.textSecondary.opacity(0.45))
+                .contentTransition(.symbolEffect(.replace))
             Text(label)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Theme.textSecondary)
         }
+        // Met or not shows only in the glyph; VoiceOver hears it as the value.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue(isMet ? "Met" : "Not met")
     }
 
     private var badgeIconName: String {
@@ -90,14 +104,15 @@ struct PasswordStrengthMeter: View {
         }
     }
 
+    /// Text tokens, not the icon tints: the 11 pt label keeps 4.5:1 on its pastel.
     private var badgeForeground: Color {
         switch evaluation.level {
         case .strong, .good:
-            Theme.online
+            Theme.successText
         case .fair:
-            Theme.warningIcon
+            Theme.warningText
         case .weak:
-            Theme.danger
+            Theme.dangerText
         case .empty:
             Theme.textSecondary
         }

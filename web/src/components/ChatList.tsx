@@ -1,0 +1,219 @@
+import type { MouseEvent, ReactNode } from "react";
+import { BellOff, Heart, QrCode, Search, SquarePen, X } from "lucide-react";
+import type { PeerActivity } from "../typing";
+import { Avatar } from "./Avatar";
+import { TypingLabel } from "./Typing";
+
+export type ListEntry = {
+  id: string;
+  username: string;
+  subtitle: string;
+  timestamp?: string;
+  online: boolean;
+  /** "typing" / "recording" replaces the preview, as on iOS. */
+  activity?: PeerActivity;
+  /** The other side reacted to our messages since we last looked (Telegram's heart badge). */
+  newReactions?: boolean;
+  /** Their messages we have not read (on any device). */
+  unread?: number;
+  /** Notifications for the chat are off: a bell in the row, and a grey count. */
+  muted?: boolean;
+};
+
+export type RequestEntry = { id: string; username: string };
+
+export function ChatList({
+  title,
+  query,
+  onQueryChange,
+  onAdd,
+  addLabel,
+  onShowQr,
+  loading,
+  error,
+  requests,
+  onRespond,
+  entries,
+  selectedId,
+  onSelect,
+  empty,
+  banner,
+  onEntryMenu,
+  className,
+}: {
+  title: string;
+  query: string;
+  onQueryChange: (value: string) => void;
+  onAdd: () => void;
+  addLabel: string;
+  /** Shown on Contacts, where iOS puts its QR button too. */
+  onShowQr?: () => void;
+  loading: boolean;
+  error: string | null;
+  requests: RequestEntry[];
+  onRespond: (id: string, accept: boolean) => void;
+  entries: ListEntry[];
+  selectedId: string | null;
+  onSelect: (entry: ListEntry) => void;
+  empty: { title: string; body: string };
+  /** Above the rows: the "turn on notifications" offer. */
+  banner?: ReactNode;
+  /** Right-click on a row (or Shift+F10 / the context-menu key on a focused one). */
+  onEntryMenu?: (entry: ListEntry, event: MouseEvent<HTMLButtonElement>) => void;
+  className?: string;
+}) {
+  const searching = query.trim().length > 0;
+  return (
+    <section className={className ? `pane ${className}` : "pane"} aria-label={title}>
+      <header className="pane-head">
+        <div className="pane-title-row">
+          <h1>{title}</h1>
+          <div className="pane-actions">
+            {onShowQr ? (
+              <button
+                type="button"
+                className="icon-btn accent"
+                aria-label="Show my QR code"
+                title="Show my QR code"
+                onClick={onShowQr}
+              >
+                <QrCode size={18} />
+              </button>
+            ) : null}
+            <button type="button" className="icon-btn" aria-label={addLabel} title={addLabel} onClick={onAdd}>
+              <SquarePen size={18} />
+            </button>
+          </div>
+        </div>
+        <div className="search">
+          <Search size={15} aria-hidden="true" />
+          <input
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder={`Search ${title.toLowerCase()}`}
+            aria-label={`Search ${title.toLowerCase()}`}
+            type="search"
+          />
+          {searching ? (
+            <button className="search-clear" aria-label="Clear search" onClick={() => onQueryChange("")}>
+              <X size={14} />
+            </button>
+          ) : null}
+        </div>
+      </header>
+
+      <div className="rows">
+        {banner}
+        {error ? (
+          <p className="pane-error" role="status">
+            {error}
+          </p>
+        ) : null}
+
+        {requests.length > 0 && !searching ? (
+          <>
+            <h2 className="list-label">Requests</h2>
+            {requests.map((request) => (
+              <div key={request.id} className="row row-static">
+                <Avatar name={request.username} seed={request.id} />
+                <div className="row-copy">
+                  <strong>{request.username}</strong>
+                  <span>Wants to connect</span>
+                </div>
+                <div className="row-actions">
+                  <button type="button" className="mini-btn" onClick={() => onRespond(request.id, true)}>
+                    Accept
+                  </button>
+                  <button type="button" className="mini-btn ghost" onClick={() => onRespond(request.id, false)}>
+                    Ignore
+                  </button>
+                </div>
+              </div>
+            ))}
+            <h2 className="list-label">{title}</h2>
+          </>
+        ) : null}
+
+        {loading && entries.length === 0 && !error ? (
+          <ul className="skeletons" aria-hidden="true">
+            {[0, 1, 2, 3, 4].map((n) => (
+              <li key={n} className="row skeleton-row">
+                <span className="skeleton skeleton-avatar" />
+                <span className="row-copy">
+                  <span className="skeleton skeleton-line" style={{ width: `${45 + n * 7}%` }} />
+                  <span className="skeleton skeleton-line short" style={{ width: `${60 - n * 5}%` }} />
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
+        {!loading && entries.length === 0 && requests.length === 0 && !error ? (
+          <div className="rows-empty">
+            <strong>{searching ? "Nothing found" : empty.title}</strong>
+            <p>{searching ? `No match for “${query.trim()}”.` : empty.body}</p>
+          </div>
+        ) : null}
+
+        {entries.map((entry) => {
+          const active = selectedId?.toLowerCase() === entry.id.toLowerCase();
+          const unread = entry.unread ?? 0;
+          return (
+            <button
+              type="button"
+              key={entry.id}
+              className={active ? "row row-button active" : "row row-button"}
+              aria-current={active ? "true" : undefined}
+              onClick={() => onSelect(entry)}
+              onContextMenu={
+                onEntryMenu
+                  ? (event) => {
+                      event.preventDefault();
+                      onEntryMenu(entry, event);
+                    }
+                  : undefined
+              }
+            >
+              <Avatar name={entry.username} seed={entry.id} online={entry.online} />
+              <span className="row-copy">
+                {entry.muted ? (
+                  <strong className="row-title-muted">
+                    <span>{entry.username}</span>
+                    <BellOff size={13} className="row-muted-icon" aria-label="Muted" />
+                  </strong>
+                ) : (
+                  <strong>{entry.username}</strong>
+                )}
+                {entry.activity ? <TypingLabel word={entry.activity} /> : <span>{entry.subtitle}</span>}
+              </span>
+              {entry.timestamp || entry.newReactions || unread > 0 ? (
+                <span className="row-side">
+                  {entry.timestamp ? <time className="row-time">{entry.timestamp}</time> : null}
+                  {entry.newReactions || unread > 0 ? (
+                    <span className="row-badges">
+                      {entry.newReactions ? (
+                        <span className="row-reaction-badge" title="New reactions">
+                          <Heart size={11} fill="currentColor" aria-hidden="true" />
+                          <span className="sr-only">New reactions</span>
+                        </span>
+                      ) : null}
+                      {unread > 0 ? (
+                        <span
+                          key={unread}
+                          className={entry.muted ? "row-unread muted" : "row-unread"}
+                          aria-label={`${unread} unread`}
+                        >
+                          {unread > 99 ? "99+" : unread}
+                        </span>
+                      ) : null}
+                    </span>
+                  ) : null}
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}

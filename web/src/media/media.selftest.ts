@@ -1,0 +1,234 @@
+import { isHeif } from "./heic";
+import { clipboardImages, displayPixelSize, imageFiles, prepareImage } from "./prepareImage";
+import { clipboardVideos, isVideoFile, videoFiles } from "./prepareVideo";
+import {
+  clockLabel,
+  effectiveTrim,
+  MAX_VIDEO_BYTES,
+  planResolutionLabel,
+  planVideo,
+  VideoTooLongError,
+  type VideoProbe,
+} from "./videoPlan";
+import { isVideoPayload, isVoicePayload, parseMediaPayload } from "../crypto/mediaPayload";
+
+function heifLike(brand: string): Uint8Array {
+  const out = new Uint8Array(12);
+  out[3] = 12;
+  out.set(new TextEncoder().encode("ftyp"), 4);
+  out.set(new TextEncoder().encode(brand), 8);
+  return out;
+}
+
+if (!isHeif(heifLike("heic"))) throw new Error("isHeif: heic brand");
+if (!isHeif(heifLike("heic"), "image/heic")) throw new Error("isHeif: mime + brand");
+if (isHeif(heifLike("mif1")) !== true) throw new Error("isHeif: mif1");
+if (isHeif(heifLike("jpeg"))) throw new Error("isHeif: jpeg brand must fail");
+if (isHeif(new Uint8Array([0xff, 0xd8, 0xff]), "image/jpeg")) throw new Error("isHeif: jpeg mime");
+if (!isHeif(new Uint8Array(4), "image/heif")) throw new Error("isHeif: short heif mime");
+
+const jpeg = new File([new Uint8Array([0xff, 0xd8])], "a.jpg", { type: "image/jpeg" });
+const png = new File([new Uint8Array([0x89])], "a.png", { type: "image/png" });
+const svg = new File([new Uint8Array([0x3c])], "a.svg", { type: "image/svg+xml" });
+const namedHeic = new File([new Uint8Array(4)], "IMG_0001.HEIC", { type: "" });
+const text = new File([new Uint8Array([0x61])], "a.txt", { type: "text/plain" });
+const picked = imageFiles([jpeg, png, svg, namedHeic, text]);
+if (picked.length !== 3) throw new Error(`imageFiles: expected 3, got ${picked.length}`);
+if (!picked.includes(namedHeic)) throw new Error("imageFiles: HEIC by name");
+if (picked.includes(svg) || picked.includes(text)) throw new Error("imageFiles: rejected svg/text");
+
+const transfer = {
+  files: [] as unknown as FileList,
+  items: [] as unknown as DataTransferItemList,
+} as DataTransfer;
+if (clipboardImages(transfer).length !== 0) throw new Error("clipboardImages: empty");
+if (clipboardImages(null).length !== 0) throw new Error("clipboardImages: null");
+
+/** A JPEG header: optional EXIF orientation, then a start-of-frame with the stored size. */
+function jpegHeader(width: number, height: number, orientation?: number): Uint8Array {
+  const parts: number[] = [0xff, 0xd8];
+  if (orientation) {
+    const tiff = [
+      0x49, 0x49, 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x12, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00,
+      orientation, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
+    const body = [0x45, 0x78, 0x69, 0x66, 0x00, 0x00, ...tiff];
+    const length = body.length + 2;
+    parts.push(0xff, 0xe1, length >> 8, length & 0xff, ...body);
+  }
+  parts.push(0xff, 0xc0, 0x00, 0x0b, 0x08, height >> 8, height & 0xff, width >> 8, width & 0xff, 0x01, 0x11, 0x00);
+  return Uint8Array.from(parts);
+}
+
+const stored = displayPixelSize(jpegHeader(32, 16));
+if (!stored || stored.width !== 32 || stored.height !== 16) {
+  throw new Error(`displayPixelSize: stored size, got ${stored?.width}x${stored?.height}`);
+}
+const turned = displayPixelSize(jpegHeader(32, 16, 6));
+if (!turned || turned.width !== 16 || turned.height !== 32) {
+  throw new Error(`displayPixelSize: orientation 6 swaps axes, got ${turned?.width}x${turned?.height}`);
+}
+if (displayPixelSize(new Uint8Array([0, 1, 2, 3])) !== null) throw new Error("displayPixelSize: not an image");
+
+/** Blob whose reported size is not the byte length, so the cap can be tested without a 2 GiB allocation. */
+function sizedBlob(bytes: Uint8Array, size: number, type: string): Blob {
+  const blob = new Blob([bytes as BlobPart], { type });
+  return new Proxy(blob, {
+    get(target, prop, receiver) {
+      if (prop === "size") return size;
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+const sendCap = 2 * 1024 * 1024 * 1024 - 1024 * 1024;
+try {
+  await prepareImage(sizedBlob(jpegHeader(32, 16), sendCap + 1, "image/jpeg"));
+  throw new Error("prepareImage: over the send cap must throw");
+} catch (err) {
+  const message = err instanceof Error ? err.message : String(err);
+  if (message !== "That image is too large to send.") {
+    throw new Error(`prepareImage: send cap message, got ${message}`);
+  }
+}
+
+try {
+  await prepareImage(sizedBlob(jpegHeader(32, 16), 70 * 1024 * 1024, "image/jpeg"));
+  throw new Error("prepareImage: an undecodable header must throw");
+} catch (err) {
+  const message = err instanceof Error ? err.message : String(err);
+  if (message.includes("64") || message === "That image is too large to send.") {
+    throw new Error(`prepareImage: a 70 MB photo must not be refused for its file size, got ${message}`);
+  }
+  if (message !== "This file isn’t an image this browser can read.") {
+    throw new Error(`prepareImage: expected a decode failure, got ${message}`);
+  }
+}
+
+const mp4 = new File([new Uint8Array(8)], "clip.mp4", { type: "video/mp4" });
+const mov = new File([new Uint8Array(8)], "IMG_0001.MOV", { type: "" });
+const webm = new File([new Uint8Array(8)], "a.webm", { type: "video/webm" });
+if (!isVideoFile(mp4) || !isVideoFile(mov) || !isVideoFile(webm)) throw new Error("isVideoFile: extensions");
+if (isVideoFile(jpeg) || isVideoFile(text)) throw new Error("isVideoFile: rejected photo/text");
+const clips = videoFiles([mp4, mov, jpeg, text, webm]);
+if (clips.length !== 3) throw new Error(`videoFiles: expected 3, got ${clips.length}`);
+if (clipboardVideos(transfer).length !== 0) throw new Error("clipboardVideos: empty");
+if (clipboardVideos(null).length !== 0) throw new Error("clipboardVideos: null");
+
+if (clockLabel(7) !== "0:07") throw new Error("clockLabel: 7s");
+if (clockLabel(750) !== "12:30") throw new Error("clockLabel: 12:30");
+if (effectiveTrim({ start: 0, end: 8 }, 8) !== null) throw new Error("effectiveTrim: whole clip");
+const kept = effectiveTrim({ start: 1, end: 4 }, 8);
+if (!kept || kept.start !== 1 || kept.end !== 4) throw new Error("effectiveTrim: window");
+
+function probe(partial: Partial<VideoProbe> & Pick<VideoProbe, "bytes" | "duration" | "width" | "height">): VideoProbe {
+  return {
+    fps: 30,
+    videoCodec: "avc",
+    audioCodec: "aac",
+    audioChannels: 2,
+    audioSampleRate: 48000,
+    audioBitrate: 128_000,
+    audioDecodable: true,
+    ...partial,
+  };
+}
+
+const copied = planVideo(probe({ bytes: 2_000_000, duration: 8, width: 1280, height: 720 }));
+if (copied.video !== "copy" || copied.audio !== "copy") throw new Error("planVideo: modest H.264 should copy");
+
+const hevc = planVideo(probe({ bytes: 12_000_000, duration: 8, width: 1920, height: 1080, videoCodec: "hevc" }));
+if (hevc.video !== "encode" || hevc.width > 1280 || hevc.height > 720) {
+  throw new Error("planVideo: HEVC should re-encode into the 1280 box");
+}
+
+const fullHd = probe({ bytes: 2_000_000, duration: 8, width: 1920, height: 1080 });
+const asHigh = planVideo(fullHd, { quality: "high" });
+if (asHigh.video !== "encode" || asHigh.width !== 1280 || asHigh.height !== 720) {
+  throw new Error(`planVideo: high caps 1080p at 720p, got ${asHigh.width}×${asHigh.height} ${asHigh.video}`);
+}
+if (planResolutionLabel(asHigh, fullHd, "high") !== "720p") throw new Error("planResolutionLabel: 720p");
+const asOriginal = planVideo(fullHd, { quality: "original" });
+if (asOriginal.video !== "copy") throw new Error("planVideo: original keeps a modest H.264 file");
+if (planResolutionLabel(asOriginal, fullHd, "original") !== "Original") {
+  throw new Error("planResolutionLabel: original copy");
+}
+
+const hevcOriginal = planVideo(
+  probe({ bytes: 12_000_000, duration: 8, width: 1920, height: 1080, videoCodec: "hevc" }),
+  { quality: "original" },
+);
+if (hevcOriginal.video !== "encode" || hevcOriginal.width !== 1920 || hevcOriginal.height !== 1080) {
+  throw new Error("planVideo: original re-encodes HEVC at the source size");
+}
+
+const medium = planVideo(probe({ bytes: 2_000_000, duration: 8, width: 1280, height: 720 }), { quality: "medium" });
+if (medium.video !== "encode" || medium.width !== 960 || medium.height !== 540) {
+  throw new Error(`planVideo: medium is 540p, got ${medium.width}×${medium.height}`);
+}
+const kept540 = planVideo(probe({ bytes: 800_000, duration: 8, width: 960, height: 540 }), { quality: "medium" });
+if (kept540.video !== "copy") throw new Error("planVideo: medium keeps a modest 540p file");
+
+const small = planVideo(probe({ bytes: 2_000_000, duration: 8, width: 1280, height: 720 }), { quality: "small" });
+if (small.video !== "encode" || small.width !== 640 || small.height !== 360) {
+  throw new Error(`planVideo: small is 360p, got ${small.width}×${small.height}`);
+}
+const small43 = planVideo(probe({ bytes: 2_000_000, duration: 8, width: 1440, height: 1080 }), { quality: "small" });
+if (small43.video !== "encode" || small43.width !== 480 || small43.height !== 360) {
+  throw new Error(`planVideo: 4:3 small stays 360p, got ${small43.width}×${small43.height}`);
+}
+
+const halfHour = planVideo(
+  probe({
+    bytes: 200_000_000,
+    duration: 30 * 60,
+    width: 1920,
+    height: 1080,
+    fps: 30,
+    videoCodec: "hevc",
+    audioBitrate: 256_000,
+  }),
+  { quality: "high" },
+);
+if (halfHour.video !== "encode" || halfHour.width !== 1280 || halfHour.height !== 720) {
+  throw new Error(`planVideo: 30 min at high should stay 720p, got ${halfHour.width}×${halfHour.height} ${halfHour.video}`);
+}
+if (halfHour.estimatedBytes > MAX_VIDEO_BYTES) {
+  throw new Error(`planVideo: 30 min estimate ${halfHour.estimatedBytes} exceeds the cap`);
+}
+
+let originalThrew = false;
+try {
+  planVideo(
+    probe({ bytes: 8_000_000_000, duration: 2 * 3600, width: 3840, height: 2160, fps: 30, videoCodec: "hevc" }),
+    { quality: "original" },
+  );
+} catch (err) {
+  originalThrew = err instanceof VideoTooLongError && /original/i.test(err.message);
+}
+if (!originalThrew) throw new Error("planVideo: original refuses a clip that cannot stay full size");
+
+const muted = planVideo(probe({ bytes: 2_000_000, duration: 8, width: 1280, height: 720 }), { mute: true });
+if (muted.audio !== "none") throw new Error("planVideo: mute drops sound");
+
+let threw = false;
+try {
+  planVideo(
+    probe({ bytes: 8_000_000_000, duration: 60 * 3600, width: 3840, height: 2160, fps: 60, videoCodec: "hevc" }),
+  );
+} catch (err) {
+  threw = err instanceof VideoTooLongError && err.maxSeconds >= 1;
+}
+if (!threw) throw new Error("planVideo: a 60-hour clip must be too long");
+
+const videoByType = parseMediaPayload('{"t":"video","k":"YQ==","mime":"video/mp4","w":1,"h":1}');
+if (!videoByType || !isVideoPayload(videoByType) || isVoicePayload(videoByType)) {
+  throw new Error("isVideoPayload: t=video");
+}
+const videoByMime = parseMediaPayload('{"t":"media","k":"YQ==","mime":"video/quicktime"}');
+if (!videoByMime || !isVideoPayload(videoByMime)) throw new Error("isVideoPayload: mime sniff");
+const photoNotVideo = parseMediaPayload('{"t":"image","k":"YQ==","mime":"video/mp4"}');
+if (!photoNotVideo || isVideoPayload(photoNotVideo)) throw new Error("isVideoPayload: t=image wins");
+
+console.log("media selftest ok");

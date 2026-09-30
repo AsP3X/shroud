@@ -1,5 +1,5 @@
 /// BIP39 English wordlist (2048 words) for encryption phrase generation.
-enum BIP39EnglishWordlist {
+nonisolated enum BIP39EnglishWordlist {
     static let words: [String] = [
         "abandon", "ability", "able", "about", "above", "absent", "absorb", "abstract",
         "absurd", "abuse", "access", "accident", "account", "accuse", "achieve", "acid",

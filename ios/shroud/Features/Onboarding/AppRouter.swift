@@ -1,11 +1,11 @@
 import SwiftUI
 
-/// Onboarding destinations — maps 1:1 to auth screens in `iOS-App.pen`.
+/// Onboarding push destinations only (not the main shell).
+/// Human: `main` is presented by `RootView` outside this stack — never push it onto `path`.
 enum AppRoute: Hashable {
     case welcome
     case signUp
     case logIn
-    case main
 }
 
 /// Central navigation state for the pre-auth onboarding flow.
@@ -15,21 +15,66 @@ final class AppRouter {
     var path: [AppRoute] = []
     /// Injected session; when set, drives unlock + logout.
     var sessionController: SessionController?
+    /// Injected crypto; messaging unlock requires identity material.
+    var cryptoController: CryptoController?
+    /// Injected messaging; local caches are wiped on logout.
+    var messagingController: MessagingController?
+    /// Injected calls; recent list is wiped on logout.
+    var callController: CallController?
+    /// Injected; runs the logout wipe and its overlay.
+    var deviceWipe: DeviceWipeController?
 
-    /// Human: Server session ≠ messaging unlock. Login must enter the 12-word phrase before main.
-    /// Agent: Only true after unlockMessages() or cold-start restore of an existing session.
+    /// Human: Server session ≠ messaging unlock. Need phrase-derived keys (or Keychain restore).
+    /// Agent: True only after unlockMessages() / cold-start crypto restore.
     var hasUnlockedMessaging = false
 
-    /// Ready for the main shell: API session present **and** local phrase unlock completed.
+    /// True while logout is in flight (disables the Log Out control).
+    var isLoggingOut: Bool { deviceWipe?.isPresented == true }
+
+    /// One-shot toast after returning to Welcome (e.g. "Signed out · local data cleared").
+    var postAuthToast: String?
+
+    /// A server picked on the lock screen, saved by `RootView` once the logout wipe is over.
+    /// Human: The wipe revokes the session on the server that issued it; the new server only
+    /// ever sees a signed-out iPhone, never this session's token.
+    var pendingServerConfiguration: ServerConfiguration?
+
+    /// Ready for the main shell: API session present **and** local crypto unlocked.
     var isUnlocked: Bool {
-        hasUnlockedMessaging && sessionController?.isSignedIn == true
+        hasUnlockedMessaging
+            && sessionController?.isSignedIn == true
+            && cryptoController?.isUnlocked == true
     }
 
-    var rootRoute: AppRoute {
-        if isUnlocked {
-            return .main
+    /// The lock screen asked for the main shell to be built, hidden, ahead of its reveal.
+    ///
+    /// Human: Building Chats (tab shell, lists, glass bar) is ~250 ms of main-thread work. Done
+    /// on the reveal's first frame, it swallowed the start of the unlock animation — the mark
+    /// jumped instead of lifting away. The lock screen now builds it while it still reads
+    /// "Checking…" under the Face ID sheet, and the reveal only fades a view that exists.
+    private(set) var prewarmsMainShell = false
+    /// Set by the shell itself once it is in the hierarchy.
+    var mainShellMounted = false
+
+    /// Whether `RootView` keeps the main shell in the hierarchy: shown, or built and hidden.
+    /// Never while the vault is sealed, so a prewarm cannot outlive a lock.
+    var mountsMainShell: Bool {
+        isUnlocked || (prewarmsMainShell && cryptoController?.isUnlocked == true)
+    }
+
+    /// Mounts the shell hidden and waits (briefly) until it has been built.
+    func prewarmMainShell() async {
+        guard cryptoController?.isUnlocked == true else { return }
+        prewarmsMainShell = true
+        let deadline = ContinuousClock.now + .milliseconds(600)
+        while !mainShellMounted, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(8))
         }
-        return .welcome
+    }
+
+    /// Drops a prewarmed shell the unlock it was for did not use.
+    func cancelMainShellPrewarm() {
+        prewarmsMainShell = false
     }
 
     func showWelcome() {
@@ -37,47 +82,103 @@ final class AppRouter {
     }
 
     func showSignUp() {
-        // Human: Spring path change pairs with the Zoom navigation transition from the Welcome logo.
-        // Agent: WRITES path = [.signUp] inside spring animation.
-        withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
+        withAnimation(Motion.standard) {
             path = [.signUp]
         }
     }
 
     func showLogIn() {
-        withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
+        withAnimation(Motion.standard) {
             path = [.logIn]
         }
     }
 
     func pop() {
-        withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
+        withAnimation(Motion.standard) {
             if !path.isEmpty {
                 path.removeLast()
             }
         }
     }
 
-    /// After phrase step (login) or account create (sign up), leave onboarding for the main shell.
+    /// After phrase setup (login) or account create (sign up), leave onboarding for the main shell.
     func unlockMessages() {
+        guard cryptoController?.isUnlocked == true else { return }
         hasUnlockedMessaging = true
+        prewarmsMainShell = false
         path = []
     }
 
-    /// Cold start: Keychain already has a session — treat as previously unlocked on this device.
-    /// Fresh login still requires the encryption-phrase step before calling `unlockMessages()`.
-    func restoreUnlockedSessionIfNeeded() {
-        guard sessionController?.isSignedIn == true else { return }
-        hasUnlockedMessaging = true
-        path = []
-    }
-
-    /// Ends the session and returns to Welcome.
-    func logOut() {
-        Task {
-            await sessionController?.logout()
+    /// Cold start: if crypto is already unlocked in memory, enter the main shell.
+    /// Otherwise stay on the lock screen so the user can tap Face ID / phrase (no auto biometry prompt).
+    func restoreUnlockedSessionIfNeeded() async {
+        guard sessionController?.session != nil else { return }
+        guard let crypto = cryptoController else {
             hasUnlockedMessaging = false
+            return
+        }
+        // Do not call vault unlock here — automatic Face ID on launch was getting stuck.
+        // The lock screen offers Face ID / passcode / phrase for an explicit unlock.
+        hasUnlockedMessaging = crypto.isUnlocked
+        if crypto.isUnlocked {
             path = []
         }
+    }
+
+    /// After a full local wipe (or incomplete login), a Keychain session can remain while
+    /// identity/vault keys are gone — that used to trap users on the lock screen forever.
+    /// Clears the orphan session so Welcome shows Sign Up / Log In again.
+    @discardableResult
+    func reconcileOrphanedSessionIfNeeded() async -> Bool {
+        guard let session = sessionController?.session else { return false }
+        guard let crypto = cryptoController else { return false }
+        // Fully unlocked mid-session: nothing to fix.
+        if crypto.isUnlocked { return false }
+        // A call answered on the lock screen wakes the app while the device is still locked.
+        // Identity keys cannot be read then. That used to look like a wiped phone: Shroud
+        // signed out and the call it had just accepted was torn down.
+        if callController?.isInCall == true { return false }
+        if !UIApplication.shared.isProtectedDataAvailable { return false }
+        switch crypto.identityPresence(for: session.userID) {
+        case .present, .unavailable:
+            return false
+        case .absent:
+            await clearOrphanedLocalSession(
+                toast: "Local data was cleared. Sign in or create an account."
+            )
+            return true
+        }
+    }
+
+    /// Drops server session + any leftover crypto shell and returns to fresh Welcome.
+    private func clearOrphanedLocalSession(toast: String) async {
+        postAuthToast = toast
+        await sessionController?.logout()
+        // Wipe identity leftovers so a half-deleted vault cannot reappear.
+        cryptoController?.lock(wipeStore: true)
+        messagingController?.stop(wipeDisk: true)
+        callController?.clearLocalState()
+        hasUnlockedMessaging = false
+        path = []
+    }
+
+    /// Logs out by clearing this iPhone of the account: server session, messages, media, every
+    /// key (identity included — signing in again takes the password and the phrase), settings and
+    /// caches, verified, behind `DeviceWipeOverlay`. Returns to Welcome when it is done.
+    ///
+    /// Human: A pending-wipe marker is written before the first deletion, so a force-quit
+    /// mid-way is finished on the next launch rather than leaving a half-cleared device.
+    func logOut() {
+        guard !isLoggingOut else { return }
+        postAuthToast = nil
+        deviceWipe?.start(reason: .logout)
+    }
+
+    /// Log Out for a server change while signed in (the lock screen's server sheet): the same
+    /// wipe, then `configuration` becomes the server (see `pendingServerConfiguration`).
+    func logOut(switchingTo configuration: ServerConfiguration) {
+        guard !isLoggingOut else { return }
+        pendingServerConfiguration = configuration
+        logOut()
     }
 }

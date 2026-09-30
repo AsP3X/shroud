@@ -8,15 +8,20 @@ struct AuthModelsTests {
         let json = """
         {
           "token": "opaque-token-value",
-          "user": { "id": "11111111-1111-1111-1111-111111111111", "username": "alice" },
-          "device": { "id": "22222222-2222-2222-2222-222222222222", "name": "iPhone" }
+          "user": {
+            "id": "11111111-1111-1111-1111-111111111111",
+            "username": "alice",
+            "share_code": "ABCD234567"
+          },
+          "device": { "id": "22222222-2222-2222-2222-222222222222", "sealed_name": "c2VhbGVk" }
         }
         """.data(using: .utf8)!
 
         let decoded = try JSONDecoder.api.decode(AuthSessionResponse.self, from: json)
         #expect(decoded.token == "opaque-token-value")
         #expect(decoded.user.username == "alice")
-        #expect(decoded.device.name == "iPhone")
+        #expect(decoded.user.shareCode == "ABCD234567")
+        #expect(decoded.device.sealedName == "c2VhbGVk")
         #expect(decoded.user.id.uuidString.lowercased() == "11111111-1111-1111-1111-111111111111")
     }
 

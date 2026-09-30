@@ -3,7 +3,7 @@ import Foundation
 /// Minimal HTTP client for the Shroud REST API (`/api/v1`).
 /// Human: Views never call this directly — feature services wrap it.
 /// Agent: HTTP JSON only; never sends key material or message plaintext.
-final class APIClient: Sendable {
+nonisolated final class APIClient: Sendable {
     private let baseURL: URL
     private let session: URLSession
 
@@ -18,7 +18,30 @@ final class APIClient: Sendable {
     ) -> APIClient {
         let fallback = URL(string: "http://127.0.0.1:8080/api/v1")!
         let url = configuration.resolvedBaseURL ?? fallback
-        return APIClient(baseURL: url)
+        return APIClient(baseURL: url, session: Self.makeSession())
+    }
+
+    /// Fails fast on an unreachable server, but stays patient once bytes are moving.
+    ///
+    /// `timeoutIntervalForRequest` is an *idle* timer (it resets on every chunk), so 20s is
+    /// generous for a multi-MB encrypted upload while still surfacing a dead server quickly;
+    /// `timeoutIntervalForResource` bounds the whole transfer. Media can be up to 2 GiB,
+    /// so a slow but moving upload is allowed an hour; a stall still fails on the idle timer.
+    ///
+    /// `waitsForConnectivity` stays off on purpose: it suppresses "cannot connect" and parks
+    /// the request for up to `timeoutIntervalForResource`, which read as an app that loads
+    /// forever instead of one that says the server is down.
+    private static func makeSession() -> URLSession {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 20
+        config.timeoutIntervalForResource = 3600
+        config.waitsForConnectivity = false
+        // Human: No HTTP disk cache. The default wrote every response — contact lists, message
+        // envelopes, share-code lookups — into a plain SQLite file in Library/Caches, outside
+        // the sealed stores; media and history have their own encrypted caches.
+        config.urlCache = nil
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: config)
     }
 
     /// Debug factory — local Docker Compose default.
@@ -29,10 +52,17 @@ final class APIClient: Sendable {
     /// Performs a GET and decodes JSON on success.
     func get<T: Decodable>(
         _ path: String,
+        query: [String: String]? = nil,
         as type: T.Type,
         bearerToken: String? = nil
     ) async throws -> T {
-        let (data, http) = try await perform(path, method: "GET", bodyData: nil, bearerToken: bearerToken)
+        let (data, http) = try await perform(
+            path,
+            method: "GET",
+            bodyData: nil,
+            bearerToken: bearerToken,
+            query: query
+        )
         try Self.throwIfNeeded(data: data, status: http.statusCode)
         return try Self.decode(T.self, from: data)
     }
@@ -45,7 +75,12 @@ final class APIClient: Sendable {
         bearerToken: String? = nil
     ) async throws -> T {
         let bodyData = try JSONEncoder.api.encode(body)
-        let (data, http) = try await perform(path, method: "POST", bodyData: bodyData, bearerToken: bearerToken)
+        let (data, http) = try await perform(
+            path,
+            method: "POST",
+            bodyData: bodyData,
+            bearerToken: bearerToken
+        )
         try Self.throwIfNeeded(data: data, status: http.statusCode)
         return try Self.decode(T.self, from: data)
     }
@@ -56,28 +91,274 @@ final class APIClient: Sendable {
         try Self.throwIfNeeded(data: data, status: http.statusCode)
     }
 
-    /// Performs a DELETE that expects 2xx with no meaningful body.
-    func deleteNoContent(path: String, bearerToken: String? = nil) async throws {
-        let (data, http) = try await perform(path, method: "DELETE", bodyData: nil, bearerToken: bearerToken)
+    /// Performs a POST with a JSON body and expects 2xx with no meaningful body (e.g. 204).
+    func postNoContent<Body: Encodable>(
+        path: String,
+        body: Body,
+        bearerToken: String? = nil
+    ) async throws {
+        let bodyData = try JSONEncoder.api.encode(body)
+        let (data, http) = try await perform(
+            path,
+            method: "POST",
+            bodyData: bodyData,
+            bearerToken: bearerToken
+        )
         try Self.throwIfNeeded(data: data, status: http.statusCode)
     }
 
+    /// Performs a POST with no body and decodes a JSON response (e.g. hangup/reject).
+    func postEmpty<T: Decodable>(
+        _ path: String,
+        as type: T.Type,
+        bearerToken: String? = nil
+    ) async throws -> T {
+        let (data, http) = try await perform(
+            path,
+            method: "POST",
+            bodyData: nil,
+            bearerToken: bearerToken
+        )
+        try Self.throwIfNeeded(data: data, status: http.statusCode)
+        return try Self.decode(T.self, from: data)
+    }
+
+    /// Performs a PUT with a JSON body and decodes the response.
+    func put<Body: Encodable, T: Decodable>(
+        _ path: String,
+        body: Body,
+        as type: T.Type,
+        bearerToken: String? = nil
+    ) async throws -> T {
+        let bodyData = try JSONEncoder.api.encode(body)
+        let (data, http) = try await perform(
+            path,
+            method: "PUT",
+            bodyData: bodyData,
+            bearerToken: bearerToken
+        )
+        try Self.throwIfNeeded(data: data, status: http.statusCode)
+        return try Self.decode(T.self, from: data)
+    }
+
+    /// Performs a PUT with a JSON body and expects 2xx with no meaningful body (e.g. 204).
+    func putNoContent<Body: Encodable>(
+        path: String,
+        body: Body,
+        bearerToken: String? = nil
+    ) async throws {
+        let bodyData = try JSONEncoder.api.encode(body)
+        let (data, http) = try await perform(
+            path,
+            method: "PUT",
+            bodyData: bodyData,
+            bearerToken: bearerToken
+        )
+        try Self.throwIfNeeded(data: data, status: http.statusCode)
+    }
+
+    /// Performs a DELETE that expects 2xx with no meaningful body.
+    func deleteNoContent(
+        path: String,
+        query: [String: String]? = nil,
+        bearerToken: String? = nil
+    ) async throws {
+        let (data, http) = try await perform(
+            path,
+            method: "DELETE",
+            bodyData: nil,
+            bearerToken: bearerToken,
+            query: query
+        )
+        try Self.throwIfNeeded(data: data, status: http.statusCode)
+    }
+
+    /// Performs a DELETE and returns the body as is — empty for `204` (e.g. removing a reaction
+    /// that was already gone).
+    func deleteRaw(path: String, bearerToken: String? = nil) async throws -> Data {
+        let (data, http) = try await perform(
+            path,
+            method: "DELETE",
+            bodyData: nil,
+            bearerToken: bearerToken
+        )
+        try Self.throwIfNeeded(data: data, status: http.statusCode)
+        return http.statusCode == 204 ? Data() : data
+    }
+
+    /// Performs a request and hands back the status and body as they are, for routes whose
+    /// error answers carry data (a reaction's `409` holds the current record). Throws only when
+    /// no answer came.
+    func response(
+        _ method: String,
+        path: String,
+        jsonBody: Data? = nil,
+        query: [String: String]? = nil,
+        bearerToken: String? = nil
+    ) async throws -> (status: Int, data: Data) {
+        let (data, http) = try await perform(
+            path,
+            method: method,
+            bodyData: jsonBody,
+            bearerToken: bearerToken,
+            query: query
+        )
+        return (http.statusCode, data)
+    }
+
+    /// Performs a DELETE and decodes a JSON result body (e.g. chat delete outcome).
+    func delete<T: Decodable>(
+        path: String,
+        query: [String: String]? = nil,
+        as type: T.Type,
+        bearerToken: String? = nil
+    ) async throws -> T {
+        let (data, http) = try await perform(
+            path,
+            method: "DELETE",
+            bodyData: nil,
+            bearerToken: bearerToken,
+            query: query
+        )
+        try Self.throwIfNeeded(data: data, status: http.statusCode)
+        return try Self.decode(T.self, from: data)
+    }
+
+    /// PUT raw bytes (e.g. encrypted media) with an explicit Content-Type.
+    func putRaw(
+        path: String,
+        body: Data,
+        contentType: String,
+        bearerToken: String? = nil
+    ) async throws {
+        let (data, http) = try await perform(
+            path,
+            method: "PUT",
+            bodyData: body,
+            bearerToken: bearerToken,
+            contentType: contentType
+        )
+        try Self.throwIfNeeded(data: data, status: http.statusCode)
+    }
+
+    /// GET raw bytes (e.g. encrypted media).
+    func getRaw(path: String, bearerToken: String? = nil) async throws -> Data {
+        let (data, http) = try await perform(
+            path,
+            method: "GET",
+            bodyData: nil,
+            bearerToken: bearerToken,
+            contentType: nil
+        )
+        try Self.throwIfNeeded(data: data, status: http.statusCode)
+        return data
+    }
+
+    // MARK: - Progress-reporting raw transfers
+    //
+    // These duplicate a few lines of `perform` on purpose: the progress variants need the
+    // per-task delegate, which only the `delegate:` overloads of URLSession accept.
+
+    /// PUT raw bytes, reporting how much of the body has left the device (0…1).
+    func putRaw(
+        path: String,
+        body: Data,
+        contentType: String,
+        bearerToken: String? = nil,
+        onProgress: @escaping @Sendable (Double) -> Void
+    ) async throws {
+        var request = rawRequest(path: path, method: "PUT", bearerToken: bearerToken)
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+
+        let observer = TransferProgressObserver(direction: .upload, onProgress: onProgress)
+        defer { observer.finish() }
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.upload(for: request, from: body, delegate: observer)
+        } catch {
+            throw APIError.transport(error.localizedDescription)
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError.transport("Invalid response")
+        }
+        noteAuthOutcome(status: http.statusCode, data: data, bearerToken: bearerToken)
+        try Self.throwIfNeeded(data: data, status: http.statusCode)
+    }
+
+    /// GET raw bytes, reporting how much of the body has arrived (0…1).
+    func getRaw(
+        path: String,
+        bearerToken: String? = nil,
+        onProgress: @escaping @Sendable (Double) -> Void
+    ) async throws -> Data {
+        let request = rawRequest(path: path, method: "GET", bearerToken: bearerToken)
+
+        let observer = TransferProgressObserver(direction: .download, onProgress: onProgress)
+        defer { observer.finish() }
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request, delegate: observer)
+        } catch {
+            throw APIError.transport(error.localizedDescription)
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError.transport("Invalid response")
+        }
+        noteAuthOutcome(status: http.statusCode, data: data, bearerToken: bearerToken)
+        try Self.throwIfNeeded(data: data, status: http.statusCode)
+        return data
+    }
+
     // MARK: - Internals
+
+    private func rawRequest(path: String, method: String, bearerToken: String?) -> URLRequest {
+        var request = URLRequest(url: resolveURL(path))
+        request.httpMethod = method
+        request.setValue("application/json, application/octet-stream, */*", forHTTPHeaderField: "Accept")
+        if let bearerToken, !bearerToken.isEmpty {
+            request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
+        }
+        return request
+    }
+
+    /// Session policy: only authenticated requests contribute to the 401 streak.
+    /// Login/register (no Bearer) must not force-logout an existing local session.
+    /// `DEVICE_REMOVED` is final on the first answer: the account removed this iPhone.
+    private func noteAuthOutcome(status: Int, data: Data, bearerToken: String?) {
+        guard bearerToken.map({ !$0.isEmpty }) == true else { return }
+        if (200 ..< 300).contains(status) {
+            SessionAuthBridge.noteAuthenticationSuccess()
+        } else if status == 401 {
+            if let bearerToken, APIError.from(data: data, statusCode: status).isDeviceRemoval {
+                SessionAuthBridge.noteDeviceRemoved(token: bearerToken)
+            } else {
+                SessionAuthBridge.noteAuthenticationFailure()
+            }
+        }
+    }
 
     private func perform(
         _ path: String,
         method: String,
         bodyData: Data?,
-        bearerToken: String?
+        bearerToken: String?,
+        query: [String: String]? = nil,
+        contentType: String? = "application/json"
     ) async throws -> (Data, HTTPURLResponse) {
-        var request = URLRequest(url: resolveURL(path))
+        var request = URLRequest(url: resolveURL(path, query: query))
         request.httpMethod = method
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json, application/octet-stream, */*", forHTTPHeaderField: "Accept")
         if let bearerToken, !bearerToken.isEmpty {
             request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
         }
         if let bodyData {
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            if let contentType {
+                request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+            }
             request.httpBody = bodyData
         }
 
@@ -86,21 +367,32 @@ final class APIClient: Sendable {
         do {
             (data, response) = try await session.data(for: request)
         } catch {
+            // Unreachable / offline — transport only. Never counts as auth failure.
             throw APIError.transport(error.localizedDescription)
         }
 
         guard let http = response as? HTTPURLResponse else {
             throw APIError.transport("Invalid response")
         }
+
+        noteAuthOutcome(status: http.statusCode, data: data, bearerToken: bearerToken)
+
         return (data, http)
     }
 
-    private func resolveURL(_ path: String) -> URL {
+    private func resolveURL(_ path: String, query: [String: String]? = nil) -> URL {
         let trimmed = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        if trimmed.isEmpty {
-            return baseURL
+        var url = trimmed.isEmpty ? baseURL : baseURL.appending(path: trimmed)
+        if let query, !query.isEmpty {
+            var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            components?.queryItems = query
+                .map { URLQueryItem(name: $0.key, value: $0.value) }
+                .sorted { $0.name < $1.name }
+            if let withQuery = components?.url {
+                url = withQuery
+            }
         }
-        return baseURL.appending(path: trimmed)
+        return url
     }
 
     private static func throwIfNeeded(data: Data, status: Int) throws {
@@ -121,15 +413,13 @@ final class APIClient: Sendable {
 // MARK: - Coders
 
 extension JSONDecoder {
-    /// Shared API decoder (ISO-8601 dates with fractional seconds when present).
-    static let api: JSONDecoder = {
+    /// Fresh decoder per call - `JSONDecoder` is not safe to share across concurrent tasks.
+    nonisolated static var api: JSONDecoder {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
             let string = try container.decode(String.self)
-            if let date = ISO8601DateFormatter.apiFractional.date(from: string)
-                ?? ISO8601DateFormatter.api.date(from: string)
-            {
+            if let date = ISO8601DateFormatter.date(fromAPI: string) {
                 return date
             }
             throw DecodingError.dataCorruptedError(
@@ -138,33 +428,48 @@ extension JSONDecoder {
             )
         }
         return decoder
-    }()
+    }
 }
 
 extension JSONEncoder {
-    static let api: JSONEncoder = {
+    nonisolated static var api: JSONEncoder {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         return encoder
-    }()
+    }
 }
 
-private extension ISO8601DateFormatter {
-    static let api: ISO8601DateFormatter = {
+extension ISO8601DateFormatter {
+    nonisolated private static let lock = NSLock()
+
+    nonisolated(unsafe) private static let api: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
         return formatter
     }()
 
-    static let apiFractional: ISO8601DateFormatter = {
+    nonisolated(unsafe) private static let apiFractional: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
     }()
+
+    /// `ISO8601DateFormatter` is not thread-safe; all API date parsing goes through this lock.
+    nonisolated static func date(fromAPI string: String) -> Date? {
+        lock.lock()
+        defer { lock.unlock() }
+        return apiFractional.date(from: string) ?? api.date(from: string)
+    }
+
+    nonisolated static func string(fromAPI date: Date) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return apiFractional.string(from: date)
+    }
 }
 
 /// Health probe payload matching the server route.
-struct HealthResponse: Decodable, Equatable, Sendable {
+nonisolated struct HealthResponse: Decodable, Equatable, Sendable {
     let status: String
     let database: String
 }

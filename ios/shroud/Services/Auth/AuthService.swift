@@ -1,13 +1,12 @@
 import Foundation
-import UIKit
 
 /// Talks to `/auth/*` and persists sessions.
 /// Human: Encryption phrase stays on-device only — never sent here.
 /// Agent: CALLS APIClient from ServerConfigurationStore; WRITES SessionStore; no phrase on wire.
-struct AuthService: Sendable {
+nonisolated struct AuthService: Sendable {
     private let sessionStore: SessionStore
 
-    init(sessionStore: SessionStore = SessionStore()) {
+    nonisolated init(sessionStore: SessionStore = SessionStore()) {
         self.sessionStore = sessionStore
     }
 
@@ -21,12 +20,11 @@ struct AuthService: Sendable {
     }
 
     /// Registers a new account and stores the session in Keychain.
+    /// No device name goes with it: `DeviceNameSync` seals the name once the phrase is in.
     func register(username: String, password: String) async throws -> SessionStore.Session {
-        let deviceName = Self.currentDeviceName()
         let body = RegisterRequest(
             username: username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
-            password: password,
-            deviceName: deviceName
+            password: password
         )
         let response: AuthSessionResponse = try await client.post(
             "auth/register",
@@ -38,13 +36,14 @@ struct AuthService: Sendable {
 
     /// Logs in and stores the session; reuses `device_id` when Keychain still has one.
     func login(username: String, password: String) async throws -> SessionStore.Session {
+        let normalizedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let existing = sessionStore.load()
-        let deviceName = Self.currentDeviceName()
+        let reusedDeviceID = existing?.deviceID
+            ?? sessionStore.loadDeviceID(matchingUsername: normalizedUsername)
         let body = LoginRequest(
-            username: username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+            username: normalizedUsername,
             password: password,
-            deviceName: deviceName,
-            deviceId: existing?.deviceID
+            deviceId: reusedDeviceID
         )
         let response: AuthSessionResponse = try await client.post(
             "auth/login",
@@ -54,12 +53,20 @@ struct AuthService: Sendable {
         return try persist(response)
     }
 
-    /// Best-effort server logout, then clears Keychain.
+    /// Clears the Keychain session immediately, then best-effort server revoke in the background.
+    ///
+    /// Local clear must not wait on the network: a hung `/auth/logout` used to leave the
+    /// token on disk so force-quit mid-logout still restored a signed-in session.
     func logout() async {
-        if let session = sessionStore.load() {
-            try? await client.postNoContent(path: "auth/logout", bearerToken: session.token)
-        }
+        let token = sessionStore.load()?.token
         sessionStore.clear()
+        guard let token else { return }
+
+        let client = self.client
+        // Fire-and-forget: UI and Keychain must not depend on server reachability.
+        Task {
+            try? await client.postNoContent(path: "auth/logout", bearerToken: token)
+        }
     }
 
     func fetchMe(session: SessionStore.Session) async throws -> MeResponse {
@@ -73,14 +80,32 @@ struct AuthService: Sendable {
             token: response.token,
             userID: response.user.id,
             username: response.user.username,
-            deviceID: response.device.id,
-            deviceName: response.device.name
+            shareCode: response.user.shareCode,
+            deviceID: response.device.id
         )
         try sessionStore.save(session)
+        sessionStore.saveDeviceAnchor(username: session.username, deviceID: session.deviceID)
         return session
     }
 
-    private static func currentDeviceName() -> String {
-        UIDevice.current.name
+    /// Session fields as `/auth/me` reports them now (e.g. share code after migration). Does not
+    /// write: the caller saves with `saveRefreshedProfile` once it knows the session it asked
+    /// about is still the current one.
+    func refreshProfile(session: SessionStore.Session) async throws -> SessionStore.Session {
+        let me = try await fetchMe(session: session)
+        let updated = SessionStore.Session(
+            token: session.token,
+            userID: me.user.id,
+            username: me.user.username,
+            shareCode: me.user.shareCode,
+            deviceID: me.device.id
+        )
+        return updated
+    }
+
+    /// Writes a profile `refreshProfile` returned.
+    func saveRefreshedProfile(_ session: SessionStore.Session) throws {
+        try sessionStore.save(session)
+        sessionStore.saveDeviceAnchor(username: session.username, deviceID: session.deviceID)
     }
 }

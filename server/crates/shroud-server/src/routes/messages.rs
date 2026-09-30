@@ -1,5 +1,7 @@
 //! HTTP message send, history, conversations list, delivery acks.
 
+use std::collections::HashMap;
+
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -13,11 +15,19 @@ use uuid::Uuid;
 
 use crate::auth::session::AuthContext;
 use crate::error::AppError;
-use crate::routes::contacts::is_blocked_either_way;
+use crate::push::PushEvent;
+use crate::rate_limit::budgets;
+use crate::routes::contacts::{are_contacts, is_blocked_either_way};
+use crate::routes::conversations::{
+    advance_read_marker, announce_chat_read, clear_watermark, unread_in,
+};
+use crate::routes::privacy::{Visibility, both_allow};
+use crate::routes::reactions::{self, ReactionEntry};
 use crate::state::AppState;
 
 const MAX_CIPHERTEXT_BYTES: usize = 64 * 1024;
 const DEFAULT_LIMIT: i64 = 50;
+/// Page size cap for history; clients walk `before_*` cursors for the 90-day window.
 const MAX_LIMIT: i64 = 100;
 
 #[derive(Debug, Deserialize)]
@@ -52,6 +62,15 @@ pub struct MessageResponse {
     pub media_object_id: Option<Uuid>,
     pub deleted_for_everyone: bool,
     pub created_at: DateTime<Utc>,
+    /// Outbound only: at least one of the peer's devices acknowledged delivery.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delivered: Option<bool>,
+    /// Outbound only: peer user has marked this message read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read: Option<bool>,
+    /// History only: live sealed reactions, oldest change first.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub reactions: Vec<ReactionEntry>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -64,26 +83,13 @@ pub struct DeleteMessageQuery {
 pub struct ListMessagesResponse {
     pub conversation_id: Option<Uuid>,
     pub messages: Vec<MessageResponse>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ConversationsResponse {
-    pub conversations: Vec<ConversationItem>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ConversationItem {
-    pub id: Uuid,
-    pub peer: PeerCard,
-    pub created_at: DateTime<Utc>,
+    /// True when another page may exist (caller got a full page).
+    pub has_more: bool,
+    /// The conversation's highest reaction `seq`, read before the page. The page's `reactions`
+    /// are the complete live set as of this value: a client keeps its own newer changes and
+    /// drops older ones the page no longer lists. Also the first catch-up cursor.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_message_at: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct PeerCard {
-    pub id: Uuid,
-    pub username: String,
+    pub reaction_seq: Option<i64>,
 }
 
 #[derive(Debug, FromRow)]
@@ -106,14 +112,21 @@ pub async fn send_message(
     auth: AuthContext,
     Json(body): Json<SendMessageRequest>,
 ) -> Result<(StatusCode, Json<MessageResponse>), AppError> {
-    if body.peer_user_id == auth.user_id {
-        return Err(AppError::validation("Cannot message yourself."));
-    }
+    state
+        .rate_limiter
+        .check_budget(
+            "message_send_user",
+            &auth.user_id.to_string(),
+            budgets::MESSAGE_SEND_USER,
+        )
+        .await?;
+
+    let is_notes = body.peer_user_id == auth.user_id;
 
     let content_type = body.content_type.as_str();
-    if content_type != "text" && content_type != "media" {
+    if !matches!(content_type, "text" | "media" | "annotation") {
         return Err(AppError::validation(
-            "content_type must be 'text' or 'media'.",
+            "content_type must be 'text', 'media' or 'annotation'.",
         ));
     }
     if content_type == "media" && body.media_object_id.is_none() {
@@ -121,11 +134,15 @@ pub async fn send_message(
             "media_object_id is required when content_type is media.",
         ));
     }
-    if content_type == "text" && body.media_object_id.is_some() {
+    if content_type != "media" && body.media_object_id.is_some() {
         return Err(AppError::validation(
             "media_object_id is only allowed when content_type is media.",
         ));
     }
+    // Human: An annotation attaches data to an earlier message (e.g. a shared voice
+    // transcript). It is delivered like any message but is not a new message to the user:
+    // it must not reorder the chat list or wake the peer's phone.
+    let is_annotation = content_type == "annotation";
 
     let ciphertext = BASE64
         .decode(body.ciphertext.trim().as_bytes())
@@ -143,13 +160,16 @@ pub async fn send_message(
         return Ok((StatusCode::OK, Json(message_to_response(existing))));
     }
 
-    if !are_contacts(&state.pool, auth.user_id, body.peer_user_id).await? {
-        return Err(AppError::forbidden(
-            "You can only message accepted contacts.",
-        ));
-    }
-    if is_blocked_either_way(&state.pool, auth.user_id, body.peer_user_id).await? {
-        return Err(AppError::forbidden("Cannot message while blocked."));
+    // Saved Messages (Notes): peer_user_id == self — no contact/block gate.
+    if !is_notes {
+        if !are_contacts(&state.pool, auth.user_id, body.peer_user_id).await? {
+            return Err(AppError::forbidden(
+                "You can only message accepted contacts.",
+            ));
+        }
+        if is_blocked_either_way(&state.pool, auth.user_id, body.peer_user_id).await? {
+            return Err(AppError::forbidden("Cannot message while blocked."));
+        }
     }
 
     let mut tx = state
@@ -157,6 +177,22 @@ pub async fn send_message(
         .begin()
         .await
         .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
+
+    // Human: Account deletion revokes the account's devices before it tombstones what they
+    // sent, and the users row outlives it (migration 021), so the foreign keys no longer stop a
+    // late send. Holding the device row until commit does: a racing send either commits first
+    // and is tombstoned with the rest, or finds the device revoked.
+    // Agent: SELECT devices FOR SHARE; waits behind devices::revoke_device's UPDATE.
+    let device_live: Option<Uuid> = sqlx::query_scalar(
+        r#"SELECT id FROM devices WHERE id = $1 AND revoked_at IS NULL FOR SHARE"#,
+    )
+    .bind(auth.device_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("lock sender device failed: {err}")))?;
+    if device_live.is_none() {
+        return Err(AppError::unauthorized());
+    }
 
     if let Some(media_id) = body.media_object_id {
         #[derive(FromRow)]
@@ -249,11 +285,11 @@ pub async fn send_message(
         .map_err(|err| AppError::Internal(format!("link media to message failed: {err}")))?;
     }
 
-    // Delivery rows: all devices of both users; sender device already delivered.
+    // Delivery rows: all linked devices of both users; sender device already delivered.
     let device_ids: Vec<Uuid> = sqlx::query_scalar(
         r#"
         SELECT id FROM devices
-        WHERE user_id = $1 OR user_id = $2
+        WHERE (user_id = $1 OR user_id = $2) AND revoked_at IS NULL
         "#,
     )
     .bind(auth.user_id)
@@ -283,6 +319,36 @@ pub async fn send_message(
         .map_err(|err| AppError::Internal(format!("insert delivery failed: {err}")))?;
     }
 
+    // A reply means the chat was read: nothing before it stays unread for the sender. When
+    // something was, the sender's other devices hear so, as after any read.
+    let read_unread = if !is_annotation && !is_notes {
+        let unread = unread_in(&mut *tx, auth.user_id, conversation_id).await?;
+        advance_read_marker(&mut *tx, auth.user_id, conversation_id, now).await?;
+        unread > 0
+    } else {
+        false
+    };
+
+    // Human: Keep conversation list sort cheap — denormalized last_message_at (migration 014).
+    // Agent: UPDATE conversations.last_message_at = now in same transaction as insert.
+    // Annotations are skipped so a shared transcript never moves the chat to the top.
+    if !is_annotation {
+        sqlx::query(
+            r#"
+            UPDATE conversations
+            SET last_message_at = $1
+            WHERE id = $2
+            "#,
+        )
+        .bind(now)
+        .bind(conversation_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| {
+            AppError::Internal(format!("touch conversation last_message_at failed: {err}"))
+        })?;
+    }
+
     tx.commit()
         .await
         .map_err(|err| AppError::Internal(format!("commit message failed: {err}")))?;
@@ -298,6 +364,9 @@ pub async fn send_message(
         media_object_id: body.media_object_id,
         deleted_for_everyone: false,
         created_at: now,
+        delivered: Some(false),
+        read: Some(false),
+        reactions: vec![],
     };
 
     // Human: Notify online peer devices and sender's other devices (not this sender device).
@@ -316,11 +385,31 @@ pub async fn send_message(
             .await;
     }
 
-    // Opaque APNs data push when the peer has no online WebSocket device.
-    state
-        .push
-        .notify_new_message_if_offline(body.peer_user_id, message_id, conversation_id, auth.user_id)
+    if read_unread {
+        announce_chat_read(
+            &state,
+            auth.user_id,
+            auth.device_id,
+            conversation_id,
+            body.peer_user_id,
+            now,
+        )
         .await;
+    }
+
+    // A push for the peer's devices without a live socket. Annotations wait for the next sync
+    // instead — they are not worth waking a phone for — and Saved Messages never notify.
+    if !is_annotation && !is_notes {
+        state
+            .push
+            .dispatch(PushEvent::Message {
+                recipient: body.peer_user_id,
+                sender: auth.user_id,
+                conversation_id,
+                message_id,
+            })
+            .await;
+    }
 
     tracing::info!(
         message_id = %message_id,
@@ -338,14 +427,15 @@ pub async fn send_message(
 }
 
 /// `GET /messages`
+///
+/// Peer may be **self** (Saved Messages / Notes). Cursor: pass both `before_created_at` and
+/// `before_id` from the oldest item of the previous page.
 pub async fn list_messages(
     State(state): State<AppState>,
     auth: AuthContext,
     Query(query): Query<ListMessagesQuery>,
 ) -> Result<Json<ListMessagesResponse>, AppError> {
-    if query.peer_user_id == auth.user_id {
-        return Err(AppError::validation("peer_user_id cannot be yourself."));
-    }
+    // Self peer is allowed (Notes). Contacts gate only applies to other users (send path).
 
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
 
@@ -354,8 +444,19 @@ pub async fn list_messages(
         return Ok(Json(ListMessagesResponse {
             conversation_id: None,
             messages: vec![],
+            has_more: false,
+            reaction_seq: None,
         }));
     };
+
+    // Read before the page: a reaction committed later has a higher seq and reaches the client
+    // through catch-up, so the page plus the cursor never miss one.
+    let reaction_seq = Some(reactions::latest_reaction_seq(&state.pool, conversation_id).await?);
+
+    // Human: A cleared chat stays empty for this caller until newer messages arrive; the peer
+    // keeps whatever their own watermark still allows.
+    // Agent: READS conversation_clears via conversations::clear_watermark; NULL = never cleared.
+    let cleared_at = clear_watermark(&state.pool, auth.user_id, conversation_id).await?;
 
     // Ensure requester is a participant (always true if find matched).
     let rows =
@@ -368,6 +469,7 @@ pub async fn list_messages(
             FROM messages m
             WHERE m.conversation_id = $1
               AND (m.created_at, m.id) < ($2, $3)
+              AND ($6::timestamptz IS NULL OR m.created_at > $6::timestamptz)
               AND NOT EXISTS (
                 SELECT 1 FROM message_hides h
                 WHERE h.message_id = m.id AND h.user_id = $5
@@ -381,6 +483,7 @@ pub async fn list_messages(
             .bind(before_id)
             .bind(limit)
             .bind(auth.user_id)
+            .bind(cleared_at)
             .fetch_all(&state.pool)
             .await
         } else {
@@ -391,6 +494,7 @@ pub async fn list_messages(
                    m.deleted_for_everyone_at, m.created_at
             FROM messages m
             WHERE m.conversation_id = $1
+              AND ($4::timestamptz IS NULL OR m.created_at > $4::timestamptz)
               AND NOT EXISTS (
                 SELECT 1 FROM message_hides h
                 WHERE h.message_id = m.id AND h.user_id = $3
@@ -402,73 +506,462 @@ pub async fn list_messages(
             .bind(conversation_id)
             .bind(limit)
             .bind(auth.user_id)
+            .bind(cleared_at)
             .fetch_all(&state.pool)
             .await
         }
         .map_err(|err| AppError::Internal(format!("list messages failed: {err}")))?;
 
+    // Human: Batch receipt lookups so history pages are O(1) queries, not O(n).
+    // Agent: CALLS peer_receipt_status_batch for outbound ids; WRITES delivered/read on responses.
+    let outbound_ids: Vec<Uuid> = rows
+        .iter()
+        .filter(|row| row.sender_user_id == auth.user_id)
+        .map(|row| row.id)
+        .collect();
+    // Notes (self peer): receipts are meaningless; skip batch lookup.
+    let is_notes = query.peer_user_id == auth.user_id;
+    let receipt_map = if is_notes || outbound_ids.is_empty() {
+        HashMap::new()
+    } else {
+        peer_receipt_status_batch(&state.pool, &outbound_ids, query.peer_user_id).await?
+    };
+    // Receipts work both ways: a caller who hides theirs doesn't see the peer's either. Reads
+    // the peer made while both allowed them stay recorded and show again if this is turned on.
+    let shows_reads = !is_notes
+        && !outbound_ids.is_empty()
+        && both_allow(
+            &state.pool,
+            auth.user_id,
+            query.peer_user_id,
+            Visibility::ReadReceipts,
+        )
+        .await?;
+
+    let live_ids: Vec<Uuid> = rows
+        .iter()
+        .filter(|row| row.deleted_for_everyone_at.is_none() && row.content_type != "annotation")
+        .map(|row| row.id)
+        .collect();
+    let mut reaction_map = reactions::live_reactions_batch(&state.pool, &live_ids).await?;
+
+    let page_len = rows.len() as i64;
+    let mut messages = Vec::with_capacity(rows.len());
+    for row in rows {
+        let mut response = message_to_response(row);
+        response.reactions = reaction_map.remove(&response.id).unwrap_or_default();
+        if !is_notes && response.sender_user_id == auth.user_id {
+            let (delivered, read) = receipt_map
+                .get(&response.id)
+                .copied()
+                .unwrap_or((false, false));
+            response.delivered = Some(delivered);
+            response.read = Some(read && shows_reads);
+        }
+        messages.push(response);
+    }
+
     Ok(Json(ListMessagesResponse {
         conversation_id: Some(conversation_id),
-        messages: rows.into_iter().map(message_to_response).collect(),
+        messages,
+        has_more: page_len >= limit,
+        reaction_seq,
     }))
 }
 
-/// `GET /conversations`
-pub async fn list_conversations(
+#[derive(Debug, Deserialize)]
+pub struct BulkReadRequest {
+    pub peer_user_id: Uuid,
+    /// Marks all messages from the peer in this conversation with
+    /// `(created_at, id) <=` this message as read.
+    pub up_to_message_id: Uuid,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BulkReadResponse {
+    pub marked: u64,
+    pub read_at: DateTime<Utc>,
+}
+
+/// `POST /messages/:id/read` — user-level read receipt (recipient only).
+pub async fn mark_read(
     State(state): State<AppState>,
     auth: AuthContext,
-) -> Result<Json<ConversationsResponse>, AppError> {
-    #[derive(FromRow)]
-    struct Row {
-        id: Uuid,
-        user_a_id: Uuid,
-        user_b_id: Uuid,
-        created_at: DateTime<Utc>,
-        last_message_at: Option<DateTime<Utc>>,
+    Path(message_id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    let meta = load_readable_message(&state.pool, message_id, auth.user_id).await?;
+    // With receipts off on either side nothing is recorded, so turning them on later doesn't
+    // reveal when this message was read. The unread marker below moves either way.
+    if both_allow(
+        &state.pool,
+        auth.user_id,
+        meta.sender_user_id,
+        Visibility::ReadReceipts,
+    )
+    .await?
+    {
+        let read_at = insert_read(&state.pool, message_id, auth.user_id).await?;
+        fanout_message_read(
+            &state,
+            message_id,
+            meta.conversation_id,
+            auth.user_id,
+            auth.device_id,
+            meta.user_a_id,
+            meta.user_b_id,
+            read_at,
+        )
+        .await;
+    }
+    if advance_read_marker(
+        &state.pool,
+        auth.user_id,
+        meta.conversation_id,
+        meta.created_at,
+    )
+    .await?
+    {
+        announce_chat_read(
+            &state,
+            auth.user_id,
+            auth.device_id,
+            meta.conversation_id,
+            meta.sender_user_id,
+            meta.created_at,
+        )
+        .await;
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /messages/read` — mark all messages from peer up to `up_to_message_id` as read.
+pub async fn mark_read_bulk(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Json(body): Json<BulkReadRequest>,
+) -> Result<Json<BulkReadResponse>, AppError> {
+    if body.peer_user_id == auth.user_id {
+        return Err(AppError::validation("peer_user_id cannot be yourself."));
+    }
+    if !are_contacts(&state.pool, auth.user_id, body.peer_user_id).await? {
+        return Err(AppError::forbidden(
+            "You can only mark messages from accepted contacts as read.",
+        ));
     }
 
-    let rows = sqlx::query_as::<_, Row>(
+    let meta = load_readable_message(&state.pool, body.up_to_message_id, auth.user_id).await?;
+    // Cursor message must be in the conversation with this peer.
+    let peer_in_conv = meta.user_a_id == body.peer_user_id || meta.user_b_id == body.peer_user_id;
+    if !peer_in_conv {
+        return Err(AppError::validation(
+            "up_to_message_id is not in a conversation with peer_user_id.",
+        ));
+    }
+
+    let now = Utc::now();
+    let marked = if both_allow(
+        &state.pool,
+        auth.user_id,
+        body.peer_user_id,
+        Visibility::ReadReceipts,
+    )
+    .await?
+    {
+        insert_reads_up_to(
+            &state,
+            &auth,
+            meta.conversation_id,
+            body.peer_user_id,
+            meta.created_at,
+            body.up_to_message_id,
+            now,
+        )
+        .await?
+    } else {
+        0
+    };
+    if marked > 0 {
+        publish_bulk_read(
+            &state,
+            &auth,
+            meta.conversation_id,
+            body.peer_user_id,
+            body.up_to_message_id,
+            now,
+            marked,
+        )
+        .await;
+    }
+    if advance_read_marker(
+        &state.pool,
+        auth.user_id,
+        meta.conversation_id,
+        meta.created_at,
+    )
+    .await?
+    {
+        announce_chat_read(
+            &state,
+            auth.user_id,
+            auth.device_id,
+            meta.conversation_id,
+            body.peer_user_id,
+            meta.created_at,
+        )
+        .await;
+    }
+
+    tracing::info!(
+        user_id = %auth.user_id,
+        peer = %body.peer_user_id,
+        marked,
+        "messages.read_bulk ok"
+    );
+
+    Ok(Json(BulkReadResponse {
+        marked,
+        read_at: now,
+    }))
+}
+
+/// Read receipts for the peer's messages in a chat up to `(created_at, id)`, when the peer is
+/// still a contact nobody blocked and both allow receipts. Returns how many messages got one.
+pub(crate) async fn send_read_receipts(
+    state: &AppState,
+    auth: &AuthContext,
+    conversation_id: Uuid,
+    peer_user_id: Uuid,
+    up_to_created_at: DateTime<Utc>,
+    up_to_id: Uuid,
+) -> Result<u64, AppError> {
+    if !are_contacts(&state.pool, auth.user_id, peer_user_id).await?
+        || is_blocked_either_way(&state.pool, auth.user_id, peer_user_id).await?
+        || !both_allow(
+            &state.pool,
+            auth.user_id,
+            peer_user_id,
+            Visibility::ReadReceipts,
+        )
+        .await?
+    {
+        return Ok(0);
+    }
+    // The peer's newest message the receipt covers: their app finds it in the thread.
+    let newest_theirs: Option<Uuid> = sqlx::query_scalar(
         r#"
-        SELECT c.id, c.user_a_id, c.user_b_id, c.created_at,
-               (
-                 SELECT MAX(m.created_at) FROM messages m
-                 WHERE m.conversation_id = c.id
-               ) AS last_message_at
-        FROM conversations c
-        WHERE c.user_a_id = $1 OR c.user_b_id = $1
-        ORDER BY last_message_at DESC NULLS LAST, c.created_at DESC
+        SELECT id FROM messages
+        WHERE conversation_id = $1 AND sender_user_id = $2 AND (created_at, id) <= ($3, $4)
+          AND content_type <> 'annotation'
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(conversation_id)
+    .bind(peer_user_id)
+    .bind(up_to_created_at)
+    .bind(up_to_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("load receipt anchor failed: {err}")))?;
+    let Some(newest_theirs) = newest_theirs else {
+        return Ok(0);
+    };
+    let now = Utc::now();
+    let marked = insert_reads_up_to(
+        state,
+        auth,
+        conversation_id,
+        peer_user_id,
+        up_to_created_at,
+        up_to_id,
+        now,
+    )
+    .await?;
+    if marked > 0 {
+        publish_bulk_read(
+            state,
+            auth,
+            conversation_id,
+            peer_user_id,
+            newest_theirs,
+            now,
+            marked,
+        )
+        .await;
+    }
+    Ok(marked)
+}
+
+/// Marks every message of the peer's in the chat up to the cursor (inclusive) read by the
+/// caller — annotations aside, which no one reads as a message. Returns the number newly marked.
+async fn insert_reads_up_to(
+    state: &AppState,
+    auth: &AuthContext,
+    conversation_id: Uuid,
+    peer_user_id: Uuid,
+    up_to_created_at: DateTime<Utc>,
+    up_to_id: Uuid,
+    now: DateTime<Utc>,
+) -> Result<u64, AppError> {
+    let result = sqlx::query(
+        r#"
+        INSERT INTO message_reads (message_id, user_id, read_at)
+        SELECT m.id, $1, $2
+        FROM messages m
+        WHERE m.conversation_id = $3
+          AND m.sender_user_id = $4
+          AND m.sender_user_id <> $1
+          AND m.content_type <> 'annotation'
+          AND (m.created_at, m.id) <= ($5, $6)
+          -- A single-message read can receipt the newest one first. A lower bound of "after
+          -- the newest receipt" would then skip every earlier message forever. Already-read
+          -- rows are left as they are.
+          AND NOT EXISTS (
+              SELECT 1 FROM message_reads r
+              WHERE r.message_id = m.id AND r.user_id = $1
+          )
+        ON CONFLICT (message_id, user_id) DO NOTHING
         "#,
     )
     .bind(auth.user_id)
-    .fetch_all(&state.pool)
+    .bind(now)
+    .bind(conversation_id)
+    .bind(peer_user_id)
+    .bind(up_to_created_at)
+    .bind(up_to_id)
+    .execute(&state.pool)
     .await
-    .map_err(|err| AppError::Internal(format!("list conversations failed: {err}")))?;
+    .map_err(|err| AppError::Internal(format!("bulk read insert failed: {err}")))?;
+    Ok(result.rows_affected())
+}
 
-    let mut conversations = Vec::with_capacity(rows.len());
-    for row in rows {
-        let peer_id = if row.user_a_id == auth.user_id {
-            row.user_b_id
-        } else {
-            row.user_a_id
-        };
-        let username: String = sqlx::query_scalar(r#"SELECT username FROM users WHERE id = $1"#)
-            .bind(peer_id)
-            .fetch_one(&state.pool)
-            .await
-            .map_err(|err| AppError::Internal(format!("peer username failed: {err}")))?;
-
-        conversations.push(ConversationItem {
-            id: row.id,
-            peer: PeerCard {
-                id: peer_id,
-                username,
-            },
-            created_at: row.created_at,
-            last_message_at: row.last_message_at,
-        });
+async fn publish_bulk_read(
+    state: &AppState,
+    auth: &AuthContext,
+    conversation_id: Uuid,
+    peer_user_id: Uuid,
+    up_to_message_id: Uuid,
+    read_at: DateTime<Utc>,
+    marked: u64,
+) {
+    let event = serde_json::json!({
+        "type": "message.read",
+        "message_id": up_to_message_id,
+        "conversation_id": conversation_id,
+        "user_id": auth.user_id,
+        "device_id": auth.device_id,
+        "read_at": read_at,
+        "up_to_message_id": up_to_message_id,
+        "marked": marked,
+    });
+    if let Ok(payload) = serde_json::to_string(&event) {
+        state
+            .realtime
+            .publish_to_users([auth.user_id, peer_user_id], Some(auth.device_id), &payload)
+            .await;
     }
+}
 
-    Ok(Json(ConversationsResponse { conversations }))
+#[derive(Debug, FromRow)]
+struct ReadableMessage {
+    conversation_id: Uuid,
+    sender_user_id: Uuid,
+    user_a_id: Uuid,
+    user_b_id: Uuid,
+    created_at: DateTime<Utc>,
+}
+
+/// Load message if caller is a conversation participant and is not the sender.
+async fn load_readable_message(
+    pool: &sqlx::PgPool,
+    message_id: Uuid,
+    reader_user_id: Uuid,
+) -> Result<ReadableMessage, AppError> {
+    let row = sqlx::query_as::<_, ReadableMessage>(
+        r#"
+        SELECT m.conversation_id, m.sender_user_id, c.user_a_id, c.user_b_id, m.created_at
+        FROM messages m
+        INNER JOIN conversations c ON c.id = m.conversation_id
+        WHERE m.id = $1
+        "#,
+    )
+    .bind(message_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("load message for read failed: {err}")))?
+    .ok_or_else(|| AppError::not_found("Message not found."))?;
+
+    let is_participant = row.user_a_id == reader_user_id || row.user_b_id == reader_user_id;
+    if !is_participant {
+        return Err(AppError::not_found("Message not found."));
+    }
+    if row.sender_user_id == reader_user_id {
+        return Err(AppError::validation(
+            "Cannot mark your own messages as read.",
+        ));
+    }
+    Ok(row)
+}
+
+async fn insert_read(
+    pool: &sqlx::PgPool,
+    message_id: Uuid,
+    user_id: Uuid,
+) -> Result<DateTime<Utc>, AppError> {
+    let now = Utc::now();
+    sqlx::query(
+        r#"
+        INSERT INTO message_reads (message_id, user_id, read_at)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (message_id, user_id) DO NOTHING
+        "#,
+    )
+    .bind(message_id)
+    .bind(user_id)
+    .bind(now)
+    .execute(pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("insert read failed: {err}")))?;
+
+    // Prefer stored read_at when already present (idempotent).
+    let stored: DateTime<Utc> = sqlx::query_scalar(
+        r#"
+        SELECT read_at FROM message_reads WHERE message_id = $1 AND user_id = $2
+        "#,
+    )
+    .bind(message_id)
+    .bind(user_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("fetch read_at failed: {err}")))?;
+    Ok(stored)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn fanout_message_read(
+    state: &AppState,
+    message_id: Uuid,
+    conversation_id: Uuid,
+    reader_user_id: Uuid,
+    reader_device_id: Uuid,
+    user_a_id: Uuid,
+    user_b_id: Uuid,
+    read_at: DateTime<Utc>,
+) {
+    let event = serde_json::json!({
+        "type": "message.read",
+        "message_id": message_id,
+        "conversation_id": conversation_id,
+        "user_id": reader_user_id,
+        "device_id": reader_device_id,
+        "read_at": read_at,
+    });
+    if let Ok(payload) = serde_json::to_string(&event) {
+        state
+            .realtime
+            .publish_to_users([user_a_id, user_b_id], Some(reader_device_id), &payload)
+            .await;
+    }
 }
 
 /// `POST /messages/:id/delivered`
@@ -561,7 +1054,8 @@ async fn ensure_conversation(
     user_x: Uuid,
     user_y: Uuid,
 ) -> Result<Uuid, AppError> {
-    let (user_a, user_b) = if user_x < user_y {
+    // Notes: equal ids (self conversation). Otherwise ordered pair a < b.
+    let (user_a, user_b) = if user_x <= user_y {
         (user_x, user_y)
     } else {
         (user_y, user_x)
@@ -600,12 +1094,12 @@ async fn ensure_conversation(
     Ok(id)
 }
 
-async fn find_conversation(
+pub(crate) async fn find_conversation(
     pool: &sqlx::PgPool,
     user_x: Uuid,
     user_y: Uuid,
 ) -> Result<Option<Uuid>, AppError> {
-    let (user_a, user_b) = if user_x < user_y {
+    let (user_a, user_b) = if user_x <= user_y {
         (user_x, user_y)
     } else {
         (user_y, user_x)
@@ -644,21 +1138,6 @@ async fn load_by_client_id(
     .map_err(|err| AppError::Internal(format!("load by client_message_id failed: {err}")))
 }
 
-async fn are_contacts(pool: &sqlx::PgPool, a: Uuid, b: Uuid) -> Result<bool, AppError> {
-    sqlx::query_scalar(
-        r#"
-        SELECT EXISTS(
-            SELECT 1 FROM contacts WHERE user_id = $1 AND contact_user_id = $2
-        )
-        "#,
-    )
-    .bind(a)
-    .bind(b)
-    .fetch_one(pool)
-    .await
-    .map_err(|err| AppError::Internal(format!("contacts check failed: {err}")))
-}
-
 fn message_to_response(row: MessageRow) -> MessageResponse {
     let deleted = row.deleted_for_everyone_at.is_some();
     MessageResponse {
@@ -676,7 +1155,76 @@ fn message_to_response(row: MessageRow) -> MessageResponse {
         media_object_id: if deleted { None } else { row.media_object_id },
         deleted_for_everyone: deleted,
         created_at: row.created_at,
+        delivered: None,
+        read: None,
+        reactions: vec![],
     }
+}
+
+/// Delivery / read status of `peer_user_id` for many outbound messages (batched).
+async fn peer_receipt_status_batch(
+    pool: &sqlx::PgPool,
+    message_ids: &[Uuid],
+    peer_user_id: Uuid,
+) -> Result<HashMap<Uuid, (bool, bool)>, AppError> {
+    let mut map: HashMap<Uuid, (bool, bool)> =
+        message_ids.iter().map(|id| (*id, (false, false))).collect();
+    if message_ids.is_empty() {
+        return Ok(map);
+    }
+
+    #[derive(FromRow)]
+    struct DeliveredRow {
+        message_id: Uuid,
+    }
+
+    let delivered_rows = sqlx::query_as::<_, DeliveredRow>(
+        r#"
+        SELECT DISTINCT d.message_id
+        FROM message_deliveries d
+        INNER JOIN devices dev ON dev.id = d.device_id
+        WHERE d.message_id = ANY($1)
+          AND dev.user_id = $2
+          AND d.delivered_at IS NOT NULL
+        "#,
+    )
+    .bind(message_ids)
+    .bind(peer_user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("peer delivered batch failed: {err}")))?;
+
+    for row in delivered_rows {
+        if let Some(entry) = map.get_mut(&row.message_id) {
+            entry.0 = true;
+        }
+    }
+
+    #[derive(FromRow)]
+    struct ReadRow {
+        message_id: Uuid,
+    }
+
+    let read_rows = sqlx::query_as::<_, ReadRow>(
+        r#"
+        SELECT message_id
+        FROM message_reads
+        WHERE message_id = ANY($1) AND user_id = $2
+        "#,
+    )
+    .bind(message_ids)
+    .bind(peer_user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("peer read batch failed: {err}")))?;
+
+    for row in read_rows {
+        if let Some(entry) = map.get_mut(&row.message_id) {
+            entry.1 = true;
+        }
+    }
+
+    Ok(map)
 }
 
 /// `DELETE /messages/:id?scope=me|everyone`
@@ -699,25 +1247,34 @@ async fn delete_for_me(
     user_id: Uuid,
     message_id: Uuid,
 ) -> Result<StatusCode, AppError> {
-    let allowed: bool = sqlx::query_scalar(
+    #[derive(FromRow)]
+    struct DeleteTarget {
+        user_a_id: Uuid,
+        user_b_id: Uuid,
+        media_object_id: Option<Uuid>,
+    }
+
+    let target = sqlx::query_as::<_, DeleteTarget>(
         r#"
-        SELECT EXISTS(
-            SELECT 1
-            FROM messages m
-            INNER JOIN conversations c ON c.id = m.conversation_id
-            WHERE m.id = $1
-              AND (c.user_a_id = $2 OR c.user_b_id = $2)
-        )
+        SELECT c.user_a_id, c.user_b_id, m.media_object_id
+        FROM messages m
+        INNER JOIN conversations c ON c.id = m.conversation_id
+        WHERE m.id = $1
+          AND (c.user_a_id = $2 OR c.user_b_id = $2)
         "#,
     )
     .bind(message_id)
     .bind(user_id)
-    .fetch_one(&state.pool)
+    .fetch_optional(&state.pool)
     .await
-    .map_err(|err| AppError::Internal(format!("delete-for-me ACL failed: {err}")))?;
+    .map_err(|err| AppError::Internal(format!("delete-for-me ACL failed: {err}")))?
+    .ok_or_else(|| AppError::not_found("Message not found."))?;
 
-    if !allowed {
-        return Err(AppError::not_found("Message not found."));
+    // Saved Messages (self conversation): hide is not enough — hard-delete the row and
+    // its media so nothing can resurface on another device or via orphaned blobs.
+    let is_notes = target.user_a_id == target.user_b_id && target.user_a_id == user_id;
+    if is_notes {
+        return hard_delete_notes_message(state, message_id, target.media_object_id).await;
     }
 
     sqlx::query(
@@ -732,6 +1289,82 @@ async fn delete_for_me(
     .execute(&state.pool)
     .await
     .map_err(|err| AppError::Internal(format!("hide message failed: {err}")))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Fully erases a Saved Messages row + linked media (DB + blob). No hide tombstone left.
+async fn hard_delete_notes_message(
+    state: &AppState,
+    message_id: Uuid,
+    media_object_id: Option<Uuid>,
+) -> Result<StatusCode, AppError> {
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|err| AppError::Internal(format!("begin notes delete failed: {err}")))?;
+
+    // Collect every media id that still points at this message (plus the message pointer).
+    let mut media_ids: Vec<Uuid> = sqlx::query_scalar(
+        r#"
+        SELECT id FROM media_objects
+        WHERE message_id = $1
+        "#,
+    )
+    .bind(message_id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("list notes media failed: {err}")))?;
+
+    if let Some(mid) = media_object_id
+        && !media_ids.contains(&mid)
+    {
+        media_ids.push(mid);
+    }
+
+    // Break FKs before deleting the message row.
+    sqlx::query(
+        r#"
+        UPDATE messages
+        SET media_object_id = NULL, ciphertext = NULL
+        WHERE id = $1
+        "#,
+    )
+    .bind(message_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("unlink notes message media failed: {err}")))?;
+
+    sqlx::query(
+        r#"
+        UPDATE media_objects
+        SET message_id = NULL
+        WHERE message_id = $1
+        "#,
+    )
+    .bind(message_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("unlink notes media row failed: {err}")))?;
+
+    // Cascades message_hides + message_deliveries.
+    sqlx::query(r#"DELETE FROM messages WHERE id = $1"#)
+        .bind(message_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| AppError::Internal(format!("delete notes message failed: {err}")))?;
+
+    tx.commit()
+        .await
+        .map_err(|err| AppError::Internal(format!("commit notes delete failed: {err}")))?;
+
+    let purged = crate::routes::media::purge_media_ids(state, &media_ids).await?;
+    tracing::info!(
+        message_id = %message_id,
+        media_purged = purged,
+        "messages.notes_hard_delete ok"
+    );
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -754,6 +1387,19 @@ async fn delete_for_everyone(
         deleted_for_everyone_at: Option<DateTime<Utc>>,
     }
 
+    // Human: The conversation row first, like reaction writes and chat and account deletes
+    // (reactions.rs): taking the message first could deadlock against a chat delete clearing
+    // reactions.
+    // Agent: a message's conversation never changes, so reading it before the lock is safe.
+    let conversation_id: Uuid =
+        sqlx::query_scalar(r#"SELECT conversation_id FROM messages WHERE id = $1"#)
+            .bind(message_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|err| AppError::Internal(format!("load message for delete failed: {err}")))?
+            .ok_or_else(|| AppError::not_found("Message not found."))?;
+    reactions::lock_conversation(&mut tx, conversation_id).await?;
+
     let meta = sqlx::query_as::<_, MsgMeta>(
         r#"
         SELECT sender_user_id, conversation_id, deleted_for_everyone_at
@@ -775,7 +1421,10 @@ async fn delete_for_everyone(
     }
 
     let now = Utc::now();
+    // Collected before the pointers are cleared, then removed from the store after commit.
+    let mut media_ids = Vec::new();
     if meta.deleted_for_everyone_at.is_none() {
+        media_ids = crate::routes::media::media_ids_for_messages(&mut tx, &[message_id]).await?;
         sqlx::query(
             r#"
             UPDATE messages
@@ -802,6 +1451,8 @@ async fn delete_for_everyone(
         .execute(&mut *tx)
         .await
         .map_err(|err| AppError::Internal(format!("unlink media on delete failed: {err}")))?;
+
+        reactions::clear_reactions_on(&mut tx, meta.conversation_id, &[message_id]).await?;
     }
 
     #[derive(FromRow)]
@@ -832,6 +1483,23 @@ async fn delete_for_everyone(
             .realtime
             .publish_to_users([pair.user_a_id, pair.user_b_id], None, &payload)
             .await;
+    }
+
+    // The tombstone is committed either way. A blob the store cannot delete stays unlinked
+    // for the orphan GC.
+    if !media_ids.is_empty() {
+        match crate::routes::media::purge_media_ids(state, &media_ids).await {
+            Ok(purged) => tracing::info!(
+                message_id = %message_id,
+                media_purged = purged,
+                "messages.delete_everyone media purged"
+            ),
+            Err(err) => tracing::warn!(
+                message_id = %message_id,
+                error = %err,
+                "messages.delete_everyone media purge failed"
+            ),
+        }
     }
 
     Ok(StatusCode::NO_CONTENT)

@@ -11,6 +11,8 @@ alwaysApply: true
 
 Modern, clean, iOS-native (Telegram-class polish): white surfaces, one confident accent, generous whitespace, capsule primary actions, grouped cards, hairline separators. Effects are **intentional and rare** — no decorative blurs/gradients on backgrounds, no drop shadows on flat list content, never more than one "hero" effect per screen.
 
+**Liquid Glass (iOS 26, the app's floor).** Bars and floating controls are the *navigation layer*; they are made of Liquid Glass and float over content, which scrolls under them and fades at the edge. Content itself (rows, cards, bubbles) is never glass. In SwiftUI that means the system material (`glassEffect`, `GlassEffectContainer`, `safeAreaBar` + `scrollEdgeEffectStyle(.soft)`, or the system navigation bar) — never a hand-painted blur, gradient or `Material` strip standing in for it.
+
 ## Tokens (never hardcode alternatives)
 
 | Token | Value | Use |
@@ -27,7 +29,9 @@ Modern, clean, iOS-native (Telegram-class polish): white surfaces, one confident
 | `separator` | `#E5E5EA` | Hairlines (1 px) |
 | `online` | `#34C759` | Presence, success, strength meter |
 | danger | `#FF3B30` (`#E0342C` on white) | Destructive rows, recording, end call |
+| `dangerText` | `#C4261D` light / `#FF6961` dark | Danger for small text (errors, weak strength label); keeps 4.5:1. Keep `danger` for fills |
 | warning | bg `#FDF1DC`, icon `#B97D10`, text `#8A5E0C` | Warning callouts |
+| success | bg `#E6F7EC`, text `successText` `#1D7A3E` (`#7ED69A` dark) | Success chips and labels |
 
 In SwiftUI these become a single `Theme` (asset catalog colors named after the tokens). Feature code references `Theme.accent`, never hex literals.
 
@@ -50,9 +54,11 @@ In SwiftUI these become a single `Theme` (asset catalog colors named after the t
 - **Avatar**: circle, accent gradient (or per-contact gradient), white initials at ~36 % of diameter, semibold.
 - **Message bubbles**: radius `[18,18,4,18]` outgoing / `[18,18,18,4]` incoming; outgoing `accent` + white text, incoming `bubble-in` + shadow `y1 blur2 #0B0B120F`; 15 pt text, 11 pt meta (time + `check-check` on sent) bottom-trailing inside the bubble.
 - **Voice message**: 34 pt circular play button (`accent-soft`/translucent white), waveform of 2.5×h rounded bars gap 2 (played = accent/white, rest muted), duration 12 pt; transcription expands below with an accent side-rule + `TRANSCRIPT` mono-caption header.
-- **Tab bar**: floating capsule inset 16 side / 12 bottom, height 56, `#FFFFFFE6` + soft shadow; active tab = `accent-soft` pill + accent icon/label, inactive `text-secondary`. Last child of the screen stack, never absolutely positioned.
-- **Sheets/overlays**: scrim `#0B0B1247` (+ background blur for context menus), sheet radius 20 top corners, 36×5 grab handle; context menus 250 wide, 42 pt rows, label left / icon right, destructive row red.
-- **Badges/chips**: capsule `accent-soft` + accent 11–12 semibold text (info) or `#E6F7EC` + `online` (success, e.g. "Available", "Verified").
+- **Tab bar**: floating Liquid Glass capsule inset 20 side / 20 bottom (8 without a home indicator), height 64 (56 pt items in a 4 pt rim); a sliding lens (`#0B0B1212` light / `#FFFFFF26` dark) marks the active tab with accent icon/label, inactive `text-primary`; a 64 pt glass search circle sits beside it and morphs into a 48 pt glass search field. In Pencil, glass = `#FFFFFF99` fill + `background_blur` 20 + 1 px `#FFFFFF80` inner stroke + shadow `y8 blur24 #0B0B1224`. Last child of the screen stack, never absolutely positioned.
+- **Top bar (Liquid Glass)**: no strip. A 44 pt row inset 16, title 17 semibold `text-primary` centred on the screen (plain, no glass); each control is a 44 pt glass circle (glyph 17 semibold, `accent`) or a glass capsule (word 16 medium, `accent`, 16 side padding); related controls (QR + Add, Video + Call) fuse into one capsule. The chat header centres the contact block (avatar, name, presence) on the screen between Back and Video + Call; only Notes keeps a More menu on the right (its only in-thread way to clear saved messages). `prominent` = accent-tinted glass with a white glyph, for the one action the bar wants (Save, Send). Content scrolls under the bar and the status bar with the soft scroll edge effect. Pushed settings screens use the *system* navigation bar (inline or large title), which is the same recipe. SwiftUI: `GlassBarRow` / `GlassBarButton` / `GlassBarGroup` pinned with `glassTopBar`.
+- **Composer (Liquid Glass)**: a 40 pt glass `+` circle, a glass field capsule (radius 20, grows to 5 lines, accent-tinted 12 % while focused), and a 40 pt glass mic circle that becomes an accent-tinted glass send circle; a reply / link strip is one more glass panel (radius 20) above the row; 12 side / 8 bottom padding, pinned with `glassBottomBar`. Recording: timer capsule, locked bar = danger-glyph circle · readout capsule · accent send circle. Floating controls over media (viewer, player, compose, calls) are glass circles too.
+- **Sheets/overlays**: scrim `#0B0B1247` (+ background blur for context menus), sheet radius 20 top corners, 36×5 grab handle; context menus 250 wide, 42 pt rows, label left / icon right, destructive row red. Toasts and the in-app banner are glass (capsule / radius 24).
+- **Badges/chips**: capsule `accent-soft` + accent 11–12 semibold text (info) or `#E6F7EC` + `successText` `#1D7A3E` (success, e.g. "Available", "Verified"). Strength badges label in `successText` / `warningText` / `dangerText`.
 
 ## Screen composition
 
@@ -64,7 +70,8 @@ In SwiftUI these become a single `Theme` (asset catalog colors named after the t
 
 ## SwiftUI implementation rules
 
-- Build `ShroudUI` as a small component library mirroring the recipes above (`PrimaryButton`, `GroupedCard`, `SettingsRow`, `Avatar`, `MessageBubble`, `WaveformView`, `TabBarCapsule`…). Feature screens compose these — **no bespoke one-off styling in feature views**.
+- Build `ShroudUI` as a small component library mirroring the recipes above (`PrimaryButton`, `GroupedCard`, `SettingsRow`, `Avatar`, `MessageBubble`, `WaveformView`, `FloatingTabBar`, `GlassBar…`). Feature screens compose these — **no bespoke one-off styling in feature views**.
+- Bars: a root tab screen uses `MainScrollScreen`; a pushed settings screen uses the system navigation bar (`navigationTitle` + `toolbar`); a screen with a custom centre (the chat) builds a `GlassBarRow`. Never hide the system bar to draw a plain row with a chevron.
 - Any new visual pattern gets designed in `iOS-App.pen` (and screenshot-verified via MCP) first, then added to `ShroudUI`, then used.
 - Support dark mode by re-mapping tokens (not per-view overrides) when dark palette is added to the `.pen` file.
 

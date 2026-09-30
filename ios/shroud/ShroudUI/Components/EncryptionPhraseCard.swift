@@ -5,6 +5,8 @@ struct EncryptionPhraseCard: View {
     let words: [String]
     let revealedCount: Int
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     private let rowCount = 6
 
     var body: some View {
@@ -41,7 +43,7 @@ struct EncryptionPhraseCard: View {
                     Text(word)
                         .font(.system(size: 14, weight: .medium, design: .monospaced))
                         .foregroundStyle(Theme.textPrimary)
-                        .transition(Self.wordPopTransition)
+                        .transition(reduceMotion ? .opacity : Self.wordPopTransition)
                 } else {
                     ShimmerPlaceholder(height: 14, width: 92)
                         .transition(.opacity)
@@ -54,6 +56,9 @@ struct EncryptionPhraseCard: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 7)
         .frame(maxWidth: .infinity)
+        // One VoiceOver stop per word ("Word 3: abandon"), not the number and the word apart.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(isRevealed ? "Word \(number): \(word)" : "Word \(number), loading")
         .animation(EncryptionPhraseReveal.wordRevealSpring, value: isRevealed)
     }
 
@@ -71,6 +76,7 @@ struct PhraseWordNumberBadge: View {
     let number: Int
     let isRevealed: Bool
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isPulsing = false
 
     var body: some View {
@@ -80,9 +86,10 @@ struct PhraseWordNumberBadge: View {
                 .frame(width: 20, height: 20)
             Text("\(number)")
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .foregroundStyle(isPulsing ? Color.white : Theme.accent)
+                .foregroundStyle(isPulsing ? Color.white : Theme.accentText)
         }
-        .scaleEffect(isPulsing ? 1.12 : 1)
+        // Reduce Motion keeps the colour flash and drops the scale pulse.
+        .scaleEffect(isPulsing && !reduceMotion ? 1.12 : 1)
         .onChange(of: isRevealed) { _, revealed in
             guard revealed else {
                 isPulsing = false
@@ -97,7 +104,7 @@ struct PhraseWordNumberBadge: View {
                 try? await Task.sleep(
                     nanoseconds: UInt64(EncryptionPhraseReveal.badgePulseDuration * 1_000_000_000)
                 )
-                withAnimation(.easeOut(duration: 0.18)) {
+                withAnimation(Motion.fade) {
                     isPulsing = false
                 }
             }

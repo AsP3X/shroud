@@ -1,11 +1,21 @@
-# Full local stack: Postgres, Redis, Nebular OS (object storage), and shroud-server API.
-# Agent: READS env defaults below; WRITES volumes; no production use.
+# Full stack: Postgres, Redis, Nebular OS, shroud-server API, and the web client.
+# Agent: READS .env; WRITES volumes. Public entry is either host ports (local overlay)
+#        or Nginx Proxy Manager (npm overlay) — see ./deploy.sh.
 #
-# Nebular build context defaults to the sibling Ownly checkout (`../ownly/nebular-os`).
-# Override with NEBULAR_CONTEXT=/path/to/nebular-os if needed.
+#   ./deploy.sh                         wizard on first run, then up
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+#   docker compose -f docker-compose.yml -f docker-compose.npm.yml up -d --build
+#
+# NPM targets (npm overlay, container DNS on proxy-network):
+#   http://shroud-web:80     → web client (also reverse-proxies /api/v1)
+#   http://shroud-api:8080   → API for the iOS app (/api/v1, /api/v1/ws)
+#
+# Nebular OS is the published image, pinned by digest. Its secrets come from .env, which
+# ./deploy.sh fills in (NOS_JWT_SECRET, NEBULAR_ACCESS_KEY_ID, NEBULAR_SECRET_ACCESS_KEY,
+# NOS_METRICS_TOKEN).
+
 x-shroud-logging: &shroud-logging
-  # Ownly-style verbose defaults for local compose; override with RUST_LOG=...
-  RUST_LOG: ${RUST_LOG:-debug}
+  RUST_LOG: ${RUST_LOG:-info}
   RUST_LOG_FORMAT: ${RUST_LOG_FORMAT:-text}
 
 services:
@@ -13,58 +23,93 @@ services:
     image: postgres:16-alpine
     container_name: shroud-postgres
     environment:
-      POSTGRES_USER: shroud
-      POSTGRES_PASSWORD: shroud
-      POSTGRES_DB: shroud
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: ${POSTGRES_USER:-shroud}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shroud}
+      POSTGRES_DB: ${POSTGRES_DB:-shroud}
     volumes:
       - shroud_pg_data:/var/lib/postgresql/data
+    networks:
+      - shroud-internal
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U shroud -d shroud"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shroud} -d ${POSTGRES_DB:-shroud}"]
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
     container_name: shroud-redis
-    ports:
-      - "6379:6379"
     volumes:
       - shroud_redis_data:/data
+    networks:
+      - shroud-internal
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
-  # Nebular OS object storage (same binary Ownly uses). Media bytes never hit the API.
   nebular:
-    build:
-      context: ${NEBULAR_CONTEXT:-../ownly/nebular-os}
-      dockerfile: Dockerfile
+    # Nebular OS 0.2.0, pinned by digest so a pull can't swap it. To upgrade, change tag and
+    # digest together (`docker buildx imagetools inspect ghcr.io/asp3x/nebular-os:<tag>`) after
+    # reading the release's upgrade notes: a version that has written data can't be rolled back.
+    image: ghcr.io/asp3x/nebular-os:0.2.0@sha256:5d18264c2c7c06ebfa5d515d3fc110fa90826032f28e0d92500fff15259bebc9
     container_name: shroud-nebular
     environment:
       <<: *shroud-logging
       NOS_BIND_ADDR: 0.0.0.0:9000
       NOS_DATA_DIR: /data/blobs
       NOS_META_PATH: /data/meta/metadata.db
-      # Local-only secrets — not for production.
-      NOS_JWT_SECRET: shroud-compose-local-dev-nos-jwt-secret-not-for-production
-      NOS_SIGNING_SECRET: shroud-compose-local-dev-nos-signing-secret-not-for-production
-      JWT_SECRET: shroud-compose-local-dev-nos-jwt-secret-not-for-production
-      SIGNING_SECRET: shroud-compose-local-dev-nos-signing-secret-not-for-production
-    ports:
-      - "9000:9000"
+      # Nebular refuses to start without it. Only Nebular knows it: the API has its own access
+      # key below. Without NOS_SIGNING_SECRET, Nebular's presigned URLs are off.
+      NOS_JWT_SECRET: ${NOS_JWT_SECRET:-}
+      # The API's key. Requests are SigV4-signed (body hash included, replays refused after
+      # 15 minutes); `editor` can read, write and delete but not reach maintenance, and the
+      # policy keeps it to the media bucket.
+      NOS_S3_ACCESS_KEY: ${NEBULAR_ACCESS_KEY_ID:-}
+      NOS_S3_SECRET_KEY: ${NEBULAR_SECRET_ACCESS_KEY:-}
+      NOS_S3_ACCESS_KEY_ROLE: editor
+      NOS_BUCKET_POLICY: '{"${NEBULAR_ACCESS_KEY_ID:-}":["shroud-media"]}'
+      # Deleted media is gone at once, instead of sitting on disk as a 24 h soft delete.
+      NOS_SOFT_DELETE_TTL_SECS: "0"
+      # Blobs are ciphertext, which compression can't shrink. The threshold sits
+      # above the 2 GiB media cap so Nebular stores them as they are.
+      NOS_COMPRESS_MIN_SIZE: "4294967296"
+      # The API caps one media object at 2 GiB.
+      NOS_MAX_BODY_SIZE: "2147483648"
+      # Two full-size uploads can be in flight together.
+      NOS_UPLOAD_MAX_IN_FLIGHT_BYTES: "4294967296"
+      # No browser ever calls Nebular; an origin that can't exist allows none.
+      NOS_CORS_ORIGINS: https://nebular.invalid
+      NOS_METRICS_TOKEN: ${NOS_METRICS_TOKEN:-}
     volumes:
       - shroud_nebular_data:/data
+    networks:
+      - shroud-internal
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Only for the entrypoint, which hands /data to the `nos` user (uid 10001) and then starts
+    # the server with none of them.
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/health/ready >/dev/null"]
       interval: 10s
       timeout: 5s
       retries: 18
       start_period: 120s
+    restart: unless-stopped
 
   api:
     build:
@@ -80,22 +125,51 @@ services:
         condition: service_healthy
     environment:
       <<: *shroud-logging
-      # Docker network hostnames (not localhost).
-      DATABASE_URL: postgres://shroud:shroud@postgres:5432/shroud
+      DATABASE_URL: "postgres://${POSTGRES_USER:-shroud}:${POSTGRES_PASSWORD:-shroud}@postgres:5432/${POSTGRES_DB:-shroud}"
+      DATABASE_POOL_MAX: "10"
+      RUN_MIGRATIONS: "true"
+      TRUST_FORWARDED_HEADERS: "true"
       REDIS_URL: redis://redis:6379
       NEBULAR_URL: http://nebular:9000
       NEBULAR_MEDIA_BUCKET: shroud-media
+      NEBULAR_ACCESS_KEY_ID: ${NEBULAR_ACCESS_KEY_ID:-}
+      NEBULAR_SECRET_ACCESS_KEY: ${NEBULAR_SECRET_ACCESS_KEY:-}
+      # Where earlier releases kept blobs. The API moves them into Nebular on start and reads
+      # them from here until then; nothing new is written to it.
+      MEDIA_DATA_DIR: /data/shroud-media
       HOST: 0.0.0.0
       PORT: "8080"
-    ports:
-      - "8080:8080"
+      WEB_PUBLIC_URL: ${WEB_PUBLIC_URL:-http://localhost:8081}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8081}
+      APNS_KEY_PATH: ${APNS_KEY_PATH:-}
+      APNS_KEY_PEM: ${APNS_KEY_PEM:-}
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+      APNS_TOPIC: ${APNS_TOPIC:-}
+      APNS_ENVIRONMENT: ${APNS_ENVIRONMENT:-sandbox}
+      WEB_PUSH_SUBJECT: ${WEB_PUSH_SUBJECT:-}
+      WEB_PUSH_VAPID_PRIVATE_KEY: ${WEB_PUSH_VAPID_PRIVATE_KEY:-}
+      WEB_PUSH_VAPID_PUBLIC_KEY: ${WEB_PUSH_VAPID_PUBLIC_KEY:-}
+      WEB_PUSH_ALLOWED_HOSTS: ${WEB_PUSH_ALLOWED_HOSTS:-}
+      # Calls: TURN_URLS + TURN_SECRET make the API mint short-lived logins for the coturn
+      # below (docs/calls.md). TURN_USERNAME / TURN_CREDENTIAL are only for a hosted TURN
+      # service with one fixed login.
+      TURN_URLS: ${TURN_URLS:-}
+      TURN_SECRET: ${TURN_SECRET:-}
+      TURN_CREDENTIAL_TTL_SECS: ${TURN_CREDENTIAL_TTL_SECS:-}
+      TURN_USERNAME: ${TURN_USERNAME:-}
+      TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
+      ICE_SERVERS_JSON: ${ICE_SERVERS_JSON:-}
+      REACTIONS_MAX_PER_USER: ${REACTIONS_MAX_PER_USER:-5}
+    volumes:
+      - shroud_media_data:/data/shroud-media
+    networks:
+      - shroud-internal
     healthcheck:
-      # No curl in slim image — use the binary bind check via /dev/tcp if available,
-      # or install nothing and rely on depends_on; prefer wget from busybox alternative.
       test:
         [
           "CMD-SHELL",
-          "timeout 2 bash -c 'cat < /dev/null > /dev/tcp/127.0.0.1/8080' || exit 1",
+          "curl -fsS http://127.0.0.1:8080/api/v1/health/ready >/dev/null || exit 1",
         ]
       interval: 10s
       timeout: 5s
@@ -103,7 +177,83 @@ services:
       start_period: 15s
     restart: unless-stopped
 
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: shroud-web
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      API_UPSTREAM: http://api:8080
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-2147483648}
+    networks:
+      - shroud-internal
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80/ >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
+
+  # TURN relay for calls whose networks refuse a direct path. Host networking: it hands out
+  # relay ports from TURN_MIN_PORT–TURN_MAX_PORT (open those UDP ports and 3478 UDP/TCP).
+  # Only logins the API minted with TURN_SECRET work, and it relays to public addresses only
+  # (coturn's recommended private/reserved ranges are refused), UDP only.
+  coturn:
+    profiles: ["calls"]
+    image: coturn/coturn:4.6
+    container_name: shroud-coturn
+    network_mode: host
+    command:
+      - -n
+      - --log-file=stdout
+      - --listening-port=3478
+      - --min-port=${TURN_MIN_PORT:-49160}
+      - --max-port=${TURN_MAX_PORT:-49259}
+      - --fingerprint
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_SECRET:-}
+      - --realm=${TURN_REALM:-shroud}
+      - --no-cli
+      - --no-tls
+      - --no-dtls
+      - --no-tcp-relay
+      - --no-multicast-peers
+      - --no-software-attribute
+      - --denied-peer-ip=0.0.0.0-0.255.255.255
+      - --denied-peer-ip=10.0.0.0-10.255.255.255
+      - --denied-peer-ip=100.64.0.0-100.127.255.255
+      - --denied-peer-ip=127.0.0.0-127.255.255.255
+      - --denied-peer-ip=169.254.0.0-169.254.255.255
+      - --denied-peer-ip=172.16.0.0-172.31.255.255
+      - --denied-peer-ip=192.0.0.0-192.0.0.255
+      - --denied-peer-ip=192.0.2.0-192.0.2.255
+      - --denied-peer-ip=192.88.99.0-192.88.99.255
+      - --denied-peer-ip=192.168.0.0-192.168.255.255
+      - --denied-peer-ip=198.18.0.0-198.19.255.255
+      - --denied-peer-ip=198.51.100.0-198.51.100.255
+      - --denied-peer-ip=203.0.113.0-203.0.113.255
+      - --denied-peer-ip=240.0.0.0-255.255.255.255
+      - --denied-peer-ip=::1
+      - --denied-peer-ip=64:ff9b::-64:ff9b::ffff:ffff
+      - --denied-peer-ip=::ffff:0.0.0.0-::ffff:255.255.255.255
+      - --denied-peer-ip=100::-100::ffff:ffff:ffff:ffff
+      - --denied-peer-ip=2001::-2001:1ff:ffff:ffff:ffff:ffff:ffff:ffff
+      - --denied-peer-ip=2002::-2002:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+      - --denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+      - --denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+    restart: unless-stopped
+
+networks:
+  shroud-internal:
+    name: shroud-internal
+    driver: bridge
+
 volumes:
   shroud_pg_data:
   shroud_redis_data:
   shroud_nebular_data:
+  shroud_media_data:

@@ -1,7 +1,7 @@
 import Foundation
 
 /// Canonical API error envelope from `/api/v1` — mirrors server `AppError` JSON.
-struct APIErrorResponse: Decodable, Equatable, Sendable {
+nonisolated struct APIErrorResponse: Decodable, Equatable, Sendable {
     struct Detail: Decodable, Equatable, Sendable {
         let code: String
         let message: String
@@ -11,10 +11,32 @@ struct APIErrorResponse: Decodable, Equatable, Sendable {
 }
 
 /// Typed client-side API failure mapped from HTTP status + error envelope.
-enum APIError: Error, Equatable, Sendable {
+nonisolated enum APIError: Error, Equatable, Sendable {
     case transport(String)
     case server(code: String, message: String, statusCode: Int)
     case decoding
+
+    /// True for HTTP 401 — the session token was rejected (not offline / unreachable).
+    ///
+    /// Transport failures and other 4xx/5xx must not be treated as auth failure so we never
+    /// force-logout a user who is merely offline or hitting a bad server.
+    var isAuthenticationFailure: Bool {
+        if case let .server(_, _, statusCode) = self, statusCode == 401 {
+            return true
+        }
+        return false
+    }
+
+    /// The server removed this device from the account (`401 DEVICE_REMOVED`). Unlike a plain
+    /// 401 this is never a hiccup: the app wipes everything of the account at once.
+    var isDeviceRemoval: Bool {
+        if case let .server(code, _, statusCode) = self, statusCode == 401 {
+            return code == Self.deviceRemovedCode
+        }
+        return false
+    }
+
+    static let deviceRemovedCode = "DEVICE_REMOVED"
 
     /// Builds an `APIError` from a failed HTTP response body when possible.
     static func from(data: Data, statusCode: Int) -> APIError {
@@ -23,6 +45,14 @@ enum APIError: Error, Equatable, Sendable {
                 code: envelope.error.code,
                 message: envelope.error.message,
                 statusCode: statusCode
+            )
+        }
+        // Preserve 401 even without a JSON envelope so session policy can still revoke.
+        if statusCode == 401 {
+            return .server(
+                code: "unauthorized",
+                message: "Unauthorized",
+                statusCode: 401
             )
         }
         return .transport("Request failed with status \(statusCode)")

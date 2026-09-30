@@ -1,0 +1,881 @@
+import SwiftUI
+import UIKit
+
+/// Receipt state for outbound bubbles (Telegram-style ticks).
+enum MessageReceiptStatus: Equatable, Sendable, Comparable {
+    case failed
+    case sending
+    case sent
+    case delivered
+    case read
+
+    var rank: Int {
+        switch self {
+        case .failed: -1
+        case .sending: 0
+        case .sent: 1
+        case .delivered: 2
+        case .read: 3
+        }
+    }
+
+    static func < (lhs: MessageReceiptStatus, rhs: MessageReceiptStatus) -> Bool {
+        lhs.rank < rhs.rank
+    }
+
+    /// What VoiceOver says for the ticks — delivered and read are both "checkmark" otherwise.
+    var spokenLabel: String {
+        switch self {
+        case .failed: "Failed"
+        case .sending: "Sending"
+        case .sent: "Sent"
+        case .delivered: "Delivered"
+        case .read: "Read"
+        }
+    }
+}
+
+// Note: `failed` is used for outbound media that stayed local after a send error.
+
+/// Shared Telegram-style receipt ticks for text and image bubbles.
+struct MessageReceiptIcon: View {
+    let receipt: MessageReceiptStatus
+    /// Muted color for sent / delivered (and sending spinner).
+    var metaColor: Color
+    /// Brighter color for read double-checks.
+    var readColor: Color
+    /// Failed glyph color (text bubbles use danger; image chips may use white).
+    var failedColor: Color = Theme.danger
+
+    /// Human: The tick is the app's smallest but most-watched state machine
+    /// (sending → sent → delivered → read). Each hop pops the new glyph in instead of
+    /// hard-cutting, so progress stays legible out of the corner of the eye.
+    var body: some View {
+        ZStack {
+            glyph
+                .id(receipt)
+                .transition(Motion.iconSwap)
+        }
+        .animation(Motion.snappy, value: receipt)
+        // Photo and video time chips don't combine their children; a bubble that does
+        // overrides this with its own label.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(receipt.spokenLabel)
+    }
+
+    @ViewBuilder
+    private var glyph: some View {
+        switch receipt {
+        case .failed:
+            Image(systemName: "exclamationmark.circle.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(failedColor)
+        case .sending:
+            ProgressView()
+                .controlSize(.mini)
+                .tint(metaColor)
+                .scaleEffect(0.65)
+                .frame(width: MessageBubbleMetrics.tickWidth, height: 11)
+        case .sent:
+            // Single thin check — Telegram “sent to server”.
+            // Padded to the double-check width so a sent → delivered hop swaps the glyph
+            // without changing the meta width (which would re-wrap the bubble's last line).
+            Image(systemName: "checkmark")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(metaColor)
+                .frame(width: MessageBubbleMetrics.tickWidth, alignment: .leading)
+        case .delivered:
+            telegramDoubleCheck(color: metaColor)
+        case .read:
+            telegramDoubleCheck(color: readColor)
+        }
+    }
+
+    /// Overlapped double check, closer to Telegram’s glyph than two spaced SF symbols.
+    private func telegramDoubleCheck(color: Color) -> some View {
+        ZStack(alignment: .leading) {
+            Image(systemName: "checkmark")
+                .font(.system(size: 9, weight: .semibold))
+            Image(systemName: "checkmark")
+                .font(.system(size: 9, weight: .semibold))
+                .offset(x: 4)
+        }
+        .foregroundStyle(color)
+        .frame(width: MessageBubbleMetrics.tickWidth, height: 10, alignment: .leading)
+    }
+}
+
+/// Preference for the visual bubble’s global frame (excludes row spacers).
+/// Used so the long-press menu can hero-animate from / back to the real bubble slot.
+struct MessageBubbleFrameKey: PreferenceKey {
+    static var defaultValue: [UUID: CGRect] = [:]
+
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { $1 })
+    }
+}
+
+/// Width of one chat row (the thread's width minus its horizontal insets).
+///
+/// Human: Bubbles used to cap at a hard-coded 280pt, so on anything wider than an iPhone 13
+/// a long message wrapped into a narrow ragged column with a third of the screen left empty.
+/// `ConversationView` measures the thread once and publishes it here instead.
+private struct ChatRowWidthKey: EnvironmentKey {
+    static let defaultValue: CGFloat = MessageBubbleMetrics.fallbackRowWidth
+}
+
+extension EnvironmentValues {
+    /// Set by `ConversationView`; read by bubbles to size their max width.
+    var chatRowWidth: CGFloat {
+        get { self[ChatRowWidthKey.self] }
+        set { self[ChatRowWidthKey.self] = newValue }
+    }
+}
+
+/// Shared geometry for the text bubble.
+///
+/// Human: The time+ticks overlay and the invisible run that reserves room for it on the last
+/// line are two views that must agree on a width to the point. They only stay in sync because
+/// both measure from the constants here.
+enum MessageBubbleMetrics {
+    /// Width of the tick block — every receipt glyph is padded to this so a receipt
+    /// upgrade never re-flows the text.
+    static let tickWidth: CGFloat = 14
+    /// Gap between the time and the ticks inside `metaRow`.
+    static let metaSpacing: CGFloat = 3
+    static let metaFontSize: CGFloat = 11
+    static let bodyFontSize: CGFloat = 16
+    /// Empty strip left on the opposite side of the row so direction reads at a glance.
+    static let oppositeGutter: CGFloat = 56
+    /// Never squeeze narrower than this, even on a very small thread width.
+    static let minBubbleWidth: CGFloat = 240
+    /// Widest a photo/video bubble may draw. Shared so a photo and a video sent back to back
+    /// line up on the same edge, the way they do in Telegram.
+    static let mediaWidthCap: CGFloat = 268
+    /// Conservative stand-in (~iPhone SE) until the host has measured its thread.
+    static let fallbackRowWidth: CGFloat = 288
+    static let textLeadingPad: CGFloat = 11
+    static let textTrailingPad: CGFloat = 11
+    /// Meta sits a touch closer to the edge than the body text (Telegram does the same).
+    static let metaTrailingPad: CGFloat = 10
+    /// Clear space between the end of the last line and the time.
+    static let metaGap: CGFloat = 8
+
+    private static let metaUIFont = UIFont.monospacedDigitSystemFont(
+        ofSize: metaFontSize,
+        weight: .regular
+    )
+    private static let digitWidth = ("0" as NSString)
+        .size(withAttributes: [.font: metaUIFont]).width
+
+    /// Rendered width of `metaRow`, measured in the font it actually draws with.
+    static func metaWidth(time: String, showsReceipt: Bool) -> CGFloat {
+        let timeWidth = (time as NSString).size(withAttributes: [.font: metaUIFont]).width
+        return timeWidth.rounded(.up) + (showsReceipt ? metaSpacing + tickWidth : 0)
+    }
+
+    /// Filler appended to the body so the last line keeps clear of the meta overlay.
+    ///
+    /// Human: It has to be built from *glyphs*, not spaces — the text engine drops trailing
+    /// whitespace when it breaks a line, which silently collapses a space-based reservation
+    /// and drops the timestamp on top of the words. Clear-coloured zeroes in the meta's own
+    /// monospaced-digit font give an exact, un-trimmable width.
+    static func metaReservation(time: String, showsReceipt: Bool) -> String {
+        let needed = metaWidth(time: time, showsReceipt: showsReceipt)
+            + (textTrailingPad - metaTrailingPad)
+            + metaGap
+        let count = max(1, Int((needed / max(digitWidth, 1)).rounded(.up)))
+        // Leading plain space is a legal break point, so a reservation that no longer fits
+        // moves to its own line instead of dragging the last word down with it.
+        return " " + String(repeating: "0", count: count)
+    }
+
+    /// Display normalisation for pasted content.
+    ///
+    /// Human: People paste assistant answers and flattened markdown tables in here. Raw tabs
+    /// jump to the text engine's default tab stops, which in a bubble scatters cells across
+    /// lines and leaves craters after list bullets. Collapsing horizontal whitespace turns
+    /// that back into ordinary prose. Presentation only — `message.text` is what gets copied,
+    /// forwarded and re-encrypted.
+    static func normalizedForDisplay(_ raw: String) -> String {
+        var out = ""
+        out.reserveCapacity(raw.count)
+        var pendingNewlines = 0
+        var pendingSpace = false
+        var wroteAny = false
+
+        for character in raw {
+            if character == "\r" { continue }
+            if character.isNewline {
+                pendingNewlines += 1
+                pendingSpace = false
+                continue
+            }
+            if character == "\t" || character == " " {
+                pendingSpace = true
+                continue
+            }
+            if wroteAny {
+                if pendingNewlines > 0 {
+                    // Keep one blank line as a paragraph break; drop the rest.
+                    out.append(String(repeating: "\n", count: min(pendingNewlines, 2)))
+                } else if pendingSpace {
+                    out.append(" ")
+                }
+            }
+            pendingNewlines = 0
+            pendingSpace = false
+            out.append(character)
+            wroteAny = true
+        }
+        return out
+    }
+}
+
+/// Stacks a reply quote over a message body at one shared width.
+///
+/// Human: A bubble with a quote has to be as wide as the *wider* of the two — the quote when it
+/// is a long line, the text when the message is long — and never wider than the row allows. A
+/// plain `VStack` cannot express that: it would either let the quote dictate an unbounded width
+/// or force the text to fill. So the three parts (quote, text, meta) are measured here and laid
+/// out against one resolved width, with the meta pinned to the bottom-trailing corner exactly
+/// as the plain bubble does.
+/// Agent: Expects exactly three subviews in that order. The text must already carry
+/// `MessageBubbleMetrics.metaReservation`, so the meta never lands on the last line.
+struct QuotedBubbleLayout: Layout {
+    /// Hard cap from the thread's width.
+    let maxWidth: CGFloat
+    /// Gap between the quote and the message text.
+    let spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) -> CGSize {
+        guard subviews.count == 3 else { return .zero }
+        let width = resolvedWidth(proposal: proposal, subviews: subviews)
+        let quoteHeight = subviews[0].sizeThatFits(ProposedViewSize(width: width, height: nil)).height
+        let textHeight = subviews[1].sizeThatFits(ProposedViewSize(width: width, height: nil)).height
+        return CGSize(width: width, height: quoteHeight + spacing + textHeight)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout Void
+    ) {
+        guard subviews.count == 3 else { return }
+        let width = bounds.width
+        let quoteHeight = subviews[0].sizeThatFits(ProposedViewSize(width: width, height: nil)).height
+        subviews[0].place(
+            at: CGPoint(x: bounds.minX, y: bounds.minY),
+            proposal: ProposedViewSize(width: width, height: quoteHeight)
+        )
+        let textHeight = subviews[1].sizeThatFits(ProposedViewSize(width: width, height: nil)).height
+        subviews[1].place(
+            at: CGPoint(x: bounds.minX, y: bounds.minY + quoteHeight + spacing),
+            proposal: ProposedViewSize(width: width, height: textHeight)
+        )
+        subviews[2].place(
+            at: CGPoint(x: bounds.maxX, y: bounds.maxY),
+            anchor: .bottomTrailing,
+            proposal: .unspecified
+        )
+    }
+
+    /// The wider of quote and text, clamped to what the row can give.
+    private func resolvedWidth(proposal: ProposedViewSize, subviews: Subviews) -> CGFloat {
+        let cap = min(maxWidth, proposal.width ?? maxWidth)
+        // The quote is one line of text with a flexible frame: its ideal width is the untruncated
+        // line, which the cap then cuts down (and the quote truncates into).
+        let quoteIdeal = subviews[0].sizeThatFits(.unspecified).width
+        // The body hugs its longest line at the cap; proposing that same width back to it keeps
+        // the line breaks identical, so the bubble hugs instead of snapping to the cap.
+        let textHug = subviews[1].sizeThatFits(ProposedViewSize(width: cap, height: nil)).width
+        return max(1, min(cap, max(quoteIdeal, textHug)))
+    }
+}
+
+/// How `LinkBubbleLayout` measures one of its rows.
+nonisolated enum LinkBubbleRole: LayoutValueKey {
+    /// Wraps at the bubble width; its hugging width counts (message text).
+    case wrapping
+    /// Its unproposed (one-line) width counts, capped by the row; then it gets the bubble's full
+    /// width (reaction chips, with the time at the trailing edge).
+    case footer
+    /// A block with a flexible frame (quote, preview): its *ideal* width counts, then it is
+    /// stretched to the bubble's width.
+    case ideal
+    /// Keeps its own size, pinned to the trailing edge (time + ticks).
+    case trailing
+
+    static let defaultValue: LinkBubbleRole = .wrapping
+}
+
+/// Stacks a link bubble's rows (quote, text, preview, meta) at one shared width.
+///
+/// Human: Same problem `QuotedBubbleLayout` solves for replies — the bubble must hug the wider
+/// of its parts without letting a flexible block claim the whole row. A large preview picture
+/// is the exception: it always takes the full width, as a photo bubble would.
+/// Agent: Rows are measured by their `LinkBubbleRole`; place order is subview order.
+struct LinkBubbleLayout: Layout {
+    /// Hard cap from the thread's width.
+    let maxWidth: CGFloat
+    /// True when the preview carries a large picture.
+    let fillsWidth: Bool
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) -> CGSize {
+        let width = resolvedWidth(proposal: proposal, subviews: subviews)
+        let height = subviews.reduce(CGFloat(0)) { total, subview in
+            total + size(of: subview, width: width).height
+        }
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout Void
+    ) {
+        var y = bounds.minY
+        for subview in subviews {
+            let size = size(of: subview, width: bounds.width)
+            if subview[LinkBubbleRole.self] == .trailing {
+                subview.place(
+                    at: CGPoint(x: bounds.maxX, y: y),
+                    anchor: .topTrailing,
+                    proposal: ProposedViewSize(size)
+                )
+            } else {
+                subview.place(
+                    at: CGPoint(x: bounds.minX, y: y),
+                    proposal: ProposedViewSize(width: bounds.width, height: size.height)
+                )
+            }
+            y += size.height
+        }
+    }
+
+    private func size(of subview: LayoutSubview, width: CGFloat) -> CGSize {
+        if subview[LinkBubbleRole.self] == .trailing {
+            return subview.sizeThatFits(.unspecified)
+        }
+        let height = subview.sizeThatFits(ProposedViewSize(width: width, height: nil)).height
+        return CGSize(width: width, height: height)
+    }
+
+    /// The widest row, clamped to what the row can give.
+    private func resolvedWidth(proposal: ProposedViewSize, subviews: Subviews) -> CGFloat {
+        let cap = min(maxWidth, proposal.width ?? maxWidth)
+        if fillsWidth { return max(1, cap) }
+        var widest: CGFloat = 1
+        for subview in subviews {
+            let width: CGFloat = switch subview[LinkBubbleRole.self] {
+            case .wrapping: subview.sizeThatFits(ProposedViewSize(width: cap, height: nil)).width
+            case .ideal, .trailing, .footer: subview.sizeThatFits(.unspecified).width
+            }
+            widest = max(widest, width)
+        }
+        return max(1, min(cap, widest))
+    }
+}
+
+/// Message bubble styled close to Telegram iOS:
+/// - Content-hugging width for short text
+/// - Wraps long text at a max width that follows the thread's own width
+/// - Time (+ ticks) sit on the **last line** of the message (not a separate row)
+/// - Soft tail corner toward the speaker, flat fill, light meta type
+struct MessageBubbleView: View {
+    let text: String
+    let time: String
+    let isMine: Bool
+    var isDeleted: Bool = false
+    var receipt: MessageReceiptStatus = .sent
+    /// When false, renders only the bubble (no leading/trailing row spacers) for menu hero.
+    var isRowEmbedded: Bool = true
+    /// When set, reports this bubble’s global frame via `MessageBubbleFrameKey`.
+    var frameReportID: UUID? = nil
+    /// Quote header for a reply; nil for an ordinary message.
+    var reply: ReplyQuoteContent? = nil
+    /// Jump to the quoted message.
+    var onReplyTap: (() -> Void)? = nil
+    /// Link preview sealed with the message; nil for an ordinary message.
+    var linkPreview: LinkPreview? = nil
+    /// The preview's picture, resolved (and decoded) by the host.
+    var linkPreviewImage: LinkPreviewImage = .none
+    /// Opens the preview's page.
+    var onOpenLinkPreview: (() -> Void)? = nil
+    /// Reaction chips; when there are any the time moves to the end of the chip row.
+    var reactions: [ReactionChipContent] = []
+    /// Tapping a chip (by emoji).
+    var onReactionTap: ((String) -> Void)? = nil
+
+    @Environment(\.chatRowWidth) private var chatRowWidth
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
+
+    /// Max width of the full bubble (including padding) — the row minus the opposite gutter.
+    private var maxBubbleWidth: CGFloat {
+        // A host that hasn't measured yet reports 0; fall back rather than collapse the bubble.
+        let row = chatRowWidth > 0 ? chatRowWidth : MessageBubbleMetrics.fallbackRowWidth
+        return min(row, max(MessageBubbleMetrics.minBubbleWidth, row - MessageBubbleMetrics.oppositeGutter))
+    }
+
+    private var displayText: String {
+        isDeleted ? "Message deleted" : MessageBubbleMetrics.normalizedForDisplay(text)
+    }
+
+    /// Explicit line breaks force the wrapping layout: the compact row is `lineLimit(1)`
+    /// and would truncate everything after the first line away.
+    private var isMultiline: Bool {
+        displayText.contains { $0.isNewline }
+    }
+
+    private var showsReceipt: Bool {
+        isMine && !isDeleted
+    }
+
+    private var bubbleFill: Color {
+        isMine ? Theme.bubbleOutgoing : Theme.bubbleIncoming
+    }
+
+    private var textColor: Color {
+        if isDeleted {
+            return isMine ? Color.white.opacity(0.85) : Theme.textSecondary
+        }
+        return isMine ? Color.white : Theme.textPrimary
+    }
+
+    private var metaColor: Color {
+        // Telegram: muted meta on both bubble types.
+        isMine ? Color.white.opacity(0.65) : Theme.textSecondary.opacity(0.95)
+    }
+
+    private var readTickColor: Color {
+        // Read ticks slightly brighter than delivered (Telegram “blue checks” on colored bubbles).
+        Color.white.opacity(0.95)
+    }
+
+    /// Telegram-like radii: large body, small “tail” corner.
+    private var corners: UnevenRoundedRectangle {
+        if isMine {
+            UnevenRoundedRectangle(
+                topLeadingRadius: 17.5,
+                bottomLeadingRadius: 17.5,
+                bottomTrailingRadius: 5,
+                topTrailingRadius: 17.5,
+                style: .continuous
+            )
+        } else {
+            UnevenRoundedRectangle(
+                topLeadingRadius: 17.5,
+                bottomLeadingRadius: 5,
+                bottomTrailingRadius: 17.5,
+                topTrailingRadius: 17.5,
+                style: .continuous
+            )
+        }
+    }
+
+    /// Body with tappable links (Telegram colours: accent in, white + underline out; underlined
+    /// in as well under Differentiate Without Color).
+    private var styledBody: AttributedString {
+        isDeleted
+            ? AttributedString(displayText)
+            : MessageLinkText.attributed(displayText, isMine: isMine, underlined: differentiateWithoutColor)
+    }
+
+    /// Link runs follow the tint; the attributed colour alone is not enough for `Text`.
+    private var linkTint: Color {
+        isMine ? Color.white : Theme.accentText
+    }
+
+    /// The message body, styled for inline composition with `metaSpacerText`.
+    private var bodyText: Text {
+        Text(styledBody)
+            .font(messageFont)
+            .italic(isDeleted)
+            .foregroundStyle(textColor)
+    }
+
+    /// Invisible trailing reservation so the last text line leaves room for time + ticks.
+    private var metaSpacerText: Text {
+        Text(verbatim: MessageBubbleMetrics.metaReservation(time: time, showsReceipt: showsReceipt))
+            .font(metaFont)
+            .foregroundStyle(Color.clear)
+    }
+
+    var body: some View {
+        Group {
+            if isRowEmbedded {
+                HStack(alignment: .bottom, spacing: 0) {
+                    if isMine { Spacer(minLength: MessageBubbleMetrics.oppositeGutter) }
+                    bubbleCore
+                    if !isMine { Spacer(minLength: MessageBubbleMetrics.oppositeGutter) }
+                }
+                .frame(maxWidth: .infinity, alignment: isMine ? .trailing : .leading)
+            } else {
+                bubbleCore
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel)
+        .reactionAccessibilityActions(isDeleted ? [] : reactions, onTap: onReactionTap)
+        // The quote and the preview are taps inside the combined element; name them.
+        .accessibilityActions {
+            if reply != nil, let onReplyTap {
+                Button("Show replied message", action: onReplyTap)
+            }
+            if !isDeleted, linkPreview != nil, let onOpenLinkPreview {
+                Button("Open link", action: onOpenLinkPreview)
+            }
+        }
+    }
+
+    /// Compact single-line when it fits; otherwise multi-line body with meta on the last line.
+    private var bubbleCore: some View {
+        Group {
+            if !reactions.isEmpty, !isDeleted {
+                reactedBubble
+            } else if let linkPreview, !isDeleted {
+                linkBubble(linkPreview)
+            } else if let reply {
+                quotedBubble(reply)
+            } else if isMultiline {
+                wrappingBubble
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    compactBubble
+                    wrappingBubble
+                }
+            }
+        }
+        // Clamps the width proposed to `ViewThatFits`, so the compact row is only chosen when
+        // it fits inside the bubble's real budget rather than the whole row.
+        .frame(maxWidth: maxBubbleWidth, alignment: isMine ? .trailing : .leading)
+        .tint(linkTint)
+    }
+
+    /// Reports the drawn bubble (not the row slot) so the long-press menu hero lines up.
+    @ViewBuilder
+    private var frameReporter: some View {
+        if let frameReportID {
+            GeometryReader { geo in
+                Color.clear.preference(
+                    key: MessageBubbleFrameKey.self,
+                    value: [frameReportID: geo.frame(in: .global)]
+                )
+            }
+        }
+    }
+
+    // MARK: - Compact (short messages)
+
+    /// `Hi          12:30 ✓✓` on one row — classic Telegram short bubble.
+    private var compactBubble: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 7) {
+            Text(styledBody)
+                .font(messageFont)
+                .italic(isDeleted)
+                .foregroundStyle(textColor)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: true)
+
+            metaRow
+                .alignmentGuide(.firstTextBaseline) { d in d[VerticalAlignment.center] + 1 }
+        }
+        .padding(.leading, MessageBubbleMetrics.textLeadingPad)
+        .padding(.trailing, MessageBubbleMetrics.metaTrailingPad)
+        .padding(.vertical, 6)
+        .background(bubbleFill)
+        .clipShape(corners)
+        .background { frameReporter }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    // MARK: - Wrapping (long messages)
+
+    /// Multi-line text; time/ticks sit on the last line (Telegram layout).
+    ///
+    /// Human: The bubble hugs its longest line rather than snapping to the cap, so a two-line
+    /// reply stays a two-line bubble. The cap comes from the `bubbleCore` frame above, which
+    /// is what the wrapping is measured against.
+    private var wrappingBubble: some View {
+        ZStack(alignment: .bottomTrailing) {
+            // Text + clear spacer on the last line reserves space for meta.
+            Text("\(bodyText)\(metaSpacerText)")
+                .multilineTextAlignment(.leading)
+                // Wide paragraphs of pasted text read as a wall without a little extra leading.
+                .lineSpacing(2.5)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, MessageBubbleMetrics.textLeadingPad)
+                .padding(.trailing, MessageBubbleMetrics.textTrailingPad)
+                .padding(.top, 7)
+                .padding(.bottom, 6)
+
+            metaRow
+                .padding(.trailing, MessageBubbleMetrics.metaTrailingPad)
+                .padding(.bottom, 5)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .background(bubbleFill)
+        .clipShape(corners)
+        .background { frameReporter }
+    }
+
+    // MARK: - Reply (quote above the message)
+
+    /// Quote on top, message below, meta in the corner — sized by `QuotedBubbleLayout`.
+    private func quotedBubble(_ reply: ReplyQuoteContent) -> some View {
+        QuotedBubbleLayout(maxWidth: maxBubbleWidth, spacing: 3) {
+            ReplyQuoteView(
+                content: reply,
+                style: isMine ? .outgoing : .incoming,
+                onTap: onReplyTap
+            )
+            .padding(.horizontal, 6)
+            .padding(.top, 6)
+
+            Text("\(bodyText)\(metaSpacerText)")
+                .multilineTextAlignment(.leading)
+                .lineSpacing(2.5)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, MessageBubbleMetrics.textLeadingPad)
+                .padding(.trailing, MessageBubbleMetrics.textTrailingPad)
+                .padding(.bottom, 6)
+
+            metaRow
+                .padding(.trailing, MessageBubbleMetrics.metaTrailingPad)
+                .padding(.bottom, 5)
+        }
+        .background(bubbleFill)
+        .clipShape(corners)
+        .background { frameReporter }
+    }
+
+    // MARK: - Link preview (block under, or over, the text)
+
+    /// Text, preview block and meta, Telegram's order: the block sits under the text with the
+    /// time on its own line beneath it — or, with "Show above text", over the text with the
+    /// time back on the last text line.
+    ///
+    /// Human: The bubble is as wide as the wider of text and preview, never wider than the row
+    /// allows; a large picture always takes the full width, like a photo would.
+    private func linkBlock(_ preview: LinkPreview) -> some View {
+        LinkPreviewView(
+            preview: preview,
+            image: linkPreviewImage,
+            style: isMine ? .outgoing : .incoming,
+            onOpen: onOpenLinkPreview
+        )
+        .padding(.horizontal, 6)
+        .padding(.top, 6)
+        .layoutValue(key: LinkBubbleRole.self, value: .ideal)
+    }
+
+    private func linkBubble(_ preview: LinkPreview) -> some View {
+        let block = linkBlock(preview)
+
+        return LinkBubbleLayout(
+            maxWidth: maxBubbleWidth,
+            fillsWidth: linkPreviewImage.isLarge
+        ) {
+            if let reply {
+                ReplyQuoteView(
+                    content: reply,
+                    style: isMine ? .outgoing : .incoming,
+                    onTap: onReplyTap
+                )
+                .padding(.horizontal, 6)
+                .padding(.top, 6)
+                .layoutValue(key: LinkBubbleRole.self, value: .ideal)
+            }
+
+            if preview.showsAboveText {
+                block
+                ZStack(alignment: .bottomTrailing) {
+                    Text("\(bodyText)\(metaSpacerText)")
+                        .multilineTextAlignment(.leading)
+                        .lineSpacing(2.5)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.leading, MessageBubbleMetrics.textLeadingPad)
+                        .padding(.trailing, MessageBubbleMetrics.textTrailingPad)
+                        .padding(.top, 5)
+                        .padding(.bottom, 6)
+                    metaRow
+                        .padding(.trailing, MessageBubbleMetrics.metaTrailingPad)
+                        .padding(.bottom, 5)
+                }
+            } else {
+                bodyText
+                    .multilineTextAlignment(.leading)
+                    .lineSpacing(2.5)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, MessageBubbleMetrics.textLeadingPad)
+                    .padding(.trailing, MessageBubbleMetrics.textTrailingPad)
+                    .padding(.top, reply == nil ? 7 : 3)
+                block
+                metaRow
+                    .padding(.trailing, MessageBubbleMetrics.metaTrailingPad)
+                    .padding(.top, 4)
+                    .padding(.bottom, 5)
+                    .layoutValue(key: LinkBubbleRole.self, value: .trailing)
+            }
+        }
+        .background(bubbleFill)
+        .clipShape(corners)
+        .background { frameReporter }
+    }
+
+    // MARK: - Reactions (chips + time at the foot)
+
+    /// Quote, text and link preview as usual, then a foot row of chips with the time at its end
+    /// (Telegram). Stacked by `LinkBubbleLayout`, which already hugs the widest row.
+    ///
+    /// Human: A reacted bubble never reserves room for the time on its last text line — the
+    /// time lives on the chip row instead, so the plain layouts stay untouched.
+    private var reactedBubble: some View {
+        let showsPreviewAbove = linkPreview?.showsAboveText == true
+        return LinkBubbleLayout(
+            maxWidth: maxBubbleWidth,
+            fillsWidth: linkPreview != nil && linkPreviewImage.isLarge
+        ) {
+            if let reply {
+                ReplyQuoteView(
+                    content: reply,
+                    style: isMine ? .outgoing : .incoming,
+                    onTap: onReplyTap
+                )
+                .padding(.horizontal, 6)
+                .padding(.top, 6)
+                .layoutValue(key: LinkBubbleRole.self, value: .ideal)
+            }
+            if let linkPreview, showsPreviewAbove {
+                linkBlock(linkPreview)
+            }
+            bodyText
+                .multilineTextAlignment(.leading)
+                .lineSpacing(2.5)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, MessageBubbleMetrics.textLeadingPad)
+                .padding(.trailing, MessageBubbleMetrics.textTrailingPad)
+                .padding(.top, reply == nil && !showsPreviewAbove ? 7 : 5)
+            if let linkPreview, !showsPreviewAbove {
+                linkBlock(linkPreview)
+            }
+            ReactionFooter(
+                chips: reactions,
+                onOutgoingBubble: isMine,
+                onTap: onReactionTap,
+                chipsAccessible: false
+            ) {
+                metaRow
+            }
+            .padding(.leading, 8)
+            .padding(.trailing, MessageBubbleMetrics.metaTrailingPad)
+            .padding(.top, 5)
+            .padding(.bottom, 6)
+            .layoutValue(key: LinkBubbleRole.self, value: .footer)
+        }
+        .background(bubbleFill)
+        .clipShape(corners)
+        .background { frameReporter }
+    }
+
+    // MARK: - Meta (time + ticks)
+
+    private var metaRow: some View {
+        HStack(spacing: MessageBubbleMetrics.metaSpacing) {
+            Text(time)
+                .font(metaFont)
+                .foregroundStyle(metaColor)
+                .fixedSize()
+
+            if showsReceipt {
+                receiptIcon
+            }
+        }
+    }
+
+    private var messageFont: Font {
+        // Telegram iOS message body is ~17pt SF; 16 keeps density close without feeling large.
+        .system(size: MessageBubbleMetrics.bodyFontSize)
+    }
+
+    /// Must stay in step with `MessageBubbleMetrics`' measuring font, or the last-line
+    /// reservation drifts away from the meta it is reserving for.
+    private var metaFont: Font {
+        .system(size: MessageBubbleMetrics.metaFontSize, weight: .regular).monospacedDigit()
+    }
+
+    private var receiptIcon: some View {
+        MessageReceiptIcon(
+            receipt: receipt,
+            metaColor: metaColor,
+            readColor: readTickColor
+        )
+    }
+
+    private var accessibilityLabel: String {
+        var parts = [isMine ? "You" : "Them"]
+        // The quote's own label is replaced by this one, so it has to be spoken here. It is
+        // drawn over deleted bubbles too.
+        if let reply {
+            parts.append("Reply to \(reply.author): \(reply.text)")
+        }
+        parts.append(displayText)
+        if let linkPreview, !isDeleted {
+            parts.append("Link preview: " + ([linkPreview.displaySiteName, linkPreview.title].compactMap { $0 }.joined(separator: ", ")))
+        }
+        if !isDeleted, let reactionsSummary = reactions.spokenSummary {
+            parts.append(reactionsSummary)
+        }
+        parts.append(time)
+        if isMine {
+            parts.append(receipt.spokenLabel)
+        }
+        return parts.joined(separator: ", ")
+    }
+}
+
+#Preview("Telegram-style bubbles") {
+    GeometryReader { geo in
+        ScrollView {
+            VStack(spacing: 8) {
+                MessageBubbleView(text: "a", time: "11:00", isMine: false)
+                MessageBubbleView(text: "👍", time: "11:01", isMine: true, receipt: .sent)
+                MessageBubbleView(text: "Ok", time: "11:03", isMine: true, receipt: .delivered)
+                MessageBubbleView(
+                    text: "Two lines\nand the time must clear the second one",
+                    time: "11:06",
+                    isMine: false
+                )
+                MessageBubbleView(
+                    text: "Hey! Are we still on for tomorrow? Parking near the trailhead fills up fast on weekends so let's leave early.",
+                    time: "12:10",
+                    isMine: true,
+                    receipt: .read
+                )
+                MessageBubbleView(
+                    text: "Sounds good, see you tomorrow! I'll bring snacks.",
+                    time: "12:11",
+                    isMine: false
+                )
+                // Pasted table: tabs would otherwise scatter the cells across lines.
+                MessageBubbleView(
+                    text: "Key takeaways:\nMetric\tValue\nDurchschnittsgehalt\t41.000 € brutto / Jahr\nMonatsgehalt\t≈ 3.417 €\n\t•\tPersonalverantwortung bringt im Schnitt +19 %.",
+                    time: "15:58",
+                    isMine: false
+                )
+                MessageBubbleView(
+                    text: String(repeating: "longword ", count: 12),
+                    time: "12:15",
+                    isMine: true,
+                    receipt: .sending
+                )
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity)
+        }
+        .environment(\.chatRowWidth, geo.size.width - 32)
+        .background(Theme.backgroundChat)
+    }
+}

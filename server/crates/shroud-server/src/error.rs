@@ -2,7 +2,7 @@
 
 use axum::{
     Json,
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use serde::Serialize;
@@ -33,6 +33,10 @@ pub enum AppError {
         code: &'static str,
         message: String,
     },
+
+    /// Rate limit exceeded; `retry_after_secs` drives the `Retry-After` response header.
+    #[error("Too many requests. Try again later.")]
+    RateLimited { retry_after_secs: u64 },
 
     #[error("{0}")]
     Internal(String),
@@ -103,6 +107,16 @@ impl AppError {
         }
     }
 
+    /// The token belonged to a device the account removed. Clients take it as final and wipe
+    /// everything of the account at once, where a plain 401 only counts toward a sign-out.
+    pub fn device_removed() -> Self {
+        Self::Api {
+            status: StatusCode::UNAUTHORIZED,
+            code: "DEVICE_REMOVED",
+            message: "This device was removed from your account.".into(),
+        }
+    }
+
     pub fn forbidden(message: impl Into<String>) -> Self {
         Self::Api {
             status: StatusCode::FORBIDDEN,
@@ -119,11 +133,15 @@ impl AppError {
         }
     }
 
+    /// Rate limited with a one-minute `Retry-After` hint (default budgets).
     pub fn rate_limited() -> Self {
-        Self::Api {
-            status: StatusCode::TOO_MANY_REQUESTS,
-            code: "RATE_LIMITED",
-            message: "Too many requests. Try again later.".into(),
+        Self::rate_limited_after(60)
+    }
+
+    /// Rate limited with a scope-specific `Retry-After` (seconds, minimum 1).
+    pub fn rate_limited_after(retry_after_secs: u64) -> Self {
+        Self::RateLimited {
+            retry_after_secs: retry_after_secs.max(1),
         }
     }
 
@@ -151,21 +169,80 @@ impl AppError {
         }
     }
 
+    pub fn call_busy() -> Self {
+        Self::Api {
+            status: StatusCode::CONFLICT,
+            code: "CALL_BUSY",
+            message: "The other party is busy on another call.".into(),
+        }
+    }
+
+    pub fn conflict(code: &'static str, message: impl Into<String>) -> Self {
+        Self::Api {
+            status: StatusCode::CONFLICT,
+            code,
+            message: message.into(),
+        }
+    }
+
+    /// The media store can't be reached right now; the upload or download can be retried.
+    pub fn media_unavailable() -> Self {
+        Self::Api {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            code: "MEDIA_UNAVAILABLE",
+            message: "Media storage is unavailable. Try again shortly.".into(),
+        }
+    }
+
     /// Legacy-friendly constructors used by existing routes/tests.
+    /// Wrong PIN against a PIN guard; the message carries the attempts left.
+    pub fn pin_incorrect(attempts_left: i32) -> Self {
+        Self::Api {
+            status: StatusCode::FORBIDDEN,
+            code: "PIN_INCORRECT",
+            message: format!("Wrong PIN. {attempts_left} attempts left."),
+        }
+    }
+
+    /// The PIN guard is gone (too many wrong PINs, or never created): only the phrase unlocks.
+    pub fn pin_guard_gone() -> Self {
+        Self::Api {
+            status: StatusCode::GONE,
+            code: "PIN_GUARD_GONE",
+            message: "This PIN no longer unlocks Shroud here. Use your encryption phrase.".into(),
+        }
+    }
+
     pub fn bad_request(message: impl Into<String>) -> Self {
         Self::validation(message)
+    }
+
+    /// The client-safe `{ error: { code, message } }` envelope, for channels without an HTTP
+    /// status of their own (WebSocket frames).
+    ///
+    /// Agent: RETURNS the same code/message an HTTP response would carry; internal details
+    /// stay out (`Internal` becomes the generic message).
+    pub fn body(&self) -> ErrorBody {
+        ErrorBody {
+            error: ErrorDetail {
+                code: self.code().into(),
+                message: self.client_message(),
+            },
+        }
     }
 
     fn status(&self) -> StatusCode {
         match self {
             Self::Api { status, .. } => *status,
+            Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
-    fn code(&self) -> &'static str {
+    pub(crate) fn code(&self) -> &'static str {
         match self {
             Self::Api { code, .. } => code,
+            Self::RateLimited { .. } => "RATE_LIMITED",
             Self::Internal(_) => "INTERNAL_ERROR",
         }
     }
@@ -174,8 +251,16 @@ impl AppError {
     fn client_message(&self) -> String {
         match self {
             Self::Api { message, .. } => message.clone(),
+            Self::RateLimited { .. } => "Too many requests. Try again later.".into(),
             // Human: Internal errors get a generic message; details stay in server logs only.
             Self::Internal(_) => "An unexpected error occurred.".into(),
+        }
+    }
+
+    fn retry_after_secs(&self) -> Option<u64> {
+        match self {
+            Self::RateLimited { retry_after_secs } => Some(*retry_after_secs),
+            _ => None,
         }
     }
 }
@@ -183,6 +268,7 @@ impl AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let status = self.status();
+        let retry_after = self.retry_after_secs();
         let body = ErrorBody {
             error: ErrorDetail {
                 code: self.code().into(),
@@ -190,10 +276,11 @@ impl IntoResponse for AppError {
             },
         };
 
+        let code = self.code();
         if status.is_server_error() {
             tracing::error!(
                 status = %status,
-                code = self.code(),
+                code,
                 error = %self,
                 "internal API error"
             );
@@ -201,12 +288,20 @@ impl IntoResponse for AppError {
             // Human: 4xx are expected (auth, validation); keep info-level so local stacks stay readable.
             tracing::info!(
                 status = %status,
-                code = self.code(),
+                code,
                 message = %self.client_message(),
                 "client API error"
             );
         }
 
-        (status, Json(body)).into_response()
+        let mut response = (status, Json(body)).into_response();
+        if let Some(secs) = retry_after {
+            // Human: Scope-aware backoff (e.g. contact requests use a 1h window).
+            // Agent: WRITES Retry-After header from RateLimited.retry_after_secs.
+            if let Ok(value) = HeaderValue::from_str(&secs.to_string()) {
+                response.headers_mut().insert(header::RETRY_AFTER, value);
+            }
+        }
+        response
     }
 }

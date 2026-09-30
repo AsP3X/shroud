@@ -2,23 +2,21 @@ import Testing
 @testable import shroud
 
 struct EncryptionPhraseParserTests {
+    private let validPhrase = ([String](repeating: "abandon", count: 11) + ["about"]).joined(separator: " ")
+
     @Test
-    func parseAcceptsTwelveWhitespaceSeparatedWords() {
-        let phrase = "ember copper lyric marble frost anchor velvet orbit prism delta canyon harbor"
-        let words = EncryptionPhraseParser.parse(phrase)
+    func parseAcceptsValidBIP39TwelveWords() {
+        let words = EncryptionPhraseParser.parse(validPhrase)
         #expect(words?.count == 12)
-        #expect(words?.first == "ember")
-        #expect(words?.last == "harbor")
+        #expect(words?.first == "abandon")
+        #expect(words?.last == "about")
     }
 
     @Test
     func parseNormalizesCaseAndExtraWhitespace() {
-        let phrase = "  Ember   COPPER  lyric marble frost anchor velvet orbit prism delta canyon harbor  "
+        let phrase = "  Abandon   ABANDON  abandon abandon abandon abandon abandon abandon abandon abandon abandon about  "
         let words = EncryptionPhraseParser.parse(phrase)
-        #expect(words == [
-            "ember", "copper", "lyric", "marble", "frost", "anchor",
-            "velvet", "orbit", "prism", "delta", "canyon", "harbor",
-        ])
+        #expect(words == Array(repeating: "abandon", count: 11) + ["about"])
     }
 
     @Test
@@ -27,8 +25,14 @@ struct EncryptionPhraseParserTests {
     }
 
     @Test
-    func parseUsesFirstTwelveWhenExtraWordsPresent() {
-        let words = EncryptionPhraseParser.parse(
+    func parseRejectsInvalidChecksum() {
+        let invalid = Array(repeating: "abandon", count: 12).joined(separator: " ")
+        #expect(EncryptionPhraseParser.parse(invalid) == nil)
+    }
+
+    @Test
+    func parseLenientDoesNotRequireChecksum() {
+        let words = EncryptionPhraseParser.parseLenient(
             "one two three four five six seven eight nine ten eleven twelve thirteen"
         )
         #expect(words?.count == 12)

@@ -1,0 +1,28 @@
+# Backward-compatible alias of docker-compose.local.yml.
+# Prefer: docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+
+services:
+  postgres:
+    # This machine only: for an API run with `cargo run`, and server tests
+    # (DATABASE_URL=postgres://…@127.0.0.1:5432/shroud).
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  redis:
+    # This machine only, as Redis has no password: for an API run with `cargo run`, and
+    # server tests (REDIS_URL=redis://127.0.0.1:6379).
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  nebular:
+    # This machine only: for an API run with `cargo run` (NEBULAR_URL=http://127.0.0.1:9000).
+    ports:
+      - "127.0.0.1:9000:9000"
+
+  api:
+    ports:
+      - "${API_PORT:-8080}:8080"
+
+  web:
+    ports:
+      - "${WEB_PORT:-8081}:80"

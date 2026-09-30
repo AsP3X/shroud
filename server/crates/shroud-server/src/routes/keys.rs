@@ -3,7 +3,7 @@
 use axum::{
     Json,
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -16,7 +16,25 @@ use crate::keys::{
     OTPK_BATCH_MAX, OTPK_POOL_MAX, decode_public_key, decode_signature, encode_b64,
     validate_key_id, validate_registration_id,
 };
+use crate::rate_limit::budgets;
+use crate::routes::contacts::are_contacts;
 use crate::state::AppState;
+
+/// Key fetch is contacts-only (or self). Non-contacts get `KEYS_REQUIRED` so we do not
+/// distinguish “exists with keys” from “not allowed” for enumeration safety.
+async fn authorize_key_fetch(
+    state: &AppState,
+    requester: Uuid,
+    target: Uuid,
+) -> Result<(), AppError> {
+    if requester == target {
+        return Ok(());
+    }
+    if are_contacts(&state.pool, requester, target).await? {
+        return Ok(());
+    }
+    Err(AppError::keys_required())
+}
 
 #[derive(Debug, Deserialize)]
 pub struct PutBundleRequest {
@@ -54,6 +72,33 @@ pub struct BundleResponse {
     pub signed_pre_key: SignedPreKeyOut,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub one_time_pre_key: Option<OneTimePreKeyOut>,
+}
+
+/// One publishable device bundle (used by multi-device list).
+#[derive(Debug, Serialize)]
+pub struct DeviceBundleResponse {
+    pub device_id: Uuid,
+    pub registration_id: i32,
+    pub identity_key: String,
+    pub signed_pre_key: SignedPreKeyOut,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub one_time_pre_key: Option<OneTimePreKeyOut>,
+}
+
+/// `GET /keys/bundles/:user_id` — all publishable devices for multi-device send.
+#[derive(Debug, Serialize)]
+pub struct BundlesListResponse {
+    pub user_id: Uuid,
+    pub bundles: Vec<DeviceBundleResponse>,
+}
+
+/// Identity-only public material (no OTPK consume).
+#[derive(Debug, Serialize)]
+pub struct IdentityResponse {
+    pub user_id: Uuid,
+    pub device_id: Uuid,
+    pub registration_id: i32,
+    pub identity_key: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -242,39 +287,87 @@ pub async fn keys_status(
     }))
 }
 
-/// `GET /keys/bundle/:user_id` — fetch + optionally consume one OTPK.
-pub async fn get_bundle(
+/// `GET /keys/identity/:user_id` — public identity only (does **not** consume OTPKs).
+///
+/// Human: Used for ongoing sealed messaging after first contact; full bundle remains for session setup.
+/// Agent: READS preferred device identity; never DELETE from device_one_time_prekeys.
+pub async fn get_identity(
     State(state): State<AppState>,
+    headers: HeaderMap,
     auth: AuthContext,
     Path(user_id): Path<Uuid>,
-) -> Result<Json<BundleResponse>, AppError> {
-    // Human: Unknown user and “no keys” share KEYS_REQUIRED to avoid account enumeration.
-    let mut tx = state
-        .pool
-        .begin()
-        .await
-        .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
+) -> Result<Json<IdentityResponse>, AppError> {
+    apply_keys_fetch_limits(&state, &headers, auth.user_id).await?;
+    authorize_key_fetch(&state, auth.user_id, user_id).await?;
 
-    let device_id: Option<Uuid> = sqlx::query_scalar(
+    let row = sqlx::query_as::<_, IdentityDeviceRow>(
         r#"
-        SELECT d.id
+        SELECT d.id AS device_id, ik.registration_id, ik.public_key
         FROM devices d
         INNER JOIN device_identity_keys ik ON ik.device_id = d.id
-        INNER JOIN device_signed_prekeys spk ON spk.device_id = d.id
-        WHERE d.user_id = $1
+        WHERE d.user_id = $1 AND d.revoked_at IS NULL
         ORDER BY d.last_seen_at DESC NULLS LAST, d.created_at DESC
         LIMIT 1
         "#,
     )
     .bind(user_id)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&state.pool)
     .await
-    .map_err(|err| AppError::Internal(format!("select key device failed: {err}")))?;
+    .map_err(|err| AppError::Internal(format!("select identity device failed: {err}")))?;
 
-    let Some(device_id) = device_id else {
+    let Some(row) = row else {
         return Err(AppError::keys_required());
     };
 
+    // Human: Audit key material fetches for abuse detection (metadata only — no key bytes).
+    // Agent: LOGS requester/target/device ids at info; never logs public_key bytes.
+    tracing::info!(
+        requester_user_id = %auth.user_id,
+        target_user_id = %user_id,
+        device_id = %row.device_id,
+        "keys.identity_get ok"
+    );
+
+    Ok(Json(IdentityResponse {
+        user_id,
+        device_id: row.device_id,
+        registration_id: row.registration_id,
+        identity_key: encode_b64(&row.public_key),
+    }))
+}
+
+#[derive(Debug, FromRow)]
+struct IdentityDeviceRow {
+    device_id: Uuid,
+    registration_id: i32,
+    public_key: Vec<u8>,
+}
+
+async fn apply_keys_fetch_limits(
+    state: &AppState,
+    headers: &HeaderMap,
+    requester_user_id: Uuid,
+) -> Result<(), AppError> {
+    let ip = state.client_ip(headers);
+    state
+        .rate_limiter
+        .check_budget("keys_ip", &ip, budgets::KEYS_IP)
+        .await?;
+    state
+        .rate_limiter
+        .check_budget(
+            "keys_user",
+            &requester_user_id.to_string(),
+            budgets::KEYS_USER,
+        )
+        .await
+}
+
+/// Load identity + SPK and consume at most one OTPK for a single device.
+async fn load_device_bundle(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    device_id: Uuid,
+) -> Result<DeviceBundleResponse, AppError> {
     let identity = sqlx::query_as::<_, IdentityRow>(
         r#"
         SELECT registration_id, public_key
@@ -283,7 +376,7 @@ pub async fn get_bundle(
         "#,
     )
     .bind(device_id)
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await
     .map_err(|err| AppError::Internal(format!("load identity failed: {err}")))?;
 
@@ -295,7 +388,7 @@ pub async fn get_bundle(
         "#,
     )
     .bind(device_id)
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await
     .map_err(|err| AppError::Internal(format!("load signed pre-key failed: {err}")))?;
 
@@ -315,24 +408,11 @@ pub async fn get_bundle(
         "#,
     )
     .bind(device_id)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await
     .map_err(|err| AppError::Internal(format!("consume otpk failed: {err}")))?;
 
-    tx.commit()
-        .await
-        .map_err(|err| AppError::Internal(format!("commit get bundle failed: {err}")))?;
-
-    tracing::info!(
-        requester_user_id = %auth.user_id,
-        target_user_id = %user_id,
-        device_id = %device_id,
-        otpk_consumed = otpk.is_some(),
-        "keys.bundle_get ok"
-    );
-
-    Ok(Json(BundleResponse {
-        user_id,
+    Ok(DeviceBundleResponse {
         device_id,
         registration_id: identity.registration_id,
         identity_key: encode_b64(&identity.public_key),
@@ -345,7 +425,131 @@ pub async fn get_bundle(
             key_id: row.key_id,
             public_key: encode_b64(&row.public_key),
         }),
+    })
+}
+
+/// `GET /keys/bundle/:user_id` — best (most recently seen) device + optional OTPK.
+pub async fn get_bundle(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    auth: AuthContext,
+    Path(user_id): Path<Uuid>,
+) -> Result<Json<BundleResponse>, AppError> {
+    apply_keys_fetch_limits(&state, &headers, auth.user_id).await?;
+    authorize_key_fetch(&state, auth.user_id, user_id).await?;
+
+    // Human: Unknown user and “no keys” share KEYS_REQUIRED to avoid account enumeration.
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
+
+    let device_id: Option<Uuid> = sqlx::query_scalar(
+        r#"
+        SELECT d.id
+        FROM devices d
+        INNER JOIN device_identity_keys ik ON ik.device_id = d.id
+        INNER JOIN device_signed_prekeys spk ON spk.device_id = d.id
+        WHERE d.user_id = $1 AND d.revoked_at IS NULL
+        ORDER BY d.last_seen_at DESC NULLS LAST, d.created_at DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("select key device failed: {err}")))?;
+
+    let Some(device_id) = device_id else {
+        return Err(AppError::keys_required());
+    };
+
+    let device = load_device_bundle(&mut tx, device_id).await?;
+
+    tx.commit()
+        .await
+        .map_err(|err| AppError::Internal(format!("commit get bundle failed: {err}")))?;
+
+    tracing::info!(
+        requester_user_id = %auth.user_id,
+        target_user_id = %user_id,
+        device_id = %device.device_id,
+        otpk_consumed = device.one_time_pre_key.is_some(),
+        "keys.bundle_get ok"
+    );
+
+    Ok(Json(BundleResponse {
+        user_id,
+        device_id: device.device_id,
+        registration_id: device.registration_id,
+        identity_key: device.identity_key,
+        signed_pre_key: device.signed_pre_key,
+        one_time_pre_key: device.one_time_pre_key,
     }))
+}
+
+/// `GET /keys/bundles/:user_id` — all devices with identity+SPK; one OTPK each when available.
+///
+/// Human: Clients seal a ciphertext per recipient device for true multi-device delivery.
+/// Agent: SELECT all publishable devices; consume ≤1 OTPK per device in one transaction.
+pub async fn get_bundles(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    auth: AuthContext,
+    Path(user_id): Path<Uuid>,
+) -> Result<Json<BundlesListResponse>, AppError> {
+    apply_keys_fetch_limits(&state, &headers, auth.user_id).await?;
+    authorize_key_fetch(&state, auth.user_id, user_id).await?;
+
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
+
+    let device_ids: Vec<Uuid> = sqlx::query_scalar(
+        r#"
+        SELECT d.id
+        FROM devices d
+        INNER JOIN device_identity_keys ik ON ik.device_id = d.id
+        INNER JOIN device_signed_prekeys spk ON spk.device_id = d.id
+        WHERE d.user_id = $1 AND d.revoked_at IS NULL
+        ORDER BY d.last_seen_at DESC NULLS LAST, d.created_at DESC
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("select key devices failed: {err}")))?;
+
+    if device_ids.is_empty() {
+        return Err(AppError::keys_required());
+    }
+
+    let mut bundles = Vec::with_capacity(device_ids.len());
+    let mut otpk_consumed = 0_u32;
+    for device_id in device_ids {
+        let device = load_device_bundle(&mut tx, device_id).await?;
+        if device.one_time_pre_key.is_some() {
+            otpk_consumed += 1;
+        }
+        bundles.push(device);
+    }
+
+    tx.commit()
+        .await
+        .map_err(|err| AppError::Internal(format!("commit get bundles failed: {err}")))?;
+
+    tracing::info!(
+        requester_user_id = %auth.user_id,
+        target_user_id = %user_id,
+        device_count = bundles.len(),
+        otpk_consumed,
+        "keys.bundles_get ok"
+    );
+
+    Ok(Json(BundlesListResponse { user_id, bundles }))
 }
 
 struct DecodedOtpk {

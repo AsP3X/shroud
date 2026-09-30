@@ -10,15 +10,7 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 fn test_state(pool: sqlx::PgPool) -> shroud_server::state::AppState {
-    let realtime = std::sync::Arc::new(shroud_server::realtime::RealtimeHub::new());
-    let push = shroud_server::push::PushService::new(pool.clone(), realtime.clone(), None);
-    shroud_server::state::AppState {
-        pool,
-        nebular_url: None,
-        media_bucket: "shroud-media".into(),
-        realtime,
-        push,
-    }
+    shroud_server::state::AppState::for_integration_tests(pool)
 }
 
 async fn test_app() -> Option<axum::Router> {
@@ -76,6 +68,89 @@ async fn register(app: &axum::Router) -> (String, String) {
         body["token"].as_str().unwrap().to_string(),
         body["user"]["id"].as_str().unwrap().to_string(),
     )
+}
+
+/// Returns (token, user_id, username, share_code).
+async fn register_full(app: &axum::Router) -> (String, String, String, String) {
+    let (username, password) = unique_user();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/register")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "username": username, "password": password }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let body = json_body(response).await;
+    (
+        body["token"].as_str().unwrap().to_string(),
+        body["user"]["id"].as_str().unwrap().to_string(),
+        body["user"]["username"].as_str().unwrap().to_string(),
+        body["user"]["share_code"].as_str().unwrap().to_string(),
+    )
+}
+
+#[tokio::test]
+async fn lookup_user_by_username_and_share_code() {
+    let Some(app) = test_app().await else {
+        eprintln!("skipping lookup_user_by_username_and_share_code: no DATABASE_URL");
+        return;
+    };
+
+    let (token_a, _id_a, _name_a, _code_a) = register_full(&app).await;
+    let (_token_b, id_b, name_b, code_b) = register_full(&app).await;
+
+    let by_name = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/users/by-username/{name_b}"))
+                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(by_name.status(), StatusCode::OK);
+    let name_json = json_body(by_name).await;
+    assert_eq!(name_json["id"], id_b);
+    assert_eq!(name_json["username"], name_b);
+    assert_eq!(name_json["share_code"], code_b);
+
+    let by_code = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/users/by-code/{code_b}"))
+                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(by_code.status(), StatusCode::OK);
+    let code_json = json_body(by_code).await;
+    assert_eq!(code_json["id"], id_b);
+    assert_eq!(code_json["share_code"], code_b);
+
+    let missing = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/users/by-code/ZZZZZZZZZZ")
+                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

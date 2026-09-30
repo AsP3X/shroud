@@ -11,15 +11,7 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 fn test_state(pool: sqlx::PgPool) -> shroud_server::state::AppState {
-    let realtime = std::sync::Arc::new(shroud_server::realtime::RealtimeHub::new());
-    let push = shroud_server::push::PushService::new(pool.clone(), realtime.clone(), None);
-    shroud_server::state::AppState {
-        pool,
-        nebular_url: None,
-        media_bucket: "shroud-media".into(),
-        realtime,
-        push,
-    }
+    shroud_server::state::AppState::for_integration_tests(pool)
 }
 
 async fn test_app() -> Option<axum::Router> {
@@ -349,4 +341,132 @@ async fn cannot_message_non_contact() {
         .await
         .expect("response");
     assert_eq!(send.status(), StatusCode::FORBIDDEN);
+}
+
+async fn post_message(app: &axum::Router, token: &str, body: Value) -> axum::response::Response {
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/messages")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response")
+}
+
+async fn last_message_at(app: &axum::Router, token: &str) -> Value {
+    let convos = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/conversations")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(convos.status(), StatusCode::OK);
+    json_body(convos).await["conversations"][0]["last_message_at"].clone()
+}
+
+#[tokio::test]
+async fn annotation_is_delivered_without_bumping_the_chat() {
+    let Some(app) = test_app().await else {
+        eprintln!("skipping annotation_is_delivered_without_bumping_the_chat: no DATABASE_URL");
+        return;
+    };
+
+    let (token_a, user_a) = register(&app).await;
+    let (token_b, user_b) = register(&app).await;
+    become_contacts(&app, &token_a, &user_a, &token_b, &user_b).await;
+
+    let voice = post_message(
+        &app,
+        &token_a,
+        json!({
+            "peer_user_id": user_b,
+            "client_message_id": Uuid::new_v4(),
+            "content_type": "text",
+            "ciphertext": BASE64.encode(b"sealed-voice-stand-in")
+        }),
+    )
+    .await;
+    assert_eq!(voice.status(), StatusCode::CREATED);
+    let before = last_message_at(&app, &token_a).await;
+    assert!(before.is_string(), "sending a message sets last_message_at");
+
+    // The recipient shares a transcript back.
+    let annotation = post_message(
+        &app,
+        &token_b,
+        json!({
+            "peer_user_id": user_a,
+            "client_message_id": Uuid::new_v4(),
+            "content_type": "annotation",
+            "ciphertext": BASE64.encode(b"sealed-transcript")
+        }),
+    )
+    .await;
+    assert_eq!(annotation.status(), StatusCode::CREATED);
+    let annotation = json_body(annotation).await;
+    assert_eq!(annotation["content_type"], "annotation");
+
+    assert_eq!(
+        last_message_at(&app, &token_a).await,
+        before,
+        "an annotation must not reorder the chat list"
+    );
+
+    let list = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/messages?peer_user_id={user_b}"))
+                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(list.status(), StatusCode::OK);
+    let history = json_body(list).await;
+    let messages = history["messages"].as_array().unwrap();
+    assert_eq!(
+        messages.len(),
+        2,
+        "annotations stay in history so every device can apply them"
+    );
+    assert_eq!(messages[0]["content_type"], "annotation");
+
+    let with_media = post_message(
+        &app,
+        &token_b,
+        json!({
+            "peer_user_id": user_a,
+            "client_message_id": Uuid::new_v4(),
+            "content_type": "annotation",
+            "ciphertext": BASE64.encode(b"sealed"),
+            "media_object_id": Uuid::new_v4()
+        }),
+    )
+    .await;
+    assert_eq!(with_media.status(), StatusCode::BAD_REQUEST);
+
+    let unknown = post_message(
+        &app,
+        &token_b,
+        json!({
+            "peer_user_id": user_a,
+            "client_message_id": Uuid::new_v4(),
+            "content_type": "reaction",
+            "ciphertext": BASE64.encode(b"sealed")
+        }),
+    )
+    .await;
+    assert_eq!(unknown.status(), StatusCode::BAD_REQUEST);
 }

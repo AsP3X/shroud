@@ -16,6 +16,9 @@ struct FlowStepper: View {
 
             stepChip(number: 2, label: "Phrase", isActive: activeStep == 2, isComplete: false)
         }
+        // Current and done show only in fill and the tick; VoiceOver hears the step instead.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Step \(activeStep) of 2, \(activeStep == 1 ? "Account" : "Phrase")")
         .frame(maxWidth: .infinity)
     }
 
@@ -37,7 +40,7 @@ struct FlowStepper: View {
             }
             Text(label)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(isActive ? Theme.accent : Theme.textSecondary)
+                .foregroundStyle(isActive ? Theme.accentText : Theme.textSecondary)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)

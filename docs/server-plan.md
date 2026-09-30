@@ -4,8 +4,8 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 
 | | |
 | --- | --- |
-| **Status** | Server vertical slice through **APNs registration + offline push gate** **implemented**. Live HTTP/2 APNs client still log-backed until .p8 wired in ops |
-| **Last updated** | 2026-07-15 |
+| **Status** | Server m1–m9 **done** + notifications (m11) + metrics + multi-replica media in Nebular OS 0.2. iOS: live chats, media, voice, calls/WebRTC/CallKit, notifications, Double Ratchet v3. |
+| **Last updated** | 2026-09-24 |
 | **Related** | [architecture.md](./architecture.md) · [thought-collection.md](../thought-collection.md) · [README.md](../README.md) |
 
 ---
@@ -60,8 +60,8 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Password change | Revoke **other** devices’ sessions; keep current session |
 | Sessions | Opaque token; store **hash** only; `Authorization: Bearer`; bound to `device_id` |
 | Session lifetime | **No time expiry**; end on logout, device delete, password-change (others), account delete |
-| Devices | Max **5** per account; optional `device_name` |
-| Device limit | New device when full → `DEVICE_LIMIT` (no auto-evict) |
+| Devices | Max **5** per account; name only **sealed** by the account's devices (`PUT /devices/:id/name`), never in the clear |
+| Device limit | New device when full → reuse the longest-idle device with no live session (its keys, push tokens, notification settings and PIN guard are dropped); `DEVICE_LIMIT` only when every device is signed in |
 | Returning device | Optional `device_id` on login: reuse if owned by user; else new device (cap applies) |
 
 ### Crypto and keys
@@ -97,14 +97,16 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Multi-device store | **One message row** + `message_deliveries` per device |
 | Real-time m4 | HTTP send + history (done) |
 | Real-time 4b | **WebSocket** in-process fan-out (**done**) |
-| Redis fan-out | **Optional** when `REDIS_URL` set: local hub + pub/sub on `shroud:user:{user_id}` |
-| WS events | `message.new`, `message.delivered` |
+| Redis fan-out | **Optional** when `REDIS_URL` set: local hub + pub/sub on `shroud:user:{user_id}`; revoked sessions on `shroud:sessions:revoked` |
+| WS events | `message.new`, `message.delivered`, `message.read`, `message.deleted`, `message.reaction`, `reactions.seen`, `typing`, `recording`, `presence.update` |
 | WS recipients | Peer devices + sender’s **other** devices (not the sending device for new) |
 | Delivery receipts | `POST /messages/:id/delivered` for current device (m4); read later |
 | Retention | Indefinite until user delete |
 | History recovery | Login + encryption phrase on client → download ciphertext |
 | Discovery | Share **`users.id` (UUID)** + deep link; username for login/display |
 | Profile lookup | `GET /users/:user_id` → `{ id, username }` (auth, rate-limited) |
+| Username / code lookup | `GET /users/by-username/:u`, `GET /users/by-code/:code`. With `discoverable_by_username` off (migration 026) the name lookup is 404 except for the user, contacts and pending requests either way; the code still works |
+| New share code | `POST /users/me/share-code` → `{ share_code }`; the old code stops resolving (10 per hour) |
 | First contact | **Contact request by target UUID only** before full messaging |
 | Contact request | No expiry in v1; pending until accept / reject / cancel / block |
 | Mutual request | If reverse pending exists → **auto-accept** both ways |
@@ -112,7 +114,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Block | Drop contact edges + cancel pending either way; store block; unblock does not re-friend |
 | Message delete | Delete-for-me via `message_hides`; delete-for-everyone **anytime** (tombstone + clear ciphertext) |
 | Delete WS | `message.deleted` fan-out for for-everyone |
-| Account delete | Hard delete user cascade; **tombstone** messages they sent for peers |
+| Account delete | Every chat deleted **for both**: their messages become tombstones; a peer with `allow_peer_chat_delete` loses the chat, others keep their own messages. Users row stays as a scrubbed placeholder (migration 021); username and share code are released |
 | Receipts | Delivery + optional read |
 | Multi-device send | Server fan-out to sender’s other devices |
 | History page | Keyset cursor `(created_at, id)` |
@@ -124,11 +126,13 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Area | Decision |
 | --- | --- |
 | Types (v1 messaging) | Text + encrypted voice/images |
-| Object store | [Nebular OS](https://github.com/AsP3X/nebular-os) |
-| Transfer | Presigned URLs via Shroud API (no large-body proxy) |
-| Layout | Bucket `shroud-media`, key `{uploader_user_id}/{object_id}` |
-| Presign TTL | **15 minutes** |
-| Max object size | **25 MiB** |
+| Object store | [Nebular OS](https://github.com/AsP3X/nebular-os) 0.2 (pinned image); a local directory without `NEBULAR_URL` |
+| Transfer | Through the Shroud API (`/media/{id}/content`, streamed). Clients never reach the store, which never sees them |
+| Store auth | SigV4 access key: `editor` role, `shroud-media` bucket only (`NOS_BUCKET_POLICY`), signed body hash, 15-minute replay window. No JWT secret or presigned URLs in the API |
+| Layout | Bucket `shroud-media`, key `media/{xx}/{object_id}` (no uploader id); rows from before keep `{uploader_user_id}/{object_id}` |
+| Deletion | Immediate in the store (`NOS_SOFT_DELETE_TTL_SECS=0`); a failed delete keeps the row for the orphan GC to retry |
+| Presign TTL | **15 minutes** (the `expires_at` field; the URLs are API paths) |
+| Max object size | **2 GiB** |
 | Transcripts | No transcript APIs in v1 |
 | Real-time | WebSocket + Redis pub/sub |
 | WS auth | First message with token within **10 seconds** |
@@ -138,8 +142,8 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Area | Decision |
 | --- | --- |
 | Rate limits | Redis; budgets in [Rate limits](#rate-limits-starting-budgets) |
-| Account delete | Hard delete + cascade |
-| Push | Data APNs (opaque ids) after online WS, same overall v1 |
+| Account delete | Scrubbed placeholder row, never `DELETE FROM users` (conversations, messages, media and calls cascade from it) |
+| Push | Alerts to the devices without a live socket: APNs (sender name sealed to the notification extension) and Web Push (RFC 8291 + VAPID). Ids and a kind, never content; per-device settings, per-chat mutes, server-side unread counts |
 | Calls | After messaging + data push; signaling + coturn |
 | Compose | Postgres + Redis + Nebular + API; + coturn for calls |
 
@@ -162,10 +166,10 @@ Keep as one shared constant in code; reject with `USERNAME_RESERVED`.
 1. Never accept, store, or log message **plaintext**, **private keys**, or the **encryption phrase**.
 2. Session tokens: persist **hash only**; return raw token once at register/login.
 3. Pre-key APIs: **public** material only; one-time pre-keys consumed atomically.
-4. Nebular objects are **ciphertext**; authorize with short-lived **presigned URLs**.
-5. APNs: **opaque ids** only (message / conversation / call).
+4. Media objects are **ciphertext**; clients upload/download via the API (`/media/{id}/content`). Only the API talks to Nebular.
+5. Pushes (APNs, Web Push): **ids and a kind** only (message / conversation / call). A sender's name only when the device asks for it, and only where the relay cannot read it.
 6. Enforce **contacts** and **blocks** before full message envelopes.
-7. Rate-limit auth, lookups, contact requests, media presign, WS connects.
+7. Rate-limit auth, lookups, contact requests, messages, calls, media, WS connects.
 8. Presence visible only to **accepted contacts**.
 
 ---
@@ -199,7 +203,9 @@ Calls phase adds **coturn** (TURN). Media bytes do not transit the Rust API.
 - Run migrations once (single job / `RUN_MIGRATIONS`), not on every replica concurrently.
 - Configurable `DATABASE_POOL_MAX`.
 - Idempotent message inserts via `client_message_id`.
-- Liveness vs readiness (DB + Redis); graceful SIGTERM drain.
+- Liveness vs readiness — **done** (`GET /health/live`, `/health/ready`; `/health` = ready; Redis required when `REDIS_URL` set).
+- Graceful SIGTERM / Ctrl-C drain — **done** (`axum::serve` + `with_graceful_shutdown`).
+- `DATABASE_POOL_MAX` / `RUN_MIGRATIONS` — **done** (env-backed; Compose sets both).
 
 ---
 
@@ -214,11 +220,18 @@ Forward-only sqlx migrations under `server/migrations/postgres/`. Do not edit ap
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | `UUID` PK | `gen_random_uuid()`; shareable public id |
-| `username` | `TEXT` NOT NULL UNIQUE | Case-folded form only |
-| `password_hash` | `TEXT` NOT NULL | argon2id PHC string |
+| `username` | `TEXT` NULL UNIQUE | Case-folded form only; NULL once deleted |
+| `password_hash` | `TEXT` NULL | argon2id PHC string; NULL once deleted |
+| `share_code` | `TEXT` NULL UNIQUE | QR / deep-link code (migration 011); NULL once deleted |
+| `allow_peer_chat_delete` | `BOOLEAN` NOT NULL | Default false (migration 016) |
+| `send_read_receipts` | `BOOLEAN` NOT NULL | Default true (migration 025); both ways, see [Presence and push](#presence-and-push) |
+| `send_typing` | `BOOLEAN` NOT NULL | Default true (migration 025); typing and recording indicators |
+| `share_presence` | `BOOLEAN` NOT NULL | Default true (migration 025); online and last seen |
+| `discoverable_by_username` | `BOOLEAN` NOT NULL | Default true (migration 026); off hides the account from name lookups by strangers |
 | `created_at` | `TIMESTAMPTZ` NOT NULL | `now()` |
+| `deleted_at` | `TIMESTAMPTZ` NULL | Set by `DELETE /auth/account`; the row stays as a placeholder (migration 021) |
 
-Indexes: unique on `username` (constraint). Optional non-unique not required.
+Indexes: unique on `username` (constraint). Optional non-unique not required. CHECK `users_deleted_scrubbed`: a live row has `username`, `share_code` and `password_hash`; a deleted row has none of them, so it can't sign in or be found, and its name and code are free for new signups.
 
 #### `devices`
 
@@ -226,11 +239,12 @@ Indexes: unique on `username` (constraint). Optional non-unique not required.
 | --- | --- | --- |
 | `id` | `UUID` PK | Client may send this back on login |
 | `user_id` | `UUID` NOT NULL FK → `users(id)` **ON DELETE CASCADE** | |
-| `name` | `TEXT` NULL | Optional display name |
+| `sealed_name` | `BYTEA` NULL | Name sealed by the account's devices, 28–512 bytes (migration 027 replaced the plaintext `name`); cleared when a login reclaims the device. See [architecture.md](./architecture.md#sealed-device-names) |
 | `created_at` | `TIMESTAMPTZ` NOT NULL | `now()` |
 | `last_seen_at` | `TIMESTAMPTZ` NULL | Updated on authenticated activity |
+| `revoked_at` | `TIMESTAMPTZ` NULL | Set by `DELETE /devices/:id`; the row stays as history (migration 019) |
 
-Indexes: `(user_id)`. Max 5 devices enforced in application code (not a DB CHECK).
+Indexes: `(user_id)`, `(user_id) WHERE revoked_at IS NULL`. Max 5 non-revoked devices enforced in application code (not a DB CHECK). Revoked devices are skipped by `GET /devices`, delivery fan-out, key bundles, session auth and login (a revoked `device_id` gets a fresh device).
 
 #### `sessions`
 
@@ -249,7 +263,7 @@ Indexes:
 - `(device_id)`
 - **Partial unique:** `UNIQUE (device_id) WHERE revoked_at IS NULL` — one live session per device
 
-**Retention:** keep revoked rows; purge job deletes where `revoked_at < now() - interval '30 days'`.
+**Retention:** keep revoked rows; purge job (`purge_revoked_sessions`, hourly) deletes where `revoked_at < now() - interval '30 days'`, except the sessions of removed devices (`devices.revoked_at` set): those stay so the device is told `DEVICE_REMOVED` however long it was offline.
 
 Auth lookup: `SELECT … FROM sessions JOIN devices … JOIN users … WHERE token_hash = $1 AND revoked_at IS NULL`.
 
@@ -394,6 +408,19 @@ Extend `messages` (or keep ciphertext as envelope that may contain media keys; s
 
 - Optional `media_object_id UUID NULL REFERENCES media_objects` on `messages` via new migration — link server-side for ACL.
 
+### Milestone 6 — Read receipts schema (locked)
+
+#### `message_reads`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `message_id` | `UUID` NOT NULL FK → `messages` CASCADE | |
+| `user_id` | `UUID` NOT NULL FK → `users` CASCADE | Reader (recipient) |
+| `read_at` | `TIMESTAMPTZ` NOT NULL | |
+| PK | `(message_id, user_id)` | User-level (not per-device) |
+
+Presence uses existing `devices.last_seen_at` + in-process / Redis online sets — no extra tables.
+
 ### Milestone 7 — Deletes schema (locked)
 
 #### `messages` columns (add)
@@ -420,16 +447,67 @@ History `GET /messages` excludes rows hidden for the caller; for-everyone rows r
 
 | Column | Type | Notes |
 | --- | --- | --- |
-| `device_id` | `UUID` PK FK → `devices` CASCADE | One token per device |
+| `device_id` | `UUID` FK → `devices` CASCADE | PK `(device_id, kind)` since migration 022 |
+| `kind` | `TEXT` NOT NULL | `alert` \| `voip` (022; the old `voip:` token prefix became this) |
 | `apns_token` | `TEXT` NOT NULL | Hex device token |
 | `environment` | `TEXT` NOT NULL | `sandbox` \| `production` |
+| `payload_key` | `BYTEA` NULL | 32 bytes (022): AES-256-GCM key the iPhone's notification extension opens sender names with. Keeps names from Apple; not an end-to-end key |
 | `updated_at` | `TIMESTAMPTZ` NOT NULL | |
+
+### Milestone 11 — Notifications schema (migration 022)
+
+#### `web_push_subscriptions`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `device_id` | `UUID` PK FK → `devices` CASCADE | One browser subscription per device |
+| `endpoint` | `TEXT` NOT NULL UNIQUE | Push-service URL; registering it on another device moves it there |
+| `p256dh` | `BYTEA` NOT NULL | Browser's P-256 key, 65-byte uncompressed point |
+| `auth` | `BYTEA` NOT NULL | 16-byte auth secret |
+| `created_at` / `updated_at` | `TIMESTAMPTZ` NOT NULL | |
+
+#### `device_notification_settings`
+
+No row = the defaults: everything on, sound `default`, muted chats not counted in the badge.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `device_id` | `UUID` PK FK → `devices` CASCADE | |
+| `enabled` | `BOOLEAN` | Push to this device at all |
+| `show_sender` | `BOOLEAN` | Name the sender (sealed for APNs) |
+| `reactions` / `contact_requests` | `BOOLEAN` | Push those too |
+| `sound` | `TEXT` | `default`, `none`, or a sound the app bundles (`^[a-z0-9_-]{1,32}$`) |
+| `badge` / `badge_includes_muted` | `BOOLEAN` | Unread total on the icon; whether muted chats count |
+| `updated_at` | `TIMESTAMPTZ` NOT NULL | |
+
+#### `chat_mutes`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `user_id` | `UUID` FK → `users` CASCADE | Who muted; applies to all of their devices |
+| `peer_user_id` | `UUID` FK → `users` CASCADE | The chat, by its other participant (index for account deletion) |
+| `muted_until` | `TIMESTAMPTZ` NULL | NULL = until unmuted; a past time = not muted |
+| PK | `(user_id, peer_user_id)` | Never self |
+
+#### `conversation_reads`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `user_id` | `UUID` FK → `users` CASCADE | |
+| `conversation_id` | `UUID` FK → `conversations` CASCADE | |
+| `read_at` | `TIMESTAMPTZ` NOT NULL | The peer's messages created after it are unread. Only moves forward. Backfilled to each chat's latest message, so nothing was unread right after the migration |
+| PK | `(user_id, conversation_id)` | |
+
+#### `server_keys`
+
+`name` PK, `secret BYTEA`: the Web Push (VAPID) signing key as PKCS#8, generated on first start and
+shared by every replica.
 
 ### Later entities (sketch)
 
 | Entity | Role |
 | --- | --- |
-| (presence/typing keys) | Redis TTLs later |
+| (presence online hash) | Redis HASH + 90s TTL / WS heartbeat refresh |
 
 Redis: pub/sub fan-out, online sets, future rate limits.
 
@@ -440,8 +518,8 @@ Redis: pub/sub fan-out, online sets, future rate limits.
 ### Auth and devices
 
 - **Register** — validate username/password → user + first device + session token.
-- **Login** — verify password; reuse `device_id` if owned, else new device if under cap; issue new session and **revoke any prior sessions on that same device** (one live token per device).
-- **Logout** — revoke **current session only**; device row remains (still counts toward cap until deleted).
+- **Login** — verify password; reuse `device_id` if owned, else new device if under cap, else reclaim the longest-idle device with no live session; issue new session and **revoke any prior sessions on that same device** (one live token per device).
+- **Logout** — revoke **current session only**; device row remains (counts toward the cap, but a login at the cap can reclaim it). Clients forget the device id on logout.
 - **Delete device** — revoke all sessions for that device; free a slot.
 - **Password change** — validate current; set new hash; revoke all sessions except current.
 - Client: store `token` + `device.id` in Keychain.
@@ -476,7 +554,7 @@ Redis: pub/sub fan-out, online sets, future rate limits.
 
 ### Media
 
-- Client encrypts → presign (≤25 MiB, 15m TTL) → PUT Nebular → envelope refs key.
+- Client encrypts → register upload → PUT `/media/{id}/content` (≤2 GiB) → envelope refs media id.
 - Path: `shroud-media` / `{uploader_user_id}/{object_id}`.
 
 ### Rate limits (starting budgets)
@@ -484,23 +562,70 @@ Redis: pub/sub fan-out, online sets, future rate limits.
 | Scope | Budget |
 | --- | --- |
 | Auth (register/login) | 10/min per IP; 5/min per username |
+| Auth sensitive (password change / account delete) | 5/hour per user |
 | User lookup | 30/min per IP |
-| Key bundle GET | 60/min per user; 120/min per IP |
+| Key bundle / identity GET | 60/min per user; 120/min per IP |
 | Contact requests | 10/hour per user |
-| Media presign | 60/min per user |
+| Message send | 120/min per user |
+| Call create / signal | 30/min per user |
+| Media upload registration | 60/min per user |
 | WebSocket connect | 30/min per IP |
+| Link relay connect | 120/min per IP; 60/min per user (plus 6 open pipes per account) |
+| Test notification | 6/min per device |
+| Device name | 60/hour per user |
+| Session status (`POST /auth/session-status`) | 60/min per IP |
+| PIN-guard unlock | 20/min per IP |
 
-Env-tunable later. Key pattern: `rl:{scope}:{id}`.
+`Retry-After` mirrors the budget window (seconds). `TRUST_FORWARDED_HEADERS` must be true only behind a trusted reverse proxy. Key pattern: `rl:{scope}:{id}`.
+
+### Link-preview relay
+
+#### `GET /api/v1/link-relay` → WebSocket upgrade
+
+A byte pipe so the **web client** can build link previews without the server learning what was
+sent (see [architecture.md](./architecture.md)). The browser runs TLS itself; the relay carries
+its bytes to one public host on port 443.
+
+1. Client connects, then within **10 seconds** sends one text frame:
+   ```json
+   { "type": "connect", "token": "<session token>", "host": "example.com" }
+   ```
+2. Server authenticates the token, applies the budgets above, resolves `host`, and refuses it
+   unless every address is public — no IP literals, no `localhost`, `.local`, `.internal`, `.lan`,
+   `.home`, `.arpa`, `.intranet`, `.corp`, and no private, loopback, link-local, or NAT64/6to4
+   address. It connects to exactly the addresses it checked (a rebinding DNS cannot swap one in).
+3. On success:
+   ```json
+   { "type": "connected" }
+   ```
+   after which **binary frames** carry TLS bytes both ways, until either side closes.
+4. On failure: `{ "type": "error", "error": { "code", "message" } }` and close. Codes:
+   `UNAUTHORIZED`, `VALIDATION_ERROR` (not a DNS name), `FORBIDDEN` (not public),
+   `LINK_UNREACHABLE` (DNS or connect failed), `RATE_LIMITED` (budget or open-pipe limit).
+
+Limits per pipe: 64 KiB up, 8 MiB down, 15 s idle, 45 s lifetime. The server never logs the host
+and cannot read the traffic.
 
 ### Presence and push
 
-- Typing ephemeral; online/last-seen via Redis TTL; contacts only.
+- **Visibility switches** (`GET/PUT /privacy/settings`: `send_read_receipts`, `send_typing`, `share_presence`; PUT is partial). Each works both ways and only has an effect while **both** users in a chat leave it on (`routes::privacy::both_allow`): hiding yours also hides your contacts' from you. Details in `docs/privacy-options.md`.
+- **Typing** — ephemeral WS only: client `{ "type": "typing", "peer_user_id", "is_typing" }` → peer gets same shape plus `user_id` / `device_id`. Contacts only, both must allow typing; no DB.
+- **Recording** — same relay as typing: client `{ "type": "recording", "peer_user_id", "is_recording" }` → peer only. Keepalive every 3s while the mic is live; no idle timeout (silence is still a take). Receiver expires after 6s.
+- **Online / last-seen** — online = at least one live WS (in-process hub + optional Redis `shroud:online:{user_id}` HASH with TTL). `last_seen_at` = max `devices.last_seen_at`. `GET /presence/:user_id` contacts-only (self always allowed); while either side hides presence it answers `online: false` with no `last_seen_at`. On connect/disconnect, fan-out `presence.update` to accepted contacts who share theirs — nobody when the user hides it. Turning `share_presence` off sends every contact `{online: false, last_seen_at: null}` at once; turning it on sends the current state.
+- **Read receipts** — user-level (`message_reads`); not per-device. Recipient only; idempotent. Single + bulk up-to cursor. WS `message.read`. While either side hides receipts, nothing is recorded or sent, and `GET /messages` reports `read: false` on the caller's messages; the reader's unread marker (`conversation_reads`) moves either way.
 - WS must auth within 10s.
-- Data APNs with opaque ids when offline.
+- **Pushes** go to each of the recipient's devices that registered for them and has **no live socket**: a device with one notifies its user itself, since it can read the message. The server pings every 30 s and closes a socket 75 s after the last frame it heard, so a phone the OS suspended counts as offline. A device signed out elsewhere (a password change) gets none until it signs in again. APNs needs `APNS_KEY_PATH` or `APNS_KEY_PEM` + `APNS_KEY_ID` + `APNS_TEAM_ID` + `APNS_TOPIC`; Web Push works out of the box. What is sent and to whom: [Milestone 11](#milestone-11--notifications).
 
-### Calls (later)
+### Calls (m9)
 
-- Signaling in API; coturn; VoIP push.
+- **1:1 only**; contacts required; one ringing/active call per user.
+- State machine: `ringing` → `active` | `rejected` | `cancelled` | `missed`; `active` → `ended`.
+- Unanswered `ringing` rows auto-expire to `missed` after 90s (background GC).
+- SDP/ICE are **opaque client blobs** (relayed, not stored).
+- `GET /calls/ice-servers` returns STUN (default) + optional TURN from env.
+- Compose: `docker compose --profile calls up` starts **coturn** (host network, local-only credentials).
+- Callee's iPhones without a live socket: an APNs alert (`call` / `video_call`, expires after 90 s). Mutes don't silence it; browsers get none (the web client has no calls). Not a PushKit ring: CallKit would ring on after a hang-up that a locked app cannot hear about.
+- The ring waits for them: `call.ring` (with the offer) is kept while the call rings (Redis `shroud:ring:{callee}` when configured, else in memory), and a callee device that connects in that time — its user tapped the alert — gets it right after `auth.ok`, so the app opens on the ringing call. Nothing is replayed once the call was answered, declined or given up.
 
 ---
 
@@ -513,11 +638,12 @@ Env-tunable later. Key pattern: `rl:{scope}:{id}`.
 | **3** | **Contacts** | **Done** — migration 004; user card; requests; mutual accept; contacts; blocks |
 | **4** | **Messages (HTTP)** | **Done** — migration 005; send/list/conversations/delivered |
 | **4b** | **WebSocket** | **Done** — `/ws`, in-process hub, message.new + message.delivered |
-| **5** | **Media** | **Done** — migration 006; upload/download presign (stub/Nebular); media on messages |
-| 6 | Receipts & presence | Read receipts; typing; online/last-seen |
+| **5** | **Media** | **Done** — migration 006; API-proxied put/get content; blobs in Nebular OS (SigV4) or a local directory; media on messages |
+| **6** | **Receipts & presence** | **Done** — migration 009 `message_reads`; `POST /messages/:id/read` + bulk; `GET /presence/:user_id`; WS `typing` + `presence.update` + `message.read` |
 | **7** | **Deletes** | **Done** — migration 007; for me / everyone; account delete; message.deleted WS |
-| 8 | APNs | Tokens; opaque data push |
-| 9 | Calls | Signaling + coturn; VoIP push |
+| **8** | **APNs** | **Done** — migration 008; `PUT /push/token`; offline WS gate; HTTP/2 ES256 JWT client (`.p8` / `APNS_KEY_PEM`); drop invalid tokens |
+| **9** | **Calls** | **Done** — migration 010; ring/accept/reject/hangup/signal; `GET /calls/ice-servers`; WS events; coturn compose profile; call alert push |
+| **11** | **Notifications** | **Done** — migration 022; APNs alerts (sealed sender name) + Web Push (RFC 8291, VAPID via `ring`); per-device settings; chat mutes; read markers → `unread_count` + icon badges; `conversation.read` / `conversation.mute`; WS ping / idle close; test push |
 
 **Compose:** Postgres + Redis + Nebular + API → later + coturn.
 
@@ -538,8 +664,7 @@ Env-tunable later. Key pattern: `rl:{scope}:{id}`.
 ```json
 {
   "username": "alice",
-  "password": "correct-horse-battery",
-  "device_name": "iPhone 16"
+  "password": "correct-horse-battery"
 }
 ```
 
@@ -547,7 +672,9 @@ Env-tunable later. Key pattern: `rl:{scope}:{id}`.
 | --- | --- | --- |
 | `username` | yes | 3–32, `[a-z0-9_]` |
 | `password` | yes | min 8; not common |
-| `device_name` | no | Display label |
+
+A `device_name` from older builds is ignored and never stored: the name is sealed once the client
+has the phrase (`PUT /devices/:id/name`).
 
 Success:
 
@@ -555,7 +682,7 @@ Success:
 {
   "token": "<opaque>",
   "user": { "id": "<uuid>", "username": "alice" },
-  "device": { "id": "<uuid>", "name": "iPhone 16" }
+  "device": { "id": "<uuid>" }
 }
 ```
 
@@ -567,7 +694,6 @@ Success:
 {
   "username": "alice",
   "password": "correct-horse-battery",
-  "device_name": "iPhone 16",
   "device_id": "<uuid>"
 }
 ```
@@ -576,23 +702,33 @@ Success:
 | --- | --- | --- |
 | `username` | yes | |
 | `password` | yes | |
-| `device_name` | no | Refresh name when reusing device |
 | `device_id` | no | Reuse if owned by user; else new device |
 
-Success body: same as register.
+Success body: same as register, plus `device.sealed_name` (Base64) when the reused device has one. Reusing a device revokes its previous session (one live session per device) and closes that session's WebSocket.
 
 #### `POST /auth/logout` → `204`
 
-`Authorization: Bearer <token>` — empty body; revokes current session only.
+`Authorization: Bearer <token>` — empty body; revokes current session only, closes its WebSocket, forgets the device's push tokens, Web Push subscription and notification settings, and deletes its PIN guard.
 
 #### `GET /auth/me` → `200`
 
 ```json
 {
   "user": { "id": "<uuid>", "username": "alice" },
-  "device": { "id": "<uuid>", "name": "iPhone 16" }
+  "device": { "id": "<uuid>", "sealed_name": "<base64>" }
 }
 ```
+
+#### `POST /auth/session-status` → `200`
+
+**No session** — a locked browser keeps its token sealed in its vault, so it asks with the token's
+hash, which it keeps readable for this (the hash is what `sessions.token_hash` stores; presenting it
+authenticates nothing). Body `{ "token_hash": "<standard Base64 of SHA-256(token)>" }` →
+`{ "removed": true | false }`. `removed` is true only when the session with that hash belongs to a
+removed device or a deleted account; the client then wipes everything of the account. A session a
+logout or a password change signed out, and a hash the server does not know, answer `false`: only a
+removal the server can point to wipes anything. `400 VALIDATION_ERROR` unless the hash decodes to 32
+bytes. Rate limit: 60/min per IP.
 
 #### `POST /auth/password` → `204`
 
@@ -603,7 +739,7 @@ Success body: same as register.
 }
 ```
 
-Revokes all **other** sessions.
+Revokes all **other** sessions and closes their WebSockets.
 
 #### `GET /devices` → `200`
 
@@ -612,7 +748,7 @@ Revokes all **other** sessions.
   "devices": [
     {
       "id": "<uuid>",
-      "name": "iPhone 16",
+      "sealed_name": "<base64>",
       "created_at": "2026-07-15T12:00:00Z",
       "last_seen_at": "2026-07-15T12:05:00Z",
       "is_current": true
@@ -621,11 +757,39 @@ Revokes all **other** sessions.
 }
 ```
 
-`name` / `last_seen_at` may be null.
+`sealed_name` / `last_seen_at` are omitted when null.
+
+#### `PUT /devices/:id/name` → `204`
+
+```json
+{ "sealed_name": "<base64>" }
+```
+
+Stores a device's name sealed by the account's devices ([format](./architecture.md#sealed-device-names));
+the server checks only that it decodes to 28–512 bytes. Any of the caller's non-revoked devices may
+be named, not only the current one. `404` for a foreign or removed id, `400 VALIDATION_ERROR` for bad
+Base64 or size. Budget: 60 per hour per user.
 
 #### `DELETE /devices/:id` → `204`
 
-Revokes sessions for that device. Deleting the current device invalidates the caller’s token.
+Revokes sessions for that device, deletes its keys, push tokens, Web Push subscription, notification settings, PIN guard, sealed name and undelivered delivery rows, and sets `devices.revoked_at`. The row is **not** deleted: messages, uploads and calls reference their sending device with `ON DELETE CASCADE`, so history the device sent stays for both participants. `404` for a foreign or already-removed id. Deleting the current device invalidates the caller’s token.
+
+The removed device must wipe the account's data at once, wherever it is:
+
+- Its open WebSocket gets `auth.error` with code `DEVICE_REMOVED` and closes.
+- Every request it makes answers `401 DEVICE_REMOVED` (its session rows are never purged). Clients wipe on the first one; a plain `401 UNAUTHORIZED` still only counts toward the iPhone's three-in-a-row sign-out.
+- Once the removal commits, the server sends one last push to the registration it just deleted: APNs `background` (priority 5) `{ "aps": { "content-available": 1 }, "type": "device_removed" }`, or Web Push `{ "v": 1, "kind": "device_removed" }`. The iPhone confirms with `GET /auth/me` before it deletes anything.
+- A locked browser asks `POST /auth/session-status`.
+
+`DELETE /auth/account` does the same for the account's other devices.
+
+#### PIN guard (web vault)
+
+The web client wraps its vault key under PIN **and** a server-held pepper, so a copied browser profile cannot be brute-forced offline (`web/src/crypto/vault.ts`). One guard per device (`device_pin_guards`); the server stores `SHA-256(auth_key)` and the pepper, never the PIN or the auth key.
+
+- `POST /pin-guard` (session) `{ "verifier": "<b64 SHA-256(auth_key)>" }` → `201 { "guard_id", "pepper", "max_attempts" }`. Replaces the device's guard (new id, new pepper, counter reset).
+- `POST /pin-guard/unlock` (**no session** — the web token is sealed in the vault this opens) `{ "guard_id", "auth_key" }` → `200 { "pepper" }`; wrong key `403 PIN_INCORRECT` (message says attempts left); the 10th wrong key in a row deletes the guard, and it and every later call get `410 PIN_GUARD_GONE` — only the phrase opens the vault then. A success resets the counter. Rate limit: 20/min per IP.
+- `DELETE /pin-guard` (session) → `204`. Logout and device removal delete it too.
 
 #### Auth error codes
 
@@ -637,11 +801,14 @@ Revokes sessions for that device. Deleting the current device invalidates the ca
 | `PASSWORD_TOO_SHORT` | Fewer than 8 characters |
 | `PASSWORD_TOO_COMMON` | On embedded denylist |
 | `INVALID_CREDENTIALS` | Failed login (no user enumeration) |
-| `DEVICE_LIMIT` | Would exceed 5 devices |
+| `DEVICE_LIMIT` | Would exceed 5 devices and all 5 are signed in |
 | `UNAUTHORIZED` | Missing / invalid / revoked token |
+| `DEVICE_REMOVED` | The token's device was removed from the account (401); the client wipes itself |
 | `FORBIDDEN` | Authenticated but not allowed |
 | `NOT_FOUND` | Device not found for user |
 | `RATE_LIMITED` | Budget exceeded |
+| `PIN_INCORRECT` | Wrong PIN against a PIN guard (403) |
+| `PIN_GUARD_GONE` | PIN guard deleted after too many wrong PINs, or never created (410) |
 
 ### Milestone 2 — Key bundles (locked)
 
@@ -675,7 +842,7 @@ Uploads/replaces keys for the **authenticated current device**.
 
 #### `GET /keys/bundle/:user_id` → `200`
 
-Fetch a pre-key bundle to start a session with that user (any authenticated caller in m2).
+Fetch a pre-key bundle for the **most recently active** publishable device (any authenticated caller). Prefer multi-device list for fan-out.
 
 ```json
 {
@@ -698,6 +865,38 @@ Fetch a pre-key bundle to start a session with that user (any authenticated call
 - `one_time_pre_key` **omitted** if pool empty (not an error).
 - If user has **no** device with identity+SPK → `404` + `KEYS_REQUIRED`.
 - OTPK row deleted in the same transaction as the read when present.
+
+#### `GET /keys/bundles/:user_id` → `200`
+
+All publishable devices (identity + signed pre-key) for multi-device sealed send.
+
+```json
+{
+  "user_id": "<uuid>",
+  "bundles": [
+    {
+      "device_id": "<uuid>",
+      "registration_id": 12345,
+      "identity_key": "<base64>",
+      "signed_pre_key": {
+        "key_id": 1,
+        "public_key": "<base64>",
+        "signature": "<base64>"
+      },
+      "one_time_pre_key": {
+        "key_id": 42,
+        "public_key": "<base64>"
+      }
+    }
+  ]
+}
+```
+
+- Ordered by `last_seen_at DESC`, then `created_at DESC`.
+- **One OTPK consumed per device** when that device’s pool is non-empty (omitted otherwise).
+- Empty publishable set → `404` + `KEYS_REQUIRED` (same enumeration posture as single GET).
+- Same rate limits as single bundle GET (`keys_ip` / `keys_user`).
+- **Contact gate:** requester must be an accepted contact of the target (or self). Non-contacts receive `404` + `KEYS_REQUIRED` (same as missing keys).
 
 #### `GET /keys/status` → `200`
 
@@ -926,7 +1125,7 @@ Marks `message_deliveries.delivered_at = now()` for **current device**. `404` if
 }
 ```
 
-`size_bytes` required, 1…25 MiB. Response:
+`size_bytes` required, 1…2 GiB. Response:
 
 ```json
 {
@@ -968,11 +1167,18 @@ Optional field: `"media_object_id": "<uuid>"` required when `content_type` is `m
    ```json
    { "type": "auth", "token": "<session token>" }
    ```
-3. Server validates token (same as Bearer), binds socket to `(user_id, device_id)`, replies:
+3. Server validates token (same as Bearer), binds socket to `(user_id, device_id)` and the session, replies:
    ```json
    { "type": "auth.ok", "user_id": "<uuid>", "device_id": "<uuid>" }
    ```
 4. On failure or timeout: close connection.
+5. The socket lives only as long as its session. When the session is revoked (logout, a password change for the other sessions, device removal, account deletion, a new login on the same device), the server sends
+   ```json
+   { "type": "auth.error", "error": { "code": "UNAUTHORIZED", "message": "This session was signed out." } }
+   ```
+   (with code `DEVICE_REMOVED` and message "This device was removed from your account." when the device was removed or the account deleted; authenticating with such a token gets the same frame) and closes the socket, on every replica (Redis `shroud:sessions:revoked`). The socket also re-checks its session right after `auth.ok` and every 30 s, so a revocation its replica missed still closes it. Clients treat `auth.error` as final and do not reconnect with that token. A newer socket from the same device replaces the older one, which closes without a frame.
+6. The server pings every 30 s and closes a socket 75 s after the last frame it heard (any frame, a pong too). A write the socket does not take within 10 s closes it as well: a full send buffer must not stall the loop. Browsers and URLSession answer pings on their own (the iOS app also pings every 25 s to notice a dead socket). A device whose socket closed counts as offline and gets pushes again; with Redis, a closing socket clears the device's online entry only while it is still the one that socket wrote.
+7. Right after `auth.ok`, a call still ringing for the user reaches the new socket (see [Calls](#calls-m9)).
 
 #### Server → client events
 
@@ -999,11 +1205,191 @@ Optional field: `"media_object_id": "<uuid>"` required when `content_type` is `m
 - On `POST /messages/:id/delivered`: notify online devices of the **message sender** (other devices / peer may care — notify **sender_user**’s online devices and peer’s other devices; minimum: notify **sender’s devices** so ticks update).
 - **Recommended delivered notify:** all online devices of both conversation users except the device that just acked.
 
-#### Not in 4b
+#### Not in 4b (partially lifted in m6)
 
-- Redis pub/sub
-- Typing / presence
-- Client→server messages beyond `auth` (ignore or nack unknown types)
+- Redis pub/sub — optional when `REDIS_URL` set
+- Typing / presence — **m6**
+- Client→server after auth: **`typing`** / **`recording`** (m6); unknown types ignored
+
+### Milestone 6 — Presence & read receipts (locked)
+
+#### `GET /presence/:user_id` → `200`
+
+```json
+{
+  "user_id": "<uuid>",
+  "online": false,
+  "last_seen_at": "2026-07-15T12:00:00Z"
+}
+```
+
+- Self always allowed. Other users: **accepted contacts only** → else `403` + `FORBIDDEN`.
+- Either side has `share_presence` off → `online: false`, `last_seen_at` omitted (migration 025).
+- `online`: any live WebSocket for that user (local hub / Redis online set).
+- `last_seen_at`: max `devices.last_seen_at` (omitted if null).
+
+#### `POST /messages/:id/read` → `204`
+
+- Caller must be a conversation participant and **not** the sender.
+- Upserts `message_reads (message_id, user_id)`; idempotent.
+- WS fan-out to conversation users except acking device:
+
+```json
+{
+  "type": "message.read",
+  "message_id": "<uuid>",
+  "conversation_id": "<uuid>",
+  "user_id": "<reader>",
+  "device_id": "<device>",
+  "read_at": "..."
+}
+```
+
+#### `POST /messages/read` → `200`
+
+```json
+{
+  "peer_user_id": "<uuid>",
+  "up_to_message_id": "<uuid>"
+}
+```
+
+Marks all messages **from** `peer_user_id` **to** the caller in that conversation with `(created_at, id) <=` the cursor message. Response:
+
+```json
+{ "marked": 2, "read_at": "..." }
+```
+
+WS `message.read` includes `up_to_message_id` + `marked` when bulk.
+
+#### WebSocket client → server (after auth)
+
+```json
+{ "type": "typing", "peer_user_id": "<uuid>", "is_typing": true }
+```
+
+```json
+{ "type": "recording", "peer_user_id": "<uuid>", "is_recording": true }
+```
+
+Server → peer only (contacts required):
+
+```json
+{
+  "type": "typing",
+  "user_id": "<sender>",
+  "device_id": "<device>",
+  "peer_user_id": "<uuid>",
+  "is_typing": true
+}
+```
+
+```json
+{
+  "type": "recording",
+  "user_id": "<sender>",
+  "device_id": "<device>",
+  "peer_user_id": "<uuid>",
+  "is_recording": true
+}
+```
+
+#### WebSocket server → contacts (connect / full disconnect)
+
+```json
+{
+  "type": "presence.update",
+  "user_id": "<uuid>",
+  "online": true,
+  "last_seen_at": "..."
+}
+```
+
+Offline fan-out only when the user has **no** remaining online devices.
+
+### Milestone 9 — Calls (locked)
+
+#### Schema `calls`
+
+| Column | Notes |
+| --- | --- |
+| `id` | UUID |
+| `caller_user_id` / `caller_device_id` | Originator |
+| `callee_user_id` / `callee_device_id` | Target; device set on accept |
+| `modality` | `voice` \| `video` |
+| `status` | `ringing` \| `active` \| `ended` \| `rejected` \| `busy` \| `missed` \| `cancelled` |
+| `ended_reason` / timestamps | Minimal metadata only |
+
+#### Routes
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/calls/ice-servers` | Auth; STUN/TURN for WebRTC |
+| POST | `/calls` | `{ peer_user_id, modality?, sdp_offer? }` → `201` ringing |
+| GET | `/calls/:id` | Participant only |
+| POST | `/calls/:id/accept` | Callee; `{ sdp_answer? }` |
+| POST | `/calls/:id/reject` | Callee while ringing |
+| POST | `/calls/:id/hangup` | Cancel / end |
+| POST | `/calls/:id/signal` | `{ signal_type, payload }` relay to peer |
+
+#### WebSocket events
+
+- `call.ring`, `call.accepted`, `call.ended`, `call.signal`
+
+Errors: `CALL_BUSY` (409) when peer or self already in ringing/active call; `FORBIDDEN` non-contacts.
+
+### Milestone 8 — Push (locked)
+
+#### `PUT /push/token` → `204`
+
+```json
+{ "token": "<apns device token>", "environment": "sandbox", "kind": "alert", "payload_key": "<base64, 32 bytes>" }
+```
+
+- `environment`: `sandbox` | `production` (selects APNs host at send time).
+- `kind`: `alert` (default) | `voip` (PushKit). One token per device and kind; a token another
+  device held moves to this one. A `voip:` token prefix (older builds) still means `kind: voip`.
+- `payload_key` (alerts, optional): the key the notification extension opens sender names with.
+  Without one the server leaves names out rather than send them readable.
+- `token`: hex, as APNs hands it out (stored lowercase).
+
+#### `DELETE /push/token?kind=alert|voip` → `204`
+
+No `kind`: both.
+
+#### Alert push (server-internal)
+
+For each device that should hear about an event ([Milestone 11](#milestone-11--notifications)):
+
+1. An alert token → HTTP/2 POST `https://api[.sandbox].push.apple.com/3/device/{token}` with:
+   - JWT bearer (`iss` = team, `kid` = key id, ES256, cached ~50m)
+   - `apns-topic`, `apns-push-type: alert`, `apns-priority: 10`, `apns-expiration` now + 24 h (calls 90 s)
+   - Body (the badge only when the device shows one, the sound per its setting):
+     ```json
+     {
+       "aps": { "alert": { "body": "New message" }, "thread-id": "<conversation id>",
+                "mutable-content": 1, "category": "message", "sound": "default", "badge": 3 },
+       "shroud": { "v": 1, "k": "message", "c": "<conversation>", "p": "<peer>", "m": "<message>",
+                   "e": "<sealed name>" }
+     }
+     ```
+   - `k`: `message`, `reaction`, `contact_request`, `call`, `video_call`, `test`; `thread-id` is
+     the conversation, or `contacts` / `calls` / `test`. `call` holds a ringing call's id.
+   - `e` = base64(nonce ‖ AES-256-GCM(`payload_key`, `{"n":"alice"}`) ‖ tag), AAD
+     `shroud-push-v1|<k>|<thread-id>|<p>`, so Apple never sees the name and cannot move it onto
+     another push — another chat's, or another requester's or caller's (they share a thread).
+     The notification service extension opens it and makes it the title.
+2. Else a Web Push subscription → POST to its endpoint: RFC 8291 `aes128gcm` body, VAPID
+   (RFC 8292) `Authorization: vapid t=…, k=…`, `TTL` 24 h (a test push 60 s), `Urgency`
+   (reactions `normal`, else `high`), `Topic` = the thread without hyphens, so queued message
+   pushes of one chat collapse (reactions get none: one must not replace an unseen message).
+   The encrypted JSON:
+   `{ "v": 1, "kind", "tag", "silent", "conversation_id", "peer_user_id", "message_id", "sender", "badge" }`
+   — `tag` is the conversation id, `<id>:reaction` for a reaction. The service worker writes the text.
+3. Relay not configured → log only. A badge that could not be counted is left out, never sent as 0.
+
+`BadDeviceToken` / `Unregistered` / `DeviceTokenNotForTopic` / `ExpiredToken` → delete token row;
+Web Push `404` / `410` → delete the subscription.
 
 ### Milestone 7 — Deletes (locked)
 
@@ -1032,18 +1418,250 @@ Add optional:
 
 #### `DELETE /auth/account` → `204`
 
-- Authenticated; optional body `{ "password": "..." }` verify.
-- Tombstone all messages where `sender_user_id = me` (clear ciphertext, set deleted_for_everyone_at).
-- `DELETE FROM users WHERE id = me` (cascades devices, sessions, keys, contacts, blocks, media ownership, hides, deliveries via FKs).
-- Remaining conversation rows may still exist for peer with tombstoned messages.
+- Authenticated; body `{ "password": "..." }` **required** (verified first; `401` when wrong).
+- Every chat is deleted **for both**, as `DELETE /conversations/:peer?scope=everyone` does: all messages
+  where `sender_user_id = me` become tombstones (ciphertext and media cleared, `deleted_for_everyone_at`
+  set), my clear watermark moves to now, and a peer with `allow_peer_chat_delete` gets theirs moved too
+  (their copy is gone; messages both have cleared past are deleted). Every other peer keeps the chat
+  with their own messages; `GET /conversations` names me `"Deleted account"`.
+- Reactions on my tombstoned messages and every reaction I left lose their ciphertext, each with a new
+  `seq`, so a peer who keeps the chat catches up with the removals (`GET /conversations/:peer/reactions`);
+  in a cleared copy they go with the purged messages. They no longer cascade away with the `users` row.
+- The `users` row is **not** deleted: conversations, messages, media and calls reference it (and my
+  devices) with `ON DELETE CASCADE`, so deleting it wiped each peer's side of the chat as well. It stays
+  as a placeholder (migration 021): `username`, `share_code` and `password_hash` NULL, `deleted_at` set.
+  The name and code can be registered again; `GET /users/*` and contact requests answer `404`.
+- Devices are revoked as by `DELETE /devices/:id` (sessions, keys, push tokens, Web Push subscriptions,
+  notification settings, PIN guards, undelivered deliveries) and their names cleared; their open
+  WebSockets close. Saved Messages, my uploads (rows and blobs), contacts, contact requests, blocks,
+  hides, reaction seen marks, read markers and chat mutes (mine, and others' of me) are deleted. Ringing or
+  active calls end as if I hung up, then all my call rows are deleted.
+- WS to peers after commit: `conversation.deleted` per chat (`user_id` me, `scope: "everyone"`,
+  `cleared_for_peer`), `contact.removed` per contact, `call.ended` per call that was still live.
+- `POST /messages` and `PUT /messages/:id/reaction` hold the caller's device row (`FOR SHARE`) until
+  commit, so a send or reaction racing the deletion is either tombstoned or cleared with the rest, or
+  refused with `401`.
+
+### Milestone 10 — Reactions
+
+Migration 020: `message_reactions(message_id, user_id, conversation_id, message_sender_id,
+ciphertext NULL, seq, added_seq, updated_at)`, primary key `(message_id, user_id)`, indexes
+`(conversation_id, seq)` (catch-up), `(user_id)` (account deletion finds the reactions to clear;
+the users row stays, so they don't cascade) and the partial unseen index
+`(conversation_id, message_sender_id, added_seq) WHERE ciphertext IS NOT NULL AND user_id <>
+message_sender_id`; `conversation_reaction_seqs` (one change counter per conversation);
+`reaction_reads(user_id, conversation_id, seen_seq)`. `message_sender_id` copies the message's
+sender (it never changes). Every set, replace and remove takes the conversation's next `seq`; a
+removal keeps the row with `ciphertext NULL`. No push, no `last_message_at` bump. Own budget
+`REACTION_USER` (120/min).
+
+**Why a counter row and not a sequence.** A write bumps the counter under its row lock in the same
+transaction, so within a conversation `seq` order is commit order: a reader that sees N sees every
+change up to N, and every later change gets a higher number. Global sequence values commit out of
+order — a snapshot taken between two such commits would skip a change for good (a client's cursor
+passes it; a page reconciled against it drops it).
+
+**Lock order.** Everything that writes a chat's messages, reaction counter, reaction rows or
+seen marks takes the conversation row first. Reaction writes: the conversation row
+(`FOR KEY SHARE`, which sends' `last_message_at` updates don't block), the message row
+(`FOR KEY SHARE`), the counter, reaction rows. Deleting a message for everyone: the conversation
+row (`FOR KEY SHARE`), the message row (`FOR UPDATE`), the counter, reaction rows. Marking
+reactions seen: the conversation row (`FOR KEY SHARE`), then its `reaction_reads` row. Deleting a
+chat: the conversation row `FOR UPDATE`, which waits for all of the above and keeps them out while
+it runs its own order (seen marks, counter, then the messages it purges). Deleting an account:
+every chat of it `FOR UPDATE`, in id order, before its messages. A new reaction holds its device
+row (`FOR SHARE`) before all of that, as a send does. So a reaction can't land on a message
+deleted a moment earlier (the lock waits for the delete and re-reads the row), and none of these
+deadlock with each other. Both deletes clear the deleted messages' reactions (a new `seq` each),
+so no sealed reaction outlives its message; deleting an account also clears every reaction the
+account left, and deleting a chat for both where the peer keeps it clears the deleter's
+reactions on the peer's messages (nothing of theirs stays readable there).
+
+#### `PUT /messages/:id/reaction` `{ "ciphertext": "<base64>", "base_seq": 41, "added": true }` → `200` reaction
+
+- Caller must be a participant; the message must be one they can see — not deleted for everyone,
+  deleted for them or before their chat clear (`404`, like an unknown or foreign message) — and not
+  an annotation (`400`); outside Notes the peer must be an accepted, unblocked contact (`403`).
+  Ciphertext 1–4096 bytes.
+- `base_seq`: the `seq` of the caller's record the new set was built on, `0` when they had none or
+  had taken it back (a removal matches `0` too). When the record has moved on — another of their
+  devices wrote it — nothing is written and the answer is `409`
+  `{ "error": { "code": "REACTION_CHANGED", … }, "current": <reaction> }`: the client merges its
+  change onto `current` and retries from `current.seq`. Omitted: the write always wins.
+- `added` (default true): the set has an emoji the base lacked. Only such a change is new for the
+  message's author (see Unseen reactions); replacing a removal always counts.
+
+#### `DELETE /messages/:id/reaction?base_seq=` → `200` reaction (ciphertext null) or `204` when there is none
+
+- Participants only; allowed after the contact is gone and on messages the caller hid, so a
+  reaction can always be taken back. With `base_seq`, a live record the caller did not build on is
+  `409 REACTION_CHANGED` as for `PUT`.
+
+Reaction body (also the WS payload's `reaction`):
+
+```json
+{ "message_id": "<uuid>", "user_id": "<uuid>", "ciphertext": "<base64>|null", "seq": 42, "updated_at": "…" }
+```
+
+WS, to the reactor's other devices and to the other participant's devices while they can see the
+message (not after they hid it or cleared past it — catch-up masks those too). `message_sender_id`
+is who wrote the message, so a client can tell a reaction to its own message without holding it;
+`added` says whether the change is news for that person (false for removals):
+
+```json
+{ "type": "message.reaction", "conversation_id": "<uuid>", "message_sender_id": "<uuid>", "device_id": "<uuid>", "added": true, "reaction": { … } }
+```
+
+#### `GET /conversations/:peer_user_id/reactions?after_seq=&limit=` → `200`
+
+`{ "reactions": [ … ], "next_seq": 57, "has_more": false }` — every change after `after_seq`, oldest
+first, removals included; `limit` default 200, max 500. Rows for messages the caller cannot see
+(deleted for everyone, deleted for me, before a chat clear) come back with a null ciphertext.
+
+#### History
+
+`GET /messages` adds `reactions` (live ones, oldest change first; omitted when empty) to each message,
+and `reaction_seq`: the conversation's latest `seq`, read before the page. The page's reactions are
+the full live set as of that value or later (an entry may carry a higher `seq`), so a client keeps
+its own newer changes and drops older ones the page no longer lists; a client without a catch-up
+cursor starts from it. Deleting for everyone clears the message's reactions (a new `seq` each, so
+catch-up reports them).
+
+#### Several reactions per person
+
+A record's sealed `e` holds a person's whole set (oldest first); `PUT` replaces it, `DELETE`
+removes it. How many one person may leave is a server setting, `REACTIONS_MAX_PER_USER` (default
+5), handed to clients by `GET /config` → `{ "reactions": { "max_per_user": 5 } }`. The server can't
+count sealed emoji, so clients enforce it when adding (a pick past the limit drops that person's
+oldest); readers show what a record holds, deduplicated, up to their own cap of 20. The 4 KiB
+ciphertext cap bounds what a modified client could store. Because one record is the whole set,
+writes carry `base_seq`: two devices of one person changing it at once merge instead of the later
+write dropping the earlier one's emoji.
+
+#### Unseen reactions (the chat list's heart badge)
+
+`GET /conversations` adds, per chat, `reaction_seq` (latest change, 0 when none) and
+`unseen_reactions`: live reactions by the other participant to the caller's messages whose latest
+added emoji (`added_seq`) is above the caller's `seen_seq` (deleted, hidden and cleared messages
+excluded). A reaction that gains an emoji counts again; one that only loses one does not, and a
+removed one stops counting. Clearing a chat marks everything in it seen. The count walks one range
+of the partial unseen index per chat, so it costs what is unseen, not the chat's history.
+
+`POST /conversations/:peer_user_id/reactions/seen` `{ "up_to_seq": 57 }` → `{ "seen_seq": 57 }` —
+clamped to the latest `seq`, never moves backwards. When it moves, the caller's other devices get
+`{ "type": "reactions.seen", "conversation_id", "peer_user_id", "seen_seq" }` so their badge clears.
+
+### Milestone 11 — Notifications
+
+A device with a live socket notifies its user itself; it can read the message. Pushes are for the
+others, and carry ids and a kind (schema: [Milestone 11 — Notifications schema](#milestone-11--notifications-schema-migration-022);
+wire format: [Alert push](#alert-push-server-internal)).
+
+#### Who gets a push
+
+- **Events:** a message (never to Saved Messages, never an annotation); an emoji **added** to one
+  of the recipient's messages (removals don't push); a contact request; a ringing call; `POST /push/test`.
+- **Devices:** the recipient's signed-in devices (a live session) with an alert token or a Web
+  Push subscription and no live socket. Their settings decide the rest: `enabled`, `reactions`,
+  `contact_requests`; `show_sender` adds the name, `badge` the unread total
+  (`badge_includes_muted` counts muted chats).
+- **Mutes:** a muted chat pushes nothing for messages or reactions — to an iPhone that counts
+  muted chats, a message still sends a badge-only push. Contact requests and calls ignore
+  mutes. Calls go to iPhones only.
+
+#### `GET /notifications/settings` → `200`
+
+```json
+{ "enabled": true, "show_sender": true, "reactions": true, "contact_requests": true,
+  "sound": "default", "badge": true, "badge_includes_muted": false }
+```
+
+The calling device's settings; the defaults when it never saved any.
+
+#### `PUT /notifications/settings` → `200` settings
+
+Any subset of the fields above, saved in one statement (two saves at once keep each other's
+fields); returns what is stored. `sound`: `default`, `none`, or a sound the
+app bundles (`^[a-z0-9_-]{1,32}$`, else `400`). The web client sends `default` or `none` (the
+service worker cannot pick a sound).
+
+#### `PUT /conversations/:peer_user_id/mute` `{ "seconds": 28800 }` → `200`
+
+```json
+{ "peer_user_id": "<uuid>", "mute": { "until": "2026-09-24T22:00:00Z" } }
+```
+
+`seconds` 60–31622400 (a year); `null` or omitted mutes until unmuted (`until: null`). Per account,
+so every device goes quiet. `DELETE` → `204` unmutes. When a mute was set or removed, the
+caller's other devices get
+`{ "type": "conversation.mute", "peer_user_id", "mute": { "until" } | null }`, and their iPhones'
+icon badges follow. `400` for Saved Messages, `404` for an unknown user. The clients offer a
+mute once the chat exists: a mute shows in the chat list.
+
+#### `POST /conversations/:peer_user_id/read` `{ "up_to_message_id": "<uuid>" }` → `200`
+
+```json
+{ "read_at": "...", "unread_count": 0, "receipts": 2 }
+```
+
+The caller looked at the chat. Moves their read marker (never backwards) to the message — omitted:
+the newest — and sends the peer read receipts for what it covers while they are still a contact,
+as `POST /messages/read` does. `POST /messages/:id/read` and `POST /messages/read` move the marker
+too, and so does sending a message (a reply means the chat was read; only one that read
+something unread is announced). When the marker moves, the caller's other devices get
+`{ "type": "conversation.read", "conversation_id", "peer_user_id", "read_at", "unread_count" }`
+(they drop the chat's badge and its delivered notifications), and their iPhones without a socket
+a badge-only push (`apns-priority: 5`, collapse id `badge`).
+
+#### `GET /conversations` additions
+
+- `unread_count`: the peer's messages after the later of the read marker and the chat's clear —
+  not annotations, not deleted for everyone, not hidden — capped at 999.
+- `mute`: `{ "until": null | "<time>" }` while muted, else `null`.
+
+#### `GET /push/web/key` → `200`
+
+`{ "public_key": "<base64url uncompressed P-256 point>" }` — the `applicationServerKey` browsers
+subscribe with. `404` when Web Push is unavailable.
+
+#### `PUT /push/web/subscription` → `204`
+
+```json
+{ "endpoint": "https://fcm.googleapis.com/fcm/send/…", "keys": { "p256dh": "<base64url>", "auth": "<base64url>" } }
+```
+
+The browser's `PushSubscription.toJSON()`. The endpoint must be `https` on a known push service
+(Google, Mozilla, Apple, Microsoft, plus `WEB_PUSH_ALLOWED_HOSTS`), never an IP address, a port
+or credentials, else `400` — the server must not POST wherever a client points it. It is checked
+and stored as the HTTP client parses it (a `\` ends a host there, as in browsers). `404` when
+Web Push is unavailable. One per device; an endpoint another device held moves here.
+`DELETE /push/web/subscription` → `204`.
+
+#### `POST /push/test` → `200`
+
+```json
+{ "channel": "apns", "status": "sent" }
+```
+
+A "Notifications are working" push to the calling device, socket or not. `channel`: `apns`, `web`,
+or null when it registered for neither. `status`: `sent`, `not_registered`, `not_configured` (this
+server cannot reach that relay), `misconfigured` (the relay refused this server's key or topic —
+`BadEnvironmentKeyInToken`, `InvalidProviderToken`, a VAPID 401/403, …; nothing on the device can
+fix it), `rejected` (the relay refused the token or subscription; it was removed), `failed`;
+`detail` says why for the last three. Budget: 6 per minute per device.
+
+#### Sign-out and deletion
+
+Logout, device removal, reusing a device at the cap, and account deletion drop the device's
+tokens, subscription and settings. A device signed out by a password change keeps them until it
+opens again, but gets no pushes meanwhile (only devices with a live session are pushed to). Account deletion also drops the user's read markers and mutes,
+and other users' mutes of them.
 
 ### Later routes (outline)
 
 | Area | Routes |
 | --- | --- |
-| Push | `PUT /push/token` |
-| Real-time | Redis multi-replica fan-out |
-| Calls | signaling |
+
 
 ---
 
@@ -1053,13 +1671,25 @@ Add optional:
 | --- | --- |
 | `DATABASE_URL` | Postgres |
 | `DATABASE_POOL_MAX` | Pool size per instance |
-| `REDIS_URL` | Optional; enables multi-replica WS fan-out (+ future limits/presence) |
+| `REDIS_URL` | Optional; enables multi-replica WS fan-out, shared rate limits, presence |
+| `TRUST_FORWARDED_HEADERS` | Honor XFF / X-Real-IP for rate-limit keys (trusted proxy only; default false) |
+| `REACTIONS_MAX_PER_USER` | Most emoji one person may leave on one message (default 5; outside 1–20 the server refuses to start); clients read it from `GET /config` |
 | `HOST` / `PORT` | Bind (default localhost:8080) |
 | `RUN_MIGRATIONS` | Prefer single migrator when scaled |
-| `NEBULAR_URL` | Nebular base URL |
-| `NEBULAR_SIGNING_SECRET` | Presign material (name may match Nebular docs) |
-| `NEBULAR_MEDIA_BUCKET` | Default `shroud-media` |
-| APNs credentials | When push ships |
+| `MEDIA_DATA_DIR` | Local ciphertext blob directory; with Nebular, the older volume moved into it on start |
+| `NEBULAR_URL` | Nebular base URL (bare origin, e.g. `http://nebular:9000`); unset = local directory |
+| `NEBULAR_ACCESS_KEY_ID` / `NEBULAR_SECRET_ACCESS_KEY` | The API's SigV4 key (Nebular's `NOS_S3_ACCESS_KEY` / `NOS_S3_SECRET_KEY`); required with `NEBULAR_URL`, secret ≥ 16 chars |
+| `NEBULAR_MEDIA_BUCKET` | Default `shroud-media` (S3 naming rules) |
+| `NEBULAR_REGION` | Signature scope only; default `us-east-1` |
+| `APNS_KEY_PATH` or `APNS_KEY_PEM` | PKCS#8 AuthKey `.p8` (path or inline PEM) |
+| `APNS_KEY_ID` | Key ID from Apple developer |
+| `APNS_TEAM_ID` | Apple Team ID (JWT `iss`) |
+| `APNS_TOPIC` | App bundle id (`apns-topic`) |
+| `WEB_PUSH_VAPID_PRIVATE_KEY` / `WEB_PUSH_VAPID_PUBLIC_KEY` | Optional, both or neither: your own VAPID key pair (base64url, `web-push generate-vapid-keys` format). Unset, the server generates one on first start and keeps it in `server_keys` (it retries every minute while that table is missing). A new key makes each browser subscribe again the next time it opens Shroud |
+| `WEB_PUSH_SUBJECT` | VAPID `sub`: how push services reach the operator (`mailto:` or `https:`). Default: the `WEB_PUBLIC_URL` origin when it is https, else a placeholder |
+| `WEB_PUSH_ALLOWED_HOSTS` | Extra push-service host suffixes, comma separated (Google, Mozilla, Apple and Microsoft are built in) |
+| `TURN_URLS` / `TURN_USERNAME` / `TURN_CREDENTIAL` | Optional TURN for ICE response |
+| `ICE_SERVERS_JSON` | Full ICE server JSON array (overrides TURN_* defaults) |
 
 ---
 
@@ -1068,17 +1698,21 @@ Add optional:
 | Risk | Note |
 | --- | --- |
 | No password recovery | No live session ⇒ no server history access even with phrase. Document in UI; optional recovery codes later. |
-| Indefinite retention | Storage growth; rely on user delete + account hard-delete + capacity planning. |
+| Indefinite retention | Storage growth; rely on user delete + account deletion + capacity planning. |
 | Shareable UUIDs | Still require contact accept; rate-limit lookups and requests. |
 
 ---
 
 ## Still open
 
-1. **Envelope ciphertext encoding** — client crypto; server stores opaque bytes (messaging milestone).
-2. **Nebular presign wire format** — when media lands.
-3. **Multi-device key fetch for send** — m2 is single best-device GET; messaging will likely add list/fetch-all-device bundles for fan-out.
-4. **Redis rate-limit wiring** — budgets documented; enforce when Redis is in the stack (auth/keys can ship without Redis first).
+1. **Multi-replica media** — **done**: with `NEBULAR_URL` set, Nebular OS is the only media store, so every replica sees every blob (the earlier mirror never authenticated and stored nothing). Blobs from the old local volume are moved into Nebular on start. Orphan GC + download ACL are **done**.
+2. **Multi-device key fetch for send** — **done** (`GET /keys/bundles/:user_id` returns all publishable devices with optional OTPK each; single-device `GET /keys/bundle/:user_id` kept).
+3. **Redis rate-limit wiring** — **done** (auth, keys, contacts, media, WS, messages, calls, sensitive auth; Redis when configured).
+4. **VoIP / CallKit push** — iOS registers PushKit tokens (`kind: voip`) and the client can send `apns-push-type: voip` (topic `<bundle>.voip`), but calls ring by alert push for now. A PushKit ring must be reported to CallKit and ended when the caller hangs up; that needs the hang-up to reach a locked iPhone without its socket first (a `call.ended` VoIP push).
+5. **iOS polish** — **done** for media, voice, call UI/WebRTC/CallKit, presence, unread, multi-device self-box decrypt. Remaining: group chats, SFU, server-assist transcription.
+6. **Double Ratchet** — **done** on client (envelope v3 default; identity X3DH-lite bootstrap; dual-initiator session reset; v1/v2 still openable).
+7. **Envelope ciphertext encoding** — server stores opaque bytes; client uses JSON sealed / DR envelope inside Base64 ciphertext field.
+8. **Observability** — **done** (lightweight Prometheus text at `GET /api/v1/metrics`: request counts, media puts/gets, store errors, legacy-volume reads and moves, calls). Full OpenTelemetry tracing still optional later.
 
 ---
 
