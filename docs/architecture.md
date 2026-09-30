@@ -6,6 +6,7 @@ High-level structure for the E2E encrypted messenger.
 | --- | --- |
 | **[server-plan.md](./server-plan.md)** | Server decisions, milestones, locked Auth API |
 | [thought-collection.md](../thought-collection.md) | Calls, WebRTC, Compose scaling notes |
+| **[android-plan.md](./android-plan.md)** | Android client: open decisions and workstreams (design in `design/Android-App.pen`, no code yet) |
 
 ## Components
 

@@ -9,6 +9,7 @@ lands in the matching `.pen` file in the same piece of work:
 | ------------------- | ------------------------ |
 | `ios/`              | `design/iOS-App.pen`     |
 | `web/`              | `design/webclient.pen`   |
+| `android/`          | `design/Android-App.pen` |
 
 A change that touches both clients updates both files. Removed UI is removed from the design too,
 not left behind as a stale frame.
