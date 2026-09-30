@@ -52,14 +52,14 @@ struct RootView: View {
 
     var body: some View {
         ZStack {
-            // Unlock reveal: Chats rises in from 0.96 while the lock screen dissolves over it.
+            // Unlock reveal: Chats fades in while the lock screen dissolves over it; its content
+            // rises in from 0.96 (inside `MainTabView`, so the tab bar stays put at the bottom).
             // The lock screen may have built the shell already (hidden, see
             // `AppRouter.prewarmMainShell`); the reveal then animates that same view in.
             Group {
                 if router.mountsMainShell {
-                    MainTabView(router: router)
+                    MainTabView(router: router, isRevealed: router.isUnlocked)
                         .opacity(router.isUnlocked ? 1 : 0)
-                        .scaleEffect(router.isUnlocked || reduceMotion ? 1 : 0.96)
                         .allowsHitTesting(router.isUnlocked)
                         // Also out of VoiceOver's reach under the call screen and under the
                         // screen-capture cover: both hide the chats only visually.
@@ -68,12 +68,8 @@ struct RootView: View {
                         )
                         .onAppear { router.mainShellMounted = true }
                         .onDisappear { router.mainShellMounted = false }
-                        .transition(.asymmetric(
-                            insertion: reduceMotion
-                                ? AnyTransition.opacity
-                                : AnyTransition.scale(scale: 0.96).combined(with: .opacity),
-                            removal: .opacity
-                        ))
+                        // No scale: it would carry the tab bar in from 0.96 too.
+                        .transition(.opacity)
                 }
                 if !router.isUnlocked {
                     onboardingStack

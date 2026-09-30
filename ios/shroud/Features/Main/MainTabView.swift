@@ -9,6 +9,8 @@ import UIKit
 /// like “first tap only hides the bar, second tap opens the chat”.
 struct MainTabView: View {
     let router: AppRouter
+    /// The unlock reveal is showing the shell; false while it is prewarmed hidden.
+    var isRevealed = true
 
     @Environment(MessagingController.self) private var messaging
     @Environment(NotificationsController.self) private var notifications
@@ -33,6 +35,9 @@ struct MainTabView: View {
     /// geometry reading lands after the first layout, and starting at 0 dropped the bar 12 pt
     /// on the shell's first frame (visible as a jump at the end of the unlock reveal).
     @State private var homeIndicatorInset: CGFloat = Self.windowBottomInset()
+    /// Set on appear. Sign-up and log-in insert the shell already revealed, without a prewarm;
+    /// their content still rises in from 0.96.
+    @State private var hasAppeared = false
 
     // Same curve as before, now expressed as a design-system token (`Motion.standard`).
     private let tabAnimation = Motion.standard
@@ -97,6 +102,10 @@ struct MainTabView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // Reduce Motion: a plain cross-fade, no slide or scale.
                 .transition(reduceMotion ? AnyTransition.opacity : tabContentTransition)
+                // The unlock reveal rises the content in from 0.96 (RootView fades the shell).
+                // Only the content: scaling the whole shell carried the tab bar ~17 pt down into
+                // place on every launch.
+                .scaleEffect((isRevealed && hasAppeared) || reduceMotion ? 1 : 0.96)
                 // Always the same modifier shape; only the edges flag changes.
                 // Ignore the keyboard while the bar is showing (clearance covers it).
                 // Header search hides the bar — let the list sit above the keyboard.
@@ -172,7 +181,10 @@ struct MainTabView: View {
         }
         // A notification (or in-app banner) tap: open what it is about — also one tapped
         // before the unlock.
-        .onAppear { openPendingNotification() }
+        .onAppear {
+            withAnimation(Motion.respecting(reduceMotion, Motion.gentle)) { hasAppeared = true }
+            openPendingNotification()
+        }
         .onChange(of: notifications.pendingOpen) { _, _ in openPendingNotification() }
         .onChange(of: messaging.hasLoadedServerChats) { _, _ in openPendingNotification() }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { note in
