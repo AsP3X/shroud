@@ -67,8 +67,19 @@ final class CallController {
     /// Current call screen (nil when idle).
     private(set) var active: ActiveCall?
     private(set) var lastError: String?
-    /// Recent ended calls for the Calls tab (this launch only).
+    /// The Calls tab: every call of this account, placed or taken on any of its devices, newest
+    /// first. The server keeps them (`GET /calls`); a call that just ended here shows at once and
+    /// gives way to the server's row when a reload lists it.
     private(set) var recent: [RecentCall] = []
+    /// The first history load since sign-in has come back, with calls or with an error.
+    private(set) var hasLoadedHistory = false
+    /// Why the history could not load, while there is nothing to show; nil otherwise.
+    private(set) var historyError: String?
+    /// The server has older calls than the ones loaded (the last page came back full).
+    private(set) var historyHasMore = false
+    private(set) var isLoadingOlderHistory = false
+    /// The last older page failed: the list end offers to try again (its row has already appeared).
+    private(set) var olderHistoryFailed = false
     private(set) var localVideoTrack: RTCVideoTrack?
     private(set) var remoteVideoTrack: RTCVideoTrack?
     /// Their camera's frames are arriving since it was last switched on: their picture shows.
@@ -83,11 +94,19 @@ final class CallController {
     /// The resolution and frame rate our screen goes out at, in every call from this phone.
     private(set) var screenShareQuality = ScreenShareQuality.saved
 
+    /// One call in the Calls tab.
+    ///
+    /// Human: `id` is the server's call id, the same for both people and all their devices. It is
+    /// what a call transcript will hang off once calls can be transcribed (docs/calls.md,
+    /// "Call history").
     struct RecentCall: Identifiable, Equatable {
         let id: UUID
         let peerUserID: UUID
         let peerUsername: String
+        /// Their account is gone: no name, and no calling back.
+        var peerDeleted = false
         let modality: CallModality
+        /// We placed it, from this or another of our devices.
         let isOutgoing: Bool
         /// How it ended, in the server's words ("ended", "missed", "rejected", "cancelled", "busy";
         /// `recentStatus`), or "answered_elsewhere" when another of our devices took the call.
@@ -95,8 +114,28 @@ final class CallController {
         /// Media connected at some point. An "ended" call that never did (couldn't connect, lost
         /// while connecting, hung up before it connected) is not a completed one.
         let connected: Bool
+        /// How long the two talked, from the answer to the end; nil when they never did.
+        var duration: TimeInterval?
+        /// When it was placed (a call that just ended here: when it ended, until the server's
+        /// row replaces it).
         let at: Date
     }
+
+    /// Calls per history page; the server allows up to 100.
+    private static let historyPageSize = 100
+    /// The server's pages, newest first, without calls still ringing or running.
+    private var history: [RecentCall] = []
+    /// Calls that ended on this phone and are not in `history` yet.
+    private var endedHere: [RecentCall] = []
+    /// Whether media connected, for calls that ran on this phone this launch. The server only
+    /// knows the call was answered.
+    private var connectedHere: [UUID: Bool] = [:]
+    /// `created_at` of the oldest call loaded: the next older page starts before it.
+    private var historyCursor: Date?
+    /// Numbers history loads so a slow one never overwrites a newer answer; bumped by sign-out.
+    private var historyRequest = 0
+    private var historyApplied = 0
+    private var historyEpoch = 0
 
     private let service = CallsService()
     private let engine = CallMediaEngine()
@@ -256,6 +295,16 @@ final class CallController {
         active = nil
         lastError = nil
         recent = []
+        history = []
+        endedHere = []
+        connectedHere = [:]
+        historyCursor = nil
+        historyEpoch += 1
+        hasLoadedHistory = false
+        historyError = nil
+        historyHasMore = false
+        isLoadingOlderHistory = false
+        olderHistoryFailed = false
     }
 
     func bind(session: SessionController, messaging: MessagingController) {
@@ -263,11 +312,123 @@ final class CallController {
         messagingController = messaging
         // A push can ring before this bind; the socket needs the token it now has.
         if machine != nil { holdSocket() }
+        Task { await refreshHistory() }
+    }
+
+    // MARK: - Call history
+
+    /// Loads the newest page of the history again. Older pages already loaded stay.
+    func refreshHistory() async {
+        guard let token = sessionController?.bearerToken, let me = sessionController?.userID else { return }
+        let myDevice = sessionController?.session?.deviceID
+        historyRequest += 1
+        let request = historyRequest
+        let epoch = historyEpoch
+        do {
+            let page = try await service.history(limit: Self.historyPageSize, token: token)
+            // A newer load already answered, or the account signed out meanwhile.
+            guard epoch == historyEpoch, request > historyApplied else { return }
+            historyApplied = request
+            let rows = page.compactMap { call in
+                Self.recentCall(from: call, me: me, myDevice: myDevice, connectedHere: connectedHere[call.id])
+            }
+            let full = page.count >= Self.historyPageSize
+            if full, let oldest = page.last?.createdAt, historyCursor.map({ $0 < oldest }) == true {
+                // Keep the older pages the list has scrolled into.
+                let ids = Set(rows.map(\.id))
+                history = rows + history.filter { !ids.contains($0.id) && $0.at < oldest }
+            } else {
+                history = rows
+                historyCursor = page.last?.createdAt
+                historyHasMore = full
+            }
+            historyError = nil
+            hasLoadedHistory = true
+            publishRecent()
+        } catch {
+            guard epoch == historyEpoch, request > historyApplied else { return }
+            // Leaving the tab cancels its load: that is no failure.
+            if error is CancellationError || (error as? URLError)?.code == .cancelled || Task.isCancelled { return }
+            hasLoadedHistory = true
+            // Calls on screen stay; an empty list says the load failed rather than "No calls yet".
+            historyError = recent.isEmpty ? SessionController.userMessage(for: error) : nil
+        }
+    }
+
+    /// Loads the next older page, when the list has scrolled to its end.
+    func loadOlderHistory() async {
+        guard historyHasMore, !isLoadingOlderHistory, let before = historyCursor,
+              let token = sessionController?.bearerToken, let me = sessionController?.userID
+        else { return }
+        let myDevice = sessionController?.session?.deviceID
+        let epoch = historyEpoch
+        isLoadingOlderHistory = true
+        olderHistoryFailed = false
+        defer { if epoch == historyEpoch { isLoadingOlderHistory = false } }
+        let page: [CallDTO]
+        do {
+            // Dates travel in milliseconds, `created_at` in microseconds: 1 ms later still takes
+            // every call from the boundary millisecond, and the ids below drop the ones listed.
+            page = try await service.history(
+                limit: Self.historyPageSize,
+                before: before.addingTimeInterval(0.001),
+                token: token
+            )
+        } catch {
+            if epoch == historyEpoch, historyCursor == before { olderHistoryFailed = true }
+            return
+        }
+        guard epoch == historyEpoch, historyCursor == before else { return }
+        let ids = Set(history.map(\.id))
+        history += page.compactMap { call in
+            ids.contains(call.id) ? nil
+                : Self.recentCall(from: call, me: me, myDevice: myDevice, connectedHere: connectedHere[call.id])
+        }
+        historyCursor = page.last?.createdAt ?? before
+        historyHasMore = page.count >= Self.historyPageSize
+        publishRecent()
+    }
+
+    /// A server call as the Calls tab lists it, from `me`'s side; nil while it rings or runs.
+    /// - Parameter connectedHere: Whether media connected, when the call ran on this phone.
+    static func recentCall(from call: CallDTO, me: UUID, myDevice: UUID?, connectedHere: Bool?) -> RecentCall? {
+        guard !call.isLive else { return nil }
+        let outgoing = call.callerUserId == me
+        let peerName = outgoing ? call.calleeUsername : call.callerUsername
+        // What this phone saw beats the server's "answered", but only for the device that answered.
+        let ranHere = myDevice != nil && (call.callerDeviceId == myDevice || call.calleeDeviceId == myDevice)
+        let connected = (ranHere ? connectedHere : nil) ?? (call.answeredAt != nil)
+        var duration: TimeInterval?
+        if connected, call.status == "ended", let answered = call.answeredAt, let ended = call.endedAt {
+            duration = max(0, ended.timeIntervalSince(answered))
+        }
+        return RecentCall(
+            id: call.id,
+            peerUserID: outgoing ? call.calleeUserId : call.callerUserId,
+            peerUsername: peerName ?? "Deleted account",
+            peerDeleted: peerName == nil,
+            modality: call.callModality,
+            isOutgoing: outgoing,
+            status: recentStatus(call.status, reason: call.endedReason),
+            connected: connected,
+            duration: duration,
+            at: call.createdAt
+        )
+    }
+
+    /// `recent` from the server's rows and the calls that ended here since.
+    private func publishRecent() {
+        let listed = Set(history.map(\.id))
+        endedHere.removeAll { listed.contains($0.id) }
+        let rows = (endedHere + history).sorted { $0.at > $1.at }
+        if recent != rows { recent = rows }
     }
 
     /// Handle raw realtime call events from `RealtimeClient`.
     func handleRealtime(type: String, json: [String: Any]) {
         if type == "auth.ok" {
+            // Calls may have come and gone while the socket was down.
+            Task { await refreshHistory() }
             guard let machine, machine.serverID != nil else { return }
             Task { await self.reconcile(machine) }
             return
@@ -284,6 +445,8 @@ final class CallController {
             handleAccepted(json)
         case "call.ended":
             handleEnded(json)
+            // Every call of ours ends up here, also those of our other devices.
+            Task { await refreshHistory() }
         case "call.signal":
             handleSignal(json)
         default:
@@ -1410,13 +1573,20 @@ final class CallController {
                 case .reject:
                     try? await service.rejectCall(id: serverID, token: token)
                 }
+                // The server lists the call once it has ended there.
+                await refreshHistory()
             }
+        } else if serverID != nil {
+            Task { await refreshHistory() }
         }
         if let serverID {
             closeKit(serverID, close)
         }
         if let call = active, let serverID {
-            recent.insert(
+            let now = Date()
+            connectedHere[serverID] = call.startedAt != nil
+            endedHere.removeAll { $0.id == serverID }
+            endedHere.insert(
                 RecentCall(
                     id: serverID,
                     peerUserID: call.peerUserID,
@@ -1425,11 +1595,14 @@ final class CallController {
                     isOutgoing: call.isOutgoing,
                     status: status,
                     connected: call.startedAt != nil,
-                    at: Date()
+                    duration: call.startedAt.map { now.timeIntervalSince($0) },
+                    at: now
                 ),
                 at: 0
             )
-            if recent.count > 40 { recent = Array(recent.prefix(40)) }
+            // The server's row, if a reload already had it, gives way until the next reload.
+            history.removeAll { $0.id == serverID }
+            publishRecent()
         }
         self.machine = nil
         guard let text else {

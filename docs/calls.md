@@ -90,6 +90,36 @@ A call rings for at most **60 s**. The server ends a call whose device has not b
 as `ended`/`connection_lost`. Before `POST /calls` checks for busy, it ends such calls of both
 people, so a crashed app never leaves anyone "busy".
 
+## Call history
+
+The Calls tab lists every call of the account, newest first: placed or taken, on any of its
+devices, answered or not. The server keeps each call's row (who called whom, from which device,
+voice or video, when it was placed, answered and ended, how it ended) for as long as both
+accounts exist; `GET /calls` pages through them with `before=<created_at>` (100 at a time on
+the iPhone). A call still ringing or running is left out until it ends.
+
+Each row shows the other person, the direction ("Outgoing voice", "Incoming video"), how it
+ended ("Missed", "No answer", "Declined", "Cancelled", "Failed") or, for a call that talked,
+how long (answer to end, "4:12"), and when it was placed. A call refused as busy (`CALL_BUSY`)
+never gets a row, so it is not listed.
+
+| Piece | Where |
+| --- | --- |
+| iPhone | `CallController.refreshHistory` / `loadOlderHistory`, `Features/Main/CallsView.swift` |
+| Web | no call list yet |
+
+The iPhone reloads the list when the tab appears, on pull to refresh, when the socket
+(re)connects, on every `call.ended` (sent to every device of both people except the one that
+ended it, so a call from another of our devices shows too) and after a call ends on the phone
+itself. That call shows at once and gives way to the server's row. The server only knows a call was answered; the phone that ran it also
+knows whether the media ever connected, and says "Failed" rather than a duration when it
+did not (this launch only).
+
+**Transcripts (planned).** A call's id is the same for both people and all their devices, so a
+transcript attaches to it by id. It is call content, not metadata: sealed like messages, never
+readable by the server (the same way voice-note transcripts travel as sealed annotations,
+architecture.md). Nothing about transcripts is stored yet.
+
 ## WebSocket events
 
 | type | fields | to |

@@ -32,10 +32,15 @@ nonisolated struct CallsService: Sendable {
         try await client.get(path(id), as: CallDTO.self, bearerToken: token)
     }
 
-    func history(limit: Int = 50, token: String) async throws -> [CallDTO] {
+    /// The account's calls, newest first; `before` pages back from a call's `created_at`.
+    func history(limit: Int = 50, before: Date? = nil, token: String) async throws -> [CallDTO] {
+        var query = ["limit": String(limit)]
+        if let before {
+            query["before"] = ISO8601DateFormatter.string(fromAPI: before)
+        }
         let response: CallListResponse = try await client.get(
             "calls",
-            query: ["limit": String(limit)],
+            query: query,
             as: CallListResponse.self,
             bearerToken: token
         )
