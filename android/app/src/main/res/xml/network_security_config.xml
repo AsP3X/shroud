@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext is allowed at this level so a self-hosted server on the LAN or the emulator host
+  (10.0.2.2) works without TLS, as iOS allows with NSAllowsLocalNetworking. The app itself refuses
+  plain HTTP to anything but local addresses (ServerConfiguration.isLocalNetworkHost, checked on
+  Save and again before every request). User-added CAs are not trusted.
+-->
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+    <base-config cleartextTrafficPermitted="true" tools:ignore="InsecureBaseConfiguration">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

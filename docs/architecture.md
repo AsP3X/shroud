@@ -6,7 +6,7 @@ High-level structure for the E2E encrypted messenger.
 | --- | --- |
 | **[server-plan.md](./server-plan.md)** | Server decisions, milestones, locked Auth API |
 | [thought-collection.md](../thought-collection.md) | Calls, WebRTC, Compose scaling notes |
-| **[android-plan.md](./android-plan.md)** | Android client: open decisions and workstreams (design in `design/Android-App.pen`, no code yet) |
+| **[android-plan.md](./android-plan.md)** | Android client: open decisions and workstreams (design in `design/Android-App.pen`; foundation, sign-up and log-in in `android/`) |
 
 ## Components
 
@@ -39,6 +39,7 @@ High-level structure for the E2E encrypted messenger.
 | iOS UI | `ios/shroud/ShroudUI/` | Reusable SwiftUI components + `Theme` |
 | iOS features | `ios/shroud/Features/` | Screens (MVVM), 1:1 with design |
 | iOS services | `ios/shroud/Services/` | API client, crypto, persistence |
+| Android | `android/` | Kotlin + Compose app; `core/` (API, crypto, storage), `ui/` (theme, components, screens) |
 | iOS extension | `ios/ShroudNotificationService/`, `ios/ShroudShared/` | Notification service extension (names the sender of a push); code it shares with the app |
 | Web | `web/` | Vite + React SPA; nginx same-origin `/api/v1` |
 | API | `server/crates/shroud-server/` | HTTP `/api/v1`, WebSocket, auth, relay |

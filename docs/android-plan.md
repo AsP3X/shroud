@@ -10,9 +10,42 @@ Read this before the first commit in `android/`.
 | [calls.md](./calls.md) | Call signalling, media, screen sharing, pushes |
 | [privacy-options.md](./privacy-options.md) | Privacy settings; Phase 5 (device protections) has Android equivalents below |
 
-**Status (2026-09-30):** design done, no code. Nothing below is implemented or verified on a
-device; version numbers and API behaviour should be checked against current Android docs when
-each item is picked up.
+**Status (2026-09-30):** foundation, sign-up and log-in are in `android/` (see
+[android/README.md](../android/README.md)), run end to end against a local server on Android 17
+and Android 11 emulators (debug and minified release builds). Everything else below is open.
+Version numbers and API behaviour should be checked against current Android docs when each item
+is picked up.
+
+What the first slice does and does not do:
+
+- **Sign Up has two steps**, unlike iOS: *Account* (username, password) and *Phrase* (the
+  phrase, Copy, "I wrote it down"). Nothing reaches the server until the phrase step's Create
+  Account, so an abandoned sign-up leaves no account without keys; a taken or refused name sends
+  the user back to the first step. Log In keeps the iOS two-step flow.
+- Sign Up, Log In and the phrase step talk to the real API and publish the key bundle, as iOS
+  does. BIP39, the HKDF derivations, X25519 and Ed25519 are ported and pinned by golden vectors
+  that match the web client's libraries (`IdentityKeyMaterialTest`); on the emulator the key the
+  server stored matched the web derivation of the same phrase.
+- The session token and the device anchor are sealed by a TEE Keystore key without user auth
+  (the `AfterFirstUnlockThisDeviceOnly` mapping of decision 1) in no-backup storage.
+- **No history-key vault yet.** Nothing derived from the phrase is stored, so every launch and
+  every return from the background asks for the phrase again (the phrase step then offers
+  Log Out instead of Back), and each unlock publishes a fresh signed prekey and one-time prekeys
+  (the iOS re-establish path). The vault and the Lock screen replace this.
+- Sign Up refuses to continue on a phone without a screen lock (designed as
+  *Sign Up — No Screen Lock*), so the vault can require one later.
+- **Android 17 local-network permission.** Apps targeting API 37 cannot reach private addresses
+  (a LAN server, the emulator host 10.0.2.2) without `ACCESS_LOCAL_NETWORK`, a runtime permission
+  in the Nearby devices group. The app asks right before the first request to such a server
+  (*Permission — Local Network*, denied state designed). Plain HTTP is allowed to local
+  addresses only, as iOS allows it.
+- The phrase screens are kept out of the Recents thumbnail (`setRecentsScreenshotEnabled(false)`
+  on 13+, `FLAG_SECURE` on 11–12, which also blocks screenshots there). App-wide screenshot
+  blocking is still decision G.
+- No device name is sealed: the kind byte has no Android value yet (see Server changes).
+- After unlocking, a temporary placeholder with Log Out stands in for the main shell; it is not
+  in the design on purpose.
+
 
 ## Ground rules
 
@@ -89,18 +122,21 @@ Order is roughly dependency order. iOS sources are the reference implementation.
 
 ### A. Foundation
 
-- [ ] Project: Kotlin, Jetpack Compose, single activity, edge-to-edge. Min SDK: decide (26
-      covers Keystore features used here; blur needs 31, fallback designed as *Glass — Without Blur*).
-- [ ] Theme tokens from the design variables (light + dark), Inter bundled, motion constants
+- [x] Project: Kotlin, Jetpack Compose, single activity, edge-to-edge. Min SDK 30 (Android 11,
+      the oldest in the test matrix; Keystore auth parameters need it). Blur needs 31, fallback
+      designed as *Glass — Without Blur*.
+- [x] Theme tokens from the design variables (light + dark), Inter bundled, motion constants
       from `ios/shroud/ShroudUI/Theme/Motion.swift`.
 - [ ] Reproducible release builds from day one (pinned toolchain, no build timestamps);
-      decide on Play App Signing vs. own key, since it affects who can verify a build.
-- [ ] `android:allowBackup="false"` and `dataExtractionRules` excluding everything
+      decide on Play App Signing vs. own key, since it affects who can verify a build. Done so
+      far: Gradle wrapper pinned by checksum, versions in `gradle/libs.versions.toml`, no
+      dependency metadata in the APK. Not yet checked by building twice and comparing.
+- [x] `android:allowBackup="false"` and `dataExtractionRules` excluding everything
       (invariant 4: files excluded from backups).
 
 ### B. Crypto and storage
 
-- [ ] Port `Services/Crypto`: BIP39, identity keys, double ratchet, message and media crypto,
+- [ ] Port `Services/Crypto`: BIP39 and identity keys done; double ratchet, message and media crypto,
       sender tags, sealed device names, safety numbers. Pass the iOS vectors.
 - [ ] Vault per decision 1. Backgrounding clears the history key and decrypted threads
       from memory (invariant 5); auto-lock delay as in privacy-options Phase 5.
@@ -179,7 +215,9 @@ Order is roughly dependency order. iOS sources are the reference implementation.
       `api_notifications.rs`.
 - [ ] Call pushes for Android: `call` / `video_call` / `call_ended` as high-priority data
       messages with TTL = ring time.
-- [ ] Device list: an Android device type for the Devices screen icon.
+- [ ] Device list: an Android device type for the Devices screen icon. This is a new kind byte in
+      the sealed device name (0 other, 1 iPhone, 2 iPad, 3 web today) that iOS and web must
+      learn to read before Android writes it.
 - [ ] Share links (`/u/<code>`): Android App Links need `/.well-known/assetlinks.json`.
 
 ## Test matrix
@@ -214,6 +252,7 @@ Sections in `design/Android-App.pen` that exist only for Android:
 | Android · Back, Fallbacks & Recovery | Predictive back storyboard, glass without blur |
 | Lock | *Locked — System Biometric Prompt*, *Locked — Fingerprints Changed*, *Locked — No Screen Lock* |
 | Screen Share | *Screen Share — System Consent* |
+| Onboarding (right of the Platform Notes card) | *Sign Up — Phrase* (+ Dark), *Sign Up — No Screen Lock*, *Log In Flow — Phrase Step · At Launch*, *Permission — Local Network*, *Sign Up — Phrase · Local Network Denied* |
 
 Not designed yet, because each depends on a decision above: the Android privacy screen
 without the keyboard switch and with a screenshot switch (G), battery-restriction help (D),

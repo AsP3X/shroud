@@ -2,7 +2,7 @@
 
 # Shroud
 
-End-to-end encrypted messenger: **Rust + PostgreSQL** server, a **native iOS** app, and a **web client**.
+End-to-end encrypted messenger: **Rust + PostgreSQL** server, a **native iOS** app, a **web client**, and an **Android** app (early: sign-up and log-in).
 
 ## Repository layout
 
@@ -13,6 +13,8 @@ End-to-end encrypted messenger: **Rust + PostgreSQL** server, a **native iOS** a
 | `server/` | Rust workspace — Axum API, migrations, integration tests |
 | `web/` | Vite + React web client (same-origin `/api/v1` via nginx) |
 | `ios/` | Native iOS app — SwiftUI, ShroudUI component library |
+| `android/` | Native Android app — Kotlin, Jetpack Compose ([android/README.md](android/README.md)) |
+| `design/Android-App.pen` | Android design source (Pencil) |
 | `docs/` | Architecture, [server plan](docs/server-plan.md), [web client](docs/web-client.md) |
 
 ## Prerequisites
