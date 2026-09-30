@@ -8,6 +8,7 @@ lands in the matching `.pen` file in the same piece of work:
 | Code                | Design file              |
 | ------------------- | ------------------------ |
 | `ios/`              | `design/iOS-App.pen`     |
+| `ios/` (iPad layout) | `design/iPad-App.pen`   |
 | `web/`              | `design/webclient.pen`   |
 | `android/`          | `design/Android-App.pen` |
 
