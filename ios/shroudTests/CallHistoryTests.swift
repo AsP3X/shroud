@@ -130,6 +130,65 @@ struct CallHistoryTests {
         #expect(row.peerUsername == "Deleted account")
     }
 
+    private func recent(with peer: UUID, minutesAgo: Double) -> CallController.RecentCall {
+        CallController.RecentCall(
+            id: UUID(),
+            peerUserID: peer,
+            peerUsername: peer == them ? "anna" : "ben",
+            modality: .voice,
+            isOutgoing: true,
+            status: "ended",
+            connected: true,
+            at: Date(timeIntervalSince1970: 1_790_000_000 - minutesAgo * 60)
+        )
+    }
+
+    /// Anna, Anna, Ben, Anna: the first two share a section, Ben's call ends it.
+    @Test func backToBackCallsWithOnePersonShareASection() {
+        let ben = UUID()
+        let list = [
+            recent(with: them, minutesAgo: 0),
+            recent(with: them, minutesAgo: 5),
+            recent(with: ben, minutesAgo: 10),
+            recent(with: them, minutesAgo: 15),
+        ]
+        let runs = CallsView.runs(of: list)
+        #expect(runs.map(\.calls.count) == [2, 1, 1])
+        #expect(runs[0].latest == list[0])
+        #expect(runs[0].id == list[1].id)
+        #expect(runs[2].calls == [list[3]])
+    }
+
+    /// A section spans an hour at most, counted from its newest call.
+    @Test func aSectionSpansAnHourAtMost() {
+        let list = [
+            recent(with: them, minutesAgo: 0),
+            recent(with: them, minutesAgo: 40),
+            recent(with: them, minutesAgo: 60),
+            recent(with: them, minutesAgo: 61),
+            recent(with: them, minutesAgo: 100),
+        ]
+        let runs = CallsView.runs(of: list)
+        #expect(runs.map(\.calls.count) == [3, 2])
+        #expect(runs[1].latest == list[3])
+    }
+
+    /// Red "Missed" is for their calls we never took: rang out, or they gave up. Our own
+    /// unanswered calls and the ones we declined are not missed.
+    @Test func onlyTheirUntakenCallsCountAsMissed() {
+        func call(outgoing: Bool, status: String) -> CallController.RecentCall {
+            CallController.RecentCall(
+                id: UUID(), peerUserID: them, peerUsername: "anna", modality: .voice,
+                isOutgoing: outgoing, status: status, connected: false, at: Date()
+            )
+        }
+        #expect(CallsView.isMissed(call(outgoing: false, status: "missed")))
+        #expect(CallsView.isMissed(call(outgoing: false, status: "cancelled")))
+        #expect(!CallsView.isMissed(call(outgoing: false, status: "rejected")))
+        #expect(!CallsView.isMissed(call(outgoing: true, status: "missed")))
+        #expect(!CallsView.isMissed(call(outgoing: true, status: "cancelled")))
+    }
+
     @Test func durationsReadLikeTheCallTimer() {
         #expect(CallsView.durationLabel(0) == "0:00")
         #expect(CallsView.durationLabel(42.9) == "0:42")

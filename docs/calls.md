@@ -103,6 +103,11 @@ ended ("Missed", "No answer", "Declined", "Cancelled", "Failed") or, for a call 
 how long (answer to end, "4:12"), and when it was placed. A call refused as busy (`CALL_BUSY`)
 never gets a row, so it is not listed.
 
+Calls in a row with the same person, all within an hour of the newest of them, share one
+section: collapsed to the person and "3 calls · 1 missed", a tap on the row unfolds one compact
+row per call, each with its own call buttons, along a thread down from the avatar. A call of
+theirs we never took reads "Missed" in red, in its row and in the section's count.
+
 | Piece | Where |
 | --- | --- |
 | iPhone | `CallController.refreshHistory` / `loadOlderHistory`, `Features/Main/CallsView.swift` |
