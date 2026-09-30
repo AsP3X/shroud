@@ -441,7 +441,8 @@ mod tests {
     async fn a_download_chunk_is_passed_through() {
         use futures_util::StreamExt;
 
-        let stream = futures_util::stream::iter([Ok::<_, reqwest::Error>(Bytes::from_static(b"abc"))]);
+        let stream =
+            futures_util::stream::iter([Ok::<_, reqwest::Error>(Bytes::from_static(b"abc"))]);
         let mut limited = idle_limited(stream, Duration::from_secs(5)).boxed();
         let chunk = limited.next().await.expect("chunk").expect("ok");
         assert_eq!(&chunk[..], b"abc");
@@ -462,6 +463,9 @@ mod tests {
             .expect_err("stall is an error");
         assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
         assert!(started.elapsed() < Duration::from_secs(5));
-        assert!(limited.next().await.is_none(), "the stream ends after the stall");
+        assert!(
+            limited.next().await.is_none(),
+            "the stream ends after the stall"
+        );
     }
 }

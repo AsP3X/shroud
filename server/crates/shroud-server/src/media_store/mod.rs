@@ -641,7 +641,8 @@ mod tests {
         let mut left = tokio::fs::read_dir(&dir).await.expect("spool dir");
         assert!(left.next_entry().await.expect("entry").is_none());
 
-        let body = futures_util::stream::iter([Ok::<_, std::io::Error>(Bytes::from_static(b"abc"))]);
+        let body =
+            futures_util::stream::iter([Ok::<_, std::io::Error>(Bytes::from_static(b"abc"))]);
         let spooled = spool_upload(&dir, body, 100, Some(3)).await.expect("spool");
         assert_eq!(spooled.len, 3);
         assert!(spooled.path.starts_with(&dir));
