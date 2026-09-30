@@ -17,7 +17,7 @@ import UIKit
 /// push about 30 s, so everything, the server check included, fits in `budget`.
 @MainActor
 enum DeviceRemovalWake {
-    static let payloadType = "device_removed"
+    nonisolated static let payloadType = "device_removed"
     /// iOS gives a silent push about 30 s in all; this is everything, the server check included.
     private static let budget: Duration = .seconds(25)
     private static let confirmTimeout: Duration = .seconds(8)

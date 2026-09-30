@@ -252,7 +252,7 @@ actor WhisperKitEngine: TranscriptionEngine {
 /// Stock WhisperKit jumps to the end of the window when a decode stops early.
 /// A voice note resumes at the last timestamp instead, so the words after a pause
 /// (or after the token budget) are still transcribed.
-final class WholeVoiceNoteSeeker: SegmentSeeking {
+nonisolated final class WholeVoiceNoteSeeker: SegmentSeeking {
     private let inner = SegmentSeeker()
 
     func findSeekPointAndSegments(

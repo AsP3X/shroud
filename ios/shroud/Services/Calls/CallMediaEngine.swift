@@ -808,7 +808,7 @@ nonisolated private final class FrameWatch: NSObject, RTCVideoRenderer, @uncheck
 }
 
 /// Resumes one level read, from the stats callback or from cancellation, and never both.
-private final class LevelGate: @unchecked Sendable {
+nonisolated private final class LevelGate: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<Float?, Never>?
     private var value: Float?

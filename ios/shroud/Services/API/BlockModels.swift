@@ -1,7 +1,7 @@
 import Foundation
 
 /// A user this account has blocked (`GET /blocks`).
-struct BlockItemDTO: Codable, Equatable, Sendable, Identifiable {
+nonisolated struct BlockItemDTO: Codable, Equatable, Sendable, Identifiable {
     var id: UUID { userId }
     let userId: UUID
     let username: String
@@ -14,7 +14,7 @@ struct BlockItemDTO: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
-struct BlocksListResponse: Decodable, Equatable, Sendable {
+nonisolated struct BlocksListResponse: Decodable, Equatable, Sendable {
     let blocks: [BlockItemDTO]
 }
 

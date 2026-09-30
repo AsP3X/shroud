@@ -12,7 +12,7 @@ import Foundation
 /// Migrates monolithic `snapshot.sealed` / `snapshot.json` once. Requires `historyKey`.
 struct LocalMessageStore: Sendable {
     static let retentionDays: Int = 90
-    static let notesPeerID = UUID(uuidString: "00000000-0000-4000-8000-6E6F74657321")!
+    nonisolated static let notesPeerID = UUID(uuidString: "00000000-0000-4000-8000-6E6F74657321")!
 
     private let fileManager: FileManager
 
@@ -23,7 +23,7 @@ struct LocalMessageStore: Sendable {
     // MARK: - Models
 
     /// Full in-memory picture (used for prune / tests / migration).
-    struct Snapshot: Codable, Equatable, Sendable {
+    nonisolated struct Snapshot: Codable, Equatable, Sendable {
         var version: Int = 2
         var conversations: [CachedConversation] = []
         var contacts: [CachedContact] = []
@@ -34,7 +34,7 @@ struct LocalMessageStore: Sendable {
         var updatedAt: Date = Date()
     }
 
-    struct Roster: Codable, Equatable, Sendable {
+    nonisolated struct Roster: Codable, Equatable, Sendable {
         var version: Int = 1
         var conversations: [CachedConversation] = []
         var contacts: [CachedContact] = []
@@ -43,14 +43,14 @@ struct LocalMessageStore: Sendable {
         var updatedAt: Date = Date()
     }
 
-    struct ThreadFile: Codable, Equatable, Sendable {
+    nonisolated struct ThreadFile: Codable, Equatable, Sendable {
         var version: Int = 1
         var peerID: UUID
         var messages: [StoredMessage] = []
         var updatedAt: Date = Date()
     }
 
-    struct CachedConversation: Codable, Equatable, Sendable {
+    nonisolated struct CachedConversation: Codable, Equatable, Sendable {
         let id: UUID
         let peerID: UUID
         let peerUsername: String
@@ -61,13 +61,13 @@ struct LocalMessageStore: Sendable {
         var unseenReactions: Int?
     }
 
-    struct CachedContact: Codable, Equatable, Sendable {
+    nonisolated struct CachedContact: Codable, Equatable, Sendable {
         let userId: UUID
         let username: String
         let createdAt: Date
     }
 
-    struct CachedContactRequest: Codable, Equatable, Sendable {
+    nonisolated struct CachedContactRequest: Codable, Equatable, Sendable {
         let id: UUID
         let fromUserId: UUID
         let toUserId: UUID
@@ -78,7 +78,7 @@ struct LocalMessageStore: Sendable {
     }
 
     /// Message row without large media blobs (those live in `LocalMediaCache`).
-    struct StoredMessage: Codable, Equatable, Sendable {
+    nonisolated struct StoredMessage: Codable, Equatable, Sendable {
         let id: UUID
         let peerUserID: UUID
         let senderUserID: UUID
@@ -108,6 +108,7 @@ struct LocalMessageStore: Sendable {
         /// Server `created_at`. Optional so threads saved before history cursors kept it still decode.
         var createdAtWire: String? = nil
 
+        @MainActor
         static func from(_ message: MessagingController.ChatMessage) -> StoredMessage {
             StoredMessage(
                 id: message.id,
@@ -135,6 +136,7 @@ struct LocalMessageStore: Sendable {
             )
         }
 
+        @MainActor
         func toChatMessage(media: LocalMediaCache, historyKey: SymmetricKey) -> MessagingController.ChatMessage {
             let kind = MessagingController.ChatMessageKind(storageKey: kind) ?? .text
             var imageData: Data?
@@ -267,7 +269,7 @@ struct LocalMessageStore: Sendable {
     ///
     /// Human: Its own small file, so moving a cursor never rewrites the roster; it lives in the
     /// user's directory and goes with it on sign-out.
-    struct ReactionCursors: Codable, Equatable, Sendable {
+    nonisolated struct ReactionCursors: Codable, Equatable, Sendable {
         var version: Int = 1
         var byPeer: [String: Int64] = [:]
     }

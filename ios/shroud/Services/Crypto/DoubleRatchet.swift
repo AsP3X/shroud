@@ -19,7 +19,7 @@ import Foundation
 ///
 /// Human: Forward secrecy for ongoing chats; identity keys only leave as public material.
 /// Agent: Envelope v3; Keychain session per peer; never logs keys or plaintext.
-enum DoubleRatchet {
+nonisolated enum DoubleRatchet {
     static let envelopeVersion = 3
     /// Max skipped message keys retained per session (out-of-order delivery).
     static let maxSkip = 64

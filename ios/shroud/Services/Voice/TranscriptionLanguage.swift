@@ -384,7 +384,7 @@ nonisolated enum TranscriptionLanguageMemory {
 /// Pure helpers for judging whether a transcript is real speech, and how much to trust it.
 ///
 /// Human: Extracted so the decision rules are testable without audio hardware.
-enum VoiceTranscript {
+nonisolated enum VoiceTranscript {
     /// True when the text contains enough letters to be worth showing.
     static func containsSpeech(_ text: String) -> Bool {
         letterCount(text) >= 2

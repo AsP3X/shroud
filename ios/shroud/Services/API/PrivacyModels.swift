@@ -9,7 +9,7 @@ import Foundation
 /// Human: The three visibility switches work both ways, and the server enforces both: hiding
 /// your read receipts also hides your contacts' from you, and the same goes for typing and
 /// online / last seen.
-struct PrivacySettingsDTO: Codable, Equatable, Sendable {
+nonisolated struct PrivacySettingsDTO: Codable, Equatable, Sendable {
     /// When true, a contact deleting a chat "for both" also clears this account's copy.
     /// When false, their messages are replaced with "Message deleted" here and this
     /// account's own messages survive.
@@ -59,7 +59,7 @@ struct PrivacySettingsDTO: Codable, Equatable, Sendable {
 }
 
 /// Partial update — absent (nil) fields are left unchanged server-side.
-struct UpdatePrivacySettingsBody: Encodable, Equatable, Sendable {
+nonisolated struct UpdatePrivacySettingsBody: Encodable, Equatable, Sendable {
     var allowPeerChatDelete: Bool?
     var sendReadReceipts: Bool?
     var sendTyping: Bool?
@@ -76,7 +76,7 @@ struct UpdatePrivacySettingsBody: Encodable, Equatable, Sendable {
 }
 
 /// `POST /users/me/share-code` — the account's new share code.
-struct ShareCodeDTO: Decodable, Equatable, Sendable {
+nonisolated struct ShareCodeDTO: Decodable, Equatable, Sendable {
     let shareCode: String
 
     enum CodingKeys: String, CodingKey {

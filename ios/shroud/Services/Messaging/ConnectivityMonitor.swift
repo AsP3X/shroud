@@ -19,7 +19,7 @@ final class ConnectivityMonitor {
         started = true
         monitor.pathUpdateHandler = { [weak self] path in
             let online = path.status == .satisfied
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 guard let self else { return }
                 if self.isOnline != online {
                     self.isOnline = online

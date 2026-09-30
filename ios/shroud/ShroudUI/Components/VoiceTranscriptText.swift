@@ -46,9 +46,10 @@ struct VoiceTranscriptText: View {
             .foregroundStyle(color)
         if let trailingReservation {
             // Clear, and untagged: the reveal renderer draws it at once, and nothing shows.
-            styled = styled + Text(verbatim: trailingReservation)
+            let reservation = Text(verbatim: trailingReservation)
                 .font(.system(size: MessageBubbleMetrics.metaFontSize).monospacedDigit())
                 .foregroundStyle(Color.clear)
+            styled = Text("\(styled)\(reservation)")
         }
         return styled
             .lineSpacing(2)

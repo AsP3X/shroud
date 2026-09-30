@@ -51,7 +51,7 @@ struct CallSignalRequest: Encodable, Equatable, Sendable {
 }
 
 /// Call metadata from the server (no media, no keys).
-struct CallDTO: Decodable, Equatable, Sendable, Identifiable {
+nonisolated struct CallDTO: Decodable, Equatable, Sendable, Identifiable {
     let id: UUID
     let callerUserId: UUID
     let callerDeviceId: UUID
@@ -103,7 +103,7 @@ struct CallDTO: Decodable, Equatable, Sendable, Identifiable {
 }
 
 /// A sealed `media_state` signal the server kept for the other device in the call.
-struct PeerMediaStateDTO: Decodable, Equatable, Sendable {
+nonisolated struct PeerMediaStateDTO: Decodable, Equatable, Sendable {
     let fromDeviceId: UUID
     let payload: String
 

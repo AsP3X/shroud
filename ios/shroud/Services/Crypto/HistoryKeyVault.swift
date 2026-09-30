@@ -352,7 +352,7 @@ enum HistoryKeyVault {
         defer { delete(account: probeAccount) }
         delete(account: probeAccount)
 
-        var add: [String: Any] = [
+        let add: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: probeAccount,
@@ -367,11 +367,10 @@ enum HistoryKeyVault {
         // Synchronous Keychain auth UI — run off the main actor, then hop back.
         return try await withCheckedThrowingContinuation { cont in
             DispatchQueue.global(qos: .userInitiated).async {
-                if isAuthAborted() {
+                guard registerActiveAuth(context) else {
                     cont.resume(throwing: VaultError.timedOut)
                     return
                 }
-                registerActiveAuth(context)
                 context.interactionNotAllowed = false
                 context.localizedReason = authenticationReason
 

@@ -122,7 +122,8 @@ struct SessionAuthFailureTests {
 
     @Test
     func removalPushIsRecognisedByType() {
-        #expect(DeviceRemovalWake.isRemoval(["aps": ["content-available": 1], "type": "device_removed"]))
+        let removal = DeviceRemovalWake.isRemoval(["aps": ["content-available": 1], "type": "device_removed"])
+        #expect(removal)
         #expect(!DeviceRemovalWake.isRemoval(["aps": ["badge": 3]]))
         #expect(!DeviceRemovalWake.isRemoval(["type": "message"]))
     }

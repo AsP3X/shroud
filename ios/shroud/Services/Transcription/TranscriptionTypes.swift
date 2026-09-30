@@ -103,7 +103,7 @@ nonisolated struct WhisperDecodePlan: Equatable, Sendable {
 /// With no timestamps, an early end (a pause, or the token budget on a dense
 /// language) is treated as the end of the whole window and the rest is skipped.
 /// A timestamp says how far the words actually reached, so the next pass starts there.
-enum VoiceNoteSeek {
+nonisolated enum VoiceNoteSeek {
     /// Whisper's timestamp grid. The engine passes its own constant as well.
     static let secondsPerTimestamp = 0.02
     /// A shorter tail than this stays with the pass that already decoded it.
@@ -162,7 +162,7 @@ enum VoiceNoteSeek {
 
 /// The language token from the first window. Later windows detect again, and a quiet
 /// tail must not replace the language the opening of the note already settled.
-enum WhisperLanguageToken {
+nonisolated enum WhisperLanguageToken {
     static func code(from tokenText: String) -> String? {
         let trimmed = tokenText.trimmingCharacters(in: .whitespacesAndNewlines)
         let inner: Substring
@@ -188,7 +188,7 @@ enum WhisperLanguageToken {
 /// A language the caller asked for wins. Otherwise the token from the opening
 /// of the note wins over the engine's file-level label, because a later window
 /// detects again and that label is the last window.
-enum WhisperReportedLanguage {
+nonisolated enum WhisperReportedLanguage {
     /// A two-letter code Whisper can be asked for, or nil.
     static func code(_ raw: String?) -> String? {
         guard let raw else { return nil }

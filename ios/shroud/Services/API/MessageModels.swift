@@ -30,7 +30,7 @@ struct SendMessageRequest: Encodable, Equatable, Sendable {
     }
 }
 
-struct MessageDTO: Decodable, Equatable, Sendable, Identifiable {
+nonisolated struct MessageDTO: Decodable, Equatable, Sendable, Identifiable {
     let id: UUID
     let conversationId: UUID
     let senderUserId: UUID
@@ -86,7 +86,7 @@ enum ConversationDeleteScope: String, Equatable, Sendable {
     case everyone
 }
 
-struct DeleteConversationResponse: Decodable, Equatable, Sendable {
+nonisolated struct DeleteConversationResponse: Decodable, Equatable, Sendable {
     /// False only when there was no server-side conversation to clear.
     let clearedForMe: Bool
     /// `everyone` scope: the peer consented, so their copy of the chat is gone as well.
@@ -143,7 +143,7 @@ struct ListMessagesResponse: Decodable, Equatable, Sendable {
 }
 
 extension MessageDTO {
-    init(from decoder: Decoder) throws {
+    nonisolated init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
         conversationId = try container.decode(UUID.self, forKey: .conversationId)

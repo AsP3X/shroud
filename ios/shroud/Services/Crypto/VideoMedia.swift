@@ -800,15 +800,17 @@ nonisolated enum VideoMedia {
         let natural = try await videoTrack.load(.naturalSize)
         let preferred = try await videoTrack.load(.preferredTransform)
 
-        let composition = AVMutableVideoComposition()
-        composition.renderSize = render
-        composition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(max(1, frameRate)))
-        let instruction = AVMutableVideoCompositionInstruction()
-        instruction.timeRange = CMTimeRange(start: .zero, duration: duration)
-        let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTrack)
+        var layer = AVVideoCompositionLayerInstruction.Configuration(assetTrack: videoTrack)
         layer.setTransform(fittedTransform(natural: natural, preferred: preferred, render: render), at: .zero)
-        instruction.layerInstructions = [layer]
-        composition.instructions = [instruction]
+        let instruction = AVVideoCompositionInstruction(configuration: .init(
+            layerInstructions: [AVVideoCompositionLayerInstruction(configuration: layer)],
+            timeRange: CMTimeRange(start: .zero, duration: duration)
+        ))
+        let composition = AVVideoComposition(configuration: .init(
+            frameDuration: CMTime(value: 1, timescale: CMTimeScale(max(1, frameRate))),
+            instructions: [instruction],
+            renderSize: render
+        ))
 
         let reader = try AVAssetReader(asset: asset)
         let videoOutput = AVAssetReaderVideoCompositionOutput(

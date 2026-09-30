@@ -13,7 +13,7 @@ import UIKit
 @Observable
 final class MessagingController {
     /// Local-only "Notes to me" peer — never used as an API peer_user_id.
-    static let notesPeerID = NotesLocal.peerID
+    nonisolated static let notesPeerID = NotesLocal.peerID
     static let notesDisplayName = NotesLocal.displayName
 
     private(set) var contacts: [ContactItemDTO] = []

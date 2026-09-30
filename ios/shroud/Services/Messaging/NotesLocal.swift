@@ -2,7 +2,7 @@ import Foundation
 
 /// Local-only "Notes to me" helpers (never hit the network).
 enum NotesLocal {
-    static let peerID = LocalMessageStore.notesPeerID
+    nonisolated static let peerID = LocalMessageStore.notesPeerID
     static let displayName = "Notes to me"
 
     static func isNotes(_ peerID: UUID) -> Bool {

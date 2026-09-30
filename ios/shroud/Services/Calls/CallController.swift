@@ -599,7 +599,7 @@ final class CallController {
             }
             let created = try await service.createCall(peerUserID: peerUserID, modality: modality, token: token)
             guard current(machine) else {
-                try? await service.hangupCall(id: created.id, token: token)
+                _ = try? await service.hangupCall(id: created.id, token: token)
                 return
             }
             machine.serverID = created.id
@@ -699,6 +699,7 @@ final class CallController {
 
     // MARK: - CallKit
 
+    @discardableResult
     private func ensureCallKit() -> CallKitManager {
         let manager = CallKitManager.shared
         manager.delegate = self
@@ -882,7 +883,7 @@ final class CallController {
                 throw error
             }
             guard current(machine) else {
-                try? await service.hangupCall(id: id, token: token)
+                _ = try? await service.hangupCall(id: id, token: token)
                 return
             }
             machine.accepting = false
@@ -1569,9 +1570,9 @@ final class CallController {
             Task {
                 switch notify {
                 case .hangup:
-                    try? await service.hangupCall(id: serverID, token: token)
+                    _ = try? await service.hangupCall(id: serverID, token: token)
                 case .reject:
-                    try? await service.rejectCall(id: serverID, token: token)
+                    _ = try? await service.rejectCall(id: serverID, token: token)
                 }
                 // The server lists the call once it has ended there.
                 await refreshHistory()
@@ -2064,7 +2065,7 @@ final class CallController {
             return "“Always relay calls” is on, but this server has no relay. Turn it off in Privacy and Security to call directly."
         }
         if let secret = error as? CallSecretError {
-            return secret.localizedDescription ?? "Open Shroud and unlock your chats to connect this call."
+            return secret.errorDescription ?? "Open Shroud and unlock your chats to connect this call."
         }
         if error as? PeerIdentityError == .changed {
             return "This contact's encryption key changed. Verify their safety number before calling."

@@ -104,7 +104,7 @@ struct CallSignalTests {
         #expect(CallSdp.fingerprint(described) == "aa:bb:cc")
         #expect(CallSdp.matches("AA:BB:CC", "aa bb cc"))
         #expect(!CallSdp.matches("AA:BB:CC", "aa:bb:cd"))
-        var object: [String: Any] = ["t": "offer", "sdp": "v=0", "restart": false, "n": 1, "ek": "%%%%"]
+        let object: [String: Any] = ["t": "offer", "sdp": "v=0", "restart": false, "n": 1, "ek": "%%%%"]
         let bad = try JSONSerialization.data(withJSONObject: object)
         #expect(throws: CallSignal.ParseError.malformed) {
             try CallSignal.parse(bad, signalType: "sdp_offer")

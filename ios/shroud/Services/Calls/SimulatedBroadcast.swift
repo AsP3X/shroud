@@ -45,7 +45,9 @@ nonisolated final class SimulatedBroadcast: @unchecked Sendable {
         }
     }
 
-    private lazy var pool: CVPixelBufferPool? = {
+    private let pool: CVPixelBufferPool? = SimulatedBroadcast.makePool()
+
+    private static func makePool() -> CVPixelBufferPool? {
         let attributes: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
             kCVPixelBufferWidthKey as String: Self.width,
@@ -55,7 +57,7 @@ nonisolated final class SimulatedBroadcast: @unchecked Sendable {
         var pool: CVPixelBufferPool?
         CVPixelBufferPoolCreate(kCFAllocatorDefault, nil, attributes as CFDictionary, &pool)
         return pool
-    }()
+    }
 
     private func frame() {
         tick += 1
