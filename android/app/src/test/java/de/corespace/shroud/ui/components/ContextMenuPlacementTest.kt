@@ -125,6 +125,9 @@ class ContextMenuPlacementTest {
         assertEquals((8 * 44 + 7).dp, ContextMenuDefaults.cardHeight(8, MenuStyle.Dark))
         assertEquals((4 * 44 + 3).dp, ContextMenuDefaults.cardHeight(4, MenuStyle.Dark))
         assertEquals(0.dp, ContextMenuDefaults.cardHeight(0, MenuStyle.Dark))
+        // Button menu, design r3Ij1X: three 42 dp rows and two hairlines = the frame's 250 × 128.
+        assertEquals(128.dp, ContextMenuDefaults.cardHeight(3, MenuStyle.Light, MenuRows.Trailing))
+        assertEquals(42.dp * 2 + 1.dp, ContextMenuDefaults.cardHeight(2, MenuStyle.Light, MenuRows.Trailing))
     }
 
     @Test

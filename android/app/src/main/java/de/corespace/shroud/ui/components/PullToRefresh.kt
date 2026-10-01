@@ -1,5 +1,6 @@
 package de.corespace.shroud.ui.components
 
+import android.annotation.SuppressLint
 import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.animate
 import androidx.compose.foundation.Canvas
@@ -57,6 +58,8 @@ import kotlin.math.min
  * [onRefresh] runs a second pull does nothing. [enabled] false (e.g. a search is active) turns the
  * gesture off. Only on list roots (never on a pushed conversation, `ChatsView.swift:175-178`).
  */
+// Parameter order is the binding signature of 00-plan §1.7.12 (modifier after it).
+@SuppressLint("ModifierParameter")
 @Composable
 fun PullToRefresh(
     onRefresh: suspend () -> Unit,

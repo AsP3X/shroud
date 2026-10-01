@@ -1,5 +1,6 @@
 package de.corespace.shroud.ui.components
 
+import android.annotation.SuppressLint
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.Orientation
@@ -55,6 +56,8 @@ import kotlin.math.roundToInt
  * modifier allows. [trackColor] is the unfilled track (iOS `systemFill`); pass a light one on the
  * always-dark media surfaces.
  */
+// Parameter order is the binding signature of 00-plan §1.7.12 (modifier after it).
+@SuppressLint("ModifierParameter")
 @Composable
 fun ShroudSlider(
     value: Float,

@@ -1,6 +1,7 @@
 package de.corespace.shroud.ui.permissions
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Context
@@ -66,6 +67,7 @@ object PermissionDecision {
      * Whether [permission] is a runtime permission on API [sdk]. `POST_NOTIFICATIONS` exists from
      * Android 13; before that notifications are on unless the user turned them off in Settings.
      */
+    @SuppressLint("InlinedApi") // A string constant compared on every API level.
     fun isRuntimePermission(permission: String, sdk: Int): Boolean =
         !(permission == Manifest.permission.POST_NOTIFICATIONS && sdk < Build.VERSION_CODES.TIRAMISU)
 }

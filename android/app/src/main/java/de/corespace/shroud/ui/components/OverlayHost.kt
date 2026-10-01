@@ -1,5 +1,6 @@
 package de.corespace.shroud.ui.components
 
+import android.annotation.SuppressLint
 import android.os.Build
 import android.os.SystemClock
 import android.view.HapticFeedbackConstants
@@ -330,6 +331,7 @@ internal object OverlayHaptics {
     }
 
     /** `SEGMENT_TICK` on Android 14+, else `CLOCK_TICK` (00-plan §1.7.12). */
+    @SuppressLint("InlinedApi") // A compile-time int, only used on API 34+.
     fun segmentTickConstant(sdk: Int): Int =
         if (sdk >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) HapticFeedbackConstants.SEGMENT_TICK else HapticFeedbackConstants.CLOCK_TICK
 }

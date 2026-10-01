@@ -1,5 +1,6 @@
 package de.corespace.shroud.ui.components
 
+import android.annotation.SuppressLint
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -103,6 +104,8 @@ enum class SheetStyle { Full, Inset, Compact }
  * look; `Dp.Unspecified` / `Color.Unspecified` keep it. Today's call sites
  * (`ShroudSheet(visible, onDismiss) { … }`) compile and look unchanged.
  */
+// Parameter order is the binding signature of 00-plan §1.7.12 (modifier after it).
+@SuppressLint("ModifierParameter")
 @Composable
 fun ShroudSheet(
     visible: Boolean,

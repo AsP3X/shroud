@@ -101,6 +101,16 @@ data class MenuAction(
 enum class MenuStyle { Light, Dark }
 
 /**
+ * How a menu's rows are laid out.
+ *
+ * [Leading]: long-press menus (design AqgbA, iOS `.contextMenu` on Android): 44 dp rows, leading
+ * glyph, light card radius 22. [Trailing]: button menus (iOS `Menu`; the link options of design
+ * r3Ij1X, conversation-compose-media §6): 42 dp rows, 16 sp label, 18 dp glyph trailing in
+ * `textSecondary`, radius 14, hairlines between rows.
+ */
+enum class MenuRows { Leading, Trailing }
+
+/**
  * A long-press menu: a card of [actions] next to [anchor], over a scrim. iOS draws these with
  * `.contextMenu` / `Menu` (`ChatsView.swift:98-105, 135-144, 229-286`, `ChatLinkBar.swift:39-66`);
  * Android draws them itself (no platform popup), shell-chats §8.7 / §10.13.
@@ -119,9 +129,10 @@ enum class MenuStyle { Light, Dark }
  * (`combinedClickable`) buzz on open (`Haptic.LongPress`); the menu itself does not. Scrim taps in
  * the first 0.4 s after a lifted menu opened are ignored (the release of the opening hold).
  * [paneTitle] is what TalkBack announces ("Chat options"). [dimsBackground] defaults to dimming
- * only when there is a [header] (iOS `Menu`s, like pickers, open over a clear backdrop). The
- * conversation's message menu has its own Telegram layout and builds its card from
- * [ContextMenuCardSurface], [ContextMenuItem] and [ContextMenuSeparator].
+ * only when there is a [header] (iOS `Menu`s, like pickers, open over a clear backdrop). [rows]
+ * picks the long-press or the button-menu row layout ([MenuRows]). The conversation's message
+ * menu has its own Telegram layout and builds its card from [ContextMenuCardSurface],
+ * [ContextMenuItem] and [ContextMenuSeparator].
  */
 @Composable
 fun ContextMenu(
@@ -131,6 +142,7 @@ fun ContextMenu(
     onDismiss: () -> Unit,
     paneTitle: String = "Options",
     dimsBackground: Boolean? = null,
+    rows: MenuRows = MenuRows.Leading,
     header: (@Composable () -> Unit)? = null,
 ) {
     ContextMenuOverlay(
@@ -140,7 +152,7 @@ fun ContextMenu(
         onDismiss = onDismiss,
         paneTitle = paneTitle,
         dims = dimsBackground ?: (header != null),
-        metrics = if (style == MenuStyle.Light) MenuCardMetrics.Light else MenuCardMetrics.Dark,
+        metrics = MenuCardMetrics.of(style, rows),
         header = header,
     )
 }
@@ -168,13 +180,18 @@ object ContextMenuDefaults {
     /** Corner radius of a lifted header (design AqgbA: r18). */
     val HeaderRadius: Dp = 18.dp
 
+    /** Row height of button menus ([MenuRows.Trailing], design r3Ij1X). */
+    val CompactRowHeight: Dp = 42.dp
+
     /**
-     * Card height for [rows] rows: the light card adds 6 dp of padding above and below; the dark
-     * card a 1 dp hairline between rows (`MessageContextMenuCard.height`, MAM:433-436).
+     * Card height for [rows] rows: the light long-press card adds 6 dp of padding above and below;
+     * the dark card and button menus a 1 dp hairline between rows (`MessageContextMenuCard.height`,
+     * MAM:433-436).
      */
-    fun cardHeight(rows: Int, style: MenuStyle): Dp = when (style) {
-        MenuStyle.Light -> RowHeight * rows + 12.dp
-        MenuStyle.Dark -> RowHeight * rows + 1.dp * max(rows - 1, 0)
+    fun cardHeight(rows: Int, style: MenuStyle, layout: MenuRows = MenuRows.Leading): Dp {
+        val metrics = MenuCardMetrics.of(style, layout)
+        val gaps = if (metrics.separators) 1.dp * max(rows - 1, 0) else 0.dp
+        return metrics.rowHeight * rows + metrics.verticalPadding * 2 + gaps
     }
 }
 
@@ -240,14 +257,14 @@ fun ContextMenuCard(
     onAction: (MenuAction) -> Unit,
     modifier: Modifier = Modifier,
     width: Dp = ContextMenuDefaults.CardWidth,
+    rows: MenuRows = MenuRows.Leading,
 ) {
     ContextMenuCardImpl(
         actions = actions,
-        style = style,
         onAction = onAction,
         modifier = modifier,
         width = width,
-        metrics = if (style == MenuStyle.Light) MenuCardMetrics.Light else MenuCardMetrics.Dark,
+        metrics = MenuCardMetrics.of(style, rows),
         translucent = false,
         back = null,
     )
@@ -256,55 +273,71 @@ fun ContextMenuCard(
 /**
  * The card itself: [MenuStyle.Light] = card glass (radius 22, 6 dp vertical padding, 1 dp
  * stroke, 0/12/32 shadow — design AqgbA, `Light context menu`); [MenuStyle.Dark] = `#1F1F24` @
- * 0.94, radius 14, 0.5 dp white @ 0.08 stroke (`MessageActionMenu.swift:470-480`). [translucent]
- * lets the light card show the blurred backdrop through — only over a blurred backdrop; otherwise
- * it takes the near-opaque no-blur fill (design Gwp1b).
+ * 0.94, radius 14, 0.5 dp white @ 0.08 stroke (`MessageActionMenu.swift:470-480`); button menus
+ * ([MenuRows.Trailing]) radius 14 without padding. [translucent] lets the light card show the
+ * blurred backdrop through — only over a blurred backdrop; otherwise it takes the near-opaque
+ * no-blur fill (design Gwp1b).
  */
 @Composable
 fun ContextMenuCardSurface(
     style: MenuStyle,
     modifier: Modifier = Modifier,
     translucent: Boolean = false,
+    rows: MenuRows = MenuRows.Leading,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    ContextMenuCardSurfaceImpl(MenuCardMetrics.of(style, rows), modifier, translucent, content)
+}
+
+@Composable
+private fun ContextMenuCardSurfaceImpl(
+    metrics: MenuCardMetrics,
+    modifier: Modifier,
+    translucent: Boolean,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val palette = overlayPalette()
-    when (style) {
-        MenuStyle.Light -> {
-            val shape = RoundedCornerShape(22.dp)
-            Column(
-                modifier
-                    .dropShadow(shape, Shadow(radius = 32.dp, color = OverlayShadows.card, offset = DpOffset(0.dp, 12.dp)))
-                    .clip(shape)
-                    .background(if (translucent) palette.cardGlass else palette.cardOpaque)
-                    .border(1.dp, palette.cardStroke, shape)
-                    .padding(vertical = 6.dp),
-                content = content,
-            )
-        }
-        MenuStyle.Dark -> {
-            val shape = RoundedCornerShape(14.dp)
-            Column(
-                modifier
-                    .clip(shape)
-                    .background(DarkMenuFill)
-                    .border(0.5.dp, Color.White.copy(alpha = 0.08f), shape),
-                content = content,
-            )
-        }
-    }
-}
-
-/** The 1 dp hairline between rows of the dark card (white @ 0.08, MAM:486-490); the light card has none. */
-@Composable
-fun ContextMenuSeparator(style: MenuStyle) {
-    if (style == MenuStyle.Dark) {
-        Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.08f)))
+    val shape = RoundedCornerShape(metrics.radius)
+    when (metrics.style) {
+        MenuStyle.Light -> Column(
+            modifier
+                .dropShadow(shape, Shadow(radius = 32.dp, color = OverlayShadows.card, offset = DpOffset(0.dp, 12.dp)))
+                .clip(shape)
+                .background(if (translucent) palette.cardGlass else palette.cardOpaque)
+                .border(1.dp, palette.cardStroke, shape)
+                .padding(vertical = metrics.verticalPadding),
+            content = content,
+        )
+        MenuStyle.Dark -> Column(
+            modifier
+                .clip(shape)
+                .background(DarkMenuFill)
+                .border(0.5.dp, Color.White.copy(alpha = 0.08f), shape)
+                .padding(vertical = metrics.verticalPadding),
+            content = content,
+        )
     }
 }
 
 /**
+ * The 1 dp hairline between rows: white @ 0.08 on the dark card (MAM:486-490), `separator` on a
+ * light button menu (design r3Ij1X `#E9E9EC`); the light long-press card has none.
+ */
+@Composable
+fun ContextMenuSeparator(style: MenuStyle, rows: MenuRows = MenuRows.Leading) {
+    ContextMenuSeparatorImpl(MenuCardMetrics.of(style, rows))
+}
+
+@Composable
+private fun ContextMenuSeparatorImpl(metrics: MenuCardMetrics) {
+    if (!metrics.separators) return
+    val color = if (metrics.style == MenuStyle.Dark) Color.White.copy(alpha = 0.08f) else ShroudTheme.colors.separator
+    Box(Modifier.fillMaxWidth().height(1.dp).background(color))
+}
+
+/**
  * One row: optional leading glyph (or the picker's check), title, a trailing caret when it opens a
- * submenu. Pressed: the highlight lands at once and fades out (`HighlightRowButtonStyle`,
+ * submenu; in a button menu ([MenuRows.Trailing]) the glyph trails the title instead. Pressed: the highlight lands at once and fades out (`HighlightRowButtonStyle`,
  * `Motion.swift:100-120`), with a light haptic. [muted] draws an information row that is not a
  * button (the message menu's receipt, MAM:449-453). [showsIconSlot] keeps titles aligned when only
  * some rows have a glyph.
@@ -317,15 +350,15 @@ fun ContextMenuItem(
     modifier: Modifier = Modifier,
     muted: Boolean = false,
     showsIconSlot: Boolean = action.icon != null || action.checked,
+    rows: MenuRows = MenuRows.Leading,
 ) {
     ContextMenuItemImpl(
         action = action,
-        style = style,
         onClick = onClick,
         modifier = modifier,
         muted = muted,
         showsIconSlot = showsIconSlot,
-        metrics = if (style == MenuStyle.Light) MenuCardMetrics.Light else MenuCardMetrics.Dark,
+        metrics = MenuCardMetrics.of(style, rows),
     )
 }
 
@@ -337,7 +370,7 @@ private val DarkMenuFill = Color(0xF01F1F24)
 /** The danger colour on the always-dark card: the dark `danger` token (#FF453A), MAM:479-481. */
 private val DarkMenuDanger = Color(0xFFFF453A)
 
-/** Row metrics per card kind. */
+/** Card and row metrics per card kind. */
 @Immutable
 internal data class MenuCardMetrics(
     val style: MenuStyle,
@@ -345,16 +378,39 @@ internal data class MenuCardMetrics(
     val glyphSize: Dp,
     val iconSlot: Dp,
     val horizontalPadding: Dp,
+    val rowHeight: Dp = ContextMenuDefaults.RowHeight,
+    val radius: Dp,
+    val verticalPadding: Dp,
+    val separators: Boolean,
+    val trailingIcon: Boolean = false,
 ) {
     companion object {
-        /** Design AqgbA: padding h 16, gap 12, glyph 19, label 17 Regular. */
-        val Light = MenuCardMetrics(MenuStyle.Light, labelSize = 17f, glyphSize = 19.dp, iconSlot = 19.dp, horizontalPadding = 16.dp)
+        /** Design AqgbA: padding h 16, gap 12, glyph 19, label 17 Regular, card r22 with 6 dp padding. */
+        val Light = MenuCardMetrics(
+            MenuStyle.Light, labelSize = 17f, glyphSize = 19.dp, iconSlot = 19.dp, horizontalPadding = 16.dp,
+            radius = 22.dp, verticalPadding = 6.dp, separators = false,
+        )
 
         /** Settings pickers (settings-lock §2.5): 16 sp rows on the light card, check 14. */
         val Picker = Light.copy(labelSize = 16f, iconSlot = 14.dp)
 
-        /** MAM:497-521: icon 15 medium in a 22 wide box, title 16, padding h 14. */
-        val Dark = MenuCardMetrics(MenuStyle.Dark, labelSize = 16f, glyphSize = 15.dp, iconSlot = 22.dp, horizontalPadding = 14.dp)
+        /** MAM:497-521: icon 15 medium in a 22 wide box, title 16, padding h 14; r14, hairlines. */
+        val Dark = MenuCardMetrics(
+            MenuStyle.Dark, labelSize = 16f, glyphSize = 15.dp, iconSlot = 22.dp, horizontalPadding = 14.dp,
+            radius = 14.dp, verticalPadding = 0.dp, separators = true,
+        )
+
+        /** Design r3Ij1X (conversation-compose-media §6): rows 42, padding h 14, label 16, trailing icon 18, r14, hairlines. */
+        private fun buttonMenu(style: MenuStyle) = MenuCardMetrics(
+            style, labelSize = 16f, glyphSize = 18.dp, iconSlot = 18.dp, horizontalPadding = 14.dp,
+            rowHeight = ContextMenuDefaults.CompactRowHeight, radius = 14.dp, verticalPadding = 0.dp, separators = true,
+            trailingIcon = true,
+        )
+
+        fun of(style: MenuStyle, rows: MenuRows): MenuCardMetrics = when (rows) {
+            MenuRows.Leading -> if (style == MenuStyle.Light) Light else Dark
+            MenuRows.Trailing -> buttonMenu(style)
+        }
     }
 }
 
@@ -365,7 +421,6 @@ internal data class MenuCardMetrics(
 @Composable
 internal fun ContextMenuCardImpl(
     actions: List<MenuAction>,
-    style: MenuStyle,
     onAction: (MenuAction) -> Unit,
     modifier: Modifier,
     width: Dp,
@@ -375,23 +430,22 @@ internal fun ContextMenuCardImpl(
     backTitle: String = "",
 ) {
     val showsIconSlot = actions.any { it.icon != null || it.checked } || back != null
-    ContextMenuCardSurface(style, modifier.width(width), translucent = translucent) {
+    ContextMenuCardSurfaceImpl(metrics, modifier.width(width), translucent) {
         if (back != null) {
+            // The back row keeps its caret leading in every layout: it points the way back.
             ContextMenuItemImpl(
                 action = MenuAction(title = backTitle, icon = OverlayIcons.CaretLeft),
-                style = style,
                 onClick = back,
                 modifier = Modifier,
                 muted = false,
                 showsIconSlot = true,
-                metrics = metrics,
+                metrics = metrics.copy(trailingIcon = false, iconSlot = maxOf(metrics.iconSlot, 13.dp)),
             )
         }
         actions.forEachIndexed { index, action ->
-            if (index > 0 || back != null) ContextMenuSeparator(style)
+            if (index > 0 || back != null) ContextMenuSeparatorImpl(metrics)
             ContextMenuItemImpl(
                 action = action,
-                style = style,
                 onClick = { onAction(action) },
                 modifier = Modifier,
                 muted = false,
@@ -405,7 +459,6 @@ internal fun ContextMenuCardImpl(
 @Composable
 private fun ContextMenuItemImpl(
     action: MenuAction,
-    style: MenuStyle,
     onClick: () -> Unit,
     modifier: Modifier,
     muted: Boolean,
@@ -414,7 +467,7 @@ private fun ContextMenuItemImpl(
 ) {
     val colors = ShroudTheme.colors
     val palette = overlayPalette()
-    val dark = style == MenuStyle.Dark
+    val dark = metrics.style == MenuStyle.Dark
     val danger = if (dark) DarkMenuDanger else colors.danger
     val labelColor = when {
         action.destructive -> danger
@@ -427,6 +480,8 @@ private fun ContextMenuItemImpl(
         action.destructive -> danger
         dark && muted -> Color.White.copy(alpha = 0.45f)
         dark -> Color.White.copy(alpha = 0.85f)
+        // Button menus draw their trailing glyphs grey (r3Ij1X).
+        metrics.trailingIcon -> colors.textSecondary
         else -> labelColor
     }
     val interaction = remember { MutableInteractionSource() }
@@ -445,7 +500,7 @@ private fun ContextMenuItemImpl(
     Row(
         modifier
             .fillMaxWidth()
-            .heightIn(min = ContextMenuDefaults.RowHeight)
+            .heightIn(min = metrics.rowHeight)
             .background(highlightColor.copy(alpha = highlightColor.alpha * highlight))
             .then(
                 if (muted) {
@@ -469,7 +524,7 @@ private fun ContextMenuItemImpl(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (showsIconSlot) {
+        val glyph: @Composable () -> Unit = {
             Box(Modifier.width(metrics.iconSlot), contentAlignment = Alignment.Center) {
                 when {
                     // The title names the row; glyphs stay silent (MAM:505-506).
@@ -478,6 +533,7 @@ private fun ContextMenuItemImpl(
                 }
             }
         }
+        if (showsIconSlot && !metrics.trailingIcon) glyph()
         ShroudText(
             text = action.title,
             style = inter(metrics.labelSize),
@@ -488,6 +544,8 @@ private fun ContextMenuItemImpl(
         )
         if (action.submenu != null) {
             ShroudIcon(OverlayIcons.CaretRight, if (dark) Color.White.copy(alpha = 0.55f) else colors.textSecondary, size = 13.dp)
+        } else if (showsIconSlot && metrics.trailingIcon) {
+            glyph()
         }
     }
 }
@@ -568,7 +626,10 @@ internal fun ContextMenuOverlay(
         val localAnchor = anchor.translate(-origin.x, -origin.y)
         val decisionHeight = with(density) {
             val rows = listOf(actions.size) + actions.mapNotNull { it.submenu?.size?.plus(1) }
-            ContextMenuDefaults.cardHeight(rows.max(), style).toPx()
+            val rowHeight = metrics.rowHeight.toPx()
+            val hairline = if (metrics.separators) 1.dp.toPx() else 0f
+            val most = rows.max()
+            most * rowHeight + 2 * metrics.verticalPadding.toPx() + hairline * max(most - 1, 0)
         }
 
         Box(
@@ -623,7 +684,6 @@ internal fun ContextMenuOverlay(
                         ) { submenu ->
                             ContextMenuCardImpl(
                                 actions = submenu?.submenu ?: actions,
-                                style = style,
                                 onAction = onAction,
                                 modifier = Modifier,
                                 width = ContextMenuDefaults.CardWidth,
