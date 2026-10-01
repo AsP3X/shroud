@@ -34,7 +34,7 @@ struct DeviceNameSealTests {
     /// Kind byte 4 is the Android app. Shared with Android (`DeviceNameSealTest`) and web
     /// (`deviceName.selftest.ts`); computed with the web client's libraries (android-port-specs
     /// crypto §16.3). Change all three or none.
-    @Test
+    @Test @MainActor
     func androidKindMatchesTheOtherClientsByteForByte() throws {
         let android = DeviceNameSeal.Label(name: "Pixel 9 Pro", kind: .android)
         let golden =
@@ -59,7 +59,7 @@ struct DeviceNameSealTests {
 
     /// A kind byte this build does not know (a newer client's) opens as `.other`, keeps the
     /// "chosen" bit, and the icon falls back to a guess from the name.
-    @Test
+    @Test @MainActor
     func anUnknownKindReadsAsOther() throws {
         var padded = Data(count: 128)
         let name = Data("Pixel 9 Pro".utf8)
@@ -82,7 +82,7 @@ struct DeviceNameSealTests {
         #expect(DeviceKind(label: .init(name: "Niklas’s Android phone", kind: .other)) == .android)
     }
 
-    @Test
+    @Test @MainActor
     func deviceKindsReadTheSealedKindFirst() {
         #expect(DeviceKind(label: .init(name: "Office", kind: .iPhone)) == .iPhone)
         #expect(DeviceKind(label: .init(name: "Office", kind: .iPad)) == .iPad)
