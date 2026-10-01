@@ -150,6 +150,8 @@ class LinkPreviewPayloadTest {
         assertNull(sample(thumbnail).withoutThumbnail().thumbnail)
         assertNull(sample().withoutSummary().summary)
         assertEquals("komoot", sample().withoutSummary().siteName)
+        assertFalse(sample().withShowsAboveText(false).showsAboveText)
+        assertEquals(sample(showsAboveText = false), sample().withShowsAboveText(false))
     }
 
     @Test

@@ -72,6 +72,12 @@ data class LinkPreview private constructor(
     fun withoutSummary(): LinkPreview = copy(summary = null)
 
     /**
+     * Copy with Telegram's "Show above message" set as the composer's toggle says — what
+     * `LinkPreviewComposer.takeAttachment` writes before sealing (`LinkPreviewComposer.swift:151-153`).
+     */
+    fun withShowsAboveText(showsAboveText: Boolean): LinkPreview = copy(showsAboveText = showsAboveText)
+
+    /**
      * The `lp` object to seal (`LinkPreview.swift:135-146`, web `linkPreviewWire`), keys sorted as
      * `MessageTextPayload` writes them. Absent texts, a missing thumbnail, non-positive sizes and
      * false flags are left out to keep the envelope small.
