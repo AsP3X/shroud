@@ -82,6 +82,8 @@ class MessagingModule(container: AppContainer) : AppModule(container) {
             // Every contact's call secret from the pinned keys (plan C29; `refreshCallSecrets`, MC:486).
             refreshCallSecrets = { container.calls.secrets.refreshAll() },
             clock = container.clock,
+            // The one definition of "push covers the background" (plan §1.7.10): a registered distributor.
+            pushCovers = { container.push.registration.delivery.value.suppressesLocalAnnouncements },
         )
     }
 }

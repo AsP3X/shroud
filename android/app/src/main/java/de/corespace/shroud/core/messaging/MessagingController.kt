@@ -93,6 +93,10 @@ interface MessagingSocket {
  * @param isResumed one of our activities is resumed (`AppPhaseMonitor.isResumed`).
  * @param wipeKeyRecords deletes every ratchet session and sender-tag watermark (sign-out).
  * @param refreshCallSecrets after a start, as iOS (`refreshCallSecrets`, plan C29: the calls package's).
+ * @param pushCovers a UnifiedPush distributor is registered, so a server that heard `focus:false`
+ *   pushes to this phone ([de.corespace.shroud.core.push.PushDelivery.suppressesLocalAnnouncements]).
+ *   iOS can assume APNs; Android may have no push path at all, and then nothing replaces the local
+ *   announcements of events still arriving over a kept socket (plan §1.7.10).
  */
 class MessagingDependencies(
     val scope: CoroutineScope,
@@ -116,6 +120,7 @@ class MessagingDependencies(
     val wipeKeyRecords: () -> Unit,
     val refreshCallSecrets: suspend () -> Unit,
     val clock: AppClock,
+    val pushCovers: () -> Boolean = { false },
     val io: CoroutineDispatcher = Dispatchers.IO,
     val compute: CoroutineDispatcher = Dispatchers.Default,
 )
@@ -454,7 +459,8 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
         val told = socket.deliverFocus()
         delay(RADIO_GRACE_MS)
         if (epoch != foregroundEpoch) return
-        notifier.setPushCoversBackground(told)
+        // Push covers the background only if the server was told and a push path exists (review W2).
+        notifier.setPushCoversBackground(told && deps.pushCovers())
         if (keepSocket) return
         polling.stop()
         contacts.onBackground()

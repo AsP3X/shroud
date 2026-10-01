@@ -81,6 +81,7 @@ class MessagingControllerTest {
     private val clock = FakeAppClock()
     private var online = true
     private var resumed = true
+    private var distributorRegistered = true
     private var keyRecordWipes = 0
     private val callSecretRefreshes = ArrayList<Long>()
 
@@ -106,6 +107,7 @@ class MessagingControllerTest {
                 mediaLoader = { media },
                 isOnline = { online },
                 isResumed = { resumed },
+                pushCovers = { distributorRegistered },
                 wipeKeyRecords = { keyRecordWipes++ },
                 refreshCallSecrets = { callSecretRefreshes += testScheduler.currentTime },
                 clock = clock,
@@ -391,6 +393,23 @@ class MessagingControllerTest {
         advanceTimeBy(30_000)
         runCurrent()
         assertEquals(calls, backend.conversationsCalls)
+    }
+
+    /** Review W2: on Android `focus:false` only means a push when a UnifiedPush distributor is registered. */
+    @Test
+    fun withoutADistributorThePhoneKeepsAnnouncingInTheBackground() = engineTest {
+        distributorRegistered = false
+        val controller = controller()
+        controller.start()
+        runCurrent()
+        // A call (or the background connection) keeps the socket: its events must still be announced here.
+        controller.leaveForeground(keepSocket = true)
+        assertEquals(listOf(false), notifier.pushCovers)
+
+        distributorRegistered = true
+        controller.leaveForeground(keepSocket = true)
+        assertEquals(listOf(false, true), notifier.pushCovers)
+        controller.stop(wipeDisk = false)
     }
 
     @Test

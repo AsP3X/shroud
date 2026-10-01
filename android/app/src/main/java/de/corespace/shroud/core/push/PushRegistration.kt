@@ -44,11 +44,21 @@ enum class NoPushReason {
 data class Distributor(val packageName: String, val label: String)
 
 /**
- * Both delivery paths at once. [coversBackground] goes to `MessageNotifier.setPushCoversBackground`:
- * while a path covers the background, the app stops announcing locally there.
+ * Both delivery paths at once.
+ *
+ * - [coversBackground]: some path delivers while Shroud is closed (the notification test, the
+ *   Delivery screen).
+ * - [suppressesLocalAnnouncements]: the only input of `MessageNotifier.setPushCoversBackground`
+ *   (through `MessagingDependencies.pushCovers`, together with the server having heard
+ *   `focus:false`). Only a registered distributor qualifies: the server's push then announces, so
+ *   the app stays quiet locally. The background connection does not — events reaching its socket
+ *   are announced by the app itself (the normal engines with the vault open, W3-PUSH's dispatcher
+ *   from ids while chats are locked, plan §1.4).
  */
 data class PushDelivery(val unifiedPush: UnifiedPushState, val backgroundConnection: Boolean, val batteryUnrestricted: Boolean) {
     val coversBackground: Boolean get() = unifiedPush is UnifiedPushState.Registered || backgroundConnection
+
+    val suppressesLocalAnnouncements: Boolean get() = unifiedPush is UnifiedPushState.Registered
 }
 
 /**
