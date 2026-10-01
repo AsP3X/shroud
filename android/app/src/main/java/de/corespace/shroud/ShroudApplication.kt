@@ -11,8 +11,12 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.work.Configuration
+import de.corespace.shroud.core.lifecycle.AppPhase
 import de.corespace.shroud.core.lifecycle.AppPhaseMonitor
 import de.corespace.shroud.ui.calls.CallActivity
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 /**
  * The process entry point, iOS `ShroudApp` + the launch half of `AppDelegate`
@@ -84,9 +88,30 @@ class ShroudApplication : Application(), Configuration.Provider {
         ProcessLifecycleOwner.get().lifecycle.addObserver(
             object : DefaultLifecycleObserver {
                 override fun onStop(owner: LifecycleOwner) {
-                    container.cryptoController.lock()
+                    lockWhenBackgrounded()
                 }
             },
         )
     }
+
+    /**
+     * Locks the keys now — unless the vault's own system prompt is up: on some skins (Samsung One
+     * UI) the biometric prompt stops our activity, and locking under it would undo the unlock the
+     * user is in the middle of (crypto §10.7, settings-lock §11.5). The lock then waits for the
+     * prompt to end and still happens if the app is in the background by then.
+     */
+    private fun lockWhenBackgrounded() {
+        val keys = container.keys.cryptoController
+        if (!keys.vaultPromptInFlight.value) {
+            keys.lock()
+            return
+        }
+        pendingPromptLock?.cancel()
+        pendingPromptLock = container.appScope.launch {
+            keys.vaultPromptInFlight.first { !it }
+            if (appPhase.phase.value == AppPhase.Background) keys.lock()
+        }
+    }
+
+    private var pendingPromptLock: Job? = null
 }

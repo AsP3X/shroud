@@ -52,15 +52,16 @@ devices) access before it reaches a LAN or emulator-host server.
 | `app/src/main/java/.../AppContainer.kt` | One per process, built after the first unlock: a registry of lazily built `di/` modules |
 | `app/src/main/java/.../di` | One module per package (`NetModule`, `KeysModule`, `AuthModule`, …); only its package fills it |
 | `app/src/main/java/.../core/lifecycle` | `AppPhaseMonitor`: Active / Inactive / Background from our activities (iOS scene phase) |
-| `app/src/main/java/.../core/model` | `Ids` (UUIDs, lower-case wire form), `Bytes`, `AppClock`, small shared types |
+| `app/src/main/java/.../core/model` | `Ids` (UUIDs, lower-case wire form), `Bytes`, `AppClock`; the domain model every engine and screen shares (`ChatMessage`, `MediaTransfer`, reactions, outcomes, `MuteDuration`, peer identity, Notes) |
 | `app/src/main/java/.../core/net` | `ApiClient` (OkHttp + kotlinx.serialization), `ShroudApi`, server settings; UUID-typed DTOs in `dto/`, strict dates and serializers in `wire/` |
-| `app/src/main/java/.../core/realtime` | `RealtimeEvent` and the foreground contracts (the client arrives in wave 1) |
-| `app/src/main/java/.../core/crypto` | BIP39, phrase → identity keys, key bundle, `CryptoController`; `ByteOps` (strict Base64, hex), `Primitives` (X25519, HKDF, HMAC, AES-GCM), `LocalHistoryCrypto` (sealed records), `PeerLocks` |
-| `app/src/main/java/.../core/keys` | `LocalNames` (keyed file names) and the key-record seams |
-| `app/src/main/java/.../core/auth` | Session (`SessionController`, Keystore-sealed `SessionStore`), password strength |
+| `app/src/main/java/.../core/realtime` | The one `RealtimeClient` (holders, focus and background frames, backoff), the event parser and the `AppForegroundCoordinator` |
+| `app/src/main/java/.../core/crypto` | BIP39, phrase → identity keys, key bundle, `CryptoController`; the v1/v2/v3 envelopes, double ratchet, media crypto, sealed device names, safety numbers; `ByteOps`, `Primitives`, `LocalHistoryCrypto`, `PeerLocks` |
+| `app/src/main/java/.../core/keys` | Sealed key stores (identity, ratchets, sender tags, peer pins), the screen-lock-bound history-key vault, `LocalNames`, key-material wipe |
+| `app/src/main/java/.../core/auth` | Session (`SessionController` with the auth listener every authenticated request reports to, Keystore-sealed `SessionStore`), password strength, the `WipeHooks` seam |
+| `app/src/main/java/.../core/{messaging,contacts,media,links,notifications,calls}` | Wave 2 seams (`MessagingSeams`, `ContactsSeams`, `MediaTypes`, `MediaEdits`, `VideoTypes`, `LinkTypes`, `NotificationKind`, `MessageNotifier`, `CallSeams`); the engines that implement them arrive in wave 2 |
 | `app/src/main/java/.../core/storage` | `KeystoreSealer`, sealed files in no-backup storage, `StorageSeal` (blocks writes during a wipe) |
 | `app/src/main/java/.../ui/theme` | Colour tokens (light/dark), Inter, motion, the design's icons |
-| `app/src/main/java/.../ui/components` | The app's own chrome: buttons, glass controls, sheet, toggle, toast, onboarding parts |
+| `app/src/main/java/.../ui/components` | The app's own chrome: buttons, glass, toggle, toast, onboarding parts; avatars, chat rows, glass bars, scroll screens, settings rows; the overlay host, menus, sheets, dialogs, pull to refresh |
 | `app/src/main/java/.../ui/onboarding` | Welcome, Server settings, Sign Up, Log In |
 | `app/src/test/java/.../testing` | JVM test kit: `MainDispatcherRule`, `FakeSharedPreferences`, `XorSealer`, `FakeAppClock`, `TempDirRule`, `SealedTestKey` |
 | `e2e/` | Local stack and adb scripts (below) |
@@ -82,7 +83,16 @@ e2e/launch.sh               # force-stop + cold start, prints the launch time
 e2e/ui.py dump | tap <text> | wait <text> | type <text> | key <code> | shot <file>
 e2e/enter_phrase.sh "<12 words>"
 e2e/reset-limits.sh         # flush the rate-limit windows (auth 10 a minute for every local client together)
+e2e/ntfy-check.sh           # the server sends a sealed high-urgency ring to the stack's ntfy (X1-SRV-UP's ignored test)
 e2e/stack-down.sh
+```
+
+The wave 1 smoke test (`GET /config`, the socket's `auth.ok`, the vault round trip with real key
+routes) runs on an emulator prepared by `emulator-setup.sh`, against the stack; it skips itself
+when the API is not reachable:
+
+```bash
+./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=de.corespace.shroud.e2e.W1SmokeTest
 ```
 
 `SERIAL` picks a device when several are attached; ports, container names and the state folder
