@@ -104,11 +104,6 @@ class ApiClient(
         send("PUT", path, token, encode(body, bodySerializer))
     }
 
-    /** The W0 name of [putUnit]; kept until W2-INT moves the last caller (00-plan §2.2 W1-NET). */
-    @Deprecated("Renamed: the answer-less PUT is putUnit.", ReplaceWith("putUnit(path, token, body, bodySerializer)"))
-    suspend fun <B> put(path: String, token: String?, body: B, bodySerializer: KSerializer<B>) =
-        putUnit(path, token, body, bodySerializer)
-
     /** DELETE; the answer carries nothing (204) (`deleteNoContent`, `APIClient.swift:160-174`). */
     suspend fun deleteUnit(path: String, token: String?, query: Map<String, String> = emptyMap()) {
         send("DELETE", path, token, null, query)
