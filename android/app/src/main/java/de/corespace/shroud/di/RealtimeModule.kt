@@ -44,13 +44,12 @@ class RealtimeModule(container: AppContainer) : AppModule(container) {
     /** The scene-phase glue (api-realtime §11.13); [onProcessStart] starts it. */
     val foregroundCoordinator: AppForegroundCoordinator by lazy {
         AppForegroundCoordinator(
-            // W2-INT points these at the controllers (`MessagingController` implements
-            // MessagingForeground, `CallController` ActiveCallProbe); until then nothing happens.
-            messaging = { null },
-            calls = { null },
-            // iOS `router.isUnlocked` until W3-SHELL's AppShellController owns it: chats unlocked.
-            // Through the module, not the onboarding shim `container.cryptoController` (W3-INT removes it).
-            isUnlocked = { container.keys.cryptoController.unlockedUserId.value != null },
+            // Never builds a controller: only what the root started or a ring built is told.
+            messaging = { container.messaging.controllerIfBuilt },
+            calls = { container.calls.controllerIfBuilt },
+            // iOS `router.isUnlocked` (`RootView.swift:257, 275`) until W3-SHELL's AppShellController
+            // owns it: signed in, no wipe running, and the chats unlocked for this session's account.
+            isUnlocked = { isUnlocked() },
             phase = container.appPhase,
             scope = container.appScope,
             backgroundConnectionHeld = { client.isHeld(RealtimeClient.Holder.Background) },
@@ -59,5 +58,12 @@ class RealtimeModule(container: AppContainer) : AppModule(container) {
 
     override fun onProcessStart() {
         foregroundCoordinator.start()
+    }
+
+    private fun isUnlocked(): Boolean {
+        val session = container.auth.sessionController.session.value ?: return false
+        if (container.auth.deviceWipe.isPresented.value) return false
+        val unlocked = container.keys.cryptoController.unlockedUserId.value ?: return false
+        return unlocked.equals(session.userId, ignoreCase = true)
     }
 }

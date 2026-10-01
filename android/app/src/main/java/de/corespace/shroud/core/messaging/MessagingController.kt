@@ -201,6 +201,12 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
 
     private var conversationsRefresh: Job? = null
 
+    /**
+     * The next successful chat list is the first since the chats were unlocked: notifications of
+     * chats read or seen elsewhere meanwhile close then (web-parity §7.6; web `AppShell.tsx:802-812`).
+     */
+    private var settleNotificationsOnNextList = false
+
     /** The catch-up sequences of start, foreground and reconnect (iOS's outbound queue cancel stops their flush). */
     private val sessionJobs = ArrayList<Job>()
 
@@ -300,6 +306,7 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
         val token = deps.session.value?.token ?: return
         state.setOffline(!deps.isOnline())
         realtimeActive = true
+        settleNotificationsOnNextList = true
         socket.hold(token)
         polling.start()
         val generation = activityGeneration
@@ -600,6 +607,13 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
             state.setOffline(false)
             // Every tab switch lands here; an unchanged list has nothing to save.
             if (changed) state.persistSnapshot()
+            if (settleNotificationsOnNextList) {
+                settleNotificationsOnNextList = false
+                notifier.closeSettledChats(
+                    readChats = list.filter { (it.unreadCount ?: 0) == 0 }.map { it.id },
+                    reactionsSeenChats = list.filter { (it.unseenReactions ?: 0) == 0 }.map { it.id },
+                )
+            }
             // Something reacted to our messages while this chat is open: it is being seen (`:1047-1049`).
             state.activePeerId?.takeIf(state::hasPendingUnseenReactions)?.let { reactions.markSeen(it) }
         } catch (e: CancellationException) {
@@ -750,7 +764,12 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
             }
             is RealtimeEvent.MessageDelivered -> readState.updateReceipt(event.messageId, ReceiptStatus.Delivered)
             is RealtimeEvent.MessageRead -> readState.onMessageRead(event, state.myUserId)
-            is RealtimeEvent.MessageDeleted -> deletes.onMessageDeleted(event)
+            is RealtimeEvent.MessageDeleted -> {
+                // Unsent for everyone: whatever this phone posted about the chat goes too, open chat
+                // or not (web-parity §7.6; web `AppShell.tsx:1549-1553`; iOS keeps them).
+                event.conversationId?.let(notifier::clearDelivered)
+                deletes.onMessageDeleted(event)
+            }
             is RealtimeEvent.MessageReaction -> reactions.apply(event)
             is RealtimeEvent.ReactionsSeen -> reactions.apply(event)
             is RealtimeEvent.ConversationDeleted -> deletes.onConversationDeleted(event)

@@ -27,16 +27,21 @@ import java.util.UUID
  * ([KeysModule.sensitiveTempFiles], swept at launch and on lock); the caller deletes the accepted
  * file once it is sealed.
  *
- * [sealedSources] reads videos in the sealed local media cache (plan C7). They are W2-MEDIA-STORE's
- * `SealedMediaDataSource.Factory` / `SealedMediaDataSourceMdr` over its `LocalMediaCache`, built in
- * parallel in wave 2, so until W2-INT sets them they are [SealedVideoSources.Unavailable]: local
- * playback reports `failed` and [VideoPipeline.posterJpegFromLocal] returns null. Picked and
- * captured clips (content and file URIs) need none of it. Players and [media] read the current
- * value at each call, so the order of wiring does not matter.
+ * [sealedSources] reads videos in the sealed local media cache (plan C7): W2-MEDIA-STORE's
+ * `SealedMediaDataSource.Factory` / `SealedMediaDataSourceMdr` over `MediaModule.localMedia`
+ * (wired by W2-INT). Both give null when the message has no local media or chats are locked, so
+ * local playback then reports `failed` and [VideoPipeline.posterJpegFromLocal] returns null. Picked
+ * and captured clips (content and file URIs) need none of it. Players and [media] read the current
+ * value at each call, so tests may replace it.
  */
 class VideoModule(container: AppContainer) : AppModule(container) {
-    /** Decrypting sources for sealed local videos; set once by W2-INT (see the class KDoc). */
-    @Volatile var sealedSources: SealedVideoSources = SealedVideoSources.Unavailable
+    /** Decrypting sources for sealed local videos (see the class KDoc). */
+    @Volatile var sealedSources: SealedVideoSources = object : SealedVideoSources {
+        override fun playerDataSource(messageId: UUID): DataSource.Factory? =
+            if (container.media.localMedia.has(messageId)) container.media.dataSourceFactory(messageId) else null
+
+        override fun retrieverDataSource(messageId: UUID): MediaDataSource? = container.media.metadataSource(messageId)
+    }
 
     /** Forwards to whatever [sealedSources] is at the time of the call. */
     private val currentSources = object : SealedVideoSources {

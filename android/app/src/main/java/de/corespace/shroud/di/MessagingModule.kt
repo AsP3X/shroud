@@ -2,58 +2,22 @@ package de.corespace.shroud.di
 
 import de.corespace.shroud.AppContainer
 import de.corespace.shroud.AppModule
-import de.corespace.shroud.core.contacts.Contacts
-import de.corespace.shroud.core.contacts.ContactsHooks
-import de.corespace.shroud.core.contacts.PeerIdentities
-import de.corespace.shroud.core.contacts.Privacy
 import de.corespace.shroud.core.crypto.CryptoController
-import de.corespace.shroud.core.crypto.CryptoError
-import de.corespace.shroud.core.links.LinkPreviewAttachment
-import de.corespace.shroud.core.media.MediaComposeQuality
-import de.corespace.shroud.core.media.MediaImageSource
-import de.corespace.shroud.core.media.edit.MediaEdits
-import de.corespace.shroud.core.media.video.VideoSendPlan
 import de.corespace.shroud.core.messaging.EnvelopeOpener
-import de.corespace.shroud.core.messaging.HydratedMessages
-import de.corespace.shroud.core.messaging.MediaLoader
 import de.corespace.shroud.core.messaging.MessagingBackend
 import de.corespace.shroud.core.messaging.MessagingController
 import de.corespace.shroud.core.messaging.MessagingDependencies
-import de.corespace.shroud.core.messaging.MessagingSnapshot
 import de.corespace.shroud.core.messaging.MessagingSocket
-import de.corespace.shroud.core.messaging.MessagingStore
 import de.corespace.shroud.core.messaging.OwnKeys
-import de.corespace.shroud.core.messaging.ReactionsEngine
-import de.corespace.shroud.core.messaging.RosterSnapshot
-import de.corespace.shroud.core.messaging.SendEngine
-import de.corespace.shroud.core.model.AddContactOutcome
-import de.corespace.shroud.core.model.ChatMessage
-import de.corespace.shroud.core.model.ContactsListState
-import de.corespace.shroud.core.model.NOTES_PEER_ID
-import de.corespace.shroud.core.model.PeerIdentityChange
-import de.corespace.shroud.core.model.PeerIdentityEvent
-import de.corespace.shroud.core.model.ReactionFailure
-import de.corespace.shroud.core.net.BlockItemDto
-import de.corespace.shroud.core.net.ContactItemDto
-import de.corespace.shroud.core.net.ContactRequestDto
 import de.corespace.shroud.core.net.ConversationDeleteScope
 import de.corespace.shroud.core.net.ConversationItemDto
 import de.corespace.shroud.core.net.DeleteConversationResponse
 import de.corespace.shroud.core.net.ListMessagesResponse
 import de.corespace.shroud.core.net.MessageDeleteScope
 import de.corespace.shroud.core.net.MuteChatResponse
-import de.corespace.shroud.core.net.PresenceDto
-import de.corespace.shroud.core.net.PrivacySettingsDto
-import de.corespace.shroud.core.net.ReactionDto
 import de.corespace.shroud.core.net.ShroudApi
-import de.corespace.shroud.core.net.UpdatePrivacySettingsBody
-import de.corespace.shroud.core.net.wire.MessageReplyReference
-import de.corespace.shroud.core.notifications.MessageNotifier
-import de.corespace.shroud.core.notifications.NotificationKind
 import de.corespace.shroud.core.realtime.RealtimeClient
 import de.corespace.shroud.core.realtime.RealtimeEvent
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -67,19 +31,27 @@ import java.util.UUID
  * and its own engines (`ThreadStore`, `HistoryPager`, `MessageDecoder`, `DeleteEngine`,
  * `ReadStateEngine`, `TypingSignals`, `PollingLoop`).
  *
- * The parts of the other wave-2 packages are wired by W2-INT: each `Unwired*` stand-in below names
- * the expression that replaces it once those modules exist (00-plan §2.0 rule 3). Until then nothing
- * starts messaging (W2-INT's `ui/ShroudApp.kt` does), and the stand-ins never decrypt, send or store.
- *
- * W2-MSG-SEND's engines also take a `SendHost` (its contract change request CR-1): the controller
- * has every member it asks for — `conversations`, `activePeerId`, `refreshConversations(force)`,
- * `setOffline`, `isMuted`, `username`, `editConversations`, `foldSharedTranscripts` — so W2-INT sets
- * `container.messagingSend.host` to a `SendHost` delegating each member to [controller] (or adds
- * `SendHost` to the controller's supertypes, with `override` on those eight members).
+ * The other wave-2 packages are wired here by W2-INT (00-plan §2.0 rule 3): the sealed store
+ * (W2-MSG-STORE), the SHRM1 media cache (W2-MEDIA-STORE), contacts, peer keys and privacy
+ * (W2-CONTACTS), the notifier (W2-NOTIF), the send, reaction and media engines (W2-MSG-SEND, whose
+ * `SendHost` is an adapter over [controller], see `MessagingSendModule`) and the call secrets
+ * (W2-CALLS-CORE). The voice player hears purges, locks and re-keys through
+ * [MessagingController.registerArtifactSink]. The interim root (`ui/ShroudApp.kt`) starts and stops it.
  */
 class MessagingModule(container: AppContainer) : AppModule(container) {
+    private val controllerLazy = lazy {
+        MessagingController(dependencies()).also { controller ->
+            // Purges stop the deleted voice note, locks stop playback and drop a take, re-keys move
+            // the played mark (W2-VOICE; iOS tears the thread's player down, `ConversationView.swift:363-379`).
+            controller.registerArtifactSink(container.voice.artifactSink)
+        }
+    }
+
     /** The controller every UI area reads (plan §1.7.7). Built on first use, on the main thread. */
-    val controller: MessagingController by lazy { MessagingController(dependencies()) }
+    val controller: MessagingController by controllerLazy
+
+    /** [controller] when something already built it: the wipe and the foreground glue never build it. */
+    val controllerIfBuilt: MessagingController? get() = if (controllerLazy.isInitialized()) controller else null
 
     private fun dependencies(): MessagingDependencies {
         val keys = container.keys
@@ -92,22 +64,23 @@ class MessagingModule(container: AppContainer) : AppModule(container) {
             keys = CryptoOwnKeys(keys.cryptoController),
             opener = EnvelopeOpener(keys.messageCrypto::open),
             peerLocks = keys.peerLocks,
-            store = UnwiredMessagingStore, // W2-INT: container.messagingStore.store
-            hasMedia = { false }, // W2-INT: container.media.localMedia::has (LocalMediaStore.has)
-            contacts = UnwiredContacts, // W2-INT: container.contacts.controller
-            peerIdentities = UnwiredPeerIdentities, // W2-INT: container.contacts.peerIdentities
-            privacy = UnwiredPrivacy, // W2-INT: container.contacts.privacy
-            notifier = UnwiredNotifier, // W2-INT: W2-NOTIF's NotificationsController (its MessageNotifier)
-            sendEngine = { UnwiredSendEngine }, // W2-INT: container.messagingSend::send
-            reactionsEngine = { UnwiredReactionsEngine }, // W2-INT: container.messagingSend::reactions
-            mediaLoader = { UnwiredMediaLoader }, // W2-INT: container.messagingSend::media
+            store = container.messagingStore.store,
+            hasMedia = { id -> container.media.localMedia.has(id) },
+            contacts = container.contacts.controller,
+            peerIdentities = container.contacts.peerIdentities,
+            privacy = container.contacts.privacy,
+            notifier = container.notifications.controller,
+            sendEngine = container.messagingSend::send,
+            reactionsEngine = container.messagingSend::reactions,
+            mediaLoader = container.messagingSend::media,
             isOnline = { container.net.connectivity.isOnline.value },
             isResumed = { container.appPhase.isResumed },
             wipeKeyRecords = {
                 keys.ratchetSessions.deleteAll()
                 keys.senderTags.deleteAll()
             },
-            refreshCallSecrets = {}, // W2-INT: W2-CALLS-CORE's CallSecrets refresh of every contact (plan C29)
+            // Every contact's call secret from the pinned keys (plan C29; `refreshCallSecrets`, MC:486).
+            refreshCallSecrets = { container.calls.secrets.refreshAll() },
             clock = container.clock,
         )
     }
@@ -151,145 +124,4 @@ private class CryptoOwnKeys(private val crypto: CryptoController) : OwnKeys {
     override val isUnlocked: Boolean get() = crypto.isUnlocked
     override fun <T> withKeys(block: (ourPrivate: ByteArray, ourPublic: ByteArray) -> T): T? =
         crypto.withMaterial { block(it.agreementPrivateKey, it.identityPublicKey) }
-}
-
-// ---- Stand-ins until W2-INT wires the other wave-2 packages -------------------------------------
-// They keep the module buildable and inert: nothing is stored, sent, decrypted against an unpinned
-// key or announced. Each names its replacement in `dependencies()` above.
-
-private object UnwiredMessagingStore : MessagingStore {
-    private val emptyRoster = RosterSnapshot(emptyList(), emptyList(), emptyList(), emptyMap())
-    override fun hydrate(userId: UUID) = HydratedMessages(emptyRoster, mapOf(NOTES_PEER_ID to emptyList()))
-    override fun persist(userId: UUID, snapshot: MessagingSnapshot): Set<UUID> = emptySet()
-    override fun persistThread(userId: UUID, storePeer: UUID, messages: List<ChatMessage>, roster: RosterSnapshot): Set<UUID> = emptySet()
-    override suspend fun flush() = Unit
-    override fun plaintext(messageId: UUID): ByteArray? = null
-    override fun savePlaintext(messageId: UUID, bytes: ByteArray) = Unit
-    override fun removeCaches(messageIds: Collection<UUID>) = Unit
-    override fun noteAnnotation(targetId: UUID, annotationId: UUID) = Unit
-    override fun annotationsFor(targetId: UUID): Set<UUID> = emptySet()
-    override fun reactionCursors(userId: UUID): Map<UUID, Long>? = null
-    override fun saveReactionCursors(userId: UUID, cursors: Map<UUID, Long>) = Unit
-    override fun lockSensitiveMemory() = Unit
-    override fun clear(userId: UUID?) = Unit
-}
-
-private object UnwiredContacts : Contacts {
-    override val contacts: StateFlow<List<ContactItemDto>> = MutableStateFlow(emptyList())
-    override val incomingRequests: StateFlow<List<ContactRequestDto>> = MutableStateFlow(emptyList())
-    override val listState: StateFlow<ContactsListState> = MutableStateFlow(ContactsListState())
-    override val presence: StateFlow<Map<UUID, PresenceDto>> = MutableStateFlow(emptyMap())
-    override val blocked: StateFlow<List<BlockItemDto>> = MutableStateFlow(emptyList())
-    override val rosterChanges: SharedFlow<Unit> = MutableSharedFlow()
-    override val pendingInvite: MutableStateFlow<String?> = MutableStateFlow(null)
-    override fun username(of: UUID): String? = null
-    override suspend fun refresh(force: Boolean) = Unit
-    override suspend fun refreshPresence(userIds: Collection<UUID>) = Unit
-    override suspend fun add(invite: String): AddContactOutcome = AddContactOutcome.Failed("Not signed in.")
-    override suspend fun accept(request: ContactRequestDto): String? = "Not signed in."
-    override suspend fun reject(request: ContactRequestDto): String? = "Not signed in."
-    override suspend fun refreshBlocks() = Unit
-    override suspend fun block(userId: UUID, username: String): String? = "Sign in to block contacts."
-    override suspend fun unblock(userId: UUID): String? = "Sign in to manage blocked contacts."
-    override fun bind(hooks: ContactsHooks) = Unit
-    override fun hydrate(contacts: List<ContactItemDto>, requests: List<ContactRequestDto>) = Unit
-    override fun start() = Unit
-    override fun onForeground() = Unit
-    override fun onBackground() = Unit
-    override fun onConnectivityRegained() = Unit
-    override fun stop(wipe: Boolean) = Unit
-}
-
-/** Never trusts a server key unpinned: every lookup is refused, so nothing is decrypted or sealed. */
-private object UnwiredPeerIdentities : PeerIdentities {
-    override val identityChanges: StateFlow<Map<UUID, PeerIdentityChange>> = MutableStateFlow(emptyMap())
-    override val verifiedPeers: StateFlow<Set<UUID>> = MutableStateFlow(emptySet())
-    override val events: SharedFlow<PeerIdentityEvent> = MutableSharedFlow()
-    override suspend fun resolvePublicKey(peer: UUID): ByteArray = throw CryptoError.Locked
-    override suspend fun publicKeyForSending(peer: UUID): ByteArray = throw CryptoError.Locked
-    override suspend fun refresh(peer: UUID) = Unit
-    override fun identityChange(peer: UUID): PeerIdentityChange? = null
-    override fun isSafetyVerified(peer: UUID): Boolean = false
-    override fun confirmSafety(peer: UUID) = Unit
-    override fun safetyNumber(peer: UUID): String? = null
-    override fun acceptNewIdentity(peer: UUID) = Unit
-    override fun clearMemory() = Unit
-    override fun wipe() = Unit
-}
-
-private object UnwiredPrivacy : Privacy {
-    override val settings: StateFlow<PrivacySettingsDto> = MutableStateFlow(PrivacySettingsDto(allowPeerChatDelete = false))
-    override val hasLoaded: StateFlow<Boolean> = MutableStateFlow(false)
-    override suspend fun refresh() = Unit
-    override suspend fun update(change: UpdatePrivacySettingsBody): String? = "Sign in to change privacy settings."
-    override suspend fun setAllowsPeerChatDelete(value: Boolean): String? = "Sign in to change privacy settings."
-    override suspend fun rotateShareCode(): String? = "Sign in to reset your QR code."
-    override fun reset() = Unit
-}
-
-private object UnwiredNotifier : MessageNotifier {
-    override var activePeerId: UUID? = null
-    override fun announce(kind: NotificationKind, peerUserId: UUID?, username: String?, conversationId: UUID?, text: String?, muted: Boolean) = Unit
-    override fun clearDelivered(conversationId: UUID) = Unit
-    override fun setBadge(count: Int) = Unit
-    override fun setPushCoversBackground(covers: Boolean) = Unit
-    override val badgeIncludesMuted: Boolean = false
-}
-
-private object UnwiredSendEngine : SendEngine {
-    private const val UNAVAILABLE = "Something went wrong. Try again."
-    override suspend fun sendText(text: String, storePeer: UUID, replyTo: MessageReplyReference?, linkPreview: LinkPreviewAttachment?) = Unit
-    override fun sendTodo(text: String) = Unit
-    override fun toggleTodo(messageId: UUID) = Unit
-    override fun deleteLocalNote(messageId: UUID) = Unit
-    override suspend fun sendImage(
-        source: MediaImageSource,
-        storePeer: UUID,
-        caption: String,
-        quality: MediaComposeQuality,
-        edits: MediaEdits,
-        replyTo: MessageReplyReference?,
-    ): String? = UNAVAILABLE
-    override suspend fun sendVideo(plan: VideoSendPlan, storePeer: UUID, replyTo: MessageReplyReference?): String? = UNAVAILABLE
-    override suspend fun sendVoice(
-        audio: ByteArray,
-        durationMs: Int,
-        storePeer: UUID,
-        waveform: ByteArray?,
-        transcript: String?,
-        replyTo: MessageReplyReference?,
-        transcriptProvider: (suspend (messageId: UUID) -> String?)?,
-    ): String? = UNAVAILABLE
-    override suspend fun retryFailedImage(messageId: UUID, storePeer: UUID): String? = UNAVAILABLE
-    override suspend fun retryFailedVideo(messageId: UUID, storePeer: UUID): String? = UNAVAILABLE
-    override suspend fun shareTranscript(transcript: String, voiceMessageId: UUID, storePeer: UUID) = Unit
-    override suspend fun flushOutbox() = Unit
-}
-
-private object UnwiredReactionsEngine : ReactionsEngine {
-    override val limit: StateFlow<Int> = MutableStateFlow(5)
-    override val revisions: StateFlow<Map<UUID, Int>> = MutableStateFlow(emptyMap())
-    override val failures: SharedFlow<ReactionFailure> = MutableSharedFlow()
-    override fun canReact(message: ChatMessage): Boolean = false
-    override fun myReactions(message: ChatMessage): List<String> = emptyList()
-    override fun toggle(emoji: String, messageId: UUID, storePeer: UUID) = Unit
-    override fun set(emojis: List<String>, messageId: UUID, storePeer: UUID) = Unit
-    override fun hasUnseen(storePeer: UUID): Boolean = false
-    override suspend fun refreshServerConfig() = Unit
-    override fun applyPage(storePeer: UUID, reactions: List<ReactionDto>, snapshotSeq: Long?) = Unit
-    override fun apply(event: RealtimeEvent.MessageReaction) = Unit
-    override fun apply(event: RealtimeEvent.ReactionsSeen) = Unit
-    override suspend fun catchUp(storePeer: UUID) = Unit
-    override suspend fun flushPendingSaves() = Unit
-    override fun reset() = Unit
-}
-
-private object UnwiredMediaLoader : MediaLoader {
-    override suspend fun ensureImageLoaded(message: ChatMessage) = Unit
-    override suspend fun ensureVideoLoaded(message: ChatMessage) = Unit
-    override suspend fun ensureVoiceLoaded(message: ChatMessage) = Unit
-    override suspend fun ensureLinkImageLoaded(message: ChatMessage) = Unit
-    override fun cancel(messageId: UUID) = Unit
-    override fun cancelAll() = Unit
-    override suspend fun mediaBytes(messageId: UUID): ByteArray? = null
 }

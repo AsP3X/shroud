@@ -16,8 +16,18 @@ interface MessageNotifier {
     /** In-app banner or system notification for one event; [muted] chats stay silent. */
     fun announce(kind: NotificationKind, peerUserId: UUID?, username: String?, conversationId: UUID?, text: String?, muted: Boolean)
 
-    /** The chat was read here or elsewhere: its delivered notifications go. */
+    /**
+     * The chat was read here or elsewhere, or a message in it was deleted for everyone (web-parity
+     * §7.6, web `AppShell.tsx:1549-1553`): its delivered notifications go.
+     */
     fun clearDelivered(conversationId: UUID)
+
+    /**
+     * The first chat list after an unlock (web-parity §7.6, web `AppShell.tsx:802-812`): chats in
+     * [readChats] (nothing unread) lose their message notifications, chats in [reactionsSeenChats]
+     * (no unseen reactions) their reaction notifications. Added by W2-INT with a no-op default.
+     */
+    fun closeSettledChats(readChats: Collection<UUID>, reactionsSeenChats: Collection<UUID>) {}
 
     /** Launcher badge (where the launcher supports one). */
     fun setBadge(count: Int)

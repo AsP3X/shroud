@@ -15,6 +15,7 @@ import de.corespace.shroud.core.calls.SealedCallSecretStore
 import de.corespace.shroud.core.calls.ShroudCallsBackend
 import de.corespace.shroud.core.contacts.Contacts
 import de.corespace.shroud.core.contacts.PeerIdentities
+import de.corespace.shroud.core.devices.DeviceNoun
 import de.corespace.shroud.core.lifecycle.AppPhase
 import de.corespace.shroud.core.storage.KeystoreSealer
 import de.corespace.shroud.core.storage.PrefsFiles
@@ -32,25 +33,25 @@ import java.io.File
  * [permissions] (the call UI registers its permission prompt there). Nobody else constructs these
  * classes (00-plan §2.0 rule 3).
  *
- * Integration (W2-INT, W3-INT):
- * - point [peerIdentities] and [contacts] at `container.contacts.peerIdentities` /
- *   `container.contacts.controller` (W2-CONTACTS) — until then calls can answer with stored secrets
- *   only, and no secret is derived;
- * - call [onProcessStart] from `AppContainer.onProcessStart` (it builds the controller, so socket
- *   rings are heard, keeps the secrets current and follows the app phase for the camera);
- * - `RealtimeModule.foregroundCoordinator(calls = { container.calls.controller })`;
- * - `WipeHooksImpl.clearCalls()` (and `haltWriters`) → [wipe];
- * - the voice package stops playback and recording on `controller.callMediaStarting`;
+ * Integration (W2-INT wired these; W3-INT adds the media engine and the system):
+ * - [peerIdentities] and [contacts] read `container.contacts` (W2-CONTACTS): pinned keys derive the
+ *   secrets, the roster names callers;
+ * - `AppContainer.onProcessStart` calls [onProcessStart] (it builds the controller, so socket rings
+ *   are heard, keeps the secrets current and follows the app phase for the camera);
+ * - `RealtimeModule.foregroundCoordinator` reads [controllerIfBuilt] as its `ActiveCallProbe`;
+ * - `WipeHooksImpl.clearCalls()` → [wipe], `haltWriters` → `clearLocalState()`;
+ * - `VoiceModule.bindCallMediaStarting(controller.callMediaStarting)`: a call's media stops voice
+ *   playback and recording;
  * - W3-INT: `controller.attach(engine, system)` with W3-CALLS-MEDIA's engine and W3-CALLS-SYSTEM's system.
  */
 class CallsModule(container: AppContainer) : AppModule(container) {
     private val app: Context get() = container.appContext
 
-    /** W2-INT: `{ container.contacts.peerIdentities }` (W2-CONTACTS' `PeerIdentityController`). */
-    private val peerIdentities: () -> PeerIdentities? = { null }
+    /** W2-CONTACTS' `PeerIdentityController`: the pinned keys call secrets are derived from. */
+    private val peerIdentities: () -> PeerIdentities? = { container.contacts.peerIdentities }
 
-    /** W2-INT: `{ container.contacts.controller }` (W2-CONTACTS' `ContactsController`). */
-    private val contacts: () -> Contacts? = { null }
+    /** W2-CONTACTS' `ContactsController`: who the contacts are (secrets for each, caller names). */
+    private val contacts: () -> Contacts? = { container.contacts.controller }
 
     /** AFU: no user authentication, no `setUnlockedDeviceRequired` (plan §1.5, P3a; calls §11). */
     private val secretSealer: KeystoreSealer by lazy { KeystoreSealer(SECRETS_ALIAS) }
@@ -92,8 +93,7 @@ class CallsModule(container: AppContainer) : AppModule(container) {
     /** Microphone and camera; the call UI (W3-CALLS-UI) sets `prompt` to show the system dialog. */
     val permissions: AndroidCallPermissions by lazy { AndroidCallPermissions(app) }
 
-    /** The one call controller; built on the main thread (its state is main-confined). */
-    val controller: CallController by lazy {
+    private val controllerLazy = lazy {
         CallController(
             scope = container.appScope,
             backend = ShroudCallsBackend(container.net.api),
@@ -104,11 +104,16 @@ class CallsModule(container: AppContainer) : AppModule(container) {
             permissions = permissions,
             clock = container.clock,
             onCallEnded = { container.realtime.foregroundCoordinator.onCallEnded() },
-            // W2-INT may switch to DeviceNoun.current(context) (W2-AUTH-WIPE): the same rule.
-            deviceNoun = { if (app.resources.configuration.smallestScreenWidthDp >= TABLET_MIN_DP) "tablet" else "phone" },
+            deviceNoun = { DeviceNoun.current(app) },
             screenCaptureSupported = { app.getSystemService(MediaProjectionManager::class.java) != null },
         )
     }
+
+    /** The one call controller; built on the main thread (its state is main-confined). */
+    val controller: CallController by controllerLazy
+
+    /** [controller] when something already built it; the wipe stops what exists and builds nothing. */
+    val controllerIfBuilt: CallController? get() = if (controllerLazy.isInitialized()) controller else null
 
     private var started: Job? = null
 
@@ -135,6 +140,5 @@ class CallsModule(container: AppContainer) : AppModule(container) {
     companion object {
         const val SECRETS_FILE = "call-secrets.sealed"
         const val SECRETS_ALIAS = "shroud.call-secrets.v1"
-        private const val TABLET_MIN_DP = 600
     }
 }

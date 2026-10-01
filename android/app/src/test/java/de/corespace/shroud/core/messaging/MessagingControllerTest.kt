@@ -161,6 +161,45 @@ class MessagingControllerTest {
     }
 
     @Test
+    fun theFirstListAfterAnUnlockClosesSettledChatsOnce() = engineTest { // web-parity §7.6, web AppShell.tsx:802-812 (W2-INT)
+        val read = UUID.fromString("0b6e1f2a-6c3d-4e8f-9a1b-2c3d4e5f6a7b")
+        val busyPeer = UUID.fromString("5a4b3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d")
+        val busy = UUID.fromString("e1d2c3b4-a596-4877-8695-a4b3c2d1e0f9")
+        backend.conversationList = listOf(
+            Dtos.conversation(peer, read, unread = 0),
+            Dtos.conversation(busyPeer, busy, username = "carol", unread = 3).copy(unseenReactions = 2),
+        )
+        val controller = controller()
+        controller.start()
+        runCurrent()
+        assertEquals(listOf(setOf(read) to setOf(read)), notifier.settled)
+
+        // Later lists settle nothing: a notification posted since then is still news.
+        controller.refreshConversations(force = true)
+        runCurrent()
+        assertEquals(1, notifier.settled.size)
+
+        // A new unlock (stop, start) settles again.
+        controller.stop(wipeDisk = false)
+        controller.start()
+        runCurrent()
+        assertEquals(2, notifier.settled.size)
+        controller.stop(wipeDisk = false)
+    }
+
+    @Test
+    fun aDeleteForEveryoneClosesTheChatsNotifications() = engineTest { // web AppShell.tsx:1549-1553 (W2-INT)
+        val controller = controller()
+        controller.start()
+        runCurrent()
+        // Also for a message this phone never loaded: the notification may be all it has of it.
+        socket.eventsFlow.tryEmit(RealtimeEvent.MessageDeleted(UUID.randomUUID(), conversation))
+        runCurrent()
+        assertEquals(listOf(conversation), notifier.cleared)
+        controller.stop(wipeDisk = false)
+    }
+
+    @Test
     fun withoutASessionNothingStarts() = engineTest {
         session.value = null
         val controller = controller()

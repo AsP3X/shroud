@@ -136,6 +136,8 @@ class AppContainer(
     fun onProcessStart() {
         keys.onProcessStart()            // SensitiveTempFiles.prepareAtLaunch() (W1-KEYS)
         notifications.onProcessStart()   // channels ensure (W2-NOTIF)
+        calls.onProcessStart()           // the call controller hears socket rings; call secrets follow the unlock (W2-CALLS-CORE)
+        voice.bindCallMediaStarting(calls.controller.callMediaStarting)   // a call's media stops voice playback and takes (W2-VOICE)
         push.onProcessStart()            // UnifiedPush restore + background connection (W3-PUSH)
         callsSystem.onProcessStart()     // Telecom registration (W3-CALLS-SYSTEM)
         realtime.onProcessStart()        // AppForegroundCoordinator on appPhase (W1-RT)

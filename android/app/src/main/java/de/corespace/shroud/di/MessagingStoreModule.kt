@@ -18,12 +18,11 @@ import de.corespace.shroud.core.messaging.local.MessagingLocalRepository
 class MessagingStoreModule(container: AppContainer) : AppModule(container) {
     /**
      * The SHRM1 media cache (W2-MEDIA-STORE's `LocalMediaStore`), asked on every call: hydrate reads
-     * which messages have their media on the phone, purges and [MessagingStore.clear] remove media.
-     * Null until the integration wires it (W2-INT: `messagingStore.localMedia = { media.<cache> }`);
-     * until then hydrated messages report no local media and purges touch plaintext only.
+     * which messages have their media on the phone, purges and [MessagingStore.clear] remove media
+     * (wired by W2-INT; tests may replace it).
      */
     @Volatile
-    var localMedia: () -> LocalMediaStore? = { null }
+    var localMedia: () -> LocalMediaStore? = { container.media.localMedia }
 
     /** The one sealed message store of the process (plan §1.7.7 `MessagingStore`). Blocking: call off main. */
     val store: MessagingStore by lazy {

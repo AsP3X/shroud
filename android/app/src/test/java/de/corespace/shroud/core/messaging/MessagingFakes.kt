@@ -359,6 +359,13 @@ class FakeNotifier : MessageNotifier {
     override fun setPushCoversBackground(covers: Boolean) {
         pushCovers += covers
     }
+
+    /** Each `closeSettledChats` call: (read chats, reactions-seen chats). */
+    val settled = ArrayList<Pair<Set<UUID>, Set<UUID>>>()
+
+    override fun closeSettledChats(readChats: Collection<UUID>, reactionsSeenChats: Collection<UUID>) {
+        settled += readChats.toSet() to reactionsSeenChats.toSet()
+    }
 }
 
 class FakeContacts : Contacts {

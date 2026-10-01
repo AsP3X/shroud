@@ -12,6 +12,7 @@ import de.corespace.shroud.core.media.VideoPipeline
 import de.corespace.shroud.core.media.video.VideoException
 import de.corespace.shroud.core.messaging.MediaHydrator
 import de.corespace.shroud.core.messaging.MediaLoader
+import de.corespace.shroud.core.messaging.MessagingController
 import de.corespace.shroud.core.messaging.MessagingStore
 import de.corespace.shroud.core.messaging.ReactionsEngine
 import de.corespace.shroud.core.messaging.SendApi
@@ -22,8 +23,11 @@ import de.corespace.shroud.core.messaging.SendKeyring
 import de.corespace.shroud.core.messaging.SendPipeline
 import de.corespace.shroud.core.messaging.ThreadState
 import de.corespace.shroud.core.messaging.reactions.ReactionEngine
+import de.corespace.shroud.core.model.ChatMessage
+import de.corespace.shroud.core.net.ConversationItemDto
 import de.corespace.shroud.core.notifications.MessageNotifier
 import de.corespace.shroud.core.storage.PrefsFiles
+import java.util.UUID
 
 /**
  * Send pipelines (00-plan §1.7.7). Owner: W2-MSG-SEND — [SendPipeline], [MediaHydrator],
@@ -33,32 +37,31 @@ import de.corespace.shroud.core.storage.PrefsFiles
  * calls [send], [reactions] and [media] once each with that `ThreadState`. Nobody else constructs this
  * package's classes (00-plan §2.0 rule 3).
  *
- * **Same-wave ports.** The engines need objects of packages built in parallel with this one; until
- * W2-INT merges them these providers fail on first use with the name of the missing owner (nothing
- * calls them before W2-INT: `MessagingController` arrives in the same merge). W2-INT points each at
- * its owner's module:
+ * **Same-wave ports** (wired by W2-INT; each is read at the time of use, so tests may replace them):
  * - [store] → `MessagingStoreModule.store` (W2-MSG-STORE);
  * - [mediaStore], [transfers] → the `LocalMediaCache` and `MediaTransferService` of `MediaModule` (W2-MEDIA-STORE);
- * - [images] → `ImageModule`'s `ImageEncoder` (W2-MEDIA-IMAGE);
- * - [video] → `VideoModule`'s `VideoMedia` (W2-VIDEO); [videoTooLarge] already reads its `VideoException.isTooLarge` (CR-4, applied at the W2 merge);
- * - [peerIdentities] → `ContactsModule`'s `PeerIdentityController` (W2-CONTACTS);
- * - [notifier] → `NotificationsModule`'s `NotificationsController` (W2-NOTIF);
- * - [host] → a [SendHost] over W2-MSG-CORE's `ThreadStore`, whose `ThreadState` additions carry the
- *   same members (CR-1); until then [SendHost.Detached] (no list refreshes, no reaction badges).
+ * - [images] → `ImageModule.pipeline` (W2-MEDIA-IMAGE);
+ * - [video] → `VideoModule.pipeline` (W2-VIDEO); [videoTooLarge] reads its `VideoException.isTooLarge` (CR-4);
+ * - [peerIdentities] → `ContactsModule.peerIdentities` (W2-CONTACTS);
+ * - [notifier] → `NotificationsModule.controller` (W2-NOTIF);
+ * - [host] → [ControllerSendHost], an adapter over `MessagingModule.controller` (CR-1: the adapter
+ *   keeps `SendHost` out of the controller's public supertypes).
  *
  * `MessagingController` registers [media]'s result as an artifact sink (it is a
  * `MessageArtifactSinks`: purges and locks stop downloads), and lets the store write threads through
  * [ReactionEngine.settled].
  */
 class MessagingSendModule(container: AppContainer) : AppModule(container) {
-    @Volatile var host: (ThreadState) -> SendHost = { SendHost.Detached }
-    @Volatile var store: () -> MessagingStore = { unwired("MessagingStore (W2-MSG-STORE)") }
-    @Volatile var mediaStore: () -> LocalMediaStore = { unwired("LocalMediaStore (W2-MEDIA-STORE)") }
-    @Volatile var transfers: () -> MediaTransfers = { unwired("MediaTransfers (W2-MEDIA-STORE)") }
-    @Volatile var images: () -> ImagePipeline = { unwired("ImagePipeline (W2-MEDIA-IMAGE)") }
-    @Volatile var video: () -> VideoPipeline = { unwired("VideoPipeline (W2-VIDEO)") }
-    @Volatile var peerIdentities: () -> PeerIdentities = { unwired("PeerIdentities (W2-CONTACTS)") }
-    @Volatile var notifier: () -> MessageNotifier? = { null }
+    private val controllerHost: SendHost by lazy { ControllerSendHost(container.messaging.controller) }
+
+    @Volatile var host: (ThreadState) -> SendHost = { controllerHost }
+    @Volatile var store: () -> MessagingStore = { container.messagingStore.store }
+    @Volatile var mediaStore: () -> LocalMediaStore = { container.media.localMedia }
+    @Volatile var transfers: () -> MediaTransfers = { container.media.transfers }
+    @Volatile var images: () -> ImagePipeline = { container.images.pipeline }
+    @Volatile var video: () -> VideoPipeline = { container.video.pipeline }
+    @Volatile var peerIdentities: () -> PeerIdentities = { container.contacts.peerIdentities }
+    @Volatile var notifier: () -> MessageNotifier? = { container.notifications.controller }
     @Volatile var videoTooLarge: (Throwable) -> Boolean = { VideoException.isTooLarge(it) }
 
     /** The REST slice of the engines, on the process's one `ShroudApi` (W1-NET). */
@@ -97,6 +100,22 @@ class MessagingSendModule(container: AppContainer) : AppModule(container) {
         notifier = { notifier() },
         videoTooLarge = { videoTooLarge(it) },
     )
+}
 
-    private fun unwired(what: String): Nothing = throw IllegalStateException("$what is not wired into MessagingSendModule yet (W2-INT).")
+/**
+ * The engines' view of the messaging controller (W2-MSG-SEND CR-1): each member forwards to the
+ * controller's public API of the same name (`MessagingController.swift` members the iOS engines call
+ * directly). Built lazily and only used after the controller exists: the engines read it at the
+ * time of a send, never while the controller is being constructed.
+ */
+internal class ControllerSendHost(private val controller: MessagingController) : SendHost {
+    override val conversations: List<ConversationItemDto> get() = controller.conversations.value
+    override val activePeerId: UUID? get() = controller.activePeerId.value
+    override suspend fun refreshConversations(force: Boolean) = controller.refreshConversations(force)
+    override fun setOffline(offline: Boolean) = controller.setOffline(offline)
+    override fun isMuted(storePeer: UUID): Boolean = controller.isMuted(storePeer)
+    override fun username(storePeer: UUID): String? = controller.username(storePeer)
+    override fun editConversations(transform: (List<ConversationItemDto>) -> List<ConversationItemDto>) =
+        controller.editConversations(transform)
+    override fun foldSharedTranscripts(thread: List<ChatMessage>): List<ChatMessage> = controller.foldSharedTranscripts(thread)
 }

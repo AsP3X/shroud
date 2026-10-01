@@ -316,7 +316,7 @@ class NotificationsController(
      * After the first chat list following an unlock: chats with nothing unread and no unseen
      * reactions lose their notifications (web-parity §7.6, `AppShell.tsx:802-812`).
      */
-    fun closeSettledChats(readChats: Collection<UUID>, reactionsSeenChats: Collection<UUID>) =
+    override fun closeSettledChats(readChats: Collection<UUID>, reactionsSeenChats: Collection<UUID>) =
         systemNotifier.closeSettledChats(readChats, reactionsSeenChats)
 
     /**
