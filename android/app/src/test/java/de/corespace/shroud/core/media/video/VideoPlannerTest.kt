@@ -7,16 +7,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Port of the plan and progress cases of `VideoMediaEncodeTests`
- * (`ios/shroudTests/VideoMediaEncodeTests.swift:42-229`; media-voice-links §12.6), names kept.
+ * Port of the plan, candidate and progress cases of `VideoMediaEncodeTests`
+ * (`ios/shroudTests/VideoMediaEncodeTests.swift:12-229`; media-voice-links §12.6), names kept.
  *
  * iOS's probes carry no codecs; Android's passthrough also needs H.264 and AAC or no audio
  * (media D7), so [probe] describes the iOS fixtures as what they are — H.264 with AAC sound.
  *
- * iOS-only, not ported (no export presets or size estimates on Android, media D6):
- * `skipsPresetsEstimatedOverTheMargin`, `keepsPresetsWithoutAnEstimate`,
- * `triesTheSmallestPresetWhenOnlyTheMarginRulesItOut`, `presetsFollowTheChosenQuality`,
- * `givesUpWhenEvenTheSmallestEstimateIsOverTheCap`. The encode cases run on a device
+ * `exportCandidates` keeps its iOS vectors verbatim (preset names as keys); on Android it picks
+ * the encoder's retry rung (`VideoEncoderTest`). iOS-only, not ported: `presetsFollowTheChosenQuality`
+ * (AVFoundation preset names; Android has no presets, media D6). The encode cases run on a device
  * (`VideoEncoderDeviceTest`).
  */
 class VideoPlannerTest {
@@ -38,6 +37,52 @@ class VideoPlannerTest {
         trim: VideoTrim? = null,
         removeAudio: Boolean = false,
     ) = VideoPlanner.previewPlan(probe, fileExtension = ext, trim = trim, removeAudio = removeAudio, quality = quality)
+
+    // MARK: - Candidate choice (VideoMediaEncodeTests.swift:8-32, 212-215)
+
+    private val cap = 100_000_000L
+
+    @Test
+    fun skipsPresetsEstimatedOverTheMargin() {
+        val chosen = VideoPlanner.exportCandidates(
+            listOf<Pair<String, Long?>>("720" to 120_000_000, "540" to 90_000_000, "480" to 50_000_000, "low" to 5_000_000),
+            cap = cap,
+        )
+        assertEquals(listOf("480", "low"), chosen)
+    }
+
+    @Test
+    fun keepsPresetsWithoutAnEstimate() {
+        val chosen = VideoPlanner.exportCandidates(listOf<Pair<String, Long?>>("720" to null, "540" to 200_000_000), cap = cap)
+        assertEquals(listOf("720"), chosen)
+    }
+
+    @Test
+    fun triesTheSmallestPresetWhenOnlyTheMarginRulesItOut() {
+        // 90 MB is over 85% of the cap but under the cap itself: worth one real export.
+        val chosen = VideoPlanner.exportCandidates(
+            listOf<Pair<String, Long?>>("720" to 300_000_000, "low" to 90_000_000, "540" to 150_000_000),
+            cap = cap,
+        )
+        assertEquals(listOf("low"), chosen)
+    }
+
+    @Test
+    fun givesUpWhenEvenTheSmallestEstimateIsOverTheCap() {
+        val chosen = VideoPlanner.exportCandidates(listOf<Pair<String, Long?>>("720" to 400_000_000, "low" to 101_000_000), cap = cap)
+        assertTrue(chosen.isEmpty())
+    }
+
+    @Test
+    fun candidatesDefaultToTheMediaCapAndTheMarginEdge() {
+        // Exactly 85 % of the cap is kept (`<=`), one byte more is not; no estimates at all → nothing.
+        val edge = Math.round(cap * 0.85)
+        assertEquals(listOf("a"), VideoPlanner.exportCandidates(listOf<Pair<String, Long?>>("a" to edge, "b" to edge + 1), cap = cap))
+        assertEquals(listOf("b"), VideoPlanner.exportCandidates(listOf<Pair<String, Long?>>("a" to cap + 1, "b" to edge + 1), cap = cap))
+        assertEquals(emptyList<String>(), VideoPlanner.exportCandidates(emptyList<Pair<String, Long?>>(), cap = cap))
+        val big = VideoPlanner.MAX_PLAINTEXT_BYTES
+        assertEquals(listOf("fits"), VideoPlanner.exportCandidates(listOf<Pair<String, Long?>>("over" to big + 1, "fits" to big)))
+    }
 
     // MARK: - iOS vectors (VideoMediaEncodeTests.swift:42-210)
 

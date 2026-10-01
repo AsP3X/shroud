@@ -3,6 +3,7 @@ package de.corespace.shroud.core.media.video
 import android.content.Context
 import android.net.Uri
 import androidx.annotation.OptIn
+import androidx.core.net.toUri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -140,7 +141,7 @@ internal class ExoPlaybackEngine private constructor(context: Context, configure
          * W2-MEDIA-STORE's `SealedMediaDataSource.URI`: the per-message data source decides what is
          * read, and no message id or path reaches a data spec, which ExoPlayer prints in its errors.
          */
-        val LOCAL_URI: Uri = Uri.parse("shroud-media:sealed")
+        val LOCAL_URI: Uri = "shroud-media:sealed".toUri()
 
         private val LOCAL_ITEM: MediaItem = MediaItem.Builder().setUri(LOCAL_URI).setMimeType(MimeTypes.VIDEO_MP4).build()
     }

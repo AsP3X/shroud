@@ -171,6 +171,25 @@ class VideoEncoderTest {
     }
 
     @Test
+    fun theRetrySkipsARungEstimatedWithinTheMarginOfTheCap() = runTest {
+        // 10 000 s at High: 1280×720 is budget-bound (≈ 0.918 of the cap), 960×540 is estimated at
+        // 1 848 648 000 bytes — over 85 % of the cap — so the one retry goes to 640×360
+        // (`exportCandidates`, `VideoMedia.swift:666-686`).
+        val long = VideoProbe(10_000.0, 1920, 1080, 2_000_000, true, "mov", "video/avc", "audio/mp4a-latm")
+        val ladder = VideoPlanner.encodeLadder(long, null, false, VideoUploadQuality.High)
+        assertEquals(1_848_648_000L, ladder[1].estimatedBytes)
+        assertTrue(ladder[1].estimatedBytes > VideoPlanner.MAX_PLAINTEXT_BYTES * VideoPlanner.ESTIMATE_MARGIN)
+        assertTrue(ladder[2].estimatedBytes <= VideoPlanner.MAX_PLAINTEXT_BYTES * VideoPlanner.ESTIMATE_MARGIN)
+
+        val exporter = Exporter(Step(bytes = 1_001), Step(bytes = 1_000))
+        val out = encoder(Inspector(long, poster), exporter).encode(VideoSendPlan(source), null)
+
+        assertEquals(listOf(1280 to 720, 640 to 360), exporter.requests.map { it.plan.width to it.plan.height })
+        assertEquals(640 to 360, out.width to out.height)
+        assertEquals(listOf(out.file.name), leftovers())
+    }
+
+    @Test
     fun aSecondOvershootIsTooLarge() = runTest {
         val exporter = Exporter(Step(bytes = 1_001), Step(bytes = 1_001))
         val error = encodeError { encoder(Inspector(big, poster), exporter).encode(VideoSendPlan(source), null) }

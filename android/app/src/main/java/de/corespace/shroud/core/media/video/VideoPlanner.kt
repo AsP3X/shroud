@@ -99,9 +99,9 @@ object VideoPlanner {
 
     /**
      * Every re-encode rung of [quality] that fits the budget, best first: element 0 is what
-     * [previewPlan] promises when it does not pass through, element 1 the encoder's one retry when
-     * the encoder overshoots the cap (media §6.4 step 7). Never empty: throws [VideoPlanError] like
-     * [previewPlan] (`VideoMedia.swift:546-554`).
+     * [previewPlan] promises when it does not pass through; the encoder's one retry after an
+     * overshoot is taken from the rest through [exportCandidates] (media §6.4 step 7). Never empty:
+     * throws [VideoPlanError] like [previewPlan] (`VideoMedia.swift:546-554`).
      */
     internal fun encodeLadder(
         probe: VideoProbe,
@@ -159,6 +159,30 @@ object VideoPlanner {
             },
             seconds,
         )
+    }
+
+    /** Estimates under this share of the cap get exported (`VideoMedia.estimateMargin`, `VideoMedia.swift:559-560`). */
+    const val ESTIMATE_MARGIN = 0.85
+
+    /**
+     * The candidates worth exporting, best first, given each one's size estimate
+     * (`VideoMedia.exportCandidates`, `VideoMedia.swift:666-686`), ported verbatim: an entry
+     * without an estimate is kept (only a real export can tell); one at most [ESTIMATE_MARGIN] of
+     * [cap] is kept; when nothing clears the margin, the smallest estimate still gets one try if it
+     * is under [cap] itself — the margin avoids wasted encodes, it does not refuse clips that fit.
+     *
+     * iOS filters its named export presets with it. Android has no presets (media D6); the
+     * encoder (`VideoEncoder`) uses it to choose the rung of its one retry after an overshoot,
+     * among the plan's smaller rungs and their [VideoOutgoingPlan.estimatedBytes] — usually the
+     * next rung, but one whose estimate is as close to the cap as the overshoot that failed is
+     * passed over.
+     */
+    fun <T> exportCandidates(estimates: List<Pair<T, Long?>>, cap: Long = MAX_PLAINTEXT_BYTES): List<T> {
+        val fits = estimates.filter { (_, bytes) -> bytes == null || bytes.toDouble() <= cap.toDouble() * ESTIMATE_MARGIN }
+        if (fits.isNotEmpty()) return fits.map { it.first }
+        // Swift `min(by:)` keeps the first of equal elements, as `minByOrNull` does.
+        val smallest = estimates.mapNotNull { (key, bytes) -> bytes?.let { key to it } }.minByOrNull { it.second }
+        return if (smallest != null && smallest.second <= cap) listOf(smallest.first) else emptyList()
     }
 
     /**

@@ -23,8 +23,10 @@ import java.io.IOException
  * 4. Passthrough when the plan allows it (`:226-255`): a remux through the metadata-clearing muxer;
  *    if that remux fails or comes out over the cap, the clip is re-encoded like any other.
  * 5. Re-encode at the plan (iOS `exportAtPlanBitrate`, `:366-422`; Android skips iOS's presets,
- *    media D6). An output over [maxPlaintextBytes] (encoder overshoot) gets **one** retry at the next
- *    rung of the ladder; still too big, or no smaller rung (Original) → [VideoException.Reason.TooLarge].
+ *    media D6). An output over [maxPlaintextBytes] (encoder overshoot) gets **one** retry at a
+ *    smaller rung: the first that iOS's preset filter keeps ([VideoPlanner.exportCandidates] over the
+ *    rungs' estimates), which is the next rung unless its estimate is over 85 % of the cap; still
+ *    too big, or no smaller rung (Original) → [VideoException.Reason.TooLarge].
  *    A plan that cannot fit at all is `TooLarge` too (`:398-400`).
  *
  * Progress: each export attempt fills [VideoPlanner.progressWindow] of its attempt number, the
@@ -121,7 +123,11 @@ class VideoEncoder internal constructor(
         }
 
         val ladder = planOrTooLarge { VideoPlanner.encodeLadder(probe, trim, plan.removeAudio, plan.quality) }
-        for (step in ladder.take(1 + SIZE_RETRIES)) {
+        // The promised rung, then one retry among the smaller rungs that iOS's preset filter would
+        // export (`exportCandidates`, `VideoMedia.swift:666-686`): the next one unless its own
+        // estimate is within the margin of the cap the first attempt just overshot.
+        val retry = VideoPlanner.exportCandidates(ladder.drop(1).map { it to it.estimatedBytes }).firstOrNull()
+        for (step in listOfNotNull(ladder.first(), retry)) {
             val output = export(VideoExportRequest(plan.sourceUri, clip = trim, removeAudio = plan.removeAudio, plan = step))
             if (fits(output)) return accept(output, step.width, step.height)
             output.delete()
@@ -158,9 +164,6 @@ class VideoEncoder internal constructor(
     companion object {
         /** Poster edge of an outgoing video (`VideoMedia.swift:220-224`, `maxEdge: 720`). */
         const val POSTER_EDGE_PX = 720
-
-        /** Retries after an encoder overshoot (media §6.4 step 7). */
-        private const val SIZE_RETRIES = 1
 
         private const val EXPORT_STEM = "export"
 

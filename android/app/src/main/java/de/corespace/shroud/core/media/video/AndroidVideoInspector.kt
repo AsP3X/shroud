@@ -36,8 +36,11 @@ internal class AndroidVideoInspector(private val context: Context) : VideoInspec
     override suspend fun probe(uri: Uri): VideoProbe? = withContext(Dispatchers.IO) {
         val meta = retrieve { setDataSource(context, uri) } ?: return@withContext null
         val tracks = trackMimes { setDataSource(context, uri, null) }
-        val containerMime = meta.containerMime ?: resolverType(uri)
-        val extension = VideoFormats.extensionForMime(containerMime).ifEmpty { VideoFormats.extensionOfName(uri.lastPathSegment) }
+        // The picked item's own type first (media §6.3: "from the MIME of the picked item"), then
+        // what the retriever sniffed, then a file name (`file://` camera captures).
+        val extension = VideoFormats.extensionForMime(resolverType(uri))
+            .ifEmpty { VideoFormats.extensionForMime(meta.containerMime) }
+            .ifEmpty { VideoFormats.extensionOfName(uri.lastPathSegment) }
         VideoProbe(
             durationSeconds = maxOf(0.1, meta.durationMs / 1000.0),
             width = meta.width,
