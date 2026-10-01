@@ -4,11 +4,10 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
 import de.corespace.shroud.core.keys.KeyMaterialWipe
+import de.corespace.shroud.core.media.ByteCountLabel
 import de.corespace.shroud.core.storage.PrefsFiles
 import java.io.File
 import java.nio.file.Files
-import java.text.DecimalFormat
-import java.text.DecimalFormatSymbols
 import java.util.Locale
 
 /**
@@ -148,9 +147,9 @@ class DeviceDataWipe(
         val settings: Int = 0,
     ) {
         /** "37 files · 18.2 MB", "1 file" (`mediaSummary`, `DeviceDataWipe.swift:380-388`; settings-lock §14.4). */
-        val mediaSummary: String get() = mediaSummary(::formatFileSize)
+        val mediaSummary: String get() = mediaSummary { fileSize(it) }
 
-        /** [mediaSummary] with another byte formatter (00-plan C34: `ByteCountLabel.format` once W2 merged). */
+        /** [mediaSummary] with another byte formatter (a fixed locale in tests). */
         fun mediaSummary(formatBytes: (Long) -> String): String {
             val files = if (mediaFiles == 1) "1 file" else "$mediaFiles files"
             return if (mediaBytes > 0) "$files · ${formatBytes(mediaBytes)}" else files
@@ -349,19 +348,15 @@ class DeviceDataWipe(
         private fun isSealedRecordName(name: String): Boolean = name.endsWith(".sealed") || name.contains(".sealed.")
 
         /**
-         * A byte count as iOS `ByteCountFormatter` (`.file`, decimal units) writes it: "512 bytes",
-         * "2 KB", "18.2 MB", "1.52 GB". Replaced by `core/media/ByteCountLabel.format` (00-plan C34)
-         * when the wave is integrated.
+         * A byte count as iOS `ByteCountFormatter.string(fromByteCount:countStyle: .file)` writes it
+         * (00-plan C34): below 1 000 bytes in bytes ("1 byte", "512 bytes" — the default formatter
+         * allows that unit), from there [ByteCountLabel.format] (Foundation's half-up rounding and
+         * unit growth: 2 500 B → "3 KB", 999 999 B → "1 MB").
          */
-        fun formatFileSize(bytes: Long, locale: Locale = Locale.getDefault()): String {
-            val symbols = DecimalFormatSymbols.getInstance(locale)
-            return when {
-                bytes == 1L -> "1 byte"
-                bytes < 1_000 -> "$bytes bytes"
-                bytes < 1_000_000 -> "${DecimalFormat("0", symbols).format(bytes / 1_000.0)} KB"
-                bytes < 1_000_000_000 -> "${DecimalFormat("0.#", symbols).format(bytes / 1_000_000.0)} MB"
-                else -> "${DecimalFormat("0.##", symbols).format(bytes / 1_000_000_000.0)} GB"
-            }
+        fun fileSize(bytes: Long, locale: Locale = Locale.getDefault()): String = when {
+            bytes == 1L -> "1 byte"
+            bytes < 1_000 -> "$bytes bytes"
+            else -> ByteCountLabel.format(bytes, locale)
         }
     }
 }

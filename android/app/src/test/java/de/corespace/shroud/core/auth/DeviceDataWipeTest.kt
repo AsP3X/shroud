@@ -163,17 +163,25 @@ class DeviceDataWipeTest {
     fun mediaSummaryReadsLikeTheDesign() {
         assertTrue(DeviceDataWipe.Inventory(mediaFiles = 37, mediaBytes = 18_200_000).mediaSummary.startsWith("37 files · "))
         assertEquals("1 file", DeviceDataWipe.Inventory(mediaFiles = 1, mediaBytes = 0).mediaSummary)
-        assertEquals("37 files · 18.2 MB", DeviceDataWipe.Inventory(mediaFiles = 37, mediaBytes = 18_200_000).mediaSummary { DeviceDataWipe.formatFileSize(it, Locale.US) })
+        assertEquals("37 files · 18.2 MB", DeviceDataWipe.Inventory(mediaFiles = 37, mediaBytes = 18_200_000).mediaSummary { DeviceDataWipe.fileSize(it, Locale.US) })
     }
 
+    /** iOS `ByteCountFormatter` (`.file`) vectors (`ByteCountLabelTest`), plan C34; review W2. */
     @Test
     fun fileSizesReadLikeByteCountFormatter() {
-        assertEquals("1 byte", DeviceDataWipe.formatFileSize(1, Locale.US))
-        assertEquals("512 bytes", DeviceDataWipe.formatFileSize(512, Locale.US))
-        assertEquals("7 KB", DeviceDataWipe.formatFileSize(6672, Locale.US))
-        assertEquals("18.2 MB", DeviceDataWipe.formatFileSize(18_200_000, Locale.US))
-        assertEquals("18 MB", DeviceDataWipe.formatFileSize(18_000_000, Locale.US))
-        assertEquals("1.52 GB", DeviceDataWipe.formatFileSize(1_520_000_000, Locale.US))
-        assertEquals("18,2 MB", DeviceDataWipe.formatFileSize(18_200_000, Locale.GERMANY))
+        assertEquals("1 byte", DeviceDataWipe.fileSize(1, Locale.US))
+        assertEquals("512 bytes", DeviceDataWipe.fileSize(512, Locale.US))
+        assertEquals("999 bytes", DeviceDataWipe.fileSize(999, Locale.US))
+        assertEquals("1 KB", DeviceDataWipe.fileSize(1_000, Locale.US))
+        assertEquals("7 KB", DeviceDataWipe.fileSize(6672, Locale.US))
+        // Foundation rounds half up and grows the unit; the old DecimalFormat port said 2 KB / 1000 KB / 1.2 MB.
+        assertEquals("3 KB", DeviceDataWipe.fileSize(2_500, Locale.US))
+        assertEquals("1 MB", DeviceDataWipe.fileSize(999_999, Locale.US))
+        assertEquals("1 MB", DeviceDataWipe.fileSize(999_600, Locale.US))
+        assertEquals("1.3 MB", DeviceDataWipe.fileSize(1_250_000, Locale.US))
+        assertEquals("18.2 MB", DeviceDataWipe.fileSize(18_200_000, Locale.US))
+        assertEquals("18 MB", DeviceDataWipe.fileSize(18_000_000, Locale.US))
+        assertEquals("1.52 GB", DeviceDataWipe.fileSize(1_520_000_000, Locale.US))
+        assertEquals("18,2 MB", DeviceDataWipe.fileSize(18_200_000, Locale.GERMANY))
     }
 }
