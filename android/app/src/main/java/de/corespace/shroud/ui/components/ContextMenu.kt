@@ -1,5 +1,8 @@
 package de.corespace.shroud.ui.components
 
+import de.corespace.shroud.ui.theme.ShroudIcons
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.platform.LocalInspectionMode
 import android.os.SystemClock
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
@@ -29,6 +32,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
@@ -286,7 +292,7 @@ fun ContextMenuCardSurface(
     rows: MenuRows = MenuRows.Leading,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    ContextMenuCardSurfaceImpl(MenuCardMetrics.of(style, rows), modifier, translucent, content)
+    ContextMenuCardSurfaceImpl(MenuCardMetrics.of(style, rows), modifier, translucent, content = content)
 }
 
 @Composable
@@ -294,10 +300,13 @@ private fun ContextMenuCardSurfaceImpl(
     metrics: MenuCardMetrics,
     modifier: Modifier,
     translucent: Boolean,
+    scroll: ScrollState? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val palette = overlayPalette()
     val shape = RoundedCornerShape(metrics.radius)
+    // A card taller than the screen (a long picker) scrolls inside its shape.
+    val scrolling = if (scroll != null) Modifier.verticalScroll(scroll) else Modifier
     when (metrics.style) {
         MenuStyle.Light -> Column(
             modifier
@@ -305,6 +314,7 @@ private fun ContextMenuCardSurfaceImpl(
                 .clip(shape)
                 .background(if (translucent) palette.cardGlass else palette.cardOpaque)
                 .border(1.dp, palette.cardStroke, shape)
+                .then(scrolling)
                 .padding(vertical = metrics.verticalPadding),
             content = content,
         )
@@ -313,6 +323,7 @@ private fun ContextMenuCardSurfaceImpl(
                 .clip(shape)
                 .background(DarkMenuFill)
                 .border(0.5.dp, Color.White.copy(alpha = 0.08f), shape)
+                .then(scrolling)
                 .padding(vertical = metrics.verticalPadding),
             content = content,
         )
@@ -428,9 +439,10 @@ internal fun ContextMenuCardImpl(
     translucent: Boolean,
     back: (() -> Unit)?,
     backTitle: String = "",
+    scroll: ScrollState? = null,
 ) {
     val showsIconSlot = actions.any { it.icon != null || it.checked } || back != null
-    ContextMenuCardSurfaceImpl(metrics, modifier.width(width), translucent) {
+    ContextMenuCardSurfaceImpl(metrics, modifier.width(width), translucent, scroll) {
         if (back != null) {
             // The back row keeps its caret leading in every layout: it points the way back.
             ContextMenuItemImpl(
@@ -570,7 +582,8 @@ internal fun ContextMenuOverlay(
 ) {
     val reduceMotion = ShroudTheme.reduceMotion
     val entrance = if (header != null) MenuEntrance.Lift else MenuEntrance.Pop
-    val progress = remember { Animatable(0f) }
+    val inspecting = LocalInspectionMode.current
+    val progress = remember { Animatable(if (inspecting) 1f else 0f) }
     val openedAt = remember { SystemClock.uptimeMillis() }
     var closing by remember { mutableStateOf(false) }
     var submenuOf by remember { mutableStateOf<MenuAction?>(null) }
@@ -691,6 +704,7 @@ internal fun ContextMenuOverlay(
                                 translucent = blurs,
                                 back = if (submenu != null) ({ submenuOf = null }) else null,
                                 backTitle = submenu?.title.orEmpty(),
+                                scroll = rememberScrollState(),
                             )
                         }
                     }
@@ -705,7 +719,11 @@ internal fun ContextMenuOverlay(
                         height = max(0, localAnchor.height.roundToInt()),
                     ),
                 )
-                val cardPlaceable = measurables.first { it.layoutId == CardId }.measure(Constraints())
+                // Never taller than the safe area between the margins; it scrolls inside then.
+                val room = constraints.maxHeight - safeTop - safeBottom -
+                    ContextMenuDefaults.TopMargin.toPx() - ContextMenuDefaults.BottomMargin.toPx()
+                val cardPlaceable = measurables.first { it.layoutId == CardId }
+                    .measure(Constraints(maxHeight = max(0, room.roundToInt())))
                 val placement = ContextMenuPlacement.place(
                     anchor = localAnchor,
                     cardWidth = cardPlaceable.width.toFloat(),
@@ -784,4 +802,44 @@ internal object OverlayIcons {
         ImageVector.Builder(name = name, defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 256f, viewportHeight = 256f)
             .apply { addPath(pathData = addPathNodes(path), fill = SolidColor(Color.Black)) }
             .build()
+}
+
+@Preview(name = "Menu cards", widthDp = 412)
+@Composable
+private fun MenuCardsPreview() {
+    ShroudTheme(dark = false) {
+        Column(
+            Modifier.background(ShroudTheme.colors.backgroundGrouped).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            ContextMenuCard(
+                actions = listOf(
+                    MenuAction("Mark as Read", icon = ShroudIcons.CircleCheck),
+                    MenuAction("Mute", icon = ShroudIcons.Info, submenu = emptyList()),
+                    MenuAction("Delete Chat", icon = ShroudIcons.TriangleAlert, destructive = true),
+                ),
+                style = MenuStyle.Light,
+                onAction = {},
+            )
+            ContextMenuCard(
+                actions = listOf(
+                    MenuAction("Show Above Text", icon = ShroudIcons.ArrowRight),
+                    MenuAction("Smaller Image", icon = ShroudIcons.Eye),
+                    MenuAction("Remove Preview", icon = ShroudIcons.TriangleAlert, destructive = true),
+                ),
+                style = MenuStyle.Light,
+                rows = MenuRows.Trailing,
+                onAction = {},
+            )
+            ContextMenuCard(
+                actions = listOf(
+                    MenuAction("Reply", icon = ShroudIcons.ArrowRight),
+                    MenuAction("Copy", icon = ShroudIcons.Clipboard),
+                    MenuAction("Delete", icon = ShroudIcons.TriangleAlert, destructive = true),
+                ),
+                style = MenuStyle.Dark,
+                onAction = {},
+            )
+        }
+    }
 }

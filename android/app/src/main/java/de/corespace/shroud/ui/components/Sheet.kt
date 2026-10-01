@@ -1,5 +1,6 @@
 package de.corespace.shroud.ui.components
 
+import androidx.compose.ui.tooling.preview.Preview
 import android.annotation.SuppressLint
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
@@ -399,5 +400,18 @@ private fun SheetHandle(drag: SheetDragState, fullSheet: Boolean) {
                 .clip(RoundedCornerShape(2.5.dp))
                 .background(if (fullSheet) colors.textSecondary.copy(alpha = 0.35f) else palette.chevron),
         )
+    }
+}
+
+@Preview(name = "Inset sheet", widthDp = 412, heightDp = 915)
+@Composable
+private fun InsetSheetPreview() {
+    ShroudTheme(dark = false) {
+        Box(Modifier.fillMaxSize().background(ShroudTheme.colors.background)) {
+            ShroudSheet(visible = true, onDismiss = {}, style = SheetStyle.Inset, paneTitle = "Device details") {
+                ShroudText("Chrome on Mac", de.corespace.shroud.ui.theme.inter(22f), ShroudTheme.colors.textPrimary)
+                ShroudText("Last active 9:37", de.corespace.shroud.ui.theme.inter(14f), ShroudTheme.colors.textSecondary)
+            }
+        }
     }
 }

@@ -1,5 +1,6 @@
 package de.corespace.shroud.ui.components
 
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -256,5 +257,24 @@ private fun ActionSheetButton(title: String, color: Color, weight: FontWeight, o
         contentAlignment = Alignment.Center,
     ) {
         ShroudText(text = title, style = inter(20f, weight), color = color, textAlign = TextAlign.Center)
+    }
+}
+
+@Preview(name = "Action sheet", widthDp = 412, heightDp = 915)
+@Composable
+private fun ActionSheetPreview() {
+    ShroudTheme(dark = false) {
+        Box(Modifier.fillMaxSize().background(ShroudTheme.colors.background)) {
+            ActionSheet(
+                visible = true,
+                title = "Delete chat with jane_cooper?",
+                message = "Deleting for both unsends your messages in jane_cooper's chat. Their own messages stay unless they allow chats to be cleared for them. They stay in your contacts.",
+                items = listOf(
+                    ActionSheetItem("Delete for me and jane_cooper", destructive = true) {},
+                    ActionSheetItem("Delete for me", destructive = true) {},
+                ),
+                onDismiss = {},
+            )
+        }
     }
 }

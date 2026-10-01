@@ -1,5 +1,6 @@
 package de.corespace.shroud.ui.components
 
+import androidx.compose.ui.tooling.preview.Preview
 import android.annotation.SuppressLint
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -208,5 +209,15 @@ internal object SliderMath {
         val span = range.endInclusive - range.start
         val step = deltaPx / travelPx * span
         return if (rtl) -step else step
+    }
+}
+
+@Preview(name = "Slider", widthDp = 412)
+@Composable
+private fun SliderPreview() {
+    ShroudTheme(dark = false) {
+        Box(Modifier.background(ShroudTheme.colors.background).padding(20.dp)) {
+            ShroudSlider(value = 0.6f, onValueChange = {}, label = "Filter intensity")
+        }
     }
 }

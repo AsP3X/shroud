@@ -1,5 +1,6 @@
 package de.corespace.shroud.ui.components
 
+import androidx.compose.ui.tooling.preview.Preview
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import androidx.compose.animation.AnimatedVisibility
@@ -337,3 +338,20 @@ private fun AlertTextField(field: AlertField, onDone: () -> Unit) {
 
 /** Adds `IME_FLAG_NO_PERSONALIZED_LEARNING` to an `EditorInfo.imeOptions` value. */
 internal fun withoutPersonalizedLearning(imeOptions: Int): Int = imeOptions or EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
+
+@Preview(name = "Rename dialog", widthDp = 412, heightDp = 915)
+@Composable
+private fun RenameDialogPreview() {
+    ShroudTheme(dark = false) {
+        Box(Modifier.fillMaxSize().background(ShroudTheme.colors.backgroundGrouped)) {
+            ShroudAlertDialog(
+                visible = true,
+                title = "Rename Device",
+                message = "The name is encrypted — only your devices can read it.",
+                field = AlertField("Pixel 9", {}, "Name", capitalization = KeyboardCapitalization.Words),
+                primary = AlertButton("Save") {},
+                onDismiss = {},
+            )
+        }
+    }
+}

@@ -41,6 +41,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.dismiss
 import androidx.compose.ui.semantics.isTraversalGroup
@@ -194,10 +195,14 @@ fun overlayCanBlur(): Boolean = LocalOverlayHost.current != null && Build.VERSIO
 /**
  * The visibility of an overlay that animates in and out: drive its enter/exit transitions from
  * it, and keep its [OverlayLayer] up while [isOverlayUp] (shown, or still running its exit).
+ * Previews (inspection mode) start shown, so a static preview draws the overlay, not its first
+ * enter frame.
  */
 @Composable
-fun rememberOverlayTransition(visible: Boolean): MutableTransitionState<Boolean> =
-    remember { MutableTransitionState(false) }.apply { targetState = visible }
+fun rememberOverlayTransition(visible: Boolean): MutableTransitionState<Boolean> {
+    val inspecting = LocalInspectionMode.current
+    return remember { MutableTransitionState(inspecting && visible) }.apply { targetState = visible }
+}
 
 /** Shown, or still animating out. */
 val MutableTransitionState<Boolean>.isOverlayUp: Boolean get() = currentState || targetState

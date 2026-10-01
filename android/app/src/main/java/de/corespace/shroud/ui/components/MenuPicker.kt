@@ -1,5 +1,7 @@
 package de.corespace.shroud.ui.components
 
+import androidx.compose.foundation.background
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -110,4 +112,18 @@ fun <T> MenuPicker(
 /** settings-lock §2.5: 44 dp row (iOS), 48 dp touch target (00-plan §2.0 rule 8). */
 internal object MenuPickerMetrics {
     val TouchHeight = 48.dp
+}
+
+@Preview(name = "Menu picker", widthDp = 412)
+@Composable
+private fun MenuPickerPreview() {
+    ShroudTheme(dark = false) {
+        Row(
+            Modifier.background(ShroudTheme.colors.background).padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ShroudText("Auto-lock", inter(16f), ShroudTheme.colors.textPrimary, modifier = Modifier.weight(1f))
+            MenuPicker(value = "Immediately", options = listOf("Immediately", "After 1 minute"), label = { it }, onSelect = {}, contentDescription = "Auto-lock")
+        }
+    }
 }
