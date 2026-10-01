@@ -95,8 +95,8 @@ class ShroudApplication : Application(), Configuration.Provider {
     }
 
     /**
-     * Locks the chats: batched saves and queued writes reach disk and decrypted threads leave memory
-     * (`lockChatsInMemory`, `RootView.swift:315-320`), then the keys go — unless the vault's own
+     * Locks the chats ([AppContainer.lockChatsInMemory], `RootView.swift:315-320`: memory, keys, the
+     * stale temp-file sweep) — unless the vault's own
      * system prompt is up: on some skins (Samsung One UI) the biometric prompt stops our activity,
      * and locking under it would undo the unlock the user is in the middle of (crypto §10.7,
      * settings-lock §11.5). The lock then waits for the prompt to end and still happens if the app
@@ -110,8 +110,7 @@ class ShroudApplication : Application(), Configuration.Provider {
                 keys.vaultPromptInFlight.first { !it }
                 if (appPhase.phase.value != AppPhase.Background) return@launch
             }
-            container.messaging.controllerIfBuilt?.lockSensitiveMemory()
-            keys.lock()
+            container.lockChatsInMemory()
         }
     }
 

@@ -15,6 +15,7 @@ import de.corespace.shroud.core.net.ServerConfiguration
 import de.corespace.shroud.core.net.ServerConfigurationStore
 import de.corespace.shroud.core.net.ServerConnectionMode
 import de.corespace.shroud.core.net.ShroudApi
+import de.corespace.shroud.core.storage.SensitiveTempFiles
 import de.corespace.shroud.core.storage.StorageSeal
 import de.corespace.shroud.di.AuthModule
 import de.corespace.shroud.di.CallsMediaModule
@@ -41,6 +42,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 
 /**
@@ -146,6 +148,20 @@ class AppContainer(
         appScope.launch { net.connectivity.networkAvailable.collect { realtime.client.onNetworkAvailable() } }
         net.onProcessStart()             // ConnectivityMonitor.start() (W1-NET)
         shell.onProcessStart()           // AppShellController (W3-SHELL; replaces the interim ON_STOP lock)
+    }
+
+    /**
+     * Locks the chats in memory (`lockChatsInMemory`, `RootView.swift:315-320`): batched saves and
+     * queued writes reach disk and decrypted threads leave memory, the keys go, then plaintext
+     * `cacheDir/shroud-*` files nobody wrote to for ten minutes are swept (plan §1.1 rule 7, §1.5).
+     * Android does not end the process at lock, so without the sweep a leaked temp file would live
+     * until the next cold start. The interim ON_STOP lock calls this; W3-SHELL's auto-lock
+     * (AppShellController) must keep calling it when it replaces that lock.
+     */
+    suspend fun lockChatsInMemory() {
+        messaging.controllerIfBuilt?.lockSensitiveMemory()
+        keys.cryptoController.lock()
+        withContext(Dispatchers.IO) { keys.sensitiveTempFiles.sweep(SensitiveTempFiles.STALE_AGE_MS) }
     }
 
     // Source-compatibility shims for the onboarding code (removed by W3-INT, 00-plan §1.3).
