@@ -213,11 +213,13 @@
         <!--
           Room (through WorkManager) declares this service direct-boot aware. Nothing of the app
           runs before the first unlock — the container reads credential-encrypted storage — so
-          it is not (00-plan §5.3: no direct-boot-aware components).
+          it is not (00-plan §5.3: no direct-boot-aware components). Room is only on the runtime
+          classpath, hence lint's MissingClass.
         -->
         <service
             android:name="androidx.room.MultiInstanceInvalidationService"
             android:directBootAware="false"
+            tools:ignore="MissingClass"
             tools:replace="android:directBootAware" />
     </application>
 </manifest>
