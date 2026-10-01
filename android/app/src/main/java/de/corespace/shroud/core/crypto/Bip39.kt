@@ -18,9 +18,13 @@ class Bip39(private val wordlist: List<String>) {
 
     private val index: Map<String, Int> = wordlist.withIndex().associate { (i, w) -> w to i }
 
+    /**
+     * Phrase errors (`BIP39Seed.SeedError`, `ios/shroud/Services/Crypto/BIP39Seed.swift`). Messages
+     * never quote the phrase: a mistyped word is still most of a real one.
+     */
     sealed class PhraseException(message: String) : Exception(message) {
         class InvalidWordCount : PhraseException("Enter all 12 words of your encryption phrase.")
-        class UnknownWord(val word: String) : PhraseException("Unknown word: $word")
+        class UnknownWord : PhraseException("One or more words are not in the recovery word list.")
         class InvalidChecksum : PhraseException("That encryption phrase checksum is invalid.")
     }
 
@@ -43,7 +47,7 @@ class Bip39(private val wordlist: List<String>) {
         if (normalized.size != WORD_COUNT) throw PhraseException.InvalidWordCount()
         val bits = ArrayList<Boolean>(WORD_COUNT * 11)
         for (word in normalized) {
-            val i = index[word] ?: throw PhraseException.UnknownWord(word)
+            val i = index[word] ?: throw PhraseException.UnknownWord()
             for (shift in 10 downTo 0) bits += (i shr shift) and 1 == 1
         }
         val entropy = ByteArray(16)
@@ -68,12 +72,41 @@ class Bip39(private val wordlist: List<String>) {
     fun isWord(word: String) = index.containsKey(word.trim().lowercase())
 
     /**
-     * A pasted phrase (`EncryptionPhraseParser.swift`): split on whitespace, first 12 words,
-     * validated. Null when it is not a valid phrase.
+     * A pasted phrase (`EncryptionPhraseParser.parse`, `ios/shroud/Services/Crypto/EncryptionPhraseParser.swift:7-16`):
+     * split on any Unicode whitespace or line break (Swift `.whitespacesAndNewlines` — a phrase
+     * pasted with no-break spaces or U+2028 separators still parses, crypto spec §17.1), lower-cased,
+     * at least 12 words, the first 12 validated. Null when it is not a valid phrase.
      */
     fun parse(text: String): List<String>? {
-        val words = text.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }.take(WORD_COUNT)
-        return runCatching { validate(words) }.getOrNull()
+        val words = words(text)
+        if (words.size < WORD_COUNT) return null
+        return runCatching { validate(words.take(WORD_COUNT)) }.getOrNull()
+    }
+
+    /**
+     * The first 12 words of [text] without the word-list and checksum checks — progressive fill
+     * before full validation (`EncryptionPhraseParser.parseLenient`, `EncryptionPhraseParser.swift:18-26`).
+     * Null with fewer than 12 words.
+     */
+    fun parseLenient(text: String): List<String>? {
+        val words = words(text)
+        return if (words.size < WORD_COUNT) null else words.take(WORD_COUNT)
+    }
+
+    /** Words of [text] split on Unicode whitespace and line breaks, lower-cased. */
+    private fun words(text: String): List<String> {
+        val out = ArrayList<String>()
+        val word = StringBuilder()
+        for (c in text) {
+            if (c.isWhitespace() || c == '\u0085') {
+                if (word.isNotEmpty()) out += word.toString().lowercase()
+                word.setLength(0)
+            } else {
+                word.append(c)
+            }
+        }
+        if (word.isNotEmpty()) out += word.toString().lowercase()
+        return out
     }
 
     private fun bits(data: ByteArray): List<Boolean> =
