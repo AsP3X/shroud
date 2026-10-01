@@ -69,7 +69,7 @@ import kotlin.concurrent.withLock
  */
 class MessagingLocalRepository(
     root: File,
-    private val state: SealedLocalState,
+    state: SealedLocalState,
     private val storageSeal: StorageSeal,
     clock: AppClock,
     private val localMedia: () -> LocalMediaStore? = { null },

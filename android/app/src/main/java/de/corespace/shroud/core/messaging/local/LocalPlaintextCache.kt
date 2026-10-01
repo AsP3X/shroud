@@ -48,15 +48,16 @@ class LocalPlaintextCache(
     fun data(messageId: UUID): ByteArray? {
         val startEpoch = synchronized(memoryLock) { epoch }
         val at = location(messageId) ?: return null
-        synchronized(memoryLock) { memory[messageId]?.let { return it.copyOf() } }
-        val plain = synchronized(stripe(messageId)) {
+        // Under the message's stripe, so a purge running meanwhile cannot be undone by this read's L1 entry.
+        synchronized(stripe(messageId)) {
+            synchronized(memoryLock) { memory[messageId]?.let { return it.copyOf() } }
             val blob = LocalFiles.read(at.file) ?: return null
-            keys.open(LocalHistoryCrypto.Context.PlaintextPayload, blob, at.aad) ?: return null
+            val plain = keys.open(LocalHistoryCrypto.Context.PlaintextPayload, blob, at.aad) ?: return null
+            synchronized(memoryLock) {
+                if (epoch == startEpoch && keys.isUnlocked) memory[messageId] = plain.copyOf()
+            }
+            return plain
         }
-        synchronized(memoryLock) {
-            if (epoch == startEpoch && keys.isUnlocked) memory[messageId] = plain.copyOf()
-        }
-        return plain
     }
 
     /** [data] as UTF-8 (`text(for:)`, `:63-66`); null when the bytes are not UTF-8. */
@@ -95,15 +96,13 @@ class LocalPlaintextCache(
      * them after the next unlock; their L1 entries are gone either way.
      */
     fun remove(messageIds: Collection<UUID>): List<UUID> {
-        synchronized(memoryLock) { messageIds.forEach { memory.remove(it) } }
         val unnamed = ArrayList<UUID>()
         for (id in messageIds) {
             val at = location(id)
-            if (at == null) {
-                unnamed += id
-                continue
+            synchronized(stripe(id)) {
+                synchronized(memoryLock) { memory.remove(id)?.fill(0) }
+                if (at == null) unnamed += id else at.file.delete()
             }
-            synchronized(stripe(id)) { at.file.delete() }
         }
         return unnamed
     }

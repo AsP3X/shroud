@@ -5,6 +5,7 @@ import de.corespace.shroud.core.messaging.CachedConversation
 import de.corespace.shroud.core.messaging.MessagingSnapshot
 import de.corespace.shroud.core.messaging.RosterSnapshot
 import de.corespace.shroud.core.model.Bytes
+import de.corespace.shroud.core.model.ChatMessage
 import de.corespace.shroud.core.model.ChatMessageKind
 import de.corespace.shroud.core.model.NOTES_PEER_ID
 import de.corespace.shroud.core.net.ContactItemDto
@@ -13,6 +14,8 @@ import de.corespace.shroud.core.net.UserCardDto
 import de.corespace.shroud.core.net.wire.Icu4jTextUnitsRule
 import de.corespace.shroud.core.net.wire.LinkPreview
 import de.corespace.shroud.testing.TempDirRule
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -23,6 +26,7 @@ import org.junit.Test
 import java.io.File
 import java.time.ZonedDateTime
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * The Android side of the store (plan §1.4, §1.5, C10; messaging-core §22.3, §23.3, D5): the chat
@@ -177,6 +181,33 @@ class MessagingStoreBehaviourTest {
         fixture.flush(repository)
         fixture.unlock()
         assertEquals("kept", fixture.repository().hydrate(fixture.userId).threads[peer]?.single()?.text)
+    }
+
+    @Test
+    fun savesFromManyThreadsOnTheRealWriterEndInTheLastState() {
+        // The production writer (one IO thread) against eight callers saving their own peers at once.
+        val repository = fixture.repository(writerScope = CoroutineScope(Dispatchers.IO.limitedParallelism(1)))
+        val peers = List(8) { UUID.randomUUID() }
+        val last = ConcurrentHashMap<UUID, List<UUID>>()
+        val workers = peers.map { p ->
+            Thread {
+                var thread = emptyList<ChatMessage>()
+                repeat(25) { n ->
+                    val message = fixture.message(p, "message $n")
+                    thread = thread + message
+                    repository.savePlaintext(message.id, "sealed $n".toByteArray())
+                    fixture.persistThread(repository, p, thread)
+                    if (n % 5 == 0) repository.removeCaches(listOf(message.id))
+                }
+                last[p] = thread.map { it.id }
+            }
+        }
+        workers.forEach(Thread::start)
+        workers.forEach(Thread::join)
+        fixture.flush(repository)
+
+        val hydrated = fixture.repository().hydrate(fixture.userId)
+        for (p in peers) assertEquals(last[p], hydrated.threads[p]?.map { it.id })
     }
 
     @Test
