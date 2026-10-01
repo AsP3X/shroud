@@ -45,14 +45,32 @@ class ImageEncoder(
 ) : ImagePipeline {
 
     /**
-     * `MessagingController.sendImage`'s encode step (`MessagingController.swift:2409-2423`) and
-     * `MediaCrypto.encode` (`MediaCrypto.swift:80-107`). Throws [ImageEncodeException] (the caller's
-     * "Could not prepare that photo.").
+     * `MessagingController.sendImage`'s encode step (`MessagingController.swift:2403-2427`) with the
+     * compose screen's quality (`MediaComposeQuality`, MCO:50-74: Original 16 384 px / 100 / passthrough,
+     * HD 2560 px / 85). Throws [ImageEncodeException] (the caller's "Could not prepare that photo.").
      */
-    override suspend fun encode(source: MediaImageSource, quality: MediaComposeQuality, edits: MediaEdits): EncodedImage {
+    override suspend fun encode(source: MediaImageSource, quality: MediaComposeQuality, edits: MediaEdits): EncodedImage =
+        encode(source, quality.maxEdge, quality.jpegQuality, quality.allowsPassthrough, edits)
+
+    /**
+     * `MediaCrypto.encode(_:maxEdge:compression:allowsPassthrough:)` (`MediaCrypto.swift:80-107`) plus
+     * the edit baking of `sendImage` (`MessagingController.swift:2409-2423`):
+     * - passthrough when [allowsPassthrough], the edits are the identity and the source is an encoded
+     *   original ([passthrough]);
+     * - else decode (downsampled to [maxEdge] — [EDITED_DECODE_CAP] when edits are baked), bake the
+     *   edits, scale so the longest pixel edge is at most [maxEdge], JPEG at [jpegQuality]
+     *   (`min(1, max(0.05, compression))` on the 0…100 scale).
+     */
+    suspend fun encode(
+        source: MediaImageSource,
+        maxEdge: Int,
+        jpegQuality: Int,
+        allowsPassthrough: Boolean,
+        edits: MediaEdits = MediaEdits.Identity,
+    ): EncodedImage {
         try {
             // Passthrough only for untouched photos (`allowsPassthrough && edits.isIdentity`, :2422).
-            val mayPassThrough = quality.allowsPassthrough && edits.isIdentity
+            val mayPassThrough = allowsPassthrough && edits.isIdentity
             val prepared: MediaImageSource = when {
                 mayPassThrough && source is MediaImageSource.ContentUri ->
                     withContext(io) { codec.readOriginal(source.uri, IN_MEMORY_ORIGINAL_LIMIT) }
@@ -63,12 +81,9 @@ class ImageEncoder(
                 if (mayPassThrough && prepared is MediaImageSource.FileBytes) {
                     passthrough(prepared.bytes)?.let { return@withContext it }
                 }
-                if (edits.isIdentity) {
-                    reencode(prepared, quality.maxEdge, quality, edits)
-                } else {
-                    // Crop, filters, markup and stickers are baked here, at full resolution (:2411-2417).
-                    reencode(prepared, minOf(quality.maxEdge, EDITED_DECODE_CAP), quality, edits)
-                }
+                // Crop, filters, markup and stickers are baked at full resolution (:2411-2417), capped (Q11).
+                val decodeEdge = if (edits.isIdentity) maxEdge else minOf(maxEdge, EDITED_DECODE_CAP)
+                reencode(prepared, decodeEdge, maxEdge, jpegQuality.coerceIn(5, 100), edits)
             }
         } catch (e: CancellationException) {
             throw e
@@ -96,14 +111,14 @@ class ImageEncoder(
 
     /**
      * Decode (downsampled to [decodeEdge]), bake [edits], scale so the longest pixel edge is at most
-     * the quality's cap, JPEG at the quality's level (`MediaCrypto.swift:93-106`); half the edge again
-     * after running out of memory.
+     * [maxEdge], JPEG at [jpegQuality] (`MediaCrypto.swift:93-106`); half the decode edge again after
+     * running out of memory, down to [MIN_RETRY_EDGE].
      */
-    private fun reencode(source: MediaImageSource, decodeEdge: Int, quality: MediaComposeQuality, edits: MediaEdits): EncodedImage {
+    private fun reencode(source: MediaImageSource, decodeEdge: Int, maxEdge: Int, jpegQuality: Int, edits: MediaEdits): EncodedImage {
         var edge = decodeEdge
         while (true) {
             try {
-                return reencodeOnce(source, edge, quality, edits)
+                return reencodeOnce(source, edge, maxEdge, jpegQuality, edits)
             } catch (oom: OutOfMemoryError) {
                 if (edge <= MIN_RETRY_EDGE) throw ImageEncodeException("The photo is too large to prepare.", oom)
                 edge = maxOf(MIN_RETRY_EDGE, edge / 2)
@@ -111,15 +126,15 @@ class ImageEncoder(
         }
     }
 
-    private fun reencodeOnce(source: MediaImageSource, edge: Int, quality: MediaComposeQuality, edits: MediaEdits): EncodedImage {
+    private fun reencodeOnce(source: MediaImageSource, edge: Int, maxEdge: Int, jpegQuality: Int, edits: MediaEdits): EncodedImage {
         val callerBitmap = (source as? MediaImageSource.Decoded)?.bitmap
         val made = ArrayList<Bitmap>(3)
+        fun track(bitmap: Bitmap): Bitmap = bitmap.also { if (it !== callerBitmap && made.none { m -> m === it }) made += it }
         try {
-            val decoded = codec.decode(source, edge).also { if (it !== callerBitmap) made += it }
-            val rendered = if (edits.isIdentity) decoded else editBaker().render(decoded, edits).also { if (it !== callerBitmap && it !in made) made += it }
-            val scaled = MediaImages.scaledToFit(rendered, quality.maxEdge).also { if (it !== callerBitmap && it !in made) made += it }
-            // `min(1, max(0.05, compression))` (:95) on the 0…100 scale.
-            val jpeg = codec.compressJpeg(scaled, quality.jpegQuality.coerceIn(5, 100))
+            val decoded = track(codec.decode(source, edge))
+            val rendered = if (edits.isIdentity) decoded else track(editBaker().render(decoded, edits))
+            val scaled = track(MediaImages.scaledToFit(rendered, maxEdge))
+            val jpeg = codec.compressJpeg(scaled, jpegQuality)
             return EncodedImage(Bytes.adopt(jpeg), maxOf(1, scaled.width), maxOf(1, scaled.height), JPEG_MIME)
         } finally {
             for (bitmap in made) if (!bitmap.isRecycled) bitmap.recycle()
