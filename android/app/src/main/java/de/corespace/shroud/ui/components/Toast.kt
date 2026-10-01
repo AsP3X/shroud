@@ -24,6 +24,7 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.referentialEqualityPolicy
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -107,7 +108,8 @@ data class Toast(
  */
 @Stable
 class ToastState {
-    var current: Toast? by mutableStateOf(null)
+    /** Referential: every shown toast is its own value, like iOS's `id` (`ToastBanner.swift:18`). */
+    var current: Toast? by mutableStateOf(null, referentialEqualityPolicy())
         private set
 
     /** Bumped by every [show]: one timer per shown toast, even for equal toasts (`ToastBanner.swift:18`). */
