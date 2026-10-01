@@ -99,7 +99,7 @@ interface VaultKeyPolicy {
  * [VaultKeyStore] on the AndroidKeyStore (crypto spec §10.2; plan decision P3b "import").
  *
  * Aliases rotate: `<aliasPrefix><8 random hex>` (`shroud.vault.wrap.3f9a0c1d`). StrongBox is tried
- * first when [preferStrongBox] says the phone has one, and any failure falls back to the TEE (some
+ * first (API 31+, where `KeyProtection` takes the flag) when [preferStrongBox] says the phone has one, and any failure falls back to the TEE (some
  * phones throw other exceptions than `StrongBoxUnavailableException`). After the import the key's
  * `KeyInfo` says where it ended up ([VaultKeyStore.Security]); a software-only Keystore is allowed
  * and recorded (P3c — the lock screen and Privacy and Security tell the user, W3).
@@ -119,7 +119,8 @@ class AndroidVaultKeyStore(
         require(wrapKey.size == 32) { "the wrap key is 32 bytes" }
         val alias = aliasPrefix + entropy.bytes(4).hex()
         val keyStore = keyStore()
-        var strongBox = preferStrongBox()
+        // KeyProtection takes the StrongBox flag from API 31 on; API 30 imports into the TEE.
+        var strongBox = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && preferStrongBox()
         try {
             importInto(keyStore, alias, wrapKey, strongBox)
         } catch (e: Exception) {
@@ -158,11 +159,13 @@ class AndroidVaultKeyStore(
     }
 
     private fun importInto(keyStore: KeyStore, alias: String, wrapKey: ByteArray, strongBox: Boolean) {
-        val protection = policy.configure(
+        val builder = policy.configure(
             KeyProtection.Builder(KeyProperties.PURPOSE_DECRYPT)
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                 .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE),
-        ).setIsStrongBoxBacked(strongBox).build()
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) builder.setIsStrongBoxBacked(strongBox)
+        val protection = builder.build()
         keyStore.setEntry(alias, KeyStore.SecretKeyEntry(SecretKeySpec(wrapKey, "AES")), protection)
     }
 

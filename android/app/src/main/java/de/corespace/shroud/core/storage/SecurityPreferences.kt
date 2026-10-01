@@ -1,6 +1,7 @@
 package de.corespace.shroud.core.storage
 
 import android.content.SharedPreferences
+import androidx.core.content.edit
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -89,25 +90,25 @@ class SecurityPreferences(private val prefs: SharedPreferences, private val seal
 
     fun setAutoLockDelay(v: AutoLockDelay) {
         if (seal.isSealed || autoLock.value == v) return
-        prefs.edit().putInt(KEY_AUTO_LOCK, v.seconds).apply()
+        prefs.edit { putInt(KEY_AUTO_LOCK, v.seconds) }
         autoLock.value = v
     }
 
     fun setGeneratesLinkPreviews(v: Boolean) {
         if (seal.isSealed || linkPreviews.value == v) return
-        prefs.edit().putBoolean(KEY_LINK_PREVIEWS, v).apply()
+        prefs.edit { putBoolean(KEY_LINK_PREVIEWS, v) }
         linkPreviews.value = v
     }
 
     fun setAlwaysRelayCalls(v: Boolean) {
         if (seal.isSealed || relayCalls.value == v) return
-        prefs.edit().putBoolean(KEY_RELAY_CALLS, v).apply()
+        prefs.edit { putBoolean(KEY_RELAY_CALLS, v) }
         relayCalls.value = v
     }
 
     fun setHidesDuringScreenCapture(v: Boolean) {
         if (seal.isSealed || hideCapture.value == v) return
-        prefs.edit().putBoolean(KEY_HIDE_CAPTURE, v).apply()
+        prefs.edit { putBoolean(KEY_HIDE_CAPTURE, v) }
         hideCapture.value = v
     }
 
