@@ -14,6 +14,7 @@ import de.corespace.shroud.core.net.ServerConfiguration
 import de.corespace.shroud.core.net.ServerConfigurationStore
 import de.corespace.shroud.core.net.ServerConnectionMode
 import de.corespace.shroud.core.net.ShroudApi
+import de.corespace.shroud.core.storage.StorageSeal
 import de.corespace.shroud.di.AuthModule
 import de.corespace.shroud.di.CallsMediaModule
 import de.corespace.shroud.di.CallsModule
@@ -77,6 +78,13 @@ class AppContainer(
 
     /** Wall and monotonic time for every controller; tests pass a `FakeAppClock` (00-plan §1.7.1). */
     val clock: AppClock = SystemAppClock
+
+    /**
+     * The process's one wipe write stop (plan §1.4; crypto spec §14). Modules pass this instance to
+     * every sealed-record, media and prefs writer and to the wipe controller; nobody else constructs
+     * a [StorageSeal], or a writer holding a second one would never see the wipe's seal.
+     */
+    val storageSeal: StorageSeal = StorageSeal()
 
     /** Self-hosted or official server, kept across Log Out (00-plan §1.5, prefs `shroud.server`). */
     val serverConfiguration = ServerConfigurationStore(appContext, json)

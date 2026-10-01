@@ -2,7 +2,9 @@ package de.corespace.shroud.core.storage
 
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
 import org.junit.Test
+import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -59,5 +61,30 @@ class StorageSealTest {
         seal.seal()
         assertTrue(seen.await(5, TimeUnit.SECONDS))
         writer.join(5_000)
+    }
+
+    /**
+     * The seal works only if every writer holds the same instance (plan §1.4): the one built by
+     * `AppContainer.storageSeal`. A second `StorageSeal()` anywhere in the app's sources (a module
+     * building its own) would never see the wipe's seal.
+     */
+    @Test
+    fun onlyAppContainerConstructsTheSeal() {
+        val main = listOf(File("src/main/java"), File("app/src/main/java")).firstOrNull { it.isDirectory }
+            ?: error("src/main/java not found from ${File(".").absolutePath}")
+        val constructions = main.walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .flatMap { file ->
+                file.readLines().withIndex()
+                    .filter { (_, line) -> CONSTRUCTION.containsMatchIn(line.substringBefore("//")) && !line.trimStart().startsWith("*") }
+                    .map { (index, _) -> "${file.relativeTo(main).invariantSeparatorsPath}:${index + 1}" }
+            }
+            .toList()
+        assertEquals(constructions.toString(), 1, constructions.size)
+        assertTrue(constructions.toString(), constructions.single().startsWith("de/corespace/shroud/AppContainer.kt:"))
+    }
+
+    private companion object {
+        val CONSTRUCTION = Regex("""\bStorageSeal\s*\(""")
     }
 }

@@ -15,7 +15,8 @@ package de.corespace.shroud.core.storage
  * calls [unseal] explicitly once the verify pass (`leftovers()`) came back empty and Welcome shows.
  * A wipe whose verify fails leaves the store sealed until the next process start.
  *
- * One instance per process (built by `AppContainer`/the keys module and handed to every writer).
+ * One instance per process: `AppContainer.storageSeal`. Modules pass it to their writers; nobody
+ * else constructs one (a writer holding a second instance would never see the wipe's seal).
  * Reads and writes are volatile: a writer on any thread sees [seal] as soon as it returns. A writer
  * that already passed its check may still finish that one write; the wipe deletes locations after
  * sealing and verifies afterwards, which is what catches that window.
