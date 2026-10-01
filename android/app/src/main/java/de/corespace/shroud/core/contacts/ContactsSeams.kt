@@ -20,9 +20,13 @@ import java.util.UUID
 // (PeerIdentityController) and Privacy (PrivacyController); MessagingController (W2-MSG-CORE)
 // implements ContactsHooks. Changing one is a contract change request (plan §2.0 rule 4).
 
-/** What contacts needs from messaging (contacts §7.1); implemented by `MessagingController`. */
+/**
+ * What contacts needs from messaging (contacts §7.1); implemented by `MessagingController`, whose
+ * public API (plan §1.7.7) exposes the same names, so the types match it: [isRealtimeConnected] is
+ * the controller's `StateFlow` (contacts reads `.value`).
+ */
 interface ContactsHooks {
-    val isRealtimeConnected: Boolean
+    val isRealtimeConnected: StateFlow<Boolean>
 
     /** Roster or requests changed: write the sealed roster (contacts persist through the messaging roster file). */
     fun persistRoster()
