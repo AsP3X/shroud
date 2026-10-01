@@ -3,21 +3,43 @@ package de.corespace.shroud.di
 import de.corespace.shroud.AppContainer
 import de.corespace.shroud.AppModule
 import de.corespace.shroud.core.net.ApiClient
+import de.corespace.shroud.core.net.ConnectivityMonitor
 import de.corespace.shroud.core.net.ShroudApi
+import kotlinx.serialization.json.Json
+import okhttp3.OkHttpClient
 
 /**
- * HTTP (00-plan §1.7.2). Owner: W1-NET — the one `ApiClient` (its `authOutcomes` is set by INT
- * once `SessionController` reports them), the `ShroudApi` facade and `ConnectivityMonitor`
- * (started in [onProcessStart]).
+ * HTTP (00-plan §1.7.2, C3, C5). Owner: W1-NET. The process's only [ApiClient] and [ShroudApi],
+ * the base [OkHttpClient] every network client derives from, and the [ConnectivityMonitor]
+ * (started in [onProcessStart]). Nobody else constructs these.
+ *
+ * Wiring left to the INT package (it owns `AppContainer`): `apiClient.authOutcomes` is set to the
+ * session's `AuthOutcomeListener` once `SessionController` exposes one, and
+ * `connectivity.networkAvailable` is forwarded to `RealtimeClient.onNetworkAvailable()`.
  */
 class NetModule(container: AppContainer) : AppModule(container) {
+    /**
+     * The base client: 20 s idle timeouts, no cache, no redirects. The media client
+     * ([ApiClient.mediaHttp]) and the WebSocket client (W1-RT, `pingInterval` 25 s) are derived
+     * from it with `newBuilder()`, so all three share one connection pool and dispatcher
+     * (api-realtime §2.3).
+     */
+    val http: OkHttpClient by lazy { ApiClient.defaultHttpClient() }
+
     /** The process's only HTTP client; the base URL follows the server settings live. */
     val apiClient: ApiClient by lazy {
-        ApiClient(baseUrl = { container.serverConfiguration.configuration.value.resolvedBaseUrl }, json = container.json)
+        ApiClient(baseUrl = { container.serverConfiguration.configuration.value.resolvedBaseUrl }, json = container.json, http = http)
     }
 
     val api: ShroudApi by lazy { ShroudApi(apiClient) }
 
-    /** Filled by the owner: `ConnectivityMonitor.start()` (W1-NET). */
-    override fun onProcessStart() = Unit
+    /** Partial-update encoder (`explicitNulls = false`), the same instance as [ShroudApi.patchJson]. */
+    val patchJson: Json get() = api.patchJson
+
+    /** Online / offline for messaging's banner and polling, and the reconnect hook of the socket. */
+    val connectivity: ConnectivityMonitor by lazy { ConnectivityMonitor(container.appContext) }
+
+    override fun onProcessStart() {
+        connectivity.start()
+    }
 }
