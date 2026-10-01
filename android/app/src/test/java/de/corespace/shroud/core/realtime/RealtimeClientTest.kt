@@ -61,6 +61,9 @@ class RealtimeClientTest {
 
     /** Away while the background connection holds the socket (plan §1.4; X1-SRV-UP `update_focus`). */
     private val focusFalseBackground = """{"type":"focus","focused":false,"background":true}"""
+
+    /** The background connection let go of a socket others keep: it counts like any socket again. */
+    private val focusFalseNotBackground = """{"type":"focus","focused":false,"background":false}"""
     private fun authFrame(token: String = "tok") = """{"type":"auth","token":"$token"}"""
     private fun backgroundAuthFrame(token: String = "tok") = """{"type":"auth","token":"$token","background":true}"""
     private fun authError(code: String) = """{"type":"auth.error","error":{"code":"$code","message":"m"}}"""
@@ -696,13 +699,49 @@ class RealtimeClientTest {
         assertTrue(client.deliverFocus())
         assertEquals(focusFalseBackground, nextFrame(peer))
 
-        // Switched off while away: nothing to undo (the coordinator then steps away and messaging
-        // releases its hold, which closes the socket).
+        // Switched off while away: the socket stops counting as background at once (away but
+        // online, like any socket), until the coordinator steps away and messaging lets go.
         client.release(Holder.Background)
+        assertEquals(focusFalseNotBackground, nextFrame(peer))
         assertTrue(client.deliverFocus())
         client.sendTyping(peerId, true)
         assertEquals(typingMarker, nextFrame(peer))
         assertEquals(1, server.requestCount)
+    }
+
+    /**
+     * The background connection ends while a call keeps the socket: the server must hear
+     * `"background": false`, or the next `focus:false` (leaving during the call, keepSocket) counts
+     * the user offline with the socket open — iOS and the web stay online there.
+     */
+    @Test
+    fun releasingTheBackgroundConnectionWhileACallKeepsTheSocketClearsTheFlag() = runTest {
+        val client = newClient()
+        val peer = Peer()
+        assertEquals(focusTrue, connect(client, peer, holder = Holder.Call))
+        client.hold(Holder.Background, "tok")
+        foreground = false
+        client.noteFocus(false)
+        assertTrue(client.deliverFocus())
+        assertEquals(focusFalseBackground, nextFrame(peer))
+
+        // Back in front with the call, then the background connection is switched off.
+        foreground = true
+        client.noteFocus(true)
+        assertTrue(client.deliverFocus())
+        assertEquals(focusTrue, nextFrame(peer))
+        client.release(Holder.Background)
+        assertEquals("""{"type":"focus","focused":true,"background":false}""", nextFrame(peer))
+        assertTrue(client.deliverFocus())
+
+        // Leaving during the call (keepSocket): a plain away frame, the socket stays online.
+        foreground = false
+        client.noteFocus(false)
+        assertTrue(client.deliverFocus())
+        assertEquals(focusFalse, nextFrame(peer))
+        client.sendTyping(peerId, true)
+        assertEquals(typingMarker, nextFrame(peer))
+        assertTrue(client.isConnected)
     }
 
     @Test

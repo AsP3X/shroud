@@ -78,8 +78,10 @@ import java.util.concurrent.TimeUnit
  * `focus:false`. A socket that was opened in front and is kept for the background connection
  * when the app leaves declares itself one on the way out: while [Holder.Background] holds the
  * socket every `focus:false` frame carries `"background": true` (plan §1.4 "declares itself a
- * background socket"; X1-SRV-UP `RealtimeHub::update_focus`). Servers without background
- * sockets ignore the extra key (`ws.rs` `ClientMessage`). `DEVICE_REMOVED` on such a socket
+ * background socket"; X1-SRV-UP `RealtimeHub::update_focus`). When the background connection
+ * lets go of a socket messaging or a call keeps, the next focus frame says `"background": false`,
+ * so the socket counts like any other again. Servers without background sockets ignore the extra
+ * key (`ws.rs` `ClientMessage`). `DEVICE_REMOVED` on such a socket
  * takes the same wipe path — that is how a removal reaches a phone without a push distributor.
  *
  * Never logs: tokens, frames and events stay out of every log.
@@ -161,8 +163,10 @@ class RealtimeClient(
 
     /**
      * The server counts the current socket as a background socket: its auth frame or a
-     * `focus:false` frame said `"background": true`. The server keeps that until the socket
-     * closes (a later `focus:true` only puts it in front), so this resets with the socket only.
+     * `focus:false` frame said `"background": true`. The server keeps that until a frame says
+     * `"background": false` or the socket closes (a `focus` frame without the field leaves it
+     * alone, `realtime/mod.rs` `update_focus`); [deliverFocusNow] clears it once the background
+     * connection lets go of a socket others keep.
      */
     private var sentBackground = false
     private var reconnectJob: Job? = null
@@ -415,29 +419,40 @@ class RealtimeClient(
 
     /**
      * Whether a frame saying [focused] also declares a background socket: away while the
-     * background connection holds the socket (plan §1.4). Never `"background": false` — the
-     * server keeps the flag for the socket's life and a `focus:true` alone puts it in front.
+     * background connection holds the socket (plan §1.4). A `focus:true` alone puts it in front;
+     * the server keeps the flag until told otherwise ([clearsBackground]).
      */
     private fun declaresBackground(focused: Boolean): Boolean = !focused && Holder.Background in holders
 
     /**
+     * The background connection let go of a socket the server still counts as background, while
+     * messaging or a call keeps it: the next focus frame says `"background": false`, so the socket
+     * counts like any other again (away but online, as on iOS and the web) instead of making the
+     * user look offline (X1-SRV-UP `update_focus`).
+     */
+    private fun clearsBackground(): Boolean = sentBackground && Holder.Background !in holders
+
+    /**
      * `RealtimeClient.swift:82-101` on the desired focus: nothing when the server already has it
-     * (and, away with the background connection on, already counts the socket as background).
+     * (and, away with the background connection on, already counts the socket as background; or,
+     * with it off, no longer does).
      */
     private fun deliverFocusNow(): Boolean {
         val webSocket = socket
         if (state.value !is ConnectionState.Connected || webSocket == null) return false
         val focused = desiredFocus()
         val background = declaresBackground(focused)
-        if (sentFocus == focused && (!background || sentBackground)) return true
+        val clear = clearsBackground()
+        if (sentFocus == focused && (!background || sentBackground) && !clear) return true
         val frame = buildJsonObject {
             put("type", "focus")
             put("focused", focused)
-            if (background) put("background", true)
+            if (background) put("background", true) else if (clear) put("background", false)
         }
         val sent = webSocket.send(frame.toString())
         if (sent && desiredFocus() == focused) sentFocus = focused
         if (sent && background) sentBackground = true
+        if (sent && clear) sentBackground = false
         return sent
     }
 
