@@ -581,9 +581,29 @@ class ContactsControllerTest {
         assertEquals(before, backend.count("contacts"))
         assertTrue(contacts.presence.value.isEmpty())
 
+        // Nothing refills the lists behind the lock: not a screen's refresh, not a forced one, not blocks.
+        backend.onContacts = { listOf(alice) }
+        contacts.refresh()
+        contacts.refresh(force = true)
+        contacts.refreshBlocks()
+        contacts.refreshPresence(listOf(alice.userId))
+        assertEquals(before, backend.count("contacts"))
+        assertTrue(contacts.blocked.value.isEmpty())
+        assertEquals(1, backend.count("blocks"))
+
         contacts.stop(wipe = true)
         assertNull(contacts.pendingInvite.value)
         assertEquals(listOf(false, true), stopped)
+
+        // Only a start resumes; a stray foreground does not.
+        contacts.onForeground()
+        runCurrent()
+        assertEquals(before, backend.count("contacts"))
+        // The next unlock starts over.
+        contacts.start()
+        runCurrent()
+        assertEquals(listOf(alice), contacts.contacts.value)
+        contacts.stop(wipe = false)
     }
 
     @Test

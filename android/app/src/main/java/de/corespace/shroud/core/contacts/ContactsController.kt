@@ -116,6 +116,12 @@ class ContactsController(
     /** Bumped by [stop]: what started before publishes nothing. */
     private var generation = 0L
 
+    /**
+     * Between [stop] and the next [start]: refreshes (a queued event's, a forced waiter's, a
+     * screen's) do nothing, so locked chats are not refilled behind the lock screen.
+     */
+    private var stopped = false
+
     /** Monotonic millis of the last presence sweep (iOS `lastPresenceSweep`). */
     private var lastPresenceSweepAt: Long? = null
 
@@ -145,15 +151,19 @@ class ContactsController(
     /** Messaging unlocked (`start`, `:464-487`): socket events, the poll, a refresh, the privacy settings. */
     override fun start() {
         if (token() == null) return
+        stopped = false
         activate()
         startPolling()
         scope.launch(main) { refresh() }
         listeners().forEach { it.onContactsActive() }
     }
 
-    /** Back in front (`handleAppBecameActive`, `:598-626`): the poll again if it stopped, a refresh. */
+    /**
+     * Back in front (`handleAppBecameActive`, `:598-626`): the poll again if it stopped, a refresh.
+     * After [stop] only [start] resumes (the chats were locked or signed out meanwhile).
+     */
     override fun onForeground() {
-        if (token() == null) return
+        if (token() == null || stopped) return
         activate()
         if (pollJob == null) startPolling()
         scope.launch(main) { refresh() }
@@ -186,6 +196,7 @@ class ContactsController(
         eventsJob?.cancel()
         eventsJob = null
         active = false
+        stopped = true
         generation++
         inFlight = null
         contactsState.value = emptyList()
@@ -226,12 +237,14 @@ class ContactsController(
     /**
      * Reloads contacts and pending incoming requests. Overlapping callers (poll, socket, screen)
      * share one fetch; [force] waits that one out and then runs a fresh one, so the caller sees its
-     * own write (`:766-784`). Never throws: a failure lands in [listState] (`:788-840`).
+     * own write (`:766-784`). Never throws: a failure lands in [listState] (`:788-840`). Does
+     * nothing after [stop] until the next start.
      */
     override suspend fun refresh(force: Boolean): Unit = withContext(main) {
+        if (stopped) return@withContext
         inFlight?.let { existing ->
             existing.join()
-            if (!force) return@withContext
+            if (!force || stopped) return@withContext
         }
         val job = scope.async(main) { performRefresh() }
         inFlight = job
@@ -309,6 +322,7 @@ class ContactsController(
 
     /** Presence of [userIds], all at once; failures (a 403 for a non-contact) are skipped per user. */
     override suspend fun refreshPresence(userIds: Collection<UUID>): Unit = withContext(main) {
+        if (stopped) return@withContext
         val bearer = token() ?: return@withContext
         fetchPresence(userIds.distinct(), bearer, generation)
     }
@@ -341,7 +355,7 @@ class ContactsController(
     fun onSharePresenceChanged(sharing: Boolean) {
         presenceState.value = emptyMap()
         lastPresenceSweepAt = null
-        if (!sharing) return
+        if (!sharing || stopped) return
         val bearer = token() ?: return
         val gen = generation
         scope.launch(main) { sweepPresenceIfNeeded(bearer, force = true, gen = gen) }
@@ -396,6 +410,7 @@ class ContactsController(
 
     /** Silent on failure: the last list stands (`refreshBlocks`, `:2199-2203`). */
     override suspend fun refreshBlocks(): Unit = withContext(main) {
+        if (stopped) return@withContext
         val bearer = token() ?: return@withContext
         val gen = generation
         val list = try {
