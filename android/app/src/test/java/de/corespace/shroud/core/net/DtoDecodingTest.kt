@@ -12,12 +12,14 @@ import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.serializer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 import java.time.Instant
 import java.util.UUID
 
@@ -685,9 +687,37 @@ class DtoDecodingTest {
 
     @Test
     fun everyDtoIsListedOnce() {
-        // The list above names each DTO once, so the id walk covers all of them exactly.
+        // The list below names each DTO once, so the id walk covers all of them exactly.
         val names = allDtoSerializers.map { it.descriptor.serialName }
         assertEquals(names.size, names.toSet().size)
+    }
+
+    /**
+     * The id walk above only sees what [allDtoSerializers] lists, so the list must hold every
+     * top-level `@Serializable` type declared under `core/net/dto/` — found from the sources, not
+     * by hand, so a new DTO that is not listed fails here instead of slipping past the id check.
+     */
+    @Test
+    fun everyDtoUnderCoreNetDtoIsListed() {
+        val declared = dtoSourceFiles()
+            .flatMap { file -> SERIALIZABLE_DECLARATION.findAll(file.readText()).map { it.groupValues[1] } }
+            .toList()
+        assertTrue("found only ${declared.size} DTOs under core/net/dto", declared.size >= 60)
+        val fromSources = declared.map { simpleName ->
+            val type = Class.forName("de.corespace.shroud.core.net.$simpleName")
+            serializer(type).descriptor.serialName
+        }.toSortedSet()
+        val listed = allDtoSerializers.map { it.descriptor.serialName }.toSortedSet()
+        assertEquals("not listed in allDtoSerializers", emptySet<String>(), fromSources - listed)
+        assertEquals("listed but not declared under core/net/dto", emptySet<String>(), listed - fromSources)
+    }
+
+    /** The `.kt` files of `core/net/dto`, from the module directory (Gradle) or the repository's `android/`. */
+    private fun dtoSourceFiles(): List<File> {
+        val relative = "src/main/java/de/corespace/shroud/core/net/dto"
+        val dir = listOf(File(relative), File("app/$relative")).firstOrNull { it.isDirectory }
+            ?: error("core/net/dto not found from ${File(".").absolutePath}")
+        return dir.listFiles { f -> f.extension == "kt" }!!.sortedBy { it.name }
     }
 
     private fun message(
@@ -698,6 +728,11 @@ class DtoDecodingTest {
 
     private companion object {
         const val UUID_SERIAL_NAME = "de.corespace.shroud.UUID"
+
+        /** A top-level (unindented) `@Serializable` class or object; nested types are reached by the walk. */
+        val SERIALIZABLE_DECLARATION = Regex(
+            """(?m)^@Serializable(?:\([^)]*\))?\s+(?:@\S+\s+)*(?:(?:data|sealed|enum|value)\s+)*(?:class|object|interface)\s+(\w+)""",
+        )
 
         val allDtoSerializers: List<KSerializer<*>> = listOf(
             // Auth
