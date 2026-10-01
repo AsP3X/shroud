@@ -1,5 +1,7 @@
 package de.corespace.shroud.core.auth
 
+import de.corespace.shroud.core.model.deviceUuid
+import de.corespace.shroud.core.model.userUuid
 import de.corespace.shroud.core.net.ApiClient
 import de.corespace.shroud.core.net.ShroudApi
 import de.corespace.shroud.core.storage.SealedFile
@@ -25,6 +27,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.util.UUID
 
 /** A reversible stand-in for the Keystore: unit tests have none. */
 class XorSealer : Sealer {
@@ -40,7 +43,7 @@ class SessionControllerTest {
     private var signedOutCalls = 0
 
     private fun session(token: String = "tok", user: String = "noah") =
-        """{"token":"$token","user":{"id":"U1","username":"$user","share_code":"ABCDEFGHJK"},"device":{"id":"D1"}}"""
+        """{"token":"$token","user":{"id":"$USER_ID","username":"$user","share_code":"ABCDEFGHJK"},"device":{"id":"$DEVICE_ID"}}"""
 
     private fun store(dir: File = folder.root) = SessionStore(
         SealedFile(File(dir, "session.sealed"), XorSealer()),
@@ -75,8 +78,11 @@ class SessionControllerTest {
         val s = c.register("  Noah ", "pw")
         val body = json.parseToJsonElement(server.takeRequest().body!!.utf8()).jsonObject
         assertEquals("\"noah\"", body["username"].toString())
-        assertEquals("u1", s.userId)
-        assertEquals("d1", s.deviceId)
+        // Stored lower-case (the wire form), read back as UUIDs.
+        assertEquals(USER_ID.lowercase(), s.userId)
+        assertEquals(DEVICE_ID.lowercase(), s.deviceId)
+        assertEquals(UUID.fromString(USER_ID), s.userUuid)
+        assertEquals(UUID.fromString(DEVICE_ID), s.deviceUuid)
         // A fresh process reads the same session back.
         assertEquals(s, store().session)
     }
@@ -85,11 +91,22 @@ class SessionControllerTest {
     fun loginReusesTheAnchoredDeviceAfterLogOutClearedTheSession() = runTest {
         server.enqueue(MockResponse(code = 200, body = session()))
         val st = store()
-        st.save(Session("old", "u1", "noah", null, "d-anchor"))
+        st.save(Session("old", USER_ID.lowercase(), "noah", null, ANCHOR))
         st.clear()
         controller(st).login("NOAH", "pw")
         val body = json.parseToJsonElement(server.takeRequest().body!!.utf8()).jsonObject
-        assertEquals("\"d-anchor\"", body["device_id"].toString())
+        assertEquals("\"$ANCHOR\"", body["device_id"].toString())
+    }
+
+    @Test
+    fun anAnchorThatIsNotAUuidIsNotSent() = runTest {
+        server.enqueue(MockResponse(code = 200, body = session()))
+        val st = store()
+        st.save(Session("old", USER_ID.lowercase(), "noah", null, "d-anchor"))
+        st.clear()
+        controller(st).login("noah", "pw")
+        val body = json.parseToJsonElement(server.takeRequest().body!!.utf8()).jsonObject
+        assertEquals("null", body["device_id"].toString())
     }
 
     @Test
@@ -124,7 +141,7 @@ class SessionControllerTest {
     fun plain401sSignOutOnlyAfterThreeInARowAndSuccessResets() = runTest {
         server.enqueue(MockResponse(code = 201, body = session()))
         repeat(2) { server.enqueue(MockResponse(code = 401, body = "")) }
-        server.enqueue(MockResponse(code = 200, body = """{"user":{"id":"U1","username":"noah"},"device":{"id":"D1"}}"""))
+        server.enqueue(MockResponse(code = 200, body = """{"user":{"id":"$USER_ID","username":"noah"},"device":{"id":"$DEVICE_ID"}}"""))
         repeat(3) { server.enqueue(MockResponse(code = 401, body = "")) }
         val c = controller()
         c.register("noah", "pw")
@@ -136,7 +153,7 @@ class SessionControllerTest {
         assertEquals(SessionController.Validation.SignedOut, c.validate())
         assertNull(c.session.value)
         // A plain sign-out keeps the anchor for the next login.
-        assertEquals("d1", store().anchorFor("noah"))
+        assertEquals(DEVICE_ID.lowercase(), store().anchorFor("noah"))
     }
 
     @Test
@@ -148,5 +165,12 @@ class SessionControllerTest {
         repeat(4) { assertEquals(SessionController.Validation.Offline, c.validate()) }
         assertTrue(c.session.value != null)
         assertFalse(signedOutCalls > 0)
+    }
+
+    private companion object {
+        // Upper case, as a server might send them: the session stores the lower-case wire form.
+        const val USER_ID = "8F14E45F-CEEA-467A-9575-3A6B7A1E6C0E"
+        const val DEVICE_ID = "2E6F9B0C-1D3A-4E5B-8C7D-9F0A1B2C3D4E"
+        const val ANCHOR = "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
     }
 }

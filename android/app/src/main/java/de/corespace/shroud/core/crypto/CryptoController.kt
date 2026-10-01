@@ -1,6 +1,7 @@
 package de.corespace.shroud.core.crypto
 
 import de.corespace.shroud.core.auth.Session
+import de.corespace.shroud.core.model.userUuid
 import de.corespace.shroud.core.net.ApiError
 import de.corespace.shroud.core.net.ErrorCodes
 import de.corespace.shroud.core.net.OneTimePreKeyDto
@@ -94,7 +95,7 @@ class CryptoController(private val api: ShroudApi, private val bip39: Bip39) {
 
     private suspend fun rejectPhraseThatIsNotTheAccountKey(established: IdentityKeyMaterial, session: Session) {
         try {
-            val published = api.identityKey(session.token, session.userId)
+            val published = api.identityKey(session.token, session.userUuid)
             val key = runCatching { java.util.Base64.getDecoder().decode(published.identityKey.trim()) }.getOrNull()
             if (key == null || !key.contentEquals(established.agreementPublic)) {
                 throw CryptoException.PhraseDoesNotMatchAccount()

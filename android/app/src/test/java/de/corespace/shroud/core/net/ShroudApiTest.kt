@@ -12,6 +12,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.util.UUID
 
 /** The wire shapes of `server-plan.md` Milestone 1, against a fake server. */
 class ShroudApiTest {
@@ -29,7 +30,8 @@ class ShroudApiTest {
     @After
     fun tearDown() = server.close()
 
-    private val session = """{"token":"tok","user":{"id":"8F14E45F-CEEA-467A-9575-3A6B7A1E6C0E","username":"noah","share_code":"ABCDEFGHJK"},"device":{"id":"d1"}}"""
+    private val session = """{"token":"tok","user":{"id":"8F14E45F-CEEA-467A-9575-3A6B7A1E6C0E","username":"noah","share_code":"ABCDEFGHJK"},"device":{"id":"2E6F9B0C-1D3A-4E5B-8C7D-9F0A1B2C3D4E"}}"""
+    private val anchor = UUID.fromString("2e6f9b0c-1d3a-4e5b-8c7d-9f0a1b2c3d4e")
 
     @Test
     fun registerSendsOnlyUsernameAndPassword() = runTest {
@@ -42,17 +44,20 @@ class ShroudApiTest {
         assertEquals(setOf("username", "password"), body.keys)
         assertEquals("tok", response.token)
         assertEquals("ABCDEFGHJK", response.user.shareCode)
+        // Upper-case ids from the wire become UUIDs; their wire form is lower-case.
+        assertEquals("8f14e45f-ceea-467a-9575-3a6b7a1e6c0e", response.user.id.toString())
+        assertEquals(anchor, response.device.id)
     }
 
     @Test
     fun loginSendsTheDeviceIdOrNull() = runTest {
         server.enqueue(MockResponse(code = 200, body = session))
         server.enqueue(MockResponse(code = 200, body = session))
-        api.login("noah", "pw", "d1")
+        api.login("noah", "pw", anchor)
         api.login("noah", "pw", null)
         val first = json.parseToJsonElement(server.takeRequest().body!!.utf8()).jsonObject
         val second = json.parseToJsonElement(server.takeRequest().body!!.utf8()).jsonObject
-        assertEquals("d1", first["device_id"]!!.jsonPrimitive.content)
+        assertEquals("2e6f9b0c-1d3a-4e5b-8c7d-9f0a1b2c3d4e", first["device_id"]!!.jsonPrimitive.content)
         assertTrue(second.containsKey("device_id"))
         assertEquals("null", second["device_id"].toString())
     }
@@ -79,15 +84,15 @@ class ShroudApiTest {
 
     @Test
     fun bearerTokenAndKeyPaths() = runTest {
-        server.enqueue(MockResponse(code = 200, body = """{"user":{"id":"u","username":"noah"},"device":{"id":"d","sealed_name":"AAAA"}}"""))
+        server.enqueue(MockResponse(code = 200, body = """{"user":{"id":"8f14e45f-ceea-467a-9575-3a6b7a1e6c0e","username":"noah"},"device":{"id":"2e6f9b0c-1d3a-4e5b-8c7d-9f0a1b2c3d4e","sealed_name":"AAAA"}}"""))
         server.enqueue(MockResponse(code = 404, body = """{"error":{"code":"KEYS_REQUIRED","message":"No keys."}}"""))
         server.enqueue(MockResponse(code = 204))
         val me = api.me("tok")
         assertEquals("AAAA", me.device.sealedName)
         assertEquals("Bearer tok", server.takeRequest().headers["Authorization"])
-        val missing = runCatching { api.identityKey("tok", "ABC") }.exceptionOrNull() as ApiError.Server
+        val missing = runCatching { api.identityKey("tok", UUID.fromString("ABCDEF01-2345-4678-9ABC-DEF012345678")) }.exceptionOrNull() as ApiError.Server
         assertEquals(ErrorCodes.KEYS_REQUIRED, missing.code)
-        assertEquals("/api/v1/keys/identity/abc", server.takeRequest().url.encodedPath)
+        assertEquals("/api/v1/keys/identity/abcdef01-2345-4678-9abc-def012345678", server.takeRequest().url.encodedPath)
         api.putKeyBundle("tok", PutKeyBundleRequest(1, "a", SignedPreKeyDto(2, "b", "c"), listOf(OneTimePreKeyDto(1, "d"))))
         val put = server.takeRequest()
         assertEquals("PUT", put.method)
