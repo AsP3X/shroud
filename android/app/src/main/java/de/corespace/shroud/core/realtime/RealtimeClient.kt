@@ -59,10 +59,16 @@ import java.util.concurrent.TimeUnit
  *
  * **Focus** (`RealtimeClient.swift:47-52, 77-101`; api-realtime §11.9): the server counts a new
  * socket as in front — its device gets no pushes — until told otherwise, so the first frame after
- * every `auth.ok` is the focus (`:304`). The focus the client claims is the wish of [noteFocus]
- * (first value: [isForeground], decision §17-5), but never `true` while the app is not in front
- * or while only [Holder.Background] holds the socket: a socket opened for a call or the background
- * connection while the app is away must not swallow the device's pushes.
+ * every `auth.ok` is the focus (`:304`). The focus the client claims is the wish of [noteFocus],
+ * but never `true` while the app is not in front or while only [Holder.Background] holds the
+ * socket: a socket opened for a call or the background connection while the app is away must not
+ * swallow the device's pushes. The wish starts from [isForeground] (decision §17-5) — at
+ * construction and again whenever a hold arrives while nobody held the socket, so every fresh
+ * start begins from the app's real phase (plan §1.7.3: "the first focus frame of a socket comes
+ * from `isForeground()`"). iOS keeps the old wish there: leaving the app notes `false`, the chats
+ * auto-lock and close the socket, and unlocking in front re-opens it (`MessagingController.start`
+ * holds without noting focus, `MessagingController.swift:464-487`) still saying "away", so the
+ * server pushes to a phone that is in use.
  *
  * **Background connection** (plan §1.4, §1.7.3; X1-SRV-UP): a socket opened while
  * [Holder.Background] holds it and nobody claims focus authenticates with `"background": true`,
@@ -175,6 +181,9 @@ class RealtimeClient(
      * (a no-op when nothing changed).
      */
     fun hold(holder: Holder, token: String) {
+        // A fresh start (nobody held the socket) begins from the app's real phase, not a wish
+        // left over from the last time the app was left (class KDoc, *Focus*).
+        if (holders.isEmpty()) wantsFocus = isForeground()
         holders += holder
         connect(token)
         deliverFocusNow()

@@ -280,6 +280,35 @@ class RealtimeClientTest {
     }
 
     @Test
+    fun aFreshStartTakesItsFocusFromTheAppPhaseNotFromAnOldWish() = runTest {
+        // Left the app (focus:false), the chats auto-locked and released the socket; the user
+        // returns and unlocks: MessagingController.start() holds without noting focus.
+        val client = newClient()
+        val first = Peer()
+        connect(client, first)
+        foreground = false
+        client.noteFocus(false)
+        assertTrue(client.deliverFocus())
+        assertEquals(focusFalse, nextFrame(first))
+        client.release(Holder.Messaging)
+        assertEquals(1001, nextClose(first))
+
+        foreground = true
+        assertEquals(focusTrue, connect(client, Peer()))
+    }
+
+    @Test
+    fun aFreshStartInTheBackgroundSaysAway() = runTest {
+        // The app was in front when the client was built, then a call is answered from the
+        // background after everything had let go of the socket.
+        val client = newClient()
+        connect(client, Peer())
+        client.release(Holder.Messaging)
+        foreground = false
+        assertEquals(focusFalse, connect(client, Peer(), holder = Holder.Call))
+    }
+
+    @Test
     fun eventsArriveInOrder() = runTest {
         val client = newClient()
         val events = record(client)
