@@ -232,12 +232,15 @@ class RealtimeClient(
 
     /**
      * Connectivity came back (Android addition, api-realtime §11.7, decision §17-4): a held socket
-     * that is down reconnects now with the backoff reset, instead of waiting out up to 30 s.
+     * that is down reconnects now with the backoff reset, instead of waiting out up to 30 s. Not
+     * after `RATE_LIMITED`: a new network does not lower the account's socket count, and that
+     * wait keeps its 30 s floor (plan C31).
      */
     fun onNetworkAvailable() {
         if (holders.isEmpty() || token == null || intentional) return
         val current = state.value
         if (current !is ConnectionState.Failed && current !is ConnectionState.Disconnected) return
+        if (current == ConnectionState.Failed(RATE_LIMITED_REASON)) return
         reconnectJob?.cancel()
         reconnectJob = null
         attempt = 0

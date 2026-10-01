@@ -565,6 +565,22 @@ class RealtimeClientTest {
         assertEquals(1000, nextClose(peer))
     }
 
+    @Test
+    fun aNetworkChangeDoesNotShortenTheRateLimitedWait() = runTest {
+        val client = newClient()
+        val peer = Peer()
+        connect(client, peer)
+        peer.send(authError("RATE_LIMITED"))
+        await("the cap") { client.state.value == ConnectionState.Failed(RealtimeClient.RATE_LIMITED_REASON) }
+        client.onNetworkAvailable()
+        assertEquals(ConnectionState.Failed(RealtimeClient.RATE_LIMITED_REASON), client.state.value)
+        val next = Peer()
+        server.enqueue(upgrade(next))
+        assertReconnectAfter(client, 30)
+        assertEquals(authFrame(), nextFrame(next))
+        assertEquals(2, server.requestCount)
+    }
+
     // ---- Cleartext (api-realtime §11.1) ----
 
     @Test
