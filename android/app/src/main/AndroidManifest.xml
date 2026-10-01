@@ -106,6 +106,16 @@
             </intent-filter>
         </activity>
 
+        <!--
+          Notification taps (NotificationTap.ENTRY_ALIAS): not exported, so only Shroud's own
+          immutable PendingIntents can start it. MainActivity itself is exported for App Links and
+          ignores the tap action unless it arrived through this alias.
+        -->
+        <activity-alias
+            android:name=".NotificationTapEntry"
+            android:targetActivity=".MainActivity"
+            android:exported="false" />
+
         <!-- Launcher icon styles (BrandLogoPreference): exactly one alias is enabled. -->
         <activity-alias
             android:name=".LauncherDetailed"

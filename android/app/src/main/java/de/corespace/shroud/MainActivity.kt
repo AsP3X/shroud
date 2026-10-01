@@ -18,7 +18,8 @@ import kotlinx.coroutines.launch
  * through the `.LauncherDetailed` / `.LauncherSimple` aliases (settings-lock §8.4) and by App
  * Links for `https://shroud.corespace.de/u/<code>` (contacts §5.10). `singleTask`: links and
  * notification taps arrive in [onNewIntent] while the app runs. [handleIntent] hands a notification
- * tap to `NotificationsController.handleTap` (its `pendingOpen` is what the shell opens once the
+ * tap — only one that came through the non-exported `.NotificationTapEntry` alias, see
+ * [NotificationTap.ENTRY_ALIAS] — to `NotificationsController.handleTap` (its `pendingOpen` is what the shell opens once the
  * chats are unlocked) and an invite link to `Contacts.pendingInvite` (the Add Contact prefill,
  * P10c), then clears the intent so a recreation does not replay it (W2-INT). The manifest's
  * `configChanges` keep rotation, folding and dark-mode switches from recreating it, as SwiftUI

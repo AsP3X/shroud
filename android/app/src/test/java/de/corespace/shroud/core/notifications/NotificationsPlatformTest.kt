@@ -3,6 +3,7 @@ package de.corespace.shroud.core.notifications
 import android.app.Notification
 import android.app.NotificationManager
 import android.content.Context
+import android.content.Intent
 import androidx.core.app.NotificationCompat
 import androidx.test.core.app.ApplicationProvider
 import de.corespace.shroud.MainActivity
@@ -43,7 +44,7 @@ class NotificationsPlatformTest {
     private val chat = UUID.fromString("6f9619ff-8b86-4d01-b42d-00c04fc964ff")
     private val preferences = NotificationPreferences(FakeSharedPreferences(), StorageSeal())
     private val channels = NotificationChannels(AndroidChannelStore(context)) { preferences.state.value }
-    private val sink = AndroidNotificationSink(context, MainActivity::class.java) { name, id ->
+    private val sink = AndroidNotificationSink(context) { name, id ->
         AvatarBitmap.render(context, AvatarPalette.seed(name, id ?: UUID(0, 0)), AvatarPalette.initials(name))
     }
     private val notifier = SystemNotifier(sink, channels, StorageSeal(), DirectExecutor)
@@ -142,7 +143,7 @@ class NotificationsPlatformTest {
 
         // The tap: the intent carries the kind and the peer, never the name.
         val tapIntent = shadowOf(shown().single().contentIntent).savedIntent
-        assertEquals(MainActivity::class.java.name, tapIntent.component!!.className)
+        assertEquals(NotificationTap.ENTRY_ALIAS, tapIntent.component!!.className)
         assertFalse(tapIntent.extras.toString().contains("alice"))
         val tap = NotificationTap.from(tapIntent)!!
         controller.handleTap(tap)
@@ -153,6 +154,20 @@ class NotificationsPlatformTest {
         controller.forgetAccount()
         assertTrue("the wipe leaves no notification", manager.activeNotifications.isEmpty())
         assertNull(controller.pendingOpen.value)
+    }
+
+    /** Review W2: MainActivity is exported (App Links); another app's intent with our action opens nothing. */
+    @Test
+    fun aTapIntentFromAnotherAppIsRefused() {
+        val forged = Intent(NotificationTap.ACTION_OPEN_NOTIFICATION)
+            .setClassName(context.packageName, MainActivity::class.java.name)
+            .putExtra(NotificationTap.EXTRA_KIND, "message")
+            .putExtra(NotificationTap.EXTRA_PEER, peer.toString())
+        assertNull(NotificationTap.from(forged))
+        // The same extras through the non-exported alias (our own PendingIntent) are a tap.
+        val ours = NotificationTap.intent(context, NotificationKind.Message, peer)
+        assertEquals(NotificationTap(NotificationKind.Message, peer), NotificationTap.from(ours))
+        assertEquals(NotificationTap(NotificationKind.Message, peer), NotificationTap.from(Intent(ours).setClassName(context, NotificationTap.ENTRY_ALIAS)))
     }
 
     @Test

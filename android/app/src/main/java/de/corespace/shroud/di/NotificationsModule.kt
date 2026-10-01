@@ -5,7 +5,6 @@ import android.graphics.Bitmap
 import androidx.core.app.NotificationManagerCompat
 import de.corespace.shroud.AppContainer
 import de.corespace.shroud.AppModule
-import de.corespace.shroud.MainActivity
 import de.corespace.shroud.core.notifications.AndroidAccessibilityState
 import de.corespace.shroud.core.notifications.AndroidChannelStore
 import de.corespace.shroud.core.notifications.AndroidNotificationSink
@@ -59,7 +58,7 @@ class NotificationsModule(container: AppContainer) : AppModule(container) {
     val soundPlayer: NotificationSoundPlayer by lazy { NotificationSoundPlayer(app) }
 
     val systemNotifier: SystemNotifier by lazy {
-        SystemNotifier(AndroidNotificationSink(app, MainActivity::class.java, ::avatar), channels, container.storageSeal)
+        SystemNotifier(AndroidNotificationSink(app, ::avatar), channels, container.storageSeal)
     }
 
     /** AFU (P3a): readable while the phone is locked, when the background connection announces. */

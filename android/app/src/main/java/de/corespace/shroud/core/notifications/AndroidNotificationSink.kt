@@ -20,12 +20,12 @@ import java.util.UUID
  *   the vault (invariant 13, memory "No plaintext unless required").
  * - Every arrival alerts again (`setOnlyAlertOnce(false)`, the web's `renotify: true`).
  *
- * @param activity the activity a tap opens (`MainActivity`).
+ * Taps open `MainActivity` through its non-exported alias ([NotificationTap.ENTRY_ALIAS]).
+ *
  * @param largeIcon draws the 40 dp avatar for a name (`AvatarBitmap`), or null.
  */
 class AndroidNotificationSink(
     private val context: Context,
-    private val activity: Class<*>,
     private val largeIcon: (name: String, peerUserId: UUID?) -> Bitmap?,
 ) : NotificationSink {
     private val manager: NotificationManager get() = context.getSystemService(NotificationManager::class.java)
@@ -84,7 +84,7 @@ class AndroidNotificationSink(
     private fun contentIntent(spec: PostSpec): PendingIntent = PendingIntent.getActivity(
         context,
         "${spec.tag}#${spec.id}".hashCode(),
-        NotificationTap.intent(context, activity, spec.kind, spec.peerUserId),
+        NotificationTap.intent(context, spec.kind, spec.peerUserId),
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 
