@@ -262,7 +262,8 @@ Order is roughly dependency order. iOS sources are the reference implementation.
 - Own release key; direct APK and F-Droid (reproducible build) are the channels (decided). Play
   is an optional later channel shipping the same Google-free APK; it would add the data-safety
   form and the foreground-service and full-screen-intent declarations (`phoneCall`,
-  `mediaProjection`, `microphone`, `camera`, `specialUse` for the background connection).
+  `mediaProjection`, `microphone`, `specialUse` for the background connection). Never `camera`:
+  the call service is `phoneCall|microphone|mediaProjection` (calls D3).
 
 ## Design reference
 
