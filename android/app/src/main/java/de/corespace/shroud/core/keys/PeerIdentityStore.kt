@@ -76,6 +76,15 @@ class PeerIdentityStore(private val file: SealedFile, private val seal: StorageS
         cache = Record(v = VERSION)
     }
 
+    /**
+     * Drops the in-memory copy without touching the file: the next call reads the record again.
+     * `KeyMaterialWipe` calls it after deleting everything under `keys/`, so a wiped pin cannot answer from RAM.
+     */
+    @Synchronized
+    fun forgetCache() {
+        cache = null
+    }
+
     /** The record, read once; null while the phone's lock (or a transient error) refuses it. */
     private fun current(): Record? {
         cache?.let { return it }

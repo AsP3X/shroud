@@ -14,7 +14,11 @@ import java.security.KeyStore
  *
  * Nothing here needs authentication or an unlocked phone. Never logs.
  */
-class KeyMaterialWipe(private val keysDir: File, private val aliases: KeystoreAliases = AndroidKeystoreAliases()) {
+class KeyMaterialWipe(
+    private val keysDir: File,
+    private val aliases: KeystoreAliases = AndroidKeystoreAliases(),
+    private val afterWipe: () -> Unit = {},
+) {
     /** The AndroidKeyStore aliases, behind an interface for JVM tests. */
     interface KeystoreAliases {
         fun list(): List<String>
@@ -22,12 +26,16 @@ class KeyMaterialWipe(private val keysDir: File, private val aliases: KeystoreAl
         fun delete(alias: String)
     }
 
-    /** Deletes `keys/**` and every `shroud.` alias. Each deletion is attempted even if another failed. */
+    /**
+     * Deletes everything under `keys/` and every `shroud.` alias, then runs [afterWipe] (in-memory caches of the
+     * deleted records). Each deletion is attempted even if another failed; never throws.
+     */
     fun wipeAll() {
         runCatching { keysDir.deleteRecursively() }
         for (alias in runCatching { aliases.list() }.getOrDefault(emptyList())) {
             if (alias.startsWith(ALIAS_PREFIX)) runCatching { aliases.delete(alias) }
         }
+        runCatching { afterWipe() }
     }
 
     /**
