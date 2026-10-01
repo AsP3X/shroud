@@ -100,7 +100,8 @@ class PeerIdentityController(
      * pin — re-checked against the server once per session in the background — or, when nothing is
      * pinned yet, the server's key, pinned now (TOFU).
      *
-     * @throws CryptoError.Locked while the pin cannot be read, or signed out with nothing pinned.
+     * @throws CryptoError.Locked while the pin cannot be read, signed out with nothing pinned, or
+     *   when the session ended while the first key was being fetched.
      * @throws ApiError when the first-use fetch fails.
      */
     override suspend fun resolvePublicKey(peer: UUID): ByteArray {
@@ -260,12 +261,14 @@ class PeerIdentityController(
 
     /**
      * Pins [fetched] unless a pin appeared meanwhile (another first use won the race): then that pin
-     * is the answer, and a different [fetched] is a change like any other.
+     * is the answer, and a different [fetched] is a change like any other. A fetch that outlived the
+     * session ([clearMemory] / [wipe] meanwhile) pins nothing: a Log Out must not get a pin back.
      */
     private suspend fun pinFirstUse(peer: UUID, fetched: ByteArray, gen: Long): ByteArray {
         var pinnedNow = false
         val key = withContext(io) {
             synchronized(pinLock) {
+                if (gen != generation.get()) throw CryptoError.Locked
                 when (val again = store.pin(peer)) {
                     PinRead.Unavailable -> throw CryptoError.Locked
                     is PinRead.Pinned -> again.key

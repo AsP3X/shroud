@@ -363,6 +363,28 @@ class PeerIdentityControllerTest {
     }
 
     @Test
+    fun aFirstUseThatOutlivesAWipePinsNothing() = runTest(main.dispatcher) {
+        val answer = CompletableDeferred<String>()
+        backend.onIdentityKey = { answer.await() }
+        val identities = controller()
+        var failure: Throwable? = null
+        val decrypt = launch {
+            try {
+                identities.resolvePublicKey(peer)
+            } catch (e: CryptoError) {
+                failure = e
+            }
+        }
+        runCurrent()
+        identities.wipe()
+        answer.complete(B64.encode(first))
+        decrypt.join()
+        assertSame(CryptoError.Locked, failure)
+        assertNull(store.publicKey(peer))
+        assertFalse(file.exists())
+    }
+
+    @Test
     fun twoFirstUsesPinOneKey() = runTest(main.dispatcher) {
         val gate = CompletableDeferred<Unit>()
         var served = 0
