@@ -4,8 +4,12 @@
 //! One that is signed in but not in front (the app backgrounded, the tab unfocused) gets a
 //! push even if its socket has not dropped yet: a suspended app keeps that socket open and
 //! would otherwise swallow the notice. The relay is APNs for the iPhone and Web Push for a
-//! browser. A push carries ids and a kind, plus the sender's name when the device asked for
-//! it — sealed so the relay cannot read it. Never message content: the server has none.
+//! browser and for the Android app (through the UnifiedPush distributor its user chose). A
+//! push carries ids and a kind, plus the sender's name when the device asked for it — sealed
+//! so the relay cannot read it. Never message content: the server has none.
+//! An Android app, unlike a browser, need not show what it is sent, so it also gets what an
+//! iPhone gets by PushKit: call rings while it looks in front and `call_ended`, plus `read`
+//! when a chat is read elsewhere.
 //! Agent: `dispatch` spawns (a recording service delivers inline); READS devices,
 //! device_notification_settings, push_tokens, web_push_subscriptions, chat_mutes; DELETES
 //! tokens and subscriptions their relay reports gone.
@@ -27,10 +31,13 @@ pub use client::{
     apns_config_from_env,
 };
 pub use payload::{Notification, NotificationKind};
-pub use web_push::{VapidKey, WebPushClient, WebSubscription};
+pub use web_push::{
+    SubscriptionClient, UnifiedPushPolicy, VapidKey, WebPushClient, WebPushOptions,
+    WebSubscription,
+};
 
 use crate::realtime::RealtimeHub;
-use web_push::{Urgency, WebPushOptions, WebPushOutcome};
+use web_push::{Urgency, WebPushOutcome};
 
 /// How long an undelivered notification stays worth delivering (device off, no signal).
 const PUSH_LIFETIME_SECS: u64 = 24 * 60 * 60;
@@ -56,13 +63,17 @@ pub enum PushEvent {
     },
     /// `requester` asked `recipient` to become contacts.
     ContactRequest { recipient: Uuid, requester: Uuid },
-    /// `recipient` read chats on `reader_device`: their other iPhones' icon badges go down.
+    /// `recipient` read chats on `reader_device`, or changed a mute there: their other iPhones'
+    /// icon badges follow. With `conversation_id` (a chat was read), their other Android apps
+    /// also close that chat's notifications.
     BadgeSync {
         recipient: Uuid,
         reader_device: Uuid,
+        conversation_id: Option<Uuid>,
     },
-    /// `caller` is ringing `recipient`: every iPhone with a VoIP token rings through PushKit;
-    /// older iPhones and browsers that are not in the foreground get a notification.
+    /// `caller` is ringing `recipient`: every iPhone with a VoIP token rings through PushKit,
+    /// every Android app through UnifiedPush; older iPhones and browsers that are not in the
+    /// foreground get a notification.
     IncomingCall {
         recipient: Uuid,
         caller: Uuid,
@@ -75,8 +86,9 @@ pub enum PushEvent {
         caller: Uuid,
         call_id: Uuid,
     },
-    /// The call is over for `recipient`'s iPhones that rang through PushKit. `except_device`
-    /// is the one that answered or ended it here, and must not be told to drop its own call.
+    /// The call is over for `recipient`'s iPhones that rang through PushKit and Android apps
+    /// that rang through UnifiedPush. `except_device` is the one that answered or ended it
+    /// here, and must not be told to drop its own call.
     CallEnded {
         recipient: Uuid,
         caller: Uuid,
@@ -90,7 +102,11 @@ pub enum PushEvent {
 #[serde(rename_all = "snake_case")]
 pub enum PushChannel {
     Apns,
+    /// Web Push to a browser's push service.
     Web,
+    /// Web Push to an Android app's UnifiedPush distributor.
+    #[serde(rename = "unifiedpush")]
+    UnifiedPush,
 }
 
 /// A push as handed to its relay (tests read these from a recording service).
@@ -100,6 +116,8 @@ pub struct SentPush {
     pub channel: PushChannel,
     /// `apns-push-type` for APNs (a PushKit ring is `Voip`); `None` for Web Push.
     pub apns_push_type: Option<ApnsPushType>,
+    /// `TTL`, `Urgency` and `Topic` of a Web Push; `None` for APNs.
+    pub web_options: Option<WebPushOptions>,
     /// APNs JSON, or the Web Push JSON before encryption.
     pub payload: Value,
 }
@@ -117,10 +135,12 @@ pub struct RemovedDeviceWake {
     endpoint: Option<String>,
     p256dh: Option<Vec<u8>>,
     auth: Option<Vec<u8>>,
+    web_client: Option<String>,
 }
 
 impl RemovedDeviceWake {
-    /// The device's alert token and Web Push subscription; `None` when it registered neither.
+    /// The device's alert token and Web Push subscription (a browser's, or an Android app's
+    /// through UnifiedPush); `None` when it registered neither.
     ///
     /// Agent: DB SELECT push_tokens (kind 'alert') + web_push_subscriptions for one device,
     /// inside the removing transaction.
@@ -133,7 +153,7 @@ impl RemovedDeviceWake {
             SELECT
                 d.id AS device_id,
                 pt.apns_token, pt.environment AS apns_environment,
-                w.endpoint, w.p256dh, w.auth
+                w.endpoint, w.p256dh, w.auth, w.client AS web_client
             FROM devices d
             LEFT JOIN push_tokens pt ON pt.device_id = d.id AND pt.kind = 'alert'
             LEFT JOIN web_push_subscriptions w ON w.device_id = d.id
@@ -175,7 +195,8 @@ impl Default for NotificationSettings {
 /// `POST /push/test`'s answer: what happened to the test notification.
 #[derive(Debug, Clone, Serialize)]
 pub struct TestPushOutcome {
-    /// `apns` or `web`; null when this device registered for neither.
+    /// `apns`, `web` (a browser) or `unifiedpush` (an Android app); null when this device
+    /// registered for none.
     pub channel: Option<PushChannel>,
     /// `sent`, `not_registered`, `not_configured` (this server cannot send to that relay),
     /// `misconfigured` (the relay refused this server's key or topic), `rejected` (the relay
@@ -230,6 +251,7 @@ struct Target {
     endpoint: Option<String>,
     p256dh: Option<Vec<u8>>,
     auth: Option<Vec<u8>>,
+    web_client: Option<String>,
 }
 
 impl Target {
@@ -253,7 +275,17 @@ impl Target {
             endpoint: self.endpoint.clone()?,
             p256dh: self.p256dh.clone()?,
             auth: self.auth.clone()?,
+            client: SubscriptionClient::from_column(self.web_client.as_deref()),
         })
+    }
+
+    /// An Android app reached through UnifiedPush: its Web Push subscription is the relay (no
+    /// APNs token comes first), and it is the app's.
+    fn is_android(&self) -> bool {
+        self.apns_token.is_none()
+            && self
+                .web_subscription()
+                .is_some_and(|subscription| subscription.client == SubscriptionClient::Android)
     }
 }
 
@@ -286,9 +318,19 @@ impl PushService {
 
     /// Integration tests: nothing leaves the process, and `recorded()` lists what would have.
     pub fn recording(pool: PgPool, realtime: Arc<RealtimeHub>) -> Self {
+        Self::recording_with_unifiedpush(pool, realtime, UnifiedPushPolicy::default())
+    }
+
+    /// Like [`Self::recording`], with Android subscriptions checked against `policy` instead
+    /// of the built-in distributors alone.
+    pub fn recording_with_unifiedpush(
+        pool: PgPool,
+        realtime: Arc<RealtimeHub>,
+        policy: UnifiedPushPolicy,
+    ) -> Self {
         let web = OnceLock::new();
         if let Some(client) = VapidKey::generate().ok().and_then(|(key, _)| {
-            WebPushClient::new(key, "mailto:test@shroud.invalid".into(), vec![]).ok()
+            WebPushClient::new(key, "mailto:test@shroud.invalid".into(), vec![], policy).ok()
         }) {
             let _ = web.set(client);
         }
@@ -322,9 +364,18 @@ impl PushService {
         self.inner.web.get().map(WebPushClient::public_key_b64url)
     }
 
-    /// `endpoint` as this server would contact it, when it is a push service it sends to.
-    pub fn allowed_web_endpoint(&self, endpoint: &str) -> Option<reqwest::Url> {
-        self.inner.web.get()?.allowed_endpoint(endpoint)
+    /// `endpoint` as this server would contact it, when it sends to it for `client`: a
+    /// browser push service, or for Android a UnifiedPush server its policy allows.
+    pub async fn accept_web_endpoint(
+        &self,
+        endpoint: &str,
+        client: SubscriptionClient,
+    ) -> Option<reqwest::Url> {
+        self.inner
+            .web
+            .get()?
+            .accept_endpoint(endpoint, client)
+            .await
     }
 
     /// Delivers `event` to the devices that should hear about it.
@@ -383,6 +434,7 @@ impl PushService {
                     endpoint: endpoint.clone(),
                     p256dh: p256dh.clone(),
                     auth: auth.clone(),
+                    client: SubscriptionClient::from_column(wake.web_client.as_deref()),
                 };
                 let options = WebPushOptions {
                     ttl_secs: u32::try_from(PUSH_LIFETIME_SECS).unwrap_or(u32::MAX),
@@ -448,7 +500,11 @@ impl PushService {
             PushEvent::BadgeSync {
                 recipient,
                 reader_device,
-            } => self.sync_badges(recipient, reader_device).await,
+                conversation_id,
+            } => {
+                self.sync_badges(recipient, reader_device, conversation_id)
+                    .await
+            }
             PushEvent::IncomingCall {
                 recipient,
                 caller,
@@ -560,20 +616,38 @@ impl PushService {
         }
     }
 
-    /// The icon badge on the recipient's offline iPhones after they read on `reader_device`.
-    async fn sync_badges(&self, recipient: Uuid, reader_device: Uuid) {
+    /// After the recipient read on `reader_device` (or changed a mute there): the icon badge
+    /// on their other iPhones, and — when a chat was read — a `read` push that closes that
+    /// chat's notifications on their other Android apps. A device in front heard
+    /// `conversation.read` on its socket.
+    async fn sync_badges(
+        &self,
+        recipient: Uuid,
+        reader_device: Uuid,
+        conversation_id: Option<Uuid>,
+    ) {
         let mut badges = BadgeCache::default();
         for target in self.targets(recipient, None, false).await {
             if target.device_id == reader_device {
                 continue;
             }
-            if target.apns_token.is_none() {
-                continue;
-            }
             let settings = target.settings();
-            if !settings.enabled || !settings.badge {
+            if !settings.enabled {
                 continue;
             }
+            let read_chat = if target.apns_token.is_some() {
+                if !settings.badge {
+                    continue;
+                }
+                None
+            } else if target.is_android()
+                && let Some(conversation_id) = conversation_id
+            {
+                Some(conversation_id)
+            } else {
+                // Browsers get none: every Web Push to them must show a notification.
+                continue;
+            };
             if self
                 .inner
                 .realtime
@@ -582,14 +656,43 @@ impl PushService {
             {
                 continue;
             }
-            let Some(badge) = badges
-                .get(&self.inner.pool, recipient, settings.badge_includes_muted)
-                .await
-            else {
-                continue;
+            let badge = if settings.badge {
+                badges
+                    .get(&self.inner.pool, recipient, settings.badge_includes_muted)
+                    .await
+            } else {
+                None
             };
-            self.push_badge(&target, badge).await;
+            match (read_chat, badge) {
+                (Some(conversation_id), badge) => {
+                    self.push_read(&target, conversation_id, badge).await;
+                }
+                (None, Some(badge)) => self.push_badge(&target, badge).await,
+                // Not counted: a wrong 0 would clear the icon.
+                (None, None) => {}
+            }
         }
+    }
+
+    /// Closes a chat's notifications on an Android app that did not read it (N13): `read`
+    /// with the new unread total, at `normal` urgency — nothing is shown. Its topic is the
+    /// chat's, so it replaces a message push for that chat still queued at the distributor.
+    async fn push_read(&self, target: &Target, conversation_id: Uuid, badge: Option<i64>) {
+        let Some(subscription) = target.web_subscription() else {
+            return;
+        };
+        let options = WebPushOptions {
+            ttl_secs: u32::try_from(PUSH_LIFETIME_SECS).unwrap_or(u32::MAX),
+            urgency: Urgency::Normal,
+            topic: Some(conversation_id.simple().to_string()),
+        };
+        self.send_web(
+            target.device_id,
+            &subscription,
+            &payload::web_read(conversation_id, badge),
+            &options,
+        )
+        .await;
     }
 
     /// A badge-only push to an iPhone: the icon count changes, nothing is shown or heard.
@@ -621,7 +724,9 @@ impl PushService {
     /// Human: An iPhone with a PushKit token always gets a VoIP push, connected or not: a
     /// phone the OS just suspended still looks connected for a while, and would miss the ring.
     /// The app reports it to CallKit (which shows a call it already shows only once), then
-    /// connects and checks the call still rings. Older iPhones get an "Incoming call" alert
+    /// connects and checks the call still rings. An Android app rings the same way through
+    /// UnifiedPush, in front or not (`Urgency: high`, `TTL` = the ring time); it de-duplicates
+    /// with the socket's `call.ring` by call id. Older iPhones get an "Incoming call" alert
     /// and browsers a Web Push, each while that device is not in the foreground — a socket
     /// left open by a suspended app or an unfocused tab does not count. Mutes do not silence
     /// a call; a device with notifications off gets nothing.
@@ -679,11 +784,14 @@ impl PushService {
             if target.apns_token.is_none() && target.web_subscription().is_none() {
                 continue;
             }
-            if self
-                .inner
-                .realtime
-                .is_device_foreground(recipient, target.device_id)
-                .await
+            // A phone the OS just froze still looks connected: an Android app rings like a
+            // PushKit iPhone, in front or not.
+            if !target.is_android()
+                && self
+                    .inner
+                    .realtime
+                    .is_device_foreground(recipient, target.device_id)
+                    .await
             {
                 continue;
             }
@@ -692,9 +800,9 @@ impl PushService {
         }
     }
 
-    /// Tells PushKit iPhones the call is over, so CallKit stops ringing after a hang-up the
-    /// socket never delivered. The device that answered or ended it is skipped: that push
-    /// would drop the call it is in.
+    /// Tells PushKit iPhones and Android apps the call is over, so they stop ringing after a
+    /// hang-up the socket never delivered. The device that answered or ended it is skipped:
+    /// that push would drop the call it is in. Browsers never rang, and get nothing.
     async fn notify_call_ended(
         &self,
         recipient: Uuid,
@@ -707,14 +815,15 @@ impl PushService {
             if except_device == Some(target.device_id) {
                 continue;
             }
-            let (Some(token), Some(environment)) = (&target.voip_token, &target.voip_environment)
-            else {
-                continue;
-            };
-            if !target.settings().enabled {
+            let voip = target.voip_token.as_ref().zip(target.voip_environment.as_ref());
+            if voip.is_none() && !target.is_android() {
                 continue;
             }
-            let name = if target.settings().show_sender {
+            let settings = target.settings();
+            if !settings.enabled {
+                continue;
+            }
+            let name = if settings.show_sender {
                 if caller_name.is_none() {
                     caller_name = Some(self.username(caller).await);
                 }
@@ -730,6 +839,12 @@ impl PushService {
                 call_id: Some(call_id),
                 sender_name: name,
                 badge: None,
+            };
+            let Some((token, environment)) = voip else {
+                // Android: `Urgency: high`, `TTL` = the ring time, in front or not.
+                self.send_notification(&target, &settings, &notification)
+                    .await;
+                continue;
             };
             let payload = payload::apns_voip(&notification, target.payload_key.as_deref());
             self.send_apns(
@@ -884,28 +999,11 @@ impl PushService {
             return (PushChannel::Web, Delivery::Failed("no subscription".into()));
         };
         let payload = payload::web(notification, settings.sound == "none");
-        let options = WebPushOptions {
-            ttl_secs: if notification.kind == NotificationKind::Test {
-                60
-            } else if ringing {
-                u32::try_from(CALL_PUSH_LIFETIME_SECS).unwrap_or(u32::MAX)
-            } else {
-                u32::try_from(PUSH_LIFETIME_SECS).unwrap_or(u32::MAX)
-            },
-            urgency: if notification.kind == NotificationKind::Reaction {
-                Urgency::Normal
-            } else {
-                Urgency::High
-            },
-            // Queued message pushes of one chat collapse into its newest one. Reactions get no
-            // topic: one must not replace a message the browser has not been shown yet.
-            topic: (notification.kind != NotificationKind::Reaction)
-                .then(|| notification.thread().replace('-', "")),
-        };
+        let options = web_options(notification, subscription.client);
         let delivery = self
             .send_web(target.device_id, &subscription, &payload, &options)
             .await;
-        (PushChannel::Web, delivery)
+        (web_channel(subscription.client), delivery)
     }
 
     async fn send_apns(
@@ -922,6 +1020,7 @@ impl PushService {
                     device_id,
                     channel,
                     apns_push_type: Some(request.push_type),
+                    web_options: None,
                     payload: request.payload.clone(),
                 });
             }
@@ -986,19 +1085,21 @@ impl PushService {
         payload: &Value,
         options: &WebPushOptions,
     ) -> Delivery {
+        let channel = web_channel(subscription.client);
         if let Some(recorder) = &self.inner.recorder {
             if let Ok(mut list) = recorder.lock() {
                 list.push(SentPush {
                     device_id,
-                    channel: PushChannel::Web,
+                    channel,
                     apns_push_type: None,
+                    web_options: Some(options.clone()),
                     payload: payload.clone(),
                 });
             }
             return Delivery::Sent;
         }
         let Some(client) = self.inner.web.get() else {
-            tracing::info!(%device_id, "web push not sent (no VAPID key loaded)");
+            tracing::info!(%device_id, ?channel, "web push not sent (no VAPID key loaded)");
             return Delivery::NotConfigured;
         };
         match client
@@ -1006,11 +1107,11 @@ impl PushService {
             .await
         {
             WebPushOutcome::Accepted => {
-                tracing::info!(%device_id, "web push accepted");
+                tracing::info!(%device_id, ?channel, "web push accepted");
                 Delivery::Sent
             }
             WebPushOutcome::Gone { status } => {
-                tracing::info!(%device_id, status, "web push subscription gone — removing");
+                tracing::info!(%device_id, ?channel, status, "web push subscription gone — removing");
                 let deleted = sqlx::query(
                     r#"DELETE FROM web_push_subscriptions WHERE device_id = $1 AND endpoint = $2"#,
                 )
@@ -1028,11 +1129,11 @@ impl PushService {
                 status: status @ (401 | 403),
                 reason,
             } => {
-                tracing::error!(%device_id, status, %reason, "web push refused this server's VAPID key");
+                tracing::error!(%device_id, ?channel, status, %reason, "web push refused this server's VAPID key");
                 Delivery::Misconfigured(format!("{status} {reason}").trim().to_string())
             }
             WebPushOutcome::Failed { status, reason } => {
-                tracing::warn!(%device_id, status, %reason, "web push failed");
+                tracing::warn!(%device_id, ?channel, status, %reason, "web push failed");
                 Delivery::Failed(reason)
             }
         }
@@ -1055,7 +1156,7 @@ impl PushService {
                 pt.apns_token, pt.environment AS apns_environment, pt.payload_key,
                 CASE WHEN $3 THEN vt.apns_token END AS voip_token,
                 CASE WHEN $3 THEN vt.environment END AS voip_environment,
-                w.endpoint, w.p256dh, w.auth
+                w.endpoint, w.p256dh, w.auth, w.client AS web_client
             FROM devices d
             LEFT JOIN device_notification_settings s ON s.device_id = d.id
             LEFT JOIN push_tokens pt ON pt.device_id = d.id AND pt.kind = 'alert'
@@ -1152,4 +1253,135 @@ fn unix_now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// The relay a Web Push subscription stands for, as tests and `POST /push/test` name it.
+fn web_channel(client: SubscriptionClient) -> PushChannel {
+    match client {
+        SubscriptionClient::Browser => PushChannel::Web,
+        SubscriptionClient::Android => PushChannel::UnifiedPush,
+    }
+}
+
+/// `TTL`, `Urgency` and `Topic` of a notification's Web Push.
+///
+/// Human: A ring, and the end of one, is worth delivering only while the call rings (60 s); a
+/// test while someone looks at the screen (60 s); anything else for a day. Only reactions wait
+/// for the phone to wake on its own (`normal`). Queued pushes of one chat collapse into its
+/// newest one; reactions get no topic, since one must not replace a message not shown yet. An
+/// Android app's call pushes collapse per call instead, like APNs' collapse id: "Missed call"
+/// takes the place of its queued ring, one call never replaces another's, and `call_ended`
+/// (no topic) never replaces a "Missed call".
+fn web_options(notification: &Notification, client: SubscriptionClient) -> WebPushOptions {
+    let kind = notification.kind;
+    let ttl_secs = match kind {
+        NotificationKind::Test => 60,
+        NotificationKind::Call | NotificationKind::VideoCall | NotificationKind::CallEnded => {
+            CALL_PUSH_LIFETIME_SECS
+        }
+        _ => PUSH_LIFETIME_SECS,
+    };
+    let topic = match (client, kind) {
+        (_, NotificationKind::Reaction)
+        | (SubscriptionClient::Android, NotificationKind::CallEnded) => None,
+        (
+            SubscriptionClient::Android,
+            NotificationKind::Call | NotificationKind::VideoCall | NotificationKind::MissedCall,
+        ) => notification.call_id.map(|id| id.simple().to_string()),
+        _ => Some(notification.thread().replace('-', "")),
+    };
+    WebPushOptions {
+        ttl_secs: u32::try_from(ttl_secs).unwrap_or(u32::MAX),
+        urgency: if kind == NotificationKind::Reaction {
+            Urgency::Normal
+        } else {
+            Urgency::High
+        },
+        topic,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn notification(kind: NotificationKind) -> Notification {
+        Notification {
+            kind,
+            conversation_id: Some(Uuid::from_u128(0xc0)),
+            peer_user_id: Some(Uuid::from_u128(0xa1)),
+            message_id: None,
+            call_id: Some(Uuid::from_u128(0xca11)),
+            sender_name: None,
+            badge: None,
+        }
+    }
+
+    #[test]
+    fn rings_live_as_long_as_the_call_rings_and_wake_the_phone() {
+        assert_eq!(CALL_PUSH_LIFETIME_SECS, 60);
+        for client in [SubscriptionClient::Browser, SubscriptionClient::Android] {
+            for kind in [
+                NotificationKind::Call,
+                NotificationKind::VideoCall,
+                NotificationKind::CallEnded,
+            ] {
+                let options = web_options(&notification(kind), client);
+                assert_eq!(options.ttl_secs, 60, "{kind:?}");
+                assert_eq!(options.urgency, Urgency::High, "{kind:?}");
+            }
+            let missed = web_options(&notification(NotificationKind::MissedCall), client);
+            assert_eq!(missed.ttl_secs, 24 * 60 * 60);
+            assert_eq!(missed.urgency, Urgency::High);
+            let test = web_options(&notification(NotificationKind::Test), client);
+            assert_eq!((test.ttl_secs, test.urgency), (60, Urgency::High));
+            let reaction = web_options(&notification(NotificationKind::Reaction), client);
+            assert_eq!(reaction.urgency, Urgency::Normal);
+            assert_eq!(reaction.topic, None);
+            let message = web_options(&notification(NotificationKind::Message), client);
+            assert_eq!(
+                (message.ttl_secs, message.urgency),
+                (24 * 60 * 60, Urgency::High)
+            );
+            assert_eq!(
+                message.topic.as_deref(),
+                Some(Uuid::from_u128(0xc0).simple().to_string().as_str())
+            );
+        }
+    }
+
+    #[test]
+    fn android_call_pushes_collapse_per_call_browsers_per_thread() {
+        let call = Uuid::from_u128(0xca11).simple().to_string();
+        for kind in [
+            NotificationKind::Call,
+            NotificationKind::VideoCall,
+            NotificationKind::MissedCall,
+        ] {
+            let android = web_options(&notification(kind), SubscriptionClient::Android);
+            assert_eq!(android.topic.as_deref(), Some(call.as_str()), "{kind:?}");
+            let browser = web_options(&notification(kind), SubscriptionClient::Browser);
+            assert_eq!(browser.topic.as_deref(), Some("calls"), "{kind:?}");
+        }
+        let ended = web_options(
+            &notification(NotificationKind::CallEnded),
+            SubscriptionClient::Android,
+        );
+        assert_eq!(ended.topic, None);
+        // A topic is at most 32 base64url characters (RFC 8030 §5.4).
+        assert_eq!(call.len(), 32);
+    }
+
+    #[test]
+    fn the_test_channel_names_the_relay() {
+        assert_eq!(
+            serde_json::to_value(web_channel(SubscriptionClient::Android)).unwrap(),
+            "unifiedpush"
+        );
+        assert_eq!(
+            serde_json::to_value(web_channel(SubscriptionClient::Browser)).unwrap(),
+            "web"
+        );
+        assert_eq!(serde_json::to_value(PushChannel::Apns).unwrap(), "apns");
+    }
 }

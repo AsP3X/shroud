@@ -307,7 +307,8 @@ where
 }
 
 /// After `reader` read a chat on `device`: their other devices drop its unread count and its
-/// delivered notifications, and their offline iPhones' icon badges come down.
+/// delivered notifications, their offline iPhones' icon badges come down, and their Android
+/// apps that are not in front close its notifications (a `read` push).
 pub(crate) async fn announce_chat_read(
     state: &AppState,
     reader: Uuid,
@@ -342,6 +343,7 @@ pub(crate) async fn announce_chat_read(
         .dispatch(PushEvent::BadgeSync {
             recipient: reader,
             reader_device: device,
+            conversation_id: Some(conversation_id),
         })
         .await;
 }

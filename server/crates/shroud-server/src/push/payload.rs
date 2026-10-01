@@ -24,7 +24,8 @@ pub enum NotificationKind {
     VideoCall,
     /// A call rang out, or its caller hung up, before anyone answered.
     MissedCall,
-    /// PushKit only: the ring is over, so the iPhone ends the CallKit call. Not an alert.
+    /// The ring is over: a PushKit iPhone ends the CallKit call, the Android app stops its
+    /// ring. Not an alert, and never sent to a browser.
     CallEnded,
     Test,
 }
@@ -198,9 +199,27 @@ pub fn apns_device_removed() -> Value {
     json!({ "aps": { "content-available": 1 }, "type": "device_removed" })
 }
 
-/// Tells a browser the account just removed it; its service worker starts the wipe.
+/// Tells a browser or the Android app the account just removed it; the service worker, or the
+/// app after asking `GET /auth/me`, starts the wipe.
 pub fn web_device_removed() -> Value {
     json!({ "v": 1, "kind": "device_removed" })
+}
+
+/// Tells the Android app a chat was read on another device: it closes that chat's
+/// notifications (the socket's `conversation.read`, for an app that is not running). `badge`
+/// is the new unread total when the device shows one. Encrypted like every Web Push, and
+/// never sent to a browser, which would have to show it.
+pub fn web_read(conversation_id: Uuid, badge: Option<i64>) -> Value {
+    let mut payload = json!({
+        "v": 1,
+        "kind": "read",
+        "tag": conversation_id,
+        "conversation_id": conversation_id,
+    });
+    if let Some(badge) = badge {
+        payload["badge"] = json!(badge);
+    }
+    payload
 }
 
 /// The Web Push payload, before RFC 8291 encryption. The service worker writes the text;
@@ -455,6 +474,41 @@ mod tests {
         assert_eq!(anonymous["silent"], true);
         assert!(anonymous.get("sender").is_none());
         assert!(anonymous.get("badge").is_none());
+    }
+
+    #[test]
+    fn a_read_names_the_chat_and_nothing_else() {
+        let chat = Uuid::from_u128(0x0123);
+        assert_eq!(
+            web_read(chat, Some(3)),
+            json!({
+                "v": 1,
+                "kind": "read",
+                "tag": chat.to_string(),
+                "conversation_id": chat.to_string(),
+                "badge": 3,
+            })
+        );
+        assert!(web_read(chat, None).get("badge").is_none());
+    }
+
+    #[test]
+    fn a_call_end_is_the_same_web_shape_as_its_ring() {
+        let ended = Notification {
+            kind: NotificationKind::CallEnded,
+            conversation_id: None,
+            peer_user_id: Some(Uuid::from_u128(32)),
+            message_id: None,
+            call_id: Some(Uuid::from_u128(31)),
+            sender_name: Some("erin".into()),
+            badge: None,
+        };
+        let payload = web(&ended, false);
+        assert_eq!(payload["kind"], "call_ended");
+        assert_eq!(payload["tag"], "calls");
+        assert_eq!(payload["call_id"], Uuid::from_u128(31).to_string());
+        assert_eq!(payload["peer_user_id"], Uuid::from_u128(32).to_string());
+        assert_eq!(payload["sender"], "erin");
     }
 
     #[test]
