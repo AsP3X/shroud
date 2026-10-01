@@ -576,6 +576,7 @@ class ReactionEngine(
      */
     suspend fun catchUp(storePeer: UUID, newestSnapshot: Long) {
         val token = state.session?.token ?: return
+        warmCursors()
         val start = cursors()[storePeer] ?: 0
         if (start >= newestSnapshot) return
         catchUpFloors[storePeer] = Long.MAX_VALUE
@@ -611,6 +612,20 @@ class ReactionEngine(
         } finally {
             catchUpFloors.remove(storePeer)
         }
+    }
+
+    /**
+     * Reads the cursors into [cursorCache] off the main thread (Android): the store's read waits for
+     * its queued writes, so the first page, tap or seen mark of an unlock should not do it on main.
+     * [refreshServerConfig] (run when messaging starts) and [catchUp] call it; a lock meanwhile, or
+     * a synchronous read that got there first, wins.
+     */
+    private suspend fun warmCursors() {
+        if (cursorCache != null) return
+        val me = state.myUserId ?: return
+        val generation = state.lockGeneration
+        val loaded = withContext(deps.io) { deps.store().reactionCursors(me) } ?: return
+        if (cursorCache == null && state.lockGeneration == generation && state.myUserId == me) cursorCache = loaded
     }
 
     /** Empty — and not cached — while the file cannot be read: catch-up then starts from zero (MC:5889-5894). */
@@ -710,9 +725,14 @@ class ReactionEngine(
 
     // ---- config, persistence, lifecycle ----
 
-    /** `GET /config` → the reaction limit, remembered for offline starts (`refreshServerConfig`, MC:5112-5120). */
+    /**
+     * `GET /config` → the reaction limit, remembered for offline starts (`refreshServerConfig`,
+     * MC:5112-5120). `MessagingController` runs it when messaging starts, so it also reads the
+     * catch-up cursors off the main thread first ([warmCursors]).
+     */
     override suspend fun refreshServerConfig() {
         val token = state.session?.token ?: return
+        warmCursors()
         val config = try {
             deps.api.clientConfig(token)
         } catch (e: CancellationException) {

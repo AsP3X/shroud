@@ -340,6 +340,25 @@ class ReactionEngineTest {
     }
 
     @Test
+    fun startingReadsTheCursorsOnceOffTheMainThread() = runTest(main.dispatcher) {
+        val s = setup()
+        val w = s.world
+        w.store.cursors = mapOf(w.peer to 10L)
+        s.engine.refreshServerConfig()
+        assertEquals(1, w.store.cursorReads)
+        // A page and a tap later find them cached.
+        s.engine.applyPage(w.peer, emptyList(), 8)
+        s.engine.set(listOf("👍"), s.message.id, w.peer)
+        assertEquals(1, w.store.cursorReads)
+        assertEquals(8L, w.store.cursors[w.peer])
+
+        // A lock drops them; the next start reads again.
+        s.engine.flushPendingSaves()
+        s.engine.refreshServerConfig()
+        assertEquals(2, w.store.cursorReads)
+    }
+
+    @Test
     fun aPendingChangeIsNeverPersistedAsConfirmed() = runTest(main.dispatcher) {
         val s = setup()
         val w = s.world
