@@ -29,6 +29,7 @@ import java.io.FilterInputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.security.MessageDigest
 import java.util.UUID
 
 /**
@@ -89,11 +90,13 @@ class MediaTransferService(
         // Draw order as MediaCrypto.sealFile: the key, then the nonce (crypto §16.3 vectors).
         val key = entropy.bytes(MediaCrypto.KEY_BYTES)
         val nonce = entropy.bytes(Primitives.GCM_NONCE_BYTES)
+        val body = SealingBody(plain, key, nonce, sealedSize)
         try {
             val upload = api.createMediaUpload(token, sealedSize)
-            api.uploadMediaContent(token, upload.mediaObjectId, SealingBody(plain, key, nonce, sealedSize), onProgress)
+            api.uploadMediaContent(token, upload.mediaObjectId, body, onProgress)
             return UploadedBlob(upload.mediaObjectId, B64.encode(key), plain.length, sealedSize)
         } finally {
+            body.destroy()
             key.fill(0)
             nonce.fill(0)
         }
@@ -197,17 +200,28 @@ class MediaTransferService(
 
     /**
      * `nonce ‖ AES-256-GCM(key, plaintext) ‖ tag`, sealed while OkHttp writes it. Repeatable: every
-     * [writeTo] re-reads the plaintext and, with the same key and nonce, emits the same bytes. The
-     * one-shot path keeps the sealed bytes after the first write (ciphertext only) so a retry does
-     * not seal again.
+     * [writeTo] emits the same bytes under the same key and nonce (media-voice-links §2.3).
+     *
+     * GCM must never seal two different plaintexts under one nonce, so a replay may only ever
+     * repeat bytes: the one-shot path keeps the sealed bytes of its first write (ciphertext only)
+     * and sends them again; the streaming path checks every 1 MiB chunk of plaintext against the
+     * SHA-256 recorded when it was first sealed **before** sealing it again, and checks the length
+     * before the tag is written — a source that changed fails the write instead.
+     *
+     * Holds its own copies of key and nonce; [destroy] zeroes them, after which a write fails rather
+     * than sealing under a zeroed key (OkHttp may still touch a body after a cancelled call returned).
      */
     internal class SealingBody(
         private val plain: Plain,
-        private val key: ByteArray,
-        private val nonce: ByteArray,
+        key: ByteArray,
+        nonce: ByteArray,
         private val sealedSize: Long,
     ) : RequestBody() {
-        private var oneShot: ByteArray? = null
+        private val key = key.copyOf() // guarded by this
+        private val nonce = nonce.copyOf() // guarded by this
+        private var destroyed = false // guarded by this
+        private var oneShot: ByteArray? = null // guarded by this
+        private val digests = ArrayList<ByteArray>() // guarded by itself: per-chunk SHA-256 of what was sealed
 
         override fun contentType(): MediaType = OCTET_STREAM
 
@@ -220,21 +234,40 @@ class MediaTransferService(
                 sink.write(sealedOnce())
                 return
             }
-            plain.open().use { input ->
-                val counted = CountingInputStream(input)
-                // Same key and nonce on every write: a fixed-entropy draw (key, then nonce).
-                val drawn = MediaCrypto.sealStream(counted, sink.outputStream(), FixedEntropy(key, nonce))
-                drawn.fill(0)
-                if (counted.count != plain.length) throw IOException("upload source changed size")
+            val (k, n) = snapshot()
+            try {
+                ReplayCheckedInputStream(plain.open(), plain.length, digests).use { input ->
+                    // Same key and nonce on every write: a fixed-entropy draw (key, then nonce).
+                    MediaCrypto.sealStream(input, sink.outputStream(), FixedEntropy(k, n)).fill(0)
+                }
+            } finally {
+                k.fill(0)
+                n.fill(0)
             }
+        }
+
+        /** Zeroes the key and nonce and drops the sealed bytes; later writes fail. */
+        @Synchronized
+        fun destroy() {
+            destroyed = true
+            key.fill(0)
+            nonce.fill(0)
+            oneShot = null
+        }
+
+        @Synchronized
+        private fun snapshot(): Pair<ByteArray, ByteArray> {
+            if (destroyed) throw IOException("upload finished")
+            return key.copyOf() to nonce.copyOf()
         }
 
         @Synchronized
         private fun sealedOnce(): ByteArray {
+            if (destroyed) throw IOException("upload finished")
             oneShot?.let { return it }
             val plaintext = plain.readAll()
-            if (plaintext.size.toLong() != plain.length) throw IOException("upload source changed size")
             val sealed = try {
+                if (plaintext.size.toLong() != plain.length) throw IOException("upload source changed size")
                 Primitives.aesGcmSeal(key, nonce, plaintext)
             } catch (_: CryptoError) {
                 throw IOException("media sealing failed")
@@ -246,6 +279,72 @@ class MediaTransferService(
         }
     }
 
+    /**
+     * Hands plaintext to the cipher one verified 1 MiB chunk at a time: a chunk sealed by an
+     * earlier write must hash the same now, and the stream must end exactly at [expectedLength] —
+     * otherwise it throws before the chunk (or the end, which makes the cipher write its tag) is
+     * released. Zeroes its buffer on close.
+     */
+    private class ReplayCheckedInputStream(
+        private val input: InputStream,
+        private val expectedLength: Long,
+        private val digests: MutableList<ByteArray>,
+    ) : InputStream() {
+        private val chunk = ByteArray(REPLAY_CHUNK_BYTES)
+        private var chunkLength = 0
+        private var chunkPosition = 0
+        private var index = 0
+        private var total = 0L
+        private var ended = false
+
+        override fun read(): Int {
+            val one = ByteArray(1)
+            return if (read(one, 0, 1) <= 0) -1 else one[0].toInt() and 0xFF
+        }
+
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            if (len == 0) return 0
+            if (chunkPosition == chunkLength && !fill()) return -1
+            val count = minOf(len, chunkLength - chunkPosition)
+            chunk.copyInto(b, off, chunkPosition, chunkPosition + count)
+            chunkPosition += count
+            return count
+        }
+
+        private fun fill(): Boolean {
+            if (ended) return false
+            var filled = 0
+            while (filled < chunk.size) {
+                val read = input.read(chunk, filled, chunk.size - filled)
+                if (read < 0) {
+                    ended = true
+                    break
+                }
+                filled += read
+            }
+            total += filled
+            if (total > expectedLength || (ended && total != expectedLength)) throw IOException("upload source changed size")
+            if (filled == 0) return false
+            val digest = MessageDigest.getInstance("SHA-256").apply { update(chunk, 0, filled) }.digest()
+            synchronized(digests) {
+                if (index < digests.size) {
+                    if (!MessageDigest.isEqual(digests[index], digest)) throw IOException("upload source changed")
+                } else {
+                    digests += digest
+                }
+            }
+            index++
+            chunkLength = filled
+            chunkPosition = 0
+            return true
+        }
+
+        override fun close() {
+            chunk.fill(0)
+            input.close()
+        }
+    }
+
     /** Hands out copies of a fixed key and nonce, in `MediaCrypto`'s draw order. */
     private class FixedEntropy(private val key: ByteArray, private val nonce: ByteArray) : Entropy {
         override fun bytes(count: Int): ByteArray = when (count) {
@@ -253,15 +352,6 @@ class MediaTransferService(
             nonce.size -> nonce.copyOf()
             else -> throw IllegalStateException("unexpected draw of $count bytes")
         }
-    }
-
-    private class CountingInputStream(input: InputStream) : FilterInputStream(input) {
-        var count = 0L
-            private set
-
-        override fun read(): Int = super.read().also { if (it >= 0) count++ }
-
-        override fun read(b: ByteArray, off: Int, len: Int): Int = super.read(b, off, len).also { if (it > 0) count += it }
     }
 
     /** Stops a long decrypt when the caller is cancelled (checked per read). */
@@ -286,6 +376,9 @@ class MediaTransferService(
     companion object {
         /** Below this, seal and open in one JCA call (media D2: Conscrypt one-shot ≤ 16 MiB, BouncyCastle streaming above). */
         const val ONE_SHOT_BYTES = 16L * 1024 * 1024
+
+        /** The streaming upload's replay check granularity: one SHA-256 per MiB of plaintext (64 KiB of digests for 2 GiB). */
+        const val REPLAY_CHUNK_BYTES = 1024 * 1024
 
         /** `cacheDir/shroud-dl-*.sealed`: the downloaded ciphertext until it is opened into the cache. */
         const val TEMP_STEM = "dl"

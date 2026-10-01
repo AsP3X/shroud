@@ -29,6 +29,7 @@ import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
@@ -164,14 +165,62 @@ class MediaTransferServiceTest {
     }
 
     @Test
-    fun aSourceThatChangesSizeIsRefused() {
-        val file = tempFiles.create("export", "bin").apply { writeBytes(ByteArray(MediaTransferService.ONE_SHOT_BYTES.toInt() + 10)) }
-        val body = MediaTransferService.SealingBody(MediaTransferService.Plain.TempFile(file), key, nonce, file.length() + 28)
+    fun aSourceThatGrewIsRefusedBeforeItsExtraBytesAreSealed() {
+        val size = MediaTransferService.ONE_SHOT_BYTES.toInt() + 10
+        val file = tempFiles.create("export", "bin").apply { writeBytes(Random(1).nextBytes(size)) }
+        val body = MediaTransferService.SealingBody(MediaTransferService.Plain.TempFile(file), key, nonce, size + 28L)
         file.appendBytes(ByteArray(3))
+        val partial = Buffer()
         try {
-            body.writeTo(Buffer())
+            body.writeTo(partial)
             fail("a grown source must not be sent under the old length")
         } catch (_: java.io.IOException) {
+        }
+        // Nonce + the 16 whole MiB that were unchanged at most: not the last chunk, not the tag.
+        assertTrue("stopped before the last chunk and the tag", partial.size <= 12L + 16 * 1024 * 1024)
+    }
+
+    @Test
+    fun aReplayNeverSealsDifferentPlaintextUnderTheSameNonce() {
+        // GCM nonce reuse: a body written again (OkHttp retry) after its source changed must stop
+        // before the changed chunk, and a shorter source must not get a tag. What went out the
+        // second time is then a prefix of what went out the first time.
+        val size = MediaTransferService.ONE_SHOT_BYTES.toInt() + 3 * 1024 * 1024 + 17
+        val plaintext = Random(2).nextBytes(size)
+        val file = tempFiles.create("export", "bin").apply { writeBytes(plaintext) }
+        val body = MediaTransferService.SealingBody(MediaTransferService.Plain.TempFile(file), key, nonce, size + 28L)
+        val first = Buffer().also { body.writeTo(it) }.readByteArray()
+
+        val changedAt = 5 * 1024 * 1024 + 123
+        file.writeBytes(plaintext.copyOf().also { it[changedAt] = (it[changedAt].toInt() xor 1).toByte() })
+        val changed = Buffer()
+        assertThrows(java.io.IOException::class.java) { body.writeTo(changed) }
+        val changedBytes = changed.readByteArray()
+        assertTrue("nothing of the changed MiB went out", changedBytes.size <= 12 + 5 * 1024 * 1024)
+        assertArrayEquals(first.copyOf(changedBytes.size), changedBytes)
+
+        file.writeBytes(plaintext.copyOf(size - 10))
+        val shorter = Buffer()
+        assertThrows(java.io.IOException::class.java) { body.writeTo(shorter) }
+        val shorterBytes = shorter.readByteArray()
+        assertTrue(shorterBytes.size < first.size - 16)
+        assertArrayEquals(first.copyOf(shorterBytes.size), shorterBytes)
+
+        // Restored: the replay is byte-identical again.
+        file.writeBytes(plaintext)
+        assertArrayEquals(first, Buffer().also { body.writeTo(it) }.readByteArray())
+    }
+
+    @Test
+    fun aDestroyedBodyNoLongerSeals() {
+        for (size in listOf(100, MediaTransferService.ONE_SHOT_BYTES.toInt() + 1)) {
+            val file = tempFiles.create("export", "bin").apply { writeBytes(ByteArray(size)) }
+            val body = MediaTransferService.SealingBody(MediaTransferService.Plain.TempFile(file), key, nonce, size + 28L)
+            body.writeTo(Buffer())
+            body.destroy()
+            val after = Buffer()
+            assertThrows(java.io.IOException::class.java) { body.writeTo(after) }
+            assertEquals(0L, after.size)
         }
     }
 
