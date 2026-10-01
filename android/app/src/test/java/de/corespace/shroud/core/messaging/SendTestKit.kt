@@ -385,7 +385,8 @@ class FakeServer(private val me: UUID) : SendApi {
     override suspend fun clientConfig(token: String) = ClientConfigDto(ClientConfigDto.Reactions(reactionLimit))
 
     private fun record(messageId: UUID, ciphertext: ByteArray?): ReactionDto {
-        seq += 1
+        // The chat's seq only grows: past any record a test (or our "other device") put there first.
+        seq = maxOf(seq, records.values.maxOfOrNull { it.seq } ?: 0L) + 1
         val dto = ReactionDto(messageId, me, ciphertext?.let(B64::encode), seq, Instant.parse("2026-09-23T21:08:35.759754Z"))
         records[messageId to me] = dto
         changeLog += dto

@@ -416,8 +416,14 @@ class ReactionEngineTest {
         s.engine.applyPage(w.peer, listOf(s.peerRecord(listOf("🔥"), 15)), 18)
         assertEquals(18L, w.store.cursors[w.peer])
         assertEquals(listOf(MessageReaction(w.peer, listOf("🔥"), 15)), s.held().reactions)
-        // Catch-up then starts from the page's newest snapshot.
+        // Caught up to the newest snapshot: no request (MC:5918-5919).
+        s.engine.catchUp(w.peer)
+        assertEquals(0, w.server.changesPagesServed)
+        // A change after it: the next load's page names a newer snapshot, and catch-up walks from
+        // the cursor the first page pulled back.
         w.server.changeLog += s.peerRecord(listOf("😮"), 19)
+        s.engine.applyPage(w.peer, emptyList(), 19)
+        assertEquals(18L, w.store.cursors[w.peer])
         s.engine.catchUp(w.peer)
         assertEquals(19L, w.store.cursors[w.peer])
         assertEquals(listOf(MessageReaction(w.peer, listOf("😮"), 19)), s.held().reactions)
