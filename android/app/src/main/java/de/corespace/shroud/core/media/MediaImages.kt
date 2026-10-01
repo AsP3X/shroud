@@ -11,6 +11,7 @@ import de.corespace.shroud.core.media.scrub.ImageHeader
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.io.InputStream
 import java.nio.ByteBuffer
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -108,25 +109,24 @@ class MediaImages(private val contentResolver: ContentResolver) : ImageCodec {
         }
     }
 
+    /**
+     * The provider's declared length decides first: a photo known to be over [limit] is not read
+     * at all, and one of known size is read into an array of exactly that size (no growing buffer
+     * holding two or three copies of a 30 MB original). Providers that do not declare a length are
+     * read in growing steps, stopping as soon as [limit] is passed.
+     */
     override fun readOriginal(uri: Uri, limit: Long): ByteArray? {
-        val input = try {
-            contentResolver.openInputStream(uri)
+        val descriptor = try {
+            contentResolver.openAssetFileDescriptor(uri, "r")
         } catch (e: Exception) {
             throw ImageEncodeException("The image could not be read.", e)
         } ?: throw ImageEncodeException("The image could not be read.")
         return try {
-            input.use { stream ->
-                val out = ByteArrayOutputStream()
-                val buffer = ByteArray(BUFFER_BYTES)
-                var total = 0L
-                while (true) {
-                    val read = stream.read(buffer)
-                    if (read < 0) break
-                    total += read
-                    if (total > limit) return null
-                    out.write(buffer, 0, read)
-                }
-                out.toByteArray()
+            // The stream closes the descriptor too; closing it again is a no-op.
+            descriptor.use { afd ->
+                val declared = afd.length.takeIf { it >= 0 }
+                if (declared != null && declared > limit) return null
+                afd.createInputStream().use { readBounded(it, declared, limit) }
             }
         } catch (e: IOException) {
             throw ImageEncodeException("The image could not be read.", e)
@@ -147,6 +147,28 @@ class MediaImages(private val contentResolver: ContentResolver) : ImageCodec {
 
     companion object {
         private const val BUFFER_BYTES = 64 * 1024
+
+        /**
+         * All of [stream] when it holds at most [limit] bytes, else null. [expected] (the declared
+         * length, if any) sizes the first buffer, so a correct declaration means one exact array.
+         */
+        internal fun readBounded(stream: InputStream, expected: Long?, limit: Long): ByteArray? {
+            var buffer = ByteArray((expected ?: BUFFER_BYTES.toLong()).coerceIn(0, limit).toInt())
+            var total = 0
+            while (true) {
+                if (total == buffer.size) {
+                    val probe = stream.read()
+                    if (probe < 0) return buffer
+                    if (total + 1L > limit) return null
+                    buffer = buffer.copyOf(minOf(limit, maxOf(total * 2L, total + BUFFER_BYTES.toLong())).toInt())
+                    buffer[total++] = probe.toByte()
+                    continue
+                }
+                val read = stream.read(buffer, total, buffer.size - total)
+                if (read < 0) return if (total == buffer.size) buffer else buffer.copyOf(total)
+                total += read
+            }
+        }
 
         /** Container MIME type of encoded bytes, `image/jpeg` when unknown (`MediaCrypto.swift:110-117`). */
         fun mimeType(data: ByteArray): String = ImageHeader.mimeType(data)

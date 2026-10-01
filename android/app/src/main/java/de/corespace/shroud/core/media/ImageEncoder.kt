@@ -91,6 +91,9 @@ class ImageEncoder(
             throw e
         } catch (e: Exception) {
             throw ImageEncodeException("The photo could not be prepared.", e)
+        } catch (oom: OutOfMemoryError) {
+            // Reading or copying a large original; the decode path has its own smaller retries.
+            throw ImageEncodeException("The photo is too large to prepare.", oom)
         }
     }
 
@@ -105,7 +108,12 @@ class ImageEncoder(
         val container = ImageHeader.container(data) ?: return null
         if (!container.allowsPassthrough) return null
         val (width, height) = ImageHeader.pixelSize(data) ?: return null
-        val clean = MediaMetadataScrubber.scrubImage(data) ?: return null
+        // The scrubber works on a copy; without room for it, re-encoding (smaller, with retries) still can.
+        val clean = try {
+            MediaMetadataScrubber.scrubImage(data)
+        } catch (_: OutOfMemoryError) {
+            null
+        } ?: return null
         return EncodedImage(Bytes.adopt(clean), width, height, container.mime)
     }
 
@@ -145,6 +153,7 @@ class ImageEncoder(
      * The tiny JPEG sealed into the media payload as `th` (`chatPreviewJPEG`, `MediaCrypto.swift:148-171`):
      * the [previewLadder] over downsampled decodes of [image]. The source is decoded once at the
      * ladder's first edge; the smaller tries scale that bitmap down. Null when [image] cannot be decoded.
+     * Blocking and CPU-bound (the seam is not suspending): call it on `Dispatchers.Default`.
      */
     override fun chatPreviewJpeg(image: ByteArray): ByteArray? {
         var base: Bitmap? = null
@@ -158,7 +167,7 @@ class ImageEncoder(
                     if (sized !== first) sized.recycle()
                 }
             }
-        } catch (_: ImageEncodeException) {
+        } catch (_: Exception) {
             return null
         } catch (_: OutOfMemoryError) {
             return null

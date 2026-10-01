@@ -33,6 +33,8 @@ class HeifScrubberTest {
         val extraProperty: String? = null,
         /** null: no `dinf`; true: a self-contained `url `; false: a `url ` naming another file. */
         val selfContainedDinf: Boolean? = null,
+        /** A clean aperture (width, height) on the primary item, associated between `ispe` and `irot`. */
+        val clap: Pair<Int, Int>? = null,
     ) {
         val image = ByteArray(96) { (it * 7 + 3).toByte() }
         val exif = u32(6) + ascii("Exif\u0000\u0000") + MediaFixtures.cameraTiff(orientation = 6)
@@ -57,8 +59,10 @@ class HeifScrubberTest {
             val ispe = fullBox("ispe", 0, 0, u32(64) + u32(48))
             val irotBox = box("irot", byteArrayOf(irot.toByte()))
             val extraPropertyBox = extraProperty?.let { box(it, ByteArray(4) + ascii("en\u0000Reykjavik\u00002026-09-01\u0000")) } ?: ByteArray(0)
-            val ipco = box("ipco", ispe + irotBox + extraPropertyBox)
-            val ipma = fullBox("ipma", 0, 0, u32(1) + u16(1) + byteArrayOf(2, 0x81.toByte(), 0x02))
+            val clapBox = clap?.let { (w, h) -> box("clap", u32(w * 2) + u32(2) + u32(h) + u32(1) + u32(0) + u32(1) + u32(0) + u32(1)) } ?: ByteArray(0)
+            val ipco = box("ipco", ispe + irotBox + clapBox + extraPropertyBox)
+            val associations = if (clap == null) byteArrayOf(2, 0x81.toByte(), 0x82.toByte()) else byteArrayOf(3, 0x81.toByte(), 0x83.toByte(), 0x82.toByte())
+            val ipma = fullBox("ipma", 0, 0, u32(1) + u16(1) + associations)
             val iprp = box("iprp", ipco + ipma)
             val idat = if (exifMethod == 1) box("idat", exif) else ByteArray(0)
             val imageAt = mdatPayloadAt
@@ -188,6 +192,17 @@ class HeifScrubberTest {
             val iprp = { data: ByteArray, heif: IsoBmff.Heif -> heif.metaChildren.first { it.type == "iprp" }.let { data.copyOfRange(it.start, it.end) } }
             assertArrayEquals("$property: properties untouched", iprp(original, before), iprp(clean, after))
         }
+    }
+
+    @Test
+    fun theCleanApertureDecidesTheDrawnSize() {
+        // 64×48 coded, cropped to 60×40, then turned a quarter: drawn 40×60.
+        val original = Heic(clap = 60 to 40).build()
+        assertEquals(40 to 60, ImageHeader.pixelSize(original))
+        val clean = requireNotNull(MediaMetadataScrubber.scrubImage(original)) { "not cleaned" }
+        assertEquals(40 to 60, ImageHeader.pixelSize(clean))
+        // A clean aperture larger than the image is ignored.
+        assertEquals(48 to 64, ImageHeader.pixelSize(Heic(clap = 80 to 40).build()))
     }
 
     @Test

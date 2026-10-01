@@ -213,6 +213,35 @@ class ImageEncoderTest {
         assertEquals(listOf(85), hd.qualities)
     }
 
+    @Test
+    fun boundedReadsStopAtTheLimit() {
+        val data = ByteArray(200_000) { (it * 31).toByte() }
+        for (expected in listOf(null, 200_000L, 10L, 500_000L, 0L)) {
+            assertArrayEquals("declared $expected", data, MediaImages.readBounded(data.inputStream(), expected, 200_000))
+            assertEquals("declared $expected, one byte over", null, MediaImages.readBounded(data.inputStream(), expected, 199_999))
+        }
+        assertArrayEquals(ByteArray(0), MediaImages.readBounded(ByteArray(0).inputStream(), null, 10))
+        assertArrayEquals(ByteArray(0), MediaImages.readBounded(ByteArray(0).inputStream(), 0, 10))
+    }
+
+    @Test
+    fun aPickedOriginalIsReadOnlyWithinTheLimit() {
+        val original = fixture("tagged.jpg")
+        val file = java.io.File.createTempFile("picked", ".jpg").apply { writeBytes(original) }
+        try {
+            val uri = Uri.fromFile(file)
+            assertArrayEquals(original, images.readOriginal(uri, original.size.toLong()))
+            assertEquals(null, images.readOriginal(uri, original.size - 1L))
+        } finally {
+            file.delete()
+        }
+        try {
+            images.readOriginal(Uri.parse("content://de.corespace.shroud.test.missing/photo/1"), 1_000)
+            fail("expected ImageEncodeException")
+        } catch (_: ImageEncodeException) {
+        }
+    }
+
     /** `chatPreviewJPEG` (`MediaCrypto.swift:151-171`): the ladder's edges and qualities. */
     @Test
     fun previewLadderStepsLikeIos() {

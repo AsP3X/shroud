@@ -116,12 +116,15 @@ object ImageHeader {
         return oriented(width.toInt(), height.toInt(), orientation)
     }
 
-    /** The primary item's `ispe`, swapped when its `irot` turns it by 90° or 270°. */
+    /**
+     * The primary item's size as drawn: its `ispe`, then its transformative properties in
+     * association order (ISO/IEC 23008-12 §6.5): `clap` crops to the clean aperture, `irot` by 90° or
+     * 270° swaps the axes. ImageIO reports the same.
+     */
     private fun heifSize(b: ByteArray): Pair<Int, Int>? {
         val heif = IsoBmff.parseHeif(b) ?: return null
         val primary = heif.primaryItem ?: return null
         var size: Pair<Int, Int>? = null
-        var quarterTurns = 0
         for (property in IsoBmff.propertiesOf(heif, primary)) {
             when (property.type) {
                 "ispe" -> if (property.payload + 12 <= property.end) {
@@ -129,11 +132,25 @@ object ImageHeader {
                     val height = b.u32be(property.payload + 8)
                     if (width <= Int.MAX_VALUE && height <= Int.MAX_VALUE) size = width.toInt() to height.toInt()
                 }
-                "irot" -> if (property.payload < property.end) quarterTurns = b.u8(property.payload) and 0x03
+                "clap" -> size = size?.let { cleanAperture(b, property, it) }
+                "irot" -> if (property.payload < property.end && (b.u8(property.payload) and 0x01) == 1) {
+                    size = size?.let { (width, height) -> height to width }
+                }
             }
         }
-        val (width, height) = size ?: return null
-        return if (quarterTurns % 2 == 1) height to width else width to height
+        return size
+    }
+
+    /** `clap` width and height (`N/D` fractions, whole pixels by the spec), when they fit inside [size]. */
+    private fun cleanAperture(b: ByteArray, clap: IsoBmff.Box, size: Pair<Int, Int>): Pair<Int, Int> {
+        if (clap.payload + 16 > clap.end) return size
+        val widthD = b.u32be(clap.payload + 4)
+        val heightD = b.u32be(clap.payload + 12)
+        if (widthD == 0L || heightD == 0L) return size
+        val width = b.u32be(clap.payload) / widthD
+        val height = b.u32be(clap.payload + 8) / heightD
+        if (width !in 1..size.first.toLong() || height !in 1..size.second.toLong()) return size
+        return width.toInt() to height.toInt()
     }
 
     private fun webpSize(b: ByteArray): Pair<Int, Int>? {
