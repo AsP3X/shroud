@@ -17,7 +17,8 @@ import java.util.UUID
 
 // Contacts, peer identity and privacy (plan §1.7.8, C6: split as contacts.md). Published by W1-INT
 // with the final signatures; W2-CONTACTS implements Contacts (ContactsController), PeerIdentities
-// (PeerIdentityController) and Privacy (PrivacyController); MessagingController (W2-MSG-CORE)
+// (PeerIdentityController) and Privacy (PrivacyController), all three reached through
+// `container.contacts` (`controller`, `peerIdentities`, `privacy`); MessagingController (W2-MSG-CORE)
 // implements ContactsHooks. Changing one is a contract change request (plan §2.0 rule 4).
 
 /**
@@ -74,13 +75,30 @@ interface Contacts {
     suspend fun block(userId: UUID, username: String): String?
     suspend fun unblock(userId: UUID): String?
 
-    // Lifecycle, driven by MessagingController.
+    // Lifecycle, driven by MessagingController on the main thread (iOS keeps all of this inside
+    // `MessagingController`). The contacts lifecycle carries the privacy settings and the
+    // peer-identity memory with it, so messaging calls only these:
+
     fun bind(hooks: ContactsHooks)
+
+    /** The sealed roster's contacts and requests, adopted only into empty lists (before [start]). */
     fun hydrate(contacts: List<ContactItemDto>, requests: List<ContactRequestDto>)
+
+    /** Messaging unlocked: socket events, the 5 s / 30 s poll, a refresh; also refreshes [Privacy]. */
     fun start()
+
+    /** Back in front: the poll again, a refresh, a [Privacy] refresh. */
     fun onForeground()
+
+    /** The socket was let go (`leaveForeground(keepSocket = false)`): no poll, socket events ignored. */
     fun onBackground()
     fun onConnectivityRegained()
+
+    /**
+     * Chats locked ([wipe] false) or Log Out / removal ([wipe] true): everything in memory cleared;
+     * also resets [Privacy] and calls `PeerIdentities.clearMemory` ([wipe]: `PeerIdentities.wipe`,
+     * every pin deleted).
+     */
     fun stop(wipe: Boolean)
 }
 
