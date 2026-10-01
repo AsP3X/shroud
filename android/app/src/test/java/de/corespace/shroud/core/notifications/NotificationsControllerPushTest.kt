@@ -261,6 +261,22 @@ class NotificationsControllerPushTest {
         }
     }
 
+    /** The Settings row (`SettingsView.swift:177-180`; §5.14.1, N14). */
+    @Test
+    fun theSettingsRowSummary() = runTest {
+        val h = ControllerHarness(this)
+        assertEquals("On", h.controller.notificationsSummary())
+        h.preferences.enabled = false
+        assertEquals("Off", h.controller.notificationsSummary())
+        h.preferences.enabled = true
+        h.store.blockMessages(h.channels.messages())
+        assertEquals("Off", h.controller.notificationsSummary())
+        val denied = ControllerHarness(this)
+        denied.permission.authorization = NotificationAuthorization.Denied
+        denied.controller.refreshAuthorization()
+        assertEquals("Off", denied.controller.notificationsSummary())
+    }
+
     // ---- Permission (P6a) ----
 
     @Test

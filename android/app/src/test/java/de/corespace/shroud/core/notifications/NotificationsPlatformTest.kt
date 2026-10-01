@@ -86,6 +86,19 @@ class NotificationsPlatformTest {
         assertFalse(silent.canShowBadge())
     }
 
+    /** §5.15, web-parity §7.3: the channel is read back to notice a sound changed in Android Settings. */
+    @Test
+    fun theChannelSoundIsReadBack() {
+        val store = AndroidChannelStore(context)
+        store.create(ChannelSpec("messages.glass.b", "Messages", null, NotificationManager.IMPORTANCE_HIGH, NotificationSound.Glass, true, true))
+        assertFalse(store.soundDiffers("messages.glass.b", NotificationSound.Glass))
+        assertTrue(store.soundDiffers("messages.glass.b", NotificationSound.Standard))
+        assertTrue(store.soundDiffers("messages.glass.b", NotificationSound.None))
+        assertFalse("no channel, nothing to say", store.soundDiffers("messages.pop.b", NotificationSound.Glass))
+        preferences.sound = NotificationSound.Glass
+        assertFalse(channels.messagesSoundDiffers())
+    }
+
     @Test
     fun aNamedLocalNotificationItsTapAndTheWipe() = runTest {
         channels.ensure()

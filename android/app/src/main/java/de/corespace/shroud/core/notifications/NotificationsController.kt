@@ -309,6 +309,27 @@ class NotificationsController(
 
     override val badgeIncludesMuted: Boolean get() = preferences.badgeIncludesMuted
 
+    /** The requests list is on screen: its notifications go (web-parity §7.6). */
+    fun clearContactRequestNotifications() = systemNotifier.cancelContactRequests()
+
+    /**
+     * After the first chat list following an unlock: chats with nothing unread and no unseen
+     * reactions lose their notifications (web-parity §7.6, `AppShell.tsx:802-812`).
+     */
+    fun closeSettledChats(readChats: Collection<UUID>, reactionsSeenChats: Collection<UUID>) =
+        systemNotifier.closeSettledChats(readChats, reactionsSeenChats)
+
+    /**
+     * The Settings root row's value (iOS `notificationsSummary`, `SettingsView.swift:177-180`;
+     * notifications-push §5.14.1): "Off" when Android keeps notifications away, the switch is off,
+     * or — Android only (N14) — the Messages channel is turned off; else "On".
+     */
+    fun notificationsSummary(): String {
+        val off = mutableAuthorization.value == NotificationAuthorization.Denied || !preferences.enabled ||
+            runCatching { channels.messagesChannelBlocked() }.getOrDefault(false)
+        return if (off) "Off" else "On"
+    }
+
     /**
      * Log Out / removal: nothing of the account stays in memory either (`forgetAccount`, `:243-251`).
      * The preferences go back to a fresh install's (storing nothing), the channels to the defaults'

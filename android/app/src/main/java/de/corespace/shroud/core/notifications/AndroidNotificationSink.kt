@@ -61,6 +61,8 @@ class AndroidNotificationSink(
         return shown.notification.extras.getInt(SystemNotifier.EXTRA_COUNT, 1).coerceAtLeast(1)
     }
 
+    override fun activeKeys(): List<Pair<String, Int>> = manager.activeNotifications.mapNotNull { shown -> shown.tag?.let { it to shown.id } }
+
     private fun base(spec: PostSpec): NotificationCompat.Builder {
         val builder = NotificationCompat.Builder(context, spec.channelId)
             .setSmallIcon(R.drawable.ic_stat_shroud)

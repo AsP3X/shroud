@@ -1,6 +1,7 @@
 package de.corespace.shroud.core.notifications
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.SharedPreferences
@@ -31,6 +32,7 @@ class NotificationPermission(
     private val sdk: Int = Build.VERSION.SDK_INT,
 ) {
     /** What the app may do now; [activity] (ours, resumed) tells a first denial from a final one. */
+    @SuppressLint("InlinedApi") // A string constant, only asked about from API 33 on ([sdk] checks).
     fun current(activity: Activity?): NotificationAuthorization {
         val granted = sdk < Build.VERSION_CODES.TIRAMISU ||
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED

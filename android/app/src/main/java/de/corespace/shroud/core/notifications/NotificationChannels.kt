@@ -37,6 +37,12 @@ interface ChannelStore {
 
     /** Deletes the channel and with it every notification posted on it. */
     fun delete(id: String)
+
+    /**
+     * Whether the channel [id] plays something else than [sound] — the user picked another sound
+     * for it in Android Settings. False when there is no such channel.
+     */
+    fun soundDiffers(id: String, sound: NotificationSound): Boolean = false
 }
 
 /**
@@ -118,6 +124,13 @@ class NotificationChannels(
      * may notify (notifications-push §5.14.2, N14): the test notification would be swallowed.
      */
     fun messagesChannelBlocked(): Boolean = store.importance(messages()) == NotificationManager.IMPORTANCE_NONE
+
+    /**
+     * Android Settings has another sound for the Messages channel than the in-app picker shows
+     * (notifications-push §5.15; web-parity §7.3: read the channel back): the picker says so in a
+     * footer line. The system channel page stays authoritative for pushes.
+     */
+    fun messagesSoundDiffers(): Boolean = store.soundDiffers(messages(), preferences().sound)
 
     /**
      * Deletes every channel of our three families (Log Out / removal, notifications-push §5.10.3);
@@ -206,6 +219,11 @@ class AndroidChannelStore(private val context: Context) : ChannelStore {
 
     override fun delete(id: String) {
         manager.deleteNotificationChannel(id)
+    }
+
+    override fun soundDiffers(id: String, sound: NotificationSound): Boolean {
+        val channel = manager.getNotificationChannel(id) ?: return false
+        return channel.sound?.toString() != soundUri(context, sound)?.toString()
     }
 
     companion object {

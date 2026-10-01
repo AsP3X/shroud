@@ -220,6 +220,31 @@ class SystemNotifierTest {
         assertEquals("calls.missed.chime.n", sink.posted.last().channelId)
     }
 
+    /** web-parity §7.6: the requests list on screen closes every request's notification. */
+    @Test
+    fun theRequestsListClosesRequests() {
+        val other = UUID.fromString("00000000-0000-0000-0000-00000000000c")
+        notifier.postLocal(NotificationKind.ContactRequest, "carol", peer, null, 0)
+        notifier.postLocal(NotificationKind.ContactRequest, "dan", other, null, 0)
+        notifier.postLocal(NotificationKind.Message, "alice", peer, chat, 0)
+        notifier.cancelContactRequests()
+        assertEquals(setOf(chat.toString() to SystemNotifier.ID_MESSAGE), sink.shade.keys)
+    }
+
+    /** web-parity §7.6: the first list after an unlock closes chats read elsewhere meanwhile. */
+    @Test
+    fun theFirstListClosesSettledChats() {
+        notifier.post(push(NotificationKind.Message), "alice")
+        notifier.post(push(NotificationKind.Reaction), "alice")
+        notifier.post(push(NotificationKind.Message, conversation = otherChat), "bob")
+        notifier.post(push(NotificationKind.Reaction, conversation = otherChat), "bob")
+        notifier.closeSettledChats(readChats = listOf(chat), reactionsSeenChats = listOf(otherChat))
+        assertEquals(
+            setOf("$chat:reaction" to SystemNotifier.ID_REACTION, otherChat.toString() to SystemNotifier.ID_MESSAGE),
+            sink.shade.keys,
+        )
+    }
+
     @Test
     fun messageBodies() {
         assertEquals("New message", SystemNotifier.messageBody(1))

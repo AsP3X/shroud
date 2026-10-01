@@ -39,7 +39,7 @@ class NotificationNameCache(
     private val deleteKey: () -> Unit,
     private val seal: StorageSeal,
     private val namesOn: () -> Boolean,
-    private val writer: Executor = Executors.newSingleThreadExecutor { Thread(it, "shroud-notification-names") },
+    private val writer: Executor = Executors.newSingleThreadExecutor { Thread(it, "shroud-notification-names").apply { isDaemon = true } },
 ) {
     private val lock = Any()
     private var names: MutableMap<UUID, String>? = null

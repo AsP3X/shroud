@@ -46,6 +46,9 @@ interface NotificationSink {
 
     /** The arrival count stored in the notification showing under [tag]/[id], or null when none shows. */
     fun activeCount(tag: String, id: Int): Int?
+
+    /** Tag and id of every notification of the app showing now. */
+    fun activeKeys(): List<Pair<String, Int>>
 }
 
 /**
@@ -72,7 +75,7 @@ class SystemNotifier(
     private val sink: NotificationSink,
     private val channels: NotificationChannels,
     private val seal: StorageSeal,
-    private val executor: Executor = Executors.newSingleThreadExecutor { Thread(it, "shroud-notifications") },
+    private val executor: Executor = Executors.newSingleThreadExecutor { Thread(it, "shroud-notifications").apply { isDaemon = true } },
 ) {
     /**
      * A push (UnifiedPush, or an event on the background connection) for the process to show
@@ -119,6 +122,30 @@ class SystemNotifier(
     /** A ring's notification goes (the call ended, was answered or declined elsewhere). */
     fun cancelCall(callId: UUID) = cancel(callTag(callId), ID_CALL)
 
+    /**
+     * Every contact-request notification goes: the requests list is on screen (web-parity §7.6;
+     * web `AppShell.tsx:813-816`).
+     */
+    fun cancelContactRequests() {
+        executor.execute {
+            runCatching {
+                for ((tag, id) in sink.activeKeys()) {
+                    if (id == ID_CONTACT_REQUEST && (tag == TAG_CONTACTS || tag.startsWith("$TAG_CONTACTS:"))) sink.cancel(tag, id)
+                }
+            }
+        }
+    }
+
+    /**
+     * The first chat list after an unlock settles what was read elsewhere meanwhile (web-parity §7.6;
+     * web `AppShell.tsx:802-812`): the message notifications of [readChats] (unread count 0) and the
+     * reaction notifications of [reactionsSeenChats] (no unseen reactions) go.
+     */
+    fun closeSettledChats(readChats: Collection<UUID>, reactionsSeenChats: Collection<UUID>) {
+        for (chat in readChats) cancel(Ids.wire(chat), ID_MESSAGE)
+        for (chat in reactionsSeenChats) cancel(reactionTag(Ids.wire(chat)), ID_REACTION)
+    }
+
     /** Every notification of the app (Log Out / removal wipe; `DeviceDataWipe.swift:176-179`). */
     fun cancelAll() {
         executor.execute { runCatching { sink.cancelAll() } }
@@ -134,6 +161,8 @@ class SystemNotifier(
     fun postSignedOutNotice(deviceNoun: String = "phone") {
         executor.execute {
             runCatching { sink.cancelAll() }
+            // The wipe reset the preferences: the default channels may not exist yet.
+            runCatching { channels.ensure() }
             postNow(
                 PostSpec(
                     tag = TAG_ACCOUNT,
@@ -192,7 +221,7 @@ class SystemNotifier(
                 category = NotificationCompat.CATEGORY_SOCIAL, number = number,
             )
             NotificationKind.ContactRequest -> PostSpec(
-                tag = peerUserId?.let { "contacts:${Ids.wire(it)}" } ?: "contacts", id = ID_CONTACT_REQUEST,
+                tag = peerUserId?.let { "$TAG_CONTACTS:${Ids.wire(it)}" } ?: TAG_CONTACTS, id = ID_CONTACT_REQUEST,
                 channelId = channels.contactRequests(), kind = kind, peerUserId = peerUserId,
                 title = name ?: APP_TITLE, name = name, body = kind.bodyLine,
                 category = NotificationCompat.CATEGORY_SOCIAL, number = number,
@@ -232,6 +261,9 @@ class SystemNotifier(
         const val ID_SIGNED_OUT = 7
 
         const val TAG_ACCOUNT = "account"
+
+        /** Contact requests: `contacts:<requester id>` (one per requester, §5.7.2). */
+        const val TAG_CONTACTS = "contacts"
 
         /** The title when no name is shown (§2; the design's *Message, sender hidden*). */
         const val APP_TITLE = "Shroud"

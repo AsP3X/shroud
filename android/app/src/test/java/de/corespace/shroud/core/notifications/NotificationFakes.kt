@@ -61,6 +61,8 @@ class FakeSink(var enabled: Boolean = true) : NotificationSink {
 
     override fun activeCount(tag: String, id: Int): Int? = shade[tag to id]?.count
 
+    override fun activeKeys(): List<Pair<String, Int>> = shade.keys.toList()
+
     fun showing(tag: String, id: Int): PostSpec? = shade[tag to id]
 }
 
