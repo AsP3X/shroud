@@ -557,4 +557,51 @@ class HistoryPagerTest {
         // One plain load for both plain callers, one more for the reconcile.
         assertEquals(2, backend.pageRequests.size)
     }
+
+    @Test
+    fun aCancelledCallerLeavesNoLoadBehind() = engineTest { // review W2: stale thread load entries
+        val pager = pager()
+        val gate = CompletableDeferred<Unit>()
+        backend.gate = gate
+        responses += page(theirs(0))
+        val scope = scopeFor(testScheduler)
+        // pollWithoutSocket's reconcile, stopped by leaveForeground mid-fetch.
+        val poll = scope.launch { pager.loadThread(peer, activate = false, reconcile = true) }
+        runCurrent()
+        poll.cancel()
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(1, backend.pageRequests.size)
+
+        // The next loads fetch, plain and reconcile alike.
+        pager.loadThread(peer, activate = false)
+        assertEquals(2, backend.pageRequests.size)
+        pager.loadThread(peer, activate = false, reconcile = true)
+        assertEquals(3, backend.pageRequests.size)
+    }
+
+    @Test
+    fun aCancelledOlderPageCallerEndsTheLoadingStateAndPagingGoesOn() = engineTest { // review W2: stuck spinner
+        val pager = pager()
+        val newest = theirs(10)
+        state.setThread(peer, listOf(held(newest, "t10")))
+        val gate = CompletableDeferred<Unit>()
+        backend.gate = gate
+        responses += page(theirs(5), hasMore = true)
+        val scope = scopeFor(testScheduler)
+        // The conversation screen's scroll caller, gone because the user backed out.
+        val scroll = scope.launch { pager.loadOlderMessages(peer) }
+        runCurrent()
+        assertTrue(pager.isLoadingOlderHistory(peer))
+        scroll.cancel()
+        gate.complete(Unit)
+        runCurrent()
+        assertTrue(pager.loadingOlderPeerIds.value.isEmpty())
+        assertEquals(1, backend.pageRequests.size)
+
+        responses += page(theirs(2), hasMore = true)
+        pager.loadOlderMessages(peer)
+        assertEquals(2, backend.pageRequests.size)
+        assertFalse(pager.isLoadingOlderHistory(peer))
+    }
 }

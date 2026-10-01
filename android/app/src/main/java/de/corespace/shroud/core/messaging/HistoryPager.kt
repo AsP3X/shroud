@@ -102,7 +102,9 @@ class HistoryPager(
         // Notes: the thread key is the sentinel, the API peer the signed-in user (Saved Messages).
         val apiPeer = if (isNotes) me else peer
 
-        threadLoads[peer]?.let { existing ->
+        // A load whose caller was cancelled still clears its own entry (below); one that already
+        // ended is no load to share.
+        threadLoads[peer]?.takeIf { it.isActive }?.let { existing ->
             val existingReconciles = threadLoadReconciles[peer] == true
             existing.join()
             if (!reconcile || existingReconciles) return
@@ -110,12 +112,17 @@ class HistoryPager(
         val job = scope.launch(start = CoroutineStart.LAZY) { performThreadLoad(apiPeer, peer, reconcile) }
         threadLoads[peer] = job
         threadLoadReconciles[peer] = reconcile
+        // The job clears its entry, not the waiter: iOS awaits an unstructured Task whose cleanup
+        // always runs, while a cancelled Kotlin caller (a stopped poll, a chat the user left) never
+        // gets past its join and would leave every later load of this chat returning at once.
+        job.invokeOnCompletion {
+            if (threadLoads[peer] === job) {
+                threadLoads.remove(peer)
+                threadLoadReconciles.remove(peer)
+            }
+        }
         job.start()
         job.join()
-        if (threadLoads[peer] === job) {
-            threadLoads.remove(peer)
-            threadLoadReconciles.remove(peer)
-        }
         if (state.activePeerId == peer) startOlderPrefetch(peer)
     }
 
@@ -318,19 +325,22 @@ class HistoryPager(
      */
     suspend fun loadOlderMessages(peer: UUID) {
         if (peer in exhaustedFlow.value) return
-        olderLoads[peer]?.let { running ->
+        olderLoads[peer]?.takeIf { it.isActive }?.let { running ->
             running.join()
             return
         }
         val job = scope.launch(start = CoroutineStart.LAZY) { performOlderLoad(peer) }
         olderLoads[peer] = job
         loadingOlderFlow.value += peer
+        // As in [loadThread]: the job ends the "Loading earlier messages" state, whoever waits.
+        job.invokeOnCompletion {
+            if (olderLoads[peer] === job) {
+                olderLoads.remove(peer)
+                loadingOlderFlow.value -= peer
+            }
+        }
         job.start()
         job.join()
-        if (olderLoads[peer] === job) {
-            olderLoads.remove(peer)
-            loadingOlderFlow.value -= peer
-        }
     }
 
     /** `performOlderLoad`, `MessagingController.swift:1456-1497`. Errors are swallowed: the next scroll to the top retries. */
@@ -399,15 +409,18 @@ class HistoryPager(
 
     /** Lock, stop: every thread load stops. */
     fun cancelThreadLoads() {
-        threadLoads.values.forEach { it.cancel() }
+        // Forget first: a cancelled job's completion handler must not edit the map mid-iteration.
+        val running = threadLoads.values.toList()
         threadLoads.clear()
         threadLoadReconciles.clear()
+        running.forEach { it.cancel() }
     }
 
     /** Stops all history paging and forgets what was learned (`cancelHistoryPaging`, `MessagingController.swift:1521-1528`). */
     fun cancelHistoryPaging() {
-        olderLoads.values.forEach { it.cancel() }
+        val older = olderLoads.values.toList()
         olderLoads.clear()
+        older.forEach { it.cancel() }
         prefetches.values.forEach { it.cancel() }
         prefetches.clear()
         exhaustedFlow.value = emptySet()
