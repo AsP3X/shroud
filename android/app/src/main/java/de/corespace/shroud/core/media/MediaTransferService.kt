@@ -430,6 +430,8 @@ internal object StreamingGcm {
     /** Plaintext per pass through the ciphers. */
     private const val CHUNK_BYTES = 1024 * 1024
 
+    private const val CTR = "AES/CTR/NoPadding"
+
     /** Counter blocks 2 … 2³² − 1 carry the keystream: beyond this inc32 would wrap. */
     const val MAX_PLAINTEXT_BYTES: Long = (0xFFFF_FFFFL - 1) * BLOCK_BYTES
 
@@ -525,18 +527,24 @@ internal object StreamingGcm {
             require(key.size == MediaCrypto.KEY_BYTES) { "media keys are 32 bytes" }
             require(nonce.size == NONCE_BYTES) { "GCM nonces are 12 bytes here" }
             val spec = SecretKeySpec(key, "AES")
-            val ecb = Cipher.getInstance("AES/ECB/NoPadding").apply { init(Cipher.ENCRYPT_MODE, spec) }
             val counter = ByteArray(BLOCK_BYTES)
-            val h = ecb.doFinal(counter) // AES_K(0¹²⁸)
+            val h = encryptBlock(spec, counter) // AES_K(0¹²⁸)
             nonce.copyInto(counter)
             counter[BLOCK_BYTES - 1] = 1
-            tagMask = ecb.doFinal(counter) // AES_K(J0)
+            tagMask = encryptBlock(spec, counter) // AES_K(J0)
             counter[BLOCK_BYTES - 1] = 2 // inc32(J0): the first keystream block
-            ctr = Cipher.getInstance("AES/CTR/NoPadding").apply { init(Cipher.ENCRYPT_MODE, spec, IvParameterSpec(counter)) }
+            ctr = Cipher.getInstance(CTR).apply { init(Cipher.ENCRYPT_MODE, spec, IvParameterSpec(counter)) }
             ghash = Ghash(h)
             h.fill(0)
             counter.fill(0)
         }
+
+        /** `AES_K(block)`: the first keystream block of CTR from [block], over zeros (no ECB cipher needed). */
+        private fun encryptBlock(spec: SecretKeySpec, block: ByteArray): ByteArray =
+            Cipher.getInstance(CTR).run {
+                init(Cipher.ENCRYPT_MODE, spec, IvParameterSpec(block))
+                doFinal(ByteArray(BLOCK_BYTES))
+            }
 
         /** Encrypts or decrypts [length] bytes into [output]; GHASH always runs over the ciphertext side. */
         fun crypt(input: ByteArray, offset: Int, length: Int, output: ByteArray, encrypt: Boolean): Int {
