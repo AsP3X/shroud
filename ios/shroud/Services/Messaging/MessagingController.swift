@@ -4352,7 +4352,7 @@ final class MessagingController {
         else { return }
         var lastSeen: Date?
         if let last = json["last_seen_at"] as? String {
-            lastSeen = ISO8601DateFormatter.apiFlexible.date(from: last)
+            lastSeen = ISO8601DateFormatter.date(fromAPI: last)
         }
         let presence = PresenceDTO(userId: userID, online: online, lastSeenAt: lastSeen)
         if presenceByUser[userID] != presence { presenceByUser[userID] = presence }
@@ -5727,7 +5727,7 @@ extension MessagingController {
               let peer = UUID(uuidString: peerString)
         else { return }
         let conversationID = (json["conversation_id"] as? String).flatMap(UUID.init(uuidString:))
-        let readAt = (json["read_at"] as? String).flatMap { ISO8601DateFormatter.apiFlexible.date(from: $0) }
+        let readAt = (json["read_at"] as? String).flatMap { ISO8601DateFormatter.date(fromAPI: $0) }
         let left = (json["unread_count"] as? NSNumber)?.intValue ?? 0
         markReadLocally(peer, conversationID: conversationID, through: readAt)
         if left > 0, peer != activePeerID {
@@ -5744,7 +5744,9 @@ extension MessagingController {
         else { return }
         var mute: ChatMuteDTO?
         if let body = json["mute"] as? [String: Any] {
-            let until = (body["until"] as? String).flatMap { ISO8601DateFormatter.apiFlexible.date(from: $0) }
+            // Whole seconds parse too (`date(fromAPI:)`): the server omits a zero fraction, and a
+            // dropped `until` used to read as "until I turn it back on" (api-realtime §16).
+            let until = (body["until"] as? String).flatMap { ISO8601DateFormatter.date(fromAPI: $0) }
             mute = ChatMuteDTO(until: until)
         }
         conversations[index].mute = mute
@@ -5951,14 +5953,6 @@ extension MessagingController {
             saveReactionCursor(end, for: storePeerID)
         }
     }
-}
-
-private extension ISO8601DateFormatter {
-    static let apiFlexible: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f
-    }()
 }
 
 extension MessagingController.ChatMessage {
