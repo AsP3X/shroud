@@ -150,7 +150,9 @@ class MediaTransferServiceTest {
     fun aBodyWrittenTwiceIsByteIdentical() {
         // OkHttp may write a repeatable body again on a fresh connection; the same key and nonce
         // must give the same bytes (never a second nonce for other bytes).
-        for (size in listOf(1_000, MediaTransferService.ONE_SHOT_BYTES.toInt() + 5)) {
+        // Sizes of media-voice-links §1.2's byte-identity test, on both sides of the one-shot switch.
+        val sizes = listOf(0, 1, 15, 16, 17, 65_535, 65_536, MediaTransferService.ONE_SHOT_BYTES.toInt() + 1)
+        for (size in sizes) {
             val plaintext = Random(size).nextBytes(size)
             val file = tempFiles.create("export", "bin").apply { writeBytes(plaintext) }
             val body = MediaTransferService.SealingBody(MediaTransferService.Plain.TempFile(file), key, nonce, size + 28L)
@@ -159,8 +161,8 @@ class MediaTransferServiceTest {
             assertEquals("application/octet-stream", body.contentType().toString())
             val first = Buffer().also { body.writeTo(it) }.readByteArray()
             val second = Buffer().also { body.writeTo(it) }.readByteArray()
-            assertArrayEquals(first, second)
-            assertArrayEquals(plaintext, MediaCrypto.openFile(first, key))
+            assertArrayEquals("size $size", first, second)
+            assertArrayEquals("size $size", MediaCrypto.sealFile(plaintext, ScriptedEntropy(key, nonce)).sealed, first)
         }
     }
 
