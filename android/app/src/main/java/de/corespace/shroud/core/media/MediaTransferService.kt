@@ -158,7 +158,7 @@ class MediaTransferService(
     }
 
     /** The plaintext an upload reads, possibly more than once (OkHttp may write a body twice). */
-    private sealed class Plain(val length: Long) {
+    internal sealed class Plain(val length: Long) {
         abstract fun open(): InputStream
 
         /** All of it in memory: small sources only. */
@@ -201,7 +201,7 @@ class MediaTransferService(
      * one-shot path keeps the sealed bytes after the first write (ciphertext only) so a retry does
      * not seal again.
      */
-    private class SealingBody(
+    internal class SealingBody(
         private val plain: Plain,
         private val key: ByteArray,
         private val nonce: ByteArray,
