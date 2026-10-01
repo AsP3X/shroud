@@ -12,6 +12,7 @@ import androidx.media3.transformer.AudioEncoderSettings
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.DefaultEncoderFactory
 import androidx.media3.transformer.EditedMediaItem
+import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
@@ -38,7 +39,8 @@ import java.io.File
  *   video bitrate (at least 40 kbps) with a key frame every 2 s, AAC at the plan's audio bitrate (at
  *   least 32 kbps) or no audio — iOS `writeBudget` (`VideoMedia.swift:783-929`: `max(40_000, …)`,
  *   `AVVideoMaxKeyFrameIntervalKey: frameRate × 2`, `max(32_000, …)`). Requested encoder settings
- *   also make Transformer re-encode the audio, so its bitrate follows the plan.
+ *   also make Transformer re-encode the audio, so its bitrate follows the plan. HDR sources are
+ *   tone-mapped to SDR, so the output is 8-bit H.264 every recipient decodes.
  *
  * Both write through [MetadataClearingMuxer] (media §5.3). Progress is polled every 150 ms like the
  * iOS export monitor (`session.states(updateInterval: 0.15)`, `VideoMedia.swift:757-765`).
@@ -69,7 +71,7 @@ internal class Media3VideoExporter(
                 throw VideoException(VideoException.Reason.ExportFailed, e)
             }
             try {
-                transformer.start(editedItem(request), output.absolutePath)
+                transformer.start(composition(request), output.absolutePath)
             } catch (e: RuntimeException) {
                 throw VideoException(VideoException.Reason.ExportFailed, e)
             }
@@ -111,6 +113,18 @@ internal class Media3VideoExporter(
             .setVideoMimeType(MimeTypes.VIDEO_H264)
             .setAudioMimeType(MimeTypes.AUDIO_AAC)
             .setEncoderFactory(encoders.build())
+    }
+
+    /**
+     * The one item as a composition. A re-encode tone-maps HDR sources to SDR (OpenGL): the output
+     * is plain 8-bit H.264 like iOS's (its H.264 presets and `writeBudget` render SDR), not the
+     * 10-bit H.264 that Media3 would keep where an encoder offers it and that browsers and most
+     * phones cannot decode. SDR sources are unaffected; a remux decodes nothing.
+     */
+    private fun composition(request: VideoExportRequest): Composition {
+        val builder = Composition.Builder(EditedMediaItemSequence.Builder(editedItem(request)).build())
+        if (!request.plan.passthrough) builder.setHdrMode(Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL)
+        return builder.build()
     }
 
     private fun editedItem(request: VideoExportRequest): EditedMediaItem {
