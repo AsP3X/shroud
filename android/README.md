@@ -30,16 +30,20 @@ devices) access before it reaches a LAN or emulator-host server.
 ## Checks (CI: `.github/workflows/android.yml`)
 
 ```bash
-./gradlew :app:testDebugUnitTest :app:lintDebug :app:verifyNoMaterial :app:verifyNoGoogleServices :app:assembleRelease
+./gradlew :app:testDebugUnitTest :app:lintDebug :app:verifyNoMaterial :app:verifyNoGoogleServices :app:verifyNoGoogleClasses :app:assembleRelease
 ```
 
 - `verifyNoMaterial` fails on any Compose Material reference in the sources or among the shipped
   libraries: the app draws its own chrome from `ui/theme` tokens.
 - `verifyNoGoogleServices` fails if a Firebase, Google Play services, ML Kit, Tink, Play Core,
   install-referrer or data-transport module reaches the debug or release runtime classpath, or if
-  the merged release manifest mentions GMS, C2DM or Firebase. Both run as part of `check`.
+  the merged release manifest mentions GMS, C2DM or Firebase.
+- `verifyNoGoogleClasses` reads R8's release mapping and fails if a class from one of those
+  packages ships, by its original name. R8 moves most renamed classes into the unnamed package, so
+  this (not the dex package list) is what catches an obfuscated or vendored copy. All three run as
+  part of `check`.
 - CI then lists the release APK's dex packages and manifest with `apkanalyzer` and fails on any
-  Google services class or entry.
+  Google services package that kept its name, or any manifest entry.
 
 ## Layout
 

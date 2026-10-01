@@ -251,6 +251,58 @@ abstract class VerifyNoGoogleServicesTask : RuntimeGraphTask() {
     }
 }
 
+/**
+ * Fails when a class from a banned package ships in the minified release: reads R8's mapping
+ * (left column = original names) instead of the dex, because R8 renames and moves most classes into
+ * the unnamed package, so `apkanalyzer dex packages` only sees the ones that keep their names. This
+ * also catches shaded or vendored copies inside an allowed artifact, which the graph check
+ * ([VerifyNoGoogleServicesTask]) cannot see. Classes R8 removed (`R8$$REMOVED$$CLASS…`) do not ship.
+ */
+abstract class VerifyNoGoogleClassesTask : DefaultTask() {
+    @get:Input
+    abstract val bannedPackages: ListProperty<String>
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val releaseMapping: RegularFileProperty
+
+    @get:OutputFile
+    abstract val report: RegularFileProperty
+
+    @TaskAction
+    fun verify() {
+        val prefixes = bannedPackages.get().map { "$it." }
+        val problems = ArrayList<String>()
+        var classes = 0
+        releaseMapping.get().asFile.forEachLine { line ->
+            // Class lines are "original.Name -> obfuscated:"; members are indented, comments start with '#'.
+            if (line.isEmpty() || line[0] == ' ' || line[0] == '#') return@forEachLine
+            val original = line.substringBefore(" -> ")
+            val target = line.substringAfter(" -> ").removeSuffix(":")
+            if (target.startsWith("R8\$\$REMOVED\$\$CLASS")) return@forEachLine
+            classes++
+            if (prefixes.any { original.startsWith(it) }) problems += "release ships $original (as $target)"
+        }
+        if (classes == 0) problems += "the release mapping lists no classes: is R8 still on?"
+        report.get().asFile.writeText(problems.joinToString("\n", postfix = "\n"))
+        if (problems.isNotEmpty()) {
+            throw GradleException("No Google classes in the release (decision record 2026-10-01):\n" + problems.joinToString("\n"))
+        }
+    }
+}
+
+/** Google groups and their packages: the dependency check bans the groups, the class check the packages. */
+val bannedGoogleGroups = listOf(
+    "com.google.firebase",
+    "com.google.android.gms",
+    "com.google.gms",
+    "com.google.mlkit",
+    "com.google.crypto.tink",
+    "com.google.android.play",
+    "com.android.installreferrer",
+    "com.google.android.datatransport",
+)
+
 val verifyNoMaterial = tasks.register<VerifyNoMaterialTask>("verifyNoMaterial") {
     group = "verification"
     description = "Fails on any Compose Material reference in sources or shipped dependencies."
@@ -261,22 +313,18 @@ val verifyNoMaterial = tasks.register<VerifyNoMaterialTask>("verifyNoMaterial") 
 val verifyNoGoogleServices = tasks.register<VerifyNoGoogleServicesTask>("verifyNoGoogleServices") {
     group = "verification"
     description = "Fails if Firebase, Google Play services, ML Kit, Tink or Play libraries reach the app."
-    bannedGroups.set(
-        listOf(
-            "com.google.firebase",
-            "com.google.android.gms",
-            "com.google.gms",
-            "com.google.mlkit",
-            "com.google.crypto.tink",
-            "com.google.android.play",
-            "com.android.installreferrer",
-            "com.google.android.datatransport",
-        ),
-    )
+    bannedGroups.set(bannedGoogleGroups)
     bannedModules.set(listOf("org.jetbrains.kotlinx:kotlinx-coroutines-play-services"))
     allowedModules.set(emptySet())
     bannedManifestTexts.set(listOf("com.google.android.gms", "com.google.android.c2dm", "com.google.firebase"))
     report.set(layout.buildDirectory.file("reports/verifyNoGoogleServices.txt"))
+}
+
+val verifyNoGoogleClasses = tasks.register<VerifyNoGoogleClassesTask>("verifyNoGoogleClasses") {
+    group = "verification"
+    description = "Fails if a Google services, ML Kit, Tink or Play class ships in the minified release (R8 mapping)."
+    bannedPackages.set(bannedGoogleGroups)
+    report.set(layout.buildDirectory.file("reports/verifyNoGoogleClasses.txt"))
 }
 
 // The variants' runtime classpaths only exist once AGP created them.
@@ -290,6 +338,9 @@ androidComponents {
                     releaseRuntime.set(graph)
                     mergedReleaseManifest.set(variant.artifacts.get(SingleArtifact.MERGED_MANIFEST))
                 }
+                verifyNoGoogleClasses.configure {
+                    releaseMapping.set(variant.artifacts.get(SingleArtifact.OBFUSCATION_MAPPING_FILE))
+                }
             }
             "debug" -> {
                 verifyNoMaterial.configure { debugRuntime.set(graph) }
@@ -300,5 +351,5 @@ androidComponents {
 }
 
 tasks.named("check") {
-    dependsOn(verifyNoMaterial, verifyNoGoogleServices)
+    dependsOn(verifyNoMaterial, verifyNoGoogleServices, verifyNoGoogleClasses)
 }

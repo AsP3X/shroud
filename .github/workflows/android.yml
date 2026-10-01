@@ -47,13 +47,17 @@ jobs:
           :app:verifyNoMaterial
           :app:verifyNoGoogleServices
           :app:assembleRelease
+          :app:verifyNoGoogleClasses
 
-      - name: No Google classes or GMS entries in the release APK
+      # verifyNoGoogleClasses above checks R8's mapping by original class name: R8 moves most
+      # renamed classes into the unnamed package, so this dex listing only sees kept names. The
+      # prefixes are bannedGoogleGroups in app/build.gradle.kts.
+      - name: No Google packages or GMS entries in the release APK
         run: |
           apk=app/build/outputs/apk/release/app-release-unsigned.apk
           analyzer="$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
           "$analyzer" dex packages "$apk" > "$RUNNER_TEMP/dex-packages.txt"
-          if grep -E '[[:space:]](com\.google\.firebase|com\.google\.android\.gms|com\.google\.mlkit|com\.google\.crypto\.tink)([.[:space:]]|$)' "$RUNNER_TEMP/dex-packages.txt"; then
+          if grep -E '[[:space:]](com\.google\.(firebase|android\.gms|gms|mlkit|crypto\.tink|android\.play|android\.datatransport)|com\.android\.installreferrer)([.[:space:]]|$)' "$RUNNER_TEMP/dex-packages.txt"; then
             echo "::error::the release APK contains Google services classes"
             exit 1
           fi
