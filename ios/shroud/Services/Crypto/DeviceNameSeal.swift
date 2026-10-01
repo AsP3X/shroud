@@ -9,7 +9,10 @@ import Foundation
 /// stored name cannot be moved onto another device, and every name pads to one size, so its
 /// length does not show. The kind (iPhone, iPad, browser) rides inside the seal for the icon,
 /// with a bit saying a person typed the name, so this iPhone keeps a rename instead of its own.
-/// Agent: Same bytes as web `crypto/deviceName.ts` (golden vector in `DeviceNameSealTests`).
+/// The Android app writes kind 4; a kind this build does not know reads as `.other`, so a newer
+/// client's kind never breaks this one (only its icon falls back to a guess from the name).
+/// Agent: Same bytes as web `crypto/deviceName.ts` (golden vectors in `DeviceNameSealTests`,
+/// kind 4 shared with Android and web: android-port-specs crypto §16.3, web-parity §4.4).
 ///   key       = HKDF-SHA256(historyKey, salt "shroud-v1", info "shroud-device-name-v1", 32)
 ///   aad       = "shroud-device-name-v1:" + lowercase device id
 ///   plaintext = kind(1, | 0x80 when typed by a person) ‖ UTF-8 name ‖ 0x80 ‖ 0x00… to 128 bytes
@@ -20,6 +23,9 @@ nonisolated enum DeviceNameSeal {
         case iPhone = 1
         case iPad = 2
         case web = 3
+        /// The Android app (phones and tablets alike). Read here before Android writes it,
+        /// so a rename made on this iPhone keeps the kind instead of turning it into `.other`.
+        case android = 4
     }
 
     struct Label: Sendable, Equatable {

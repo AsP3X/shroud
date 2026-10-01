@@ -551,7 +551,8 @@ struct DevicesView: View {
     }
 
     /// Seals the new name (marked as chosen, so an iPhone keeps it instead of its own) and
-    /// reloads. Returns an error message, or nil once saved.
+    /// reloads. Returns an error message, or nil once saved. The stored kind is kept, so
+    /// renaming an Android device here keeps kind 4 (a build without it wrote back `.other`).
     private func rename(_ device: LinkedDeviceDTO, to name: String) async -> String? {
         guard let token = sessionController.bearerToken,
               let historyKey = cryptoController.material?.historyKey
@@ -782,7 +783,12 @@ private struct DeviceDetailSheet: View {
 // MARK: - Device kind
 
 /// What a device is: the kind sealed with its name, else a guess from the name.
-private enum DeviceKind {
+///
+/// Human: The Android app seals kind 4, which shows as "Android app" with the green phone tile
+/// (android-port decision P4). Before this build knew kind 4 it read as `.other` and fell back
+/// to the name guess, so "Pixel 9 Pro" showed as "Unknown".
+/// Agent: Internal (not private) for `DeviceNameSealTests`.
+enum DeviceKind: Equatable {
     case iPhone, iPad, android, browser, mac, pc, unknown
 
     init(label: DeviceNameSeal.Label?) {
@@ -790,6 +796,7 @@ private enum DeviceKind {
         case .iPhone: self = .iPhone; return
         case .iPad: self = .iPad; return
         case .web: self = .browser; return
+        case .android: self = .android; return
         case .other, nil: break
         }
         let lower = (label?.name ?? "").lowercased()
@@ -814,7 +821,7 @@ private enum DeviceKind {
         switch self {
         case .iPhone: "iPhone app"
         case .iPad: "iPad app"
-        case .android: "Phone"
+        case .android: "Android app"
         case .browser: "Web browser"
         case .mac: "Mac"
         case .pc: "Computer"
