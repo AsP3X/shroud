@@ -69,17 +69,21 @@ class TestKitTest {
 
         prefs.edit().putString("a", "1").apply() // equal value: no change
         assertEquals(emptyList<String?>(), heard)
-        prefs.edit().putString("a", "2").putString("b", "x").apply()
-        assertEquals(listOf("b", "a"), heard) // last modified first, as SharedPreferencesImpl
+        prefs.edit().putString("b", "x").putString("a", "2").apply()
+        // Each changed key once; the order is unspecified (hash order in SharedPreferencesImpl).
+        assertEquals(2, heard.size)
+        assertEquals(setOf("a", "b"), heard.toSet())
         heard.clear()
-        prefs.edit().clear().putString("c", "y").apply()
-        assertEquals(listOf(null, "c"), heard)
+        prefs.edit().clear().putString("d", "w").putString("c", "y").apply()
+        assertEquals(null, heard.first()) // the clear comes first, as on API 30+
+        assertEquals(setOf("c", "d"), heard.drop(1).toSet())
+        assertEquals(3, heard.size)
         heard.clear()
         prefs.edit().remove("missing").apply()
         assertEquals(emptyList<String?>(), heard)
 
         prefs.unregisterOnSharedPreferenceChangeListener(listener)
-        prefs.edit().putString("d", "z").apply()
+        prefs.edit().putString("e", "z").apply()
         assertEquals(emptyList<String?>(), heard)
         assertEquals(5, prefs.editCount)
     }

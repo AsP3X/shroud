@@ -9,8 +9,11 @@ import android.content.SharedPreferences
  * - `remove(key)` and `putString(key, null)` / `putStringSet(key, null)` delete the key;
  * - writing an equal value is no change (no listener call);
  * - listeners hear `null` first after any `clear()` (API 30+, even of an empty file), then each
- *   changed key, last-modified first; calls are synchronous here (the platform posts them to
- *   the main thread);
+ *   changed key once. The order of the changed keys is **unspecified**: the platform collects
+ *   them from the editor's plain `HashMap`, so on a device it is hash order, not call order. This
+ *   fake deliberately reports them sorted by key, so a test that depends on any order fails here
+ *   rather than passing on the JVM and differing on a device. Compare as sets. Calls are
+ *   synchronous here (the platform posts them to the main thread);
  * - a stored or returned string set is a copy.
  *
  * Listeners are held strongly (the platform holds them weakly — keep a reference in production
@@ -89,7 +92,6 @@ class FakeSharedPreferences(initial: Map<String, Any> = emptyMap()) : SharedPref
         }
 
         private fun put(key: String, value: Any?): SharedPreferences.Editor = apply {
-            modified.remove(key)
             modified[key] = value
         }
 
@@ -113,7 +115,8 @@ class FakeSharedPreferences(initial: Map<String, Any> = emptyMap()) : SharedPref
             modified.clear()
             val snapshot = listeners.toList()
             if (cleared) snapshot.forEach { it.onSharedPreferenceChanged(this@FakeSharedPreferences, null) }
-            for (key in changed.asReversed()) snapshot.forEach { it.onSharedPreferenceChanged(this@FakeSharedPreferences, key) }
+            // Unspecified on the platform (hash order); sorted here so nobody relies on call order.
+            for (key in changed.sorted()) snapshot.forEach { it.onSharedPreferenceChanged(this@FakeSharedPreferences, key) }
         }
     }
 
