@@ -86,10 +86,17 @@ interface PeerIdentities {
     val verifiedPeers: StateFlow<Set<UUID>>
     val events: SharedFlow<PeerIdentityEvent>
 
-    /** Decrypt path: the pinned key (pinned now if this is the first). */
+    /**
+     * Decrypt path: the pinned key (pinned now if this is the first). Reads the pin through
+     * `PeerIdentityStore.pin`: while it is `Unavailable` (phone locked, chats unlocked) throws
+     * `CryptoError.Locked` — never trusts the server's key as a first use (plan §1.7.4 note).
+     */
     suspend fun resolvePublicKey(peer: UUID): ByteArray
 
-    /** Throws `PeerIdentityChangedException` while a change is pending. */
+    /**
+     * Throws `PeerIdentityChangedException` while a change is pending, and `CryptoError.Locked`
+     * while the pin is unavailable, so the send is queued and retried after unlock.
+     */
     suspend fun publicKeyForSending(peer: UUID): ByteArray
 
     suspend fun refresh(peer: UUID)

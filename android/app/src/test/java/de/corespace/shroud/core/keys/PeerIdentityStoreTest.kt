@@ -1,6 +1,7 @@
 package de.corespace.shroud.core.keys
 
 import de.corespace.shroud.core.crypto.B64
+import de.corespace.shroud.core.crypto.CryptoError
 import de.corespace.shroud.core.storage.ScriptedSealer
 import de.corespace.shroud.core.storage.SealResult
 import de.corespace.shroud.core.storage.SealedFile
@@ -14,6 +15,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -91,18 +93,47 @@ class PeerIdentityStoreTest {
         assertArrayEquals(ByteArray(32) { 2 }, store().publicKey(peer))
     }
 
-    /** A merge over a record the locked phone refuses would drop every other pin: writes wait. */
+    /**
+     * A locked phone (or a transient Keystore error) is never "not pinned": that would let a
+     * server-sent key through as a first use. Every reader says so; a merge over the refused record
+     * would drop every other pin, so writes refuse too.
+     */
     @Test
-    fun aLockedPhoneReadsNothingAndDropsWritesUntilItReads() {
+    fun aLockedPhoneIsUnavailableNeverNotPinnedAndWritesWait() {
         val peer = UUID.randomUUID()
-        store().save(peer, ByteArray(32) { 1 })
-        sealer.readFailure = SealResult.DeviceLocked
-        val store = store()
-        assertNull(store.publicKey(peer))
-        store.save(UUID.randomUUID(), ByteArray(32) { 9 })
-        sealer.readFailure = null
-        assertArrayEquals("not cached while locked", ByteArray(32) { 1 }, store.publicKey(peer))
+        store().apply {
+            save(peer, ByteArray(32) { 1 })
+            setVerified(peer, true)
+        }
+        for (failure in listOf(SealResult.DeviceLocked, SealResult.Failed)) {
+            sealer.readFailure = failure
+            val store = store()
+            assertEquals(PeerIdentityStore.PinRead.Unavailable, store.pin(peer))
+            assertEquals(PeerIdentityStore.PinRead.Unavailable, store.pin(UUID.randomUUID()))
+            assertThrows(CryptoError.Locked::class.java) { store.publicKey(peer) }
+            assertThrows(CryptoError.Locked::class.java) { store.publicKeyBase64(peer) }
+            assertThrows(CryptoError.Locked::class.java) { store.isVerified(peer) }
+            assertThrows(CryptoError.Locked::class.java) { store.save(UUID.randomUUID(), ByteArray(32) { 9 }) }
+            assertThrows(CryptoError.Locked::class.java) { store.setVerified(peer, false) }
+            sealer.readFailure = null
+            val pinned = store.pin(peer) as PeerIdentityStore.PinRead.Pinned
+            assertArrayEquals("not cached while locked", ByteArray(32) { 1 }, pinned.key)
+            assertTrue(pinned.verified)
+        }
         assertEquals(1, Json.parseToJsonElement(sealer.open(file.readBytes()).decodeToString()).jsonObject["keys"]!!.jsonObject.size)
+    }
+
+    @Test
+    fun pinTellsPinnedFromNone() {
+        val store = store()
+        val peer = UUID.randomUUID()
+        assertEquals(PeerIdentityStore.PinRead.None, store.pin(peer))
+        store.save(peer, ByteArray(32) { 3 })
+        val pinned = store.pin(peer) as PeerIdentityStore.PinRead.Pinned
+        assertArrayEquals(ByteArray(32) { 3 }, pinned.key)
+        assertFalse(pinned.verified)
+        pinned.key.fill(0) // the caller's copy
+        assertArrayEquals(ByteArray(32) { 3 }, store.publicKey(peer))
     }
 
     @Test
@@ -140,5 +171,6 @@ class PeerIdentityStoreTest {
         val store = store()
         assertEquals("AAAA AAAA", store.publicKeyBase64(peer))
         assertNull(store.publicKey(peer))
+        assertEquals(PeerIdentityStore.PinRead.None, store.pin(peer))
     }
 }
