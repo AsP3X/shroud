@@ -108,14 +108,24 @@ class VaultFlowTest {
 
         ActivityScenario.launch(MainActivity::class.java).use {
             val unlock = CoroutineScope(Dispatchers.Default).async { crypto.unlockHistoryIfPossible(userId) }
-            assertTrue("the system prompt appeared", DeviceLock.answerPromptWithPin())
+            if (!DeviceLock.answerPromptWithPin()) {
+                val result = runBlocking { withTimeout(100_000) { unlock.await() } }
+                val direct = runCatching { runBlocking { keys.historyVault.unlock(userId) } }.exceptionOrNull()
+                val detail = (direct as? VaultError.Keystore)?.let { "${it.detail} cause=${it.cause}" }
+                throw AssertionError(
+                    "no system prompt (unlock=$result, error=${crypto.lastUnlockErrorMessage.value}, " +
+                        "top=${container.appPhase.topActivity}, direct=$direct $detail)",
+                )
+            }
             val unlocked = runBlocking { withTimeout(30_000) { unlock.await() } }
             assertTrue("vault unlock failed: ${crypto.lastUnlockErrorMessage.value}", unlocked)
+            // Checked while Shroud is still in front: the interim background lock
+            // (`ShroudApplication`, invariant 5) drops the keys once the activity closes.
+            assertEquals(userId, crypto.unlockedUserId.value)
+            assertFalse(crypto.needsHistoryUnlock.value)
+            assertFalse(crypto.vaultPromptInFlight.value)
+            assertTrue(keys.sealedLocalState.isUnlocked)
         }
-        assertEquals(userId, crypto.unlockedUserId.value)
-        assertFalse(crypto.needsHistoryUnlock.value)
-        assertFalse(crypto.vaultPromptInFlight.value)
-        assertTrue(keys.sealedLocalState.isUnlocked)
         assertEquals("no second PUT /keys/bundle, no request at all", 2, server.requests.size)
         assertEquals(1, server.requests.count { it == "PUT /api/v1/keys/bundle" })
         crypto.lock()

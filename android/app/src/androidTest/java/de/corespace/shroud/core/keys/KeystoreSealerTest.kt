@@ -100,7 +100,16 @@ class KeystoreSealerTest {
         DeviceLock.lockNow()
         try {
             assertTrue(DeviceLock.isLocked)
-            assertEquals(SealResult.DeviceLocked, wu.openClassified(wuSealed))
+            // Keystore locks the keys a moment after the keyguard shows; until then the record still
+            // opens. What matters: once refused, it is DeviceLocked — never "gone" (KeyGone/Corrupt
+            // would make the identity look wiped, crypto spec §9.2).
+            var last: SealResult? = null
+            val refused = DeviceLock.waitFor(20_000) {
+                last = wu.openClassified(wuSealed)
+                last !is SealResult.Opened
+            }
+            assertTrue("the WhenUnlocked key never refused while locked (last: $last)", refused)
+            assertEquals(SealResult.DeviceLocked, last)
             assertArrayEquals(byteArrayOf(7, 8, 9), (afu.openClassified(afuSealed) as SealResult.Opened).bytes)
         } finally {
             DeviceLock.ensureUnlocked()
