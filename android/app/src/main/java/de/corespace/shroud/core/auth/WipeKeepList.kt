@@ -1,5 +1,6 @@
 package de.corespace.shroud.core.auth
 
+import de.corespace.shroud.core.storage.PrefsFiles
 import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -11,9 +12,8 @@ import java.util.concurrent.CopyOnWriteArrayList
  * address, the public transcription weights and their bookkeeping, platform and library state
  * that breaks if deleted under a running process.
  *
- * Owning areas register their entries when the container is built (`AuthModule` holds the
- * defaults of 00-plan §1.5; a package that keeps more registers through `container.auth.wipeKeepList`).
- * Registration and reads are thread-safe.
+ * [forApp] registers the kept rows of 00-plan §1.5 when the container is built; a package that
+ * keeps more registers through `container.auth.wipeKeepList`. Registration and reads are thread-safe.
  */
 class WipeKeepList {
     private class PrefsRule(val file: String, val key: String?, val prefix: String, val suffix: String)
@@ -60,5 +60,40 @@ class WipeKeepList {
     fun holdsKeptPath(dir: File): Boolean {
         val prefix = dir.absolutePath + File.separator
         return paths.any { it.startsWith(prefix) }
+    }
+
+    companion object {
+        /** `ServerConfigurationStore.KEY`, the server this app talks to. */
+        const val SERVER_CONFIGURATION_KEY = "shroud.server.configuration"
+
+        /** Public Whisper weights under `no_backup/` (W2-WHISPER / W3-TRANSCRIPTION), kept across Log Out (P7). */
+        const val WHISPER_DIR = "whisper"
+
+        private const val WORK_DATABASE = "androidx.work.workdb"
+        private const val WORK_PREFS = "androidx.work.util.preferences"
+
+        /**
+         * The app's keep-list: the kept rows of 00-plan §1.5 and the platform state of settings-lock
+         * §14.3.2 — none of it the account's (`DeviceDataWipe.swift:78-89, 226-237`).
+         */
+        fun forApp(locations: WipeLocations): WipeKeepList = WipeKeepList().apply {
+            // The server this app talks to.
+            keepPrefsKey(PrefsFiles.SERVER, SERVER_CONFIGURATION_KEY)
+            keepPrefsKey(PrefsFiles.WIPE, DeviceDataWipe.PENDING_KEY)
+            // Device facts such as "notifications permission asked" survive Log Out (P6).
+            keepPrefsKeyPrefix(PrefsFiles.DEVICE, "")
+            // Which transcription model is installed and its readiness flags; the public weights.
+            keepPrefsKey(PrefsFiles.VOICE, "transcription.model")
+            keepPrefsKeyPrefix(PrefsFiles.VOICE, "transcription.", ".ready")
+            keepPath(File(locations.noBackupDir, WHISPER_DIR))
+            // Platform and library state that breaks if deleted under a running process: the code
+            // cache, androidx.profileinstaller's markers, WorkManager's database and old preferences.
+            keepPath(locations.codeCacheDir)
+            keepPath(File(locations.filesDir, "profileinstaller"))
+            keepPath(File(locations.filesDir, "profileInstalled"))
+            keepPath(File(locations.noBackupDir, WORK_DATABASE))
+            keepPath(File(locations.databasesDir, WORK_DATABASE))
+            keepPrefsKeyPrefix(WORK_PREFS, "")
+        }
     }
 }

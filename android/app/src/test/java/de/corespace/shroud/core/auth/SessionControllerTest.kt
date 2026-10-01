@@ -3,6 +3,7 @@ package de.corespace.shroud.core.auth
 import de.corespace.shroud.core.model.deviceUuid
 import de.corespace.shroud.core.model.userUuid
 import de.corespace.shroud.core.net.ApiClient
+import de.corespace.shroud.core.net.ApiError
 import de.corespace.shroud.core.net.ShroudApi
 import de.corespace.shroud.core.storage.SealedFile
 import de.corespace.shroud.testing.XorSealer
@@ -28,13 +29,19 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 
+/**
+ * `ios/shroudTests/SessionAuthFailureTests.swift` (every case, verbatim tokens) plus the Android
+ * listener path through a real `ApiClient` (settings-lock §13, §18.1).
+ */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionControllerTest {
     @get:Rule val folder = TemporaryFolder()
     private lateinit var server: MockWebServer
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = true }
-    private var signedOutCalls = 0
+    private var marks = 0
+    private var wipePresented = false
     private val signedOutWipes = mutableListOf<Boolean>()
 
     private fun session(token: String = "tok", user: String = "noah") =
@@ -46,15 +53,24 @@ class SessionControllerTest {
         json,
     )
 
-    /** Wired as AppContainer wires it: the client reports every authenticated answer to the session. */
+    /** Wired as AuthModule wires it: the client reports every authenticated answer to the session. */
     private fun controller(store: SessionStore = store()): SessionController {
         val client = ApiClient({ server.url("/api/v1").toString() }, json)
         return SessionController(
             ShroudApi(client),
             store,
             CoroutineScope(Dispatchers.Unconfined),
-            onSignedOut = { wipe -> signedOutCalls++; signedOutWipes += wipe },
+            wipeMarker = { marks++ },
+            isWipePresented = { wipePresented },
+            onSignedOut = { wipe -> signedOutWipes += wipe },
         ).also { client.authOutcomes = it.authOutcomes }
+    }
+
+    /** iOS `applySessionForTests(sampleSession)`: a stored session, no network. */
+    private fun signedIn(): SessionController {
+        val st = store()
+        st.save(SAMPLE)
+        return controller(st)
     }
 
     @Before
@@ -69,6 +85,138 @@ class SessionControllerTest {
         server.close()
         Dispatchers.resetMain()
     }
+
+    // ---- SessionAuthFailureTests.swift ----
+
+    @Test
+    fun ignoresFailuresWhenNotSignedIn() {
+        val c = controller()
+        repeat(3) { c.recordAuthenticationFailure() }
+        assertEquals(0, c.consecutiveAuthenticationFailures)
+        assertFalse(c.pendingFullLocalWipe.value)
+        assertNull(c.session.value)
+        assertEquals(0, marks)
+    }
+
+    @Test
+    fun resetClearsConsecutiveFailures() {
+        val c = signedIn()
+        c.recordAuthenticationFailure()
+        c.resetAuthenticationFailures()
+        assertEquals(0, c.consecutiveAuthenticationFailures)
+    }
+
+    @Test
+    fun consumePendingFullLocalWipeIsOneShot() {
+        val c = controller()
+        assertFalse(c.consumePendingFullLocalWipe())
+        assertFalse(c.consumePendingFullLocalWipe())
+    }
+
+    @Test
+    fun thresholdConstantIsAtLeastTwo() {
+        assertTrue(SessionController.AUTH_FAILURE_THRESHOLD >= 2)
+        assertEquals(3, SessionController.AUTH_FAILURE_THRESHOLD)
+    }
+
+    @Test
+    fun threeFailuresMarkFullWipeAndKeepTheToken() {
+        val c = signedIn()
+        assertTrue(c.session.value != null)
+
+        c.recordAuthenticationFailure()
+        assertTrue(c.session.value != null)
+        assertEquals(1, c.consecutiveAuthenticationFailures)
+        assertFalse(c.pendingFullLocalWipe.value)
+
+        c.recordAuthenticationFailure()
+        assertTrue(c.session.value != null)
+        assertEquals(2, c.consecutiveAuthenticationFailures)
+
+        // The token stays until the wipe revokes it. A fourth 401 must not start a second wipe.
+        c.recordAuthenticationFailure()
+        assertEquals("test-token", c.session.value?.token)
+        assertTrue(c.pendingFullLocalWipe.value)
+        assertEquals(0, c.consecutiveAuthenticationFailures)
+        // The pending marker is persisted now, so a kill before the overlay still finishes.
+        assertEquals(1, marks)
+        c.recordAuthenticationFailure()
+        assertTrue(c.session.value != null)
+        assertEquals(1, marks)
+        assertEquals(WipeReason.SessionEnded, c.pendingWipeReason)
+        assertTrue(c.consumePendingFullLocalWipe())
+        assertFalse(c.consumePendingFullLocalWipe())
+        // The stored session is untouched too.
+        assertEquals("test-token", store().session?.token)
+    }
+
+    @Test
+    fun deviceRemovedMarksFullWipeOnFirstAnswer() {
+        val c = signedIn()
+        c.recordDeviceRemoved("test-token")
+        assertTrue(c.pendingFullLocalWipe.value)
+        assertTrue(c.sessionEndedByDeviceRemoval.value)
+        assertEquals(WipeReason.Removed, c.pendingWipeReason)
+        // Like the 401 streak, the token stays for the wipe to revoke, and a second report
+        // (the socket and a request both saying so) does not queue another wipe.
+        assertEquals("test-token", c.session.value?.token)
+        c.recordDeviceRemoved("test-token")
+        c.recordAuthenticationFailure()
+        assertEquals(1, marks)
+        assertTrue(c.consumePendingFullLocalWipe())
+        assertFalse(c.consumePendingFullLocalWipe())
+    }
+
+    @Test
+    fun deviceRemovedIgnoredWhenSignedOut() {
+        val c = controller()
+        c.recordDeviceRemoved("test-token")
+        assertFalse(c.pendingFullLocalWipe.value)
+    }
+
+    @Test
+    fun deviceRemovedAboutAnotherTokenIsIgnored() {
+        // A late reply to a request made before this login: the old session was removed, not this one.
+        val c = signedIn()
+        c.recordDeviceRemoved("an-older-token")
+        assertFalse(c.pendingFullLocalWipe.value)
+        assertEquals(0, marks)
+    }
+
+    @Test
+    fun interruptedWipeSuppressesASecondOne() {
+        val c = signedIn()
+        c.beginInterruptedWipe()
+        c.recordDeviceRemoved("test-token")
+        assertFalse(c.pendingFullLocalWipe.value)
+    }
+
+    @Test
+    fun aRemovalWhileTheWipeRunsQueuesNothing() {
+        // Log Out on a removed phone: its own logout answers DEVICE_REMOVED (`:179-182`).
+        val c = signedIn()
+        wipePresented = true
+        c.recordDeviceRemoved("test-token")
+        assertFalse(c.pendingFullLocalWipe.value)
+        assertFalse(c.sessionEndedByDeviceRemoval.value)
+        // From now on nothing counts: the session is ending.
+        repeat(3) { c.recordAuthenticationFailure() }
+        assertFalse(c.pendingFullLocalWipe.value)
+        assertEquals(0, marks)
+    }
+
+    @Test
+    fun onlyDeviceRemovedCodeIsARemoval() {
+        val removed = """{"error":{"code":"DEVICE_REMOVED","message":"x"}}"""
+        val plain = """{"error":{"code":"UNAUTHORIZED","message":"x"}}"""
+        assertTrue(ApiError.from(401, removed).isDeviceRemoved)
+        assertTrue(ApiError.from(401, removed).isUnauthorized)
+        assertFalse(ApiError.from(401, plain).isDeviceRemoved)
+        assertFalse(ApiError.from(401, "").isDeviceRemoved)
+        assertFalse(ApiError.from(403, removed).isDeviceRemoved)
+    }
+
+    // ---- The listener path (any authenticated request, HTTP or socket) ----
 
     @Test
     fun registerPersistsAndNormalises() = runTest {
@@ -87,7 +235,7 @@ class SessionControllerTest {
     }
 
     @Test
-    fun loginReusesTheAnchoredDeviceAfterLogOutClearedTheSession() = runTest {
+    fun loginReusesTheAnchoredDeviceAfterTheSessionWasCleared() = runTest {
         server.enqueue(MockResponse(code = 200, body = session()))
         val st = store()
         st.save(Session("old", USER_ID.lowercase(), "noah", null, ANCHOR))
@@ -109,55 +257,33 @@ class SessionControllerTest {
     }
 
     @Test
-    fun logOutWipesTheAnchorAndRevokes() = runTest {
-        server.enqueue(MockResponse(code = 201, body = session()))
-        server.enqueue(MockResponse(code = 204))
-        val c = controller()
-        c.register("noah", "pw")
-        server.takeRequest()
-        c.logOut()
-        assertNull(c.session.value)
-        assertEquals(1, signedOutCalls)
-        // Log Out deletes the stored identity and vault too (DeviceWipeController.swift:209).
-        assertEquals(listOf(true), signedOutWipes)
-        assertNull(store().anchorFor("noah"))
-        val revoke = server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)!!
-        assertEquals("/api/v1/auth/logout", revoke.url.encodedPath)
-        assertEquals("Bearer tok", revoke.headers["Authorization"])
-    }
-
-    @Test
-    fun deviceRemovedEndsTheSessionAtOnce() = runTest {
+    fun deviceRemovedOnARequestMarksTheWipeAndKeepsTheSession() = runTest {
         server.enqueue(MockResponse(code = 201, body = session()))
         server.enqueue(MockResponse(code = 401, body = """{"error":{"code":"DEVICE_REMOVED","message":"removed"}}"""))
         val c = controller()
         c.register("noah", "pw")
         assertEquals(SessionController.Validation.DeviceRemoved, c.validate())
-        assertNull(c.session.value)
-        assertNull(store().session)
-        assertEquals(1, signedOutCalls)
-        assertEquals(listOf(true), signedOutWipes)
-        // The root reads the reason once (wipe overlay message), then it is gone.
-        assertEquals(SessionController.Validation.DeviceRemoved, c.endedByServer.value)
-        assertEquals(SessionController.Validation.DeviceRemoved, c.consumeEnding())
-        assertNull(c.endedByServer.value)
+        assertEquals("tok", c.session.value?.token)
+        assertEquals("tok", store().session?.token)
+        assertTrue(c.pendingFullLocalWipe.value)
+        assertTrue(c.sessionEndedByDeviceRemoval.value)
+        assertEquals(1, marks)
+        // No keys dropped here: the wipe locks crypto itself, in order.
+        assertEquals(emptyList<Boolean>(), signedOutWipes)
     }
 
     @Test
-    fun aRemovalSeenOnTheSocketWipesOnlyItsOwnSession() = runTest {
+    fun aRemovalSeenOnTheSocketCountsOnlyForItsOwnSession() = runTest {
         server.enqueue(MockResponse(code = 201, body = session(token = "new")))
         val c = controller()
         c.register("noah", "pw")
-        // A late answer about an older login (SessionController.swift:170-174): nothing happens.
+        // A late answer about an older login (`SessionController.swift:174-178`): nothing happens.
         c.authOutcomes.onDeviceRemoved("old")
-        assertEquals("new", c.session.value?.token)
-        assertEquals(0, signedOutCalls)
-        assertNull(c.endedByServer.value)
-        // The socket's auth.error for this session's token wipes at once.
+        assertFalse(c.pendingFullLocalWipe.value)
+        // The socket's auth.error for this session's token marks the wipe at once.
         c.authOutcomes.onDeviceRemoved("new")
-        assertNull(c.session.value)
-        assertEquals(listOf(true), signedOutWipes)
-        assertEquals(SessionController.Validation.DeviceRemoved, c.endedByServer.value)
+        assertTrue(c.pendingFullLocalWipe.value)
+        assertEquals(WipeReason.Removed, c.pendingWipeReason)
     }
 
     @Test
@@ -168,27 +294,14 @@ class SessionControllerTest {
         c.register("noah", "pw")
         val api = ShroudApi(ApiClient({ server.url("/api/v1").toString() }, json).also { it.authOutcomes = c.authOutcomes })
         repeat(3) { runCatching { api.contacts("tok") } }
-        assertNull(c.session.value)
+        assertTrue(c.pendingFullLocalWipe.value)
+        assertEquals("tok", c.session.value?.token)
         assertEquals(SessionController.Validation.SignedOut, c.sessionAfterFailure())
-        // The third 401 runs the full wipe: onSignedOut(wipe = true) deletes the identity and vault.
-        assertEquals(listOf(true), signedOutWipes)
+        assertEquals(WipeReason.SessionEnded, c.pendingWipeReason)
     }
 
     @Test
-    fun logOutOfOurOwnLeavesNoServerReason() = runTest {
-        server.enqueue(MockResponse(code = 201, body = session()))
-        server.enqueue(MockResponse(code = 204))
-        val c = controller()
-        c.register("noah", "pw")
-        server.takeRequest()
-        c.logOut()
-        server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)
-        assertNull(c.endedByServer.value)
-        assertEquals(SessionController.Validation.Offline, c.sessionAfterFailure())
-    }
-
-    @Test
-    fun plain401sSignOutOnlyAfterThreeInARowAndSuccessResets() = runTest {
+    fun plain401sEndTheSessionOnlyAfterThreeInARowAndSuccessResets() = runTest {
         server.enqueue(MockResponse(code = 201, body = session()))
         repeat(2) { server.enqueue(MockResponse(code = 401, body = "")) }
         server.enqueue(MockResponse(code = 200, body = """{"user":{"id":"$USER_ID","username":"noah"},"device":{"id":"$DEVICE_ID"}}"""))
@@ -200,13 +313,27 @@ class SessionControllerTest {
         assertEquals(SessionController.Validation.Valid, c.validate())
         assertEquals(SessionController.Validation.Offline, c.validate())
         assertEquals(SessionController.Validation.Offline, c.validate())
+        assertFalse(c.pendingFullLocalWipe.value)
         assertEquals(SessionController.Validation.SignedOut, c.validate())
-        assertNull(c.session.value)
-        // The third 401 is iOS markSessionEnded(): the full wipe, stored identity, vault and device
-        // anchor included (RootView.swift:186-194, :206-213), as for a removal.
-        assertEquals(listOf(true), signedOutWipes)
-        assertNull(store().anchorFor("noah"))
-        assertEquals(SessionController.Validation.SignedOut, c.consumeEnding())
+        assertTrue(c.pendingFullLocalWipe.value)
+        assertEquals("tok", c.session.value?.token)
+    }
+
+    @Test
+    fun validateWritesBackOnlyAChangedProfile() = runTest {
+        server.enqueue(MockResponse(code = 201, body = session()))
+        server.enqueue(MockResponse(code = 200, body = """{"user":{"id":"$USER_ID","username":"noah","share_code":"ABCDEFGHJK"},"device":{"id":"$DEVICE_ID"}}"""))
+        server.enqueue(MockResponse(code = 200, body = """{"user":{"id":"$USER_ID","username":"noah","share_code":"ZZZZZZZZZZ"},"device":{"id":"$DEVICE_ID"}}"""))
+        val c = controller()
+        c.register("noah", "pw")
+        val file = File(folder.root, "session.sealed")
+        val written = file.lastModified()
+        file.setLastModified(written - 10_000)
+        assertEquals(SessionController.Validation.Valid, c.validate())
+        assertEquals(written - 10_000, file.lastModified())
+        assertEquals(SessionController.Validation.Valid, c.validate())
+        assertEquals("ZZZZZZZZZZ", c.session.value?.shareCode)
+        assertEquals("ZZZZZZZZZZ", store().session?.shareCode)
     }
 
     @Test
@@ -217,7 +344,63 @@ class SessionControllerTest {
         server.close()
         repeat(4) { assertEquals(SessionController.Validation.Offline, c.validate()) }
         assertTrue(c.session.value != null)
-        assertFalse(signedOutCalls > 0)
+        assertFalse(c.pendingFullLocalWipe.value)
+    }
+
+    // ---- logout(): the wipe's endLocalSession step ----
+
+    @Test
+    fun logoutForgetsSessionAndAnchorThenRevokes() = runTest {
+        server.enqueue(MockResponse(code = 201, body = session()))
+        server.enqueue(MockResponse(code = 204))
+        val c = controller()
+        c.register("noah", "pw")
+        server.takeRequest()
+        c.logout()
+        assertNull(c.session.value)
+        assertNull(store().session)
+        assertTrue(c.hasNoSession())
+        assertNull(store().anchorFor("noah"))
+        val revoke = server.takeRequest(5, TimeUnit.SECONDS)!!
+        assertEquals("/api/v1/auth/logout", revoke.url.encodedPath)
+        assertEquals("Bearer tok", revoke.headers["Authorization"])
+        // The wipe drops the keys itself; logout does not.
+        assertEquals(emptyList<Boolean>(), signedOutWipes)
+    }
+
+    @Test
+    fun logoutEndsAForcedSignOutSoTheNextSessionCountsAgain() = runTest {
+        val c = signedIn()
+        c.recordDeviceRemoved("test-token")
+        assertTrue(c.consumePendingFullLocalWipe())
+        server.enqueue(MockResponse(code = 401, body = """{"error":{"code":"DEVICE_REMOVED","message":"removed"}}"""))
+        c.logout()
+        // The background revoke of the old token: its DEVICE_REMOVED answer finds no session to end.
+        assertEquals("Bearer test-token", server.takeRequest(5, TimeUnit.SECONDS)!!.headers["Authorization"])
+        assertFalse(c.sessionEndedByDeviceRemoval.value)
+        @Suppress("DEPRECATION")
+        assertEquals(SessionController.Validation.DeviceRemoved, c.consumeEnding())
+
+        server.enqueue(MockResponse(code = 201, body = session(token = "next")))
+        c.register("noah", "pw")
+        c.recordDeviceRemoved("next")
+        assertTrue(c.pendingFullLocalWipe.value)
+    }
+
+    @Test
+    @Suppress("DEPRECATION")
+    fun theInterimLogOutStillSignsOutAtOnce() = runTest {
+        server.enqueue(MockResponse(code = 201, body = session()))
+        server.enqueue(MockResponse(code = 204))
+        val c = controller()
+        c.register("noah", "pw")
+        server.takeRequest()
+        c.logOut()
+        assertNull(c.session.value)
+        assertEquals(listOf(true), signedOutWipes)
+        assertNull(c.endedByServer.value)
+        assertEquals(SessionController.Validation.Offline, c.sessionAfterFailure())
+        assertEquals("/api/v1/auth/logout", server.takeRequest(5, TimeUnit.SECONDS)!!.url.encodedPath)
     }
 
     private companion object {
@@ -225,5 +408,8 @@ class SessionControllerTest {
         const val USER_ID = "8F14E45F-CEEA-467A-9575-3A6B7A1E6C0E"
         const val DEVICE_ID = "2E6F9B0C-1D3A-4E5B-8C7D-9F0A1B2C3D4E"
         const val ANCHOR = "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+
+        /** `SessionAuthFailureTests.sampleSession` (`:131-137`), lower-case wire ids. */
+        val SAMPLE = Session("test-token", "11111111-1111-1111-1111-111111111111", "tester", null, "22222222-2222-2222-2222-222222222222")
     }
 }

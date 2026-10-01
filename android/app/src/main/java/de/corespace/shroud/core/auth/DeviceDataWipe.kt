@@ -36,6 +36,7 @@ data class WipeLocations(
     val noBackupDir: File,
     val cacheDir: File,
     val databasesDir: File,
+    val codeCacheDir: File = File(dataDir, "code_cache"),
     val externalFiles: List<File> = emptyList(),
     val externalCache: List<File> = emptyList(),
 ) {
@@ -62,11 +63,12 @@ data class WipeLocations(
             noBackupDir = context.noBackupFilesDir,
             cacheDir = context.cacheDir,
             databasesDir = File(context.dataDir, "databases"),
+            codeCacheDir = context.codeCacheDir,
             externalFiles = context.getExternalFilesDirs(null).filterNotNull(),
             externalCache = context.externalCacheDirs.filterNotNull(),
         )
 
-        /** The layout of a data directory under [root] (`files/`, `no_backup/`, `cache/`, `databases/`), for tests. */
+        /** The layout of a data directory under [root] (`files/`, `no_backup/`, `cache/`, `databases/`, `code_cache/`), for tests. */
         fun under(root: File): WipeLocations = WipeLocations(
             dataDir = root,
             filesDir = File(root, "files"),

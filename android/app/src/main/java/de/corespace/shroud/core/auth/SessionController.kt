@@ -6,6 +6,7 @@ import de.corespace.shroud.core.net.ApiError
 import de.corespace.shroud.core.net.AuthOutcomeListener
 import de.corespace.shroud.core.net.AuthSessionResponse
 import de.corespace.shroud.core.net.ShroudApi
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -40,6 +41,7 @@ import kotlinx.coroutines.withContext
  * @param isWipePresented whether the device wipe is already running (`SessionAuthBridge.deviceWipe?.isPresented`).
  * @param onSignedOut only for the deprecated [logOut] / [signOutLocally] path: drops the keys
  *   (its argument is the wipe flag). The device wipe locks crypto itself, in order.
+ * @param io where the session store's disk and Keystore work runs.
  */
 class SessionController(
     private val api: ShroudApi,
@@ -48,6 +50,7 @@ class SessionController(
     private val wipeMarker: WipePendingMarker = WipePendingMarker.None,
     private val isWipePresented: () -> Boolean = { false },
     private val onSignedOut: (wipe: Boolean) -> Unit = {},
+    private val io: CoroutineDispatcher = Dispatchers.IO,
 ) {
     private val state = MutableStateFlow(store.session)
 
@@ -114,7 +117,7 @@ class SessionController(
     suspend fun login(username: String, password: String): Session {
         val name = normalize(username)
         val anchor = state.value?.takeIf { it.username == name }?.deviceId
-            ?: withContext(Dispatchers.IO) { store.anchorFor(name) }
+            ?: withContext(io) { store.anchorFor(name) }
         return adopt(api.login(name, password, Ids.parse(anchor)))
     }
 
@@ -136,7 +139,7 @@ class SessionController(
             if (state.value != current) return Validation.Offline
             val refreshed = current.copy(username = me.user.username, shareCode = me.user.shareCode ?: current.shareCode)
             if (refreshed != current) {
-                withContext(Dispatchers.IO) { store.save(refreshed) }
+                withContext(io) { store.save(refreshed) }
                 if (state.value == current) state.value = refreshed
             }
             // Success is also recorded by the listener; reset here so paths without it work (`:131-132`).
@@ -220,7 +223,7 @@ class SessionController(
         val token = state.value?.token
         val forced = isForceLoggingOut || pendingWipe.value
         val removed = removal.value
-        withContext(Dispatchers.IO) { store.wipe() }
+        withContext(io) { store.wipe() }
         state.value = null
         consecutiveAuthenticationFailures = 0
         isForceLoggingOut = false
@@ -247,8 +250,9 @@ class SessionController(
     }
 
     private fun revokeInBackground(token: String) {
-        // Built before this returns, so it goes to the server the session belonged to.
-        appScope.launch(Dispatchers.Main.immediate) { runCatching { api.logout(token) } }
+        // On the main thread (appScope is Main.immediate) the request is built before this returns, so
+        // it goes to the server the session belonged to even if the server setting changes next.
+        appScope.launch { runCatching { api.logout(token) } }
     }
 
     /** The persisted [Session] keeps lower-case String ids (plan C1); read them back as UUIDs via `userUuid` / `deviceUuid`. */
@@ -260,7 +264,7 @@ class SessionController(
             shareCode = response.user.shareCode,
             deviceId = Ids.wire(response.device.id),
         )
-        withContext(Dispatchers.IO) { store.save(session) }
+        withContext(io) { store.save(session) }
         consecutiveAuthenticationFailures = 0
         ended.value = null
         state.value = session

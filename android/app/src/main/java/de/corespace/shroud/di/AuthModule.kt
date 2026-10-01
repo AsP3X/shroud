@@ -66,11 +66,13 @@ class AuthModule(container: AppContainer) : AppModule(container) {
     }
 
     /** What survives the wipe; packages that keep more register here (settings-lock §14.3.2). */
-    val wipeKeepList: WipeKeepList by lazy { WipeKeepList().also(::registerKeptState) }
+    val wipeKeepList: WipeKeepList by lazy { WipeKeepList.forApp(locations) }
+
+    private val locations: WipeLocations by lazy { WipeLocations.of(app) }
 
     val deviceDataWipe: DeviceDataWipe by lazy {
         DeviceDataWipe(
-            locations = WipeLocations.of(app),
+            locations = locations,
             keyMaterial = container.keys.keyMaterialWipe,
             keystore = KeyMaterialWipe.AndroidKeystoreAliases(),
             prefs = AndroidPrefsAccess(app, KNOWN_PREFS),
@@ -137,43 +139,10 @@ class AuthModule(container: AppContainer) : AppModule(container) {
     private fun reduceMotion(): Boolean =
         runCatching { Settings.Global.getFloat(app.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }.getOrDefault(false)
 
-    /**
-     * The kept rows of 00-plan §1.5 and the platform state of settings-lock §14.3.2: none of it is the
-     * account's (`DeviceDataWipe.swift:78-89, 226-237`).
-     */
-    private fun registerKeptState(keep: WipeKeepList) {
-        val noBackup = app.noBackupFilesDir
-        // The server this app talks to (`ServerConfigurationStore`).
-        keep.keepPrefsKey(PrefsFiles.SERVER, SERVER_CONFIGURATION_KEY)
-        keep.keepPrefsKey(PrefsFiles.WIPE, DeviceDataWipe.PENDING_KEY)
-        // Device facts such as "notifications permission asked" survive Log Out (P6).
-        keep.keepPrefsKeyPrefix(PrefsFiles.DEVICE, "")
-        // Which transcription model is installed, and its readiness flags; the public weights themselves.
-        keep.keepPrefsKey(PrefsFiles.VOICE, "transcription.model")
-        keep.keepPrefsKeyPrefix(PrefsFiles.VOICE, "transcription.", ".ready")
-        keep.keepPath(File(noBackup, WHISPER_DIR))
-        // Platform and library state that breaks if deleted under a running process.
-        keep.keepPath(app.codeCacheDir)
-        keep.keepPath(File(app.filesDir, "profileinstaller"))
-        keep.keepPath(File(app.filesDir, "profileInstalled"))
-        keep.keepPath(File(noBackup, WORK_DATABASE))
-        keep.keepPath(app.getDatabasePath(WORK_DATABASE))
-        keep.keepPrefsKeyPrefix(WORK_PREFS, "")
-    }
-
     companion object {
         const val SESSION_ALIAS = "shroud.session.v1"
         const val SESSION_FILE = "session.sealed"
         const val ANCHOR_FILE = "device-anchor.sealed"
-
-        /** `ServerConfigurationStore.KEY`. */
-        const val SERVER_CONFIGURATION_KEY = "shroud.server.configuration"
-
-        /** Public Whisper weights (W2-WHISPER / W3-TRANSCRIPTION), kept across Log Out (P7). */
-        const val WHISPER_DIR = "whisper"
-
-        private const val WORK_DATABASE = "androidx.work.workdb"
-        private const val WORK_PREFS = "androidx.work.util.preferences"
 
         /** Every prefs file the app writes (00-plan §1.5), also before `apply()` reached the disk. */
         private val KNOWN_PREFS = listOf(
