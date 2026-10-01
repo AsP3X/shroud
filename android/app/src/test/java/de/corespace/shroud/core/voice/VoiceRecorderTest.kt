@@ -358,6 +358,22 @@ class VoiceRecorderTest {
         assertEquals(emptyList<String>(), leftovers())
     }
 
+    /** Review W2: a failed take that is then cancelled (slide away, background, wipe) leaves no plaintext. */
+    @Test
+    fun aMicrophoneThatFailsMidTakeAndIsThenCancelledLeavesNothingBehind() = runTest(UnconfinedTestDispatcher()) {
+        val source = FakePcmSource(totalFrames = rate * 2, sample = speech, failReadAfter = rate)
+        val capture = FakeCapture({ source })
+        val recorder = recorder(capture)
+        recorder.start()
+        assertTrue(source.released.await(5, TimeUnit.SECONDS))
+
+        recorder.cancel()
+        assertFalse(recorder.isRecording)
+        awaitCondition { leftovers().isEmpty() }
+        assertTrue(capture.encoders.single().aborted)
+        assertFalse(capture.encoders.single().finished)
+    }
+
     @Test
     fun recordingToStringNeverPrintsTheAudio() {
         val take = VoiceRecorder.Recording(ByteArray(10), 1234, ByteArray(44))

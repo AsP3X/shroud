@@ -265,7 +265,11 @@ class VoiceRecorder(
         } finally {
             runCatching { take.source.stop() }
             runCatching { take.source.release() }
-            if (take.cancelled) {
+            // A failed take is over too: whether finish() (EncodeFailed) or cancel() (slide away,
+            // background, focus loss, wipe) ends it, its partial plaintext audio must not stay in
+            // cacheDir (plan §1.1 rule 7). complete() never reads the file of a failed take, and
+            // abort() is idempotent.
+            if (take.cancelled || take.failed) {
                 take.encoder.abort()
                 take.file.delete()
             }
