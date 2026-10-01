@@ -21,7 +21,8 @@ import { b64ToBytes, bytesToB64, concatBytes, randomBytes, utf8 } from "./bytes"
  *               putting its own name back)
  *   sealed    = nonce(12) ‖ AES-256-GCM ciphertext(128) ‖ tag(16), sent as standard Base64
  *
- * Kind 4 is the Android app's (port plan decision P4, same byte as iOS `DeviceNameSeal.Kind`).
+ * Kind 4 is the Android app's (port plan decision P4; the same byte as iOS
+ * `DeviceNameSeal.Kind.android` and the Android app's `DeviceNameSeal.Kind.Android`).
  * A build without it reads 4 as "other", and a rename from such a build writes "other" back;
  * the Android app repairs that kind on its next unlock. Reading the kind here keeps a rename
  * from this browser from dropping it.
