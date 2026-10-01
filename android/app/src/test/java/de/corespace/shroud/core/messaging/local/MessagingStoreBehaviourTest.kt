@@ -7,12 +7,15 @@ import de.corespace.shroud.core.messaging.RosterSnapshot
 import de.corespace.shroud.core.model.Bytes
 import de.corespace.shroud.core.model.ChatMessage
 import de.corespace.shroud.core.model.ChatMessageKind
+import de.corespace.shroud.core.model.MessageReaction
 import de.corespace.shroud.core.model.NOTES_PEER_ID
+import de.corespace.shroud.core.model.ReceiptStatus
 import de.corespace.shroud.core.net.ContactItemDto
 import de.corespace.shroud.core.net.ContactRequestDto
 import de.corespace.shroud.core.net.UserCardDto
 import de.corespace.shroud.core.net.wire.Icu4jTextUnitsRule
 import de.corespace.shroud.core.net.wire.LinkPreview
+import de.corespace.shroud.core.net.wire.MessageReplyReference
 import de.corespace.shroud.testing.TempDirRule
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -403,6 +406,73 @@ class MessagingStoreBehaviourTest {
         assertEquals(900L, l.mediaByteCount)
         // The link message's media payload (with its blob key) was not replaced by its text wire.
         assertTrue(repository.plaintext(link.id)!!.toString(Charsets.UTF_8).contains("\"k\":\"blob-key\""))
+    }
+
+    // ---- Written-state skip across a cold start (`MessagingLocalRepository.swift:165-176`) ----
+
+    /**
+     * Hydrate records what it read as what the files hold, so the controller's first save after an
+     * unlock — the hydrated state handed straight back — rewrites nothing: not the roster, not a
+     * thread, not a cached plaintext. Every stored field takes part (quote, link preview, reactions,
+     * waveform, microsecond dates, the roster's DTO bridges), so a field that does not survive the
+     * row round trip shows up here as a rewritten file.
+     */
+    @Test
+    fun aSaveOfTheHydratedStateWritesNothing() {
+        val repository = fixture.repository()
+        val me = fixture.userId
+        val from = UUID.randomUUID()
+        val at = fixture.now.minusSeconds(3_600).plusNanos(123_456_000)
+        val reply = fixture.message(peer, "yes", createdAt = at).copy(
+            createdAtWire = "2026-09-21T13:13:20.123456Z",
+            replyTo = MessageReplyReference(UUID.randomUUID(), me, MessageReplyReference.Kind.Text, "ok?"),
+            reactions = listOf(MessageReaction(me, listOf("🔥", "👍"), 42), MessageReaction(peer, emptyList(), 7)),
+            receipt = ReceiptStatus.Read,
+        )
+        val link = fixture.message(peer, "https://komoot.com/tour/1398273").copy(
+            linkPreview = LinkPreview(
+                url = "https://komoot.com/tour/1398273",
+                siteName = "komoot",
+                title = "Herzogstand – Heimgarten ridge walk",
+                summary = "Intermediate hike · 13.6 km",
+                thumbnail = Bytes.of(byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte(), 0x00, 0x10, 0x4A, 0x46)),
+                imageWidth = 1200,
+                imageHeight = 630,
+            ),
+        )
+        val voice = fixture.message(peer, "Voice message").copy(
+            kind = ChatMessageKind.Voice,
+            mediaObjectId = UUID.randomUUID(),
+            durationMs = 2_300,
+            voiceWaveform = Bytes.of(byteArrayOf(0, 127, 128.toByte(), 255.toByte())),
+            transcript = "Bis gleich!",
+        )
+        val pending = fixture.message(peer, "on its way").copy(isMine = true, senderUserId = me, receipt = ReceiptStatus.Sending, pendingSync = true)
+        val gone = LocalTombstones.tombstone(fixture.message(peer, "gone"))
+        val note = fixture.message(NOTES_PEER_ID, "[todo:0]Buy milk").copy(kind = ChatMessageKind.Todo, todoDone = false)
+        repository.savePlaintext(voice.id, "{\"t\":\"voice\",\"mime\":\"audio/mp4\",\"k\":\"blob-key\"}".toByteArray())
+        fixture.persist(
+            repository,
+            mapOf(peer to listOf(reply, link, voice, pending, gone), NOTES_PEER_ID to listOf(note)),
+            RosterSnapshot(
+                conversations = listOf(CachedConversation(UUID.randomUUID(), peer, "alice", fixture.now.minusSeconds(86_400), at, 9, 2)),
+                contacts = listOf(ContactItemDto(peer, "alice", fixture.now.minusSeconds(86_400))),
+                incomingRequests = listOf(ContactRequestDto(UUID.randomUUID(), from, me, "pending", at, null, UserCardDto(from, "carol", null))),
+                unreadByPeer = mapOf(peer to 3),
+            ),
+        )
+        val files = fixture.shroudDir.walkTopDown().filter { it.isFile }.toList()
+        assertEquals(7, files.size) // roster, two threads, three text plaintexts and the voice payload
+        fixture.backdate(*files.toTypedArray())
+
+        val fresh = fixture.repository()
+        val hydrated = fresh.hydrate(fixture.userId)
+        fresh.persist(fixture.userId, MessagingSnapshot(hydrated.roster, hydrated.threads))
+        fixture.persistThread(fresh, peer, hydrated.threads.getValue(peer), hydrated.roster)
+
+        assertEquals(listOf(reply.id, link.id, voice.id, pending.id, gone.id), hydrated.threads[peer]?.map { it.id })
+        assertEquals(reply, hydrated.threads.getValue(peer)[0])
+        for (file in files) assertEquals(file.relativeTo(fixture.shroudDir).path, StoreFixture.OLD_MILLIS, file.lastModified())
     }
 
     // ---- Retention through the repository ----
