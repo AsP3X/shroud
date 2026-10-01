@@ -33,6 +33,24 @@ foundations, W2 engines, W3 screens and platform, W4 hardening and release). Wav
 - **Server, iOS, web (wave 1):** the server sends UnifiedPush to Android subscriptions and knows
   background sockets; iOS and web read the Android device kind (4); the web sends delivery acks.
 
+Still open from wave 1:
+
+- **Design (W1-DESIGN and the design parts of X1-IOS / X1-WEB): not done.** The kit frames
+  (action sheet, alert with a field, inset and compact sheets, menu picker, pull to refresh, light
+  and dark context card, toast with action) and the token variables of `design/Android-App.pen`,
+  the Log In new-phrase state, the removed-device wipe overlay and the Devices "Android app" tile
+  in `design/iOS-App.pen`, and the Devices "Android app" tile in `design/webclient.pen` are not in
+  the committed `.pen` files yet.
+- **Media crypto speed (media risk R1):** the streaming GCM benchmark
+  (`MediaCryptoBenchmarkTest`, 256 MiB, BouncyCastle) measured 2026-10-01 on emulators only:
+  Android 17 (API 37, `sdk_gphone64_arm64`) seal 44.3 MB/s, open 45.4 MB/s; Android 11 (API 30)
+  seal 66.7 MB/s, open 66.8 MB/s — the API 37 image is below the 50 MB/s target. No physical
+  phone measured yet; W2-MEDIA-STORE plans the hardware AES/CTR + GHASH fallback as required
+  unless a mid-range ARM64 phone reaches 50 MB/s.
+- Not run yet: the logcat review of §6.8 on a physical phone and the manual crypto matrix on a
+  Pixel and a Samsung (the emulator runs of the wave 1 device tests logged no token, username or
+  key).
+
 Sign Up still has two steps, unlike iOS (*Account*, then *Phrase*; nothing reaches the server
 before the phrase step's Create Account), refuses a phone without a screen lock, and asks for
 Android 17's local-network permission before the first request to a LAN or emulator-host server.
