@@ -346,6 +346,7 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
 
     /** `stopActivity`, `MessagingController.swift:520-554`. */
     private fun stopActivity(contactsWipe: Boolean) {
+        state.writable = false
         polling.stop()
         sessionJobs.forEach { it.cancel() }
         sessionJobs.clear()
@@ -382,6 +383,7 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
     /** `clearInMemoryState`, `MessagingController.swift:566-591`. The contacts' lists clear in `contacts.stop`. */
     private fun clearInMemoryState() {
         hydratedAheadOfStart = false
+        state.writable = false
         state.setConversations(emptyList())
         state.setThreads(emptyMap())
         typing.clearAll()
@@ -462,6 +464,7 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
     private fun lockMemoryNow() {
         hydratedAheadOfStart = false
         needsHydrate = true
+        state.writable = false
         state.bumpLockGeneration()
         state.setThreads(emptyMap())
         typing.clearAll()
@@ -531,6 +534,8 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
         restored.putIfAbsent(NOTES_PEER_ID, emptyList())
         state.setThreads(restored)
         state.editUnread { it + hydrated.roster.unreadByPeer }
+        // Memory now holds what the disk had: writes may go out again.
+        state.writable = true
     }
 
     // ---- Chat list (messaging-core §7.3) -----------------------------------------------------------
@@ -939,6 +944,6 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
  * [PeerIdentityChangedException], else the API's own mapping.
  */
 internal fun messagingUserMessage(error: Throwable): String = when (error) {
-    is PeerIdentityChangedException -> error.message ?: SessionController.userMessage(error)
+    is PeerIdentityChangedException -> PeerIdentityChangedException.MESSAGE
     else -> SessionController.userMessage(error)
 }

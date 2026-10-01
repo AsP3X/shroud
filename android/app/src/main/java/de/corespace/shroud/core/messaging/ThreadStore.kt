@@ -76,6 +76,14 @@ class ThreadStore(
     /** Drops what a purge leaves behind outside the store: the hydrate job of each id (the media loader). */
     internal var onPurge: (Collection<UUID>) -> Unit = {}
 
+    /**
+     * Whether what memory holds may be written: false until the sealed cache was read
+     * (hydrate) and again once memory was dropped (lock, stop) — an empty thread map written
+     * then would delete every thread file. iOS gets this from the repository losing its key
+     * (`local.setHistoryKey(nil)`, `MessagingController.swift:553, 660`).
+     */
+    var writable: Boolean = false
+
     /** Serial writer of every store call (messaging-core §23.3). */
     private val disk: CoroutineDispatcher = io.limitedParallelism(1)
 
@@ -173,6 +181,7 @@ class ThreadStore(
      * whole snapshot when the thread is gone. Messages the retention cap dropped leave memory too.
      */
     override fun persistThread(storePeer: UUID) {
+        if (!writable) return
         val userId = myUserId ?: return
         val messages = threadsFlow.value[storePeer] ?: return persistSnapshot()
         val settled = settle(messages)
@@ -185,6 +194,7 @@ class ThreadStore(
 
     /** Writes everything (`persistSnapshot`, `MessagingController.swift:4688-4706`). */
     override fun persistSnapshot() {
+        if (!writable) return
         val userId = myUserId ?: return
         val snapshot = MessagingSnapshot(rosterSnapshot(), threadsFlow.value.mapValues { settle(it.value) })
         onDisk {
