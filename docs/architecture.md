@@ -250,7 +250,14 @@ content to send.
   (`conversation.read`, plus badge-only pushes to iPhones without a socket). Like read receipts,
   the markers tell the server when a chat was read, never what it says.
 - **Web Push endpoints** must be https on a known push service (`WEB_PUSH_ALLOWED_HOSTS` adds
-  more), so a subscription cannot aim the server's requests at an arbitrary address.
+  more), so a subscription cannot aim the server's requests at an arbitrary address. The
+  Android app's endpoints (`client: "android"`, from the UnifiedPush distributor its user
+  installed) pass their own policy instead: https on port 443 on a built-in UnifiedPush server
+  (`ntfy.sh`, `up.conversations.im`, Mozilla's autopush) or one the operator lists
+  (`UNIFIEDPUSH_ALLOWED_HOSTS`); with `UNIFIEDPUSH_PUBLIC_HOSTS=true` any public name whose every
+  address is globally routable, the push connecting only to the addresses checked. Google's push
+  hosts are never accepted for Android, whatever is configured: the app is Google-free, and an
+  "embedded FCM distributor" would route its pushes through Google.
 - **Sounds** are generated (`scripts/gen_notification_sounds.py`) and shared by both apps.
 
 ## Security invariants
