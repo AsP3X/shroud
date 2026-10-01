@@ -25,7 +25,7 @@ class CryptoControllerTest {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = true }
     private val bip39 = TestWordlist.bip39
     private val words = List(11) { "abandon" } + "about"
-    private val session = Session("tok", "u1", "noah", null, "d1")
+    private val session = Session("tok", USER_ID, "noah", null, "2e6f9b0c-1d3a-4e5b-8c7d-9f0a1b2c3d4e")
     private val abandonKey = "mTuaX8n1TBpa7jCzFg2HyYcLPjB5ZW7YJ8YUtlmaayQ="
 
     @Before
@@ -38,15 +38,15 @@ class CryptoControllerTest {
     @After
     fun tearDown() = server.close()
 
-    private fun identity(key: String) = """{"user_id":"u1","device_id":"d0","registration_id":1,"identity_key":"$key"}"""
+    private fun identity(key: String) = """{"user_id":"$USER_ID","device_id":"6ba7b810-9dad-11d1-80b4-00c04fd430c8","registration_id":1,"identity_key":"$key"}"""
 
     @Test
     fun firstDevicePublishesAndUnlocks() = runTest {
         server.enqueue(MockResponse(code = 404, body = """{"error":{"code":"KEYS_REQUIRED","message":"none"}}"""))
         server.enqueue(MockResponse(code = 204))
         crypto.unlockWithPhrase(words, session)
-        assertEquals("u1", crypto.unlockedUserId.value)
-        server.takeRequest()
+        assertEquals(USER_ID, crypto.unlockedUserId.value)
+        assertEquals("/api/v1/keys/identity/$USER_ID", server.takeRequest().url.encodedPath)
         val put = json.parseToJsonElement(server.takeRequest().body!!.utf8()).jsonObject
         assertEquals(abandonKey, put["identity_key"]!!.jsonPrimitive.content)
     }
@@ -56,7 +56,7 @@ class CryptoControllerTest {
         server.enqueue(MockResponse(code = 200, body = identity(abandonKey)))
         server.enqueue(MockResponse(code = 204))
         crypto.unlockWithPhrase(words, session)
-        assertEquals("u1", crypto.unlockedUserId.value)
+        assertEquals(USER_ID, crypto.unlockedUserId.value)
     }
 
     @Test
@@ -94,5 +94,9 @@ class CryptoControllerTest {
         val error = job.await()
         assertTrue(error.toString(), error is CryptoException.LockedWhileUnlocking)
         assertNull(crypto.unlockedUserId.value)
+    }
+
+    private companion object {
+        const val USER_ID = "8f14e45f-ceea-467a-9575-3a6b7a1e6c0e"
     }
 }

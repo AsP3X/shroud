@@ -1,5 +1,6 @@
 package de.corespace.shroud.core.auth
 
+import de.corespace.shroud.core.model.Ids
 import de.corespace.shroud.core.net.ApiError
 import de.corespace.shroud.core.net.AuthSessionResponse
 import de.corespace.shroud.core.net.ShroudApi
@@ -31,12 +32,15 @@ class SessionController(
     suspend fun register(username: String, password: String): Session =
         adopt(api.register(normalize(username), password))
 
-    /** Signs in, reusing this phone's device row on the account when it had one. */
+    /**
+     * Signs in, reusing this phone's device row on the account when it had one. An anchor that is
+     * not a canonical UUID (never written by [adopt]) is not sent: the server then makes a new row.
+     */
     suspend fun login(username: String, password: String): Session {
         val name = normalize(username)
         val anchor = state.value?.takeIf { it.username == name }?.deviceId
             ?: withContext(Dispatchers.IO) { store.anchorFor(name) }
-        return adopt(api.login(name, password, anchor))
+        return adopt(api.login(name, password, Ids.parse(anchor)))
     }
 
     enum class Validation { Valid, Offline, SignedOut, DeviceRemoved }
@@ -114,13 +118,14 @@ class SessionController(
         onSignedOut()
     }
 
+    /** The persisted [Session] keeps lower-case String ids (plan C1); read them back as UUIDs via `userUuid` / `deviceUuid`. */
     private suspend fun adopt(response: AuthSessionResponse): Session {
         val session = Session(
             token = response.token,
-            userId = response.user.id.lowercase(),
+            userId = Ids.wire(response.user.id),
             username = response.user.username,
             shareCode = response.user.shareCode,
-            deviceId = response.device.id.lowercase(),
+            deviceId = Ids.wire(response.device.id),
         )
         withContext(Dispatchers.IO) { store.save(session) }
         state.value = session
