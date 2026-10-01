@@ -176,9 +176,13 @@ class MessagingLocalRepository(
 
         // What was just read (or re-saved after the prune or the scrub) is what the files hold. The
         // peer set stays unknown: a thread file that did not decode is still on disk, and the first
-        // full save should clear it out (`:165-176`).
+        // full save should clear it out (`:165-176`). Android fix: without a roster file (an empty
+        // install) the roster stays unknown too. iOS records an empty roster there, so a save with
+        // nothing in the roster (Notes only, no contacts or chats yet) never writes one, and the
+        // next load — which reads threads only after a roster (`LocalMessageStore.swift:237-240`) —
+        // ignores every thread file.
         written = Written(userId).also {
-            it.roster = snapshot.roster().content()
+            it.roster = if (snapshot.rosterOnDisk) snapshot.roster().content() else null
             it.threads.putAll(rowsRead)
         }
 

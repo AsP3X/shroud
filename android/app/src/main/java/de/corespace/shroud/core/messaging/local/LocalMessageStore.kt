@@ -44,6 +44,8 @@ class LocalMessageStore(
     /**
      * Roster + threads in memory (`LocalMessageStore.Snapshot`, `:25-35`). [threads] is keyed by the
      * thread key (Notes: [NOTES_PEER_ID]); [unreadByPeer] by lower-case peer id, as on disk.
+     * [rosterOnDisk] is set by [load] when a roster file was read (Android: an empty install's
+     * written-state must not claim that an empty roster is on disk, see `MessagingLocalRepository.hydrate`).
      */
     data class Snapshot(
         val conversations: List<StoredConversation> = emptyList(),
@@ -51,6 +53,7 @@ class LocalMessageStore(
         val incomingRequests: List<CachedContactRequest> = emptyList(),
         val threads: Map<UUID, List<StoredMessage>> = emptyMap(),
         val unreadByPeer: Map<String, Int> = emptyMap(),
+        val rosterOnDisk: Boolean = false,
     ) {
         fun roster(): Roster = Roster(
             conversations = conversations,
@@ -112,7 +115,7 @@ class LocalMessageStore(
             if (keys.name(LocalNames.Kind.THREAD, thread.peerId) + SEALED != file.name) continue
             threads[thread.peerId] = thread.messages
         }
-        return Snapshot(roster.conversations, roster.contacts, roster.incomingRequests, threads, roster.unreadByPeer)
+        return Snapshot(roster.conversations, roster.contacts, roster.incomingRequests, threads, roster.unreadByPeer, rosterOnDisk = true)
     }
 
     /** `loadRoster` (`:288-290`): null while locked, when missing or when it does not open. */
