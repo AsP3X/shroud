@@ -126,36 +126,66 @@ class LocalNamesTest {
         assertTrue(names.isWiped)
     }
 
+    /**
+     * crypto spec §1.6: a name computed under a half-zeroed key would point a write at the wrong
+     * file, so every call must either return the right name or report Locked.
+     *
+     * What this test guarantees is that the race is *exercised*: the wipe starts only after every
+     * worker has produced a name, and each worker keeps naming until it sees Locked, so every round
+     * has names succeeding right up to the wipe and names refused after it. It cannot reliably
+     * catch a missing lock — BouncyCastle copies the key at `HMac.init`, so a half-zeroed key is
+     * visible only during one 32-byte copy. The no-wrong-name property itself comes from the
+     * read/write lock in [LocalNames] (reviewed), not from this test.
+     */
     @Test
     fun aWipeRacingNamesNeverYieldsAWrongName() {
-        // crypto spec §1.6: a name computed under a half-zeroed key would point a write at the
-        // wrong file. Every call either returns the right name or reports Locked.
+        val workers = 4
+        var totalNamed = 0
+        var totalLocked = 0
         repeat(20) {
             val names = LocalNames.derive(SEALED_TEST_KEY)
-            val pool = Executors.newFixedThreadPool(4)
+            val pool = Executors.newFixedThreadPool(workers)
             val start = CountDownLatch(1)
+            val everyoneNamed = CountDownLatch(workers)
             val wrong = AtomicInteger()
+            val named = AtomicInteger()
             val locked = AtomicInteger()
-            repeat(4) {
+            repeat(workers) {
                 pool.execute {
                     start.await()
-                    repeat(200) {
+                    var first = true
+                    // Bounded so a broken wipe fails the test instead of hanging it.
+                    for (i in 0 until 5_000_000) {
                         try {
                             if (names.name(LocalNames.Kind.RATCHET, PEER) != RATCHET_NAME) wrong.incrementAndGet()
+                            named.incrementAndGet()
                         } catch (_: CryptoError.Locked) {
                             locked.incrementAndGet()
+                            break
+                        } finally {
+                            if (first) {
+                                first = false
+                                everyoneNamed.countDown()
+                            }
                         }
                     }
                 }
             }
             start.countDown()
-            Thread.sleep(1)
+            assertTrue(everyoneNamed.await(10, TimeUnit.SECONDS))
             names.wipe()
             pool.shutdown()
-            assertTrue(pool.awaitTermination(10, TimeUnit.SECONDS))
+            assertTrue(pool.awaitTermination(30, TimeUnit.SECONDS))
             assertEquals(0, wrong.get())
+            // Every worker named before the wipe and was refused after it.
+            assertTrue(named.get() >= workers)
+            assertEquals(workers, locked.get())
+            totalNamed += named.get()
+            totalLocked += locked.get()
             assertThrows(CryptoError.Locked::class.java) { names.name(LocalNames.Kind.RATCHET, PEER) }
         }
+        assertTrue(totalNamed > 0)
+        assertEquals(20 * workers, totalLocked)
     }
 
     @Test
