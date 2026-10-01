@@ -31,15 +31,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.dropShadow
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import de.corespace.shroud.ui.theme.Motion
 import de.corespace.shroud.ui.theme.ShroudIcons
@@ -47,9 +50,13 @@ import de.corespace.shroud.ui.theme.ShroudTheme
 import de.corespace.shroud.ui.theme.inter
 
 /**
- * Full-width capsule primary action (`PrimaryButton.swift`): 54 high, accent, white 17 semibold,
- * trailing arrow; a spinner replaces the arrow while [isLoading]. [enabled] false dims it to
- * 0.45 — except while loading, which shows the spinner at full strength.
+ * Full-width capsule primary action (`ShroudUI/Components/PrimaryButton.swift:7-45`): 54 high,
+ * accent, white 17 semibold, trailing arrow; a spinner replaces the arrow while [isLoading]
+ * (`Motion.iconSwap` on `Motion.snappy`, `:17-29`, `:37`), a changed title cross-fades (`:24`).
+ * Shadow accent @ 25 %, blur 20, offset (0, 8) (`:36`; design-inventory addendum PrimaryButton
+ * PB1). Press: scale 0.975, dim 0.05, medium haptic on press-down (`:41`). [enabled] false dims
+ * it to 0.45 — the caller's invalid-form dimming — except while loading, which shows the spinner
+ * at full strength. TalkBack reads the current title (`:43`).
  */
 @Composable
 fun PrimaryButton(
@@ -72,7 +79,7 @@ fun PrimaryButton(
                 haptic = Haptic.Medium,
                 onClick = onClick,
             )
-            .shadow(20.dp, CircleShape, ambientColor = colors.accent.copy(alpha = 0.25f), spotColor = colors.accent.copy(alpha = 0.25f))
+            .dropShadow(CircleShape, Shadow(radius = 20.dp, color = colors.accent, offset = DpOffset(0.dp, 8.dp), alpha = 0.25f))
             .height(54.dp)
             .clip(CircleShape)
             .background(colors.accent)
@@ -80,7 +87,7 @@ fun PrimaryButton(
         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AnimatedVisibility(visible = isLoading, enter = scaleIn(Motion.snappy(), 0.45f) + fadeIn(), exit = scaleOut(Motion.snappy(), 0.45f) + fadeOut()) {
+        AnimatedVisibility(visible = isLoading, enter = Motion.iconSwap.enter, exit = Motion.iconSwap.exit) {
             Spinner(color = Color.White, size = 18.dp)
         }
         AnimatedContent(
@@ -90,20 +97,26 @@ fun PrimaryButton(
         ) { text ->
             ShroudText(text, inter(17f, FontWeight.SemiBold), Color.White, maxLines = 1)
         }
-        AnimatedVisibility(visible = showsArrow && !isLoading, enter = scaleIn(Motion.snappy(), 0.45f) + fadeIn(), exit = scaleOut(Motion.snappy(), 0.45f) + fadeOut()) {
+        AnimatedVisibility(visible = showsArrow && !isLoading, enter = Motion.iconSwap.enter, exit = Motion.iconSwap.exit) {
             ShroudIcon(ShroudIcons.ArrowRightBold, Color.White, size = 18.dp)
         }
     }
 }
 
-/** Secondary capsule (`SecondaryButton.swift`): 52 high, accent-soft fill, accent-text label. */
+/**
+ * Secondary capsule (`ShroudUI/Components/SecondaryButton.swift:4-20`): 52 high, accent-soft fill,
+ * accent-text label (4.5:1 in dark mode too), press scale 0.975 / dim 0.06 with the default light
+ * haptic. [enabled] false dims it to 0.45 with disabled semantics (iOS callers use `.disabled`;
+ * the wipe overlay's "Continue", settings-lock §14.5). TalkBack reads the title (`:19`).
+ */
 @Composable
-fun SecondaryButton(title: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun SecondaryButton(title: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val colors = ShroudTheme.colors
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .pressable(scale = 0.975f, dimming = 0.06f, onClick = onClick)
+            .alpha(if (enabled) 1f else 0.45f)
+            .pressable(enabled = enabled, scale = 0.975f, dimming = 0.06f, onClick = onClick)
             .height(52.dp)
             .clip(CircleShape)
             .background(colors.accentSoft),
@@ -114,9 +127,10 @@ fun SecondaryButton(title: String, onClick: () -> Unit, modifier: Modifier = Mod
 }
 
 /**
- * The 44 dp glass circle of the bars (`Glass Circle` in the design): translucent fill, hairline
- * white rim, accent glyph. The blur the design shows needs the content behind it; onboarding sits
- * on a flat background, so the fill alone matches.
+ * The 44 dp glass circle of the bars (design `Glass Circle` `n9Lx7`): [GlassStyle.Soft] glass —
+ * `glassSoft` fill, `glassStroke` rim, shadow 0/8/24 — and a 20 dp glyph. It blurs what lies
+ * behind when the screen provides a [LocalGlassBackdrop]; onboarding sits on a flat background,
+ * where the translucent fill alone matches the design.
  */
 @Composable
 fun GlassCircleButton(
@@ -127,13 +141,12 @@ fun GlassCircleButton(
     tint: Color = ShroudTheme.colors.accent,
     enabled: Boolean = true,
 ) {
-    val colors = ShroudTheme.colors
     Box(
         modifier = modifier
             .alpha(if (enabled) 1f else 0.4f)
             .pressable(enabled = enabled, scale = 0.92f, onClick = onClick, onClickLabel = contentDescription)
             .size(44.dp)
-            .glass(colors.glassSoft, colors.glassStroke)
+            .glassSurface(CircleShape, GlassStyle.Soft)
             .semantics { this.contentDescription = contentDescription },
         contentAlignment = Alignment.Center,
     ) {
@@ -141,7 +154,7 @@ fun GlassCircleButton(
     }
 }
 
-/** A glass capsule with a text label ("Log In", "Sign Up" in the bars). */
+/** A [GlassStyle.Soft] glass capsule with a text label ("Log In", "Sign Up" in the bars). */
 @Composable
 fun GlassCapsuleButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val colors = ShroudTheme.colors
@@ -150,7 +163,7 @@ fun GlassCapsuleButton(label: String, onClick: () -> Unit, modifier: Modifier = 
             .alpha(if (enabled) 1f else 0.4f)
             .pressable(enabled = enabled, scale = 0.94f, onClick = onClick)
             .height(44.dp)
-            .glass(colors.glassSoft, colors.glassStroke)
+            .glassSurface(CircleShape, GlassStyle.Soft)
             .padding(horizontal = 16.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -158,6 +171,10 @@ fun GlassCapsuleButton(label: String, onClick: () -> Unit, modifier: Modifier = 
     }
 }
 
+/**
+ * A capsule with a fixed [fill], a 1 dp [rim] and a soft shadow, no blur: the toast's opaque
+ * capsule. Glass chrome uses [glassSurface], which blurs and falls back as the design asks.
+ */
 fun Modifier.glass(fill: Color, rim: Color): Modifier = this
     .shadow(12.dp, CircleShape, ambientColor = Color(0x240B0B12), spotColor = Color(0x240B0B12))
     .clip(CircleShape)

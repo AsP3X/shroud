@@ -13,29 +13,41 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.dropShadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import de.corespace.shroud.ui.theme.Motion
 import de.corespace.shroud.ui.theme.ShroudTheme
 
 /**
- * The app's switch (`Toggle` in the design): a 63 × 28 track with a 39 × 24 pill knob, accent
- * when on. Not the Material switch.
+ * The app's switch (design `Toggle` `A6Obz`, design-inventory §3.5): a 63 × 28 track (radius 14,
+ * padding 2) with a 39 × 24 white pill knob (radius 12, shadow `#0000001F` 0/2/6), `accent` when on,
+ * `toggleOff` when off; knob and track ease with `Motion.snappy`. Not the Material switch. iOS
+ * draws a `UISwitch` tinted with the accent.
+ *
+ * [enabled] false takes no taps (the row around it dims, settings-lock §2 `ToggleRow`).
  */
 @Composable
-fun ShroudToggle(checked: Boolean, onCheckedChange: (Boolean) -> Unit, label: String, modifier: Modifier = Modifier) {
+fun ShroudToggle(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    label: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
     val colors = ShroudTheme.colors
     val track by animateColorAsState(if (checked) colors.accent else colors.toggleOff, Motion.snappy(), label = "toggleTrack")
     val knobX by animateDpAsState(if (checked) 20.dp else 0.dp, Motion.snappy(), label = "toggleKnob")
     Box(
         modifier
-            .pressable(scale = 0.97f, role = Role.Switch, onClick = { onCheckedChange(!checked) })
+            .pressable(enabled = enabled, scale = 0.97f, role = Role.Switch, onClick = { onCheckedChange(!checked) })
             .semantics(mergeDescendants = true) {
                 contentDescription = label
                 stateDescription = if (checked) "On" else "Off"
@@ -49,7 +61,7 @@ fun ShroudToggle(checked: Boolean, onCheckedChange: (Boolean) -> Unit, label: St
         Box(
             Modifier
                 .offset { IntOffset(knobX.roundToPx(), 0) }
-                .shadow(3.dp, RoundedCornerShape(12.dp), ambientColor = Color(0x1F000000), spotColor = Color(0x1F000000))
+                .dropShadow(RoundedCornerShape(12.dp), Shadow(radius = 6.dp, color = Color(0x1F000000), offset = DpOffset(0.dp, 2.dp)))
                 .size(39.dp, 24.dp)
                 .clip(RoundedCornerShape(12.dp))
                 .background(Color.White),
