@@ -373,6 +373,33 @@ class LocalMediaCacheTest {
     }
 
     @Test
+    fun aRemoveWithdrawsAnUnfinishedWriteOfThatId() {
+        // web preview.selftest: a deleted message must not come back through a cache — here a
+        // download still writing when the delete for everyone arrives (web: `isWithdrawn` before
+        // `saveMediaBlob`, `messaging.ts:583-585`).
+        cache.saveBlocking(photo, random(10, seed = 22))
+        val downloading = cache.writer(photo)
+        downloading.write(random(100_000, seed = 23), 0, 100_000)
+        val unrelated = cache.writer(other)
+        unrelated.write(ByteArray(5), 0, 5)
+
+        cache.remove(listOf(photo))
+
+        assertFalse(cache.has(photo))
+        assertThrows(IOException::class.java) { downloading.write(ByteArray(1), 0, 1) }
+        assertThrows(IOException::class.java) { downloading.commit() }
+        assertFalse("nothing came back", cache.has(photo))
+        unrelated.commit()
+        assertTrue(cache.has(other))
+        assertEquals("no pending file left", 1, dir.listFiles()!!.size)
+
+        // A writer opened after the removal (a pruned message fetched again) is not affected.
+        val again = random(70_000, seed = 24)
+        cache.saveBlocking(photo, again)
+        assertArrayEquals(again, cache.readAllBlocking(photo))
+    }
+
+    @Test
     fun inventoryCountsFilesAndBytes() {
         assertEquals(0 to 0L, cache.inventory())
         cache.saveBlocking(photo, ByteArray(100))

@@ -111,7 +111,9 @@ interface MediaTransfers {
      * `GET media/{id}/content`, opened with [keyBase64] (the payload's `k`) and committed to the
      * local cache under [targetMessageId] only once the whole blob authenticated. A bad key →
      * `MediaCrypto.MediaError.InvalidKey` and chats locked → `CryptoError.Locked`, both before any
-     * request; a blob that does not open → `MediaCrypto.MediaError.DecryptFailed`. Cancellable.
+     * request; a blob that does not open → `MediaCrypto.MediaError.DecryptFailed`; a
+     * [LocalMediaStore.remove] of [targetMessageId] meanwhile → `IOException`, nothing stored.
+     * Cancellable.
      */
     suspend fun downloadInto(
         mediaObjectId: UUID,
@@ -141,6 +143,11 @@ interface LocalMediaStore {
 
     /** The server re-keyed a sent message: [from]'s file becomes [to]'s. */
     fun rename(from: UUID, to: UUID)
+
+    /**
+     * Deletes the media of [messageIds]; an unfinished [writer] of one of them fails its commit,
+     * so a download racing a delete for everyone leaves nothing. Later writers work normally.
+     */
     fun remove(messageIds: Collection<UUID>)
 
     /** Closes open readers and writers and deletes every media file (works while locked). */

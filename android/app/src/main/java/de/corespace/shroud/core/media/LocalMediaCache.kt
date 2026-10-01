@@ -205,7 +205,9 @@ class LocalMediaCache(
 
     /**
      * Deletes the files of [messageIds] (deletes for everyone, retention pruning, purges; iOS
-     * `remove(messageIDs:)`, `:66-71`). Remembered until the next unlock while chats are locked.
+     * `remove(messageIDs:)`, `:66-71`) and withdraws their unfinished writers, whose commit then
+     * fails, so a download racing a delete cannot bring the media back. Remembered until the next
+     * unlock while chats are locked (when every writer is already gone).
      */
     override fun remove(messageIds: Collection<UUID>) {
         if (messageIds.isEmpty()) return
@@ -325,11 +327,24 @@ class LocalMediaCache(
         return true
     }
 
+    /**
+     * Withdraws the unfinished writers of [messageIds] first, then deletes their files: a download
+     * that finishes after a delete for everyone must not bring the media back (web
+     * `preview.selftest`: a deleted message does not come back through a cache; the web checks
+     * `isWithdrawn` before `saveMediaBlob`, `messaging.ts:583-585`). A writer withdrawn this way
+     * fails its commit; one opened after the removal writes normally (a message pruned locally and
+     * fetched again later).
+     */
     private fun removeNow(names: LocalNames, messageIds: Collection<UUID>): Boolean {
+        val targets = HashSet<File>()
         for (id in messageIds) {
             val name = nameOrNull(names, id) ?: return false
-            File(directory, name + SEALED_SUFFIX).delete()
+            targets += File(directory, name + SEALED_SUFFIX)
         }
+        for (handle in handles.toList()) {
+            if (handle is Shrm1Writer && handle.target in targets) handle.withdraw()
+        }
+        for (target in targets) target.delete()
         return true
     }
 
@@ -624,14 +639,14 @@ private class Shrm1Reader(
 /** Streams plaintext into a pending SHRM1 file; [commit] seals the last segment and renames it into place. */
 private class Shrm1Writer(
     val pendingFile: File,
-    private val target: File,
+    val target: File,
     private val header: ByteArray,
     fileKey: ByteArray,
     private val noncePrefix: ByteArray,
     private val storageSeal: StorageSeal,
     private val onFinished: (Handle) -> Unit,
 ) : SealedMediaWriter, Handle {
-    private enum class Phase { Open, Committed, Aborted, Locked }
+    private enum class Phase { Open, Committed, Aborted, Locked, Withdrawn }
 
     private var key: ByteArray? = fileKey
     private var phase = Phase.Open
@@ -717,10 +732,18 @@ private class Shrm1Writer(
         discard(Phase.Locked)
     }
 
+    /** The id's media was removed while this writer ran: drop the partial file; [commit] then fails. */
+    @Synchronized
+    fun withdraw() {
+        if (phase != Phase.Open) return
+        discard(Phase.Withdrawn)
+    }
+
     private fun ensureOpen() {
         when (phase) {
             Phase.Open -> Unit
             Phase.Locked -> throw CryptoError.Locked
+            Phase.Withdrawn -> throw IOException("media removed while it was written")
             Phase.Committed, Phase.Aborted -> throw IOException("writer finished")
         }
     }
