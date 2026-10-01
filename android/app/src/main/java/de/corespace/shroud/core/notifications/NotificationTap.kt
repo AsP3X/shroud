@@ -1,0 +1,50 @@
+package de.corespace.shroud.core.notifications
+
+import android.content.Context
+import android.content.Intent
+import de.corespace.shroud.core.model.Ids
+import java.util.UUID
+
+/**
+ * A tap on a system notification, as its intent carries it (notifications-push §5.7.5): the kind
+ * and the peer id — **never a name** (the task's base intent can be persisted with Recents; the
+ * username comes from local data once the chats are unlocked, shell-chats §4.6).
+ *
+ * `MainActivity.onCreate` / `onNewIntent` (W2-INT, then W3-SHELL) call [from] and hand the result
+ * to `NotificationsController.handleTap`, then clear the intent (`setIntent(Intent())`) so a
+ * recreation does not replay it.
+ *
+ * @property kind null for a notification that only opens the app (the signed-out notice).
+ */
+data class NotificationTap(val kind: NotificationKind?, val peerUserId: UUID?) {
+    companion object {
+        const val ACTION_OPEN_NOTIFICATION = "de.corespace.shroud.OPEN_NOTIFICATION"
+        const val EXTRA_KIND = "shroud.kind"
+        const val EXTRA_PEER = "shroud.peer"
+
+        /** The tap [intent] stands for, or null when it is not a notification tap. */
+        fun from(intent: Intent?): NotificationTap? {
+            if (intent == null) return null
+            return parse(intent.action, intent.getStringExtra(EXTRA_KIND), intent.getStringExtra(EXTRA_PEER))
+        }
+
+        /** [from] on the raw values. A malformed peer is dropped; an unknown kind reads as null. */
+        fun parse(action: String?, kind: String?, peer: String?): NotificationTap? {
+            if (action != ACTION_OPEN_NOTIFICATION) return null
+            return NotificationTap(kind?.let(NotificationKind::fromWire), Ids.parse(peer))
+        }
+
+        /**
+         * The intent a notification opens: [activity] (`MainActivity`, `singleTask`) with the tap's
+         * kind and peer as extras, brought to the front of its task.
+         */
+        fun intent(context: Context, activity: Class<*>, kind: NotificationKind?, peerUserId: UUID?): Intent =
+            Intent(context, activity)
+                .setAction(ACTION_OPEN_NOTIFICATION)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .apply {
+                    kind?.let { putExtra(EXTRA_KIND, it.wire) }
+                    peerUserId?.let { putExtra(EXTRA_PEER, Ids.wire(it)) }
+                }
+    }
+}
