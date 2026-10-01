@@ -2,6 +2,7 @@ package de.corespace.shroud.core.media
 
 import android.net.Uri
 import androidx.annotation.OptIn
+import androidx.core.net.toUri
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
@@ -102,7 +103,7 @@ class SealedMediaDataSource(private val openReader: () -> SealedMediaReader?) : 
          * The URI every sealed media item plays under: opaque on purpose (no id, no path). The
          * extractors sniff the container, so no file extension is needed.
          */
-        val URI: Uri by lazy { Uri.parse("shroud-media:sealed") }
+        val URI: Uri by lazy { "shroud-media:sealed".toUri() }
 
         /** A [MediaItem] for a source built from a [Factory]. */
         fun mediaItem(): MediaItem = MediaItem.fromUri(URI)

@@ -21,6 +21,7 @@ import java.security.GeneralSecurityException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -84,10 +85,16 @@ class LocalMediaCache(
     private val deferred = ArrayList<DeferredChange>() // guarded by itself
     private val pendingSwept = AtomicBoolean(false)
 
+    /** Counts locks, so a handle registered while a lock ran can tell it missed the invalidation. */
+    private val lockGeneration = AtomicLong()
+
     private val lockListener = object : SealedLocalState.Listener {
         override fun onUnlock(historyKey: ByteArray) = applyDeferred()
 
-        override fun onLock() = invalidateHandles()
+        override fun onLock() {
+            lockGeneration.incrementAndGet()
+            invalidateHandles()
+        }
     }
     private val registration: AutoCloseable = state.addListener(lockListener)
 
@@ -161,12 +168,17 @@ class LocalMediaCache(
      */
     override fun writer(messageId: UUID): SealedMediaWriter {
         if (storageSeal.isSealed) return DroppingWriter()
-        val name = mediaName(messageId) ?: throw CryptoError.Locked
+        if (!state.isUnlocked) throw CryptoError.Locked
         val salt = entropy.bytes(Shrm1.SALT_BYTES)
         val prefix = entropy.bytes(Shrm1.NONCE_PREFIX_BYTES)
         val header = Shrm1.header(salt, prefix)
-        val fileKey = state.withSubkey(LocalHistoryCrypto.Context.MediaFile) { Shrm1.fileKey(it, salt) }
-            ?: throw CryptoError.Locked
+        val generation = lockGeneration.get()
+        // Name and key under one read lock, so both come from the same history key.
+        val (name, fileKey) = state.withSubkey(LocalHistoryCrypto.Context.MediaFile) { subkey ->
+            val names = state.names() ?: return@withSubkey null
+            val name = nameOrNull(names, messageId) ?: return@withSubkey null
+            name to Shrm1.fileKey(subkey, salt)
+        } ?: throw CryptoError.Locked
         val writer = try {
             ensureDirectory()
             sweepPendingOnce()
@@ -176,7 +188,7 @@ class LocalMediaCache(
             fileKey.fill(0)
             throw e
         }
-        register(writer)
+        register(writer, generation)
         return writer
     }
 
@@ -253,11 +265,12 @@ class LocalMediaCache(
             raf.seek(0)
             raf.readFully(header)
             val parsed = Shrm1.parseHeader(header) ?: return null
+            val generation = lockGeneration.get()
             val fileKey = state.withSubkey(LocalHistoryCrypto.Context.MediaFile) { Shrm1.fileKey(it, parsed.salt) } ?: return null
             val opened = Shrm1Reader(raf, header, parsed.noncePrefix, fileKey, layout, ::release)
             reader = opened
             if (!opened.authenticateLast()) return null
-            register(opened)
+            register(opened, generation)
             handedOut = true
             return opened
         } finally {
@@ -267,12 +280,14 @@ class LocalMediaCache(
     }
 
     /**
-     * Tracks [handle] for the lock. A lock that ran between deriving the handle's key and this
-     * registration missed it, so the state is checked again afterwards.
+     * Tracks [handle] for the lock. A lock whose listener ran between deriving the handle's key
+     * (at [generation]) and this registration missed it, so after registering the state and the
+     * generation are checked again: the key is zeroed if any lock happened in between, even one
+     * already followed by an unlock (no key may outlive a lock, plan §1.4).
      */
-    private fun register(handle: Handle) {
+    private fun register(handle: Handle, generation: Long) {
         handles += handle
-        if (!state.isUnlocked) {
+        if (!state.isUnlocked || lockGeneration.get() != generation) {
             handle.invalidate()
             throw CryptoError.Locked
         }
