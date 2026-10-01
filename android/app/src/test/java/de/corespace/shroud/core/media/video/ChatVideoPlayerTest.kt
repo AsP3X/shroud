@@ -99,7 +99,7 @@ class ChatVideoPlayerTest {
         assertTrue(state.isPlaying)
         assertEquals(10.0, state.duration, 0.0)
         assertEquals(1, engine.plays)
-        assertEquals(listOf<VideoSource>(VideoSource.Local(clip)), engines.sources)
+        assertEquals(listOf<VideoSource>(VideoSource.Message(clip)), engines.sources)
         player.teardown()
     }
 

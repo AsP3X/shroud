@@ -124,7 +124,7 @@ internal class ExoPlaybackEngine private constructor(context: Context, configure
 
     class Factory(private val context: Context, private val sources: SealedVideoSources) : PlaybackEngine.Factory {
         override fun create(source: VideoSource): PlaybackEngine? = when (source) {
-            is VideoSource.Local -> {
+            is VideoSource.Message -> {
                 val data = sources.playerDataSource(source.messageId)
                 data?.let { factory ->
                     val media: MediaSource = ProgressiveMediaSource.Factory(factory).createMediaSource(LOCAL_ITEM)

@@ -20,11 +20,12 @@ import kotlin.math.floor
 
 /**
  * What a [ChatVideoPlayer] plays (conversation-compose-media §16): a received or sent video in the
- * sealed local media cache, or a picked / captured file for the compose preview.
+ * sealed local media cache, or a picked / captured file for the compose preview. The one video
+ * source type of the app: `ui.media.video.VideoPlayerOverlay` takes it too (plan §1.7.13).
  */
 sealed interface VideoSource {
-    /** Read through the decrypting source of the sealed local cache; no decrypted file (plan C7). */
-    data class Local(val messageId: UUID) : VideoSource
+    /** A message's video, read through the decrypting source of the sealed local cache; no decrypted file (plan C7). */
+    data class Message(val messageId: UUID) : VideoSource
 
     /** A content or file URI that already exists (photo picker, camera capture). */
     data class Content(val uri: Uri) : VideoSource {
@@ -91,8 +92,8 @@ class ChatVideoPlayer internal constructor(
     /** Bumped by [teardown] so an in-flight [start] cannot attach a player after the screen left (`:29-30`). */
     private var startId = 0
 
-    /** Plays the sealed local video of [messageId]; same as `start(VideoSource.Local(messageId))`. */
-    suspend fun start(messageId: UUID) = start(VideoSource.Local(messageId))
+    /** Plays the sealed local video of [messageId]; same as `start(VideoSource.Message(messageId))`. */
+    suspend fun start(messageId: UUID) = start(VideoSource.Message(messageId))
 
     /** Plays a file that already exists (compose preview); it is never deleted here (`:53`). */
     suspend fun start(uri: Uri) = start(VideoSource.Content(uri))

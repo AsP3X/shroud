@@ -44,9 +44,3 @@ data class VideoComposeDraft(val videos: List<PickedVideo>, val caption: String 
  */
 data class ViewerItem(val id: UUID, val title: String, val dateLine: String, val caption: String?, val aspect: Float, val isLoaded: Boolean)
 
-/** What the video player plays: a message's sealed media (read through `SealedMediaDataSource`, C7) or a local clip. */
-sealed interface VideoSource {
-    data class Message(val messageId: UUID) : VideoSource
-
-    data class Local(val uri: Uri) : VideoSource
-}
