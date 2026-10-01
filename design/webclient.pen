@@ -1,5 +1,5 @@
 {
-  "version": "2.19",
+  "version": "2.20",
   "children": [
     {
       "type": "frame",
@@ -2730,7 +2730,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/1f44d.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -2878,7 +2878,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                            "mode": "fill"
+                            "mode": "cover"
                           },
                           "layout": "none",
                           "children": [
@@ -2964,7 +2964,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/2764-fe0f.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -3094,7 +3094,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                                "mode": "fill"
+                                "mode": "cover"
                               },
                               "width": 32,
                               "height": 32
@@ -3162,7 +3162,7 @@
                                     "type": "image",
                                     "enabled": true,
                                     "url": "emoji/1f60d.png",
-                                    "mode": "fit"
+                                    "mode": "contain"
                                   },
                                   "width": 17,
                                   "height": 17
@@ -4670,7 +4670,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "https://images.unsplash.com/photo-1784665664525-7b6b0e25aa49?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTAwODIzMjB8&ixlib=rb-4.1.0&q=80&w=1080",
-                                "mode": "fill"
+                                "mode": "cover"
                               },
                               "width": 64,
                               "height": 64
@@ -4804,7 +4804,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/1f525.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -8469,7 +8469,7 @@
                 "type": "image",
                 "enabled": true,
                 "url": "validate-my-qr-code.png",
-                "mode": "fill"
+                "mode": "cover"
               },
               "width": 440,
               "height": 716
@@ -11349,7 +11349,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/1f44d.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -11497,7 +11497,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                            "mode": "fill"
+                            "mode": "cover"
                           },
                           "layout": "none",
                           "children": [
@@ -11583,7 +11583,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/2764-fe0f.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -11713,7 +11713,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                                "mode": "fill"
+                                "mode": "cover"
                               },
                               "width": 32,
                               "height": 32
@@ -11781,7 +11781,7 @@
                                     "type": "image",
                                     "enabled": true,
                                     "url": "emoji/1f60d.png",
-                                    "mode": "fit"
+                                    "mode": "contain"
                                   },
                                   "width": 17,
                                   "height": 17
@@ -13289,7 +13289,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "https://images.unsplash.com/photo-1784665664525-7b6b0e25aa49?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTAwODIzMjB8&ixlib=rb-4.1.0&q=80&w=1080",
-                                "mode": "fill"
+                                "mode": "cover"
                               },
                               "width": 64,
                               "height": 64
@@ -13423,7 +13423,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/1f525.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -16019,7 +16019,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/1f44d.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -16167,7 +16167,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                            "mode": "fill"
+                            "mode": "cover"
                           },
                           "layout": "none",
                           "children": [
@@ -16253,7 +16253,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/2764-fe0f.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -16383,7 +16383,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                                "mode": "fill"
+                                "mode": "cover"
                               },
                               "width": 32,
                               "height": 32
@@ -16451,7 +16451,7 @@
                                     "type": "image",
                                     "enabled": true,
                                     "url": "emoji/1f60d.png",
-                                    "mode": "fit"
+                                    "mode": "contain"
                                   },
                                   "width": 17,
                                   "height": 17
@@ -17959,7 +17959,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "https://images.unsplash.com/photo-1784665664525-7b6b0e25aa49?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTAwODIzMjB8&ixlib=rb-4.1.0&q=80&w=1080",
-                                "mode": "fill"
+                                "mode": "cover"
                               },
                               "width": 64,
                               "height": 64
@@ -18093,7 +18093,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/1f525.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -20063,7 +20063,7 @@
                         "type": "image",
                         "enabled": true,
                         "url": "https://images.unsplash.com/photo-1788929899726-aa12e24b0e7f?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTAwODIzMjB8&ixlib=rb-4.1.0&q=80&w=1080",
-                        "mode": "fill"
+                        "mode": "cover"
                       },
                       "cornerRadius": 4,
                       "layout": "vertical",
@@ -20196,7 +20196,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "https://images.unsplash.com/photo-1788929899726-aa12e24b0e7f?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTAwODIzMjB8&ixlib=rb-4.1.0&q=80&w=1080",
-                            "mode": "fill"
+                            "mode": "cover"
                           },
                           "cornerRadius": 4,
                           "layout": "vertical",
@@ -20325,7 +20325,7 @@
                         "type": "image",
                         "enabled": true,
                         "url": "https://images.unsplash.com/photo-1784665664525-7b6b0e25aa49?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTAwODIzMjB8&ixlib=rb-4.1.0&q=80&w=1080",
-                        "mode": "fill"
+                        "mode": "cover"
                       },
                       "width": 64,
                       "height": 64
@@ -23037,7 +23037,7 @@
                                     "type": "image",
                                     "enabled": true,
                                     "url": "emoji/1f447.png",
-                                    "mode": "fit"
+                                    "mode": "contain"
                                   },
                                   "width": 17,
                                   "height": 17
@@ -25444,7 +25444,7 @@
                                     "type": "image",
                                     "enabled": true,
                                     "url": "emoji/1f447.png",
-                                    "mode": "fit"
+                                    "mode": "contain"
                                   },
                                   "width": 17,
                                   "height": 17
@@ -28728,7 +28728,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/1f44d.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -28876,7 +28876,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                            "mode": "fill"
+                            "mode": "cover"
                           },
                           "layout": "none",
                           "children": [
@@ -28962,7 +28962,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/2764-fe0f.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -29092,7 +29092,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                                "mode": "fill"
+                                "mode": "cover"
                               },
                               "width": 32,
                               "height": 32
@@ -29160,7 +29160,7 @@
                                     "type": "image",
                                     "enabled": true,
                                     "url": "emoji/1f60d.png",
-                                    "mode": "fit"
+                                    "mode": "contain"
                                   },
                                   "width": 17,
                                   "height": 17
@@ -30668,7 +30668,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "https://images.unsplash.com/photo-1784665664525-7b6b0e25aa49?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTAwODIzMjB8&ixlib=rb-4.1.0&q=80&w=1080",
-                                "mode": "fill"
+                                "mode": "cover"
                               },
                               "width": 64,
                               "height": 64
@@ -30802,7 +30802,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/1f525.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -33229,7 +33229,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/1f44d.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -33377,7 +33377,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                            "mode": "fill"
+                            "mode": "cover"
                           },
                           "layout": "none",
                           "children": [
@@ -33463,7 +33463,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/2764-fe0f.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -33593,7 +33593,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                                "mode": "fill"
+                                "mode": "cover"
                               },
                               "width": 32,
                               "height": 32
@@ -33661,7 +33661,7 @@
                                     "type": "image",
                                     "enabled": true,
                                     "url": "emoji/1f60d.png",
-                                    "mode": "fit"
+                                    "mode": "contain"
                                   },
                                   "width": 17,
                                   "height": 17
@@ -35169,7 +35169,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "https://images.unsplash.com/photo-1784665664525-7b6b0e25aa49?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTAwODIzMjB8&ixlib=rb-4.1.0&q=80&w=1080",
-                                "mode": "fill"
+                                "mode": "cover"
                               },
                               "width": 64,
                               "height": 64
@@ -35303,7 +35303,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/1f525.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -35698,7 +35698,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "emoji/2764-fe0f.png",
-                            "mode": "fit"
+                            "mode": "contain"
                           },
                           "width": 21,
                           "height": 21
@@ -35724,7 +35724,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "emoji/1f525.png",
-                            "mode": "fit"
+                            "mode": "contain"
                           },
                           "width": 21,
                           "height": 21
@@ -35749,7 +35749,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "emoji/1f44d.png",
-                            "mode": "fit"
+                            "mode": "contain"
                           },
                           "width": 21,
                           "height": 21
@@ -35774,7 +35774,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "emoji/1f622.png",
-                            "mode": "fit"
+                            "mode": "contain"
                           },
                           "width": 21,
                           "height": 21
@@ -35799,7 +35799,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "emoji/1f64f.png",
-                            "mode": "fit"
+                            "mode": "contain"
                           },
                           "width": 21,
                           "height": 21
@@ -35824,7 +35824,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "emoji/1f62e.png",
-                            "mode": "fit"
+                            "mode": "contain"
                           },
                           "width": 21,
                           "height": 21
@@ -35849,7 +35849,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "emoji/1f44e.png",
-                            "mode": "fit"
+                            "mode": "contain"
                           },
                           "width": 21,
                           "height": 21
@@ -38123,7 +38123,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/1f44d.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -38271,7 +38271,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                            "mode": "fill"
+                            "mode": "cover"
                           },
                           "layout": "none",
                           "children": [
@@ -38357,7 +38357,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/2764-fe0f.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -38487,7 +38487,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                                "mode": "fill"
+                                "mode": "cover"
                               },
                               "width": 32,
                               "height": 32
@@ -38555,7 +38555,7 @@
                                     "type": "image",
                                     "enabled": true,
                                     "url": "emoji/1f60d.png",
-                                    "mode": "fit"
+                                    "mode": "contain"
                                   },
                                   "width": 17,
                                   "height": 17
@@ -40063,7 +40063,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "https://images.unsplash.com/photo-1784665664525-7b6b0e25aa49?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTAwODIzMjB8&ixlib=rb-4.1.0&q=80&w=1080",
-                                "mode": "fill"
+                                "mode": "cover"
                               },
                               "width": 64,
                               "height": 64
@@ -40197,7 +40197,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/1f525.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -40675,7 +40675,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/2764-fe0f.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -40701,7 +40701,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f525.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -40726,7 +40726,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f44d.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -40751,7 +40751,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f622.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -40776,7 +40776,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f64f.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -40801,7 +40801,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f62e.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -40826,7 +40826,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f44e.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -40851,7 +40851,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f970.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -40884,7 +40884,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f44f.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -40909,7 +40909,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f601.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -40934,7 +40934,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f914.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -40959,7 +40959,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f92f.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -40984,7 +40984,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f631.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41009,7 +41009,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f92c.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41034,7 +41034,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f389.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41059,7 +41059,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f929.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41092,7 +41092,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f92e.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41117,7 +41117,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f4a9.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41142,7 +41142,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f44c.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41167,7 +41167,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f54a-fe0f.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41192,7 +41192,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f921.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41217,7 +41217,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f971.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41242,7 +41242,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f974.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41267,7 +41267,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f60d.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41300,7 +41300,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f433.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41325,7 +41325,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/2764-fe0f-200d-1f525.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41350,7 +41350,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f31a.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41375,7 +41375,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f32d.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41400,7 +41400,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f4af.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41425,7 +41425,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f923.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41450,7 +41450,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/26a1.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41475,7 +41475,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f34c.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41508,7 +41508,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f3c6.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41533,7 +41533,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f494.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41558,7 +41558,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f928.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41583,7 +41583,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f610.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41608,7 +41608,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f353.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41633,7 +41633,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f37e.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41658,7 +41658,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f48b.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41683,7 +41683,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f595.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41716,7 +41716,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f608.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41741,7 +41741,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f634.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41766,7 +41766,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f62d.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41791,7 +41791,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f913.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41816,7 +41816,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f47b.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41841,7 +41841,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f468-200d-1f4bb.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41866,7 +41866,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f440.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -41891,7 +41891,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f383.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 21,
                               "height": 21
@@ -45650,7 +45650,7 @@
       "x": 1520,
       "y": 6100,
       "name": "Desktop — Settings · Devices",
-      "context": "Settings › Devices (web), in step with iOS: this browser, remove all others, other devices with Remove, the five-device limit, and what the server records.",
+      "context": "Settings › Devices (web), in step with iOS: this browser, remove all others, other devices with Remove (an iPhone, an iPad and an Android phone — sealed kind 4 'Android app': green #2FA85B tile, Lucide smartphone; X1-WEB, P4), the five-device limit, and what the server records.",
       "theme": {
         "mode": "dark"
       },
@@ -46239,7 +46239,7 @@
                     {
                       "type": "frame",
                       "id": "uxugM",
-                      "name": "Group Other devices — 2",
+                      "name": "Group Other devices — 3",
                       "width": "fill_container",
                       "layout": "vertical",
                       "gap": 8,
@@ -46258,7 +46258,7 @@
                               "id": "gQYdO",
                               "name": "Label",
                               "fill": "$text-tertiary",
-                              "content": "OTHER DEVICES — 2",
+                              "content": "OTHER DEVICES — 3",
                               "fontFamily": "$font-ui",
                               "fontSize": 11,
                               "fontWeight": "700",
@@ -46437,6 +46437,88 @@
                                   "fontWeight": "600"
                                 }
                               ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "maZZ7",
+                              "name": "Row Pixel 9a",
+                              "width": "fill_container",
+                              "stroke": "$separator",
+                              "strokeWidth": {
+                                "top": 1
+                              },
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                11,
+                                14
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "U95if",
+                                  "name": "Tile",
+                                  "width": 30,
+                                  "height": 30,
+                                  "fill": "#2FA85B",
+                                  "cornerRadius": 8,
+                                  "justifyContent": "center",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "Yj5YK",
+                                      "name": "Glyph",
+                                      "width": 15,
+                                      "height": 15,
+                                      "icon": "smartphone",
+                                      "library": "lucide",
+                                      "fill": "#FFFFFF"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "FH3VZ",
+                                  "name": "Copy",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 2,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "amiRx",
+                                      "name": "Title",
+                                      "fill": "$text-primary",
+                                      "content": "Pixel 9a",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 15,
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "dA1N2",
+                                      "name": "Subtitle",
+                                      "fill": "$text-secondary",
+                                      "content": "Last active 08:05 AM",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 13,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "cuigF",
+                                  "name": "Remove",
+                                  "fill": "$danger",
+                                  "content": "Remove",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "600"
+                                }
+                              ]
                             }
                           ]
                         }
@@ -46519,7 +46601,7 @@
                                       "id": "csgDQ",
                                       "name": "Count",
                                       "fill": "$text-secondary",
-                                      "content": "3 of 5",
+                                      "content": "4 of 5",
                                       "fontFamily": "$font-ui",
                                       "fontSize": 14,
                                       "fontWeight": "normal"
@@ -46565,7 +46647,7 @@
                                       "cornerRadius": 3,
                                       "id": "GMU2i",
                                       "name": "Segment",
-                                      "fill": "#FFFFFF1F",
+                                      "fill": "$accent",
                                       "width": "fill_container",
                                       "height": 5
                                     },
@@ -46603,7 +46685,7 @@
                           "fill": "$text-tertiary",
                           "textGrowth": "fixed-width",
                           "width": "fill_container",
-                          "content": "You can sign in on 2 more devices. A logged-out device stays listed until it signs in again or you remove it.",
+                          "content": "You can sign in on 1 more device. A logged-out device stays listed until it signs in again or you remove it.",
                           "lineHeight": 1.55,
                           "fontFamily": "$font-ui",
                           "fontSize": 12,
@@ -51003,7 +51085,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/1f44d.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -51151,7 +51233,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                            "mode": "fill"
+                            "mode": "cover"
                           },
                           "layout": "none",
                           "children": [
@@ -51237,7 +51319,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/2764-fe0f.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -51367,7 +51449,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                                "mode": "fill"
+                                "mode": "cover"
                               },
                               "width": 32,
                               "height": 32
@@ -51435,7 +51517,7 @@
                                     "type": "image",
                                     "enabled": true,
                                     "url": "emoji/1f60d.png",
-                                    "mode": "fit"
+                                    "mode": "contain"
                                   },
                                   "width": 17,
                                   "height": 17
@@ -52943,7 +53025,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "https://images.unsplash.com/photo-1784665664525-7b6b0e25aa49?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTAwODIzMjB8&ixlib=rb-4.1.0&q=80&w=1080",
-                                "mode": "fill"
+                                "mode": "cover"
                               },
                               "width": 64,
                               "height": 64
@@ -53077,7 +53159,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/1f525.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -55504,7 +55586,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/1f44d.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -55652,7 +55734,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                            "mode": "fill"
+                            "mode": "cover"
                           },
                           "layout": "none",
                           "children": [
@@ -55738,7 +55820,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/2764-fe0f.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -55868,7 +55950,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                                "mode": "fill"
+                                "mode": "cover"
                               },
                               "width": 32,
                               "height": 32
@@ -55936,7 +56018,7 @@
                                     "type": "image",
                                     "enabled": true,
                                     "url": "emoji/1f60d.png",
-                                    "mode": "fit"
+                                    "mode": "contain"
                                   },
                                   "width": 17,
                                   "height": 17
@@ -57444,7 +57526,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "https://images.unsplash.com/photo-1784665664525-7b6b0e25aa49?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTAwODIzMjB8&ixlib=rb-4.1.0&q=80&w=1080",
-                                "mode": "fill"
+                                "mode": "cover"
                               },
                               "width": 64,
                               "height": 64
@@ -57578,7 +57660,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/1f525.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -60463,7 +60545,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/1f44d.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -60611,7 +60693,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                            "mode": "fill"
+                            "mode": "cover"
                           },
                           "layout": "none",
                           "children": [
@@ -60697,7 +60779,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/2764-fe0f.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -60827,7 +60909,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                                "mode": "fill"
+                                "mode": "cover"
                               },
                               "width": 32,
                               "height": 32
@@ -60895,7 +60977,7 @@
                                     "type": "image",
                                     "enabled": true,
                                     "url": "emoji/1f60d.png",
-                                    "mode": "fit"
+                                    "mode": "contain"
                                   },
                                   "width": 17,
                                   "height": 17
@@ -62403,7 +62485,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "https://images.unsplash.com/photo-1784665664525-7b6b0e25aa49?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTAwODIzMjB8&ixlib=rb-4.1.0&q=80&w=1080",
-                                "mode": "fill"
+                                "mode": "cover"
                               },
                               "width": 64,
                               "height": 64
@@ -62537,7 +62619,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/1f525.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -66873,7 +66955,7 @@
             "type": "image",
             "enabled": true,
             "url": "https://images.unsplash.com/photo-1758600436605-7e43ac56f707?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTA0NTQxMzZ8&ixlib=rb-4.1.0&q=80&w=1080",
-            "mode": "fill"
+            "mode": "cover"
           }
         },
         {
@@ -67168,7 +67250,7 @@
             "type": "image",
             "enabled": true,
             "url": "https://images.unsplash.com/photo-1758600588158-cb4cd4fd97d5?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTA0NTQxMzZ8&ixlib=rb-4.1.0&q=80&w=1080",
-            "mode": "fill"
+            "mode": "cover"
           },
           "cornerRadius": 16,
           "stroke": "#FFFFFF1F",
@@ -69470,7 +69552,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/1f44d.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -69618,7 +69700,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                            "mode": "fill"
+                            "mode": "cover"
                           },
                           "layout": "none",
                           "children": [
@@ -69704,7 +69786,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/2764-fe0f.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -69834,7 +69916,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                                "mode": "fill"
+                                "mode": "cover"
                               },
                               "width": 32,
                               "height": 32
@@ -69902,7 +69984,7 @@
                                     "type": "image",
                                     "enabled": true,
                                     "url": "emoji/1f60d.png",
-                                    "mode": "fit"
+                                    "mode": "contain"
                                   },
                                   "width": 17,
                                   "height": 17
@@ -71410,7 +71492,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "https://images.unsplash.com/photo-1784665664525-7b6b0e25aa49?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTAwODIzMjB8&ixlib=rb-4.1.0&q=80&w=1080",
-                                "mode": "fill"
+                                "mode": "cover"
                               },
                               "width": 64,
                               "height": 64
@@ -71544,7 +71626,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/1f525.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -74167,7 +74249,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/1f44d.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -74315,7 +74397,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                            "mode": "fill"
+                            "mode": "cover"
                           },
                           "layout": "none",
                           "children": [
@@ -74401,7 +74483,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/2764-fe0f.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -74531,7 +74613,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                                "mode": "fill"
+                                "mode": "cover"
                               },
                               "width": 32,
                               "height": 32
@@ -74599,7 +74681,7 @@
                                     "type": "image",
                                     "enabled": true,
                                     "url": "emoji/1f60d.png",
-                                    "mode": "fit"
+                                    "mode": "contain"
                                   },
                                   "width": 17,
                                   "height": 17
@@ -76107,7 +76189,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "https://images.unsplash.com/photo-1784665664525-7b6b0e25aa49?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTAwODIzMjB8&ixlib=rb-4.1.0&q=80&w=1080",
-                                "mode": "fill"
+                                "mode": "cover"
                               },
                               "width": 64,
                               "height": 64
@@ -76241,7 +76323,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/1f525.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -80538,7 +80620,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                            "mode": "fill"
+                            "mode": "cover"
                           },
                           "width": 32,
                           "height": 32
@@ -80606,7 +80688,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f60d.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 17,
                               "height": 17
@@ -81979,7 +82061,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "https://images.unsplash.com/photo-1784665664525-7b6b0e25aa49?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTAwODIzMjB8&ixlib=rb-4.1.0&q=80&w=1080",
-                            "mode": "fill"
+                            "mode": "cover"
                           },
                           "width": 64,
                           "height": 64
@@ -82113,7 +82195,7 @@
                                     "type": "image",
                                     "enabled": true,
                                     "url": "emoji/1f525.png",
-                                    "mode": "fit"
+                                    "mode": "contain"
                                   },
                                   "width": 18,
                                   "height": 18
@@ -82909,7 +82991,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                            "mode": "fill"
+                            "mode": "cover"
                           },
                           "width": 32,
                           "height": 32
@@ -82977,7 +83059,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f60d.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 17,
                               "height": 17
@@ -84350,7 +84432,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "https://images.unsplash.com/photo-1784665664525-7b6b0e25aa49?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTAwODIzMjB8&ixlib=rb-4.1.0&q=80&w=1080",
-                            "mode": "fill"
+                            "mode": "cover"
                           },
                           "width": 64,
                           "height": 64
@@ -84484,7 +84566,7 @@
                                     "type": "image",
                                     "enabled": true,
                                     "url": "emoji/1f525.png",
-                                    "mode": "fit"
+                                    "mode": "contain"
                                   },
                                   "width": 18,
                                   "height": 18
@@ -85510,7 +85592,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                            "mode": "fill"
+                            "mode": "cover"
                           },
                           "width": 32,
                           "height": 32
@@ -85578,7 +85660,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f60d.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 17,
                               "height": 17
@@ -86951,7 +87033,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "https://images.unsplash.com/photo-1784665664525-7b6b0e25aa49?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTAwODIzMjB8&ixlib=rb-4.1.0&q=80&w=1080",
-                            "mode": "fill"
+                            "mode": "cover"
                           },
                           "width": 64,
                           "height": 64
@@ -87085,7 +87167,7 @@
                                     "type": "image",
                                     "enabled": true,
                                     "url": "emoji/1f525.png",
-                                    "mode": "fit"
+                                    "mode": "contain"
                                   },
                                   "width": 18,
                                   "height": 18
@@ -88348,7 +88430,7 @@
             "type": "image",
             "enabled": true,
             "url": "https://images.unsplash.com/photo-1758600436605-7e43ac56f707?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTA0NTQxMzZ8&ixlib=rb-4.1.0&q=80&w=1080",
-            "mode": "fill"
+            "mode": "cover"
           }
         },
         {
@@ -88643,7 +88725,7 @@
             "type": "image",
             "enabled": true,
             "url": "https://images.unsplash.com/photo-1758600588158-cb4cd4fd97d5?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTA0NTQxMzZ8&ixlib=rb-4.1.0&q=80&w=1080",
-            "mode": "fill"
+            "mode": "cover"
           },
           "cornerRadius": 12,
           "stroke": "#FFFFFF1F",
@@ -89306,7 +89388,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                            "mode": "fill"
+                            "mode": "cover"
                           },
                           "width": 32,
                           "height": 32
@@ -89374,7 +89456,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "emoji/1f60d.png",
-                                "mode": "fit"
+                                "mode": "contain"
                               },
                               "width": 17,
                               "height": 17
@@ -90747,7 +90829,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "https://images.unsplash.com/photo-1784665664525-7b6b0e25aa49?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTAwODIzMjB8&ixlib=rb-4.1.0&q=80&w=1080",
-                            "mode": "fill"
+                            "mode": "cover"
                           },
                           "width": 64,
                           "height": 64
@@ -90881,7 +90963,7 @@
                                     "type": "image",
                                     "enabled": true,
                                     "url": "emoji/1f525.png",
-                                    "mode": "fit"
+                                    "mode": "contain"
                                   },
                                   "width": 18,
                                   "height": 18
@@ -93167,7 +93249,7 @@
             "type": "image",
             "enabled": true,
             "url": "https://images.unsplash.com/photo-1758600588158-cb4cd4fd97d5?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTA0NTQxMzZ8&ixlib=rb-4.1.0&q=80&w=1080",
-            "mode": "fill"
+            "mode": "cover"
           },
           "cornerRadius": 16,
           "stroke": "#FFFFFF1F",
@@ -93467,7 +93549,7 @@
             "type": "image",
             "enabled": true,
             "url": "https://images.unsplash.com/photo-1758600436605-7e43ac56f707?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTA0NTQxMzZ8&ixlib=rb-4.1.0&q=80&w=1080",
-            "mode": "fill"
+            "mode": "cover"
           },
           "cornerRadius": 16,
           "stroke": "#FFFFFF1F",
@@ -96565,7 +96647,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/1f44d.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -96713,7 +96795,7 @@
                             "type": "image",
                             "enabled": true,
                             "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                            "mode": "fill"
+                            "mode": "cover"
                           },
                           "layout": "none",
                           "children": [
@@ -96799,7 +96881,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/2764-fe0f.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -96929,7 +97011,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "https://images.unsplash.com/photo-1476560123413-698b683da026?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400&q=80",
-                                "mode": "fill"
+                                "mode": "cover"
                               },
                               "width": 32,
                               "height": 32
@@ -96997,7 +97079,7 @@
                                     "type": "image",
                                     "enabled": true,
                                     "url": "emoji/1f60d.png",
-                                    "mode": "fit"
+                                    "mode": "contain"
                                   },
                                   "width": 17,
                                   "height": 17
@@ -98505,7 +98587,7 @@
                                 "type": "image",
                                 "enabled": true,
                                 "url": "https://images.unsplash.com/photo-1784665664525-7b6b0e25aa49?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTAwODIzMjB8&ixlib=rb-4.1.0&q=80&w=1080",
-                                "mode": "fill"
+                                "mode": "cover"
                               },
                               "width": 64,
                               "height": 64
@@ -98639,7 +98721,7 @@
                                         "type": "image",
                                         "enabled": true,
                                         "url": "emoji/1f525.png",
-                                        "mode": "fit"
+                                        "mode": "contain"
                                       },
                                       "width": 18,
                                       "height": 18
@@ -100131,7 +100213,7 @@
             "type": "image",
             "enabled": true,
             "url": "https://images.unsplash.com/photo-1758600588158-cb4cd4fd97d5?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTA0NTQxMzZ8&ixlib=rb-4.1.0&q=80&w=1080",
-            "mode": "fill"
+            "mode": "cover"
           },
           "cornerRadius": 12,
           "stroke": "#FFFFFF1F",
@@ -100349,7 +100431,7 @@
             "type": "image",
             "enabled": true,
             "url": "https://images.unsplash.com/photo-1758600436605-7e43ac56f707?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTA0NTQxMzZ8&ixlib=rb-4.1.0&q=80&w=1080",
-            "mode": "fill"
+            "mode": "cover"
           },
           "cornerRadius": 12,
           "stroke": "#FFFFFF1F",
