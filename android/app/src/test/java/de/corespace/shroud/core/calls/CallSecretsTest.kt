@@ -261,6 +261,30 @@ class CallSecretsTest {
         assertTrue(locked.peers.isEmpty())
     }
 
+    /** What the call controller asks about a peer goes to the secrets and W2-CONTACTS' controllers. */
+    @Test
+    fun theCallPeerDirectoryForwards() = runTest {
+        val io = UnconfinedTestDispatcher(testScheduler)
+        val store = InMemoryCallSecretStore()
+        val peers = FakePeerIdentities(mapOf(bob to bobPublic))
+        val directory = ContactsCallPeers(secrets(store, peers, FakeContacts(listOf(bob)), io = io), { peers }, { FakeContacts(listOf(bob)) }, io)
+        assertNull(directory.storedSecret(bob))
+        assertEquals(expectedSecret, directory.deriveSecret(bob).hex())
+        assertEquals(expectedSecret, directory.storedSecret(bob)!!.hex())
+        assertEquals("user-$bob", directory.contactUsername(bob))
+        assertNull(directory.contactUsername(carol))
+        assertFalse(directory.isSafetyVerified(bob))
+        // Unwired (before W2-INT): nothing known, nothing derived.
+        val unwired = ContactsCallPeers(secrets(InMemoryCallSecretStore(), null, io = io), { null }, { null }, io)
+        assertNull(unwired.contactUsername(bob))
+        assertNull(unwired.safetyNumber(bob))
+        try {
+            unwired.deriveSecret(bob)
+            fail("derived without peer identities")
+        } catch (_: CallSecretException) {
+        }
+    }
+
     @Test
     fun rosterChangesUnlocksAndKeyEventsKeepTheSecretsCurrent() = runTest {
         val io = UnconfinedTestDispatcher(testScheduler)

@@ -301,7 +301,7 @@ internal class FakePeers(private val names: Map<UUID, String>) : CallPeerDirecto
     var deriveError: Exception? = null
     val confirmed = ArrayList<UUID>()
 
-    override fun storedSecret(peer: UUID): ByteArray? = if (stored) Vector.secret else null
+    override suspend fun storedSecret(peer: UUID): ByteArray? = if (stored) Vector.secret else null
 
     override suspend fun deriveSecret(peer: UUID): ByteArray {
         if (deriveDelayMs > 0) delay(deriveDelayMs)

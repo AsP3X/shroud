@@ -11,7 +11,10 @@ import de.corespace.shroud.core.net.IceServerDto
 import de.corespace.shroud.core.net.ShroudApi
 import de.corespace.shroud.core.realtime.RealtimeClient
 import de.corespace.shroud.core.realtime.RealtimeEvent
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 // What CallController needs from the rest of the app, as narrow interfaces so the scripted
@@ -72,7 +75,7 @@ class RealtimeCallSocket(private val client: RealtimeClient) : CallSocket {
  */
 interface CallPeerDirectory {
     /** The stored call secret (readable on a locked phone), or null (`CallSecretStore.secret(for:)`). */
-    fun storedSecret(peer: UUID): ByteArray?
+    suspend fun storedSecret(peer: UUID): ByteArray?
 
     /**
      * Derives (and stores) the call secret from the pinned identity key. Throws
@@ -90,13 +93,17 @@ interface CallPeerDirectory {
     fun contactUsername(peer: UUID): String?
 }
 
-/** [CallPeerDirectory] over [CallSecrets] and W2-CONTACTS' controllers (plan C29); providers stay null until wired. */
+/**
+ * [CallPeerDirectory] over [CallSecrets] and W2-CONTACTS' controllers (plan C29); providers stay
+ * null until wired. The stored secret is read on [io] (a Keystore open, the first time).
+ */
 class ContactsCallPeers(
     private val secrets: CallSecrets,
     private val peers: () -> PeerIdentities?,
     private val contacts: () -> Contacts?,
+    private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : CallPeerDirectory {
-    override fun storedSecret(peer: UUID): ByteArray? = secrets.secret(peer)
+    override suspend fun storedSecret(peer: UUID): ByteArray? = withContext(io) { secrets.secret(peer) }
     override suspend fun deriveSecret(peer: UUID): ByteArray = secrets.derive(peer)
     override fun isSafetyVerified(peer: UUID): Boolean = peers()?.isSafetyVerified(peer) ?: false
     override fun safetyNumber(peer: UUID): String? = peers()?.safetyNumber(peer)
