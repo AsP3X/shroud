@@ -58,6 +58,19 @@ data class VideoOutgoingPlan(
 /** The chosen quality cannot fit under the media cap (`VideoMedia.swift:99-102`). */
 class VideoPlanError(message: String, val maxSeconds: Int) : Exception(message)
 
+/**
+ * Why an encode gave up (`VideoMedia.VideoError`, `VideoMedia.swift:110-115`). Thrown by
+ * `VideoPipeline.encode` (W2-VIDEO); the send path maps [Reason.TooLarge] to its two "too large"
+ * lines and everything else to "Could not prepare that video." (`MessagingController.swift:2630-2639`).
+ *
+ * A cancelled caller gets its own `CancellationException`, as Kotlin's structured concurrency
+ * requires; [Reason.Cancelled] is only thrown when the platform ended an export as cancelled while
+ * the caller was still waiting for it.
+ */
+class VideoException(val reason: Reason, cause: Throwable? = null) : Exception(reason.name, cause) {
+    enum class Reason { Unreadable, ExportFailed, TooLarge, Cancelled }
+}
+
 /** One video to send, built by the compose screen (`PickedMovie.swift:58-74`). */
 data class VideoSendPlan(
     val sourceUri: Uri,
