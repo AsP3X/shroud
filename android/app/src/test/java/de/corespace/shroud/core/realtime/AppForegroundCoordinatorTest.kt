@@ -158,6 +158,37 @@ class AppForegroundCoordinatorTest {
     }
 
     @Test
+    fun theBackgroundConnectionEndingInTheBackgroundStepsAwayAgain() = runTest {
+        val coordinator = coordinator()
+        toFront()
+        backgroundHeld = true
+        toBack()
+        // Switched off (or its service stopped) while the app is away: the socket may close now.
+        backgroundHeld = false
+        coordinator.onBackgroundConnectionEnded()
+        runCurrent()
+        assertEquals(listOf("active", "leave(keepSocket=true)", "leave(keepSocket=false)"), messaging.calls)
+        // A call still keeps it.
+        toFront()
+        backgroundHeld = true
+        toBack()
+        backgroundHeld = false
+        calls.hasActiveCall = true
+        coordinator.onBackgroundConnectionEnded()
+        runCurrent()
+        assertEquals("leave(keepSocket=true)", messaging.calls.last())
+    }
+
+    @Test
+    fun theBackgroundConnectionEndingInFrontDoesNothing() = runTest {
+        val coordinator = coordinator()
+        toFront()
+        coordinator.onBackgroundConnectionEnded()
+        runCurrent()
+        assertEquals(listOf("active"), messaging.calls)
+    }
+
+    @Test
     fun aCallEndingInFrontOrLockedDoesNothing() = runTest {
         val coordinator = coordinator()
         toFront()

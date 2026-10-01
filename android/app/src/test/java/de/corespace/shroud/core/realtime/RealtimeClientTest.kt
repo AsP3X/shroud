@@ -58,6 +58,9 @@ class RealtimeClientTest {
     private val authOk = """{"type":"auth.ok","user_id":"$userId","device_id":"$deviceId"}"""
     private val focusTrue = """{"type":"focus","focused":true}"""
     private val focusFalse = """{"type":"focus","focused":false}"""
+
+    /** Away while the background connection holds the socket (plan §1.4; X1-SRV-UP `update_focus`). */
+    private val focusFalseBackground = """{"type":"focus","focused":false,"background":true}"""
     private fun authFrame(token: String = "tok") = """{"type":"auth","token":"$token"}"""
     private fun backgroundAuthFrame(token: String = "tok") = """{"type":"auth","token":"$token","background":true}"""
     private fun authError(code: String) = """{"type":"auth.error","error":{"code":"$code","message":"m"}}"""
@@ -397,10 +400,11 @@ class RealtimeClientTest {
         await("auth.ok") { client.isConnected }
         assertEquals(focusTrue, nextFrame(peer))
 
-        // The server drops it: back to 1 s, and the next auth.ok says reconnect.
+        // The server drops it (a restart): back to 1 s, and the next auth.ok says reconnect.
+        // MockWebServer's server-side socket has no call to cancel(), so it closes instead.
         val again = Peer()
         server.enqueue(upgrade(again))
-        peer.socket!!.cancel()
+        peer.socket!!.close(1011, "restart")
         assertReconnectAfter(client, 1)
         assertEquals(authFrame(), nextFrame(again))
         again.send(authOk)
@@ -573,8 +577,9 @@ class RealtimeClientTest {
         val client = newClient()
         val peer = Peer()
         // Even with the app in front (chats locked, say): only the background connection holds it.
+        // The first frame after auth.ok is still its focus (`:304`), away and background.
         val first = connect(client, peer, holder = Holder.Background, expectedAuth = backgroundAuthFrame())
-        assertEquals(focusFalse, first)
+        assertEquals(focusFalseBackground, first)
         client.noteFocus(true)
         assertTrue(client.deliverFocus())
         client.sendTyping(peerId, true)
@@ -586,7 +591,7 @@ class RealtimeClientTest {
         foreground = false
         val client = newClient()
         val peer = Peer()
-        assertEquals(focusFalse, connect(client, peer, holder = Holder.Background, expectedAuth = backgroundAuthFrame()))
+        assertEquals(focusFalseBackground, connect(client, peer, holder = Holder.Background, expectedAuth = backgroundAuthFrame()))
 
         // The app comes to the front and the chats unlock (MessagingController.handleAppBecameActive).
         foreground = true
@@ -597,11 +602,11 @@ class RealtimeClientTest {
         settle()
         assertEquals(1, server.requestCount)
 
-        // leaveForeground(keepSocket = true): focus:false, the socket stays.
+        // leaveForeground(keepSocket = true): focus:false, still a background socket; it stays.
         foreground = false
         client.noteFocus(false)
         assertTrue(client.deliverFocus())
-        assertEquals(focusFalse, nextFrame(peer))
+        assertEquals(focusFalseBackground, nextFrame(peer))
 
         // Back in front, then the chats lock: messaging lets go, the background connection keeps
         // the socket, and the server hears at once that nobody is looking any more.
@@ -610,11 +615,68 @@ class RealtimeClientTest {
         assertTrue(client.deliverFocus())
         assertEquals(focusTrue, nextFrame(peer))
         client.release(Holder.Messaging)
-        assertEquals(focusFalse, nextFrame(peer))
+        assertEquals(focusFalseBackground, nextFrame(peer))
         settle()
         assertTrue(client.isConnected)
         assertNull(peer.closeCodes.poll())
         assertTrue(client.isHeld(Holder.Background))
+    }
+
+    @Test
+    fun aSocketOpenedInFrontAndKeptForTheBackgroundConnectionDeclaresItselfOnLeaving() = runTest {
+        // Plan §1.4: leaving with the background connection on, the socket messaging opened in
+        // front stays (keepSocket) and must stop counting as online — it says so with its focus.
+        val client = newClient()
+        val peer = Peer()
+        assertEquals(focusTrue, connect(client, peer, holder = Holder.Messaging))
+        // Switched on in Settings while in front: nothing for the server yet.
+        client.hold(Holder.Background, "tok")
+        client.sendTyping(peerId, true)
+        assertEquals(typingMarker, nextFrame(peer))
+
+        // leaveForeground(keepSocket = true).
+        foreground = false
+        client.noteFocus(false)
+        assertTrue(client.deliverFocus())
+        assertEquals(focusFalseBackground, nextFrame(peer))
+        assertTrue(client.deliverFocus())
+
+        // Back in front and away again: the flag stays with the socket, every away frame says it.
+        foreground = true
+        client.noteFocus(true)
+        assertTrue(client.deliverFocus())
+        assertEquals(focusTrue, nextFrame(peer))
+        foreground = false
+        client.noteFocus(false)
+        assertTrue(client.deliverFocus())
+        assertEquals(focusFalseBackground, nextFrame(peer))
+
+        // Switched off while away: nothing to undo (the coordinator then steps away and messaging
+        // releases its hold, which closes the socket).
+        client.release(Holder.Background)
+        assertTrue(client.deliverFocus())
+        client.sendTyping(peerId, true)
+        assertEquals(typingMarker, nextFrame(peer))
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun aBackgroundHoldArrivingWhileAwayDeclaresTheKeptSocketAtOnce() = runTest {
+        // A call kept the socket in the background (focus:false sent), then the background
+        // connection starts (W3-PUSH restarts its service): the server hears it right away.
+        val client = newClient()
+        val peer = Peer()
+        connect(client, peer, holder = Holder.Messaging)
+        client.hold(Holder.Call, "tok")
+        foreground = false
+        client.noteFocus(false)
+        assertTrue(client.deliverFocus())
+        assertEquals(focusFalse, nextFrame(peer))
+        client.hold(Holder.Background, "tok")
+        assertEquals(focusFalseBackground, nextFrame(peer))
+        assertTrue(client.deliverFocus())
+        client.sendTyping(peerId, true)
+        assertEquals(typingMarker, nextFrame(peer))
     }
 
     @Test

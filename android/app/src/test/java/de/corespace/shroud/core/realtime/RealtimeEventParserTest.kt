@@ -14,7 +14,7 @@ import java.time.Instant
 import java.util.UUID
 
 /**
- * One frame per server event (api-realtime §11.5; shapes from `routes/*.rs`) and each
+ * One frame per server event (api-realtime §11.5; shapes from the server's `routes/` files) and each
  * required-field drop of §11.12, where the iOS consumer's guard drops it.
  */
 class RealtimeEventParserTest {

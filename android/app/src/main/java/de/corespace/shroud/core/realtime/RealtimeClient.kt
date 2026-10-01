@@ -69,8 +69,12 @@ import java.util.concurrent.TimeUnit
  * so the server neither shows the user online nor treats the device as in front. When a
  * messaging or call hold arrives on the same socket and the app is in front, the client sends
  * `focus:true` at once; from then on the server counts it like any socket, until the next
- * `focus:false`. `DEVICE_REMOVED` on such a socket takes the same wipe path — that is how a
- * removal reaches a phone without a push distributor.
+ * `focus:false`. A socket that was opened in front and is kept for the background connection
+ * when the app leaves declares itself one on the way out: while [Holder.Background] holds the
+ * socket every `focus:false` frame carries `"background": true` (plan §1.4 "declares itself a
+ * background socket"; X1-SRV-UP `RealtimeHub::update_focus`). Servers without background
+ * sockets ignore the extra key (`ws.rs` `ClientMessage`). `DEVICE_REMOVED` on such a socket
+ * takes the same wipe path — that is how a removal reaches a phone without a push distributor.
  *
  * Never logs: tokens, frames and events stay out of every log.
  *
@@ -148,6 +152,13 @@ class RealtimeClient(
     private var intentional = false
     private var wantsFocus = isForeground()
     private var sentFocus: Boolean? = null
+
+    /**
+     * The server counts the current socket as a background socket: its auth frame or a
+     * `focus:false` frame said `"background": true`. The server keeps that until the socket
+     * closes (a later `focus:true` only puts it in front), so this resets with the socket only.
+     */
+    private var sentBackground = false
     private var reconnectJob: Job? = null
     private var everConnected = false
 
@@ -157,22 +168,29 @@ class RealtimeClient(
         }
     }
 
-    /** Opens the socket (if needed) for [holder] (`RealtimeClient.swift:59-63`). */
+    /**
+     * Opens the socket (if needed) for [holder] (`RealtimeClient.swift:59-63`). On a socket that
+     * is already up, a holder that changes what the server should hear — a messaging or call hold
+     * on a socket the background connection opened, while the app is in front — is told at once
+     * (a no-op when nothing changed).
+     */
     fun hold(holder: Holder, token: String) {
-        val focusBefore = desiredFocus()
         holders += holder
         connect(token)
-        if (desiredFocus() != focusBefore) deliverFocusNow()
+        deliverFocusNow()
     }
 
-    /** [holder] is done with the socket; it closes once nobody holds it (`RealtimeClient.swift:65-71`). */
+    /**
+     * [holder] is done with the socket; it closes once nobody holds it (`RealtimeClient.swift:65-71`).
+     * While others still hold it, the server hears at once if that changed the focus — messaging
+     * letting go of a socket the background connection keeps.
+     */
     fun release(holder: Holder) {
-        val focusBefore = desiredFocus()
         holders -= holder
         if (holders.isEmpty()) {
             everConnected = false
             disconnect(reconnect = false)
-        } else if (desiredFocus() != focusBefore) {
+        } else {
             deliverFocusNow()
         }
     }
@@ -258,6 +276,7 @@ class RealtimeClient(
         socket?.close(code, null)
         socket = null
         sentFocus = null
+        sentBackground = false
     }
 
     /**
@@ -317,12 +336,13 @@ class RealtimeClient(
      */
     private fun sendAuth(webSocket: WebSocket) {
         val token = token ?: return
+        val background = declaresBackground(desiredFocus())
         val frame = buildJsonObject {
             put("type", "auth")
             put("token", token)
-            if (Holder.Background in holders && !desiredFocus()) put("background", true)
+            if (background) put("background", true)
         }
-        webSocket.send(frame.toString())
+        if (webSocket.send(frame.toString()) && background) sentBackground = true
     }
 
     /** `RealtimeClient.swift:292-336`. */
@@ -369,6 +389,7 @@ class RealtimeClient(
     private fun onEnded(reason: String) {
         socket = null
         sentFocus = null
+        sentBackground = false
         mutableState.value = if (intentional) ConnectionState.Disconnected else ConnectionState.Failed(reason)
         if (!intentional && token != null && holders.isNotEmpty()) scheduleReconnect()
     }
@@ -380,17 +401,31 @@ class RealtimeClient(
     private fun desiredFocus(): Boolean =
         wantsFocus && holders.any { it != Holder.Background } && isForeground()
 
+    /**
+     * Whether a frame saying [focused] also declares a background socket: away while the
+     * background connection holds the socket (plan §1.4). Never `"background": false` — the
+     * server keeps the flag for the socket's life and a `focus:true` alone puts it in front.
+     */
+    private fun declaresBackground(focused: Boolean): Boolean = !focused && Holder.Background in holders
+
+    /**
+     * `RealtimeClient.swift:82-101` on the desired focus: nothing when the server already has it
+     * (and, away with the background connection on, already counts the socket as background).
+     */
     private fun deliverFocusNow(): Boolean {
         val webSocket = socket
         if (state.value !is ConnectionState.Connected || webSocket == null) return false
         val focused = desiredFocus()
-        if (sentFocus == focused) return true
+        val background = declaresBackground(focused)
+        if (sentFocus == focused && (!background || sentBackground)) return true
         val frame = buildJsonObject {
             put("type", "focus")
             put("focused", focused)
+            if (background) put("background", true)
         }
         val sent = webSocket.send(frame.toString())
         if (sent && desiredFocus() == focused) sentFocus = focused
+        if (sent && background) sentBackground = true
         return sent
     }
 

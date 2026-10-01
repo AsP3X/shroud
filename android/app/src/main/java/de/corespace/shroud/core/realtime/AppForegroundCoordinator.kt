@@ -18,6 +18,9 @@ import kotlinx.coroutines.launch
  *   `focus:false`, then release messaging's hold unless something keeps the socket — a call
  *   (`:334`) or the background connection (plan §1.4).
  * - [AppPhase.Inactive] changes nothing for the socket.
+ * - A reason to keep the socket that ends while the app is away — a call ([onCallEnded]) or the
+ *   background connection ([onBackgroundConnectionEnded]) — steps away again, so the socket
+ *   closes once nothing needs it (`RootView.swift:244-253`).
  *
  * No `beginBackgroundTask` equivalent is needed: Android does not suspend the process at stop
  * (api-realtime §11.13). [messaging] and [calls] return null until W2-INT wires the controllers;
@@ -63,6 +66,16 @@ class AppForegroundCoordinator(
      * connection still holds it). The call controller calls this after releasing its hold.
      */
     fun onCallEnded() {
+        if (phase.phase.value == AppPhase.Background) stepAway()
+    }
+
+    /**
+     * The background connection was switched off or its service stopped (W3-PUSH calls this after
+     * `release(Holder.Background)`). Leaving the app kept messaging's hold for it (plan §1.4), so
+     * in the background this steps away again exactly as [onCallEnded] does
+     * (`RootView.swift:244-253`): the socket closes unless a call still needs it.
+     */
+    fun onBackgroundConnectionEnded() {
         if (phase.phase.value == AppPhase.Background) stepAway()
     }
 
