@@ -905,7 +905,12 @@ final class MessagingController {
             case let .userID(id):
                 card = try await contactsService.getUser(userID: id, token: token)
             case let .shareCode(code):
-                card = try await contactsService.getUserByShareCode(code, token: token)
+                let service = contactsService
+                card = try await Self.lookUpShareCode(
+                    code,
+                    byCode: { try await service.getUserByShareCode($0, token: token) },
+                    byUsername: { try await service.getUserByUsername($0, token: token) }
+                )
             case let .username(name):
                 card = try await contactsService.getUserByUsername(name, token: token)
             }
@@ -918,6 +923,42 @@ final class MessagingController {
         } catch {
             return .failed(SessionController.userMessage(for: error))
         }
+    }
+
+    /// Looks a share code up, and on a 404 tries it as a username.
+    ///
+    /// Human: `ContactInviteParser` reads any 8–16 letters and digits as a share code, so a
+    /// username like `noahvorberg` (no underscore) could never be added by name: the server
+    /// answered "User not found." for the code. The server never has both readings for one
+    /// input, so when no share code matches, the same text lower-cased is tried as a username
+    /// — what the web client does (`web/src/api/client.ts:389-411`; android-port decision P10a,
+    /// contacts §8.2). Only a 404 falls back; offline, rate limits and server errors surface.
+    /// Agent: Pure apart from the two lookups, for `ContactInviteParserTests`.
+    nonisolated static func lookUpShareCode(
+        _ code: String,
+        byCode: @Sendable (String) async throws -> UserCardDTO,
+        byUsername: @Sendable (String) async throws -> UserCardDTO
+    ) async throws -> UserCardDTO {
+        do {
+            return try await byCode(code)
+        } catch let error as APIError {
+            guard case let .server(_, _, statusCode) = error, statusCode == 404,
+                  let name = usernameFallback(forShareCode: code)
+            else { throw error }
+            return try await byUsername(name)
+        }
+    }
+
+    /// The username a share code may really be: the (already normalized) code lower-cased, when
+    /// that is a valid username (3–32 of `a-z`, `0-9`, `_`: the server's rule, the web's regex
+    /// `^[a-z0-9_]{3,32}$`). Nil otherwise, e.g. for `MÜLLERHANS`.
+    nonisolated static func usernameFallback(forShareCode code: String) -> String? {
+        let name = code.lowercased()
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789_")
+        guard (3 ... 32).contains(name.unicodeScalars.count),
+              name.unicodeScalars.allSatisfy({ allowed.contains($0) })
+        else { return nil }
+        return name
     }
 
     /// Legacy UUID-only entry point (kept for call sites / tests).
@@ -4211,7 +4252,15 @@ final class MessagingController {
         }
     }
 
+    /// The peer read our messages: tick them "read".
+    ///
+    /// Human: The server sends `message.read` to the reader's other devices too
+    /// (`routes/messages.rs` `publish_bulk_read` / `fanout_message_read`). Reading a chat on our
+    /// iPad used to mark our own sent messages "read" on this iPhone, before the peer saw them.
+    /// Our own reads are ignored here; the unread badge follows `conversation.read`.
+    /// (android-port decision D8b, conversation-thread §24.3.)
     private func handleReadEvent(_ json: [String: Any]) {
+        guard Self.isPeerRead(json, me: sessionController?.userID) else { return }
         // Single-message read or bulk up_to.
         if let upToString = json["up_to_message_id"] as? String,
            let upTo = UUID(uuidString: upToString)
@@ -4225,6 +4274,17 @@ final class MessagingController {
         // Single read also implies all earlier own messages in that thread are read
         // once the peer has opened the chat; mark this one and promote earlier.
         markOwnMessagesRead(upToMessageID: messageID)
+    }
+
+    /// False for a `message.read` whose reader (`user_id`) is this account: one of our own
+    /// devices read the peer's messages. An event without a readable `user_id` counts as the
+    /// peer's, as before (older servers).
+    nonisolated static func isPeerRead(_ json: [String: Any], me: UUID?) -> Bool {
+        guard let me,
+              let readerString = json["user_id"] as? String,
+              let reader = UUID(uuidString: readerString)
+        else { return true }
+        return reader != me
     }
 
     /// Raises receipt status for a message (never lowers it).
@@ -4482,11 +4542,26 @@ final class MessagingController {
         verifiedPeers.insert(peerUserID)
     }
 
+    /// The number to compare with the contact's own phone.
+    ///
+    /// Human: While a key change waits for "Trust new key", this is the new key's number: that
+    /// is the one the contact's phone shows, so the two can be compared before trusting it. The
+    /// old pinned key's number matched nothing the contact could ever see (android-port
+    /// decision P10b, contacts §8.3). Nothing else changes: the pin stays the old key until
+    /// it is trusted.
     func safetyNumber(for peerUserID: UUID) -> String? {
         guard let local = cryptoController?.material?.identityPublicKeyData,
-              let peer = peerKeys.publicKeyData(for: peerUserID)
+              let peer = Self.safetyNumberKey(
+                  pinned: peerKeys.publicKeyData(for: peerUserID),
+                  change: identityChanges[peerUserID]
+              )
         else { return nil }
         return IdentitySafetyNumber.displayString(localIdentity: local, peerIdentity: peer)
+    }
+
+    /// The peer key a safety number is computed from: a pending change's new key, else the pin.
+    static func safetyNumberKey(pinned: Data?, change: PeerIdentityChange?) -> Data? {
+        change?.currentKey ?? pinned
     }
 
     func refreshPeerIdentity(_ peerUserID: UUID) async {
