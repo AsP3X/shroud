@@ -1,4 +1,4 @@
-// Generates the vectors pinned by MessageCryptoVectorsTest, DoubleRatchetTest, MediaCryptoTest,
+// Generates the vectors pinned by MessageCryptoTest, DoubleRatchetTest, MediaCryptoTest,
 // DeviceNameSealTest and IdentitySafetyNumberTest with Node's own crypto (OpenSSL) — an
 // implementation independent of the BouncyCastle/JCA code under test.
 //

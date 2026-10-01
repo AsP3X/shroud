@@ -38,7 +38,7 @@ object DeviceNameSeal {
         ;
 
         companion object {
-            /** The kind of [byte] (custom bit already removed); unknown values are [Other] (`:83`). */
+            /** The kind of [byte] (custom bit already removed); unknown values are [Other] (`DeviceNameSeal.swift:82`). */
             fun fromByte(byte: Int): Kind = entries.firstOrNull { it.byte == byte } ?: Other
         }
     }
@@ -70,7 +70,7 @@ object DeviceNameSeal {
     private val SALT = utf8("shroud-v1")
 
     /**
-     * Seals [label] for [deviceId] (`seal`, `DeviceNameSeal.swift:42-63`). The name is [normalize]d
+     * Seals [label] for [deviceId] (`seal`, `DeviceNameSeal.swift:44-66`). The name is [normalize]d
      * first; nothing left → [SealError.EmptyName]. [nonce] is for test vectors only (12 bytes);
      * leave it out for a fresh random one.
      *
@@ -96,7 +96,7 @@ object DeviceNameSeal {
     }
 
     /**
-     * Opens a sealed name; null when it does not open (`open`, `DeviceNameSeal.swift:65-85`): absent,
+     * Opens a sealed name; null when it does not open (`open`, `DeviceNameSeal.swift:68-85`): absent,
      * not strict Base64, not 156 bytes, another account's key, another device, tampered, or padding
      * that is not `0x80 0x00…` after a non-empty, valid UTF-8 name. An unknown kind byte is [Kind.Other].
      */
@@ -125,7 +125,7 @@ object DeviceNameSeal {
 
     /**
      * One line, no control or bidi characters, at most [MAX_NAME_BYTES] UTF-8 bytes cut between
-     * characters — an emoji is never split (`normalize`, `DeviceNameSeal.swift:87-116`; the web's
+     * characters — an emoji is never split (`normalize`, `DeviceNameSeal.swift:87-106`; the web's
      * `normalizeDeviceName` follows the same rules):
      *
      * 1. Every control (general category Cc) and every line/paragraph separator or bidi mark and
@@ -170,7 +170,7 @@ object DeviceNameSeal {
         return out.toString().trim()
     }
 
-    /** `isStripped` (`DeviceNameSeal.swift:118-126`). */
+    /** `isStripped` (`DeviceNameSeal.swift:108-116`). */
     private fun isStripped(cp: Int): Boolean = Character.getType(cp) == Character.CONTROL.toInt() || when (cp) {
         0x2028, 0x2029, 0x200E, 0x200F, in 0x202A..0x202E, in 0x2066..0x2069 -> true
         else -> false
@@ -178,10 +178,10 @@ object DeviceNameSeal {
 
     private fun isWhitespace(cp: Int): Boolean = Character.isWhitespace(cp) || Character.isSpaceChar(cp)
 
-    /** `key` (`DeviceNameSeal.swift:128-135`). The caller zeroes it. */
+    /** `key` (`DeviceNameSeal.swift:118-125`). The caller zeroes it. */
     private fun key(historyKey: ByteArray): ByteArray = Primitives.hkdf(historyKey, SALT, utf8(LABEL), 32)
 
-    /** `associatedData` (`:137-139`): the device id in its lower-case wire form. */
+    /** `associatedData` (`DeviceNameSeal.swift:127-129`): the device id in its lower-case wire form. */
     private fun aad(deviceId: UUID): ByteArray = utf8("$LABEL:${Ids.wire(deviceId)}")
 
     /** Swift `String(bytes:encoding: .utf8)`: null on any malformed sequence (no replacement characters). */

@@ -12,7 +12,7 @@ package de.corespace.shroud.core.crypto
  * group i (0…11)  = ((d[2i % 32] << 16) | (d[(2i+1) % 32] << 8) | d[3i % 32]) % 100000, 5 digits
  * ```
  *
- * 30 bytes give 10 groups; the last two wrap so the whole hash is used (`:26`). The byte order is
+ * 30 bytes give 10 groups; the last two wrap so the whole hash is used (`:27`). The byte order is
  * **unsigned** ([lexLess]): a signed compare would give a different number for about half of all
  * key pairs (crypto R7). Never logs key bytes.
  */
