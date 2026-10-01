@@ -1404,17 +1404,20 @@ For each device that should hear about an event ([Milestone 11](#milestone-11--n
      The notification service extension opens it and makes it the title.
 2. Else a Web Push subscription → POST to its endpoint: RFC 8291 `aes128gcm` body, VAPID
    (RFC 8292) `Authorization: vapid t=…, k=…`, `TTL` 24 h (a test push 60 s), `Urgency`
-   (reactions `normal`, else `high`), `Topic` = the thread without hyphens, so queued message
-   pushes of one chat collapse (reactions get none: one must not replace an unseen message).
+   (reactions `normal`, else `high`), `Topic` = a per-subscription key of the thread
+   (base64url of the first 24 bytes of HMAC-SHA256(subscription auth secret,
+   `shroud-push-topic-v1:<id>`), 32 characters), so queued message pushes of one chat collapse
+   while the push service never sees the conversation id and cannot link the two participants'
+   devices (reactions get none: one must not replace an unseen message).
    The encrypted JSON:
    `{ "v": 1, "kind", "tag", "silent", "conversation_id", "peer_user_id", "message_id", "call_id", "sender", "badge" }`
    — `tag` is the conversation id, `<id>:reaction` for a reaction. The service worker writes the text.
    For an Android subscription (`client: "android"`, through its UnifiedPush distributor) the
    same JSON, plus: rings (`call` / `video_call`) and `call_ended` with `TTL` 60 s (the ring
-   time) at `high`, the rings' and `missed_call`'s `Topic` the call id without hyphens (a "Missed
-   call" replaces its queued ring; `call_ended` has none, so it never replaces one); and `read`
-   (`{ "v": 1, "kind": "read", "tag", "conversation_id", "badge"? }`, `normal`, `Topic` the
-   conversation) when the chat was read on another device.
+   time) at `high`, the rings' and `missed_call`'s `Topic` keyed from the call id the same way (a
+   "Missed call" replaces its queued ring; `call_ended` has none, so it never replaces one); and
+   `read` (`{ "v": 1, "kind": "read", "tag", "conversation_id", "badge"? }`, `normal`, `Topic`
+   keyed from the conversation id like a message push) when the chat was read on another device.
 3. Relay not configured → log only. A badge that could not be counted is left out, never sent as 0.
 
 `BadDeviceToken` / `Unregistered` / `DeviceTokenNotForTopic` / `ExpiredToken` → delete token row;

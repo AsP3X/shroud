@@ -290,7 +290,26 @@ pub struct WebPushOptions {
     pub ttl_secs: u32,
     pub urgency: Urgency,
     /// Replaces a queued, undelivered push with the same topic (≤ 32 base64url characters).
+    /// Always a [`push_topic`], never an id in the clear.
     pub topic: Option<String>,
+}
+
+/// The RFC 8030 `Topic` of a push about `id` (a conversation id, a call id, `calls`) sent to the
+/// subscription whose auth secret is `auth_secret`.
+///
+/// Human: `Topic` is a plain request header the push service reads; only the body is encrypted.
+/// A conversation id there would be the same on both participants' phones, so a distributor
+/// (most Android phones share one, ntfy.sh) could link who talks to whom, every device of one
+/// user, and the timing of each chat. The topic is therefore keyed with the subscription's own
+/// auth secret, which only this server and that device know: pushes for one chat to one device
+/// still collapse, and nothing links them across devices or recovers the id.
+/// Agent: base64url (no padding) of the first 24 bytes of
+/// HMAC-SHA256(auth, "shroud-push-topic-v1:" + id) — exactly 32 characters (RFC 8030 §5.4).
+#[must_use]
+pub fn push_topic(auth_secret: &[u8], id: &str) -> String {
+    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, auth_secret);
+    let tag = ring::hmac::sign(&key, format!("shroud-push-topic-v1:{id}").as_bytes());
+    B64URL.encode(&tag.as_ref()[..24])
 }
 
 #[derive(Debug)]

@@ -11,7 +11,7 @@ use http_body_util::BodyExt;
 use ring::agreement::{ECDH_P256, EphemeralPrivateKey, UnparsedPublicKey, agree_ephemeral};
 use ring::rand::SystemRandom;
 use serde_json::{Value, json};
-use shroud_server::push::{PushService, UnifiedPushPolicy, VapidKey, WebPushClient};
+use shroud_server::push::{PushService, UnifiedPushPolicy, VapidKey, WebPushClient, push_topic};
 use shroud_server::routes;
 use shroud_server::state::AppState;
 use sqlx::postgres::PgPoolOptions;
@@ -925,18 +925,22 @@ async fn a_ring_reaches_a_local_ntfy_within_a_second() {
     );
 
     // What a distributor is sent for a ring: RFC 8291 + VAPID, high urgency, the ring time as
-    // TTL, the call as topic.
+    // TTL, a topic per call.
     let (head, body) = tokio::time::timeout(std::time::Duration::from_secs(5), captured)
         .await
         .expect("the second phone's push")
         .expect("capture");
-    let call_topic = call["id"].as_str().unwrap().replace('-', "");
+    // The topic is keyed with this phone's auth secret: the distributor never sees the call id.
+    let call_topic = push_topic(&second_auth, call["id"].as_str().unwrap());
+    assert!(!head.contains(&call["id"].as_str().unwrap().replace('-', "")));
+    assert!(!head.contains(call["id"].as_str().unwrap()));
     for expected in [
         "post /upcapture?up=1 http/1.1".to_string(),
         "content-encoding: aes128gcm".to_string(),
         "urgency: high".to_string(),
         "ttl: 60".to_string(),
-        format!("topic: {call_topic}"),
+        // The capture lower-cases the head.
+        format!("topic: {}", call_topic.to_lowercase()),
     ] {
         assert!(head.contains(&expected), "{expected} missing from:\n{head}");
     }

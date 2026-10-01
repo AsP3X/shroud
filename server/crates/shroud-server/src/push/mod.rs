@@ -32,7 +32,8 @@ pub use client::{
 };
 pub use payload::{Notification, NotificationKind};
 pub use web_push::{
-    SubscriptionClient, UnifiedPushPolicy, VapidKey, WebPushClient, WebPushOptions, WebSubscription,
+    SubscriptionClient, UnifiedPushPolicy, VapidKey, WebPushClient, WebPushOptions,
+    WebSubscription, push_topic,
 };
 
 use crate::realtime::RealtimeHub;
@@ -675,7 +676,8 @@ impl PushService {
 
     /// Closes a chat's notifications on an Android app that did not read it (N13): `read`
     /// with the new unread total, at `normal` urgency — nothing is shown. Its topic is the
-    /// chat's, so it replaces a message push for that chat still queued at the distributor.
+    /// chat's ([`push_topic`] of the same id as a message push), so it replaces a message push
+    /// for that chat still queued at the distributor.
     async fn push_read(&self, target: &Target, conversation_id: Uuid, badge: Option<i64>) {
         let Some(subscription) = target.web_subscription() else {
             return;
@@ -683,7 +685,7 @@ impl PushService {
         let options = WebPushOptions {
             ttl_secs: u32::try_from(PUSH_LIFETIME_SECS).unwrap_or(u32::MAX),
             urgency: Urgency::Normal,
-            topic: Some(conversation_id.simple().to_string()),
+            topic: Some(push_topic(&subscription.auth, &conversation_id.to_string())),
         };
         self.send_web(
             target.device_id,
@@ -1001,7 +1003,7 @@ impl PushService {
             return (PushChannel::Web, Delivery::Failed("no subscription".into()));
         };
         let payload = payload::web(notification, settings.sound == "none");
-        let options = web_options(notification, subscription.client);
+        let options = web_options(notification, &subscription);
         let delivery = self
             .send_web(target.device_id, &subscription, &payload, &options)
             .await;
@@ -1273,8 +1275,10 @@ fn web_channel(client: SubscriptionClient) -> PushChannel {
 /// newest one; reactions get no topic, since one must not replace a message not shown yet. An
 /// Android app's call pushes collapse per call instead, like APNs' collapse id: "Missed call"
 /// takes the place of its queued ring, one call never replaces another's, and `call_ended`
-/// (no topic) never replaces a "Missed call".
-fn web_options(notification: &Notification, client: SubscriptionClient) -> WebPushOptions {
+/// (no topic) never replaces a "Missed call". Every topic is a [`push_topic`] keyed with the
+/// subscription's auth secret: the push service never sees a conversation or call id.
+fn web_options(notification: &Notification, subscription: &WebSubscription) -> WebPushOptions {
+    let client = subscription.client;
     let kind = notification.kind;
     let ttl_secs = match kind {
         NotificationKind::Test => 60,
@@ -1289,9 +1293,10 @@ fn web_options(notification: &Notification, client: SubscriptionClient) -> WebPu
         (
             SubscriptionClient::Android,
             NotificationKind::Call | NotificationKind::VideoCall | NotificationKind::MissedCall,
-        ) => notification.call_id.map(|id| id.simple().to_string()),
-        _ => Some(notification.thread().replace('-', "")),
-    };
+        ) => notification.call_id.map(|id| id.to_string()),
+        _ => Some(notification.thread()),
+    }
+    .map(|id| push_topic(&subscription.auth, &id));
     WebPushOptions {
         ttl_secs: u32::try_from(ttl_secs).unwrap_or(u32::MAX),
         urgency: if kind == NotificationKind::Reaction {
@@ -1306,6 +1311,17 @@ fn web_options(notification: &Notification, client: SubscriptionClient) -> WebPu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn subscription(client: SubscriptionClient, auth: [u8; 16]) -> WebSubscription {
+        WebSubscription {
+            endpoint: "https://ntfy.sh/up123?up=1".into(),
+            p256dh: vec![4; 65],
+            auth: auth.to_vec(),
+            client,
+        }
+    }
+
+    const AUTH: [u8; 16] = [5; 16];
 
     fn notification(kind: NotificationKind) -> Notification {
         Notification {
@@ -1328,50 +1344,113 @@ mod tests {
                 NotificationKind::VideoCall,
                 NotificationKind::CallEnded,
             ] {
-                let options = web_options(&notification(kind), client);
+                let options = web_options(&notification(kind), &subscription(client, AUTH));
                 assert_eq!(options.ttl_secs, 60, "{kind:?}");
                 assert_eq!(options.urgency, Urgency::High, "{kind:?}");
             }
-            let missed = web_options(&notification(NotificationKind::MissedCall), client);
+            let missed = web_options(
+                &notification(NotificationKind::MissedCall),
+                &subscription(client, AUTH),
+            );
             assert_eq!(missed.ttl_secs, 24 * 60 * 60);
             assert_eq!(missed.urgency, Urgency::High);
-            let test = web_options(&notification(NotificationKind::Test), client);
+            let test = web_options(
+                &notification(NotificationKind::Test),
+                &subscription(client, AUTH),
+            );
             assert_eq!((test.ttl_secs, test.urgency), (60, Urgency::High));
-            let reaction = web_options(&notification(NotificationKind::Reaction), client);
+            let reaction = web_options(
+                &notification(NotificationKind::Reaction),
+                &subscription(client, AUTH),
+            );
             assert_eq!(reaction.urgency, Urgency::Normal);
             assert_eq!(reaction.topic, None);
-            let message = web_options(&notification(NotificationKind::Message), client);
+            let message = web_options(
+                &notification(NotificationKind::Message),
+                &subscription(client, AUTH),
+            );
             assert_eq!(
                 (message.ttl_secs, message.urgency),
                 (24 * 60 * 60, Urgency::High)
             );
             assert_eq!(
-                message.topic.as_deref(),
-                Some(Uuid::from_u128(0xc0).simple().to_string().as_str())
+                message.topic,
+                Some(push_topic(&AUTH, &Uuid::from_u128(0xc0).to_string()))
             );
         }
     }
 
     #[test]
     fn android_call_pushes_collapse_per_call_browsers_per_thread() {
-        let call = Uuid::from_u128(0xca11).simple().to_string();
+        let call = push_topic(&AUTH, &Uuid::from_u128(0xca11).to_string());
         for kind in [
             NotificationKind::Call,
             NotificationKind::VideoCall,
             NotificationKind::MissedCall,
         ] {
-            let android = web_options(&notification(kind), SubscriptionClient::Android);
+            let android = web_options(
+                &notification(kind),
+                &subscription(SubscriptionClient::Android, AUTH),
+            );
             assert_eq!(android.topic.as_deref(), Some(call.as_str()), "{kind:?}");
-            let browser = web_options(&notification(kind), SubscriptionClient::Browser);
-            assert_eq!(browser.topic.as_deref(), Some("calls"), "{kind:?}");
+            let browser = web_options(
+                &notification(kind),
+                &subscription(SubscriptionClient::Browser, AUTH),
+            );
+            assert_eq!(browser.topic, Some(push_topic(&AUTH, "calls")), "{kind:?}");
         }
         let ended = web_options(
             &notification(NotificationKind::CallEnded),
-            SubscriptionClient::Android,
+            &subscription(SubscriptionClient::Android, AUTH),
         );
         assert_eq!(ended.topic, None);
         // A topic is at most 32 base64url characters (RFC 8030 §5.4).
         assert_eq!(call.len(), 32);
+        assert!(
+            call.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        );
+    }
+
+    /// Plan §1.1 rule 9: the distributor sees ciphertext and timing only. The same chat (or
+    /// call) gives every subscription its own topic, and no topic shows the id it stands for.
+    #[test]
+    fn topics_never_show_an_id_and_differ_per_subscription() {
+        let conversation = Uuid::from_u128(0xc0);
+        let call = Uuid::from_u128(0xca11);
+        for kind in [
+            NotificationKind::Message,
+            NotificationKind::Call,
+            NotificationKind::MissedCall,
+        ] {
+            let mine = web_options(
+                &notification(kind),
+                &subscription(SubscriptionClient::Android, AUTH),
+            )
+            .topic
+            .expect("a topic");
+            let theirs = web_options(
+                &notification(kind),
+                &subscription(SubscriptionClient::Android, [6; 16]),
+            )
+            .topic
+            .expect("a topic");
+            assert_ne!(mine, theirs, "{kind:?}");
+            for id in [conversation, call] {
+                for shown in [id.to_string(), id.simple().to_string()] {
+                    assert!(!mine.contains(&shown[..8]), "{kind:?} shows {shown}");
+                }
+            }
+        }
+        // The read push replaces the chat's queued message push: the same topic.
+        assert_eq!(
+            web_options(
+                &notification(NotificationKind::Message),
+                &subscription(SubscriptionClient::Android, AUTH)
+            )
+            .topic,
+            Some(push_topic(&AUTH, &conversation.to_string()))
+        );
     }
 
     #[test]

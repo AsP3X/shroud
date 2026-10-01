@@ -12,7 +12,7 @@ use ring::agreement::{ECDH_P256, EphemeralPrivateKey};
 use ring::rand::SystemRandom;
 use serde_json::{Value, json};
 use shroud_server::push::web_push::Urgency;
-use shroud_server::push::{ApnsPushType, PushChannel, SentPush};
+use shroud_server::push::{ApnsPushType, PushChannel, SentPush, push_topic};
 use shroud_server::realtime::SocketMode;
 use shroud_server::routes;
 use shroud_server::state::AppState;
@@ -1785,9 +1785,12 @@ fn options_of(push: &SentPush) -> (u32, Urgency, Option<String>) {
     (options.ttl_secs, options.urgency, options.topic)
 }
 
-/// A UUID as an RFC 8030 topic: its 32 hex digits.
+/// The RFC 8030 topic of a push about `id` to a subscription made by `browser_keys` (auth secret
+/// 16 × 5): keyed with that secret, never the id itself.
 fn topic(id: &Value) -> Option<String> {
-    Some(id.as_str().unwrap().replace('-', ""))
+    let topic = push_topic(&[5u8; 16], id.as_str().unwrap());
+    assert!(!topic.contains(&id.as_str().unwrap().replace('-', "")[..8]));
+    Some(topic)
 }
 
 const DAY: u32 = 24 * 60 * 60;
