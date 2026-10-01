@@ -15,8 +15,10 @@ import kotlin.math.min
  * `AVAudioRecorder(settings: [AVFormatIDKey: kAudioFormatMPEG4AAC, 44 100 Hz, 1 channel])`
  * (`ios/shroud/Services/Voice/VoiceRecorder.swift:82-92`; media-voice-links §8.1, D8): a synchronous
  * `MediaCodec` encoder (`audio/mp4a-latm`, `AACObjectLC`, [VoiceFormat.AAC_BITRATE]) feeding a
- * `MediaMuxer` (`MUXER_OUTPUT_MPEG_4`). The muxer writes no location (only `setLocation` would);
- * iPhone (`AVAudioPlayer`) and the web (`<audio>`, `audio/mp4`) play the result.
+ * `MediaMuxer` (`MUXER_OUTPUT_MPEG_4`). The muxer writes no location (only `setLocation` would), but
+ * its MPEG-4 writer adds device keys (`com.android.version`) in a movie-level `meta` box, so [finish]
+ * blanks every `meta`/`udta` box afterwards ([Mp4MetadataBlanker]). iPhone (`AVAudioPlayer`) and the
+ * web (`<audio>`, `audio/mp4`) play the result.
  *
  * [output] is a `SensitiveTempFiles` file (`cacheDir/shroud-voice-*.m4a`, plaintext for the length
  * of the take, plan §1.1 rule 7); [VoiceRecorder] deletes it after reading it or on cancel.
@@ -24,7 +26,7 @@ import kotlin.math.min
  * One thread at a time (the recording loop, then `finish` after the loop has ended). Construction
  * throws [IOException] when the device has no AAC encoder or the file cannot be opened.
  */
-class AacM4aWriter(output: File) : VoiceEncoder {
+class AacM4aWriter(private val output: File) : VoiceEncoder {
     private val codec: MediaCodec
     private val muxer: MediaMuxer
     private val info = MediaCodec.BufferInfo()
@@ -104,6 +106,9 @@ class AacM4aWriter(output: File) : VoiceEncoder {
             throw IOException("could not finish the voice file", e)
         }
         releaseAll()
+        // After release: the muxer has closed the file. Throws IOException when the file cannot be
+        // checked; the take then fails instead of sending device metadata.
+        Mp4MetadataBlanker.blank(output)
     }
 
     override fun abort() {

@@ -24,7 +24,8 @@ import kotlin.math.sin
 
 /**
  * The platform halves of a voice note on a device (W2-VOICE acceptance, media-voice-links §8.1, D8):
- * [AacM4aWriter] writes AAC-LC 44.1 kHz mono MPEG-4 audio with no location, [AudioPcmDecoder] reads
+ * [AacM4aWriter] writes AAC-LC 44.1 kHz mono MPEG-4 audio with no location and no device metadata
+ * (the muxer's `meta`/`udta` boxes blanked by [Mp4MetadataBlanker]), [AudioPcmDecoder] reads
  * it back (and the web's WAV), [VoiceRecorder] with the real encoder yields a note, and
  * [ExoVoicePlayer] prepares it. Uses synthetic PCM, so it needs no microphone permission:
  *
@@ -84,6 +85,8 @@ class VoiceDeviceTest {
         assertNotNull(duration)
         assertTrue("duration $duration", abs(duration!! - 1500) <= 60)
         assertFalse("no location atom", containsLocation(bytes))
+        assertFalse("no device metadata (com.android.version …)", contains(bytes, "com.android".toByteArray(Charsets.US_ASCII)))
+        assertEquals("no meta/udta box left", 0, metadataBoxesIn(bytes))
         assertTrue("≈ 64 kbps: ${bytes.size} bytes for 1.5 s", bytes.size in 6_000..20_000)
     }
 
@@ -203,8 +206,21 @@ class VoiceDeviceTest {
     }
 
     /** QuickTime `©xyz` (ISO 6709 location), the atom a phone camera writes; MediaMuxer only adds it on `setLocation`. */
-    private fun containsLocation(bytes: ByteArray): Boolean {
-        val needle = byteArrayOf(0xA9.toByte(), 'x'.code.toByte(), 'y'.code.toByte(), 'z'.code.toByte())
+    private fun containsLocation(bytes: ByteArray): Boolean =
+        contains(bytes, byteArrayOf(0xA9.toByte(), 'x'.code.toByte(), 'y'.code.toByte(), 'z'.code.toByte()))
+
+    /** How many `meta`/`udta` boxes the file still has (the blanker run on a copy finds none to blank). */
+    private fun metadataBoxesIn(bytes: ByteArray): Int {
+        val copy = SensitiveTempFiles(context.cacheDir).create("m4acheck", "m4a")
+        return try {
+            copy.writeBytes(bytes)
+            Mp4MetadataBlanker.blank(copy)
+        } finally {
+            copy.delete()
+        }
+    }
+
+    private fun contains(bytes: ByteArray, needle: ByteArray): Boolean {
         outer@ for (i in 0..bytes.size - needle.size) {
             for (j in needle.indices) if (bytes[i + j] != needle[j]) continue@outer
             return true
