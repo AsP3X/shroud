@@ -2,6 +2,7 @@ package de.corespace.shroud.core.crypto
 
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -29,6 +30,7 @@ import kotlin.coroutines.CoroutineContext
  * iOS gets it from the main actor, `ios/shroud/Services/Messaging/MessageDecoder.swift:186-213`;
  * web `withPeerLock`, `web/src/messaging.ts:147-161`).
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class PeerLocksTest {
     private val locks = PeerLocks()
 

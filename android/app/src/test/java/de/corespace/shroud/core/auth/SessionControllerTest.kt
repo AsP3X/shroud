@@ -5,7 +5,7 @@ import de.corespace.shroud.core.model.userUuid
 import de.corespace.shroud.core.net.ApiClient
 import de.corespace.shroud.core.net.ShroudApi
 import de.corespace.shroud.core.storage.SealedFile
-import de.corespace.shroud.core.storage.Sealer
+import de.corespace.shroud.testing.XorSealer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -28,12 +28,6 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
 import java.util.UUID
-
-/** A reversible stand-in for the Keystore: unit tests have none. */
-class XorSealer : Sealer {
-    override fun seal(plaintext: ByteArray) = plaintext.map { (it.toInt() xor 0x5A).toByte() }.toByteArray()
-    override fun open(sealed: ByteArray) = seal(sealed)
-}
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionControllerTest {

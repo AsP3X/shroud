@@ -96,7 +96,7 @@ class CryptoController(private val api: ShroudApi, private val bip39: Bip39) {
     private suspend fun rejectPhraseThatIsNotTheAccountKey(established: IdentityKeyMaterial, session: Session) {
         try {
             val published = api.identityKey(session.token, session.userUuid)
-            val key = runCatching { java.util.Base64.getDecoder().decode(published.identityKey.trim()) }.getOrNull()
+            val key = B64.decodeStrict(published.identityKey)
             if (key == null || !key.contentEquals(established.agreementPublic)) {
                 throw CryptoException.PhraseDoesNotMatchAccount()
             }
@@ -124,13 +124,10 @@ class CryptoController(private val api: ShroudApi, private val bip39: Bip39) {
     companion object {
         fun bundleRequest(material: IdentityKeyMaterial) = PutKeyBundleRequest(
             registrationId = material.registrationId,
-            identityKey = b64(material.agreementPublic),
-            signedPreKey = SignedPreKeyDto(material.signedPreKeyId, b64(material.signedPreKeyPublic), b64(material.signedPreKeySignature)),
-            oneTimePreKeys = material.oneTimePreKeys.map { OneTimePreKeyDto(it.keyId, b64(it.publicKey)) },
+            identityKey = B64.encode(material.agreementPublic),
+            signedPreKey = SignedPreKeyDto(material.signedPreKeyId, B64.encode(material.signedPreKeyPublic), B64.encode(material.signedPreKeySignature)),
+            oneTimePreKeys = material.oneTimePreKeys.map { OneTimePreKeyDto(it.keyId, B64.encode(it.publicKey)) },
         )
-
-        /** Standard Base64 with padding, no line breaks — what the server's `STANDARD` decodes. */
-        fun b64(bytes: ByteArray): String = java.util.Base64.getEncoder().encodeToString(bytes)
 
         fun userMessage(error: Throwable): String = when (error) {
             is Bip39.PhraseException.InvalidWordCount -> "Enter all 12 words of your encryption phrase."

@@ -8,6 +8,8 @@ import de.corespace.shroud.core.auth.SessionController
 import de.corespace.shroud.core.crypto.Bip39
 import de.corespace.shroud.core.crypto.CryptoController
 import de.corespace.shroud.core.lifecycle.AppPhaseMonitor
+import de.corespace.shroud.core.model.AppClock
+import de.corespace.shroud.core.model.SystemAppClock
 import de.corespace.shroud.core.net.ServerConfiguration
 import de.corespace.shroud.core.net.ServerConfigurationStore
 import de.corespace.shroud.core.net.ServerConnectionMode
@@ -73,7 +75,8 @@ class AppContainer(
         explicitNulls = true
     }
 
-    // W1-INT adds `val clock: AppClock = SystemAppClock` (core/model, W0-B) once both W0 packages merged.
+    /** Wall and monotonic time for every controller; tests pass a `FakeAppClock` (00-plan §1.7.1). */
+    val clock: AppClock = SystemAppClock
 
     /** Self-hosted or official server, kept across Log Out (00-plan §1.5, prefs `shroud.server`). */
     val serverConfiguration = ServerConfigurationStore(appContext, json)

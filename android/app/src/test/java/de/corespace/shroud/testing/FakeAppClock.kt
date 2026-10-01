@@ -1,27 +1,25 @@
 package de.corespace.shroud.testing
 
+import de.corespace.shroud.core.model.AppClock
 import java.time.Instant
 
 /**
- * A hand-driven clock with the shape of `core/model/AppClock` (W0-B, 00-plan §1.7.1): wall time
+ * A hand-driven [AppClock] (W0-B, 00-plan §1.7.1): wall time
  * ([nowMillis], [now]) and monotonic time since boot ([elapsedMillis]) move independently, so a
  * test can change the wall clock without time passing (the auto-lock must not care, plan C12).
  *
  * Starts at 1 790 000 000 000 ms = 2026-09-21T14:13:20Z, a Monday (the instant of iOS
  * `NotificationSettingsTests.testMuteLabels`), with 1 000 s of uptime.
- *
- * W1-INT makes it implement `AppClock` once W0-B's interface and this kit share a branch
- * (`: AppClock`, `override` on the three functions).
  */
-class FakeAppClock(wallMillis: Long = START_WALL_MILLIS, elapsedMillis: Long = START_ELAPSED_MILLIS) {
+class FakeAppClock(wallMillis: Long = START_WALL_MILLIS, elapsedMillis: Long = START_ELAPSED_MILLIS) : AppClock {
     private var wall = wallMillis
     private var elapsed = elapsedMillis
 
-    fun nowMillis(): Long = wall
+    override fun nowMillis(): Long = wall
 
-    fun elapsedMillis(): Long = elapsed
+    override fun elapsedMillis(): Long = elapsed
 
-    fun now(): Instant = Instant.ofEpochMilli(wall)
+    override fun now(): Instant = Instant.ofEpochMilli(wall)
 
     /** Time passes: both clocks move by [millis]. */
     fun advanceBy(millis: Long) {

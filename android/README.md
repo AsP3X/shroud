@@ -48,10 +48,13 @@ devices) access before it reaches a LAN or emulator-host server.
 | `app/src/main/java/.../AppContainer.kt` | One per process, built after the first unlock: a registry of lazily built `di/` modules |
 | `app/src/main/java/.../di` | One module per package (`NetModule`, `KeysModule`, `AuthModule`, …); only its package fills it |
 | `app/src/main/java/.../core/lifecycle` | `AppPhaseMonitor`: Active / Inactive / Background from our activities (iOS scene phase) |
-| `app/src/main/java/.../core/net` | `ApiClient` (OkHttp + kotlinx.serialization), wire models, server settings |
-| `app/src/main/java/.../core/crypto` | BIP39, phrase → identity keys, key bundle, `CryptoController` |
+| `app/src/main/java/.../core/model` | `Ids` (UUIDs, lower-case wire form), `Bytes`, `AppClock`, small shared types |
+| `app/src/main/java/.../core/net` | `ApiClient` (OkHttp + kotlinx.serialization), `ShroudApi`, server settings; UUID-typed DTOs in `dto/`, strict dates and serializers in `wire/` |
+| `app/src/main/java/.../core/realtime` | `RealtimeEvent` and the foreground contracts (the client arrives in wave 1) |
+| `app/src/main/java/.../core/crypto` | BIP39, phrase → identity keys, key bundle, `CryptoController`; `ByteOps` (strict Base64, hex), `Primitives` (X25519, HKDF, HMAC, AES-GCM), `LocalHistoryCrypto` (sealed records), `PeerLocks` |
+| `app/src/main/java/.../core/keys` | `LocalNames` (keyed file names) and the key-record seams |
 | `app/src/main/java/.../core/auth` | Session (`SessionController`, Keystore-sealed `SessionStore`), password strength |
-| `app/src/main/java/.../core/storage` | `KeystoreSealer`, sealed files in no-backup storage |
+| `app/src/main/java/.../core/storage` | `KeystoreSealer`, sealed files in no-backup storage, `StorageSeal` (blocks writes during a wipe) |
 | `app/src/main/java/.../ui/theme` | Colour tokens (light/dark), Inter, motion, the design's icons |
 | `app/src/main/java/.../ui/components` | The app's own chrome: buttons, glass controls, sheet, toggle, toast, onboarding parts |
 | `app/src/main/java/.../ui/onboarding` | Welcome, Server settings, Sign Up, Log In |

@@ -22,7 +22,7 @@ class IdentityKeyMaterialTest {
     fun derivesTheSameKeysAsIosAndWeb() {
         val m = IdentityKeyMaterial.establish(bip39, words, "user", oneTimePreKeyCount = 3)
         assertEquals("993b9a5fc9f54c1a5aee30b3160d87c9870b3e3079656ed827c614b6599a6b24", m.agreementPublic.hex())
-        assertEquals("mTuaX8n1TBpa7jCzFg2HyYcLPjB5ZW7YJ8YUtlmaayQ=", CryptoController.b64(m.agreementPublic))
+        assertEquals("mTuaX8n1TBpa7jCzFg2HyYcLPjB5ZW7YJ8YUtlmaayQ=", B64.encode(m.agreementPublic))
         assertEquals("5f71ef7f350fba4457721d0ff360069e2d856df8b269c32c1fe2e5247e9ee0e7", m.signingPublic.hex())
         assertEquals(8525, m.registrationId)
     }

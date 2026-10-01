@@ -73,5 +73,3 @@ class Bip39Test {
         assertTrue(bip39.isWord("Zoo"))
     }
 }
-
-fun ByteArray.hex(): String = joinToString("") { "%02x".format(it) }
