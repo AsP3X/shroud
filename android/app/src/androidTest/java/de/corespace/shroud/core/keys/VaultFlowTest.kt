@@ -83,6 +83,7 @@ class VaultFlowTest {
     }
 
     private fun wipe() {
+        container.auth.sessionStore.clear()
         keys.cryptoController.lock(wipeStore = true)
         keys.keyMaterialWipe.wipeAll()
         assertEquals(emptyList<String>(), keys.keyMaterialWipe.leftovers().filter { it.startsWith("keys/") })
@@ -92,6 +93,10 @@ class VaultFlowTest {
         signUpController.establishFromSignup(words, session)
         assertEquals(userId, signUpController.unlockedUserId.value)
         assertEquals(listOf("GET /api/v1/keys/identity/$userId", "PUT /api/v1/keys/bundle"), server.requests)
+        // A real sign-up stores its session next to the keys. Without it the relaunch below is a
+        // signed-out phone with leftovers, which the launch check wipes (W2-AUTH-WIPE,
+        // `DeviceWipeController.finishInterruptedWipeIfNeeded`; iOS skips it only in its unit-test host).
+        container.auth.sessionStore.save(session)
         // The sign-up process goes away: its keys leave memory, the disk keeps them.
         signUpController.lock()
     }
