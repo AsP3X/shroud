@@ -68,6 +68,31 @@ android {
     // region native — whisper.cpp (00-plan §5.2): pinned ndkVersion, CMake 3.31.x,
     // abiFilters arm64-v8a + x86_64, -O3, GGML_NATIVE=OFF. Filled by W2-WHISPER (W2),
     // W3-TRANSCRIPTION (W3), W4-RELEASE (W4); nobody else edits between these markers.
+    //
+    // Pinned for reproducible builds: the NDK and CMake installed on the build machines (CMake
+    // 4.1.2 replaces the plan's 3.31.x, which is not installed). The ggml switches (-O3 in every
+    // build type, GGML_NATIVE=OFF, the per-CPU arm64 variants) live in src/main/cpp/CMakeLists.txt.
+    ndkVersion = "30.0.16248370"
+    defaultConfig {
+        ndk {
+            // The APK ships these two ABIs only (00-plan §5.2), for every native library: phones and
+            // tablets (arm64-v8a), emulators and Chromebooks (x86_64).
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
+        externalNativeBuild {
+            cmake {
+                // ggml's CPU variants are separate libraries next to libggml-base.so: one shared
+                // C++ runtime for all of them (NDK C++ library support: several shared libraries).
+                arguments += listOf("-DANDROID_STL=c++_shared")
+            }
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "4.1.2"
+        }
+    }
     // endregion native
 }
 
