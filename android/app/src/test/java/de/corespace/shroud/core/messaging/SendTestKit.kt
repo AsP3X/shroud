@@ -392,8 +392,12 @@ class FakeServer(private val me: UUID) : SendApi {
         return dto
     }
 
+    /** When set, a reaction write waits for it after it went out. */
+    var reactionGate: CompletableDeferred<Unit>? = null
+
     override suspend fun putReaction(token: String, messageId: UUID, ciphertext: ByteArray, baseSeq: Long, added: Boolean): ReactionWriteResult {
         writes += Write(messageId, ciphertext, baseSeq, added)
+        reactionGate?.await()
         if (reactionFailures > 0) {
             reactionFailures--
             throw ApiError.Transport("The network connection was lost.")
@@ -638,12 +642,17 @@ class FakeNotifier : MessageNotifier {
  * One signed-in account ([me]) and a peer, with real `MessageCrypto` on both sides, wired the way
  * `MessagingSendModule` wires production.
  */
-class SendWorld(scope: CoroutineScope, dispatcher: CoroutineContext, tempDir: File, meFirst: Boolean = true) {
+class SendWorld(
+    scope: CoroutineScope,
+    dispatcher: CoroutineContext,
+    tempDir: File,
+    meFirst: Boolean = true,
+    val meKeys: TestIdentity = TestIdentity.random(),
+    val peerKeys: TestIdentity = TestIdentity.random(),
+) {
     private val ids = listOf(UUID.randomUUID(), UUID.randomUUID()).sortedBy { Ids.wire(it) }
     val me: UUID = if (meFirst) ids[0] else ids[1]
     val peer: UUID = if (meFirst) ids[1] else ids[0]
-    val meKeys = TestIdentity.random()
-    val peerKeys = TestIdentity.random()
     val media = FakeMediaStore()
     val store = FakeMessagingStore(media)
     val state = FakeThreadState(me, "tok", store)
