@@ -69,9 +69,15 @@ object DeviceLock {
     fun waitForPrompt(timeoutMs: Long = 20_000): Boolean =
         device.wait(Until.findObject(By.text(SystemBiometricAuthenticator.TITLE)), timeoutMs) != null
 
-    /** Cancels whatever system prompt is up (back). */
+    /**
+     * Cancels the vault prompt (back). On API 30 the credential view opens the soft keyboard for the
+     * PIN, and the first back only hides it; back is pressed until the prompt's title is gone.
+     */
     fun dismissPrompt() {
-        device.pressBack()
+        repeat(3) {
+            device.pressBack()
+            if (device.wait(Until.gone(By.text(SystemBiometricAuthenticator.TITLE)), 2_000) == true) return
+        }
     }
 
     fun waitFor(timeoutMs: Long, condition: () -> Boolean): Boolean {
