@@ -72,17 +72,17 @@ import kotlin.coroutines.CoroutineContext
  * the optimistic bubble in place, drops the optimistic id's caches, moves its transfer and tells the
  * sinks; [purge] drops caches. [lock] behaves like `lockSensitiveMemory`.
  */
-class FakeThreadState(
+class SendFakeThreadState(
     me: UUID?,
     token: String?,
-    private val store: FakeMessagingStore,
+    private val store: SendFakeMessagingStore,
 ) : ThreadState {
     override var myUserId: UUID? = me
     override var session: Session? = token?.let { Session(it, Ids.wire(me!!), "noah", null, Ids.wire(UUID.randomUUID())) }
     override var lockGeneration: Long = 0
     private val flow = MutableStateFlow<Map<UUID, List<ChatMessage>>>(emptyMap())
     override val threads: StateFlow<Map<UUID, List<ChatMessage>>> = flow
-    override val transfers = FakeTransferBoard()
+    override val transfers = SendFakeTransferBoard()
     override val isOffline: Boolean = false
     override val isRealtimeConnected: Boolean = false
 
@@ -159,7 +159,7 @@ class FakeThreadState(
 }
 
 /** [MediaTransferBoard] that also records every phase it went through. */
-class FakeTransferBoard : MediaTransferBoard {
+class SendFakeTransferBoard : MediaTransferBoard {
     private val flow = MutableStateFlow<Map<UUID, MediaTransfer>>(emptyMap())
     override val transfers: StateFlow<Map<UUID, MediaTransfer>> = flow
     val phases = mutableListOf<Pair<UUID, MediaTransfer.Phase?>>()
@@ -193,7 +193,7 @@ class FakeTransferBoard : MediaTransferBoard {
 }
 
 /** [LocalMediaStore] in memory (SHRM1 is W2-MEDIA-STORE's; only the contract matters here). */
-class FakeMediaStore : LocalMediaStore {
+class SendFakeMediaStore : LocalMediaStore {
     val files = ConcurrentHashMap<UUID, ByteArray>()
     val renames = mutableListOf<Pair<UUID, UUID>>()
     var refuseSaves = false
@@ -245,7 +245,7 @@ class FakeMediaStore : LocalMediaStore {
 }
 
 /** [MessagingStore] in memory: plaintext, annotation index (D5), reaction cursors; [removeCaches] reaches the media store. */
-class FakeMessagingStore(private val media: FakeMediaStore) : MessagingStore {
+class SendFakeMessagingStore(private val media: SendFakeMediaStore) : MessagingStore {
     val plaintexts = ConcurrentHashMap<UUID, ByteArray>()
     val annotations = HashMap<UUID, MutableSet<UUID>>()
     var cursors: Map<UUID, Long> = emptyMap()
@@ -300,7 +300,7 @@ class FakeMessagingStore(private val media: FakeMediaStore) : MessagingStore {
  * (`messages.rs`), history pages are newest first, reaction writes follow `reactions.rs`
  * (`base_seq` 0 matches a removal; a live record not built on → 409 with `current`).
  */
-class FakeServer(private val me: UUID) : SendApi {
+class SendFakeServer(private val me: UUID) : SendApi {
     private var clock = Instant.parse("2026-09-24T12:00:00Z")
     private val byClientId = HashMap<UUID, MessageDto>()
     val messages = mutableListOf<MessageDto>()
@@ -321,6 +321,9 @@ class FakeServer(private val me: UUID) : SendApi {
     /** Scripted 409s: our other device wrote these records first. */
     val conflicts = ArrayDeque<ReactionDto>()
     var reactionFailures = 0
+
+    /** Thrown by the next reaction writes, in order, before anything else (a 404, a 409 without a record). */
+    val reactionErrors = ArrayDeque<Throwable>()
     var changesPagesServed = 0
     val seenCalls = mutableListOf<Pair<UUID, Long>>()
     var seenFails = false
@@ -399,6 +402,7 @@ class FakeServer(private val me: UUID) : SendApi {
     override suspend fun putReaction(token: String, messageId: UUID, ciphertext: ByteArray, baseSeq: Long, added: Boolean): ReactionWriteResult {
         writes += Write(messageId, ciphertext, baseSeq, added)
         reactionGate?.await()
+        reactionErrors.removeFirstOrNull()?.let { throw it }
         if (reactionFailures > 0) {
             reactionFailures--
             throw ApiError.Transport("The network connection was lost.")
@@ -416,6 +420,7 @@ class FakeServer(private val me: UUID) : SendApi {
 
     override suspend fun deleteReaction(token: String, messageId: UUID, baseSeq: Long): ReactionWriteResult {
         writes += Write(messageId, null, baseSeq, null)
+        reactionErrors.removeFirstOrNull()?.let { throw it }
         if (reactionFailures > 0) {
             reactionFailures--
             throw ApiError.Transport("The network connection was lost.")
@@ -448,7 +453,7 @@ class FakeServer(private val me: UUID) : SendApi {
 }
 
 /** [MediaTransfers] sealing for real ([MediaCrypto]), blobs kept in memory; downloads land in the media store. */
-class FakeMediaTransfers(private val media: FakeMediaStore) : MediaTransfers {
+class SendFakeMediaTransfers(private val media: SendFakeMediaStore) : MediaTransfers {
     val blobs = HashMap<UUID, ByteArray>()
     val uploads = mutableListOf<PlainSource>()
     var failUploads = 0
@@ -491,7 +496,7 @@ class FakeMediaTransfers(private val media: FakeMediaStore) : MediaTransfers {
 }
 
 /** [ImagePipeline] returning what the test set. */
-class FakeImages : ImagePipeline {
+class SendFakeImages : ImagePipeline {
     var failure: Throwable? = null
     var width = 4032
     var height = 3024
@@ -511,7 +516,7 @@ class FakeImages : ImagePipeline {
 }
 
 /** A file-backed [VideoPipeline]: the encode writes a `shroud-*` file like Media3's Transformer output (C28). */
-class FakeVideo(private val dir: File) : VideoPipeline {
+class SendFakeVideo(private val dir: File) : VideoPipeline {
     var failure: Throwable? = null
     var output = ByteArray(300_000) { (it % 251).toByte() }
     var poster: Bytes? = Bytes.of(ByteArray(900) { 3 })
@@ -537,10 +542,10 @@ class FakeVideo(private val dir: File) : VideoPipeline {
 }
 
 /** W2-VIDEO's "too large" error as the tests stand it in (CR-4). */
-class FakeVideoTooLarge : Exception("too large")
+class SendFakeVideoTooLarge : Exception("too large")
 
 /** [PeerIdentities] over fixed keys; [changed] peers throw like a pending key change. */
-class FakePeerIdentities(private val keys: Map<UUID, ByteArray>) : PeerIdentities {
+class SendFakePeerIdentities(private val keys: Map<UUID, ByteArray>) : PeerIdentities {
     val changed = HashSet<UUID>()
 
     /** Thrown by [resolvePublicKey] (a key out of reach). */
@@ -573,7 +578,7 @@ class FakePeerIdentities(private val keys: Map<UUID, ByteArray>) : PeerIdentitie
 }
 
 /** [SendKeyring] over a test identity; [locked] = chats locked. */
-class FakeKeyring(private val identity: TestIdentity) : SendKeyring {
+class SendFakeKeyring(private val identity: TestIdentity) : SendKeyring {
     var locked = false
     override val isUnlocked: Boolean get() = !locked
     override fun <T : Any> withKeys(block: (ourPrivate: ByteArray, ourPublic: ByteArray) -> T): T? =
@@ -581,9 +586,9 @@ class FakeKeyring(private val identity: TestIdentity) : SendKeyring {
 }
 
 /** [SendHost] in memory. */
-class FakeHost : SendHost {
-    override val conversations = MutableStateFlow<List<ConversationItemDto>>(emptyList())
-    override val activePeerId = MutableStateFlow<UUID?>(null)
+class SendFakeHost : SendHost {
+    override var conversations: List<ConversationItemDto> = emptyList()
+    override var activePeerId: UUID? = null
     var refreshes = 0
     var wentOffline = false
     val muted = HashSet<UUID>()
@@ -600,12 +605,12 @@ class FakeHost : SendHost {
         wentOffline = offline
     }
 
-    override fun isMuted(peer: UUID): Boolean = peer in muted
-    override fun username(peer: UUID): String? = names[peer]
+    override fun isMuted(storePeer: UUID): Boolean = storePeer in muted
+    override fun username(storePeer: UUID): String? = names[storePeer]
 
     override fun editConversations(transform: (List<ConversationItemDto>) -> List<ConversationItemDto>) {
-        val next = transform(conversations.value)
-        if (next != conversations.value) conversations.value = next
+        val next = transform(conversations)
+        if (next != conversations) conversations = next
     }
 
     /** Stands in for an annotation that arrived before any voice note of the thread. */
@@ -627,7 +632,7 @@ class FakeHost : SendHost {
 }
 
 /** [MessageNotifier] that records announcements. */
-class FakeNotifier : MessageNotifier {
+class SendFakeNotifier : MessageNotifier {
     override var activePeerId: UUID? = null
     val announced = mutableListOf<Triple<NotificationKind, UUID?, String?>>()
     override fun announce(kind: NotificationKind, peerUserId: UUID?, username: String?, conversationId: UUID?, text: String?, muted: Boolean) {
@@ -654,17 +659,17 @@ class SendWorld(
     private val ids = listOf(UUID.randomUUID(), UUID.randomUUID()).sortedBy { Ids.wire(it) }
     val me: UUID = if (meFirst) ids[0] else ids[1]
     val peer: UUID = if (meFirst) ids[1] else ids[0]
-    val media = FakeMediaStore()
-    val store = FakeMessagingStore(media)
-    val state = FakeThreadState(me, "tok", store)
-    val host = FakeHost()
-    val server = FakeServer(me)
-    val transfers = FakeMediaTransfers(media)
-    val images = FakeImages()
-    val video = FakeVideo(tempDir)
-    val identities = FakePeerIdentities(mapOf(peer to peerKeys.public, me to meKeys.public))
-    val keyring = FakeKeyring(meKeys)
-    val notifier = FakeNotifier()
+    val media = SendFakeMediaStore()
+    val store = SendFakeMessagingStore(media)
+    val state = SendFakeThreadState(me, "tok", store)
+    val host = SendFakeHost()
+    val server = SendFakeServer(me)
+    val transfers = SendFakeMediaTransfers(media)
+    val images = SendFakeImages()
+    val video = SendFakeVideo(tempDir)
+    val identities = SendFakePeerIdentities(mapOf(peer to peerKeys.public, me to meKeys.public))
+    val keyring = SendFakeKeyring(meKeys)
+    val notifier = SendFakeNotifier()
     val clock = FakeAppClock()
     var online = true
     val crypto = MessageCrypto(InMemoryRatchetSessionRecords(), InMemorySenderTagWatermarks())
@@ -687,7 +692,7 @@ class SendWorld(
         compute = dispatcher,
         io = dispatcher,
         notifier = { notifier },
-        videoTooLarge = { it is FakeVideoTooLarge },
+        videoTooLarge = { it is SendFakeVideoTooLarge },
     )
 
     fun pipeline() = SendPipeline(state, { host }, deps)

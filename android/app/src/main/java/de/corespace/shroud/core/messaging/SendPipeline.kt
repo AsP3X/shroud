@@ -56,9 +56,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelChildren
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -83,16 +80,20 @@ import kotlin.coroutines.CoroutineContext
 
 /**
  * What the send, media and reaction engines need from `MessagingController` beyond [ThreadState]
- * (messaging-core §11, §19.6, §19.8). The members match `MessagingController`'s public API of plan
- * §1.7.7 where one exists, so W2-INT can let the controller implement this interface (contract
- * change request CR-1 of W2-MSG-SEND). Main-confined like [ThreadState].
+ * (messaging-core §11, §19.6, §19.8). Main-confined like [ThreadState].
+ *
+ * Every member has the name and shape of the member W2-MSG-CORE adds to its `ThreadState` for the
+ * same purpose (plain values, read at the moment of use), so W2-INT wires it with a one-line
+ * delegate per member — or lets `ThreadStore` implement this interface too (contract change request
+ * CR-1 of W2-MSG-SEND). [foldSharedTranscripts] is the one extra: W2-MSG-CORE folds inside
+ * `ThreadState.rekey`, so its delegate may return the thread unchanged.
  */
 interface SendHost {
-    /** The server's chat list (`MessagingController.conversations`); reactions read `reaction_seq`, `unseen_reactions` and ids. */
-    val conversations: StateFlow<List<ConversationItemDto>>
+    /** The server's chat list, Notes not included; reactions read `reaction_seq`, `unseen_reactions` and ids. */
+    val conversations: List<ConversationItemDto>
 
     /** The chat on screen (`MessagingController.activePeerId`). */
-    val activePeerId: StateFlow<UUID?>
+    val activePeerId: UUID?
 
     /** `MessagingController.refreshConversations(force)`; every successful send forces one (MC:1658, 1679, 2927, 3283, 3785). */
     suspend fun refreshConversations(force: Boolean = false)
@@ -100,10 +101,10 @@ interface SendHost {
     /** iOS `isOffline = true` after a send found no network (MC:1642, 1691, 2536, 2718, 3472); `ContactsHooks.setOffline`. */
     fun setOffline(offline: Boolean)
 
-    fun isMuted(peer: UUID): Boolean
+    fun isMuted(storePeer: UUID): Boolean
 
     /** Who a peer is, for a banner: the chat list, then contacts (MC:5850-5853). */
-    fun username(peer: UUID): String?
+    fun username(storePeer: UUID): String?
 
     /** Replaces the chat list through [transform]; publishes only a real change (reaction badges, MC:5538-5542, 5582-5583). */
     fun editConversations(transform: (List<ConversationItemDto>) -> List<ConversationItemDto>)
@@ -120,12 +121,12 @@ interface SendHost {
      * nothing, transcripts are not folded. Sends, retries, downloads and reactions still work.
      */
     object Detached : SendHost {
-        override val conversations: StateFlow<List<ConversationItemDto>> = MutableStateFlow<List<ConversationItemDto>>(emptyList()).asStateFlow()
-        override val activePeerId: StateFlow<UUID?> = MutableStateFlow<UUID?>(null).asStateFlow()
+        override val conversations: List<ConversationItemDto> get() = emptyList()
+        override val activePeerId: UUID? get() = null
         override suspend fun refreshConversations(force: Boolean) = Unit
         override fun setOffline(offline: Boolean) = Unit
-        override fun isMuted(peer: UUID): Boolean = false
-        override fun username(peer: UUID): String? = null
+        override fun isMuted(storePeer: UUID): Boolean = false
+        override fun username(storePeer: UUID): String? = null
         override fun editConversations(transform: (List<ConversationItemDto>) -> List<ConversationItemDto>) = Unit
         override fun foldSharedTranscripts(thread: List<ChatMessage>): List<ChatMessage> = thread
     }

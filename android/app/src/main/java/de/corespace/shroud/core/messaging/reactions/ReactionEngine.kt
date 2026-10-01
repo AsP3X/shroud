@@ -1,6 +1,7 @@
 package de.corespace.shroud.core.messaging.reactions
 
 import android.content.SharedPreferences
+import androidx.core.content.edit
 import de.corespace.shroud.core.crypto.CryptoError
 import de.corespace.shroud.core.crypto.MessageCrypto
 import de.corespace.shroud.core.crypto.OpenAs
@@ -55,7 +56,7 @@ import kotlin.coroutines.coroutineContext
  *   failure puts back what the server holds and emits a [ReactionFailure];
  * - **reads theirs** from history pages ([openPage], [reconcilePage], [applyPage]), the socket
  *   ([apply]) and the catch-up feed ([catchUp]), behind per-chat cursors kept in the sealed store;
- * - keeps the **heart badge** of unseen reactions ([hasUnseen], [markSeen], [applyingLocalSeen]).
+ * - keeps the **heart badge** of unseen reactions ([hasUnseen], [onChatShown], [markSeen], [applyLocalSeen]).
  *
  * Records are tagged v2 identity envelopes (peer + self box, never the ratchet): a reaction is
  * overwritten in place, so ratchet steps would be lost, and every device must open it at any time.
@@ -299,7 +300,8 @@ class ReactionEngine(
     /**
      * What goes to disk: our unconfirmed reaction swapped for the one the server last confirmed
      * (`settledReactions`, MC:5317-5327). Saved as if confirmed, a pending set would outlive a failed
-     * save. `MessagingController` applies it to every thread it persists (contract change request CR-2).
+     * save. `ThreadStore` applies it to every thread it persists, on main — W2-MSG-CORE's
+     * `ReactionsEngine.settled` (contract change request CR-2).
      */
     fun settled(messages: List<ChatMessage>): List<ChatMessage> {
         if (rollback.isEmpty()) return messages
@@ -413,10 +415,14 @@ class ReactionEngine(
     }
 
     /**
-     * The [ReactionsEngine] seam's page hook: [reactions] are every record the page listed. Opens them
-     * and reconciles the messages they name into the thread as it is by then; moves cursor and floor
-     * at once. Exact page semantics (messages with no record lose their old entries too) need
-     * [openPage] + [reconcilePage] from the pager — contract change request CR-3.
+     * The [ReactionsEngine] seam's page hook (`publishHistoryPage`, MC:1270-1302): [reactions] are the
+     * page's trusted records ([ReactionMerge.pageRecords]). Moves cursor and floor at once, then opens
+     * the records and reconciles the messages they name into the thread as it is by then — the order
+     * against a catch-up running meanwhile does not matter, every entry carries its `seq`.
+     *
+     * The page's messages that came back without a record are the pager's to reconcile with an empty
+     * list (W2-MSG-CORE's `HistoryPager.publishHistoryPage` does); a pager that also wants this
+     * engine's opened entries back can call [openPage] + [reconcilePage] itself.
      */
     override fun applyPage(storePeer: UUID, reactions: List<ReactionDto>, snapshotSeq: Long?) {
         if (snapshotSeq == null) return
@@ -497,7 +503,7 @@ class ReactionEngine(
     override fun apply(event: RealtimeEvent.MessageReaction) {
         val dto = event.reaction
         // The conversation names the chat; Notes (not in the list) falls back to a scan (MC:5500-5502).
-        val storePeer = event.conversationId?.let { id -> host().conversations.value.firstOrNull { it.id == id }?.peer?.id }
+        val storePeer = event.conversationId?.let { id -> host().conversations.firstOrNull { it.id == id }?.peer?.id }
             ?: state.peerFor(dto.messageId)
         scope.launch {
             if (storePeer != null) {
@@ -529,12 +535,12 @@ class ReactionEngine(
                 kind = NotificationKind.Reaction,
                 peerUserId = storePeer,
                 username = host.username(storePeer),
-                conversationId = host.conversations.value.firstOrNull { it.peer.id == storePeer }?.id,
+                conversationId = host.conversations.firstOrNull { it.peer.id == storePeer }?.id,
                 text = null,
                 muted = host.isMuted(storePeer),
             )
         }
-        if (storePeer != null && storePeer == host.activePeerId.value) {
+        if (storePeer != null && storePeer == host.activePeerId) {
             if (!added) return
             host.editConversations { list ->
                 list.map { if (it.peer.id == storePeer && (it.reactionSeq ?: 0) < dto.seq) it.copy(reactionSeq = dto.seq) else it }
@@ -549,9 +555,9 @@ class ReactionEngine(
     override fun apply(event: RealtimeEvent.ReactionsSeen) {
         seenLocally[event.peerUserId] = maxOf(seenLocally[event.peerUserId] ?: 0, event.seenSeq)
         val host = host()
-        val before = host.conversations.value
-        val after = applyingLocalSeen(before)
-        if (after != before) host.editConversations { applyingLocalSeen(it) } else refreshConversationsSoon()
+        val before = host.conversations
+        val after = applyLocalSeen(before)
+        if (after != before) host.editConversations { applyLocalSeen(it) } else refreshConversationsSoon()
     }
 
     // ---- catch-up ----
@@ -632,29 +638,39 @@ class ReactionEngine(
     /** The other side reacted to our messages since we last looked; never for the open chat (`hasUnseenReactions`, MC:5563-5570). */
     override fun hasUnseen(storePeer: UUID): Boolean {
         val host = host()
-        if (host.activePeerId.value == storePeer) return false
-        return hasPendingUnseen(storePeer, host.conversations.value)
+        if (host.activePeerId == storePeer) return false
+        return hasPendingUnseen(storePeer, host.conversations)
     }
 
     private fun hasPendingUnseen(storePeer: UUID, list: List<ConversationItemDto>): Boolean =
         (list.firstOrNull { it.peer.id == storePeer }?.unseenReactions ?: 0) > 0
 
     /**
+     * The open chat's list row or thread was just refreshed: while the list still counts unseen
+     * reactions for it, they are marked seen (MC:1047-1048 after a list refresh, MC:1408-1409 after
+     * a thread load). Another chat than the open one is left alone. `MessagingController` calls it
+     * at both places — W2-MSG-CORE's `ReactionsEngine.onChatShown` (contract change request CR-2).
+     */
+    fun onChatShown(storePeer: UUID) {
+        val host = host()
+        if (host.activePeerId != storePeer || !hasPendingUnseen(storePeer, host.conversations)) return
+        markSeen(storePeer)
+    }
+
+    /**
      * Clears the chat's badge here and asks the server to clear it everywhere (`markReactionsSeen`,
      * MC:5576-5595): up to [upTo], the list's `reaction_seq` or the cursor, whichever is further. Not
      * saved → the local mark is forgotten so the badge comes back and the next open retries.
-     * `MessagingController` calls it after a list refresh and a thread load of the open chat with unseen
-     * reactions (contract change request CR-2).
      */
     fun markSeen(storePeer: UUID, upTo: Long? = null) {
         if (state.isNotes(storePeer)) return
         val token = state.session?.token ?: return
         val host = host()
-        val listed = host.conversations.value.firstOrNull { it.peer.id == storePeer }?.reactionSeq ?: 0
+        val listed = host.conversations.firstOrNull { it.peer.id == storePeer }?.reactionSeq ?: 0
         val seq = maxOf(upTo ?: 0, listed, cursors()[storePeer] ?: 0)
         if (seq <= 0) return
         seenLocally[storePeer] = maxOf(seenLocally[storePeer] ?: 0, seq)
-        host.editConversations { applyingLocalSeen(it) }
+        host.editConversations { applyLocalSeen(it) }
         val apiPeer = state.apiPeer(storePeer)
         scope.launch {
             try {
@@ -670,11 +686,12 @@ class ReactionEngine(
     /**
      * Zeroes badges this device already marked seen, for a list that may predate the seen call
      * (`applyingLocalReactionSeen`, MC:5598-5609). `MessagingController.refreshConversations` applies it
-     * to every list it adopts (contract change request CR-2).
+     * to every list it adopts — W2-MSG-CORE's `ReactionsEngine.applyLocalSeen` (contract change
+     * request CR-2).
      */
-    fun applyingLocalSeen(list: List<ConversationItemDto>): List<ConversationItemDto> {
-        if (seenLocally.isEmpty()) return list
-        return list.map { item ->
+    fun applyLocalSeen(conversations: List<ConversationItemDto>): List<ConversationItemDto> {
+        if (seenLocally.isEmpty()) return conversations
+        return conversations.map { item ->
             val seen = seenLocally[item.peer.id] ?: return@map item
             if ((item.unseenReactions ?: 0) <= 0 || (item.reactionSeq ?: 0) > seen) return@map item
             item.copy(unseenReactions = 0)
@@ -706,7 +723,7 @@ class ReactionEngine(
         val newLimit = maxOf(1, config.reactions.maxPerUser)
         if (newLimit == limitFlow.value) return
         limitFlow.value = newLimit
-        if (!storageSeal.isSealed) prefs.edit().putInt(LIMIT_KEY, newLimit).apply()
+        if (!storageSeal.isSealed) prefs.edit { putInt(LIMIT_KEY, newLimit) }
     }
 
     /** Batches the sealed thread save after reaction changes: events come in bursts (`scheduleReactionPersist`, MC:5868-5876). */

@@ -624,6 +624,21 @@ class SendPipelineTest {
     }
 
     @Test
+    fun aVoiceEnvelopeOverTheBudgetFailsWithTheVoiceText() = runTest(main.dispatcher) {
+        // Without its transcript the payload is still too large (an outsized waveform): the voice
+        // wording of the iOS error (MC:3724-3730), the note kept as failed with its transcript.
+        val w = world()
+        val error = w.pipeline().sendVoice(voice, 1_000, w.peer, ByteArray(50_000) { 1 }, "kept here", null, null)
+        assertEquals("Media message is too large to send. Try a shorter voice note.", error)
+        val failed = w.state.messages(w.peer)!!.single()
+        assertEquals(ReceiptStatus.Failed, failed.receipt)
+        assertEquals(error, failed.sendError)
+        assertEquals("kept here", failed.transcript)
+        assertTrue(failed.pendingSync)
+        assertTrue(w.server.requests.isEmpty())
+    }
+
+    @Test
     fun voiceInNotesStaysLocal() = runTest(main.dispatcher) {
         val w = world()
         assertNull(w.pipeline().sendVoice(voice, 1_000, NOTES_PEER_ID, waveform, "memo", null, null))

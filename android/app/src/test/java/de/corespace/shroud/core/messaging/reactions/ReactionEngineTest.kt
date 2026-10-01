@@ -249,6 +249,55 @@ class ReactionEngineTest {
     }
 
     @Test
+    fun aRemovalAnsweredWith204LeavesNoneAtTheBaseSeq() = runTest(main.dispatcher) {
+        // `MessageReactionTests.swift:144-145` (204 → saved(nil)) as the engine takes it (MC:5176-5178):
+        // our other device had already taken it back, which is what we wanted.
+        val s = setup()
+        val w = s.world
+        val failures = s.failures(this)
+        w.state.put(w.peer, listOf(s.message.copy(reactions = listOf(MessageReaction(w.me, listOf("❤️"), 41)))))
+        w.server.records[s.message.id to w.me] = s.ownRecord(null, 44)
+
+        s.engine.toggle("❤️", s.message.id, w.peer)
+
+        assertEquals(listOf(41L), w.server.writes.map { it.baseSeq })
+        assertNull(w.server.writes.single().ciphertext)
+        assertEquals(listOf(MessageReaction(w.me, emptyList(), 41)), s.held().reactions)
+        assertTrue(failures.isEmpty())
+    }
+
+    @Test
+    fun otherWriteAnswersAndForeign409sPutBackWhatTheServerHolds() = runTest(main.dispatcher) {
+        // `MessageReactionTests.swift:146-152`: a 404, or a 409 without a record, is an error; and a
+        // 409 naming someone else's record or another message cannot be ours (MC:5184-5187).
+        val s = setup()
+        val w = s.world
+        val failures = s.failures(this)
+        val confirmed = MessageReaction(w.me, listOf("❤️"), 41)
+        w.state.put(w.peer, listOf(s.message.copy(reactions = listOf(confirmed))))
+        w.server.records[s.message.id to w.me] = s.ownRecord(listOf("❤️"), 41)
+
+        w.server.reactionErrors += de.corespace.shroud.core.net.ApiError.Server("NOT_FOUND", "Message not found.", 404)
+        s.engine.set(listOf("❤️", "👍"), s.message.id, w.peer)
+        assertEquals(listOf(confirmed), s.held().reactions)
+
+        w.server.reactionErrors += de.corespace.shroud.core.net.ApiError.Server("REACTION_CHANGED", "Try again.", 409)
+        s.engine.set(listOf("❤️", "👍"), s.message.id, w.peer)
+        assertEquals(listOf(confirmed), s.held().reactions)
+
+        w.server.conflicts += s.peerRecord(listOf("🔥"), 50)
+        s.engine.set(listOf("❤️", "👍"), s.message.id, w.peer)
+        assertEquals(listOf(confirmed), s.held().reactions)
+
+        w.server.conflicts += s.ownRecord(listOf("🔥"), 51).copy(messageId = UUID.randomUUID())
+        s.engine.set(listOf("❤️", "👍"), s.message.id, w.peer)
+        assertEquals(listOf(confirmed), s.held().reactions)
+
+        assertEquals(4, w.server.writes.size)
+        assertEquals(List(4) { "Couldn't save your reaction." }, failures.map { it.message })
+    }
+
+    @Test
     fun onlyReactableMessagesTakeReactions() = runTest(main.dispatcher) {
         val s = setup()
         val w = s.world
@@ -436,8 +485,8 @@ class ReactionEngineTest {
         val s = setup(mine = true)
         val w = s.world
         w.host.names[w.peer] = "mira"
-        w.host.conversations.value = listOf(conversation(w.peer, 10, 1))
-        val event = RealtimeEvent.MessageReaction(s.peerRecord(listOf("🔥"), 11), w.host.conversations.value.single().id, w.me, null, true)
+        w.host.conversations = listOf(conversation(w.peer, 10, 1))
+        val event = RealtimeEvent.MessageReaction(s.peerRecord(listOf("🔥"), 11), w.host.conversations.single().id, w.me, null, true)
         s.engine.apply(event)
         assertEquals(listOf(MessageReaction(w.peer, listOf("🔥"), 11)), s.held().reactions)
         assertEquals(listOf(Triple(NotificationKind.Reaction, w.peer, "mira")), w.notifier.announced)
@@ -453,10 +502,10 @@ class ReactionEngineTest {
     fun inTheOpenChatTheirReactionIsSeenAtOnce() = runTest(main.dispatcher) {
         val s = setup(mine = true)
         val w = s.world
-        w.host.conversations.value = listOf(conversation(w.peer, 10, 1))
-        w.host.activePeerId.value = w.peer
+        w.host.conversations = listOf(conversation(w.peer, 10, 1))
+        w.host.activePeerId = w.peer
         s.engine.apply(RealtimeEvent.MessageReaction(s.peerRecord(listOf("🔥"), 11), null, w.me, null, true))
-        val row = w.host.conversations.value.single()
+        val row = w.host.conversations.single()
         assertEquals(11L, row.reactionSeq)
         assertEquals(0, row.unseenReactions)
         assertEquals(listOf(w.peer to 11L), w.server.seenCalls)
@@ -478,22 +527,42 @@ class ReactionEngineTest {
         val s = setup()
         val w = s.world
         val row = conversation(w.peer, 15, 2)
-        w.host.conversations.value = listOf(row)
+        w.host.conversations = listOf(row)
         assertTrue(s.engine.hasUnseen(w.peer))
 
         w.server.seenFails = true
         s.engine.markSeen(w.peer)
         assertEquals(listOf(w.peer to 15L), w.server.seenCalls)
         // Not saved: a list that still carries the badge shows it again (MC:5589-5593).
-        assertEquals(listOf(row), s.engine.applyingLocalSeen(listOf(row)))
+        assertEquals(listOf(row), s.engine.applyLocalSeen(listOf(row)))
 
         w.server.seenFails = false
-        w.host.conversations.value = listOf(row)
+        w.host.conversations = listOf(row)
         s.engine.markSeen(w.peer)
-        assertEquals(0, w.host.conversations.value.single().unseenReactions)
+        assertEquals(0, w.host.conversations.single().unseenReactions)
         // A racing list that predates the seen call keeps it cleared; a newer reaction shows.
-        assertEquals(0, s.engine.applyingLocalSeen(listOf(row)).single().unseenReactions)
-        assertEquals(1, s.engine.applyingLocalSeen(listOf(conversation(w.peer, 16, 1))).single().unseenReactions)
+        assertEquals(0, s.engine.applyLocalSeen(listOf(row)).single().unseenReactions)
+        assertEquals(1, s.engine.applyLocalSeen(listOf(conversation(w.peer, 16, 1))).single().unseenReactions)
+    }
+
+    @Test
+    fun onlyTheOpenChatWithUnseenReactionsIsMarkedSeenWhenShown() = runTest(main.dispatcher) {
+        // MC:1047-1048 (list refresh) and MC:1408-1409 (thread load).
+        val s = setup()
+        val w = s.world
+        val other = UUID.randomUUID()
+        w.host.conversations = listOf(conversation(w.peer, 15, 2), conversation(other, 9, 0))
+        s.engine.onChatShown(w.peer)
+        assertTrue("not the open chat", w.server.seenCalls.isEmpty())
+
+        w.host.activePeerId = other
+        s.engine.onChatShown(other)
+        assertTrue("nothing unseen", w.server.seenCalls.isEmpty())
+
+        w.host.activePeerId = w.peer
+        s.engine.onChatShown(w.peer)
+        assertEquals(listOf(w.peer to 15L), w.server.seenCalls)
+        assertEquals(0, w.host.conversations.first().unseenReactions)
     }
 
     @Test
@@ -507,9 +576,9 @@ class ReactionEngineTest {
     fun seenOnOurOtherDeviceClearsTheBadgeHere() = runTest(main.dispatcher) {
         val s = setup()
         val w = s.world
-        w.host.conversations.value = listOf(conversation(w.peer, 15, 2))
+        w.host.conversations = listOf(conversation(w.peer, 15, 2))
         s.engine.apply(RealtimeEvent.ReactionsSeen(w.peer, 15, null))
-        assertEquals(0, w.host.conversations.value.single().unseenReactions)
+        assertEquals(0, w.host.conversations.single().unseenReactions)
         advanceTimeBy(5_000)
         assertEquals(0, w.host.refreshes)
 
@@ -538,13 +607,13 @@ class ReactionEngineTest {
         val s = setup()
         val w = s.world
         w.server.reactionGate = CompletableDeferred()
-        w.host.conversations.value = listOf(conversation(w.peer, 15, 2))
+        w.host.conversations = listOf(conversation(w.peer, 15, 2))
         s.engine.set(listOf("👍"), s.message.id, w.peer)
         s.engine.markSeen(w.peer)
         s.engine.reset()
         runCurrent()
         assertTrue(s.engine.revisions.value.isEmpty())
-        assertEquals(listOf(conversation(w.peer, 15, 2)), s.engine.applyingLocalSeen(listOf(conversation(w.peer, 15, 2))))
+        assertEquals(listOf(conversation(w.peer, 15, 2)), s.engine.applyLocalSeen(listOf(conversation(w.peer, 15, 2))))
         advanceTimeBy(5_000)
         assertTrue(w.state.persistThreads.isEmpty())
         assertEquals(1, w.server.writes.size)

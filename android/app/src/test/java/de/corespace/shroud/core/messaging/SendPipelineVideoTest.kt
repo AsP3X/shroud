@@ -118,7 +118,7 @@ class SendPipelineVideoTest {
     @Test
     fun tooLargeAndUnreadableVideosSayWhy() = runTest(main.dispatcher) {
         val w = world()
-        w.video.failure = FakeVideoTooLarge()
+        w.video.failure = SendFakeVideoTooLarge()
         assertEquals(
             "This video is too large to send at original quality. Trim it or choose a lower quality.",
             w.pipeline().sendVideo(plan(VideoUploadQuality.Original), w.peer, null),

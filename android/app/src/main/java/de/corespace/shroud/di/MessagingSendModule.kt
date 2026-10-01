@@ -42,8 +42,12 @@ import de.corespace.shroud.core.storage.PrefsFiles
  * - [video] → `VideoModule`'s `VideoMedia`, and [videoTooLarge] → its "too large" error (W2-VIDEO, CR-4);
  * - [peerIdentities] → `ContactsModule`'s `PeerIdentityController` (W2-CONTACTS);
  * - [notifier] → `NotificationsModule`'s `NotificationsController` (W2-NOTIF);
- * - [host] → the `MessagingController` once it implements [SendHost] (W2-MSG-CORE, CR-1); until then
- *   [SendHost.Detached] (no list refreshes, no reaction badges).
+ * - [host] → a [SendHost] over W2-MSG-CORE's `ThreadStore`, whose `ThreadState` additions carry the
+ *   same members (CR-1); until then [SendHost.Detached] (no list refreshes, no reaction badges).
+ *
+ * `MessagingController` registers [media]'s result as an artifact sink (it is a
+ * `MessageArtifactSinks`: purges and locks stop downloads), and lets the store write threads through
+ * [ReactionEngine.settled].
  */
 class MessagingSendModule(container: AppContainer) : AppModule(container) {
     @Volatile var host: (ThreadState) -> SendHost = { SendHost.Detached }
