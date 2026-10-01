@@ -286,6 +286,9 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
         scope.launch { state.onDiskAwait { deps.store.lockSensitiveMemory() } }
         lockMemoryNow()
         clearInMemoryState()
+        // iOS clears contacts and incoming requests in `clearInMemoryState` (`:566-591`); here those
+        // lists live in the contacts engine, which only `stop` clears (W2-CONTACTS change request).
+        contacts.stop(false)
     }
 
     /**
@@ -359,6 +362,9 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
         sessionJobs.clear()
         realtimeActive = false
         socket.release()
+        // `outboundQueue.cancel()` (`:526`): sends in flight stop calling the server; their bubbles
+        // stay queued for the next start.
+        send.cancelAll()
         state.setActivePeer(null)
         // Drop (don't cancel) an in-flight list refresh: cancelling surfaced a spurious network
         // error on sign-out. The generation keeps it from publishing.

@@ -276,7 +276,7 @@ class SendPipeline(
     private var flushJob: Deferred<Unit>? = null
 
     /** Stops every send, retry and flush in flight (sign-out, wipe: `outboundQueue.cancel()`, MC:526). Their bubbles stay queued. */
-    fun cancelAll() {
+    override fun cancelAll() {
         job.cancelChildren()
         flushJob = null
         annotations.reset()

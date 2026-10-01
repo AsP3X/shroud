@@ -56,6 +56,12 @@ jobs:
         with:
           python-version: "3.13"
 
+      # whisper.cpp (app/src/main/cpp) builds with the NDK and CMake pinned in app/build.gradle.kts
+      # (region native); externalNativeBuild fails without exactly these versions.
+      - name: Install the pinned NDK and CMake
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;30.0.16248370" "cmake;4.1.2" > /dev/null
+
       - name: Reaction tables are up to date
         working-directory: .
         run: python3 scripts/gen_reaction_set.py --check

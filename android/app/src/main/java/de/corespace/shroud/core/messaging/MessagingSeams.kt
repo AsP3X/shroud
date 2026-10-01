@@ -225,6 +225,14 @@ interface SendEngine {
 
     /** Sends whatever waited for the network. */
     suspend fun flushOutbox()
+
+    /**
+     * Stops every send, retry and flush in flight; their bubbles stay queued (`outboundQueue.cancel()`,
+     * `MessagingController.swift:526`). `MessagingController` calls it when it stops (sign-out, lock,
+     * wipe halt), so a send cannot keep calling the server with the old token. Added at the W2 merge
+     * (W2-MSG-SEND CR-5); defaulted so stand-ins compile.
+     */
+    fun cancelAll() {}
 }
 
 /** Reactions (messaging-core §19); implemented by `ReactionEngine` (W2-MSG-SEND). */

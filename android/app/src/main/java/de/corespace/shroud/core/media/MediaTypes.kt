@@ -177,7 +177,11 @@ fun interface MediaEditBaker {
 
 /** Video encoding; implemented by `VideoMedia` (W2-VIDEO). */
 interface VideoPipeline {
-    /** Throws `VideoException` (Unreadable, ExportFailed, TooLarge, Cancelled). */
+    /**
+     * Throws [de.corespace.shroud.core.media.video.VideoException] (Unreadable, ExportFailed,
+     * TooLarge, Cancelled — the last only for a cancel the platform reports); a cancelled caller gets
+     * a `CancellationException`.
+     */
     suspend fun encode(plan: VideoSendPlan, onProgress: ((Double) -> Unit)?): EncodedVideo
     suspend fun posterJpegFromLocal(messageId: UUID, maxEdgePx: Int = 720): ByteArray?
     val maxSealedBytes: Long

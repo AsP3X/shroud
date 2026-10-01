@@ -12,6 +12,9 @@ user installs (e.g. ntfy) plus an opt-in "Background connection"; both arrive in
 Needs JDK 21 and the Android SDK with platform 37. `gradle/gradle-daemon-jvm.properties` pins
 the Gradle daemon to JDK 21 (the compiler toolchain is 21 too): Gradle picks an installed JDK 21
 and never downloads one, so install it first. Android Studio honours the same criteria.
+On-device transcription builds the vendored whisper.cpp (`app/src/main/cpp`), so the SDK also
+needs the NDK and CMake pinned in `app/build.gradle.kts` (region native):
+`sdkmanager "ndk;30.0.16248370" "cmake;4.1.2"`. The APK ships `arm64-v8a` and `x86_64` only.
 
 ```bash
 cd android
@@ -93,6 +96,16 @@ when the API is not reachable:
 
 ```bash
 ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=de.corespace.shroud.e2e.W1SmokeTest
+```
+
+Video tests need software decoders on the emulator: start the AVDs with
+`-feature -HardwareDecoder` (the default `c2.goldfish.h264.decoder` fails every decode with
+`-no-window`). The transcription benchmark downloads the public model from huggingface.co on its
+first run and keeps it in the app's `no_backup/whisper/`:
+
+```bash
+adb shell am instrument -w -e class de.corespace.shroud.core.transcription.TranscriptionBenchmarkDeviceTest \
+  [-e models base,small] de.corespace.shroud.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 `SERIAL` picks a device when several are attached; ports, container names and the state folder

@@ -9,6 +9,7 @@ import de.corespace.shroud.core.media.ImagePipeline
 import de.corespace.shroud.core.media.LocalMediaStore
 import de.corespace.shroud.core.media.MediaTransfers
 import de.corespace.shroud.core.media.VideoPipeline
+import de.corespace.shroud.core.media.video.VideoException
 import de.corespace.shroud.core.messaging.MediaHydrator
 import de.corespace.shroud.core.messaging.MediaLoader
 import de.corespace.shroud.core.messaging.MessagingStore
@@ -39,7 +40,7 @@ import de.corespace.shroud.core.storage.PrefsFiles
  * - [store] → `MessagingStoreModule.store` (W2-MSG-STORE);
  * - [mediaStore], [transfers] → the `LocalMediaCache` and `MediaTransferService` of `MediaModule` (W2-MEDIA-STORE);
  * - [images] → `ImageModule`'s `ImageEncoder` (W2-MEDIA-IMAGE);
- * - [video] → `VideoModule`'s `VideoMedia`, and [videoTooLarge] → its "too large" error (W2-VIDEO, CR-4);
+ * - [video] → `VideoModule`'s `VideoMedia` (W2-VIDEO); [videoTooLarge] already reads its `VideoException.isTooLarge` (CR-4, applied at the W2 merge);
  * - [peerIdentities] → `ContactsModule`'s `PeerIdentityController` (W2-CONTACTS);
  * - [notifier] → `NotificationsModule`'s `NotificationsController` (W2-NOTIF);
  * - [host] → a [SendHost] over W2-MSG-CORE's `ThreadStore`, whose `ThreadState` additions carry the
@@ -58,7 +59,7 @@ class MessagingSendModule(container: AppContainer) : AppModule(container) {
     @Volatile var video: () -> VideoPipeline = { unwired("VideoPipeline (W2-VIDEO)") }
     @Volatile var peerIdentities: () -> PeerIdentities = { unwired("PeerIdentities (W2-CONTACTS)") }
     @Volatile var notifier: () -> MessageNotifier? = { null }
-    @Volatile var videoTooLarge: (Throwable) -> Boolean = { false }
+    @Volatile var videoTooLarge: (Throwable) -> Boolean = { VideoException.isTooLarge(it) }
 
     /** The REST slice of the engines, on the process's one `ShroudApi` (W1-NET). */
     val api: SendApi by lazy { SendApi.of(container.net.api) }
