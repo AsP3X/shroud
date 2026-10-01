@@ -102,6 +102,31 @@ class ConnectivityMonitorTest {
     }
 
     @Test
+    fun callbacksQueuedBeforeStopAreDropped() {
+        val source = FakeSource(internet = true)
+        val monitor = ConnectivityMonitor(source)
+        monitor.start()
+        val old = source.listener!!
+        old.onAvailable("wifi", hasInternet = true)
+        monitor.stop()
+        // Already queued on the ConnectivityManager thread when stop() unregistered.
+        old.onLost("wifi")
+        assertTrue("a stopped monitor keeps its last value", monitor.isOnline.value)
+
+        source.internet = false
+        monitor.start()
+        val fresh = source.listener!!
+        old.onAvailable("stale", hasInternet = true)
+        assertFalse("the first registration's late news is not this one's", monitor.isOnline.value)
+        fresh.onAvailable("mobile", hasInternet = true)
+        assertTrue(monitor.isOnline.value)
+        old.onLost("mobile")
+        assertTrue(monitor.isOnline.value)
+        fresh.onLost("mobile")
+        assertFalse(monitor.isOnline.value)
+    }
+
+    @Test
     fun aRefusedRegistrationStaysOptimistic() {
         val source = FakeSource(internet = false, accept = false)
         val monitor = ConnectivityMonitor(source)

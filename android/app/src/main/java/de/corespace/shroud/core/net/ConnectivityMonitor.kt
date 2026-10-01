@@ -35,6 +35,9 @@ class ConnectivityMonitor internal constructor(private val source: NetworkSource
     private val available = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     private var started = false
 
+    /** Which registration is live; callbacks of an earlier one (in flight across [stop]) are dropped. Guarded by `this`. */
+    private var registration = 0
+
     /** Whether the phone has a network that reaches the internet. True until [start] learns otherwise (iOS `:11`). */
     val isOnline: StateFlow<Boolean> = online.asStateFlow()
 
@@ -45,12 +48,13 @@ class ConnectivityMonitor internal constructor(private val source: NetworkSource
     @Synchronized
     fun start() {
         if (started) return
+        val mine = ++registration
         // The current state first; the callbacks that follow registration keep it up to date.
         online.value = source.currentHasInternet()
         started = source.register(object : NetworkSource.Listener {
-            override fun onAvailable(network: Any, hasInternet: Boolean?) = publish(tracker.onAvailable(network, hasInternet))
-            override fun onCapabilitiesChanged(network: Any, hasInternet: Boolean) = publish(tracker.onCapabilitiesChanged(network, hasInternet))
-            override fun onLost(network: Any) = publish(tracker.onLost(network))
+            override fun onAvailable(network: Any, hasInternet: Boolean?) = handle(mine) { tracker.onAvailable(network, hasInternet) }
+            override fun onCapabilitiesChanged(network: Any, hasInternet: Boolean) = handle(mine) { tracker.onCapabilitiesChanged(network, hasInternet) }
+            override fun onLost(network: Any) = handle(mine) { tracker.onLost(network) }
         })
         // Untracked, a snapshot would never change again: stay optimistic instead.
         if (!started) online.value = true
@@ -61,11 +65,20 @@ class ConnectivityMonitor internal constructor(private val source: NetworkSource
     fun stop() {
         if (!started) return
         started = false
+        registration++
         source.unregister()
         tracker.reset()
     }
 
-    private fun publish(change: DefaultNetworkTracker.Change) {
+    /**
+     * Runs one callback's [event] against the tracker and publishes what changed — unless it
+     * belongs to a registration that [stop] already ended: `unregisterNetworkCallback` does not
+     * recall callbacks already queued on the ConnectivityManager thread.
+     */
+    @Synchronized
+    private fun handle(from: Int, event: () -> DefaultNetworkTracker.Change) {
+        if (from != registration) return
+        val change = event()
         change.online?.let { online.value = it }
         if (change.becameAvailable) available.tryEmit(Unit)
     }
