@@ -7,6 +7,7 @@ import de.corespace.shroud.core.net.wire.UuidSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.UseSerializers
+import kotlinx.serialization.json.Json
 import java.time.Instant
 import java.util.UUID
 
@@ -63,10 +64,8 @@ data class MarkReactionsSeenBody(@SerialName("up_to_seq") val upToSeq: Long)
 data class MarkReactionsSeenResponse(@SerialName("seen_seq") val seenSeq: Long)
 
 /**
- * What a reaction write did (`MessagesService.ReactionWriteResult`, `MessagesService.swift:76-83`).
- *
- * The mapping from an HTTP answer, `from(status, body, json)` (`MessagesService.swift:120-129`),
- * is W1-NET's (plan §1.7.2): it needs `ApiClient.errorFor`. It goes into the companion below.
+ * What a reaction write did (`MessagesService.ReactionWriteResult`, `MessagesService.swift:76-83`);
+ * built from the HTTP answer by [from].
  */
 sealed interface ReactionWriteResult {
     /** Written; null for a removal that found nothing to remove (204). */
@@ -78,6 +77,32 @@ sealed interface ReactionWriteResult {
      */
     data class ChangedElsewhere(val current: ReactionDto) : ReactionWriteResult
 
-    /** Home of `from(status, body, json)` (W1-NET). */
-    companion object
+    companion object {
+        /**
+         * A reaction write's answer (`MessagesService.reactionWrite`, `MessagesService.swift:119-129`;
+         * `MessageReactionTests.reactionWriteAnswersDecode`): a `409` whose body carries a decodable
+         * `current` → [ChangedElsewhere]; any other non-2xx — a `409` without `current` included —
+         * throws [ApiError.from]; a `204` or empty body → [Saved] with null; otherwise the decoded
+         * record, or [ApiError.Decoding] when it does not decode. [json] must ignore unknown keys:
+         * the conflict body carries the error envelope beside `current`.
+         */
+        fun from(status: Int, body: String, json: Json): ReactionWriteResult {
+            if (status == 409) {
+                val conflict = try {
+                    json.decodeFromString(ReactionConflictDto.serializer(), body)
+                } catch (_: IllegalArgumentException) {
+                    // SerializationException is an IllegalArgumentException.
+                    null
+                }
+                if (conflict != null) return ChangedElsewhere(conflict.current)
+            }
+            if (status !in 200..299) throw ApiError.from(status, body)
+            if (status == 204 || body.isBlank()) return Saved(null)
+            return try {
+                Saved(json.decodeFromString(ReactionDto.serializer(), body))
+            } catch (e: IllegalArgumentException) {
+                throw ApiError.Decoding(e.message ?: "decode")
+            }
+        }
+    }
 }
