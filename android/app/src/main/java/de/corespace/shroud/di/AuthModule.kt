@@ -123,11 +123,14 @@ class AuthModule(container: AppContainer) : AppModule(container) {
     /**
      * Seals this phone's name for the device list (`RootView.syncDeviceName`, `RootView.swift:306-313`):
      * needs the history key, so only while unlocked; best effort, never throws. The key is copied out
-     * of the crypto controller for the call and zeroed after it.
+     * of the crypto controller for the call and zeroed after it. Keys of another account than the
+     * session's (a sign-in in between) seal nothing: other devices could not open that name.
      */
     suspend fun syncDeviceName() {
         val session = sessionController.session.value ?: return
-        val historyKey = container.keys.cryptoController.withMaterial { it.historyKey.copyOf() } ?: return
+        val crypto = container.keys.cryptoController
+        if (!session.userId.equals(crypto.unlockedUserId.value, ignoreCase = true)) return
+        val historyKey = crypto.withMaterial { it.historyKey.copyOf() } ?: return
         try {
             DeviceNameSync.syncIfNeeded(container.net.api, session, historyKey, DeviceNameSync.currentLabel(app))
         } finally {
