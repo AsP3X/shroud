@@ -1049,6 +1049,145 @@ mod tests {
         assert!(!hub.is_device_online(user, device).await);
     }
 
+    #[tokio::test]
+    async fn a_background_socket_counts_only_while_its_app_is_in_front() {
+        let hub = Arc::new(RealtimeHub::new());
+        let (user, phone) = (Uuid::new_v4(), Uuid::new_v4());
+        let mut socket = hub
+            .subscribe_with(user, phone, Uuid::new_v4(), SocketMode::Background)
+            .await
+            .expect("background socket");
+
+        // It hears everything, but its user is not online through it, nor its app in front.
+        hub.publish_to_users([user], None, "event").await;
+        assert_eq!(socket.events.try_recv().as_deref(), Ok("event"));
+        assert!(!hub.is_user_online(user).await);
+        assert!(!hub.is_device_online(user, phone).await);
+        assert!(!hub.is_device_foreground(user, phone).await);
+        // Saying it is still away changes nothing.
+        assert_eq!(
+            hub.set_focus(user, phone, socket.id, false).await,
+            OnlineChange::Unchanged
+        );
+        assert!(!hub.is_user_online(user).await);
+
+        // The app comes to the front on the same socket: online, and in front.
+        assert_eq!(
+            hub.set_focus(user, phone, socket.id, true).await,
+            OnlineChange::CameOnline
+        );
+        assert!(hub.is_user_online(user).await);
+        assert!(hub.is_device_online(user, phone).await);
+        assert!(hub.is_device_foreground(user, phone).await);
+        assert_eq!(
+            hub.set_focus(user, phone, socket.id, true).await,
+            OnlineChange::Unchanged
+        );
+
+        // It leaves again: back to background accounting.
+        assert_eq!(
+            hub.set_focus(user, phone, socket.id, false).await,
+            OnlineChange::WentOffline
+        );
+        assert!(!hub.is_user_online(user).await);
+        assert!(!hub.is_device_foreground(user, phone).await);
+        hub.publish_to_users([user], None, "later").await;
+        assert_eq!(socket.events.try_recv().as_deref(), Ok("later"));
+
+        // A stale socket id changes nothing.
+        assert_eq!(
+            hub.set_focus(user, phone, socket.id + 1, true).await,
+            OnlineChange::Unchanged
+        );
+        assert!(!hub.is_user_online(user).await);
+    }
+
+    #[tokio::test]
+    async fn a_background_socket_leaves_other_devices_online() {
+        let hub = Arc::new(RealtimeHub::new());
+        let (user, phone, laptop) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let _phone = hub
+            .subscribe_with(user, phone, Uuid::new_v4(), SocketMode::Background)
+            .await
+            .expect("phone");
+        let laptop_socket = hub
+            .subscribe(user, laptop, Uuid::new_v4())
+            .await
+            .expect("laptop");
+        assert!(hub.is_user_online(user).await);
+        assert!(hub.is_device_online(user, laptop).await);
+        assert!(!hub.is_device_online(user, phone).await);
+
+        hub.unsubscribe(user, laptop, laptop_socket.id).await;
+        assert!(!hub.is_user_online(user).await);
+    }
+
+    #[tokio::test]
+    async fn a_socket_kept_for_the_background_connection_turns_background() {
+        let hub = Arc::new(RealtimeHub::new());
+        let (user, phone) = (Uuid::new_v4(), Uuid::new_v4());
+        // Opened while the app was on screen, as every socket is.
+        let socket = hub
+            .subscribe(user, phone, Uuid::new_v4())
+            .await
+            .expect("socket");
+        assert!(hub.is_user_online(user).await);
+
+        // An ordinary socket that leaves the front stays online (a tab in the background).
+        assert_eq!(
+            hub.update_focus(user, phone, socket.id, false, None).await,
+            OnlineChange::Unchanged
+        );
+        assert!(hub.is_user_online(user).await);
+        assert!(!hub.is_device_foreground(user, phone).await);
+        hub.set_focus(user, phone, socket.id, true).await;
+
+        // The app leaves and keeps its socket for the background connection.
+        assert_eq!(
+            hub.update_focus(user, phone, socket.id, false, Some(true))
+                .await,
+            OnlineChange::WentOffline
+        );
+        assert!(!hub.is_user_online(user).await);
+        assert!(!hub.is_device_foreground(user, phone).await);
+        // Back in front, then away again without saying: still a background socket.
+        assert_eq!(
+            hub.update_focus(user, phone, socket.id, true, None).await,
+            OnlineChange::CameOnline
+        );
+        assert_eq!(
+            hub.update_focus(user, phone, socket.id, false, None).await,
+            OnlineChange::WentOffline
+        );
+        // The background connection was switched off while the socket stays: ordinary again.
+        assert_eq!(
+            hub.update_focus(user, phone, socket.id, false, Some(false))
+                .await,
+            OnlineChange::CameOnline
+        );
+        assert!(hub.is_user_online(user).await);
+    }
+
+    #[tokio::test]
+    async fn a_background_socket_replacing_an_online_one_takes_the_device_offline() {
+        let hub = Arc::new(RealtimeHub::new());
+        let (user, phone) = (Uuid::new_v4(), Uuid::new_v4());
+        let old = hub
+            .subscribe(user, phone, Uuid::new_v4())
+            .await
+            .expect("old");
+        assert!(hub.is_user_online(user).await);
+        let new = hub
+            .subscribe_with(user, phone, Uuid::new_v4(), SocketMode::Background)
+            .await
+            .expect("new");
+        assert!(!hub.is_user_online(user).await);
+        // The old socket's cleanup leaves the new one registered.
+        hub.unsubscribe(user, phone, old.id).await;
+        hub.set_focus(user, phone, new.id, true).await;
+        assert!(hub.is_user_online(user).await);
+    }
+
     #[test]
     fn fanout_envelopes_without_a_device_still_parse() {
         let old = r#"{"user_id":"0190a3b4-1c2d-7e8f-9a0b-1c2d3e4f5a6b","except_device_id":null,"event":{"type":"x"}}"#;
