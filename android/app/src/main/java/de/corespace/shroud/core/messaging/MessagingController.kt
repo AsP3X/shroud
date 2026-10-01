@@ -278,7 +278,6 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
         if (hydratedAheadOfStart || !keys.isUnlocked) return
         hydrateFromDisk()
         hydratedAheadOfStart = true
-        needsHydrate = false
     }
 
     /** The unlock it was prepared for did not go through (`discardPreparedCachedState`, `:458-462`). */
@@ -304,7 +303,6 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
         launchSession {
             // Paint cached chats and contacts at once, so a cold or offline start feels instant.
             if (hydratedAheadOfStart) hydratedAheadOfStart = false else hydrateFromDisk()
-            needsHydrate = false
             if (generation != activityGeneration) return@launchSession
             contacts.start()
             contacts.refresh()
@@ -323,7 +321,14 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
      * offline reopen.
      */
     suspend fun stop(wipeDisk: Boolean) {
-        if (!wipeDisk) state.persistSnapshot() else reactions.reset()
+        if (!wipeDisk) {
+            state.persistSnapshot()
+        } else {
+            reactions.reset()
+            // Android addition (invisible): a download finishing after the sign-out must not write
+            // media for an account that is gone, as `haltForDeviceWipe` already ensures.
+            media.cancelAll()
+        }
         stopActivity(contactsWipe = wipeDisk)
         if (wipeDisk) {
             clearLocalData()
@@ -413,10 +418,7 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
         val generation = activityGeneration
         launchSession {
             // The memory was locked meanwhile: read the sealed cache again (`:602-606`).
-            if (needsHydrate && keys.isUnlocked) {
-                hydrateFromDisk()
-                needsHydrate = false
-            }
+            if (needsHydrate && keys.isUnlocked) hydrateFromDisk()
             if (generation != activityGeneration) return@launchSession
             contacts.refresh()
             refreshConversations()
@@ -519,8 +521,12 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
      */
     private suspend fun hydrateFromDisk() {
         val userId = state.myUserId
-        if (userId == null) {
+        if (userId == null || !keys.isUnlocked) {
+            // No key, nothing readable (iOS: the repository has no key and returns only Notes). Memory
+            // stays unwritable — an empty map saved now would delete every thread file — and the
+            // next return to the app with the key reads the cache.
             if (state.messages(NOTES_PEER_ID) == null) state.setThread(NOTES_PEER_ID, emptyList())
+            if (userId != null) needsHydrate = true
             return
         }
         val generation = state.lockGeneration
@@ -540,6 +546,7 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
         state.setThreads(restored)
         state.editUnread { it + hydrated.roster.unreadByPeer }
         // Memory now holds what the disk had: writes may go out again.
+        needsHydrate = false
         state.writable = true
     }
 

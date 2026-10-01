@@ -185,6 +185,27 @@ class MessagingControllerTest {
     }
 
     @Test
+    fun aStartWithoutTheKeyWritesNothingAndReadsTheCacheOnceTheKeyIsThere() = engineTest {
+        hydrateWith(mapOf(peer to cachedThread("later")))
+        keys.unlocked = false
+        val controller = controller()
+        controller.start()
+        runCurrent()
+        assertFalse("hydrate" in store.events)
+        assertEquals(emptyList<ChatMessage>(), controller.threads.value[NOTES_PEER_ID])
+        // An empty memory saved now would delete every thread file.
+        controller.persistRoster()
+        runCurrent()
+        assertTrue(store.persisted.isEmpty())
+
+        keys.unlocked = true
+        controller.handleAppBecameActive()
+        runCurrent()
+        assertEquals("later", controller.threads.value[peer]?.single()?.text)
+        controller.stop(wipeDisk = false)
+    }
+
+    @Test
     fun aDiscardedPreparationLeavesNothingInMemory() = engineTest { // MessagingController.swift:458-462
         hydrateWith(mapOf(peer to cachedThread("hi")))
         val controller = controller()
@@ -239,6 +260,7 @@ class MessagingControllerTest {
         assertEquals(1, peerKeys.wiped)
         assertEquals(1, keyRecordWipes)
         assertTrue("reset" in reactions.log)
+        assertEquals(1, media.cancelledAll)
         assertTrue("stop:true" in contacts.log)
         assertEquals(writes, store.persisted.size)
         assertTrue(controller.threads.value.isEmpty())

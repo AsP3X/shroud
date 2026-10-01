@@ -70,6 +70,12 @@ import java.util.UUID
  * The parts of the other wave-2 packages are wired by W2-INT: each `Unwired*` stand-in below names
  * the expression that replaces it once those modules exist (00-plan §2.0 rule 3). Until then nothing
  * starts messaging (W2-INT's `ui/ShroudApp.kt` does), and the stand-ins never decrypt, send or store.
+ *
+ * W2-MSG-SEND's engines also take a `SendHost` (its contract change request CR-1): the controller
+ * has every member it asks for — `conversations`, `activePeerId`, `refreshConversations(force)`,
+ * `setOffline`, `isMuted`, `username`, `editConversations`, `foldSharedTranscripts` — so W2-INT sets
+ * `container.messagingSend.host` to a `SendHost` delegating each member to [controller] (or adds
+ * `SendHost` to the controller's supertypes, with `override` on those eight members).
  */
 class MessagingModule(container: AppContainer) : AppModule(container) {
     /** The controller every UI area reads (plan §1.7.7). Built on first use, on the main thread. */
@@ -87,11 +93,11 @@ class MessagingModule(container: AppContainer) : AppModule(container) {
             opener = EnvelopeOpener(keys.messageCrypto::open),
             peerLocks = keys.peerLocks,
             store = UnwiredMessagingStore, // W2-INT: container.messagingStore.store
-            hasMedia = { false }, // W2-INT: container.media.cache::has (LocalMediaStore.has)
-            contacts = UnwiredContacts, // W2-INT: container.contacts.contacts
+            hasMedia = { false }, // W2-INT: container.media.localMedia::has (LocalMediaStore.has)
+            contacts = UnwiredContacts, // W2-INT: container.contacts.controller
             peerIdentities = UnwiredPeerIdentities, // W2-INT: container.contacts.peerIdentities
             privacy = UnwiredPrivacy, // W2-INT: container.contacts.privacy
-            notifier = UnwiredNotifier, // W2-INT: container.notifications.controller
+            notifier = UnwiredNotifier, // W2-INT: W2-NOTIF's NotificationsController (its MessageNotifier)
             sendEngine = { UnwiredSendEngine }, // W2-INT: container.messagingSend::send
             reactionsEngine = { UnwiredReactionsEngine }, // W2-INT: container.messagingSend::reactions
             mediaLoader = { UnwiredMediaLoader }, // W2-INT: container.messagingSend::media
@@ -101,7 +107,7 @@ class MessagingModule(container: AppContainer) : AppModule(container) {
                 keys.ratchetSessions.deleteAll()
                 keys.senderTags.deleteAll()
             },
-            refreshCallSecrets = {}, // W2-INT: container.calls.callSecrets.refreshAll()
+            refreshCallSecrets = {}, // W2-INT: W2-CALLS-CORE's CallSecrets refresh of every contact (plan C29)
             clock = container.clock,
         )
     }
