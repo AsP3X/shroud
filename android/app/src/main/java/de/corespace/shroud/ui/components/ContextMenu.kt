@@ -1,8 +1,5 @@
 package de.corespace.shroud.ui.components
 
-import de.corespace.shroud.ui.theme.ShroudIcons
-import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.platform.LocalInspectionMode
 import android.os.SystemClock
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
@@ -12,6 +9,7 @@ import androidx.compose.animation.core.snap
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -32,10 +30,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
@@ -53,34 +50,37 @@ import androidx.compose.ui.draw.dropShadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
+import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.ui.theme.Motion
+import de.corespace.shroud.ui.theme.ShroudIcons
 import de.corespace.shroud.ui.theme.ShroudTheme
 import de.corespace.shroud.ui.theme.inter
-import kotlinx.coroutines.launch
+import de.corespace.shroud.ui.theme.perform
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
 
 /**
  * One row of a context menu, a menu picker or the message menu card.
@@ -303,7 +303,7 @@ private fun ContextMenuCardSurfaceImpl(
     scroll: ScrollState? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val palette = overlayPalette()
+    val palette = ShroudTheme.colors
     val shape = RoundedCornerShape(metrics.radius)
     // A card taller than the screen (a long picker) scrolls inside its shape.
     val scrolling = if (scroll != null) Modifier.verticalScroll(scroll) else Modifier
@@ -446,7 +446,7 @@ internal fun ContextMenuCardImpl(
         if (back != null) {
             // The back row keeps its caret leading in every layout: it points the way back.
             ContextMenuItemImpl(
-                action = MenuAction(title = backTitle, icon = OverlayIcons.CaretLeft),
+                action = MenuAction(title = backTitle, icon = ShroudIcons.CaretLeft),
                 onClick = back,
                 modifier = Modifier,
                 muted = false,
@@ -478,7 +478,7 @@ private fun ContextMenuItemImpl(
     metrics: MenuCardMetrics,
 ) {
     val colors = ShroudTheme.colors
-    val palette = overlayPalette()
+    val palette = ShroudTheme.colors
     val dark = metrics.style == MenuStyle.Dark
     val danger = if (dark) DarkMenuDanger else colors.danger
     val labelColor = when {
@@ -500,7 +500,7 @@ private fun ContextMenuItemImpl(
     val pressed by interaction.collectIsPressedAsState()
     val view = LocalView.current
     LaunchedEffect(pressed) {
-        if (pressed) OverlayHaptics.light(view)
+        if (pressed) view.perform(Haptic.Light)
     }
     // Lands instantly, fades out (MOT:109-117).
     val highlight by animateFloatAsState(
@@ -540,7 +540,7 @@ private fun ContextMenuItemImpl(
             Box(Modifier.width(metrics.iconSlot), contentAlignment = Alignment.Center) {
                 when {
                     // The title names the row; glyphs stay silent (MAM:505-506).
-                    action.checked -> ShroudIcon(OverlayIcons.CheckBold, if (dark) Color.White else colors.accent, size = 14.dp)
+                    action.checked -> ShroudIcon(ShroudIcons.CheckBold, if (dark) Color.White else colors.accent, size = 14.dp)
                     action.icon != null -> ShroudIcon(action.icon, glyphColor, size = metrics.glyphSize)
                 }
             }
@@ -555,7 +555,7 @@ private fun ContextMenuItemImpl(
             overflow = TextOverflow.Ellipsis,
         )
         if (action.submenu != null) {
-            ShroudIcon(OverlayIcons.CaretRight, if (dark) Color.White.copy(alpha = 0.55f) else colors.textSecondary, size = 13.dp)
+            ShroudIcon(ShroudIcons.CaretRight, if (dark) Color.White.copy(alpha = 0.55f) else colors.textSecondary, size = 13.dp)
         } else if (showsIconSlot && metrics.trailingIcon) {
             glyph()
         }
@@ -596,7 +596,7 @@ internal fun ContextMenuOverlay(
             1f,
             when {
                 reduceMotion -> Motion.reduced()
-                entrance == MenuEntrance.Lift -> OverlayMotion.menuLift()
+                entrance == MenuEntrance.Lift -> Motion.menuLift()
                 else -> Motion.snappy()
             },
         )
@@ -605,7 +605,7 @@ internal fun ContextMenuOverlay(
         if (!closing) {
             closing = true
             scope.launch {
-                progress.animateTo(0f, if (reduceMotion) Motion.reduced() else OverlayMotion.menuDrop())
+                progress.animateTo(0f, if (reduceMotion) Motion.reduced() else Motion.menuDrop())
                 currentOnDismiss()
             }
         }
@@ -630,7 +630,7 @@ internal fun ContextMenuOverlay(
         val back by rememberOverlayBack(enabled = !closing) {
             if (submenuOf != null) submenuOf = null else close()
         }
-        val palette = overlayPalette()
+        val palette = ShroudTheme.colors
         val density = LocalDensity.current
         val safe = WindowInsets.systemBars.union(WindowInsets.ime)
         val safeTop = safe.getTop(density).toFloat()
@@ -664,7 +664,7 @@ internal fun ContextMenuOverlay(
                                 .background(Color.Black.copy(alpha = 0.42f))
                                 .background(Color(0xFF0F0F14).copy(alpha = 0.28f))
                             blurs -> Modifier.background(palette.menuScrim)
-                            else -> Modifier.background(palette.menuScrimNoBlur)
+                            else -> Modifier.background(palette.menuScrimOpaque)
                         },
                     )
                     .dismissOnTap(
@@ -768,41 +768,6 @@ private val MenuBackdropBlur = 12.dp
 
 private const val HeaderId = "header"
 private const val CardId = "card"
-
-/**
- * Glyphs the overlays need that `ShroudIcons` does not have yet (Phosphor 2.1.1 regular, MIT —
- * the paths of `assets/regular/<name>.svg`, already listed in `assets/licenses/icons.txt` as the
- * Phosphor set). W1-UI-THEME's icon set carries them as well; W1-INT may point these at it.
- */
-internal object OverlayIcons {
-    /** Phosphor `caret-right`: a row that opens a submenu. */
-    val CaretRight: ImageVector by lazy {
-        phosphor("CaretRight", "M181.66,133.66l-80,80a8,8,0,0,1-11.32-11.32L164.69,128,90.34,53.66a8,8,0,0,1,11.32-11.32l80,80A8,8,0,0,1,181.66,133.66Z")
-    }
-
-    /** Phosphor `caret-left`: the submenu's back row (shell-chats §8.8). */
-    val CaretLeft: ImageVector by lazy {
-        phosphor("CaretLeft", "M165.66,202.34a8,8,0,0,1-11.32,11.32l-80-80a8,8,0,0,1,0-11.32l80-80a8,8,0,0,1,11.32,11.32L91.31,128Z")
-    }
-
-    /** Phosphor `caret-up-down`: a menu picker's value (settings-lock §2.5). */
-    val CaretUpDown: ImageVector by lazy {
-        phosphor(
-            "CaretUpDown",
-            "M181.66,170.34a8,8,0,0,1,0,11.32l-48,48a8,8,0,0,1-11.32,0l-48-48a8,8,0,0,1,11.32-11.32L128,212.69l42.34-42.35A8,8,0,0,1,181.66,170.34Zm-96-84.68L128,43.31l42.34,42.35a8,8,0,0,0,11.32-11.32l-48-48a8,8,0,0,0-11.32,0l-48,48A8,8,0,0,0,85.66,85.66Z",
-        )
-    }
-
-    /** Phosphor `check-bold`: a picker's current value (settings-lock §2.5: "check 14 bold accent"). */
-    val CheckBold: ImageVector by lazy {
-        phosphor("CheckBold", "M232.49,80.49l-128,128a12,12,0,0,1-17,0l-56-56a12,12,0,1,1,17-17L96,183,215.51,63.51a12,12,0,0,1,17,17Z")
-    }
-
-    private fun phosphor(name: String, path: String): ImageVector =
-        ImageVector.Builder(name = name, defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 256f, viewportHeight = 256f)
-            .apply { addPath(pathData = addPathNodes(path), fill = SolidColor(Color.Black)) }
-            .build()
-}
 
 @Preview(name = "Menu cards", widthDp = 412)
 @Composable

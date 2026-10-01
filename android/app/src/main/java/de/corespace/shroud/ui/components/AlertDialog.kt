@@ -1,6 +1,5 @@
 package de.corespace.shroud.ui.components
 
-import androidx.compose.ui.tooling.preview.Preview
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import androidx.compose.animation.AnimatedVisibility
@@ -63,6 +62,7 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
@@ -122,7 +122,7 @@ fun ShroudAlertDialog(
     OverlayLayer(active = visibility.isOverlayUp) {
         val content = shown.content ?: return@OverlayLayer
         val colors = ShroudTheme.colors
-        val palette = overlayPalette()
+        val palette = ShroudTheme.colors
         val reduceMotion = ShroudTheme.reduceMotion
         val transition = rememberTransition(visibility, label = "alert")
         val back by rememberOverlayBack(enabled = visible) { currentOnDismiss() }

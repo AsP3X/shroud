@@ -1,6 +1,8 @@
 package de.corespace.shroud.ui.components
 
+import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.ui.components.PullToRefreshMachine.Phase
+import de.corespace.shroud.ui.theme.Haptics
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -136,9 +138,10 @@ class PullToRefreshMachineTest {
     @Test
     fun thresholdTickIsSegmentTickOnAndroid14AndAClockTickBefore() {
         // 00-plan §1.7.12: SegmentTick → SEGMENT_TICK (34+) else CLOCK_TICK.
-        assertEquals(android.view.HapticFeedbackConstants.SEGMENT_TICK, OverlayHaptics.segmentTickConstant(34))
-        assertEquals(android.view.HapticFeedbackConstants.SEGMENT_TICK, OverlayHaptics.segmentTickConstant(37))
-        assertEquals(android.view.HapticFeedbackConstants.CLOCK_TICK, OverlayHaptics.segmentTickConstant(33))
-        assertEquals(android.view.HapticFeedbackConstants.CLOCK_TICK, OverlayHaptics.segmentTickConstant(30))
+        // The pull now plays it through the theme's View.perform(Haptic.SegmentTick).
+        assertEquals(android.view.HapticFeedbackConstants.SEGMENT_TICK, Haptics.feedbackConstant(Haptic.SegmentTick, sdk = 34))
+        assertEquals(android.view.HapticFeedbackConstants.SEGMENT_TICK, Haptics.feedbackConstant(Haptic.SegmentTick, sdk = 37))
+        assertEquals(android.view.HapticFeedbackConstants.CLOCK_TICK, Haptics.feedbackConstant(Haptic.SegmentTick, sdk = 33))
+        assertEquals(android.view.HapticFeedbackConstants.CLOCK_TICK, Haptics.feedbackConstant(Haptic.SegmentTick, sdk = 30))
     }
 }

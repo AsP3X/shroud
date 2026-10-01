@@ -1,6 +1,5 @@
 package de.corespace.shroud.ui.components
 
-import androidx.compose.ui.tooling.preview.Preview
 import android.annotation.SuppressLint
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
@@ -62,10 +61,12 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import de.corespace.shroud.ui.theme.MediaColors
 import de.corespace.shroud.ui.theme.Motion
 import de.corespace.shroud.ui.theme.ShroudTheme
 import kotlin.math.max
@@ -124,7 +125,7 @@ fun ShroudSheet(
     val currentOnDismiss by rememberUpdatedState(onDismiss)
     OverlayLayer(active = visibility.isOverlayUp) {
         val colors = ShroudTheme.colors
-        val palette = overlayPalette()
+        val palette = ShroudTheme.colors
         val reduceMotion = ShroudTheme.reduceMotion
         val transition = rememberTransition(visibility, label = "sheet")
         val back by rememberOverlayBack(enabled = visible) { currentOnDismiss() }
@@ -135,7 +136,7 @@ fun ShroudSheet(
             scrim != Color.Unspecified -> scrim
             style == SheetStyle.Full -> colors.scrim
             style == SheetStyle.Inset -> palette.sheetScrim
-            else -> palette.compactSheetScrim
+            else -> MediaColors.sheetScrim
         }
         val fill = when {
             color != Color.Unspecified -> color
@@ -381,7 +382,7 @@ private fun Modifier.sheetShadow(shape: Shape, look: SheetLook): Modifier =
 @Composable
 private fun SheetHandle(drag: SheetDragState, fullSheet: Boolean) {
     val colors = ShroudTheme.colors
-    val palette = overlayPalette()
+    val palette = ShroudTheme.colors
     Box(
         Modifier
             .fillMaxWidth()

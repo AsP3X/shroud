@@ -1,16 +1,10 @@
 package de.corespace.shroud.ui.components
 
-import android.annotation.SuppressLint
 import android.os.Build
 import android.os.SystemClock
-import android.view.HapticFeedbackConstants
-import android.view.View
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.MutableTransitionState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
@@ -19,7 +13,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalContext
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
@@ -49,7 +42,6 @@ import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import de.corespace.shroud.ui.theme.ShroudTheme
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
@@ -227,63 +219,6 @@ private fun Modifier.backdropBlur(state: OverlayHostState): Modifier = graphicsL
 
 // ---- Shared pieces of the overlay components (internal) ---------------------------------------
 
-/**
- * Overlay colours, light and dark — the shell-chats §15.1 tokens (`menuScrim`, `sheetScrim`,
- * `cardGlass`, `cardStroke`, `cardOpaque`, `chevron`, `rowPressed`), the design's no-blur menu
- * scrim (`Glass — Without Blur`, design-inventory §2) and the attach sheet's scrim
- * (`MediaColors.sheetScrim`, conversation-compose-media §2.3). W1-UI-THEME adds the same values
- * to `ShroudColors` / `MediaColors`; they live here until W1-INT points these components at the
- * tokens (contract change request in the W1-UI-OVERLAYS report).
- */
-@Immutable
-internal data class OverlayPalette(
-    /** Behind the light context menu, with a 12 dp blur (API 31+); design `Blur Scrim`. */
-    val menuScrim: Color,
-    /** Behind the light context menu without blur (API 30); design `Gwp1b`. */
-    val menuScrimNoBlur: Color,
-    /** Behind action sheets, alerts, inset sheets and large sheets; design `New Chat` `Scrim`. */
-    val sheetScrim: Color,
-    /** Behind the compact (attach) sheet; design `Attach Open` `Scrim` (35 %). */
-    val compactSheetScrim: Color,
-    /** Light menu card over a blurred backdrop. */
-    val cardGlass: Color,
-    val cardStroke: Color,
-    /** Card fill where nothing behind it is blurred. */
-    val cardOpaque: Color,
-    /** Grabber of inset sheets (iOS `systemGray3`). */
-    val chevron: Color,
-    /** Pressed row on a card (iOS `systemGray5`). */
-    val rowPressed: Color,
-)
-
-internal val LightOverlayPalette = OverlayPalette(
-    menuScrim = Color(0x59F2F2F7),
-    menuScrimNoBlur = Color(0x590B0B12),
-    sheetScrim = Color(0x470B0B12),
-    compactSheetScrim = Color(0x590B0B12),
-    cardGlass = Color(0xD1FFFFFF),
-    cardStroke = Color(0x99FFFFFF),
-    cardOpaque = Color(0xF5FFFFFF),
-    chevron = Color(0xFFC7C7CC),
-    rowPressed = Color(0xFFE5E5EA),
-)
-
-internal val DarkOverlayPalette = OverlayPalette(
-    menuScrim = Color(0x470F0F14),
-    menuScrimNoBlur = Color(0x590B0B12),
-    sheetScrim = Color(0x470B0B12),
-    compactSheetScrim = Color(0x590B0B12),
-    cardGlass = Color(0xF01F1F24),
-    cardStroke = Color(0x14FFFFFF),
-    cardOpaque = Color(0xF51F1F24),
-    chevron = Color(0xFF48484A),
-    rowPressed = Color(0xFF2C2C2E),
-)
-
-@Composable
-internal fun overlayPalette(): OverlayPalette =
-    if (ShroudTheme.colors.isDark) DarkOverlayPalette else LightOverlayPalette
-
 /** Shadow colours of the design's overlay surfaces (`#0B0B12` at the alpha the design gives). */
 internal object OverlayShadows {
     /** Card glass: 0/12/32 #0B0B1229 (design `Light context menu`). */
@@ -300,45 +235,6 @@ internal object OverlayShadows {
 
     /** Onboarding sheet (aNX3S): 0/−12/40 #0B0B1240. */
     val fullSheet = Color(0x400B0B12)
-}
-
-/**
- * Menu springs of `Motion.swift:36-39` and the ease curves of `.easeInOut` (W1-UI-THEME adds them
- * to `Motion` as `menuLift()` / `menuDrop()` / `easeInOut(ms)`; same numbers).
- */
-internal object OverlayMotion {
-    /** Telegram's context-menu spring: mass 5, stiffness 900, damping 104 (MOT:36). */
-    fun <T> menuLift(): FiniteAnimationSpec<T> = spring(dampingRatio = 0.7752f, stiffness = 180f)
-
-    /** SwiftUI `.easeInOut`. */
-    val EaseInOut = CubicBezierEasing(0.42f, 0f, 0.58f, 1f)
-
-    /** Putting it back: 0.2 s ease-in-out (MOT:38-39). */
-    const val MENU_DROP_MS = 200
-
-    fun <T> menuDrop(): FiniteAnimationSpec<T> = tween(MENU_DROP_MS, easing = EaseInOut)
-}
-
-/**
- * The few haptics the overlays fire, with the mapping of 00-plan §1.7.12 (C19). W1-UI-THEME's
- * `View.perform(Haptic)` holds the full table; these stay identical to it (W1-INT may route them
- * through it).
- */
-internal object OverlayHaptics {
-    /** `Haptic.Light`: iOS impact light. */
-    fun light(view: View) {
-        view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-    }
-
-    /** `Haptic.SegmentTick`: pull-to-refresh crossing its threshold. */
-    fun segmentTick(view: View) {
-        view.performHapticFeedback(segmentTickConstant(Build.VERSION.SDK_INT))
-    }
-
-    /** `SEGMENT_TICK` on Android 14+, else `CLOCK_TICK` (00-plan §1.7.12). */
-    @SuppressLint("InlinedApi") // A compile-time int, only used on API 34+.
-    fun segmentTickConstant(sdk: Int): Int =
-        if (sdk >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) HapticFeedbackConstants.SEGMENT_TICK else HapticFeedbackConstants.CLOCK_TICK
 }
 
 /**

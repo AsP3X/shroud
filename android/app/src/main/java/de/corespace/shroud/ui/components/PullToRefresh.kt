@@ -35,12 +35,14 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.ui.theme.Motion
 import de.corespace.shroud.ui.theme.ShroudTheme
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
+import de.corespace.shroud.ui.theme.perform
 import kotlin.math.max
 import kotlin.math.min
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 
 /**
  * Pull to refresh for a list root — the app's own (no Material `PullToRefreshBox`, shell-chats
@@ -123,7 +125,7 @@ fun PullToRefresh(
                 if (!currentEnabled || source != NestedScrollSource.UserInput || available.y <= 0f || !machine.canPull) return Offset.Zero
                 if (machine.phase == PullToRefreshMachine.Phase.Settling) controller.job?.cancel()
                 val pulled = machine.pull(available.y)
-                if (pulled.crossedThreshold) OverlayHaptics.segmentTick(view)
+                if (pulled.crossedThreshold) view.perform(Haptic.SegmentTick)
                 return Offset(0f, pulled.consumed)
             }
 

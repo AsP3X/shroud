@@ -2,6 +2,10 @@ package de.corespace.shroud.ui.components
 
 import android.view.inputmethod.EditorInfo
 import androidx.compose.ui.unit.dp
+import de.corespace.shroud.ui.theme.DarkColors
+import de.corespace.shroud.ui.theme.LightColors
+import de.corespace.shroud.ui.theme.MediaColors
+import de.corespace.shroud.ui.theme.Motion
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -76,19 +80,35 @@ class OverlayMathTest {
     }
 
     @Test
-    fun overlayPalettesMatchTheThemeTokens() {
-        // shell-chats §15.1 / W1-UI-THEME ShroudColors: same values, so W1-INT can swap them 1:1.
-        assertEquals(0x59F2F2F7, LightOverlayPalette.menuScrim.toArgbInt())
-        assertEquals(0x470F0F14, DarkOverlayPalette.menuScrim.toArgbInt())
-        assertEquals(0x590B0B12, LightOverlayPalette.menuScrimNoBlur.toArgbInt())
-        assertEquals(0x470B0B12, LightOverlayPalette.sheetScrim.toArgbInt())
-        assertEquals(0x470B0B12, DarkOverlayPalette.sheetScrim.toArgbInt())
-        assertEquals(0x590B0B12, LightOverlayPalette.compactSheetScrim.toArgbInt())
-        assertEquals(0xD1FFFFFF.toInt(), LightOverlayPalette.cardGlass.toArgbInt())
-        assertEquals(0xF01F1F24.toInt(), DarkOverlayPalette.cardGlass.toArgbInt())
-        assertEquals(0xF5FFFFFF.toInt(), LightOverlayPalette.cardOpaque.toArgbInt())
-        assertEquals(0xFFC7C7CC.toInt(), LightOverlayPalette.chevron.toArgbInt())
-        assertEquals(0xFF2C2C2E.toInt(), DarkOverlayPalette.rowPressed.toArgbInt())
+    fun overlaysDrawWithTheThemeTokens() {
+        // shell-chats §15.1 / design: the overlay surfaces read these ShroudColors / MediaColors
+        // tokens (W1-INT replaced the components' internal copies with them; values unchanged).
+        assertEquals(0x59F2F2F7, LightColors.menuScrim.toArgbInt())
+        assertEquals(0x470F0F14, DarkColors.menuScrim.toArgbInt())
+        assertEquals(0x590B0B12, LightColors.menuScrimOpaque.toArgbInt())
+        assertEquals(0x590B0B12, DarkColors.menuScrimOpaque.toArgbInt())
+        assertEquals(0x470B0B12, LightColors.sheetScrim.toArgbInt())
+        assertEquals(0x470B0B12, DarkColors.sheetScrim.toArgbInt())
+        assertEquals(0x590B0B12, MediaColors.sheetScrim.toArgbInt())
+        assertEquals(0xD1FFFFFF.toInt(), LightColors.cardGlass.toArgbInt())
+        assertEquals(0xF01F1F24.toInt(), DarkColors.cardGlass.toArgbInt())
+        assertEquals(0x99FFFFFF.toInt(), LightColors.cardStroke.toArgbInt())
+        assertEquals(0x14FFFFFF, DarkColors.cardStroke.toArgbInt())
+        assertEquals(0xF5FFFFFF.toInt(), LightColors.cardOpaque.toArgbInt())
+        assertEquals(0xF51F1F24.toInt(), DarkColors.cardOpaque.toArgbInt())
+        assertEquals(0xFFC7C7CC.toInt(), LightColors.chevron.toArgbInt())
+        assertEquals(0xFF48484A.toInt(), DarkColors.chevron.toArgbInt())
+        assertEquals(0xFFE5E5EA.toInt(), LightColors.rowPressed.toArgbInt())
+        assertEquals(0xFF2C2C2E.toInt(), DarkColors.rowPressed.toArgbInt())
+    }
+
+    @Test
+    fun menuMotionIsTheTelegramSpringAndAnEaseInOutDrop() {
+        // MOT:36-39: lift = mass 5, stiffness 900, damping 104 → dampingRatio 0.7752, stiffness 180;
+        // drop = 0.2 s ease-in-out.
+        assertEquals(0.7752f, Motion.MENU_LIFT_DAMPING_RATIO, 0.0001f)
+        assertEquals(180f, Motion.MENU_LIFT_STIFFNESS, 0.0001f)
+        assertEquals(200L, Motion.MENU_DROP_MS)
     }
 
     private fun androidx.compose.ui.graphics.Color.toArgbInt(): Int {

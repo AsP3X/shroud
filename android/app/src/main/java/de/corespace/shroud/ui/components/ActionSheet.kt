@@ -1,6 +1,5 @@
 package de.corespace.shroud.ui.components
 
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -49,6 +48,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.corespace.shroud.ui.theme.Motion
 import de.corespace.shroud.ui.theme.ShroudTheme
@@ -93,7 +93,7 @@ fun ActionSheet(
 
     OverlayLayer(active = visibility.isOverlayUp) {
         val content = shown.content ?: return@OverlayLayer
-        val palette = overlayPalette()
+        val palette = ShroudTheme.colors
         val reduceMotion = ShroudTheme.reduceMotion
         val transition = rememberTransition(visibility, label = "actionSheet")
         val back by rememberOverlayBack(enabled = visible) { currentOnDismiss() }
@@ -198,7 +198,7 @@ private fun ActionSheetCard(modifier: Modifier = Modifier, content: @Composable 
         modifier
             .fillMaxWidth()
             .clip(shape)
-            .background(overlayPalette().cardOpaque)
+            .background(ShroudTheme.colors.cardOpaque)
             .verticalScroll(rememberScrollState()),
         content = content,
     )
@@ -246,7 +246,7 @@ private fun ActionSheetButton(title: String, color: Color, weight: FontWeight, o
         animationSpec = if (pressed) snap() else Motion.fade(),
         label = "actionSheetHighlight",
     )
-    val pressedFill = overlayPalette().rowPressed
+    val pressedFill = ShroudTheme.colors.rowPressed
     Box(
         Modifier
             .fillMaxWidth()

@@ -1,7 +1,6 @@
 package de.corespace.shroud.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -25,7 +24,9 @@ import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import de.corespace.shroud.ui.theme.ShroudIcons
 import de.corespace.shroud.ui.theme.ShroudTheme
 import de.corespace.shroud.ui.theme.inter
 
@@ -86,7 +87,7 @@ fun <T> MenuPicker(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         ShroudText(current, inter(16f), if (enabled) colors.accent else colors.textSecondary, maxLines = 1)
-        ShroudIcon(OverlayIcons.CaretUpDown, if (enabled) colors.accent else colors.textSecondary, size = 13.dp)
+        ShroudIcon(ShroudIcons.CaretUpDown, if (enabled) colors.accent else colors.textSecondary, size = 13.dp)
     }
 
     if (open && enabled) {
