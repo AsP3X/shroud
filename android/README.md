@@ -98,6 +98,18 @@ when the API is not reachable:
 ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=de.corespace.shroud.e2e.W1SmokeTest
 ```
 
+The wave 2 engine e2e runs the real `AppContainer` with every engine wired against a scripted web
+peer (`e2e/peer/peer.ts`: one web account run by the web client's own crypto and API modules with
+in-memory stores, driven over a loopback control API on port 8099). Text, a reply, link previews
+and photos go both ways, then a video, a voice note, reactions and deletes for everyone both
+ways, and the Log Out wipe must leave nothing. The script bundles the peer with the web's esbuild
+(`npm ci` in `web/` first), starts it, runs `EngineE2eTest` on one device and fails instead of
+skipping when something is missing:
+
+```bash
+e2e/engine-e2e.sh emulator-5556      # the serial is required when several devices are attached
+```
+
 Video tests need software decoders on the emulator: start the AVDs with
 `-feature -HardwareDecoder` (the default `c2.goldfish.h264.decoder` fails every decode with
 `-no-window`). The transcription benchmark downloads the public model from huggingface.co on its
