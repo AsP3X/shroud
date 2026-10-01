@@ -1,13 +1,15 @@
-"""Generate the notification sounds for the web client and the iOS app.
+"""Generate the notification sounds for the web client, the iOS app and the Android app.
 
     python3 scripts/gen_notification_sounds.py
 
-writes web/public/sounds/<id>.wav and ios/shroud/Resources/Sounds/<id>.wav: short tones made
-here from sine partials (no recordings, so no licences), 24 kHz mono 16-bit PCM. Both clients
-list the same ids (web/src/notifications/sounds.ts, ios/shroud/Services/Notifications/
-NotificationSound.swift); the server only passes an id through to APNs as `<id>.wav`, which is
-why iOS keeps them in the app bundle. WAV is a format iOS plays for notifications and every
-browser plays in <audio>.
+writes web/public/sounds/<id>.wav, ios/shroud/Resources/Sounds/<id>.wav and
+android/app/src/main/res/raw/<id>.wav: short tones made here from sine partials (no recordings,
+so no licences), 24 kHz mono 16-bit PCM, the same bytes in all three. The clients list the same
+ids (web/src/notifications/sounds.ts, ios/shroud/Services/Notifications/NotificationSound.swift,
+android/.../core/notifications/NotificationSound.kt); the server only passes an id through to
+APNs as `<id>.wav`, which is why iOS keeps them in the app bundle. Android plays them in the app
+and as the sound of its notification channels. WAV is a format iOS plays for notifications,
+Android plays everywhere and every browser plays in <audio>.
 """
 import math, pathlib, struct, wave
 
@@ -96,6 +98,11 @@ SOUNDS = {
 }
 
 
+# Every client gets the same file. Android resource names must be lower-case letters, digits and
+# "_", which every id here already is.
+OUTPUTS = ("web/public/sounds", "ios/shroud/Resources/Sounds", "android/app/src/main/res/raw")
+
+
 def write(path, samples):
     path.parent.mkdir(parents=True, exist_ok=True)
     with wave.open(str(path), "wb") as out:
@@ -108,7 +115,7 @@ def write(path, samples):
 def main():
     for name, make in SOUNDS.items():
         samples = make()
-        for folder in ("web/public/sounds", "ios/shroud/Resources/Sounds"):
+        for folder in OUTPUTS:
             write(ROOT / folder / f"{name}.wav", samples)
         print(f"{name}: {len(samples) / RATE:.2f}s")
 
