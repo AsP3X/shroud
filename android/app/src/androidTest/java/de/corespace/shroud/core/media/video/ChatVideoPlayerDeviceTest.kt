@@ -117,8 +117,9 @@ class ChatVideoPlayerDeviceTest {
             assertFalse(ready.failed)
             assertEquals(2.0, ready.duration, 0.15)
             assertNotNull(player.player.value)
-            // The item's URI only names the message; the source reads its own bytes.
-            assertTrue(sources.opened.all { it.scheme == ExoPlaybackEngine.LOCAL_SCHEME && it.lastPathSegment == messageId.toString() })
+            // The item's URI is opaque (no message id in ExoPlayer's errors); the source reads its own bytes.
+            assertTrue(sources.opened.isNotEmpty())
+            assertTrue(sources.opened.toString(), sources.opened.all { it == ExoPlaybackEngine.LOCAL_URI })
 
             withTimeout(5_000) { while (player.state.value.currentTime <= 0.2) delay(50) }
             player.pause()

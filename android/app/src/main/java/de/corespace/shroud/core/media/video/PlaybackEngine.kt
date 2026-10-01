@@ -17,17 +17,6 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.util.UUID
-
-/** What [ChatVideoPlayer] plays: a sealed local video, or a picked/captured file (compose preview). */
-internal sealed interface PlaybackSource {
-    data class Local(val messageId: UUID) : PlaybackSource
-
-    data class Content(val uri: Uri) : PlaybackSource {
-        /** Never prints the URI. */
-        override fun toString(): String = "Content"
-    }
-}
 
 /**
  * The player under [ChatVideoPlayer]: ExoPlayer on a device ([ExoPlaybackEngine]), scripted in the
@@ -58,7 +47,7 @@ internal interface PlaybackEngine {
 
     fun interface Factory {
         /** A prepared engine, or null when [source] cannot be read (no local media, chats locked). */
-        fun create(source: PlaybackSource): PlaybackEngine?
+        fun create(source: VideoSource): PlaybackEngine?
     }
 }
 
@@ -133,27 +122,26 @@ internal class ExoPlaybackEngine private constructor(context: Context, configure
     }
 
     class Factory(private val context: Context, private val sources: SealedVideoSources) : PlaybackEngine.Factory {
-        override fun create(source: PlaybackSource): PlaybackEngine? = when (source) {
-            is PlaybackSource.Local -> {
+        override fun create(source: VideoSource): PlaybackEngine? = when (source) {
+            is VideoSource.Local -> {
                 val data = sources.playerDataSource(source.messageId)
                 data?.let { factory ->
-                    val media: MediaSource = ProgressiveMediaSource.Factory(factory).createMediaSource(localItem(source.messageId))
+                    val media: MediaSource = ProgressiveMediaSource.Factory(factory).createMediaSource(LOCAL_ITEM)
                     ExoPlaybackEngine(context) { setMediaSource(media) }
                 }
             }
-            is PlaybackSource.Content -> ExoPlaybackEngine(context) { setMediaItem(MediaItem.fromUri(source.uri)) }
+            is VideoSource.Content -> ExoPlaybackEngine(context) { setMediaItem(MediaItem.fromUri(source.uri)) }
         }
-
-        /** The URI only names the item; the data source decides what is read. */
-        private fun localItem(messageId: UUID): MediaItem = MediaItem.Builder()
-            .setUri(Uri.Builder().scheme(LOCAL_SCHEME).authority(LOCAL_AUTHORITY).appendPath(messageId.toString()).build())
-            .setMimeType(MimeTypes.VIDEO_MP4)
-            .build()
     }
 
     companion object {
-        /** `shroud-media://local/<message id>`: never resolved by anything but the sealed source. */
-        const val LOCAL_SCHEME = "shroud-media"
-        const val LOCAL_AUTHORITY = "local"
+        /**
+         * The URI every sealed local video plays under, the same opaque `shroud-media:sealed` as
+         * W2-MEDIA-STORE's `SealedMediaDataSource.URI`: the per-message data source decides what is
+         * read, and no message id or path reaches a data spec, which ExoPlayer prints in its errors.
+         */
+        val LOCAL_URI: Uri = Uri.parse("shroud-media:sealed")
+
+        private val LOCAL_ITEM: MediaItem = MediaItem.Builder().setUri(LOCAL_URI).setMimeType(MimeTypes.VIDEO_MP4).build()
     }
 }

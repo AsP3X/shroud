@@ -62,9 +62,9 @@ class ChatVideoPlayerTest {
 
     private class Engines(vararg engines: FakeEngine?) : PlaybackEngine.Factory {
         private val queue = ArrayDeque(engines.toList())
-        val sources = ArrayList<PlaybackSource>()
+        val sources = ArrayList<VideoSource>()
 
-        override fun create(source: PlaybackSource): PlaybackEngine? {
+        override fun create(source: VideoSource): PlaybackEngine? {
             sources += source
             return queue.removeFirst()
         }
@@ -99,7 +99,7 @@ class ChatVideoPlayerTest {
         assertTrue(state.isPlaying)
         assertEquals(10.0, state.duration, 0.0)
         assertEquals(1, engine.plays)
-        assertEquals(listOf<PlaybackSource>(PlaybackSource.Local(clip)), engines.sources)
+        assertEquals(listOf<VideoSource>(VideoSource.Local(clip)), engines.sources)
         player.teardown()
     }
 

@@ -19,6 +19,21 @@ import java.util.UUID
 import kotlin.math.floor
 
 /**
+ * What a [ChatVideoPlayer] plays (conversation-compose-media §16): a received or sent video in the
+ * sealed local media cache, or a picked / captured file for the compose preview.
+ */
+sealed interface VideoSource {
+    /** Read through the decrypting source of the sealed local cache; no decrypted file (plan C7). */
+    data class Local(val messageId: UUID) : VideoSource
+
+    /** A content or file URI that already exists (photo picker, camera capture). */
+    data class Content(val uri: Uri) : VideoSource {
+        /** Never prints the URI. */
+        override fun toString(): String = "Content"
+    }
+}
+
+/**
  * Playback for one chat video with a custom transport (`ChatVideoPlayer`,
  * `ios/shroud/Services/Video/ChatVideoPlayer.swift`; conversation-compose-media §16;
  * media-voice-links §6.5). Owns a bare player and publishes exactly what the overlay and the
@@ -76,13 +91,18 @@ class ChatVideoPlayer internal constructor(
     /** Bumped by [teardown] so an in-flight [start] cannot attach a player after the screen left (`:29-30`). */
     private var startId = 0
 
-    /** Plays the sealed local video of [messageId]. */
-    suspend fun start(messageId: UUID) = start(PlaybackSource.Local(messageId))
+    /** Plays the sealed local video of [messageId]; same as `start(VideoSource.Local(messageId))`. */
+    suspend fun start(messageId: UUID) = start(VideoSource.Local(messageId))
 
     /** Plays a file that already exists (compose preview); it is never deleted here (`:53`). */
-    suspend fun start(uri: Uri) = start(PlaybackSource.Content(uri))
+    suspend fun start(uri: Uri) = start(VideoSource.Content(uri))
 
-    internal suspend fun start(source: PlaybackSource) {
+    /**
+     * Prepares [source], waits up to 8 s for it to become playable, then plays it
+     * (`start(data:)` / `start(url:)`, `ChatVideoPlayer.swift:38-112`). Returns once it plays or
+     * failed ([State.failed]); a no-op while started or failed, until [teardown].
+     */
+    suspend fun start(source: VideoSource) {
         if (engine != null || _state.value.failed) return
         startId += 1
         val id = startId
