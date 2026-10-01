@@ -139,10 +139,16 @@ console.log(`  bob send   ${hex(bSend)}`);
 const [, bMk0] = kdfCK(bSend);
 const m2 = { v: 3, dh: b64(x25519Pub(bobDh)), n: 0, pn: 0, ct: b64(gcmSeal(bMk0, fill(0x66, 12), utf8("reply from bob"))) };
 console.log(`  m2 ${JSON.stringify(m2)}`);
-// Alice receives m2: DH ratchet from her send private 0x33 (her own next DH is not part of the trace).
+// Alice receives m2: DH ratchet from her send private 0x33, then her next DH 0x57 (:214-238).
 const [aRoot2, aRecv] = kdfRK(aRoot, ecdh(aliceDh, Buffer.from(m2.dh, "base64")));
 check(hex(aRoot2) === hex(bRoot2), "alice root after receive");
+check(hex(aRecv) === hex(bSend), "alice receive chain");
 check(gcmOpen(kdfCK(aRecv)[1], Buffer.from(m2.ct, "base64")).toString() === "reply from bob", "alice opens m2");
+const aliceDh2 = fill(0x57, 32);
+const [aRoot3, aSend2] = kdfRK(aRoot2, ecdh(aliceDh2, Buffer.from(m2.dh, "base64")));
+console.log(`  alice root3 ${hex(aRoot3)}  (after her new DH 0x57)`);
+console.log(`  alice send2 ${hex(aSend2)}`);
+console.log(`  alice dh2   ${b64(x25519Pub(aliceDh2))}`);
 
 // ---- deterministic v3 (MessageCrypto.swift:131-199) ----
 // Alice (lower id) seals "hello" to Bob with no session: initiateAsSender DH 0x33, ratchet nonce
