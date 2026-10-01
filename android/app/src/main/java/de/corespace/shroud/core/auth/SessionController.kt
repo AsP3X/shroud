@@ -6,6 +6,7 @@ import de.corespace.shroud.core.net.ApiError
 import de.corespace.shroud.core.net.AuthOutcomeListener
 import de.corespace.shroud.core.net.AuthSessionResponse
 import de.corespace.shroud.core.net.ShroudApi
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -147,6 +148,11 @@ class SessionController(
             Validation.Valid
         } catch (e: ApiError) {
             // The listener already counted a 401 (`:133-135`); offline and server blips keep the session.
+            sessionAfterFailure()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // A failed write-back keeps the session as it was (`:136-139`).
             sessionAfterFailure()
         }
     }
