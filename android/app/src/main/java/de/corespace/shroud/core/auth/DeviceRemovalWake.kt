@@ -110,9 +110,15 @@ class RemovalWake(
         storageSeal.seal()
         runCatching { hooks.haltWriters() }
         if (session.session.value?.token == stored.token) session.recordDeviceRemoved(stored.token)
-        withContext(io) {
-            dataWipe.markPending()
-            dataWipe.wipeEverything()
+        try {
+            withContext(io) {
+                dataWipe.markPending()
+                dataWipe.wipeEverything()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // The marker (written first) makes the next launch finish it.
         }
         runCatching { hooks.forgetNotifications() }
         // The next UI start finishes through the marker, not with a second (overlay) wipe.

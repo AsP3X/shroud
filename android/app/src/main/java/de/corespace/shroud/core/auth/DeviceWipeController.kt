@@ -187,8 +187,14 @@ class DeviceWipeController(
         val token = session.session.value?.token
         // Nothing may write while the stores are emptied (`:122-125`).
         haltWriters()
-        inventory = withContext(io) { dataWipe.inventory() }
-        withContext(io) { dataWipe.markPending() }
+        inventory = try {
+            withContext(io) { dataWipe.inventory() }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            DeviceDataWipe.Inventory()
+        }
+        onIo { dataWipe.markPending() }
         for (step in WipeStep.entries) {
             if (!perform(step, reduce, token)) return
         }
@@ -207,26 +213,26 @@ class DeviceWipeController(
                 if (outcome == ServerSessionOutcome.Offline) "Ended here · server offline" else "Session ended"
             }
             WipeStep.Messages -> {
-                withContext(io) { dataWipe.wipeMessages() }
+                onIo { dataWipe.wipeMessages() }
                 removed(inventory.messages)
             }
             WipeStep.Media -> {
-                withContext(io) { dataWipe.wipeMedia() }
+                onIo { dataWipe.wipeMedia() }
                 if (inventory.mediaFiles == 0) "None stored" else inventory.mediaSummary
             }
             WipeStep.Keys -> {
-                withContext(io) { dataWipe.wipeKeys() }
+                onIo { dataWipe.wipeKeys() }
                 removed(inventory.keys)
             }
             WipeStep.Settings -> {
-                withContext(io) { dataWipe.wipeSettings() }
+                onIo { dataWipe.wipeSettings() }
                 "Cleared"
             }
             WipeStep.Verify -> {
-                var found = withContext(io) { dataWipe.leftovers() }
+                var found = checkLeftovers()
                 if (found.isNotEmpty()) {
-                    withContext(io) { dataWipe.wipeEverything() }
-                    found = withContext(io) { dataWipe.leftovers() }
+                    onIo { dataWipe.wipeEverything() }
+                    found = checkLeftovers()
                 }
                 // No wait for data protection as on iOS (`:165-172`): credential-encrypted storage and
                 // Keystore deletions are available after the first unlock, and nothing runs before it.
@@ -235,7 +241,7 @@ class DeviceWipeController(
                     fail(found)
                     return false
                 }
-                withContext(io) { dataWipe.clearPending() }
+                onIo { dataWipe.clearPending() }
                 "Nothing left"
             }
         }
@@ -319,6 +325,23 @@ class DeviceWipeController(
         } ?: ServerSessionOutcome.Offline
     }
 
+    /**
+     * Runs a deleting step on [io]. An unexpected failure must neither crash the app half-way nor
+     * leave the overlay spinning: the run goes on, and the verify pass finds what is left.
+     */
+    private suspend fun onIo(block: suspend () -> Unit) {
+        step { withContext(io) { block() } }
+    }
+
+    /** The verify scan; a scan that fails is not "clean". */
+    private suspend fun checkLeftovers(): List<DeviceDataWipe.Leftover> = try {
+        withContext(io) { dataWipe.leftovers() }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        listOf(DeviceDataWipe.Leftover(WipeStep.Settings, DeviceDataWipe.LABEL_SETTINGS))
+    }
+
     private fun haltWriters() {
         runCatching { hooks.haltWriters() }
     }
@@ -361,10 +384,10 @@ class DeviceWipeController(
             session.beginInterruptedWipe()
             endServerSessionOutcome(token)
         }
-        withContext(io) { dataWipe.wipeEverything() }
+        onIo { dataWipe.wipeEverything() }
         step { hooks.forgetNotifications() }
         step { hooks.forgetAppearance() }
-        if (withContext(io) { dataWipe.leftovers() }.isEmpty()) withContext(io) { dataWipe.clearPending() }
+        if (checkLeftovers().isEmpty()) onIo { dataWipe.clearPending() }
         if (!pending) return false
         if (session.session.value != null) step { session.logout() }
         step { hooks.lockCrypto(wipeStore = true) }

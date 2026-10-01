@@ -88,6 +88,9 @@ class FakeSystemWipe : SystemWipe {
 
     @Volatile var stuck: List<DeviceDataWipe.Leftover> = emptyList()
 
+    /** The Settings step's system part throws (an OEM's notification service, say). */
+    @Volatile var clearFails = false
+
     override fun evictNetworkConnections() {
         calls += "evict"
     }
@@ -98,6 +101,7 @@ class FakeSystemWipe : SystemWipe {
 
     override suspend fun clearSystemState() {
         calls += "clearSystem"
+        if (clearFails) throw IllegalStateException("system service died")
     }
 
     override suspend fun leftovers(): List<DeviceDataWipe.Leftover> = stuck

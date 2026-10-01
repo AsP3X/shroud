@@ -341,6 +341,20 @@ class DeviceWipeControllerTest {
     }
 
     @Test
+    fun aStepThatThrowsNeitherCrashesNorStopsTheWipe() = runTest {
+        val h = Harness(this)
+        h.fixture.seedAccount()
+        h.system.clearFails = true
+        h.controller.start(WipeReason.Logout)
+        advanceUntilIdle()
+        // The rest of the settings step is done before the system part; the check proves it.
+        assertEquals("Cleared", h.controller.details.value[WipeStep.Settings])
+        assertEquals("Nothing left", h.controller.details.value[WipeStep.Verify])
+        assertEquals(WipePhase.Idle, h.controller.phase.value)
+        assertNull(h.session.session.value)
+    }
+
+    @Test
     fun retryAndContinueOnlyAfterAFailure() = runTest {
         val h = Harness(this)
         h.controller.retry()

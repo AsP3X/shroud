@@ -234,6 +234,22 @@ class SessionControllerTest {
         assertEquals(s, store().session)
     }
 
+    /** settings-lock A.4: the `AuthModelsTests.swift` vector becomes this Session (ids in their lower-case wire form). */
+    @Test
+    fun authSessionDecodesTheIosVector() = runTest {
+        server.enqueue(
+            MockResponse(
+                code = 200,
+                body = """{"token":"opaque-token-value","user":{"id":"11111111-1111-1111-1111-111111111111","username":"alice","share_code":"ABCD234567"},"device":{"id":"22222222-2222-2222-2222-222222222222","sealed_name":"c2VhbGVk"}}""",
+            ),
+        )
+        val s = controller().login("alice", "pw")
+        assertEquals(
+            Session("opaque-token-value", "11111111-1111-1111-1111-111111111111", "alice", "ABCD234567", "22222222-2222-2222-2222-222222222222"),
+            s,
+        )
+    }
+
     @Test
     fun loginReusesTheAnchoredDeviceAfterTheSessionWasCleared() = runTest {
         server.enqueue(MockResponse(code = 200, body = session()))

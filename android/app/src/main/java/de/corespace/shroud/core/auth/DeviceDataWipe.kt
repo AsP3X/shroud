@@ -2,6 +2,7 @@ package de.corespace.shroud.core.auth
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.core.content.edit
 import de.corespace.shroud.core.keys.KeyMaterialWipe
 import de.corespace.shroud.core.storage.PrefsFiles
 import java.io.File
@@ -168,13 +169,13 @@ class DeviceDataWipe(
      */
     val isPending: Boolean get() = prefs.open(PrefsFiles.WIPE).getBoolean(PENDING_KEY, false)
 
-    /** Written with `commit()`: on disk before this returns. */
+    /** Written with `commit()`: on disk before this returns (a kill right after must still find it). */
     override fun markPending() {
-        prefs.open(PrefsFiles.WIPE).edit().putBoolean(PENDING_KEY, true).commit()
+        prefs.open(PrefsFiles.WIPE).edit(commit = true) { putBoolean(PENDING_KEY, true) }
     }
 
     fun clearPending() {
-        prefs.open(PrefsFiles.WIPE).edit().remove(PENDING_KEY).commit()
+        prefs.open(PrefsFiles.WIPE).edit(commit = true) { remove(PENDING_KEY) }
     }
 
     // ---- Inventory (`DeviceDataWipe.swift:125-134`) ----
@@ -218,9 +219,8 @@ class DeviceDataWipe(
      */
     suspend fun wipeSettings() {
         for ((name, keys) in removablePrefsKeys()) {
-            val editor = prefs.open(name).edit()
-            keys.forEach(editor::remove)
-            editor.commit()
+            // Committed, so the verify pass and a kill right after see the keys gone.
+            prefs.open(name).edit(commit = true) { keys.forEach { remove(it) } }
         }
         remove(locations.voiceDir)
         system?.cancelAccountWork()

@@ -1,6 +1,7 @@
 package de.corespace.shroud.core.appearance
 
 import android.content.SharedPreferences
+import androidx.core.content.edit
 import de.corespace.shroud.core.storage.StorageSeal
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -45,9 +46,9 @@ class ColorThemePreference(private val prefs: SharedPreferences, private val sea
     fun choose(theme: ColorTheme) {
         state.value = theme
         if (theme == ColorTheme.System) {
-            prefs.edit().remove(KEY).apply()
+            prefs.edit { remove(KEY) }
         } else if (seal?.isSealed != true) {
-            prefs.edit().putString(KEY, theme.raw).apply()
+            prefs.edit { putString(KEY, theme.raw) }
         }
     }
 
