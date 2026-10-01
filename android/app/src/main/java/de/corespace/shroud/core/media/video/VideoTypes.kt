@@ -69,6 +69,14 @@ class VideoPlanError(message: String, val maxSeconds: Int) : Exception(message)
  */
 class VideoException(val reason: Reason, cause: Throwable? = null) : Exception(reason.name, cause) {
     enum class Reason { Unreadable, ExportFailed, TooLarge, Cancelled }
+
+    companion object {
+        /**
+         * Whether an encode failure is iOS's `VideoError.tooLarge` (`MessagingController.swift:2630`),
+         * the send path's "too large" lines; the predicate W2-MSG-SEND's `videoTooLarge` takes.
+         */
+        fun isTooLarge(error: Throwable): Boolean = error is VideoException && error.reason == Reason.TooLarge
+    }
 }
 
 /** One video to send, built by the compose screen (`PickedMovie.swift:58-74`). */

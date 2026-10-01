@@ -196,6 +196,10 @@ class VideoEncoderTest {
         assertEquals(VideoException.Reason.TooLarge, error.reason)
         assertEquals(2, exporter.requests.size)
         assertEquals(emptyList<String>(), leftovers())
+        // The send path's "too large" lines (`MessagingController.swift:2630-2639`) key on this.
+        assertTrue(VideoException.isTooLarge(error))
+        assertFalse(VideoException.isTooLarge(VideoException(VideoException.Reason.ExportFailed)))
+        assertFalse(VideoException.isTooLarge(VideoPlanError("x", 1)))
     }
 
     @Test
