@@ -166,8 +166,8 @@ async function withPeerLock<T>(peerUserId: string, fn: () => Promise<T>): Promis
  * the first time is acknowledged with `POST /messages/{id}/delivered`, so the sender sees two
  * ticks before the chat is read — an iPhone or Android sender otherwise sees one tick until
  * then. iOS acks a thread page's new inbound ids once the page is shown
- * (`MessagingController.swift:1339-1344`), an older page's (`:1446-1450`) and a socket message
- * before it is decoded (`:4317-4320`); here `loadHistoryPage`, `fetchLatest` and
+ * (`MessagingController.swift:1340-1344`), an older page's (`:1447-1451`) and a socket message
+ * before it is decoded (`:4318-4320`); here `loadHistoryPage`, `fetchLatest` and
  * `ingestIncoming` do the same.
  *
  * "For the first time" is iOS's "not already in the thread": its body is not in this browser's
@@ -206,7 +206,8 @@ function acknowledgeDelivery(token: string, messageIds: string[]): void {
 }
 
 /**
- * `POST /messages/{id}/delivered` (server `routes/messages.rs` `mark_delivered`), errors
+ * `POST /messages/{id}/delivered` with the lower-case id and no body (iOS
+ * `MessagesService.swift:157-162`, server `routes/messages.rs` `mark_delivered`), errors
  * swallowed. Raw `fetch` with the API client's headers, because `api` has no call for it.
  */
 async function postDelivered(token: string, messageId: string): Promise<void> {
@@ -261,7 +262,7 @@ export async function ingestIncoming(
   material: IdentityMaterial,
 ): Promise<ChatMessage> {
   return withPeerLock(peerUserId, () => {
-    // Acked before decoding, as iOS `ingestIncoming` does (`MessagingController.swift:4317-4320`).
+    // Acked before decoding, as iOS `ingestIncoming` does (`MessagingController.swift:4318-4320`).
     if (deliveryAckDue(dto, me, peerUserId)) acknowledgeDelivery(token, [dto.id]);
     return decodeIncoming(dto, me, peerUserId, token, material);
   });
@@ -744,7 +745,7 @@ export async function loadHistoryPage(
       out.push(await decodeWithReactions(dto, me, peer, token, material, unopened));
     }
     forgetTombstones(res.messages);
-    // Once the page is decoded, so its acks never hold up the chat (iOS `:1339-1344`, `:1446-1450`).
+    // Once the page is decoded, so its acks never hold up the chat (iOS `:1340-1344`, `:1447-1451`).
     acknowledgeDelivery(token, due);
     const oldest = res.messages[res.messages.length - 1];
     const more = (res.has_more || res.messages.length >= limit) && oldest;

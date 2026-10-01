@@ -42,7 +42,7 @@ type DeviceKind = { label: string; Icon: ComponentType<IconProps>; tint: string 
 
 /**
  * What a device is: the kind sealed with its name, else a guess from the name — the same rules
- * as iOS `DeviceKind` (`DevicesView.swift:785-846`). The Android app seals kind 4 (port plan
+ * as iOS `DeviceKind` (`DevicesView.swift:784-846`). The Android app seals kind 4 (port plan
  * decision P4): "Android app", the phone icon, green. A name that only looks like a phone keeps
  * the guess "Phone" — it may be an Android device renamed by a client that dropped its kind.
  */

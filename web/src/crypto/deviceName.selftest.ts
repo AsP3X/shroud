@@ -84,7 +84,7 @@ check(
   "a rename keeps the Android kind",
 );
 
-// A kind this build does not know yet reads as "other", the name intact (iOS `Kind(rawValue:) ?? .other`).
+// A kind this build does not know yet reads as "other", the name intact (iOS `DeviceNameSeal.swift:82`).
 const unknownPadded = new Uint8Array(128);
 const unknownName = utf8("Future device");
 unknownPadded[0] = 0x05 | 0x80;

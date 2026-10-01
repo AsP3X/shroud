@@ -1,6 +1,6 @@
 /**
- * Delivery acks (`POST /messages/{id}/delivered`, iOS `MessagingController.swift:1339-1344,
- * 1446-1450, 4317-4320`): the peer's messages are acked the first time this browser sees them —
+ * Delivery acks (`POST /messages/{id}/delivered`, iOS `MessagingController.swift:1340-1344,
+ * 1447-1451, 4318-4320`): the peer's messages are acked the first time this browser sees them —
  * over the socket, in the open chat's poll and in history pages — once each, one at a time,
  * without holding up the page, and never for our own messages, Notes, or messages deleted for
  * everyone. A failed ack is dropped.
