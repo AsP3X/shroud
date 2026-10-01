@@ -10,42 +10,34 @@ Read this before the first commit in `android/`.
 | [calls.md](./calls.md) | Call signalling, media, screen sharing, pushes |
 | [privacy-options.md](./privacy-options.md) | Privacy settings; Phase 5 (device protections) has Android equivalents below |
 
-**Status (2026-09-30):** foundation, sign-up and log-in are in `android/` (see
-[android/README.md](../android/README.md)), run end to end against a local server on Android 17
-and Android 11 emulators (debug and minified release builds). Everything else below is open.
-Version numbers and API behaviour should be checked against current Android docs when each item
-is picked up.
+**Status (2026-10-01, wave 1 merged):** the port follows a five-wave plan (W0 contracts, W1
+foundations, W2 engines, W3 screens and platform, W4 hardening and release). Waves 0 and 1 are in
+`android/` (see [android/README.md](../android/README.md)):
 
-What the first slice does and does not do:
+- **Foundations:** the full REST client (`ApiClient`, `ShroudApi`, error model with Retry-After,
+  connectivity), the one realtime socket (holders, focus and background frames, backoff), every
+  sealed plaintext shape, the v1/v2/v3 envelopes and double ratchet, media crypto, sealed device
+  names, safety numbers — all pinned by the iOS and web vectors.
+- **Keys:** the sealed key stores, the history-key vault bound to the screen lock (Keystore wrap
+  key, system biometric prompt), key-material wipe, and `CryptoController` parity with iOS. The
+  Lock screen that opens the vault at launch arrives in wave 3; until then the phrase step stands
+  in for it and going to the background drops the keys (invariant 5), except while the vault's own
+  prompt is up.
+- **Session:** every authenticated request and the socket report to the session; three 401s in a
+  row sign out (keys kept), `DEVICE_REMOVED` signs out and deletes the stored identity and vault at
+  once, token-checked. Log Out deletes them too. The full wipe overlay is wave 2/3.
+- **UI kit:** every colour token, SwiftUI-matched motion, haptics, icons, tiered glass, toasts,
+  list rows, bars, settings parts, menus, sheets, dialogs, pull to refresh — no Material.
+- **Seams for wave 2** are published with their final signatures (messaging, contacts, media,
+  video, links, notifications, calls, wipe hooks, the shared domain model).
+- **Server, iOS, web (wave 1):** the server sends UnifiedPush to Android subscriptions and knows
+  background sockets; iOS and web read the Android device kind (4); the web sends delivery acks.
 
-- **Sign Up has two steps**, unlike iOS: *Account* (username, password) and *Phrase* (the
-  phrase, Copy, "I wrote it down"). Nothing reaches the server until the phrase step's Create
-  Account, so an abandoned sign-up leaves no account without keys; a taken or refused name sends
-  the user back to the first step. Log In keeps the iOS two-step flow.
-- Sign Up, Log In and the phrase step talk to the real API and publish the key bundle, as iOS
-  does. BIP39, the HKDF derivations, X25519 and Ed25519 are ported and pinned by golden vectors
-  that match the web client's libraries (`IdentityKeyMaterialTest`); on the emulator the key the
-  server stored matched the web derivation of the same phrase.
-- The session token and the device anchor are sealed by a TEE Keystore key without user auth
-  (the `AfterFirstUnlockThisDeviceOnly` mapping of decision 1) in no-backup storage.
-- **No history-key vault yet.** Nothing derived from the phrase is stored, so every launch and
-  every return from the background asks for the phrase again (the phrase step then offers
-  Log Out instead of Back), and each unlock publishes a fresh signed prekey and one-time prekeys
-  (the iOS re-establish path). The vault and the Lock screen replace this.
-- Sign Up refuses to continue on a phone without a screen lock (designed as
-  *Sign Up — No Screen Lock*), so the vault can require one later.
-- **Android 17 local-network permission.** Apps targeting API 37 cannot reach private addresses
-  (a LAN server, the emulator host 10.0.2.2) without `ACCESS_LOCAL_NETWORK`, a runtime permission
-  in the Nearby devices group. The app asks right before the first request to such a server
-  (*Permission — Local Network*, denied state designed). Plain HTTP is allowed to local
-  addresses only, as iOS allows it.
-- The phrase screens are kept out of the Recents thumbnail (`setRecentsScreenshotEnabled(false)`
-  on 13+, `FLAG_SECURE` on 11–12, which also blocks screenshots there). App-wide screenshot
-  blocking is still decision G.
-- No device name is sealed: the kind byte has no Android value yet (see Server changes).
-- After unlocking, a temporary placeholder with Log Out stands in for the main shell; it is not
-  in the design on purpose.
-
+Sign Up still has two steps, unlike iOS (*Account*, then *Phrase*; nothing reaches the server
+before the phrase step's Create Account), refuses a phone without a screen lock, and asks for
+Android 17's local-network permission before the first request to a LAN or emulator-host server.
+After unlocking, a temporary placeholder with Log Out stands in for the main shell; it is not in
+the design on purpose and goes in wave 3.
 
 ## Ground rules
 
@@ -59,9 +51,38 @@ What the first slice does and does not do:
   Face ID, the Android mapping is in [Key storage](#1-key-storage-and-unlock).
 - **Design stays in sync.** `android/` ↔ `design/Android-App.pen`, as in `CLAUDE.md`.
 
-## Decide before writing code
+## Decisions
 
-These three change the architecture. Each has a recommendation; none is settled.
+These three change the architecture. **All decided on 2026-10-01** by the product owner; the
+decision record below supersedes the options tables, which stay for the reasoning.
+
+**Decision record 2026-10-01 (binding):**
+
+- **No Google, one build.** No Firebase/FCM, no Google Play services, ML Kit, Tink or Play Core,
+  directly or transitively; no `play`/`foss` flavors. CI enforces it (`verifyNoGoogleServices`,
+  `verifyNoGoogleClasses`).
+- **Decision 1 (key storage):** as recommended, with these corrections. Items the phone must read
+  while locked — call secrets, the UnifiedPush subscription keys, the notification name cache —
+  use a Keystore key without user auth and **without** `unlockedDeviceRequired` (readable after
+  the first unlock, iOS `AfterFirstUnlockThisDeviceOnly`). There is **no push name key** on
+  Android: UnifiedPush carries the sender inside the RFC 8291 ciphertext. The vault's wrap key is
+  imported (not generated) and auth-bound; a software-only Keystore is allowed with a one-line
+  notice on the lock screen and in Privacy and Security.
+- **Decision 2 (push):** **UnifiedPush** (Web Push RFC 8030/8291 + VAPID, which the server already
+  sends) through a distributor the user installs, e.g. ntfy, **plus an opt-in "Background
+  connection"**: a foreground service that keeps the WebSocket open for phones without a
+  distributor. Messages, call rings and the device-removed wipe arrive through either path. The
+  UnifiedPush connector library is not used (it depends on Tink): the app implements the receiver
+  protocol and RFC 8291 decryption on BouncyCastle. No FCM routes, table or sender on the server.
+- **Decision 3 (calls):** ring when the app is killed or the phone locked — a high-urgency
+  UnifiedPush message (`Urgency: high`, TTL 60 s = ring time) or a ring on the background
+  connection, then a CallStyle notification with a full-screen intent first, Telecom and the
+  `phoneCall` foreground service after. Without the Android 14+ full-screen-intent permission the
+  heads-up ring is accepted.
+- **Other product decisions** (device kind 4 "Android app", notification permission timing,
+  screenshot protection, whisper.cpp transcription, CameraX, own release key with direct APK +
+  F-Droid, and the rest) are recorded in the port plan; Play is an optional later channel
+  shipping the same Google-free APK.
 
 ### 1. Key storage and unlock
 
@@ -76,7 +97,7 @@ readable after first unlock.
 | New fingerprint enrolled | `setInvalidatedByBiometricEnrollment(true)` (key dies) vs. `false` | `true`. The lock screen falls back to the phrase — designed as *Locked — Fingerprints Changed* |
 | Weak (class 2) face unlock only | Cannot unlock a Keystore key | Offer screen lock and phrase only; label the button by the enrolled strong biometric |
 | No screen lock | — | Refuse to open the vault: *Locked — No Screen Lock* |
-| Key needed while locked (push name key) | Separate Keystore key without user auth, `unlockedDeviceRequired` | Yes — mirrors `AfterFirstUnlockThisDeviceOnly`. It opens sender names only, never messages |
+| Key needed while locked (call secrets, UnifiedPush keys, notification name cache) | Separate Keystore key without user auth; with or without `unlockedDeviceRequired` | **Without** `unlockedDeviceRequired` (decided): mirrors `AfterFirstUnlockThisDeviceOnly`, since pushes and rings arrive while the phone is locked. No push name key on Android (the sender travels inside the UnifiedPush ciphertext) |
 
 Open: what to show on devices whose Keystore is known to be unreliable (keys lost after OS
 update). The phrase path covers it, but it needs a test on at least one such device.
@@ -92,12 +113,13 @@ client. Android needs one of:
 | **UnifiedPush** | Small: it *is* Web Push (RFC 8291 + VAPID), which the server already sends; allow-list of distributor hosts (`WEB_PUSH_ALLOWED_HOSTS`) needs a policy | For de-Googled phones. The user must install a distributor |
 | **Persistent socket** (foreground service) | None | Battery cost and a permanent notification; last resort |
 
-Recommendation: FCM first, UnifiedPush second behind the same client interface, no persistent
-socket. Decide before building because it sets the device-registration API and the
-notification service.
+~~Recommendation: FCM first, UnifiedPush second.~~ **Decided 2026-10-01: UnifiedPush plus the
+opt-in persistent socket ("Background connection"), no FCM** (decision record above). Android
+subscriptions use `PUT /push/web/subscription` with `client: "android"` and a distributor host
+policy on the server.
 
-Whatever the transport, the payload rule stands: ids and a kind, plus the sealed sender name
-`e` under the key the device registered (AAD `shroud-push-v1|kind|thread|peer`).
+The payload stays ids and a kind; the sender's name travels inside the RFC 8291 ciphertext, which
+only this phone can open (no sealed `e` for Android).
 
 ### 3. Incoming calls
 
@@ -109,12 +131,12 @@ iOS uses PushKit + CallKit. Android has no equivalent pair; the pieces are:
 - The full-screen-intent permission is restricted on Android 14+ (granted by default only to
   calling apps; declare it for Play). Without it the ring is a heads-up notification on the
   lock screen — acceptable fallback, already in the design.
-- A `call` push must start the ring within the high-priority FCM window; `call_ended` must
-  stop it. Same ids as calls.md.
+- A `call` push (high-urgency UnifiedPush, or the background socket) starts the ring;
+  `call_ended` stops it. A distributor broadcast carries no foreground-service start exemption,
+  so the notification rings first. Same ids as calls.md.
 
-Decide: whether the first release rings when the app is killed (needs all of the above) or
-only while it is in memory. Recommendation: all of it — a messenger that misses calls when
-closed reads as broken.
+Decided 2026-10-01: the first release rings when the app is killed (all of the above), on the
+UnifiedPush and background-connection transports instead of FCM (decision record above).
 
 ## Workstreams
 
@@ -127,8 +149,8 @@ Order is roughly dependency order. iOS sources are the reference implementation.
       designed as *Glass — Without Blur*.
 - [x] Theme tokens from the design variables (light + dark), Inter bundled, motion constants
       from `ios/shroud/ShroudUI/Theme/Motion.swift`.
-- [ ] Reproducible release builds from day one (pinned toolchain, no build timestamps);
-      decide on Play App Signing vs. own key, since it affects who can verify a build. Done so
+- [ ] Reproducible release builds from day one (pinned toolchain, no build timestamps); our own
+      release key (decided), so F-Droid can ship our signature. Done so
       far: Gradle wrapper pinned by checksum, versions in `gradle/libs.versions.toml`, no
       dependency metadata in the APK. Not yet checked by building twice and comparing.
 - [x] `android:allowBackup="false"` and `dataExtractionRules` excluding everything
@@ -136,17 +158,19 @@ Order is roughly dependency order. iOS sources are the reference implementation.
 
 ### B. Crypto and storage
 
-- [ ] Port `Services/Crypto`: BIP39 and identity keys done; double ratchet, message and media crypto,
-      sender tags, sealed device names, safety numbers. Pass the iOS vectors.
-- [ ] Vault per decision 1. Backgrounding clears the history key and decrypted threads
-      from memory (invariant 5); auto-lock delay as in privacy-options Phase 5.
+- [x] Port `Services/Crypto`: BIP39, identity keys, double ratchet, message and media crypto,
+      sender tags, sealed device names, safety numbers. Pass the iOS vectors (wave 1).
+- [ ] Vault per decision 1 (built in wave 1; the Lock screen and the auto-lock delay of
+      privacy-options Phase 5 are wave 3). Backgrounding clears the history key and decrypted
+      threads from memory (invariant 5).
 - [ ] Sealed local store (SQLite or files, AES-256-GCM under `historyKey`), including
       `SealedLocalState` and the ratchet session store.
-- [ ] Sensitive temp files: app-private cache only, wiped on lock and on start.
+- [x] Sensitive temp files: app-private cache only, wiped on lock and on start.
 
 ### C. Messaging
 
-- [ ] REST + WebSocket client, focus reporting (`{type:"focus"}`), reconnect rules.
+- [x] REST + WebSocket client, focus reporting (`{type:"focus"}`, `"background": true` for the
+      background connection), reconnect rules (wave 1).
 - [ ] Known traps carried over from iOS: the server re-keys sent messages (drop the client
       id on send), tombstones reach the newest page only, annotation caches need purging.
 - [ ] Device removal: `DEVICE_REMOVED` + wake push wipes at once, also when the app is killed.
@@ -154,12 +178,15 @@ Order is roughly dependency order. iOS sources are the reference implementation.
 
 ### D. Notifications
 
-- [ ] Transport per decision 2; token registration with the per-device name key.
-- [ ] Messaging service opens `e` and posts the notification; without the key (before first
-      unlock) it posts without a name, never a wrong one.
+- [ ] Transport per decision 2: UnifiedPush registration (distributor choice, subscription keys
+      made on the phone) and the opt-in background connection.
+- [ ] The receiver decrypts the RFC 8291 message and posts the notification; a process started
+      before the first unlock does nothing until the user unlocks (distributors deliver queued
+      pushes then).
 - [ ] Channels: Messages, Calls, Contact requests. Per-device settings from the server still
       apply; channel settings in Android can override them and the screen should reflect that.
-- [ ] `POST_NOTIFICATIONS` (Android 13+) asked from the Allow card only.
+- [ ] `POST_NOTIFICATIONS` (Android 13+) asked once after the first unlock, then from the
+      Settings cards (decided).
 - [ ] Badges: launcher dots; count from the push where the launcher supports it.
 - [ ] OEM battery restrictions: detect the common ones and link to the right settings page;
       expect late pushes on Xiaomi, Huawei, Oppo, older Samsung regardless.
@@ -173,7 +200,7 @@ Order is roughly dependency order. iOS sources are the reference implementation.
 - [ ] Screen share: MediaProjection + `mediaProjection` foreground service; consent dialog at
       every start; tolerate single-app sharing (Android 14+) and projection stopping on its own.
       App audio capture (`AudioPlaybackCapture`) is possible on Android where iOS has none —
-      the protocol already has the sound section; decide whether to send it.
+      not in v1 (decided).
 - [ ] Proximity sensor screen-off during voice calls (iOS gets it for free).
 
 ### F. Media, links, voice
@@ -185,16 +212,14 @@ Order is roughly dependency order. iOS sources are the reference implementation.
 - [ ] Video: trim, transcode, thumbnails (Media3 Transformer); match the iOS output limits.
 - [ ] Link previews fetched on device, user agent rule from iOS (`WhatsApp/2…`), sealed into
       the message.
-- [ ] Voice messages: record, waveform, playback. Transcription: no WhisperKit — evaluate
-      whisper.cpp vs. a TFLite build for speed and size on a mid-range phone before promising
-      the same model; the Transcription screen's copy depends on the result.
+- [ ] Voice messages: record, waveform, playback. Transcription: whisper.cpp (decided), still
+      gated by a benchmark on a mid-range phone; the Transcription screen's copy depends on it.
 
 ### G. Device protections (privacy-options Phase 5 equivalents)
 
-- [ ] **Screenshots / recents.** Recents cover is designed. Blocking screenshots
-      (`FLAG_SECURE`) also blocks the user's own — product decision: off by default with a
-      switch, or on. iOS has "Hide chats during screen recording" on by default; the closest
-      match is `FLAG_SECURE` tied to that switch.
+- [ ] **Screenshots / recents.** Recents cover is designed. Decided: a per-API-level scheme
+      (`FLAG_SECURE`, Recents, the recording callback) behind one switch, on by default, like
+      iOS's "Hide chats during screen recording".
 - [ ] **Keyboards.** iOS can refuse third-party keyboards; Android cannot. Set
       `IME_FLAG_NO_PERSONALIZED_LEARNING` on composer, search and phrase fields, and drop the
       "Only Apple keyboards" switch from the Android privacy screen.
@@ -211,21 +236,22 @@ Order is roughly dependency order. iOS sources are the reference implementation.
 
 ## Server changes
 
-- [ ] Push transport(s) from decision 2; device `platform` value for Android; tests next to
-      `api_notifications.rs`.
-- [ ] Call pushes for Android: `call` / `video_call` / `call_ended` as high-priority data
-      messages with TTL = ring time.
-- [ ] Device list: an Android device type for the Devices screen icon. This is a new kind byte in
-      the sealed device name (0 other, 1 iPhone, 2 iPad, 3 web today) that iOS and web must
-      learn to read before Android writes it.
-- [ ] Share links (`/u/<code>`): Android App Links need `/.well-known/assetlinks.json`.
+- [x] UnifiedPush for Android subscriptions (`client: "android"`, distributor host policy,
+      `UNIFIEDPUSH_*` settings), background sockets that never count as online; tests in
+      `api_push.rs` (wave 1).
+- [x] Call pushes for Android: `call` / `video_call` / `call_ended` as high-urgency Web Push with
+      TTL = ring time, sent regardless of foreground (wave 1).
+- [x] Device list: kind byte 4 "Android app" in the sealed device name; iOS and web read it
+      (wave 1); Android writes it from its first release.
+- [ ] Share links (`/u/<code>`): Android App Links need `/.well-known/assetlinks.json` with our
+      release-key fingerprint.
 
 ## Test matrix
 
 | Area | Minimum |
 | --- | --- |
-| Keystore | One StrongBox phone (Pixel), one TEE-only, one Samsung; enrol a new fingerprint; remove the screen lock; reboot and receive a push before first unlock |
-| Push | App killed, Doze, battery saver, one aggressive OEM; device without Play services if UnifiedPush ships |
+| Keystore | One StrongBox phone (Pixel), one TEE-only, one Samsung (also: the vault prompt on One UI); enrol a new fingerprint; remove the screen lock; reboot, unlock, and receive the queued push |
+| Push | UnifiedPush with ntfy and the background connection; app killed, Doze, battery saver, one aggressive OEM; AOSP images without Google APIs |
 | Calls | Locked, in another app, killed; Bluetooth headset; cellular call arriving mid-call; iPhone ↔ Android and web ↔ Android |
 | Screen share | Whole screen and single app; stop from the system chip |
 | Media | Metadata strip on real camera files per vendor |
@@ -233,10 +259,10 @@ Order is roughly dependency order. iOS sources are the reference implementation.
 
 ## Release
 
-- Play data-safety form; foreground-service type declarations (`phoneCall`,
-  `mediaProjection`, `microphone`, `camera`); full-screen-intent declaration.
-- Decide on a second channel (F-Droid or signed APK) — it is what makes reproducible builds
-  and UnifiedPush matter.
+- Own release key; direct APK and F-Droid (reproducible build) are the channels (decided). Play
+  is an optional later channel shipping the same Google-free APK; it would add the data-safety
+  form and the foreground-service and full-screen-intent declarations (`phoneCall`,
+  `mediaProjection`, `microphone`, `camera`, `specialUse` for the background connection).
 
 ## Design reference
 
@@ -254,6 +280,7 @@ Sections in `design/Android-App.pen` that exist only for Android:
 | Screen Share | *Screen Share — System Consent* |
 | Onboarding (right of the Platform Notes card) | *Sign Up — Phrase* (+ Dark), *Sign Up — No Screen Lock*, *Log In Flow — Phrase Step · At Launch*, *Permission — Local Network*, *Sign Up — Phrase · Local Network Denied* |
 
-Not designed yet, because each depends on a decision above: the Android privacy screen
-without the keyboard switch and with a screenshot switch (G), battery-restriction help (D),
-and the Transcription copy if the model differs (F).
+Not designed yet (wave 3 design work, now that the decisions are taken): the Android privacy
+screen without the keyboard switch and with the screen-capture switch (G), the push delivery
+screen (distributor choice, background connection, battery restriction help) (D), and the
+Transcription copy for whisper.cpp (F).
