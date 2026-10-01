@@ -103,41 +103,6 @@ interface ThreadState {
 
     val isOffline: Boolean
     val isRealtimeConnected: Boolean
-
-    // ---- Added by W2-MSG-CORE: what the send and reaction engines need from the controller's
-    // state (iOS reads it in place, MessagingController.swift). Additive with defaults, so
-    // implementations and fakes written against the W1-INT seam keep compiling; ThreadStore
-    // overrides every one. Contract change request to W2-MSG-SEND / W2-INT: use these. ----
-
-    /** Live connectivity (`connectivity.isOnline`, `MessagingController.swift:1625`), not the published [isOffline] flag. */
-    val isOnline: Boolean get() = !isOffline
-
-    /** A send failed on the network: the chats read offline (`MessagingController.swift:1690`). */
-    fun setOffline(offline: Boolean) {}
-
-    /** `refreshConversations(force)`: after a send (messaging-core §11.1 rule 6) or a failed mute. */
-    suspend fun refreshConversations(force: Boolean) {}
-
-    /** One conversations refresh for a burst of reaction events, 700 ms debounced (`MessagingController.swift:5856-5866`). */
-    fun refreshConversationsSoon() {}
-
-    /** The chat list, server order, Notes not included (the heart badge reads `reaction_seq` / `unseen_reactions`). */
-    val conversations: List<ConversationItemDto> get() = emptyList()
-
-    /** Rewrites the chat list, published only when it changed (`MessagingController.swift:5537-5547, 5576-5596`). */
-    fun editConversations(transform: (List<ConversationItemDto>) -> List<ConversationItemDto>) {}
-
-    /** The chat on screen. */
-    val activePeerId: UUID? get() = null
-
-    /** Who a peer is, for a notification: the chat list, then contacts (`MessagingController.swift:5850-5854`). */
-    fun username(storePeer: UUID): String? = null
-
-    /** The chat is muted right now (`MessagingController.swift:5763-5765`). */
-    fun isMuted(storePeer: UUID): Boolean = false
-
-    /** The peer reacted to one of our messages: banner or notification (`MessagingController.swift:5531-5540`). */
-    fun announceReaction(storePeer: UUID) {}
 }
 
 /**
@@ -285,25 +250,30 @@ interface ReactionsEngine {
     suspend fun flushPendingSaves()
     fun reset()
 
-    // ---- Added by W2-MSG-CORE (additive, defaulted; see ThreadState). The controller calls these
-    // where iOS reaches into its reaction state. Contract change request to W2-MSG-SEND / W2-INT. ----
+    // ---- Added in W2 by W2-MSG-CORE, the seam's W2 owner: where iOS's controller reaches into its
+    // reaction state, `MessagingController` calls these. Additive with no-op defaults, so the W1-INT
+    // shape still compiles; the names and signatures are the ones W2-MSG-SEND's `ReactionEngine`
+    // already has (its contract change request CR-2) — it only adds `override` (and drops the
+    // default value of `markSeen`'s `upTo`, which an override may not repeat). ----
 
     /**
      * Zeroes the heart badge of chats this device already marked seen, for a list that may predate
-     * the seen call (`applyingLocalReactionSeen`, `MessagingController.swift:5598-5609`). Called on
-     * every server list before it is published.
+     * the seen call (`applyingLocalReactionSeen`, `MessagingController.swift:5598-5609`). Applied to
+     * every server list before it is published (`:1029-1031`).
      */
-    fun applyLocalSeen(conversations: List<ConversationItemDto>): List<ConversationItemDto> = conversations
+    fun applyingLocalSeen(list: List<ConversationItemDto>): List<ConversationItemDto> = list
 
     /**
-     * The open chat's list row or thread was refreshed: if it still counts unseen reactions, mark
-     * them seen (`MessagingController.swift:1054-1057, 1412-1414`; messaging-core §19.8).
+     * Clears a chat's heart badge here and asks the server to clear it everywhere, up to [upTo] or
+     * the chat's latest known `seq` (`markReactionsSeen`, `MessagingController.swift:5576-5595`).
+     * The controller calls it for the open chat while its list row still counts unseen reactions
+     * (`hasPendingUnseenReactions`, `:1047-1049, 1408-1410`; messaging-core §19.8).
      */
-    fun onChatShown(storePeer: UUID) {}
+    fun markSeen(storePeer: UUID, upTo: Long? = null) {}
 
     /**
      * A thread as it may be written to disk: our unconfirmed entry replaced by the one the server
-     * last confirmed (`settledReactions`, `MessagingController.swift:5317-5329`). Applied to every
+     * last confirmed (`settledReactions`, `MessagingController.swift:4694, 4715`). Applied to every
      * thread the store writes.
      */
     fun settled(messages: List<ChatMessage>): List<ChatMessage> = messages

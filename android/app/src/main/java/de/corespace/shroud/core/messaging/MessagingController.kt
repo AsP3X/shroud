@@ -200,13 +200,13 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
     private var activityGeneration = 0L
 
     private var conversationsRefresh: Job? = null
-    private var conversationsRefreshSoon: Job? = null
 
     /** The catch-up sequences of start, foreground and reconnect (iOS's outbound queue cancel stops their flush). */
     private val sessionJobs = ArrayList<Job>()
 
     init {
-        state.host = StoreHost()
+        // `activePeerID` `didSet` (`MessagingController.swift:62-64`): banners for the open chat are suppressed.
+        state.onActivePeerChanged = { notifier.activePeerId = it }
         state.settle = reactions::settled
         state.onPurge = { ids -> ids.forEach(media::cancel) }
         // Engines that hold message state of their own hear about purges, locks and re-keys too.
@@ -329,7 +329,9 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
             clearLocalData()
         } else {
             clearInMemoryState()
-            state.flush()
+            // `local.setHistoryKey(nil)` (`:553`): the snapshot above reaches disk first (one serial
+            // writer), then the store forgets the plaintext it holds in memory.
+            state.onDiskAwait { deps.store.lockSensitiveMemory() }
         }
     }
 
@@ -356,8 +358,6 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
         // Drop (don't cancel) an in-flight list refresh: cancelling surfaced a spurious network
         // error on sign-out. The generation keeps it from publishing.
         conversationsRefresh = null
-        conversationsRefreshSoon?.cancel()
-        conversationsRefreshSoon = null
         pager.cancelThreadLoads()
         pager.cancelHistoryPaging()
         // The next sign-in is a first load again: the skeleton may come back.
@@ -457,6 +457,11 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
      */
     suspend fun lockSensitiveMemory() {
         reactions.flushPendingSaves()
+        // From here nothing new reaches the writer, and work in flight publishes nothing: what
+        // memory holds is about to go, and an event landing during the flush must not be saved
+        // after the store forgot its key.
+        state.writable = false
+        state.bumpLockGeneration()
         state.onDiskAwait { deps.store.lockSensitiveMemory() }
         lockMemoryNow()
     }
@@ -571,7 +576,7 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
         try {
             val fetched = deps.backend.conversations(token)
             if (generation != activityGeneration) return
-            val list = readState.applyingLocalChatState(reactions.applyLocalSeen(fetched))
+            val list = readState.applyingLocalChatState(reactions.applyingLocalSeen(fetched))
             val changed = state.conversations != list
             state.setConversations(list)
             list.firstOrNull()?.let { readState.serverKeepsReadMarkers = it.unreadCount != null }
@@ -582,8 +587,8 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
             state.setOffline(false)
             // Every tab switch lands here; an unchanged list has nothing to save.
             if (changed) state.persistSnapshot()
-            // Something reacted to our messages while this chat is open: it is being seen.
-            state.activePeerId?.let(reactions::onChatShown)
+            // Something reacted to our messages while this chat is open: it is being seen (`:1047-1049`).
+            state.activePeerId?.takeIf(state::hasPendingUnseenReactions)?.let { reactions.markSeen(it) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -605,15 +610,21 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
         }
     }
 
-    /** One list refresh for a burst of reaction events (`refreshConversationsSoon`, `MessagingController.swift:5856-5866`). */
-    private fun refreshConversationsSoon() {
-        if (conversationsRefreshSoon != null) return
-        conversationsRefreshSoon = scope.launch {
-            delay(REFRESH_SOON_MS)
-            conversationsRefreshSoon = null
-            refreshConversations(force = true)
-        }
-    }
+    /**
+     * Rewrites the chat list; published only when it changed. The reaction engine's heart badges
+     * use it (`MessagingController.swift:5537-5542, 5557, 5582-5583`; W2-MSG-SEND's `SendHost`).
+     */
+    fun editConversations(transform: (List<ConversationItemDto>) -> List<ConversationItemDto>) = state.editConversations(transform)
+
+    /** Who a peer is, for a banner: the chat list, then contacts (`username(for:)`, `MessagingController.swift:5850-5854`). */
+    fun username(peer: UUID): String? = state.username(peer)
+
+    /**
+     * Applies the transcripts shared as annotations whose voice note is in [thread] and forgets them
+     * (`foldSharedTranscripts`, `MessagingController.swift:3564-3571`); a sent voice note folds through
+     * it (`:3776`). The pending map lives here, with the ingest and paging paths.
+     */
+    fun foldSharedTranscripts(thread: List<ChatMessage>): List<ChatMessage> = state.foldSharedTranscripts(thread)
 
     // ---- Threads (messaging-core §8) ---------------------------------------------------------------
 
@@ -878,29 +889,6 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
 
     // ---- Glue ------------------------------------------------------------------------------------------
 
-    private inner class StoreHost : ThreadStore.Host {
-        override suspend fun refreshConversations(force: Boolean) = this@MessagingController.refreshConversations(force)
-        override fun refreshConversationsSoon() = this@MessagingController.refreshConversationsSoon()
-        override fun isMuted(storePeer: UUID): Boolean = readState.isMuted(storePeer)
-
-        /** `noteReactionActivity`'s banner (`MessagingController.swift:5531-5540`): never for Notes. */
-        override fun announceReaction(storePeer: UUID) {
-            if (isNotesChat(storePeer)) return
-            notifier.announce(
-                NotificationKind.Reaction,
-                storePeer,
-                state.username(storePeer),
-                state.conversations.firstOrNull { it.peer.id == storePeer }?.id,
-                null,
-                readState.isMuted(storePeer),
-            )
-        }
-
-        override fun activePeerChanged(peer: UUID?) {
-            notifier.activePeerId = peer
-        }
-    }
-
     private inner class PollHost : PollingLoop.Host {
         override val isOnline: Boolean get() = deps.isOnline()
         override val isRealtimeConnected: Boolean get() = socket.isConnected.value
@@ -932,9 +920,6 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
     companion object {
         /** The focus frame and the close each get this long to leave the radio (`MessagingController.swift:639, 652`). */
         const val RADIO_GRACE_MS = 200L
-
-        /** `refreshConversationsSoon`, `MessagingController.swift:5859`. */
-        const val REFRESH_SOON_MS = 700L
     }
 }
 

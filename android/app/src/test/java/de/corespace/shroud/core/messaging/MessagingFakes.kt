@@ -527,9 +527,18 @@ class FakeReactionsEngine : ReactionsEngine {
     override fun reset() {
         log += "reset"
     }
-    override fun onChatShown(storePeer: UUID) {
+    override fun markSeen(storePeer: UUID, upTo: Long?) {
         shown += storePeer
     }
+
+    /** Chats this device marked seen: their badge reads zero in a list that predates it. */
+    val seenLocally = HashSet<UUID>()
+    override fun applyingLocalSeen(list: List<ConversationItemDto>): List<ConversationItemDto> =
+        list.map { if (it.peer.id in seenLocally && (it.unseenReactions ?: 0) > 0) it.copy(unseenReactions = 0) else it }
+
+    /** Our pending entries as the server confirmed them: here, simply without the pending ones. */
+    override fun settled(messages: List<ChatMessage>): List<ChatMessage> =
+        messages.map { message -> if (message.reactions.any { it.pending }) message.copy(reactions = message.reactions.filterNot { it.pending }) else message }
 }
 
 class FakeMediaLoader : MediaLoader {

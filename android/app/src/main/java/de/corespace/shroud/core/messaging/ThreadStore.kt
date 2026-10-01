@@ -53,22 +53,11 @@ class ThreadStore(
     private val onlineNow: () -> Boolean,
     private val realtimeConnectedNow: () -> Boolean,
 ) : ThreadState {
-    /** What the store does for the controller that iOS's controller does in place. Set once by [MessagingController]. */
-    internal interface Host {
-        suspend fun refreshConversations(force: Boolean)
-        fun refreshConversationsSoon()
-        fun isMuted(storePeer: UUID): Boolean
-        fun announceReaction(storePeer: UUID)
-        fun activePeerChanged(peer: UUID?)
-    }
-
-    internal var host: Host = object : Host {
-        override suspend fun refreshConversations(force: Boolean) = Unit
-        override fun refreshConversationsSoon() = Unit
-        override fun isMuted(storePeer: UUID): Boolean = false
-        override fun announceReaction(storePeer: UUID) = Unit
-        override fun activePeerChanged(peer: UUID?) = Unit
-    }
+    /**
+     * Called on every change of the active chat; [MessagingController] mirrors it to the notifier
+     * (`activePeerID` `didSet`, `MessagingController.swift:62-64`).
+     */
+    internal var onActivePeerChanged: (UUID?) -> Unit = {}
 
     /** Our thread before it is written (the reaction engine's `settled`); identity until the controller sets it. */
     internal var settle: (List<ChatMessage>) -> List<ChatMessage> = { it }
@@ -228,34 +217,39 @@ class ThreadStore(
 
     override val isOffline: Boolean get() = offlineFlow.value
     override val isRealtimeConnected: Boolean get() = realtimeConnectedNow()
-    override val isOnline: Boolean get() = onlineNow()
 
-    override fun setOffline(offline: Boolean) {
+    // ---- Controller state ----------------------------------------------------------------------
+
+    /** Live connectivity (`connectivity.isOnline`), not the published [isOffline] flag. */
+    val isOnline: Boolean get() = onlineNow()
+
+    fun setOffline(offline: Boolean) {
         if (offlineFlow.value != offline) offlineFlow.value = offline
     }
 
-    override suspend fun refreshConversations(force: Boolean) = host.refreshConversations(force)
+    /** The chat list, server order, Notes not included. */
+    val conversations: List<ConversationItemDto> get() = conversationsFlow.value
 
-    override fun refreshConversationsSoon() = host.refreshConversationsSoon()
-
-    override val conversations: List<ConversationItemDto> get() = conversationsFlow.value
-
-    override fun editConversations(transform: (List<ConversationItemDto>) -> List<ConversationItemDto>) {
+    /** Rewrites the chat list; published only when it changed. */
+    fun editConversations(transform: (List<ConversationItemDto>) -> List<ConversationItemDto>) {
         setConversations(transform(conversationsFlow.value))
     }
 
-    override val activePeerId: UUID? get() = activePeerFlow.value
+    /** The chat on screen. */
+    val activePeerId: UUID? get() = activePeerFlow.value
 
     /** The chat list, then contacts (`username(for:)`, `MessagingController.swift:5850-5854`). */
-    override fun username(storePeer: UUID): String? =
+    fun username(storePeer: UUID): String? =
         conversationsFlow.value.firstOrNull { it.peer.id == storePeer }?.peer?.username
             ?: roster().first.firstOrNull { it.userId == storePeer }?.username
 
-    override fun isMuted(storePeer: UUID): Boolean = host.isMuted(storePeer)
-
-    override fun announceReaction(storePeer: UUID) = host.announceReaction(storePeer)
-
-    // ---- Controller state ----------------------------------------------------------------------
+    /**
+     * The chat's list row still counts reactions to our messages nobody here has seen
+     * (`hasPendingUnseenReactions`, `MessagingController.swift:5568-5570`) — also for the open chat,
+     * unlike the badge (`ReactionsEngine.hasUnseen`).
+     */
+    fun hasPendingUnseenReactions(storePeer: UUID): Boolean =
+        (conversationsFlow.value.firstOrNull { it.peer.id == storePeer }?.unseenReactions ?: 0) > 0
 
     val conversationsState: StateFlow<List<ConversationItemDto>> = conversationsFlow.asStateFlow()
     val unread: StateFlow<Map<UUID, Int>> = unreadFlow.asStateFlow()
@@ -288,7 +282,7 @@ class ThreadStore(
     fun setActivePeer(peer: UUID?) {
         if (activePeerFlow.value == peer) return
         activePeerFlow.value = peer
-        host.activePeerChanged(peer)
+        onActivePeerChanged(peer)
     }
 
     fun editListStatus(transform: (ListStatus) -> ListStatus) {

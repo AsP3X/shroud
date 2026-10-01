@@ -290,7 +290,8 @@ class HistoryPager(
             }
             if (generation != state.lockGeneration) return
             if (newestSnapshot != null) reactions().catchUp(storePeer)
-            if (state.activePeerId == storePeer) reactions().onChatShown(storePeer)
+            // Reactions to our messages in the chat on screen are being seen (`:1408-1410`).
+            if (state.activePeerId == storePeer && state.hasPendingUnseenReactions(storePeer)) reactions().markSeen(storePeer)
             state.setLastError(null)
             state.setOffline(false)
             state.persistThread(storePeer)
