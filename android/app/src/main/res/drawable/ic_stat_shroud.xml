@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The notification small icon (notifications-push §5.7.1): the veil of design/icon/shroud-icon.svg
+  as a white silhouette, as Android draws status-bar icons (alpha only). Same path as
+  ic_launcher_monochrome.xml, moved so its 612 × 648 bounding box sits centred in the viewport.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="704"
+    android:viewportHeight="704">
+    <group
+        android:translateX="-160"
+        android:translateY="-176">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M512 204C686 204 788 330 792 500C795 612 806 690 818 752C826 792 806 818 776 818C742 818 720 752 684 752C646 752 628 824 590 824C552 824 532 758 494 758C446 758 400 790 340 818C300 836 250 850 206 852C236 820 242 776 236 720C230 650 230 580 232 500C236 330 338 204 512 204Z" />
+    </group>
+</vector>
