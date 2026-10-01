@@ -1,6 +1,7 @@
 package de.corespace.shroud.ui
 
 import android.Manifest
+import android.annotation.SuppressLint
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ContentTransform
@@ -63,6 +64,9 @@ import java.util.UUID
  * one-time notification permission dialog. W3-SHELL replaces both with `RootScreen` and
  * `AppShellController` and deletes this file (00-plan §1.2, §2.6).
  */
+// POST_NOTIFICATIONS is a string compared on every API level; below 33 the request helper reports
+// the system's notification switch instead (`rememberPermissionRequest`).
+@SuppressLint("InlinedApi")
 @Composable
 fun ShroudApp(container: AppContainer) {
     val glue = remember(container) { InterimSession.of(container) }
