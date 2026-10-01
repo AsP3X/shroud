@@ -626,6 +626,11 @@ and cannot read the traffic.
 - `GET /calls/ice-servers` returns STUN (default) + optional TURN from env.
 - Compose: `docker compose --profile calls up` starts **coturn** (host network, local-only credentials).
 - Callee's iPhones without a live socket: an APNs alert (`call` / `video_call`, expires after 90 s). Mutes don't silence it; browsers get none (the web client has no calls). Not a PushKit ring: CallKit would ring on after a hang-up that a locked app cannot hear about.
+- Callee's Android phones (a Web Push subscription with `client: "android"`): a `call` /
+  `video_call` push through their UnifiedPush distributor **even while the app looks in front**,
+  `Urgency: high`, `TTL` 60 s; when the ring ends without them, `call_ended` (all but the device
+  that answered or ended it), then `missed_call` to those not in front if nobody answered. The
+  app drops a ring it already has from its socket by call id.
 - The ring waits for them: `call.ring` (with the offer) is kept while the call rings (Redis `shroud:ring:{callee}` when configured, else in memory), and a callee device that connects in that time — its user tapped the alert — gets it right after `auth.ok`, so the app opens on the ringing call. Nothing is replayed once the call was answered, declined or given up.
 
 ---
