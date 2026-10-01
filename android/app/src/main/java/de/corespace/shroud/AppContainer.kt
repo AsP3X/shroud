@@ -9,6 +9,7 @@ import de.corespace.shroud.core.crypto.CryptoController
 import de.corespace.shroud.core.lifecycle.AppPhaseMonitor
 import de.corespace.shroud.core.model.AppClock
 import de.corespace.shroud.core.model.SystemAppClock
+import de.corespace.shroud.core.net.AuthOutcomeListener
 import de.corespace.shroud.core.net.ServerConfiguration
 import de.corespace.shroud.core.net.ServerConfigurationStore
 import de.corespace.shroud.core.net.ServerConnectionMode
@@ -88,6 +89,18 @@ class AppContainer(
 
     /** Self-hosted or official server, kept across Log Out (00-plan §1.5, prefs `shroud.server`). */
     val serverConfiguration = ServerConfigurationStore(appContext, json)
+
+    /**
+     * Where the one `ApiClient` and the one `RealtimeClient` report every authenticated answer
+     * (00-plan §1.7.6: "set on ApiClient and RealtimeClient by INT"): the session's
+     * [SessionController.authOutcomes], iOS `SessionAuthBridge`. A forwarder, so neither client
+     * builds the session; any request with a token means the session already exists.
+     */
+    val authOutcomes: AuthOutcomeListener = object : AuthOutcomeListener {
+        override fun onAuthenticatedSuccess() = auth.sessionController.authOutcomes.onAuthenticatedSuccess()
+        override fun onAuthenticationFailure() = auth.sessionController.authOutcomes.onAuthenticationFailure()
+        override fun onDeviceRemoved(token: String) = auth.sessionController.authOutcomes.onDeviceRemoved(token)
+    }
 
     val net by lazy { NetModule(this) }                                   // W1-NET
     val realtime by lazy { RealtimeModule(this) }                         // W1-RT

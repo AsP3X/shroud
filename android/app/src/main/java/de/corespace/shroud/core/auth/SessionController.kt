@@ -2,6 +2,7 @@ package de.corespace.shroud.core.auth
 
 import de.corespace.shroud.core.model.Ids
 import de.corespace.shroud.core.net.ApiError
+import de.corespace.shroud.core.net.AuthOutcomeListener
 import de.corespace.shroud.core.net.AuthSessionResponse
 import de.corespace.shroud.core.net.ShroudApi
 import kotlinx.coroutines.CoroutineScope
@@ -10,6 +11,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -21,6 +24,11 @@ import kotlinx.coroutines.withContext
  * the wipe flag of [signOutLocally] — true for Log Out and a removal, whose stored identity and
  * vault go too (`DeviceWipeController.swift:209, :297`), false for a plain 401 streak, which keeps
  * them (`RootView.swift:213`).
+ *
+ * Every authenticated answer reaches the session through [authOutcomes] (iOS `SessionAuthBridge`,
+ * `SessionController.swift:8-35`), which the INT package sets on the one `ApiClient` and the one
+ * `RealtimeClient`. That listener is the only place a 401 or `DEVICE_REMOVED` counts: [validate]
+ * and the screens never count a failure themselves, they read what became of the session.
  */
 class SessionController(
     private val api: ShroudApi,
@@ -30,6 +38,47 @@ class SessionController(
 ) {
     private val state = MutableStateFlow(store.session)
     val session: StateFlow<Session?> = state.asStateFlow()
+
+    private val ended = MutableStateFlow<Validation?>(null)
+
+    /** The 401 streak, main-confined; the store keeps a copy so a relaunch continues it. */
+    private var authFailures = store.authFailures
+
+    /** Orders the streak's disk writes (they run on IO). */
+    private val failureWrites = Mutex()
+
+    /**
+     * Why the server ended the last session — [Validation.DeviceRemoved] or [Validation.SignedOut]
+     * (the 401 streak) — until the root consumes it with [consumeEnding] to show its message. Null
+     * while signed in and after a Log Out of our own. iOS keeps the removal reason on the session
+     * (`sessionEndedByDeviceRemoval`, `SessionController.swift:52-56`); W2-AUTH-WIPE's wipe overlay
+     * takes this over.
+     */
+    val endedByServer: StateFlow<Validation?> = ended.asStateFlow()
+
+    /** Returns [endedByServer] once and clears it, so a recreated screen does not show it again. */
+    fun consumeEnding(): Validation? = ended.value.also { ended.value = null }
+
+    /**
+     * The session's ears on every authenticated request (iOS `SessionAuthBridge`). Called on OkHttp
+     * threads and the socket's pump; each call hops to [appScope] (main) before it touches the
+     * session, as the Swift bridge hops to the main actor. `ApiClient` reports an answer before it
+     * throws, and both run on the main queue in that order, so a caller catching the error already
+     * sees the session as the answer left it.
+     */
+    val authOutcomes: AuthOutcomeListener = object : AuthOutcomeListener {
+        override fun onAuthenticatedSuccess() {
+            appScope.launch { noteSuccess() }
+        }
+
+        override fun onAuthenticationFailure() {
+            appScope.launch { recordAuthenticationFailure() }
+        }
+
+        override fun onDeviceRemoved(token: String) {
+            appScope.launch { recordDeviceRemoved(token) }
+        }
+    }
 
     /** Creates the account. The phrase never goes to the server — only these two fields. */
     suspend fun register(username: String, password: String): Session =
@@ -58,48 +107,63 @@ class SessionController(
             val me = api.me(current.token)
             if (state.value != current) return Validation.Offline
             val refreshed = current.copy(username = me.user.username, shareCode = me.user.shareCode ?: current.shareCode)
-            if (refreshed != current || store.authFailures != 0) withContext(Dispatchers.IO) { store.save(refreshed) }
+            if (refreshed != current) withContext(Dispatchers.IO) { store.save(refreshed) }
             if (state.value == current) state.value = refreshed
             Validation.Valid
         } catch (e: ApiError) {
-            if (state.value != current) return Validation.Offline
-            when (noteFailure(e)) {
-                Validation.DeviceRemoved -> Validation.DeviceRemoved
-                Validation.SignedOut -> Validation.SignedOut
-                else -> Validation.Offline
-            }
+            // The answer was already counted through authOutcomes (iOS: "Bridge already counted this
+            // 401 from APIClient; keep session until threshold", SessionController.swift:133-135).
+            sessionAfterFailure()
         }
     }
 
     /**
-     * Any authenticated request that failed (`SessionAuthBridge`): `DEVICE_REMOVED` ends the
-     * session at once; plain 401s only after [AUTH_FAILURE_THRESHOLD] in a row, and anything else
-     * (offline, 5xx) never counts. Returns what became of the session.
+     * What became of the session after an authenticated request failed: still signed in (below the
+     * 401 streak, offline, or another session took over) reads as [Validation.Offline]; ended by
+     * the server reads as its reason. Never counts anything itself.
      */
-    suspend fun noteFailure(error: Throwable): Validation {
-        if (error !is ApiError) return Validation.Offline
-        return when {
-            error.isDeviceRemoved -> {
-                signOutLocally(wipe = true)
-                Validation.DeviceRemoved
-            }
-            error.isUnauthorized -> {
-                val failures = store.authFailures + 1
-                if (failures >= AUTH_FAILURE_THRESHOLD) {
-                    signOutLocally(wipe = false)
-                    Validation.SignedOut
-                } else {
-                    withContext(Dispatchers.IO) { store.setAuthFailures(failures) }
-                    Validation.Offline
-                }
-            }
-            else -> Validation.Offline
+    fun sessionAfterFailure(): Validation =
+        if (state.value != null) Validation.Offline else ended.value ?: Validation.Offline
+
+    /**
+     * One real 401 on a request with the session's token (`recordAuthenticationFailure`,
+     * `SessionController.swift:155-161`): the session ends only after [AUTH_FAILURE_THRESHOLD] in a
+     * row. Offline and other statuses never get here (`ApiClient` reports only 2xx and 401).
+     */
+    internal suspend fun recordAuthenticationFailure() {
+        if (state.value == null) return
+        // Counted on main before any suspension, so answers arriving together never undercount.
+        authFailures += 1
+        if (authFailures >= AUTH_FAILURE_THRESHOLD) {
+            endByServer(Validation.SignedOut, wipe = false)
+            return
         }
+        val count = authFailures
+        failureWrites.withLock { withContext(Dispatchers.IO) { store.setAuthFailures(count) } }
+    }
+
+    /**
+     * The account removed this device (`recordDeviceRemoved(token:)`, `SessionController.swift:174-182`):
+     * one answer is enough, but only for the session that got it — the server keeps saying
+     * `DEVICE_REMOVED` about an old token, and a late reply from before a new login must not wipe it.
+     */
+    internal fun recordDeviceRemoved(token: String) {
+        val current = state.value ?: return
+        if (current.token != token) return
+        endByServer(Validation.DeviceRemoved, wipe = true)
     }
 
     /** A request with the session worked: the 401 streak is over. */
-    suspend fun noteSuccess() {
-        if (store.authFailures != 0) state.value?.let { withContext(Dispatchers.IO) { store.save(it) } }
+    internal suspend fun noteSuccess() {
+        if (authFailures == 0) return
+        authFailures = 0
+        val current = state.value ?: return
+        failureWrites.withLock { if (state.value == current) withContext(Dispatchers.IO) { store.save(current) } }
+    }
+
+    private fun endByServer(reason: Validation, wipe: Boolean) {
+        signOutLocally(wipe)
+        ended.value = reason
     }
 
     /**
@@ -116,6 +180,8 @@ class SessionController(
     }
 
     fun signOutLocally(wipe: Boolean) {
+        ended.value = null
+        authFailures = 0
         if (wipe) store.wipe() else store.clear()
         state.value = null
         onSignedOut(wipe)
@@ -131,6 +197,8 @@ class SessionController(
             deviceId = Ids.wire(response.device.id),
         )
         withContext(Dispatchers.IO) { store.save(session) }
+        authFailures = 0
+        ended.value = null
         state.value = session
         return session
     }

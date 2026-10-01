@@ -50,10 +50,16 @@ fun ShroudApp(container: AppContainer) {
     }
     var showServerSettings by remember { mutableStateOf(false) }
 
-    // Launch check of the session (`validateSessionIfNeeded`).
+    // Launch check of the session (`validateSessionIfNeeded`). What it finds reaches the root
+    // the same way as any other request's answer: through the session's auth listener.
     LaunchedEffect(Unit) {
-        if (container.sessionController.session.value == null) return@LaunchedEffect
-        when (container.sessionController.validate()) {
+        if (container.sessionController.session.value != null) container.sessionController.validate()
+    }
+    // The server ended the session (removal, or the 401 streak) from any request or the socket:
+    // back to Welcome with the reason. Consumed once, so a recreated activity does not repeat it.
+    val endedByServer by container.sessionController.endedByServer.collectAsState()
+    LaunchedEffect(endedByServer) {
+        when (container.sessionController.consumeEnding()) {
             SessionController.Validation.DeviceRemoved -> router.reset("This phone was removed from your account.")
             SessionController.Validation.SignedOut -> router.reset("Signed out. Log in again.")
             else -> Unit
@@ -104,7 +110,6 @@ fun ShroudApp(container: AppContainer) {
                             onBack = if (router.canPop) router::pop else null,
                             onSignUp = router::showSignUp,
                             onLogOut = logOut,
-                            onSessionEnded = { router.reset(it) },
                         )
                     }
                 }

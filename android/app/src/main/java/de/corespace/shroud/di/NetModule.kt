@@ -13,9 +13,9 @@ import okhttp3.OkHttpClient
  * the base [OkHttpClient] every network client derives from, and the [ConnectivityMonitor]
  * (started in [onProcessStart]). Nobody else constructs these.
  *
- * Wiring left to the INT package (it owns `AppContainer`): `apiClient.authOutcomes` is set to the
- * session's `AuthOutcomeListener` once `SessionController` exposes one, and
- * `connectivity.networkAvailable` is forwarded to `RealtimeClient.onNetworkAvailable()`.
+ * Wiring by the INT package: `apiClient.authOutcomes` is the session's listener
+ * ([AppContainer.authOutcomes]), and `AppContainer.onProcessStart` forwards
+ * `connectivity.networkAvailable` to `RealtimeClient.onNetworkAvailable()`.
  */
 class NetModule(container: AppContainer) : AppModule(container) {
     /**
@@ -29,6 +29,7 @@ class NetModule(container: AppContainer) : AppModule(container) {
     /** The process's only HTTP client; the base URL follows the server settings live. */
     val apiClient: ApiClient by lazy {
         ApiClient(baseUrl = { container.serverConfiguration.configuration.value.resolvedBaseUrl }, json = container.json, http = http)
+            .apply { authOutcomes = container.authOutcomes }
     }
 
     val api: ShroudApi by lazy { ShroudApi(apiClient) }

@@ -104,7 +104,6 @@ fun LogInScreen(
     onBack: (() -> Unit)?,
     onSignUp: () -> Unit,
     onLogOut: () -> Unit,
-    onSessionEnded: (String) -> Unit,
 ) {
     val colors = ShroudTheme.colors
     val reduce = ShroudTheme.reduceMotion
@@ -185,13 +184,11 @@ fun LogInScreen(
                     return@launch
                 }
                 container.cryptoController.unlockWithPhrase(words.map { it.trim().lowercase() }, session)
-                sessions.noteSuccess()
             } catch (e: Throwable) {
-                // A revoked or removed session must not trap the user on this step.
-                when (sessions.noteFailure(e)) {
-                    SessionController.Validation.DeviceRemoved -> onSessionEnded("This phone was removed from your account.")
-                    SessionController.Validation.SignedOut -> onSessionEnded("Signed out. Log in again.")
-                    else -> error = CryptoController.userMessage(e)
+                // A revoked or removed session must not trap the user on this step: the session's
+                // auth listener already ended it, and the root goes back to Welcome with its message.
+                if (sessions.sessionAfterFailure() == SessionController.Validation.Offline) {
+                    error = CryptoController.userMessage(e)
                 }
             } finally {
                 submitting = false

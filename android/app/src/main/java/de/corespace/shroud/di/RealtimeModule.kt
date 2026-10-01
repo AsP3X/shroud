@@ -18,12 +18,11 @@ import de.corespace.shroud.core.realtime.RealtimeClient
 class RealtimeModule(container: AppContainer) : AppModule(container) {
     /**
      * Where the socket reports `DEVICE_REMOVED` (with its token): the session's listener, the same
-     * one `ApiClient.authOutcomes` gets. Set by INT (plan §1.7.6: "set on ApiClient and
-     * RealtimeClient by INT"); while null a removal seen on the socket wipes nothing and waits for
-     * the next REST call to report it.
+     * one `ApiClient.authOutcomes` gets ([AppContainer.authOutcomes], wired by W1-INT; plan
+     * §1.7.6). The session wipes only when the token is still its own.
      */
     @Volatile
-    var authOutcomes: AuthOutcomeListener? = null
+    var authOutcomes: AuthOutcomeListener? = container.authOutcomes
 
     /**
      * The device's one socket. Built on first use, on the main thread (its state is main-confined).

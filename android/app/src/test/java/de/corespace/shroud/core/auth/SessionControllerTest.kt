@@ -46,12 +46,16 @@ class SessionControllerTest {
         json,
     )
 
-    private fun controller(store: SessionStore = store()) = SessionController(
-        ShroudApi(ApiClient({ server.url("/api/v1").toString() }, json)),
-        store,
-        CoroutineScope(Dispatchers.Unconfined),
-        onSignedOut = { wipe -> signedOutCalls++; signedOutWipes += wipe },
-    )
+    /** Wired as AppContainer wires it: the client reports every authenticated answer to the session. */
+    private fun controller(store: SessionStore = store()): SessionController {
+        val client = ApiClient({ server.url("/api/v1").toString() }, json)
+        return SessionController(
+            ShroudApi(client),
+            store,
+            CoroutineScope(Dispatchers.Unconfined),
+            onSignedOut = { wipe -> signedOutCalls++; signedOutWipes += wipe },
+        ).also { client.authOutcomes = it.authOutcomes }
+    }
 
     @Before
     fun setUp() {
@@ -133,6 +137,53 @@ class SessionControllerTest {
         assertNull(store().session)
         assertEquals(1, signedOutCalls)
         assertEquals(listOf(true), signedOutWipes)
+        // The root reads the reason once (wipe overlay message), then it is gone.
+        assertEquals(SessionController.Validation.DeviceRemoved, c.endedByServer.value)
+        assertEquals(SessionController.Validation.DeviceRemoved, c.consumeEnding())
+        assertNull(c.endedByServer.value)
+    }
+
+    @Test
+    fun aRemovalSeenOnTheSocketWipesOnlyItsOwnSession() = runTest {
+        server.enqueue(MockResponse(code = 201, body = session(token = "new")))
+        val c = controller()
+        c.register("noah", "pw")
+        // A late answer about an older login (SessionController.swift:170-174): nothing happens.
+        c.authOutcomes.onDeviceRemoved("old")
+        assertEquals("new", c.session.value?.token)
+        assertEquals(0, signedOutCalls)
+        assertNull(c.endedByServer.value)
+        // The socket's auth.error for this session's token wipes at once.
+        c.authOutcomes.onDeviceRemoved("new")
+        assertNull(c.session.value)
+        assertEquals(listOf(true), signedOutWipes)
+        assertEquals(SessionController.Validation.DeviceRemoved, c.endedByServer.value)
+    }
+
+    @Test
+    fun anyAuthenticatedRequestCountsTowardsTheStreakNotOnlyValidate() = runTest {
+        server.enqueue(MockResponse(code = 201, body = session()))
+        repeat(3) { server.enqueue(MockResponse(code = 401, body = "")) }
+        val c = controller()
+        c.register("noah", "pw")
+        val api = ShroudApi(ApiClient({ server.url("/api/v1").toString() }, json).also { it.authOutcomes = c.authOutcomes })
+        repeat(3) { runCatching { api.contacts("tok") } }
+        assertNull(c.session.value)
+        assertEquals(SessionController.Validation.SignedOut, c.sessionAfterFailure())
+        assertEquals(listOf(false), signedOutWipes)
+    }
+
+    @Test
+    fun logOutOfOurOwnLeavesNoServerReason() = runTest {
+        server.enqueue(MockResponse(code = 201, body = session()))
+        server.enqueue(MockResponse(code = 204))
+        val c = controller()
+        c.register("noah", "pw")
+        server.takeRequest()
+        c.logOut()
+        server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)
+        assertNull(c.endedByServer.value)
+        assertEquals(SessionController.Validation.Offline, c.sessionAfterFailure())
     }
 
     @Test
