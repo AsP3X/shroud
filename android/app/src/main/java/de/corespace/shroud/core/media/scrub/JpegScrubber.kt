@@ -7,8 +7,9 @@ package de.corespace.shroud.core.media.scrub
  * primary image (from SOI through every scan to EOI) and of every MPF secondary image (Ultra HDR /
  * ISO gain maps, large thumbnails) is classified:
  *
- * - kept as is: `APP0` JFIF/JFXX, `APP2` `ICC_PROFILE`, `APP2` `MPF`, `APP2` ISO 21496-1 gain-map
- *   metadata, `APP14` `Adobe`, and every non-APP marker (tables, frames, scans);
+ * - kept as is: `APP0` JFIF/JFXX, `APP2` `ICC_PROFILE`, `APP2` `MPF` (only its per-image unique
+ *   ids, `ImageUIDList`, are zeroed in place), `APP2` ISO 21496-1 gain-map metadata, `APP14`
+ *   `Adobe`, and every non-APP marker (tables, frames, scans);
  * - `APP1 Exif`: rewritten in place, same length — a little-endian TIFF whose IFD0 holds only the
  *   source's `Orientation` ([MinimalTiff]), then zeros; maker notes, GPS, dates, serials and the
  *   embedded thumbnail go;
@@ -35,6 +36,9 @@ internal object JpegScrubber {
     private const val JFXX = "JFXX\u0000"
     private const val ADOBE = "Adobe"
     private const val MP_ENTRY = 0xB002
+
+    /** MP Index IFD `ImageUIDList` (CIPA DC-007): a 33-byte unique id per image, like Exif `ImageUniqueID`. */
+    private const val MP_IMAGE_UID_LIST = 0xB003
 
     private const val SOI = 0xD8
     private const val EOI = 0xD9
@@ -166,7 +170,11 @@ internal object JpegScrubber {
     private fun scrubImage(out: ByteArray, layout: Layout): Boolean {
         for (segment in layout.segments) {
             when (classify(out, segment)) {
-                Kind.Keep -> Unit
+                Kind.Keep -> if (isMpf(out, segment)) {
+                    // The unique image ids go; the entries locating the gain map stay (same length).
+                    val uids = mpfImageUids(out, segment) ?: return false
+                    out.fill(ZERO, uids.first, uids.last + 1)
+                }
                 Kind.Exif -> {
                     val tiff = segment.payload + EXIF.length
                     val orientation = MinimalTiff.orientation(out, tiff, segment.end) ?: return false
@@ -186,13 +194,34 @@ internal object JpegScrubber {
     private fun audit(data: ByteArray, layout: Layout, where: String, found: MutableList<String>) {
         for (segment in layout.segments) {
             when (classify(data, segment)) {
-                Kind.Keep -> Unit
+                Kind.Keep -> if (isMpf(data, segment)) {
+                    val uids = mpfImageUids(data, segment)
+                    if (uids == null) {
+                        found += "$where.MPF.unreadable"
+                    } else if (!data.allEqual(uids.first, uids.last + 1, ZERO)) {
+                        found += "$where.MPF.ImageUIDList"
+                    }
+                }
                 Kind.Exif -> found += MinimalTiff.audit(data, segment.payload + EXIF.length, segment.end, "Exif")
                 Kind.Xmp -> found += XmpBlanker.audit(data, segment.payload + XMP.length, segment.end)
                 Kind.Comment -> if (!data.allEqual(segment.payload, segment.end, SPACE)) found += "$where.COM"
                 Kind.Blank -> found += "$where.APP${segment.marker - 0xE0}"
             }
         }
+    }
+
+    private fun isMpf(b: ByteArray, segment: Segment): Boolean = segment.marker == 0xE2 && b.hasAscii(segment.payload, MPF, segment.end)
+
+    /**
+     * The bytes of the `ImageUIDList` in the first IFD of an `APP2 MPF` segment (empty when there is
+     * none); null when the MPF structure cannot be read.
+     */
+    private fun mpfImageUids(b: ByteArray, segment: Segment): IntRange? {
+        val tiffStart = segment.payload + MPF.length
+        val tiff = MinimalTiff.Reader.open(b, tiffStart, segment.end) ?: return null
+        val ifd = tiff.readIfd(tiff.firstIfd) ?: return null
+        val entry = ifd.entries.firstOrNull { it.tag == MP_IMAGE_UID_LIST } ?: return IntRange.EMPTY
+        return MinimalTiff.valueRange(tiff, tiffStart, entry)
     }
 
     /**

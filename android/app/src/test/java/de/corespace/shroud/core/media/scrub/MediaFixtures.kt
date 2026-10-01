@@ -182,23 +182,32 @@ object MediaFixtures {
             " hdrgm:HDRCapacityMin=\"0\" hdrgm:HDRCapacityMax=\"2.3\" hdrgm:BaseRenditionIsHDR=\"False\"/>" +
             "</rdf:RDF></x:xmpmeta>"
 
-    /** An APP2 MPF segment (big-endian) for a primary of [primarySize] bytes and secondary images at the given offsets. */
-    fun mpfSegment(primarySize: Int, secondaries: List<Pair<Int, Int>>): ByteArray {
+    /**
+     * An APP2 MPF segment (big-endian) for a primary of [primarySize] bytes and secondary images at
+     * the given offsets; with [imageUids] its Index IFD also carries an `ImageUIDList` (0xB003, 33
+     * bytes per image, as some cameras write it).
+     */
+    fun mpfSegment(primarySize: Int, secondaries: List<Pair<Int, Int>>, imageUids: Boolean = false): ByteArray {
         val count = 1 + secondaries.size
-        val ifdEntries = 3
+        val ifdEntries = if (imageUids) 4 else 3
         val ifdSize = 2 + 12 * ifdEntries + 4
         val entriesOffset = 8 + ifdSize
+        val uidsOffset = entriesOffset + 16 * count
         val tiff = ByteArrayOutputStream()
         tiff.write(ascii("MM")); tiff.write(u16(42)); tiff.write(u32(8))
         tiff.write(u16(ifdEntries))
         tiff.write(u16(0xB000)); tiff.write(u16(7)); tiff.write(u32(4)); tiff.write(ascii("0100"))
         tiff.write(u16(0xB001)); tiff.write(u16(4)); tiff.write(u32(1)); tiff.write(u32(count))
         tiff.write(u16(0xB002)); tiff.write(u16(7)); tiff.write(u32(16 * count)); tiff.write(u32(entriesOffset))
+        if (imageUids) {
+            tiff.write(u16(0xB003)); tiff.write(u16(7)); tiff.write(u32(33 * count)); tiff.write(u32(uidsOffset))
+        }
         tiff.write(u32(0))
         tiff.write(u32(0x030000)); tiff.write(u32(primarySize)); tiff.write(u32(0)); tiff.write(u32(0))
         for ((offset, size) in secondaries) {
             tiff.write(u32(0)); tiff.write(u32(size)); tiff.write(u32(offset)); tiff.write(u32(0))
         }
+        if (imageUids) for (index in 0 until count) tiff.write(ascii("UID-SERIAL-0042-$index".padEnd(32, '0') + "\u0000"))
         return segment(0xE2, ascii("MPF\u0000") + tiff.toByteArray())
     }
 
@@ -217,7 +226,7 @@ object MediaFixtures {
      * GContainer + `GCamera`, MPF), then the gain map JPEG with its `hdrgm` XMP; with [motionPhoto]
      * the MP4 follows the gain map.
      */
-    fun pixelUltraHdr(motionPhoto: Boolean = false): UltraHdr {
+    fun pixelUltraHdr(motionPhoto: Boolean = false, imageUids: Boolean = false): UltraHdr {
         val gainMapPixels = jpeg(32, 24, seed = 7)
         val gainMap = withSegments(gainMapPixels, xmpSegment(GAIN_MAP_XMP))
         val video = if (motionPhoto) motionVideo() else ByteArray(0)
@@ -228,10 +237,10 @@ object MediaFixtures {
         repeat(2) {
             val exif = exifSegment(cameraTiff())
             val xmp = xmpSegment(pixelPrimaryXmp(motionPhoto, gainMap.size, video.size))
-            val mpfProbe = mpfSegment(primary.size, listOf(0 to gainMap.size))
+            val mpfProbe = mpfSegment(primary.size, listOf(0 to gainMap.size), imageUids)
             val draft = withSegments(base, exif, xmp, mpfProbe)
             mpfTiffStart = draft.indexOf(ascii("MPF\u0000"), 0) + 4
-            val mpf = mpfSegment(draft.size, listOf((draft.size - mpfTiffStart) to gainMap.size))
+            val mpf = mpfSegment(draft.size, listOf((draft.size - mpfTiffStart) to gainMap.size), imageUids)
             primary = withSegments(base, exif, xmp, mpf)
         }
         return UltraHdr(primary + gainMap + video, primary.size, gainMap.size, video.size)

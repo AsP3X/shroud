@@ -132,7 +132,31 @@ internal object MinimalTiff {
 
     private fun name(tag: Int): String = NAMES[tag] ?: ALLOWED_TIFF_TAGS[tag] ?: String.format(Locale.ROOT, "0x%04X", tag)
 
-    class Entry(val tag: Int, val type: Int, val count: Long, val valueField: Int)
+    class Entry(val tag: Int, val type: Int, val count: Long, val valueField: Int) {
+        /** Bytes of one value of this entry's TIFF type; 0 for an unknown type. */
+        val unitSize: Int
+            get() = when (type) {
+                1, 2, 6, 7 -> 1
+                3, 8 -> 2
+                4, 9, 11, 13 -> 4
+                5, 10, 12 -> 8
+                else -> 0
+            }
+    }
+
+    /**
+     * Where the value of [entry] lives in the block `[start, start + reader.length)`: inline in its
+     * value field when it fits in four bytes, else at the offset stored there. Absolute indices;
+     * null when the type is unknown or the value runs outside the block.
+     */
+    fun valueRange(reader: Reader, start: Int, entry: Entry): IntRange? {
+        if (entry.unitSize == 0 || entry.count < 0) return null
+        val size = entry.count * entry.unitSize
+        if (size == 0L) return IntRange.EMPTY
+        val at = if (size <= 4) entry.valueField.toLong() else reader.u32(entry.valueField)
+        if (at < 0 || at + size > reader.length) return null
+        return (start + at).toInt() until (start + at + size).toInt()
+    }
 
     class Ifd(val entries: List<Entry>, val next: Long)
 

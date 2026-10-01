@@ -61,6 +61,21 @@ class JpegScrubberTest {
 
     /** Deviation from the spec's "no MPF + trailer → re-encode": the trailer is cut at EOI, so Samsung JPEGs keep their pixels. */
     @Test
+    fun mpfImageUniqueIdsAreZeroedInPlace() {
+        val fixture = MediaFixtures.pixelUltraHdr(imageUids = true)
+        val original = fixture.bytes
+        assertTrue(MediaMetadataScrubber.leftoverMetadata(original).contains("JPEG.MPF.ImageUIDList"))
+
+        val clean = assertNotNull(MediaMetadataScrubber.scrubImage(original))
+
+        assertEquals(emptyList<String>(), MediaMetadataScrubber.leftoverMetadata(clean))
+        assertEquals(emptyList<String>(), survivingSecrets(clean, listOf("UID-SERIAL")))
+        assertEquals("same length: MPF offsets stay valid", original.size, clean.size)
+        assertArrayEquals("the gain map is still where MPF says", original.copyOfRange(fixture.primarySize, original.size), clean.copyOfRange(fixture.primarySize, clean.size))
+        assertArrayEquals(MediaFixtures.pixels(original), MediaFixtures.pixels(clean))
+    }
+
+    @Test
     fun samsungTrailerIsCutAtTheEndOfTheImage() {
         val original = MediaFixtures.samsungJpeg()
         val primary = assertNotNull(JpegScrubber.parse(original, 0, original.size))

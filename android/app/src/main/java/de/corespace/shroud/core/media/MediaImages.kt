@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
 import android.net.Uri
+import androidx.core.graphics.scale
 import androidx.exifinterface.media.ExifInterface
 import de.corespace.shroud.core.media.scrub.ImageHeader
 import java.io.ByteArrayInputStream
@@ -171,7 +172,7 @@ class MediaImages(private val contentResolver: ContentResolver) : ImageCodec {
         fun scaledToFit(bitmap: Bitmap, maxEdge: Int): Bitmap {
             val (width, height) = fit(bitmap.width, bitmap.height, maxEdge)
             if (width == bitmap.width && height == bitmap.height) return bitmap
-            return Bitmap.createScaledBitmap(bitmap, width, height, true)
+            return bitmap.scale(width, height, filter = true)
         }
     }
 }

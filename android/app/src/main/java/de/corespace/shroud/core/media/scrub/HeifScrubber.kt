@@ -10,19 +10,40 @@ package de.corespace.shroud.core.media.scrub
  *   become the minimal orientation-only TIFF plus zeros ([MinimalTiff]; HEIF orientation itself
  *   lives in the kept `irot`/`imir` properties);
  * - `mime` items of type `application/rdf+xml` (XMP): [XmpBlanker] in place;
- * - item names: spaces (same length; decoders never read them);
+ * - item names and the `hdlr` name (which can name the writing software): spaces (same length;
+ *   decoders never read them);
  * - bytes of `mdat`/`idat` that no item references, and `free`/`skip` payloads: zeros;
  * - a trailing top-level box after all referenced data (Samsung's `mpvd` motion video): cut off.
  *
  * Items in `idat` (construction method 1 — iPhone grids, ISO gain-map `tmap` items) are handled like
  * file-offset items. Refused (null → the caller re-encodes): another handler than `pict`, an unknown
  * box at the top level before the data ends or inside `meta`, an unknown item type, a `mime` item
- * that is not XMP, `uri ` items, protected items, data in other files, metadata items built from
- * other items (construction method 2), `infe` versions 0/1. When in doubt, never the original.
+ * that is not XMP, `uri ` items, protected items, data in other files (a `dref` that is not
+ * self-contained), metadata items built from other items (construction method 2), `infe` versions
+ * 0/1, and any item property outside [PROPERTIES] — HEIF 2022 added descriptive properties that
+ * carry text and times (`udes` user description, `crtt`/`mdft` creation and modification time,
+ * `altt` accessibility text), and an unknown property may be one of them. When in doubt, never the
+ * original.
  */
 internal object HeifScrubber {
     private val TOP_LEVEL: Set<String> = setOf("ftyp", "meta", "mdat", "free", "skip")
     private val META_CHILDREN: Set<String> = setOf("hdlr", "pitm", "iloc", "iinf", "iref", "iprp", "idat", "dinf", "grpl", "free", "skip")
+
+    /**
+     * Item properties (`iprp/ipco`) that only describe how to decode and draw the picture
+     * (ISO/IEC 23008-12, MIAF, AVIF, ISO 21496-1, ISO/IEC 23001-17): decoder configurations,
+     * size, colour, HDR levels, transforms, auxiliary types, layers. Measured on iPhone
+     * (ImageIO and camera) HEICs: `colr hvcC ispe irot pixi auxC clli`.
+     */
+    val PROPERTIES: Set<String> = setOf(
+        // decoder configurations
+        "hvcC", "lhvC", "av1C", "avcC", "vvcC", "jpgC", "j2kH", "uncC", "cmpd", "cpal", "cpat", "splz", "sbpm", "snuc", "cloc",
+        // image description
+        "ispe", "pixi", "colr", "pasp", "clli", "mdcv", "cclv", "amve", "reve", "rloc", "auxC", "oinf", "tols", "lsel", "a1op", "a1lx",
+        // transforms
+        "irot", "imir", "clap", "iscl",
+        "free", "skip",
+    )
 
     /** Coded and derived image items, kept untouched. */
     private val IMAGE_ITEMS: Set<String> = setOf(
@@ -43,6 +64,9 @@ internal object HeifScrubber {
         if (heif.handler != "pict") return null
         if (heif.metaChildren.any { it.type !in META_CHILDREN }) return null
         if (heif.locations.values.any { it.dataReferenceIndex != 0 }) return null
+        if (heif.metaChildren.any { it.type == "dinf" && !IsoBmff.isSelfContainedDinf(out, it) }) return null
+        if (heif.properties.any { it.type !in PROPERTIES }) return null
+        heif.handlerBox?.let { blankHandlerName(out, it) }
         for (item in heif.items) {
             if (item.protectionIndex != 0) return null
             val location = heif.locations[item.id]
@@ -71,7 +95,10 @@ internal object HeifScrubber {
         for (box in heif.topLevel) if (box.type !in TOP_LEVEL) found += "HEIF." + box.type
         for (box in heif.metaChildren) if (box.type !in META_CHILDREN) found += "HEIF.meta." + box.type
         if (heif.handler != "pict") found += "HEIF.handler"
+        heif.handlerBox?.let { if (!isBlankHandlerName(data, it)) found += "HEIF.handlerName" }
         if (heif.locations.values.any { it.dataReferenceIndex != 0 }) found += "HEIF.externalData"
+        if (heif.metaChildren.any { it.type == "dinf" && !IsoBmff.isSelfContainedDinf(data, it) }) found += "HEIF.dataReference"
+        for (property in heif.properties) if (property.type !in PROPERTIES) found += "HEIF.property." + property.type.trim()
         for (item in heif.items) {
             if (item.protectionIndex != 0) found += "HEIF.protectedItem"
             if (!data.allEqual(item.nameStart, item.nameEnd, SPACE)) found += "HEIF.itemName"
@@ -87,6 +114,27 @@ internal object HeifScrubber {
         }
         if (!unreferencedIsZero(data, heif, data.size)) found += "HEIF.unreferenced"
         return found
+    }
+
+    /**
+     * The `hdlr` name as spaces up to its terminating zero, zeros after it (same length). ImageIO
+     * writes an empty name; other writers put their software name there.
+     */
+    private fun blankHandlerName(out: ByteArray, hdlr: IsoBmff.Box) {
+        val from = hdlr.payload + IsoBmff.HANDLER_NAME_OFFSET
+        if (from >= hdlr.end) return
+        var terminator = from
+        while (terminator < hdlr.end && out[terminator] != ZERO) terminator++
+        out.fill(SPACE, from, terminator)
+        if (terminator < hdlr.end) out.fill(ZERO, terminator, hdlr.end)
+    }
+
+    private fun isBlankHandlerName(data: ByteArray, hdlr: IsoBmff.Box): Boolean {
+        val from = hdlr.payload + IsoBmff.HANDLER_NAME_OFFSET
+        if (from >= hdlr.end) return true
+        var terminator = from
+        while (terminator < hdlr.end && data[terminator] != ZERO) terminator++
+        return data.allEqual(from, terminator, SPACE) && data.allEqual(terminator, hdlr.end, ZERO)
     }
 
     private fun kind(item: IsoBmff.ItemInfo): Kind = when (item.type) {
@@ -166,6 +214,7 @@ internal object HeifScrubber {
         }
         for (box in heif.topLevel) if (box.end <= cut && (box.type == "free" || box.type == "skip")) action(box.payload, box.end)
         for (box in heif.metaChildren) if (box.type == "free" || box.type == "skip") action(box.payload, box.end)
+        for (box in heif.properties) if (box.type == "free" || box.type == "skip") action(box.payload, box.end)
     }
 
     private fun gather(data: ByteArray, extents: List<LongRange>): ByteArray {

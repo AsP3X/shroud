@@ -66,6 +66,8 @@ internal object IsoBmff {
         val meta: Box,
         val metaChildren: List<Box>,
         val handler: String?,
+        /** The `hdlr` box; its name string (from [HANDLER_NAME_OFFSET] of the payload) can name the writing software. */
+        val handlerBox: Box?,
         val primaryItem: Long?,
         val items: List<ItemInfo>,
         val locations: Map<Long, ItemLocation>,
@@ -104,6 +106,7 @@ internal object IsoBmff {
         val meta = metas[0]
         val children = boxes(b, meta.payload + 4, meta.end) ?: return null
         var handler: String? = null
+        var handlerBox: Box? = null
         var primary: Long? = null
         var items: List<ItemInfo> = emptyList()
         var ilocBox: Box? = null
@@ -115,6 +118,7 @@ internal object IsoBmff {
                 "hdlr" -> {
                     if (child.payload + 12 > child.end) return null
                     handler = b.fourCc(child.payload + 8)
+                    handlerBox = child
                 }
                 "pitm" -> {
                     val version = b.u8(child.payload)
@@ -140,7 +144,28 @@ internal object IsoBmff {
             }
         }
         val locations = ilocBox?.let { parseIloc(b, it, idat) ?: return null } ?: emptyMap()
-        return Heif(top, meta, children, handler, primary, items, locations, idat, properties, associations)
+        return Heif(top, meta, children, handler, handlerBox, primary, items, locations, idat, properties, associations)
+    }
+
+    /** `hdlr` payload: version/flags (4), pre_defined (4), handler_type (4), reserved (12), then the name. */
+    const val HANDLER_NAME_OFFSET = 24
+
+    /**
+     * True when the `dinf` box [dinf] says only "the data is in this file": one `dref` whose
+     * entries are all self-contained (`flags & 1`) `url ` boxes with no location string
+     * (ISO/IEC 14496-12 §8.7.2). Anything else names another place — refused by the scrubber.
+     */
+    fun isSelfContainedDinf(b: ByteArray, dinf: Box): Boolean {
+        val children = boxes(b, dinf.payload, dinf.end) ?: return false
+        if (children.size != 1 || children[0].type != "dref") return false
+        val dref = children[0]
+        if (dref.payload + 8 > dref.end) return false
+        val count = b.u32be(dref.payload + 4)
+        val entries = boxes(b, dref.payload + 8, dref.end) ?: return false
+        if (entries.size.toLong() != count) return false
+        return entries.all { entry ->
+            entry.type == "url " && entry.payload + 4 == entry.end && (b.u8(entry.payload + 3) and 1) == 1
+        }
     }
 
     private fun parseIinf(b: ByteArray, box: Box): List<ItemInfo>? {

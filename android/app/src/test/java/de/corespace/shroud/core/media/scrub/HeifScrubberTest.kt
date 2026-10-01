@@ -28,6 +28,11 @@ class HeifScrubberTest {
         val boxBeforeMdat: String? = null,
         val motionVideo: Boolean = true,
         val itemName: String = "Primary Test Phone",
+        val handlerName: String = "Test Phone HEIF handler",
+        /** An extra item property in `ipco` (not associated with any item). */
+        val extraProperty: String? = null,
+        /** null: no `dinf`; true: a self-contained `url `; false: a `url ` naming another file. */
+        val selfContainedDinf: Boolean? = null,
     ) {
         val image = ByteArray(96) { (it * 7 + 3).toByte() }
         val exif = u32(6) + ascii("Exif\u0000\u0000") + MediaFixtures.cameraTiff(orientation = 6)
@@ -51,7 +56,8 @@ class HeifScrubberTest {
             val iinf = fullBox("iinf", 0, 0, u16(items.size) + items.reduce { a, b -> a + b })
             val ispe = fullBox("ispe", 0, 0, u32(64) + u32(48))
             val irotBox = box("irot", byteArrayOf(irot.toByte()))
-            val ipco = box("ipco", ispe + irotBox)
+            val extraPropertyBox = extraProperty?.let { box(it, ByteArray(4) + ascii("en\u0000Reykjavik\u00002026-09-01\u0000")) } ?: ByteArray(0)
+            val ipco = box("ipco", ispe + irotBox + extraPropertyBox)
             val ipma = fullBox("ipma", 0, 0, u32(1) + u16(1) + byteArrayOf(2, 0x81.toByte(), 0x02))
             val iprp = box("iprp", ipco + ipma)
             val idat = if (exifMethod == 1) box("idat", exif) else ByteArray(0)
@@ -67,10 +73,15 @@ class HeifScrubberTest {
             }
             entries += ilocEntry(3, 0, xmpAt, xmp.size)
             val iloc = fullBox("iloc", 1, 0, byteArrayOf(0x44, 0x00) + u16(entries.size) + entries.reduce { a, b -> a + b })
-            val hdlr = fullBox("hdlr", 0, 0, u32(0) + ascii(handler) + ByteArray(12) + byteArrayOf(0))
+            val hdlr = fullBox("hdlr", 0, 0, u32(0) + ascii(handler) + ByteArray(12) + ascii(handlerName) + byteArrayOf(0))
+            val dinf = when (selfContainedDinf) {
+                null -> ByteArray(0)
+                true -> box("dinf", fullBox("dref", 0, 0, u32(1) + fullBox("url ", 0, 1, ByteArray(0))))
+                false -> box("dinf", fullBox("dref", 0, 0, u32(1) + fullBox("url ", 0, 0, ascii("file:///sdcard/DCIM/Test Phone.heic\u0000"))))
+            }
             val pitm = fullBox("pitm", 0, 0, u16(1))
             val extra = extraMetaChild?.let { box(it, ascii("<x:xmpmeta>Reykjavik</x:xmpmeta>")) } ?: ByteArray(0)
-            val meta = fullBox("meta", 0, 0, hdlr + pitm + iinf + iprp + idat + iloc + extra)
+            val meta = fullBox("meta", 0, 0, hdlr + dinf + pitm + iinf + iprp + idat + iloc + extra)
             val ftyp = box("ftyp", ascii(majorBrand) + u32(0) + ascii("mif1") + ascii("heic"))
             // A `uuid` box carries its 16-byte extended type first.
             val before = boxBeforeMdat?.let { box(it, ascii("0123456789abcdef") + ascii("Test Phone")) } ?: ByteArray(0)
@@ -101,7 +112,7 @@ class HeifScrubberTest {
         val fixture = Heic()
         val original = fixture.build()
         val before = MediaMetadataScrubber.leftoverMetadata(original)
-        for (name in listOf("GPS", "MakerNote", "TIFF.Model", "XMP.photoshop:DateCreated", "XMP.Container:Directory", "HEIF.mpvd", "HEIF.itemName", "HEIF.unreferenced")) {
+        for (name in listOf("GPS", "MakerNote", "TIFF.Model", "XMP.photoshop:DateCreated", "XMP.Container:Directory", "HEIF.mpvd", "HEIF.itemName", "HEIF.handlerName", "HEIF.unreferenced")) {
             assertTrue("$name in $before", before.contains(name))
         }
         val mpvdAt = IsoBmff.boxes(original, 0, original.size)!!.first { it.type == "mpvd" }.start
@@ -152,12 +163,43 @@ class HeifScrubberTest {
             "unknown box before the data" to Heic(boxBeforeMdat = "uuid"),
             "image sequence" to Heic(boxBeforeMdat = "moov"),
             "not a picture handler" to Heic(handler = "vide"),
+            "user description property" to Heic(extraProperty = "udes"),
+            "creation time property" to Heic(extraProperty = "crtt"),
+            "modification time property" to Heic(extraProperty = "mdft"),
+            "accessibility text property" to Heic(extraProperty = "altt"),
+            "unknown property" to Heic(extraProperty = "zzzz"),
+            "data in another file" to Heic(selfContainedDinf = false),
         )
         for ((label, fixture) in refused) {
             assertNull(label, MediaMetadataScrubber.scrubImage(fixture.build()))
             assertFalse("$label is reported", MediaMetadataScrubber.leftoverMetadata(fixture.build()).isEmpty())
         }
         assertNull("truncated", MediaMetadataScrubber.scrubImage(Heic().build().copyOf(100)))
+    }
+
+    @Test
+    fun aSelfContainedDataReferenceAndDecodingPropertiesAreKept() {
+        for (property in listOf("clap", "pasp", "imir", "clli", "mdcv")) {
+            val original = Heic(selfContainedDinf = true, extraProperty = property).build()
+            val clean = requireNotNull(MediaMetadataScrubber.scrubImage(original)) { "$property: not cleaned" }
+            assertEquals(property, emptyList<String>(), MediaMetadataScrubber.leftoverMetadata(clean))
+            val before = IsoBmff.parseHeif(original)!!
+            val after = IsoBmff.parseHeif(clean)!!
+            val iprp = { data: ByteArray, heif: IsoBmff.Heif -> heif.metaChildren.first { it.type == "iprp" }.let { data.copyOfRange(it.start, it.end) } }
+            assertArrayEquals("$property: properties untouched", iprp(original, before), iprp(clean, after))
+        }
+    }
+
+    @Test
+    fun theHandlerNameBecomesSpaces() {
+        val original = Heic(motionVideo = false).build()
+        val clean = requireNotNull(MediaMetadataScrubber.scrubImage(original)) { "not cleaned" }
+        val hdlr = IsoBmff.parseHeif(clean)!!.handlerBox!!
+        val name = hdlr.payload + IsoBmff.HANDLER_NAME_OFFSET
+        assertEquals("pict", clean.fourCc(hdlr.payload + 8))
+        assertTrue(clean.allEqual(name, name + "Test Phone HEIF handler".length, SPACE))
+        assertEquals(0, clean.u8(hdlr.end - 1))
+        assertEquals(original.size, clean.size)
     }
 
     @Test
