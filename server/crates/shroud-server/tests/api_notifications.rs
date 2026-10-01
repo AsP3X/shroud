@@ -11,7 +11,9 @@ use http_body_util::BodyExt;
 use ring::agreement::{ECDH_P256, EphemeralPrivateKey};
 use ring::rand::SystemRandom;
 use serde_json::{Value, json};
-use shroud_server::push::{ApnsPushType, PushChannel};
+use shroud_server::push::web_push::Urgency;
+use shroud_server::push::{ApnsPushType, PushChannel, SentPush};
+use shroud_server::realtime::SocketMode;
 use shroud_server::routes;
 use shroud_server::state::AppState;
 use sqlx::postgres::PgPoolOptions;
@@ -1744,4 +1746,508 @@ async fn deleting_the_account_wakes_its_other_devices() {
     assert!(pushes_to(&state, phone.device_id).is_empty());
     let (_, body) = call(&app, "GET", "/api/v1/auth/me", &other.token, None).await;
     assert_eq!(body["error"]["code"], "DEVICE_REMOVED");
+}
+
+// MARK: Android (UnifiedPush)
+
+/// Subscribes `who` as the Android app does: its distributor's endpoint, `client: "android"`.
+async fn register_android(app: &axum::Router, who: &Account) -> StatusCode {
+    let (p256dh, auth) = browser_keys();
+    let endpoint = format!("https://ntfy.sh/up{}?up=1", Uuid::new_v4().simple());
+    call(
+        app,
+        "PUT",
+        "/api/v1/push/web/subscription",
+        &who.token,
+        Some(json!({
+            "endpoint": endpoint,
+            "keys": { "p256dh": p256dh, "auth": auth },
+            "client": "android",
+        })),
+    )
+    .await
+    .0
+}
+
+/// Everything recorded for `device`, with its Web Push options.
+fn sent_to(state: &AppState, device: Uuid) -> Vec<SentPush> {
+    state
+        .push
+        .recorded()
+        .into_iter()
+        .filter(|p| p.device_id == device)
+        .collect()
+}
+
+/// (TTL, urgency, topic) of a recorded Web Push.
+fn options_of(push: &SentPush) -> (u32, Urgency, Option<String>) {
+    let options = push.web_options.clone().expect("a Web Push");
+    (options.ttl_secs, options.urgency, options.topic)
+}
+
+/// A UUID as an RFC 8030 topic: its 32 hex digits.
+fn topic(id: &Value) -> Option<String> {
+    Some(id.as_str().unwrap().replace('-', ""))
+}
+
+const DAY: u32 = 24 * 60 * 60;
+
+#[tokio::test]
+async fn an_android_app_gets_pushes_through_its_distributor() {
+    let Some((app, state)) = test_state().await else {
+        eprintln!("skipping an_android_app_gets_pushes_through_its_distributor: no DATABASE_URL");
+        return;
+    };
+    let a = register(&app).await;
+    let b = register(&app).await;
+    become_contacts(&app, &a, &b).await;
+    assert_eq!(register_android(&app, &b).await, StatusCode::NO_CONTENT);
+
+    // A message: the browser's JSON, on the UnifiedPush channel, high urgency for a day,
+    // collapsing per chat.
+    let message = send(&app, &a, &b.user_id, "text").await;
+    let pushes = sent_to(&state, b.device_id);
+    assert_eq!(pushes.len(), 1, "{pushes:?}");
+    let push = &pushes[0];
+    assert_eq!(push.channel, PushChannel::UnifiedPush);
+    assert_eq!(push.payload["v"], 1);
+    assert_eq!(push.payload["kind"], "message");
+    assert_eq!(push.payload["message_id"], message);
+    assert_eq!(push.payload["peer_user_id"], a.user_id);
+    assert_eq!(push.payload["sender"], a.username);
+    assert_eq!(push.payload["badge"], 1);
+    assert_eq!(push.payload["tag"], push.payload["conversation_id"]);
+    assert_eq!(
+        options_of(push),
+        (DAY, Urgency::High, topic(&push.payload["conversation_id"]))
+    );
+
+    // A reaction waits for the phone to wake (normal) and replaces nothing (no topic).
+    let theirs = send(&app, &b, &a.user_id, "text").await;
+    let (status, _) = call(
+        &app,
+        "PUT",
+        &format!("/api/v1/messages/{theirs}/reaction"),
+        &a.token,
+        Some(json!({ "ciphertext": BASE64.encode(b"sealed-emoji"), "added": true })),
+    )
+    .await;
+    assert!(status.is_success());
+    let reaction = sent_to(&state, b.device_id).pop().unwrap();
+    assert_eq!(reaction.payload["kind"], "reaction");
+    assert_eq!(options_of(&reaction), (DAY, Urgency::Normal, None));
+
+    // A contact request.
+    let c = register(&app).await;
+    call(
+        &app,
+        "POST",
+        "/api/v1/contacts/requests",
+        &c.token,
+        Some(json!({ "user_id": b.user_id })),
+    )
+    .await;
+    let request = sent_to(&state, b.device_id).pop().unwrap();
+    assert_eq!(request.payload["kind"], "contact_request");
+    assert_eq!(request.channel, PushChannel::UnifiedPush);
+    assert_eq!(options_of(&request).1, Urgency::High);
+
+    // The app in front shows messages itself.
+    let b_id: Uuid = b.user_id.parse().unwrap();
+    let before = sent_to(&state, b.device_id).len();
+    let open = state
+        .realtime
+        .subscribe(b_id, b.device_id, Uuid::new_v4())
+        .await
+        .expect("subscribe");
+    send(&app, &a, &b.user_id, "text").await;
+    assert_eq!(sent_to(&state, b.device_id).len(), before);
+    state.realtime.unsubscribe(b_id, b.device_id, open.id).await;
+
+    // A background socket (the background connection) gets the event and the push: it is
+    // never in front for pushes until its app is.
+    let mut background = state
+        .realtime
+        .subscribe_with(b_id, b.device_id, Uuid::new_v4(), SocketMode::Background)
+        .await
+        .expect("background socket");
+    send(&app, &a, &b.user_id, "text").await;
+    next_event(&mut background.events, "message.new").await;
+    assert_eq!(sent_to(&state, b.device_id).len(), before + 1);
+    state
+        .realtime
+        .set_focus(b_id, b.device_id, background.id, true)
+        .await;
+    send(&app, &a, &b.user_id, "text").await;
+    assert_eq!(sent_to(&state, b.device_id).len(), before + 1);
+    state
+        .realtime
+        .set_focus(b_id, b.device_id, background.id, false)
+        .await;
+    send(&app, &a, &b.user_id, "text").await;
+    assert_eq!(sent_to(&state, b.device_id).len(), before + 2);
+
+    // The sender's name stays out when the phone asked for that, as for a browser.
+    call(
+        &app,
+        "PUT",
+        "/api/v1/notifications/settings",
+        &b.token,
+        Some(json!({ "show_sender": false })),
+    )
+    .await;
+    send(&app, &a, &b.user_id, "text").await;
+    let anonymous = sent_to(&state, b.device_id).pop().unwrap();
+    assert!(anonymous.payload.get("sender").is_none(), "{anonymous:?}");
+}
+
+#[tokio::test]
+async fn an_android_app_rings_even_in_front_and_hears_the_ring_end() {
+    let Some((app, state)) = test_state().await else {
+        eprintln!(
+            "skipping an_android_app_rings_even_in_front_and_hears_the_ring_end: no DATABASE_URL"
+        );
+        return;
+    };
+    let a = register(&app).await;
+    let b = register(&app).await;
+    become_contacts(&app, &a, &b).await;
+    let b_id: Uuid = b.user_id.parse().unwrap();
+    // Two Android phones and a browser. The first phone and the browser are open right now.
+    assert_eq!(register_android(&app, &b).await, StatusCode::NO_CONTENT);
+    let b_other = login_again(&app, &b).await;
+    assert_eq!(
+        register_android(&app, &b_other).await,
+        StatusCode::NO_CONTENT
+    );
+    let b_web = login_again(&app, &b).await;
+    register_web(
+        &app,
+        &b_web,
+        &format!("https://fcm.googleapis.com/fcm/send/{}", Uuid::new_v4()),
+    )
+    .await;
+    let _phone_open = state
+        .realtime
+        .subscribe(b_id, b.device_id, Uuid::new_v4())
+        .await
+        .expect("subscribe");
+    let _web_open = state
+        .realtime
+        .subscribe(b_id, b_web.device_id, Uuid::new_v4())
+        .await
+        .expect("subscribe");
+    // A muted chat still rings.
+    call(
+        &app,
+        "PUT",
+        &format!("/api/v1/conversations/{}/mute", a.user_id),
+        &b.token,
+        None,
+    )
+    .await;
+
+    let (status, ring) = call(
+        &app,
+        "POST",
+        "/api/v1/calls",
+        &a.token,
+        Some(json!({ "peer_user_id": b.user_id, "modality": "video", "protocol": 2 })),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {ring}");
+
+    // Both phones ring, the one in front too: high urgency, alive as long as the call rings,
+    // collapsing per call.
+    for phone in [b.device_id, b_other.device_id] {
+        let pushes = sent_to(&state, phone);
+        assert_eq!(pushes.len(), 1, "{pushes:?}");
+        let push = &pushes[0];
+        assert_eq!(push.channel, PushChannel::UnifiedPush);
+        assert_eq!(push.payload["kind"], "video_call");
+        assert_eq!(push.payload["call_id"], ring["id"]);
+        assert_eq!(push.payload["peer_user_id"], a.user_id);
+        assert_eq!(push.payload["sender"], a.username);
+        assert_eq!(push.payload["tag"], "calls");
+        assert_eq!(options_of(push), (60, Urgency::High, topic(&ring["id"])));
+    }
+    // The browser in front rings from its socket only.
+    assert!(sent_to(&state, b_web.device_id).is_empty());
+
+    // The caller gives up: both phones are told the ring is over (high, 60 s, no topic, so it
+    // never replaces a "Missed call"); the closed one also gets "Missed call" in place of its
+    // queued ring.
+    let (status, _) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/calls/{}/hangup", ring["id"].as_str().unwrap()),
+        &a.token,
+        None,
+    )
+    .await;
+    assert!(status.is_success());
+    let in_front = sent_to(&state, b.device_id);
+    assert_eq!(in_front.len(), 2, "{in_front:?}");
+    assert_eq!(in_front[1].payload["kind"], "call_ended");
+    assert_eq!(in_front[1].payload["call_id"], ring["id"]);
+    assert_eq!(options_of(&in_front[1]), (60, Urgency::High, None));
+    let closed = sent_to(&state, b_other.device_id);
+    let kinds: Vec<&str> = closed
+        .iter()
+        .map(|p| p.payload["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds, ["video_call", "call_ended", "missed_call"]);
+    assert_eq!(
+        options_of(&closed[2]),
+        (DAY, Urgency::High, topic(&ring["id"]))
+    );
+    assert!(sent_to(&state, b_web.device_id).is_empty());
+
+    // Answered on one phone: the other one stops ringing, the one that answered is not told
+    // to drop the call it just took.
+    let (_, second) = call(
+        &app,
+        "POST",
+        "/api/v1/calls",
+        &a.token,
+        Some(json!({ "peer_user_id": b.user_id, "modality": "voice", "protocol": 2 })),
+    )
+    .await;
+    let (status, _) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/calls/{}/accept", second["id"].as_str().unwrap()),
+        &b_other.token,
+        Some(json!({})),
+    )
+    .await;
+    assert!(status.is_success(), "{status}");
+    let for_second = |device: Uuid| -> Vec<String> {
+        sent_to(&state, device)
+            .into_iter()
+            .filter(|p| p.payload["call_id"] == second["id"])
+            .map(|p| p.payload["kind"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(for_second(b.device_id), ["call", "call_ended"]);
+    assert_eq!(for_second(b_other.device_id), ["call"]);
+    // Hanging up an answered call pushes nothing more: the phones heard about it already.
+    let (status, _) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/calls/{}/hangup", second["id"].as_str().unwrap()),
+        &a.token,
+        None,
+    )
+    .await;
+    assert!(status.is_success());
+    assert_eq!(for_second(b.device_id), ["call", "call_ended"]);
+    assert_eq!(for_second(b_other.device_id), ["call"]);
+
+    // A phone with notifications off does not ring.
+    call(
+        &app,
+        "PUT",
+        "/api/v1/notifications/settings",
+        &b.token,
+        Some(json!({ "enabled": false })),
+    )
+    .await;
+    let before = sent_to(&state, b.device_id).len();
+    let (_, third) = call(
+        &app,
+        "POST",
+        "/api/v1/calls",
+        &a.token,
+        Some(json!({ "peer_user_id": b.user_id, "modality": "voice", "protocol": 2 })),
+    )
+    .await;
+    assert!(third["id"].is_string(), "{third}");
+    assert_eq!(sent_to(&state, b.device_id).len(), before);
+}
+
+#[tokio::test]
+async fn reading_elsewhere_closes_the_chat_on_android() {
+    let Some((app, state)) = test_state().await else {
+        eprintln!("skipping reading_elsewhere_closes_the_chat_on_android: no DATABASE_URL");
+        return;
+    };
+    let a = register(&app).await;
+    let b = register(&app).await;
+    become_contacts(&app, &a, &b).await;
+    let b_id: Uuid = b.user_id.parse().unwrap();
+    assert_eq!(register_android(&app, &b).await, StatusCode::NO_CONTENT);
+    let b_laptop = login_again(&app, &b).await;
+    let b_web = login_again(&app, &b).await;
+    register_web(
+        &app,
+        &b_web,
+        &format!("https://fcm.googleapis.com/fcm/send/{}", Uuid::new_v4()),
+    )
+    .await;
+    let read_on = |who: &Account| {
+        let (app, token, peer) = (app.clone(), who.token.clone(), a.user_id.clone());
+        async move {
+            let (status, body) = call(
+                &app,
+                "POST",
+                &format!("/api/v1/conversations/{peer}/read"),
+                &token,
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+        }
+    };
+
+    send(&app, &a, &b.user_id, "text").await;
+    send(&app, &a, &b.user_id, "text").await;
+    let conversation =
+        sent_to(&state, b.device_id).pop().unwrap().payload["conversation_id"].clone();
+    let browser_before = sent_to(&state, b_web.device_id).len();
+
+    // Read on the laptop: the phone closes the chat's notifications, nothing shown, and its
+    // topic replaces a message push for that chat still queued at the distributor.
+    read_on(&b_laptop).await;
+    let read = sent_to(&state, b.device_id).pop().unwrap();
+    assert_eq!(read.channel, PushChannel::UnifiedPush);
+    assert_eq!(
+        read.payload,
+        json!({
+            "v": 1,
+            "kind": "read",
+            "tag": conversation,
+            "conversation_id": conversation,
+            "badge": 0,
+        })
+    );
+    assert_eq!(
+        options_of(&read),
+        (DAY, Urgency::Normal, topic(&conversation))
+    );
+    // Browsers would have to show a push: they get none.
+    assert_eq!(sent_to(&state, b_web.device_id).len(), browser_before);
+
+    // Read on the phone itself: nothing for it.
+    send(&app, &a, &b.user_id, "text").await;
+    let before = sent_to(&state, b.device_id).len();
+    read_on(&b).await;
+    assert_eq!(sent_to(&state, b.device_id).len(), before);
+
+    // A mute change moves no chat's notifications: nothing either.
+    call(
+        &app,
+        "PUT",
+        &format!("/api/v1/conversations/{}/mute", a.user_id),
+        &b_laptop.token,
+        None,
+    )
+    .await;
+    assert_eq!(sent_to(&state, b.device_id).len(), before);
+    call(
+        &app,
+        "DELETE",
+        &format!("/api/v1/conversations/{}/mute", a.user_id),
+        &b_laptop.token,
+        None,
+    )
+    .await;
+
+    // In front, the socket's `conversation.read` does it.
+    send(&app, &a, &b.user_id, "text").await;
+    let before = sent_to(&state, b.device_id).len();
+    let open = state
+        .realtime
+        .subscribe(b_id, b.device_id, Uuid::new_v4())
+        .await
+        .expect("subscribe");
+    read_on(&b_laptop).await;
+    assert_eq!(sent_to(&state, b.device_id).len(), before);
+    state.realtime.unsubscribe(b_id, b.device_id, open.id).await;
+
+    // Without a badge the push still closes the chat, with no count.
+    call(
+        &app,
+        "PUT",
+        "/api/v1/notifications/settings",
+        &b.token,
+        Some(json!({ "badge": false })),
+    )
+    .await;
+    send(&app, &a, &b.user_id, "text").await;
+    read_on(&b_laptop).await;
+    let read = sent_to(&state, b.device_id).pop().unwrap();
+    assert_eq!(read.payload["kind"], "read");
+    assert!(read.payload.get("badge").is_none(), "{read:?}");
+}
+
+#[tokio::test]
+async fn a_test_push_reaches_an_android_app() {
+    let Some((app, state)) = test_state().await else {
+        eprintln!("skipping a_test_push_reaches_an_android_app: no DATABASE_URL");
+        return;
+    };
+    let a = register(&app).await;
+    assert_eq!(register_android(&app, &a).await, StatusCode::NO_CONTENT);
+    let (status, body) = call(&app, "POST", "/api/v1/push/test", &a.token, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "sent");
+    assert_eq!(body["channel"], "unifiedpush");
+    let pushes = sent_to(&state, a.device_id);
+    assert_eq!(pushes.len(), 1);
+    assert_eq!(pushes[0].payload["kind"], "test");
+    assert_eq!(options_of(&pushes[0]).0, 60);
+}
+
+#[tokio::test]
+async fn a_removed_android_app_is_woken_and_told_to_wipe() {
+    let Some((app, state)) = test_state().await else {
+        eprintln!("skipping a_removed_android_app_is_woken_and_told_to_wipe: no DATABASE_URL");
+        return;
+    };
+    let phone = register(&app).await;
+    let android = login_again(&app, &phone).await;
+    assert_eq!(
+        register_android(&app, &android).await,
+        StatusCode::NO_CONTENT
+    );
+    let signed_out = login_again(&app, &phone).await;
+    assert_eq!(
+        register_android(&app, &signed_out).await,
+        StatusCode::NO_CONTENT
+    );
+
+    let (status, _) = call(
+        &app,
+        "DELETE",
+        &format!("/api/v1/devices/{}", android.device_id),
+        &phone.token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let wake = sent_to(&state, android.device_id);
+    assert_eq!(wake.len(), 1, "{wake:?}");
+    assert_eq!(wake[0].channel, PushChannel::UnifiedPush);
+    assert_eq!(wake[0].payload, json!({ "v": 1, "kind": "device_removed" }));
+    assert_eq!(options_of(&wake[0]), (DAY, Urgency::High, None));
+    let left: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM web_push_subscriptions WHERE device_id = $1")
+            .bind(android.device_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(left, 0, "the wake went to a subscription already purged");
+
+    // A plain sign-out is no removal: no wake, and the subscription goes with the session.
+    let (status, _) = call(&app, "POST", "/api/v1/auth/logout", &signed_out.token, None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(sent_to(&state, signed_out.device_id).is_empty());
+    let left: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM web_push_subscriptions WHERE device_id = $1")
+            .bind(signed_out.device_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(left, 0);
 }

@@ -270,6 +270,7 @@ async fn announce_mute(
         .dispatch(PushEvent::BadgeSync {
             recipient: auth.user_id,
             reader_device: auth.device_id,
+            conversation_id: None,
         })
         .await;
 }

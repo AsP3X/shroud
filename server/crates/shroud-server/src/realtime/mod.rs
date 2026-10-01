@@ -54,12 +54,46 @@ struct Connection {
     session_id: Uuid,
     tx: DeviceTx,
     /// The app is in front and shows its own notices. A client says otherwise with `focus`;
-    /// until it does, a live socket counts as in front (that is what older apps do).
+    /// until it does, a live socket counts as in front (that is what older apps do) — unless
+    /// it is a background socket.
     focused: bool,
+    /// A background socket (Android's opt-in background connection): it gets every event, but
+    /// while its app is not in front it counts neither as online nor as in front.
+    background: bool,
     /// What this socket last wrote to the Redis online hash. Its cleanup deletes the entry
     /// only while it still holds that: a newer socket of the device, on another replica, may
     /// have written its own since.
     online_ts: Option<i64>,
+}
+
+impl Connection {
+    /// Whether this socket makes its user online (presence, `last_seen`). A background socket
+    /// does only while its app is in front.
+    fn counts_online(&self) -> bool {
+        !self.background || self.focused
+    }
+}
+
+/// How a socket counts until its app says otherwise (`focus`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SocketMode {
+    /// An app on screen, or one that never says: online, and in front.
+    Foreground,
+    /// The auth frame said `"background": true` (Android's background connection, a
+    /// foreground service that keeps the socket open for messages and calls): it receives
+    /// every event, but its user is not online through it and its pushes are not skipped,
+    /// until its app sends `focus:true`.
+    Background,
+}
+
+/// What a `focus` frame changed about whether its socket makes the user online.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnlineChange {
+    Unchanged,
+    /// A background socket's app came to the front.
+    CameOnline,
+    /// It left again (or a socket declared itself a background socket on leaving).
+    WentOffline,
 }
 
 /// HDEL the field only while it holds the value the caller wrote.
@@ -191,9 +225,25 @@ impl RealtimeHub {
         device_id: Uuid,
         session_id: Uuid,
     ) -> Result<Subscription, &'static str> {
+        self.subscribe_with(user_id, device_id, session_id, SocketMode::Foreground)
+            .await
+    }
+
+    /// [`Self::subscribe`] for a socket that starts as `mode` says.
+    ///
+    /// Human: A background socket counts against the per-user cap like any other, and gets
+    /// every event; it just leaves no trace in presence (no online entry, no focus in front).
+    pub async fn subscribe_with(
+        self: &Arc<Self>,
+        user_id: Uuid,
+        device_id: Uuid,
+        session_id: Uuid,
+        mode: SocketMode,
+    ) -> Result<Subscription, &'static str> {
         let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAP);
         let id = self.next_connection_id.fetch_add(1, Ordering::Relaxed);
-        {
+        let background = mode == SocketMode::Background;
+        let replaced_online_ts = {
             let mut connections = self.connections.write().await;
             if let Some(set) = connections.devices_by_user.get(&user_id)
                 && set.len() >= MAX_WS_PER_USER
@@ -201,13 +251,14 @@ impl RealtimeHub {
             {
                 return Err("too many websocket connections for this user");
             }
-            connections.by_device.insert(
+            let replaced = connections.by_device.insert(
                 device_id,
                 Connection {
                     id,
                     session_id,
                     tx,
-                    focused: true,
+                    focused: !background,
+                    background,
                     online_ts: None,
                 },
             );
@@ -216,8 +267,16 @@ impl RealtimeHub {
                 .entry(user_id)
                 .or_default()
                 .insert(device_id);
+            replaced.and_then(|connection| connection.online_ts)
+        };
+        if background {
+            // The device's previous socket may have left it online in Redis: no longer.
+            self.mark_offline(user_id, device_id, replaced_online_ts)
+                .await;
+            self.write_focus(user_id, device_id, id, false).await;
+        } else {
+            self.mark_online(user_id, device_id, id).await;
         }
-        self.mark_online(user_id, device_id, id).await;
         Ok(Subscription { id, events: rx })
     }
 
@@ -251,33 +310,75 @@ impl RealtimeHub {
     /// still have a socket. Pushes are skipped for a device that is actually in front; these
     /// are not, so a call and a message still reach them.
     /// Agent: NO-OP unless `connection_id` still owns the device. Also written to Redis so
-    /// another replica's push decision sees it.
+    /// another replica's push decision sees it. RETURNS whether a background socket's user
+    /// came online or went offline through it (the caller announces presence).
     pub async fn set_focus(
         &self,
         user_id: Uuid,
         device_id: Uuid,
         connection_id: u64,
         focused: bool,
-    ) {
-        {
+    ) -> OnlineChange {
+        self.update_focus(user_id, device_id, connection_id, focused, None)
+            .await
+    }
+
+    /// [`Self::set_focus`], and with `background` set, whether the socket is a background
+    /// socket from now on (`{"type":"focus","focused":false,"background":true}`: a socket the
+    /// app keeps open for its background connection when it leaves the screen).
+    ///
+    /// Human: A background socket in front counts like any socket; once its app leaves again
+    /// it is back to background accounting — offline, not in front.
+    /// Agent: Redis online entry written when it comes online, cleared when it goes offline.
+    pub async fn update_focus(
+        &self,
+        user_id: Uuid,
+        device_id: Uuid,
+        connection_id: u64,
+        focused: bool,
+        background: Option<bool>,
+    ) -> OnlineChange {
+        let (change, cleared_online_ts) = {
             let mut connections = self.connections.write().await;
             if !connections
                 .devices_by_user
                 .get(&user_id)
                 .is_some_and(|devices| devices.contains(&device_id))
             {
-                return;
+                return OnlineChange::Unchanged;
             }
             let Some(connection) = connections.by_device.get_mut(&device_id) else {
-                return;
+                return OnlineChange::Unchanged;
             };
             if connection.id != connection_id {
-                return;
+                return OnlineChange::Unchanged;
             }
+            let was_online = connection.counts_online();
             connection.focused = focused;
+            if let Some(background) = background {
+                connection.background = background;
+            }
+            match (was_online, connection.counts_online()) {
+                (false, true) => (OnlineChange::CameOnline, None),
+                (true, false) => (OnlineChange::WentOffline, connection.online_ts.take()),
+                _ => (OnlineChange::Unchanged, None),
+            }
+        };
+        match change {
+            // Writes the online entry and the focus.
+            OnlineChange::CameOnline => self.mark_online(user_id, device_id, connection_id).await,
+            OnlineChange::WentOffline => {
+                self.mark_offline(user_id, device_id, cleared_online_ts)
+                    .await;
+                self.write_focus(user_id, device_id, connection_id, focused)
+                    .await;
+            }
+            OnlineChange::Unchanged => {
+                self.write_focus(user_id, device_id, connection_id, focused)
+                    .await;
+            }
         }
-        self.write_focus(user_id, device_id, connection_id, focused)
-            .await;
+        change
     }
 
     /// Closes the sockets opened with any of `session_ids`, here and on every other replica.
@@ -354,7 +455,8 @@ impl RealtimeHub {
         }
     }
 
-    /// True if the user has at least one online WebSocket (local or Redis online hash).
+    /// True if the user has at least one online WebSocket (local or Redis online hash). A
+    /// background socket whose app is not in front does not count.
     pub async fn is_user_online(&self, user_id: Uuid) -> bool {
         if let Some(mut conn) = self.redis.read().await.clone() {
             match redis_online_count(&mut conn, user_id).await {
@@ -367,7 +469,14 @@ impl RealtimeHub {
         connections
             .devices_by_user
             .get(&user_id)
-            .is_some_and(|devices| !devices.is_empty())
+            .is_some_and(|devices| {
+                devices.iter().any(|device_id| {
+                    connections
+                        .by_device
+                        .get(device_id)
+                        .is_some_and(Connection::counts_online)
+                })
+            })
     }
 
     /// True when this device is connected and its app is in front, so it shows its own notices.
@@ -375,7 +484,7 @@ impl RealtimeHub {
     /// Human: Push decisions are per device. An app the user is looking at needs no push. One
     /// that is signed in but backgrounded or unfocused does, even while its socket lingers.
     /// A socket that never says (an older app) counts as in front. A device with no socket
-    /// does not.
+    /// does not, nor does one with only a background socket while its app is not in front.
     pub async fn is_device_foreground(&self, user_id: Uuid, device_id: Uuid) -> bool {
         {
             let connections = self.connections.read().await;
@@ -399,7 +508,8 @@ impl RealtimeHub {
     /// True if this device has a live WebSocket here or (with Redis) on another replica.
     ///
     /// Human: Presence is per device: a connected app counts as online, whether or not it is
-    /// the one in front.
+    /// the one in front — except over a background socket, which counts only while its app is
+    /// in front.
     pub async fn is_device_online(&self, user_id: Uuid, device_id: Uuid) -> bool {
         {
             let connections = self.connections.read().await;
@@ -407,8 +517,9 @@ impl RealtimeHub {
                 .devices_by_user
                 .get(&user_id)
                 .is_some_and(|devices| devices.contains(&device_id))
+                && let Some(connection) = connections.by_device.get(&device_id)
             {
-                return true;
+                return connection.counts_online();
             }
         }
         if let Some(mut conn) = self.redis.read().await.clone() {
@@ -472,7 +583,8 @@ impl RealtimeHub {
             .map(|ring| ring.payload.clone())
     }
 
-    /// Refreshes this socket's Redis online heartbeat (call from WS loop).
+    /// Refreshes this socket's Redis online heartbeat (call from WS loop). A background
+    /// socket whose app is not in front writes none.
     pub async fn refresh_online(&self, user_id: Uuid, device_id: Uuid, connection_id: u64) {
         self.mark_online(user_id, device_id, connection_id).await;
     }
@@ -483,7 +595,7 @@ impl RealtimeHub {
             let Some(connection) = connections.by_device.get(&device_id) else {
                 return;
             };
-            if connection.id != connection_id {
+            if connection.id != connection_id || !connection.counts_online() {
                 return;
             }
             connection.focused
@@ -935,6 +1047,145 @@ mod tests {
         hub.unsubscribe(user, device, socket.id).await;
         assert!(!hub.is_device_foreground(user, device).await);
         assert!(!hub.is_device_online(user, device).await);
+    }
+
+    #[tokio::test]
+    async fn a_background_socket_counts_only_while_its_app_is_in_front() {
+        let hub = Arc::new(RealtimeHub::new());
+        let (user, phone) = (Uuid::new_v4(), Uuid::new_v4());
+        let mut socket = hub
+            .subscribe_with(user, phone, Uuid::new_v4(), SocketMode::Background)
+            .await
+            .expect("background socket");
+
+        // It hears everything, but its user is not online through it, nor its app in front.
+        hub.publish_to_users([user], None, "event").await;
+        assert_eq!(socket.events.try_recv().as_deref(), Ok("event"));
+        assert!(!hub.is_user_online(user).await);
+        assert!(!hub.is_device_online(user, phone).await);
+        assert!(!hub.is_device_foreground(user, phone).await);
+        // Saying it is still away changes nothing.
+        assert_eq!(
+            hub.set_focus(user, phone, socket.id, false).await,
+            OnlineChange::Unchanged
+        );
+        assert!(!hub.is_user_online(user).await);
+
+        // The app comes to the front on the same socket: online, and in front.
+        assert_eq!(
+            hub.set_focus(user, phone, socket.id, true).await,
+            OnlineChange::CameOnline
+        );
+        assert!(hub.is_user_online(user).await);
+        assert!(hub.is_device_online(user, phone).await);
+        assert!(hub.is_device_foreground(user, phone).await);
+        assert_eq!(
+            hub.set_focus(user, phone, socket.id, true).await,
+            OnlineChange::Unchanged
+        );
+
+        // It leaves again: back to background accounting.
+        assert_eq!(
+            hub.set_focus(user, phone, socket.id, false).await,
+            OnlineChange::WentOffline
+        );
+        assert!(!hub.is_user_online(user).await);
+        assert!(!hub.is_device_foreground(user, phone).await);
+        hub.publish_to_users([user], None, "later").await;
+        assert_eq!(socket.events.try_recv().as_deref(), Ok("later"));
+
+        // A stale socket id changes nothing.
+        assert_eq!(
+            hub.set_focus(user, phone, socket.id + 1, true).await,
+            OnlineChange::Unchanged
+        );
+        assert!(!hub.is_user_online(user).await);
+    }
+
+    #[tokio::test]
+    async fn a_background_socket_leaves_other_devices_online() {
+        let hub = Arc::new(RealtimeHub::new());
+        let (user, phone, laptop) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let _phone = hub
+            .subscribe_with(user, phone, Uuid::new_v4(), SocketMode::Background)
+            .await
+            .expect("phone");
+        let laptop_socket = hub
+            .subscribe(user, laptop, Uuid::new_v4())
+            .await
+            .expect("laptop");
+        assert!(hub.is_user_online(user).await);
+        assert!(hub.is_device_online(user, laptop).await);
+        assert!(!hub.is_device_online(user, phone).await);
+
+        hub.unsubscribe(user, laptop, laptop_socket.id).await;
+        assert!(!hub.is_user_online(user).await);
+    }
+
+    #[tokio::test]
+    async fn a_socket_kept_for_the_background_connection_turns_background() {
+        let hub = Arc::new(RealtimeHub::new());
+        let (user, phone) = (Uuid::new_v4(), Uuid::new_v4());
+        // Opened while the app was on screen, as every socket is.
+        let socket = hub
+            .subscribe(user, phone, Uuid::new_v4())
+            .await
+            .expect("socket");
+        assert!(hub.is_user_online(user).await);
+
+        // An ordinary socket that leaves the front stays online (a tab in the background).
+        assert_eq!(
+            hub.update_focus(user, phone, socket.id, false, None).await,
+            OnlineChange::Unchanged
+        );
+        assert!(hub.is_user_online(user).await);
+        assert!(!hub.is_device_foreground(user, phone).await);
+        hub.set_focus(user, phone, socket.id, true).await;
+
+        // The app leaves and keeps its socket for the background connection.
+        assert_eq!(
+            hub.update_focus(user, phone, socket.id, false, Some(true))
+                .await,
+            OnlineChange::WentOffline
+        );
+        assert!(!hub.is_user_online(user).await);
+        assert!(!hub.is_device_foreground(user, phone).await);
+        // Back in front, then away again without saying: still a background socket.
+        assert_eq!(
+            hub.update_focus(user, phone, socket.id, true, None).await,
+            OnlineChange::CameOnline
+        );
+        assert_eq!(
+            hub.update_focus(user, phone, socket.id, false, None).await,
+            OnlineChange::WentOffline
+        );
+        // The background connection was switched off while the socket stays: ordinary again.
+        assert_eq!(
+            hub.update_focus(user, phone, socket.id, false, Some(false))
+                .await,
+            OnlineChange::CameOnline
+        );
+        assert!(hub.is_user_online(user).await);
+    }
+
+    #[tokio::test]
+    async fn a_background_socket_replacing_an_online_one_takes_the_device_offline() {
+        let hub = Arc::new(RealtimeHub::new());
+        let (user, phone) = (Uuid::new_v4(), Uuid::new_v4());
+        let old = hub
+            .subscribe(user, phone, Uuid::new_v4())
+            .await
+            .expect("old");
+        assert!(hub.is_user_online(user).await);
+        let new = hub
+            .subscribe_with(user, phone, Uuid::new_v4(), SocketMode::Background)
+            .await
+            .expect("new");
+        assert!(!hub.is_user_online(user).await);
+        // The old socket's cleanup leaves the new one registered.
+        hub.unsubscribe(user, phone, old.id).await;
+        hub.set_focus(user, phone, new.id, true).await;
+        assert!(hub.is_user_online(user).await);
     }
 
     #[test]

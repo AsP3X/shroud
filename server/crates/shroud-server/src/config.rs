@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
 use crate::media_store::NebularConfig;
+use crate::push::UnifiedPushPolicy;
 use crate::turn::TurnConfig;
 
 /// Default Postgres pool size when `DATABASE_POOL_MAX` is unset.
@@ -57,6 +58,8 @@ pub struct Config {
     pub turn: Option<TurnConfig>,
     /// Most emoji one person may leave on one message (`REACTIONS_MAX_PER_USER`, 1–20).
     pub reactions_max_per_user: u32,
+    /// Where Android (UnifiedPush) subscriptions may point (`UNIFIEDPUSH_*`).
+    pub unifiedpush: UnifiedPushPolicy,
 }
 
 /// Where encrypted media blobs live (see [`crate::media_store`]).
@@ -134,6 +137,20 @@ impl Config {
         let reactions_max_per_user =
             parse_reactions_max_per_user(std::env::var("REACTIONS_MAX_PER_USER").ok().as_deref())?;
 
+        let unifiedpush = unifiedpush_policy(&|name| std::env::var(name).ok())?;
+        if unifiedpush.allow_local_http {
+            tracing::warn!(
+                "UNIFIEDPUSH_ALLOW_LOCAL_HTTP is on: Android subscriptions may point at http:// on \
+                 this machine. For end-to-end tests only — never in production"
+            );
+        }
+        if unifiedpush.public_hosts {
+            tracing::info!(
+                "UNIFIEDPUSH_PUBLIC_HOSTS is on: Android subscriptions may point at any public \
+                 https host"
+            );
+        }
+
         Ok(Self {
             database_url,
             database_pool_max,
@@ -147,6 +164,7 @@ impl Config {
             ice_servers: ice.servers,
             turn: ice.turn,
             reactions_max_per_user,
+            unifiedpush,
         })
     }
 
@@ -298,6 +316,34 @@ pub fn media_config(lookup: &dyn Fn(&str) -> Option<String>) -> Result<MediaConf
     })
 }
 
+/// Where Android subscriptions may point, read through `lookup` (the process environment
+/// outside tests).
+///
+/// Human: The built-in UnifiedPush servers need no setting. `UNIFIEDPUSH_ALLOWED_HOSTS` adds
+/// an operator's own (host suffixes, comma separated); `UNIFIEDPUSH_PUBLIC_HOSTS=true` lets the
+/// app use any public https host; `UNIFIEDPUSH_ALLOW_LOCAL_HTTP=true` is for end-to-end tests
+/// against a local ntfy only. A switch that is not true/false stops startup.
+pub fn unifiedpush_policy(
+    lookup: &dyn Fn(&str) -> Option<String>,
+) -> Result<UnifiedPushPolicy, AppError> {
+    Ok(UnifiedPushPolicy {
+        allowed_hosts: crate::push::web_push::host_suffixes(
+            &lookup("UNIFIEDPUSH_ALLOWED_HOSTS").unwrap_or_default(),
+        ),
+        public_hosts: parse_bool_env(
+            "UNIFIEDPUSH_PUBLIC_HOSTS",
+            lookup("UNIFIEDPUSH_PUBLIC_HOSTS").as_deref(),
+            false,
+        )?,
+        allow_local_http: parse_bool_env(
+            "UNIFIEDPUSH_ALLOW_LOCAL_HTTP",
+            lookup("UNIFIEDPUSH_ALLOW_LOCAL_HTTP").as_deref(),
+            false,
+        )?,
+        resolve_overrides: std::collections::HashMap::new(),
+    })
+}
+
 /// S3's bucket naming rules, which also keep Nebular's system directories out of reach.
 fn is_valid_bucket_name(name: &str) -> bool {
     let bytes = name.as_bytes();
@@ -442,6 +488,43 @@ mod tests {
         assert_eq!(media.bucket, "media.shroud-1");
         assert_eq!(media.data_dir, PathBuf::from("/srv/media"));
         assert!(!format!("{media:?}").contains(SECRET));
+    }
+
+    fn unifiedpush_from(pairs: &[(&str, &str)]) -> Result<UnifiedPushPolicy, AppError> {
+        let env: std::collections::HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect();
+        unifiedpush_policy(&|name| env.get(name).cloned())
+    }
+
+    #[test]
+    fn unifiedpush_is_built_in_hosts_only_by_default() {
+        let policy = unifiedpush_from(&[]).unwrap();
+        assert!(policy.allowed_hosts.is_empty());
+        assert!(!policy.public_hosts);
+        assert!(!policy.allow_local_http);
+        assert!(policy.resolve_overrides.is_empty());
+        let policy = unifiedpush_from(&[
+            (
+                "UNIFIEDPUSH_ALLOWED_HOSTS",
+                " Push.Example.org, .ntfy.example.net ,",
+            ),
+            ("UNIFIEDPUSH_PUBLIC_HOSTS", "true"),
+            ("UNIFIEDPUSH_ALLOW_LOCAL_HTTP", "1"),
+        ])
+        .unwrap();
+        assert_eq!(
+            policy.allowed_hosts,
+            vec![
+                "push.example.org".to_string(),
+                "ntfy.example.net".to_string()
+            ]
+        );
+        assert!(policy.public_hosts);
+        assert!(policy.allow_local_http);
+        let err = unifiedpush_from(&[("UNIFIEDPUSH_PUBLIC_HOSTS", "sometimes")]).unwrap_err();
+        assert!(err.to_string().contains("UNIFIEDPUSH_PUBLIC_HOSTS"));
     }
 
     #[test]

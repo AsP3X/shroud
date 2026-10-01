@@ -327,6 +327,79 @@ async fn read_receipts_single_and_bulk() {
     let _ = msg2;
 }
 
+/// Human: A background socket (the Android app's background connection) does not make its
+/// user online in `GET /presence` until its app is in front, and not after it left again.
+#[tokio::test]
+async fn presence_ignores_a_background_socket_until_its_app_is_in_front() {
+    let Some(database_url) = std::env::var("DATABASE_URL").ok() else {
+        eprintln!(
+            "skipping presence_ignores_a_background_socket_until_its_app_is_in_front: no DATABASE_URL"
+        );
+        return;
+    };
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .expect("connect to DATABASE_URL");
+    sqlx::migrate!("../../migrations/postgres")
+        .run(&pool)
+        .await
+        .expect("apply migrations");
+    let state = test_state(pool);
+    let app = axum::Router::new()
+        .merge(routes::router())
+        .with_state(state.clone());
+
+    let (token_a, user_a) = register(&app).await;
+    let (token_b, user_b) = register(&app).await;
+    become_contacts(&app, &token_a, &user_a, &token_b, &user_b).await;
+    let online = |viewer: String, user: String| {
+        let app = app.clone();
+        async move {
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .method("GET")
+                        .uri(format!("/api/v1/presence/{user}"))
+                        .header(header::AUTHORIZATION, format!("Bearer {viewer}"))
+                        .body(Body::empty())
+                        .expect("request"),
+                )
+                .await
+                .expect("response");
+            assert_eq!(response.status(), StatusCode::OK);
+            json_body(response).await["online"].as_bool().unwrap()
+        }
+    };
+
+    let b: Uuid = user_b.parse().unwrap();
+    let device: Uuid = sqlx::query_scalar("SELECT id FROM devices WHERE user_id = $1")
+        .bind(b)
+        .fetch_one(&state.pool)
+        .await
+        .expect("device");
+    let socket = state
+        .realtime
+        .subscribe_with(
+            b,
+            device,
+            Uuid::new_v4(),
+            shroud_server::realtime::SocketMode::Background,
+        )
+        .await
+        .expect("background socket");
+    assert!(!online(token_a.clone(), user_b.clone()).await);
+    // Its own user sees it the same way.
+    assert!(!online(token_b.clone(), user_b.clone()).await);
+
+    state.realtime.set_focus(b, device, socket.id, true).await;
+    assert!(online(token_a.clone(), user_b.clone()).await);
+
+    state.realtime.set_focus(b, device, socket.id, false).await;
+    assert!(!online(token_a.clone(), user_b.clone()).await);
+}
+
 #[tokio::test]
 async fn read_requires_participant() {
     let Some(app) = test_app().await else {

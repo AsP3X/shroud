@@ -977,3 +977,327 @@ async fn websocket_reaction_events_reach_who_can_see_the_message() {
     let _ = shutdown.send(());
     let _ = server.await;
 }
+
+// MARK: background sockets (Android's background connection)
+
+/// Opens a socket with `auth` as its first frame; returns it with its `auth.ok`.
+async fn connect_with(addr: std::net::SocketAddr, auth: Value) -> (Socket, Value) {
+    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/api/v1/ws"))
+        .await
+        .expect("ws connect");
+    socket
+        .send(Message::Text(auth.to_string().into()))
+        .await
+        .expect("send auth");
+    let ok = next_of_type(&mut socket, "auth.ok", Duration::from_secs(5))
+        .await
+        .expect("auth.ok");
+    (socket, ok)
+}
+
+/// A socket the way the Android app's background connection opens it.
+async fn connect_background(addr: std::net::SocketAddr, token: &str) -> (Socket, Value) {
+    connect_with(
+        addr,
+        json!({ "type": "auth", "token": token, "background": true }),
+    )
+    .await
+}
+
+async fn send_frame(socket: &mut Socket, frame: Value) {
+    socket
+        .send(Message::Text(frame.to_string().into()))
+        .await
+        .expect("send frame");
+}
+
+/// `GET /presence/{user}` as `viewer`: (online, last_seen_at).
+async fn presence_of(
+    client: &reqwest::Client,
+    addr: std::net::SocketAddr,
+    viewer: &str,
+    user: &str,
+) -> (bool, Value) {
+    let response = client
+        .get(format!("http://{addr}/api/v1/presence/{user}"))
+        .bearer_auth(viewer)
+        .send()
+        .await
+        .expect("presence");
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let body: Value = response.json().await.expect("json");
+    (
+        body["online"].as_bool().unwrap(),
+        body.get("last_seen_at").cloned().unwrap_or(Value::Null),
+    )
+}
+
+/// The next `presence.update` about `user`, if one comes within `wait`.
+async fn presence_update(socket: &mut Socket, user: &str, wait: Duration) -> Option<Value> {
+    let deadline = tokio::time::Instant::now() + wait;
+    loop {
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let event = next_of_type(socket, "presence.update", left).await?;
+        if event["user_id"] == user {
+            return Some(event);
+        }
+    }
+}
+
+/// Human: The Android app's opt-in background connection keeps a socket open while the app
+/// is not on screen. Its user must not look online to their contacts all day, nor its
+/// `last_seen` move, yet it must get every event. Once the app is on screen the same socket
+/// counts like any other; when it leaves, it is back to background accounting.
+#[tokio::test]
+async fn a_background_socket_is_not_online_until_its_app_is_in_front() {
+    let Some(pool) = test_pool().await else {
+        eprintln!(
+            "skipping a_background_socket_is_not_online_until_its_app_is_in_front: DATABASE_URL unavailable"
+        );
+        return;
+    };
+    let (addr, shutdown_tx, server) = spawn_app(pool).await;
+    let client = reqwest::Client::new();
+    let (alice_token, alice_id) = register(&client, addr).await;
+    let (bob_token, bob_id) = register(&client, addr).await;
+    become_contacts(
+        &client,
+        addr,
+        (&alice_token, &alice_id),
+        (&bob_token, &bob_id),
+    )
+    .await;
+    let mut bob = connect_authed(addr, &bob_token).await;
+    let short = Duration::from_millis(500);
+    let (online, never_seen) = presence_of(&client, addr, &bob_token, &alice_id).await;
+    assert!(!online);
+
+    let (mut alice, ok) = connect_background(addr, &alice_token).await;
+    assert_eq!(ok["user_id"], alice_id);
+    assert!(
+        presence_update(&mut bob, &alice_id, short).await.is_none(),
+        "a background socket is not announced"
+    );
+    assert_eq!(
+        presence_of(&client, addr, &bob_token, &alice_id).await,
+        (false, never_seen.clone()),
+        "neither online nor seen"
+    );
+    // It gets every event all the same.
+    send_text(&client, addr, &bob_token, &alice_id).await;
+    assert!(
+        next_of_type(&mut alice, "message.new", Duration::from_secs(5))
+            .await
+            .is_some()
+    );
+
+    // The app comes to the front on the same socket: online, and seen now.
+    send_frame(&mut alice, json!({ "type": "focus", "focused": true })).await;
+    let update = presence_update(&mut bob, &alice_id, Duration::from_secs(5))
+        .await
+        .expect("online once in front");
+    assert_eq!(update["online"], true);
+    let (online, seen) = presence_of(&client, addr, &bob_token, &alice_id).await;
+    assert!(online);
+    assert!(seen.is_string() && seen != never_seen, "{seen}");
+
+    // It leaves again: offline, while the socket stays open and keeps delivering.
+    send_frame(&mut alice, json!({ "type": "focus", "focused": false })).await;
+    let update = presence_update(&mut bob, &alice_id, Duration::from_secs(5))
+        .await
+        .expect("offline once away");
+    assert_eq!(update["online"], false);
+    let (online, left_at) = presence_of(&client, addr, &bob_token, &alice_id).await;
+    assert!(!online);
+    send_text(&client, addr, &bob_token, &alice_id).await;
+    assert!(
+        next_of_type(&mut alice, "message.new", Duration::from_secs(5))
+            .await
+            .is_some()
+    );
+
+    // Closing it changes nothing anyone can see.
+    let _ = alice.close(None).await;
+    assert!(presence_update(&mut bob, &alice_id, short).await.is_none());
+    assert_eq!(
+        presence_of(&client, addr, &bob_token, &alice_id).await,
+        (false, left_at)
+    );
+
+    let _ = bob.close(None).await;
+    let _ = shutdown_tx.send(());
+    let _ = server.await;
+}
+
+/// Human: A socket opened while the app was on screen is kept by the background connection
+/// when the app leaves. `focus:false` with `"background": true` turns it into a background
+/// socket; a plain `focus:false` (a browser tab in the background) keeps its user online.
+#[tokio::test]
+async fn a_socket_kept_for_the_background_connection_goes_offline() {
+    let Some(pool) = test_pool().await else {
+        eprintln!(
+            "skipping a_socket_kept_for_the_background_connection_goes_offline: DATABASE_URL unavailable"
+        );
+        return;
+    };
+    let (addr, shutdown_tx, server) = spawn_app(pool).await;
+    let client = reqwest::Client::new();
+    let (alice_token, alice_id) = register(&client, addr).await;
+    let (bob_token, bob_id) = register(&client, addr).await;
+    become_contacts(
+        &client,
+        addr,
+        (&alice_token, &alice_id),
+        (&bob_token, &bob_id),
+    )
+    .await;
+    let mut bob = connect_authed(addr, &bob_token).await;
+    let short = Duration::from_millis(500);
+
+    let mut alice = connect_authed(addr, &alice_token).await;
+    let update = presence_update(&mut bob, &alice_id, Duration::from_secs(5))
+        .await
+        .expect("online");
+    assert_eq!(update["online"], true);
+
+    send_frame(&mut alice, json!({ "type": "focus", "focused": false })).await;
+    assert!(presence_update(&mut bob, &alice_id, short).await.is_none());
+    assert!(presence_of(&client, addr, &bob_token, &alice_id).await.0);
+
+    send_frame(
+        &mut alice,
+        json!({ "type": "focus", "focused": false, "background": true }),
+    )
+    .await;
+    let update = presence_update(&mut bob, &alice_id, Duration::from_secs(5))
+        .await
+        .expect("offline");
+    assert_eq!(update["online"], false);
+    assert!(!presence_of(&client, addr, &bob_token, &alice_id).await.0);
+
+    send_frame(&mut alice, json!({ "type": "focus", "focused": true })).await;
+    let update = presence_update(&mut bob, &alice_id, Duration::from_secs(5))
+        .await
+        .expect("online again");
+    assert_eq!(update["online"], true);
+    let _ = alice.close(None).await;
+    let update = presence_update(&mut bob, &alice_id, Duration::from_secs(5))
+        .await
+        .expect("offline on close");
+    assert_eq!(update["online"], false);
+
+    let _ = bob.close(None).await;
+    let _ = shutdown_tx.send(());
+    let _ = server.await;
+}
+
+/// Human: Removing a phone whose only socket is its background connection still reaches it:
+/// that is how a removal wipes a phone without a push distributor.
+#[tokio::test]
+async fn removing_a_device_closes_its_background_socket() {
+    let Some(pool) = test_pool().await else {
+        eprintln!(
+            "skipping removing_a_device_closes_its_background_socket: DATABASE_URL unavailable"
+        );
+        return;
+    };
+    let (addr, shutdown_tx, server) = spawn_app(pool).await;
+    let client = reqwest::Client::new();
+    let alice = unique_username();
+    let (phone_token, alice_id) = register_as(&client, addr, &alice).await;
+    let (android_token, android_id) = log_in(&client, addr, &alice, None).await;
+    let (mut android, _) = connect_background(addr, &android_token).await;
+    let (bob_token, bob_id) = register(&client, addr).await;
+    become_contacts(
+        &client,
+        addr,
+        (&phone_token, &alice_id),
+        (&bob_token, &bob_id),
+    )
+    .await;
+    send_text(&client, addr, &bob_token, &alice_id).await;
+    assert!(
+        next_of_type(&mut android, "message.new", Duration::from_secs(5))
+            .await
+            .is_some()
+    );
+
+    let removed = client
+        .delete(format!("http://{addr}/api/v1/devices/{android_id}"))
+        .bearer_auth(&phone_token)
+        .send()
+        .await
+        .expect("remove device");
+    assert_eq!(removed.status(), reqwest::StatusCode::NO_CONTENT);
+    assert_removed(&mut android).await;
+
+    let _ = shutdown_tx.send(());
+    let _ = server.await;
+}
+
+/// Human: Behind a load balancer the push decision and the presence answer can come from a
+/// replica that does not hold the socket. A background socket writes no online entry to
+/// Redis, so it counts there as nowhere; in front it counts like any socket. Also needs
+/// `REDIS_URL` (a throwaway instance).
+#[tokio::test]
+async fn a_background_socket_counts_nowhere_across_replicas() {
+    let Some(pool) = test_pool().await else {
+        eprintln!(
+            "skipping a_background_socket_counts_nowhere_across_replicas: DATABASE_URL unavailable"
+        );
+        return;
+    };
+    let Ok(redis_url) = std::env::var("REDIS_URL") else {
+        eprintln!("skipping a_background_socket_counts_nowhere_across_replicas: REDIS_URL unset");
+        return;
+    };
+    let api_state = redis_replica(pool.clone(), &redis_url).await;
+    let (api, api_shutdown, api_server) = spawn_state(api_state.clone()).await;
+    let (ws, ws_shutdown, ws_server) = spawn_state(redis_replica(pool, &redis_url).await).await;
+    let client = reqwest::Client::new();
+    let (token, user_id) = register(&client, api).await;
+    let user: Uuid = user_id.parse().unwrap();
+
+    let (mut socket, ok) = connect_background(ws, &token).await;
+    let device: Uuid = ok["device_id"].as_str().unwrap().parse().unwrap();
+    let hub = &api_state.realtime;
+    // Seen from the other replica: not online, not in front (so its pushes go out).
+    assert!(!hub.is_user_online(user).await);
+    assert!(!hub.is_device_online(user, device).await);
+    assert!(!hub.is_device_foreground(user, device).await);
+
+    // Waits until the other replica sees the user online and the device in front (or both
+    // not), or fails: the frame is handled on the socket's replica in its own time.
+    let settle = |want: bool| {
+        let hub = hub.clone();
+        async move {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                let seen = (
+                    hub.is_user_online(user).await,
+                    hub.is_device_online(user, device).await,
+                    hub.is_device_foreground(user, device).await,
+                );
+                if seen == (want, want, want) {
+                    return;
+                }
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "never became {want}: {seen:?}"
+                );
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }
+    };
+    send_frame(&mut socket, json!({ "type": "focus", "focused": true })).await;
+    settle(true).await;
+
+    send_frame(&mut socket, json!({ "type": "focus", "focused": false })).await;
+    settle(false).await;
+
+    let _ = socket.close(None).await;
+    for (shutdown, server) in [(api_shutdown, api_server), (ws_shutdown, ws_server)] {
+        let _ = shutdown.send(());
+        let _ = server.await;
+    }
+}

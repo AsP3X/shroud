@@ -1,11 +1,12 @@
-//! Push registration: APNs tokens (alerts and PushKit VoIP), Web Push subscriptions, and a
-//! test notification.
+//! Push registration: APNs tokens (alerts and PushKit VoIP), Web Push subscriptions (browsers,
+//! and the Android app through UnifiedPush), and a test notification.
 //!
-//! Human: One device, one relay: an iPhone registers APNs tokens, a browser a Web Push
-//! subscription. A token or endpoint that moves to another device (a reinstall, a second
-//! account in the same browser) is taken away from the device that had it, so one person's
-//! notifications never ring on someone else's screen.
-//! Agent: DB push_tokens (PK device_id + kind), web_push_subscriptions; CALLS PushService.
+//! Human: One device, one relay: an iPhone registers APNs tokens, a browser or an Android
+//! phone a Web Push subscription. A token or endpoint that moves to another device (a
+//! reinstall, a second account in the same browser) is taken away from the device that had
+//! it, so one person's notifications never ring on someone else's screen.
+//! Agent: DB push_tokens (PK device_id + kind), web_push_subscriptions (+ `client`); CALLS
+//! PushService.
 
 use axum::{
     Json,
@@ -17,8 +18,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::session::AuthContext;
 use crate::error::AppError;
-use crate::push::TestPushOutcome;
 use crate::push::web_push::parse_subscription_keys;
+use crate::push::{SubscriptionClient, TestPushOutcome};
 use crate::rate_limit::budgets;
 use crate::state::AppState;
 
@@ -172,11 +173,14 @@ pub async fn web_key(
     Ok(Json(WebPushKeyResponse { public_key }))
 }
 
-/// The browser's `PushSubscription.toJSON()`.
+/// The browser's `PushSubscription.toJSON()`, or the Android app's UnifiedPush endpoint and
+/// the RFC 8291 keys it generated, with `"client": "android"`.
 #[derive(Debug, Deserialize)]
 pub struct WebSubscriptionRequest {
     pub endpoint: String,
     pub keys: WebSubscriptionKeys,
+    /// `browser` (absent: what browsers have always sent) or `android`.
+    pub client: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -185,7 +189,16 @@ pub struct WebSubscriptionKeys {
     pub auth: String,
 }
 
-/// `PUT /push/web/subscription` — this browser's push subscription.
+/// The refusal an Android app shows as "this server refuses your distributor".
+const REFUSED_DISTRIBUTOR: &str = "This server doesn’t send to that UnifiedPush distributor.";
+
+/// `PUT /push/web/subscription` — this browser's push subscription, or this Android app's
+/// (`client: "android"`, an endpoint from its UnifiedPush distributor).
+///
+/// Human: Browsers subscribe on the push services browsers use. An Android endpoint is on a
+/// UnifiedPush server — the built-in public ones, the operator's own
+/// (`UNIFIEDPUSH_ALLOWED_HOSTS`), or with `UNIFIEDPUSH_PUBLIC_HOSTS` any public host — and
+/// never on Google's (`web_push::android_endpoint`).
 pub async fn put_web_subscription(
     State(state): State<AppState>,
     auth: AuthContext,
@@ -196,12 +209,24 @@ pub async fn put_web_subscription(
             "Web Push is not available on this server.",
         ));
     }
+    let client = match body.client.as_deref().map(str::trim) {
+        None => SubscriptionClient::Browser,
+        Some(value) => SubscriptionClient::parse(value)
+            .ok_or_else(|| AppError::validation("client must be 'browser' or 'android'."))?,
+    };
     // Stored as parsed: the form the HTTP client will contact.
     let endpoint = state
         .push
-        .allowed_web_endpoint(body.endpoint.trim())
-        .ok_or_else(|| {
-            AppError::validation("endpoint must be an https URL of a browser push service.")
+        .accept_web_endpoint(body.endpoint.trim(), client)
+        .await
+        .ok_or_else(|| match client {
+            SubscriptionClient::Browser => {
+                AppError::validation("endpoint must be an https URL of a browser push service.")
+            }
+            SubscriptionClient::Android => {
+                tracing::info!(device_id = %auth.device_id, "push.web android endpoint refused");
+                AppError::validation(REFUSED_DISTRIBUTOR)
+            }
         })?;
     let endpoint = endpoint.as_str();
     let (p256dh, auth_secret) = parse_subscription_keys(&body.keys.p256dh, &body.keys.auth)
@@ -220,12 +245,13 @@ pub async fn put_web_subscription(
         .map_err(|err| AppError::Internal(format!("release web push endpoint failed: {err}")))?;
     sqlx::query(
         r#"
-        INSERT INTO web_push_subscriptions (device_id, endpoint, p256dh, auth, updated_at)
-        VALUES ($1, $2, $3, $4, now())
+        INSERT INTO web_push_subscriptions (device_id, endpoint, p256dh, auth, client, updated_at)
+        VALUES ($1, $2, $3, $4, $5, now())
         ON CONFLICT (device_id) DO UPDATE SET
             endpoint = EXCLUDED.endpoint,
             p256dh = EXCLUDED.p256dh,
             auth = EXCLUDED.auth,
+            client = EXCLUDED.client,
             updated_at = now()
         "#,
     )
@@ -233,6 +259,7 @@ pub async fn put_web_subscription(
     .bind(endpoint)
     .bind(p256dh)
     .bind(auth_secret)
+    .bind(client.as_str())
     .execute(&mut *tx)
     .await
     .map_err(|err| AppError::Internal(format!("save web push subscription failed: {err}")))?;
@@ -240,7 +267,8 @@ pub async fn put_web_subscription(
         .await
         .map_err(|err| AppError::Internal(format!("commit web push subscription failed: {err}")))?;
 
-    tracing::info!(device_id = %auth.device_id, "push.web subscribed");
+    // Never the endpoint: its path is the subscription's secret push token.
+    tracing::info!(device_id = %auth.device_id, client = client.as_str(), "push.web subscribed");
     Ok(StatusCode::NO_CONTENT)
 }
 

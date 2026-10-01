@@ -151,6 +151,11 @@ services:
       WEB_PUSH_VAPID_PRIVATE_KEY: ${WEB_PUSH_VAPID_PRIVATE_KEY:-}
       WEB_PUSH_VAPID_PUBLIC_KEY: ${WEB_PUSH_VAPID_PUBLIC_KEY:-}
       WEB_PUSH_ALLOWED_HOSTS: ${WEB_PUSH_ALLOWED_HOSTS:-}
+      # Android push (UnifiedPush): ntfy.sh, up.conversations.im and Mozilla's autopush are
+      # built in. Add your own distributor's push server (host suffixes, comma separated), or
+      # allow any public https host. Google's push hosts are never accepted for Android.
+      UNIFIEDPUSH_ALLOWED_HOSTS: ${UNIFIEDPUSH_ALLOWED_HOSTS:-}
+      UNIFIEDPUSH_PUBLIC_HOSTS: ${UNIFIEDPUSH_PUBLIC_HOSTS:-false}
       # Calls: TURN_URLS + TURN_SECRET make the API mint short-lived logins for the coturn
       # below (docs/calls.md). TURN_USERNAME / TURN_CREDENTIAL are only for a hosted TURN
       # service with one fixed login.

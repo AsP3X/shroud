@@ -143,7 +143,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | --- | --- |
 | Rate limits | Redis; budgets in [Rate limits](#rate-limits-starting-budgets) |
 | Account delete | Scrubbed placeholder row, never `DELETE FROM users` (conversations, messages, media and calls cascade from it) |
-| Push | Alerts to the devices without a live socket: APNs (sender name sealed to the notification extension) and Web Push (RFC 8291 + VAPID). Ids and a kind, never content; per-device settings, per-chat mutes, server-side unread counts |
+| Push | Alerts to the devices without a live socket: APNs (sender name sealed to the notification extension) and Web Push (RFC 8291 + VAPID) — to browsers, and to the Android app through the UnifiedPush distributor its user installed (no Google service). Ids and a kind, never content; per-device settings, per-chat mutes, server-side unread counts |
 | Calls | After messaging + data push; signaling + coturn |
 | Compose | Postgres + Redis + Nebular + API; + coturn for calls |
 
@@ -460,10 +460,11 @@ History `GET /messages` excludes rows hidden for the caller; for-everyone rows r
 
 | Column | Type | Notes |
 | --- | --- | --- |
-| `device_id` | `UUID` PK FK → `devices` CASCADE | One browser subscription per device |
+| `device_id` | `UUID` PK FK → `devices` CASCADE | One subscription per device (a browser's, or the Android app's) |
 | `endpoint` | `TEXT` NOT NULL UNIQUE | Push-service URL; registering it on another device moves it there |
 | `p256dh` | `BYTEA` NOT NULL | Browser's P-256 key, 65-byte uncompressed point |
 | `auth` | `BYTEA` NOT NULL | 16-byte auth secret |
+| `client` | `TEXT` NOT NULL DEFAULT `'browser'` | `browser` or `android` (migration 028): which host policy the endpoint passed, and what the device is sent (Android also gets rings in front, `call_ended` and `read`). Rows from before 028 are browsers |
 | `created_at` / `updated_at` | `TIMESTAMPTZ` NOT NULL | |
 
 #### `device_notification_settings`
@@ -611,10 +612,10 @@ and cannot read the traffic.
 - **Visibility switches** (`GET/PUT /privacy/settings`: `send_read_receipts`, `send_typing`, `share_presence`; PUT is partial). Each works both ways and only has an effect while **both** users in a chat leave it on (`routes::privacy::both_allow`): hiding yours also hides your contacts' from you. Details in `docs/privacy-options.md`.
 - **Typing** — ephemeral WS only: client `{ "type": "typing", "peer_user_id", "is_typing" }` → peer gets same shape plus `user_id` / `device_id`. Contacts only, both must allow typing; no DB.
 - **Recording** — same relay as typing: client `{ "type": "recording", "peer_user_id", "is_recording" }` → peer only. Keepalive every 3s while the mic is live; no idle timeout (silence is still a take). Receiver expires after 6s.
-- **Online / last-seen** — online = at least one live WS (in-process hub + optional Redis `shroud:online:{user_id}` HASH with TTL). `last_seen_at` = max `devices.last_seen_at`. `GET /presence/:user_id` contacts-only (self always allowed); while either side hides presence it answers `online: false` with no `last_seen_at`. On connect/disconnect, fan-out `presence.update` to accepted contacts who share theirs — nobody when the user hides it. Turning `share_presence` off sends every contact `{online: false, last_seen_at: null}` at once; turning it on sends the current state.
+- **Online / last-seen** — online = at least one live WS (in-process hub + optional Redis `shroud:online:{user_id}` HASH with TTL) — a background socket (the Android app's background connection, `"background": true` in its auth frame) counts only while its app is in front, and never touches `last_seen_at`. `last_seen_at` = max `devices.last_seen_at`. `GET /presence/:user_id` contacts-only (self always allowed); while either side hides presence it answers `online: false` with no `last_seen_at`. On connect/disconnect, fan-out `presence.update` to accepted contacts who share theirs — nobody when the user hides it. Turning `share_presence` off sends every contact `{online: false, last_seen_at: null}` at once; turning it on sends the current state.
 - **Read receipts** — user-level (`message_reads`); not per-device. Recipient only; idempotent. Single + bulk up-to cursor. WS `message.read`. While either side hides receipts, nothing is recorded or sent, and `GET /messages` reports `read: false` on the caller's messages; the reader's unread marker (`conversation_reads`) moves either way.
 - WS must auth within 10s.
-- **Pushes** go to each of the recipient's devices that registered for them and has **no live socket**: a device with one notifies its user itself, since it can read the message. The server pings every 30 s and closes a socket 75 s after the last frame it heard, so a phone the OS suspended counts as offline. A device signed out elsewhere (a password change) gets none until it signs in again. APNs needs `APNS_KEY_PATH` or `APNS_KEY_PEM` + `APNS_KEY_ID` + `APNS_TEAM_ID` + `APNS_TOPIC`; Web Push works out of the box. What is sent and to whom: [Milestone 11](#milestone-11--notifications).
+- **Pushes** go to each of the recipient's devices that registered for them and has **no live socket**: a device with one notifies its user itself, since it can read the message. The server pings every 30 s and closes a socket 75 s after the last frame it heard, so a phone the OS suspended counts as offline. A background socket whose app is not in front does not count either: it gets the events and the pushes, and the app drops the second copy by id. A device signed out elsewhere (a password change) gets none until it signs in again. APNs needs `APNS_KEY_PATH` or `APNS_KEY_PEM` + `APNS_KEY_ID` + `APNS_TEAM_ID` + `APNS_TOPIC`; Web Push works out of the box, for browsers and for the Android app (UnifiedPush; `UNIFIEDPUSH_*` widen which distributor hosts it may use). What is sent and to whom: [Milestone 11](#milestone-11--notifications).
 
 ### Calls (m9)
 
@@ -625,6 +626,11 @@ and cannot read the traffic.
 - `GET /calls/ice-servers` returns STUN (default) + optional TURN from env.
 - Compose: `docker compose --profile calls up` starts **coturn** (host network, local-only credentials).
 - Callee's iPhones without a live socket: an APNs alert (`call` / `video_call`, expires after 90 s). Mutes don't silence it; browsers get none (the web client has no calls). Not a PushKit ring: CallKit would ring on after a hang-up that a locked app cannot hear about.
+- Callee's Android phones (a Web Push subscription with `client: "android"`): a `call` /
+  `video_call` push through their UnifiedPush distributor **even while the app looks in front**,
+  `Urgency: high`, `TTL` 60 s; when the ring ends without them, `call_ended` (all but the device
+  that answered or ended it), then `missed_call` to those not in front if nobody answered. The
+  app drops a ring it already has from its socket by call id.
 - The ring waits for them: `call.ring` (with the offer) is kept while the call rings (Redis `shroud:ring:{callee}` when configured, else in memory), and a callee device that connects in that time — its user tapped the alert — gets it right after `auth.ok`, so the app opens on the ringing call. Nothing is replayed once the call was answered, declined or given up.
 
 ---
@@ -778,7 +784,7 @@ The removed device must wipe the account's data at once, wherever it is:
 
 - Its open WebSocket gets `auth.error` with code `DEVICE_REMOVED` and closes.
 - Every request it makes answers `401 DEVICE_REMOVED` (its session rows are never purged). Clients wipe on the first one; a plain `401 UNAUTHORIZED` still only counts toward the iPhone's three-in-a-row sign-out.
-- Once the removal commits, the server sends one last push to the registration it just deleted: APNs `background` (priority 5) `{ "aps": { "content-available": 1 }, "type": "device_removed" }`, or Web Push `{ "v": 1, "kind": "device_removed" }`. The iPhone confirms with `GET /auth/me` before it deletes anything.
+- Once the removal commits, the server sends one last push to the registration it just deleted: APNs `background` (priority 5) `{ "aps": { "content-available": 1 }, "type": "device_removed" }`, or Web Push `{ "v": 1, "kind": "device_removed" }` (`Urgency: high`; a browser's, or the Android app's through its distributor). The iPhone and the Android app confirm with `GET /auth/me` before they delete anything.
 - A locked browser asks `POST /auth/session-status`.
 
 `DELETE /auth/account` does the same for the account's other devices.
@@ -1167,6 +1173,12 @@ Optional field: `"media_object_id": "<uuid>"` required when `content_type` is `m
    ```json
    { "type": "auth", "token": "<session token>" }
    ```
+   The Android app's background connection (a foreground service that keeps the socket open
+   while the app is not on screen) adds `"background": true`. Such a socket gets every event, but
+   until its app sends `focus:true` it makes its user neither online (no `presence.update`, no
+   `last_seen_at` touch, not online in `GET /presence`) nor in front (its pushes still go out).
+   After `focus:true` it counts like any socket; the next `focus:false` returns it to background
+   accounting. Revocation and `DEVICE_REMOVED` close it like any socket.
 3. Server validates token (same as Bearer), binds socket to `(user_id, device_id)` and the session, replies:
    ```json
    { "type": "auth.ok", "user_id": "<uuid>", "device_id": "<uuid>" }
@@ -1179,6 +1191,15 @@ Optional field: `"media_object_id": "<uuid>"` required when `content_type` is `m
    (with code `DEVICE_REMOVED` and message "This device was removed from your account." when the device was removed or the account deleted; authenticating with such a token gets the same frame) and closes the socket, on every replica (Redis `shroud:sessions:revoked`). The socket also re-checks its session right after `auth.ok` and every 30 s, so a revocation its replica missed still closes it. Clients treat `auth.error` as final and do not reconnect with that token. A newer socket from the same device replaces the older one, which closes without a frame.
 6. The server pings every 30 s and closes a socket 75 s after the last frame it heard (any frame, a pong too). A write the socket does not take within 10 s closes it as well: a full send buffer must not stall the loop. Browsers and URLSession answer pings on their own (the iOS app also pings every 25 s to notice a dead socket). A device whose socket closed counts as offline and gets pushes again; with Redis, a closing socket clears the device's online entry only while it is still the one that socket wrote.
 7. Right after `auth.ok`, a call still ringing for the user reaches the new socket (see [Calls](#calls-m9)).
+8. The client says when its app comes to the front or leaves it:
+   ```json
+   { "type": "focus", "focused": false, "background": true }
+   ```
+   A socket that never says counts as in front (older clients). A device whose socket says
+   `focused: false` gets pushes again; it stays online (a browser tab in the background) unless
+   it is a background socket. `background` is optional: `true` turns the socket into a background
+   socket from now on (an Android app that leaves the screen and keeps its socket for the
+   background connection), `false` into an ordinary one; absent leaves it as it is.
 
 #### Server → client events
 
@@ -1305,7 +1326,9 @@ Server → peer only (contacts required):
 }
 ```
 
-Offline fan-out only when the user has **no** remaining online devices.
+Offline fan-out only when the user has **no** remaining online devices. A background socket is
+announced only when its app comes to the front (`online: true`) and leaves again or closes from
+there (`online: false`); opening or closing it in the background announces nothing.
 
 ### Milestone 9 — Calls (locked)
 
@@ -1384,8 +1407,14 @@ For each device that should hear about an event ([Milestone 11](#milestone-11--n
    (reactions `normal`, else `high`), `Topic` = the thread without hyphens, so queued message
    pushes of one chat collapse (reactions get none: one must not replace an unseen message).
    The encrypted JSON:
-   `{ "v": 1, "kind", "tag", "silent", "conversation_id", "peer_user_id", "message_id", "sender", "badge" }`
+   `{ "v": 1, "kind", "tag", "silent", "conversation_id", "peer_user_id", "message_id", "call_id", "sender", "badge" }`
    — `tag` is the conversation id, `<id>:reaction` for a reaction. The service worker writes the text.
+   For an Android subscription (`client: "android"`, through its UnifiedPush distributor) the
+   same JSON, plus: rings (`call` / `video_call`) and `call_ended` with `TTL` 60 s (the ring
+   time) at `high`, the rings' and `missed_call`'s `Topic` the call id without hyphens (a "Missed
+   call" replaces its queued ring; `call_ended` has none, so it never replaces one); and `read`
+   (`{ "v": 1, "kind": "read", "tag", "conversation_id", "badge"? }`, `normal`, `Topic` the
+   conversation) when the chat was read on another device.
 3. Relay not configured → log only. A badge that could not be counted is left out, never sent as 0.
 
 `BadDeviceToken` / `Unregistered` / `DeviceTokenNotForTopic` / `ExpiredToken` → delete token row;
@@ -1562,12 +1591,21 @@ wire format: [Alert push](#alert-push-server-internal)).
 - **Events:** a message (never to Saved Messages, never an annotation); an emoji **added** to one
   of the recipient's messages (removals don't push); a contact request; a ringing call; `POST /push/test`.
 - **Devices:** the recipient's signed-in devices (a live session) with an alert token or a Web
-  Push subscription and no live socket. Their settings decide the rest: `enabled`, `reactions`,
+  Push subscription and no live socket in front (a socket that said `focus:false`, or a
+  background socket whose app is not in front, does not count). Their settings decide the rest: `enabled`, `reactions`,
   `contact_requests`; `show_sender` adds the name, `badge` the unread total
   (`badge_includes_muted` counts muted chats).
 - **Mutes:** a muted chat pushes nothing for messages or reactions — to an iPhone that counts
   muted chats, a message still sends a badge-only push. Contact requests and calls ignore
-  mutes. Calls go to iPhones only.
+  mutes.
+- **Android** (a Web Push subscription with `client: "android"`): the app decides what to show,
+  so beyond what a browser gets it is sent what a PushKit iPhone gets — `call` / `video_call`
+  **even while it looks in front** (a phone the OS just froze still has its socket), and
+  `call_ended` to every Android phone but the one that answered or ended the call, both at
+  `Urgency: high` with `TTL` 60 s; `missed_call` as to browsers (not in front). After a chat was
+  read on another device, an Android phone not in front gets `read` with the new unread total
+  (`normal`; nothing is shown, the app closes that chat's notifications). Browsers get neither
+  `call_ended` nor `read`: every push to them must show a notification.
 
 #### `GET /notifications/settings` → `200`
 
@@ -1610,8 +1648,11 @@ as `POST /messages/read` does. `POST /messages/:id/read` and `POST /messages/rea
 too, and so does sending a message (a reply means the chat was read; only one that read
 something unread is announced). When the marker moves, the caller's other devices get
 `{ "type": "conversation.read", "conversation_id", "peer_user_id", "read_at", "unread_count" }`
-(they drop the chat's badge and its delivered notifications), and their iPhones without a socket
-a badge-only push (`apns-priority: 5`, collapse id `badge`).
+(they drop the chat's badge and its delivered notifications), their iPhones without a socket
+a badge-only push (`apns-priority: 5`, collapse id `badge`), and their Android phones not in
+front a `read` Web Push (`{ "v": 1, "kind": "read", "tag", "conversation_id", "badge" }`,
+`Urgency: normal`) so they close that chat's notifications. A mute change syncs iPhone badges
+only.
 
 #### `GET /conversations` additions
 
@@ -1637,14 +1678,35 @@ and stored as the HTTP client parses it (a `\` ends a host there, as in browsers
 Web Push is unavailable. One per device; an endpoint another device held moves here.
 `DELETE /push/web/subscription` → `204`.
 
+The Android app sends the endpoint its UnifiedPush distributor (ntfy, Sunup, …) handed it, its
+own RFC 8291 keys, and `"client": "android"` (absent = `"browser"`, so browsers and older clients
+are unchanged; anything else → `400` "client must be 'browser' or 'android'."). Its endpoint
+passes the distributor policy instead of the browser list:
+
+- `https` on port 443, a domain name, no credentials, on `ntfy.sh`, `up.conversations.im` or
+  `push.services.mozilla.com` (Mozilla autopush, which Sunup uses), or a host suffix in
+  `UNIFIEDPUSH_ALLOWED_HOSTS` (an operator's own ntfy);
+- with `UNIFIEDPUSH_PUBLIC_HOSTS=true`, any public name whose **every** resolved address is
+  globally routable — checked at subscription and again at every send, and the push connects
+  only to the addresses checked (the check is that HTTP client's resolver; it uses no proxy);
+- **never Google** (`*.googleapis.com`, whatever the settings say): an "embedded FCM
+  distributor" would route the phone's pushes through Google;
+- `UNIFIEDPUSH_ALLOW_LOCAL_HTTP=true` (end-to-end tests only, logged as a warning at start,
+  never in the compose files) also accepts `http://` to loopback (`localhost`, `127.0.0.1`,
+  `[::1]`), e.g. a local ntfy reached through `adb reverse`.
+
+Refused: `400 VALIDATION_ERROR` "This server doesn’t send to that UnifiedPush distributor." The
+app shows it as such. The server sends exactly what it sends a browser — RFC 8291 ciphertext with
+its VAPID `Authorization` — so the distributor sees ciphertext and timing only.
+
 #### `POST /push/test` → `200`
 
 ```json
 { "channel": "apns", "status": "sent" }
 ```
 
-A "Notifications are working" push to the calling device, socket or not. `channel`: `apns`, `web`,
-or null when it registered for neither. `status`: `sent`, `not_registered`, `not_configured` (this
+A "Notifications are working" push to the calling device, socket or not. `channel`: `apns`, `web`
+(a browser), `unifiedpush` (the Android app's distributor), or null when it registered for none. `status`: `sent`, `not_registered`, `not_configured` (this
 server cannot reach that relay), `misconfigured` (the relay refused this server's key or topic —
 `BadEnvironmentKeyInToken`, `InvalidProviderToken`, a VAPID 401/403, …; nothing on the device can
 fix it), `rejected` (the relay refused the token or subscription; it was removed), `failed`;
@@ -1688,6 +1750,9 @@ and other users' mutes of them.
 | `WEB_PUSH_VAPID_PRIVATE_KEY` / `WEB_PUSH_VAPID_PUBLIC_KEY` | Optional, both or neither: your own VAPID key pair (base64url, `web-push generate-vapid-keys` format). Unset, the server generates one on first start and keeps it in `server_keys` (it retries every minute while that table is missing). A new key makes each browser subscribe again the next time it opens Shroud |
 | `WEB_PUSH_SUBJECT` | VAPID `sub`: how push services reach the operator (`mailto:` or `https:`). Default: the `WEB_PUBLIC_URL` origin when it is https, else a placeholder |
 | `WEB_PUSH_ALLOWED_HOSTS` | Extra push-service host suffixes, comma separated (Google, Mozilla, Apple and Microsoft are built in) |
+| `UNIFIEDPUSH_ALLOWED_HOSTS` | Extra UnifiedPush server host suffixes for Android subscriptions, comma separated (`ntfy.sh`, `up.conversations.im` and Mozilla's autopush are built in; Google's hosts are refused whatever is listed) |
+| `UNIFIEDPUSH_PUBLIC_HOSTS` | `true`: Android subscriptions may also point at any public https host whose every address is globally routable; pushes connect only to the addresses checked. Default `false` |
+| `UNIFIEDPUSH_ALLOW_LOCAL_HTTP` | Tests only: `true` accepts `http://` to loopback for Android subscriptions (a local ntfy). Logged as a warning at start; never set it in production |
 | `TURN_URLS` / `TURN_USERNAME` / `TURN_CREDENTIAL` | Optional TURN for ICE response |
 | `ICE_SERVERS_JSON` | Full ICE server JSON array (overrides TURN_* defaults) |
 
