@@ -83,7 +83,8 @@ class SealedLocalState {
 
     /**
      * Stores a copy of [historyKey] (32 bytes) and derives the keyed names, replacing any previous
-     * key (which is zeroed). Then tells every [Listener] (outside the lock).
+     * key (which is zeroed). Then tells every [Listener] (outside the lock). [unlocked] changes
+     * inside the write lock, so a racing [lock] can never leave it `true` without a key.
      */
     fun unlock(historyKey: ByteArray) {
         require(historyKey.size == LocalHistoryCrypto.MASTER_KEY_BYTES) { "the history key is 32 bytes" }
@@ -91,8 +92,8 @@ class SealedLocalState {
             clearLocked()
             key = historyKey.copyOf()
             localNames = LocalNames.derive(historyKey)
+            state.value = true
         }
-        state.value = true
         if (listeners.isEmpty()) return
         val copy = withKey { it.copyOf() } ?: return
         try {
@@ -107,9 +108,9 @@ class SealedLocalState {
         val wasUnlocked = rw.write {
             val had = key != null
             clearLocked()
+            state.value = false
             had
         }
-        state.value = false
         if (wasUnlocked) for (listener in listeners) listener.onLock()
     }
 
@@ -121,8 +122,8 @@ class SealedLocalState {
                 key = historyKey.copyOf()
                 localNames = LocalNames.derive(historyKey)
             }
+            state.value = historyKey != null
         }
-        state.value = historyKey != null
     }
 
     /** Registers [listener]; closing the result unregisters it. */
