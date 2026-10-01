@@ -17,12 +17,25 @@ import UIKit
 final class DeviceWipeController {
     typealias Step = DeviceDataWipe.Step
 
-    enum Reason: Equatable {
+    nonisolated enum Reason: Equatable, Sendable {
         /// The user confirmed Log Out (or changed server).
         case logout
         /// The server stopped accepting the session. The token is still here; the session step
         /// revokes it (a 401 means it was already over).
         case sessionEnded
+        /// The account removed this iPhone in Settings → Devices on another device (the
+        /// server's `DEVICE_REMOVED`). Web `DeviceWipeDialog.tsx:18-24` "removed" (P11a).
+        case removed
+    }
+
+    /// What the server said to the wipe's own `POST auth/logout`.
+    nonisolated enum ServerSessionOutcome: Equatable, Sendable {
+        /// It ended the session, or it was already over.
+        case ended
+        /// `401 DEVICE_REMOVED`: this device is no longer part of the account.
+        case removed
+        /// No answer (offline, or not within `serverTimeout`): only this iPhone forgot it.
+        case offline
     }
 
     enum Phase: Equatable {
@@ -125,7 +138,12 @@ final class DeviceWipeController {
         let detail: String
         switch step {
         case .session:
-            detail = await endServerSession(token: token) ? "Session ended" : "Ended here · server offline"
+            let outcome = await endServerSession(token: token)
+            let said = Self.reason(reason, after: outcome)
+            if said != reason {
+                withAnimation(Motion.standard) { reason = said }
+            }
+            detail = outcome == .offline ? "Ended here · server offline" : "Session ended"
         case .messages:
             wipe.wipeMessages()
             detail = Self.removed(inventory.messages)
@@ -238,22 +256,20 @@ final class DeviceWipeController {
         if remaining > .zero { try? await Task.sleep(for: remaining) }
     }
 
-    /// Revokes the token on the server. False only when the server could not be reached (or
-    /// did not answer in time): then only this iPhone forgot the session.
-    private func endServerSession(token: String?) async -> Bool {
-        guard let token else { return true }
+    /// Revokes the token on the server. `.offline` only when the server could not be reached
+    /// (or did not answer in time): then only this iPhone forgot the session.
+    private func endServerSession(token: String?) async -> ServerSessionOutcome {
+        guard let token else { return .ended }
         let timeout = Self.serverTimeout
-        return await withTaskGroup(of: Bool?.self) { group in
+        return await withTaskGroup(of: ServerSessionOutcome?.self) { group in
             group.addTask {
                 do {
                     try await APIClient.makeConfiguredClient().postNoContent(path: "auth/logout", bearerToken: token)
-                    return true
+                    return .ended
                 } catch let error as APIError {
-                    // 401: already over. Anything but "could not connect" means the server heard us.
-                    if case .transport = error { return false }
-                    return true
+                    return Self.serverSessionOutcome(of: error)
                 } catch {
-                    return false
+                    return .offline
                 }
             }
             group.addTask {
@@ -262,8 +278,26 @@ final class DeviceWipeController {
             }
             let first = await group.next() ?? nil
             group.cancelAll()
-            return first ?? false
+            return first ?? .offline
         }
+    }
+
+    /// 401: already over — `DEVICE_REMOVED` says why. Anything but "could not connect" means
+    /// the server heard us.
+    nonisolated static func serverSessionOutcome(of error: APIError) -> ServerSessionOutcome {
+        if error.isDeviceRemoval { return .removed }
+        if case .transport = error { return .offline }
+        return .ended
+    }
+
+    /// The reason the overlay states once the server answered the session step.
+    ///
+    /// Human: RootView and the removal push start this wipe as `.sessionEnded` for a removal
+    /// too, since `SessionController` keeps no reason. The server's own answer to this wipe's
+    /// logout settles it: `DEVICE_REMOVED` means this iPhone was removed. A Log Out the user
+    /// chose stays a Log Out, and an offline server leaves the reason as it was.
+    nonisolated static func reason(_ current: Reason, after outcome: ServerSessionOutcome) -> Reason {
+        current == .sessionEnded && outcome == .removed ? .removed : current
     }
 
     // MARK: - Launch
@@ -315,6 +349,16 @@ final class DeviceWipeController {
         case .keys: "Encryption keys"
         case .settings: "Settings & caches"
         case .verify: "Checking nothing is left"
+        }
+    }
+
+    /// The sentence before "Removing everything Shroud stored …" while the wipe runs.
+    /// `device` is "iPhone" or "iPad".
+    nonisolated static func lead(for reason: Reason, device: String) -> String {
+        switch reason {
+        case .logout: ""
+        case .sessionEnded: "Your session ended. "
+        case .removed: "This \(device) was removed from your account. "
         }
     }
 

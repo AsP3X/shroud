@@ -207,6 +207,9 @@ struct ContactProfileView: View {
             .padding(.vertical, 9)
             .accessibilityElement(children: .combine)
 
+            // During a key change this is the new key's number, the one the contact's phone
+            // shows, so "I verified this contact" can be checked against it (P10b). Verifying
+            // only appears once the new key is trusted.
             if let number = messaging.safetyNumber(for: peerUserID) {
                 Rectangle()
                     .fill(Theme.separator)

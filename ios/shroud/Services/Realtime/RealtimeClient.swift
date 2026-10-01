@@ -257,13 +257,43 @@ final class RealtimeClient {
         }
     }
 
+    /// What an `auth.error` means for this socket.
+    nonisolated enum AuthErrorOutcome: Equatable, Sendable {
+        /// `DEVICE_REMOVED`: stop for good and wipe this iPhone.
+        case removed
+        /// `RATE_LIMITED` ("Too many WebSocket connections for this account."): the session is
+        /// fine, the account just has as many sockets as the server allows. Try again later.
+        case retryLater
+        /// Anything else (`UNAUTHORIZED`, no code): stop. No sign-out here; the REST 401
+        /// streak decides whether the session is over.
+        case stop
+    }
+
+    /// `auth.error` policy (web `realtime.ts:9-21` and its selftest; android-port-specs
+    /// api-realtime §11.8). iOS used to stop on every code, so an account over the socket cap
+    /// lost real-time delivery on this iPhone until the next launch.
+    nonisolated static func authErrorOutcome(code: String?) -> AuthErrorOutcome {
+        switch code ?? "" {
+        case APIError.deviceRemovedCode: .removed
+        case "RATE_LIMITED": .retryLater
+        default: .stop
+        }
+    }
+
+    /// The backoff attempt a `RATE_LIMITED` socket waits at least: 2^5 s, capped at 30 s.
+    nonisolated static let rateLimitedAttemptFloor = 5
+
+    /// Seconds before reconnect attempt `attempt` (0-based): 1, 2, 4, 8, 16, then 30.
+    nonisolated static func reconnectDelay(attempt: Int) -> Double {
+        min(30.0, pow(2.0, Double(attempt)))
+    }
+
     private func scheduleReconnect() {
         guard !intentionalDisconnect, token != nil else { return }
         reconnectTask?.cancel()
         let attempt = reconnectAttempt
         reconnectAttempt = min(reconnectAttempt + 1, 8)
-        // 1s, 2s, 4s, … capped ~30s
-        let delay = min(30.0, pow(2.0, Double(attempt)))
+        let delay = Self.reconnectDelay(attempt: attempt)
         reconnectTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard let self, !Task.isCancelled, !self.intentionalDisconnect else { return }
@@ -305,15 +335,25 @@ final class RealtimeClient {
             // A reconnect: a call checks what it may have missed meanwhile.
             emit(.raw(type: type, json: json))
         case "auth.error":
-            state = .failed("WebSocket authentication failed")
-            // Bad token — do not hammer reconnect with same token.
-            intentionalDisconnect = true
-            disconnect(reconnect: false)
-            // The account removed this iPhone while the socket was open: wipe it now.
-            if let error = json["error"] as? [String: Any],
-               error["code"] as? String == APIError.deviceRemovedCode,
-               let token {
-                SessionAuthBridge.noteDeviceRemoved(token: token)
+            let outcome = Self.authErrorOutcome(code: (json["error"] as? [String: Any])?["code"] as? String)
+            switch outcome {
+            case .retryLater:
+                // Too many sockets for this account: the session is still good, so keep
+                // trying (web `realtime.ts:125-127`), but every 30 s — the `auth.ok` before
+                // this error reset the backoff (android-port-specs api-realtime §11.7-11.8).
+                reconnectAttempt = max(reconnectAttempt, Self.rateLimitedAttemptFloor)
+                disconnect(reconnect: true)
+                state = .failed("Too many WebSocket connections for this account.")
+                scheduleReconnect()
+            case .removed, .stop:
+                state = .failed("WebSocket authentication failed")
+                // Bad token — do not hammer reconnect with same token.
+                intentionalDisconnect = true
+                disconnect(reconnect: false)
+                // The account removed this iPhone while the socket was open: wipe it now.
+                if outcome == .removed, let token {
+                    SessionAuthBridge.noteDeviceRemoved(token: token)
+                }
             }
         case "message.new":
             if let event = RealtimeEvent.parseMessageNew(from: data) {
