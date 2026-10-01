@@ -66,6 +66,8 @@ abstract class CryptoException(message: String, cause: Throwable? = null) : Exce
  * - A lock generation guards every adopt: an unlock that started before a [lock] never adopts its
  *   keys ([CryptoException.LockedWhileUnlocking]) — the Android form of iOS's "no await between
  *   opening and setting the material" (`:102-104`).
+ * - While a wipe runs ([storageSeal], crypto §14) nothing is persisted, published or adopted; iOS
+ *   gets this by halting its controllers first (`DeviceWipeController.swift:68-81`).
  * - [vaultPromptInFlight] is true while the system prompt is up, so the shell's background lock can
  *   leave an unlock that is completing alone (crypto §10.7, settings-lock §11.5).
  *
@@ -336,8 +338,13 @@ class CryptoController(
         }
     }
 
-    /** Identity record, then the vault (`persistUnlocked`, `:240-244`). */
+    /**
+     * Identity record, then the vault (`persistUnlocked`, `:240-244`). Refused while a wipe runs
+     * ([StorageSeal]): the stores would drop both writes silently, and the flow would then publish
+     * a bundle whose keys exist nowhere on this phone.
+     */
     private suspend fun persistUnlocked(material: IdentityKeyMaterial) = withContext(io) {
+        if (storageSeal.isSealed) throw CryptoException.LockedWhileUnlocking()
         identityStore.save(material)
         vault.store(material.historyKey, material.userId)
     }
@@ -379,13 +386,13 @@ class CryptoController(
     }
 
     /**
-     * Keeps [established] unless a lock came after [generation] (then it is wiped and
-     * [CryptoException.LockedWhileUnlocking] thrown). Opens [SealedLocalState] inside the write lock,
-     * so a racing [lock] cannot leave it unlocked with wiped bytes.
+     * Keeps [established] unless a lock came after [generation] or a wipe is running (then it is
+     * wiped and [CryptoException.LockedWhileUnlocking] thrown). Opens [SealedLocalState] inside the
+     * write lock, so a racing [lock] cannot leave it unlocked with wiped bytes.
      */
     private fun adopt(established: IdentityKeyMaterial, generation: Long) {
         rw.write {
-            if (generation != lockGeneration) {
+            if (generation != lockGeneration || storageSeal.isSealed) {
                 established.wipe()
                 throw CryptoException.LockedWhileUnlocking()
             }

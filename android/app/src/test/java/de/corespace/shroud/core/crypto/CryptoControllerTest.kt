@@ -449,6 +449,29 @@ class CryptoControllerTest {
         assertEquals(OTHER_USER_ID, crypto.unlockedUserId.value)
     }
 
+    /** Crypto §14: during a wipe nothing is stored (the stores drop it), so nothing may be published or adopted. */
+    @Test
+    fun aWipeInProgressRefusesToPersistPublishOrAdopt() = runBlocking<Unit> {
+        storageSeal.seal()
+        server.enqueue(keysRequired())
+        val error = runCatching { crypto.unlockWithPhrase(words, session) }.exceptionOrNull()
+        assertTrue(error.toString(), error is CryptoException.LockedWhileUnlocking)
+        assertEquals("no PUT /keys/bundle", 1, server.requestCount)
+        assertEquals("/api/v1/keys/identity/$USER_ID", take().url.encodedPath)
+        assertFalse(identityStore.hasRecord())
+        assertNull(crypto.unlockedUserId.value)
+        storageSeal.unseal()
+
+        signUp()
+        relaunch()
+        storageSeal.seal()
+        assertFalse(crypto.unlockHistoryIfPossible(USER_ID))
+        assertEquals("Shroud was locked while unlocking. Try again.", crypto.lastUnlockErrorMessage.value)
+        assertNull(crypto.unlockedUserId.value)
+        assertFalse(state.isUnlocked)
+        storageSeal.unseal()
+    }
+
     // ---- Lock (crypto §12.5) ----
 
     @Test
