@@ -5,6 +5,7 @@ import de.corespace.shroud.AppContainer
 import de.corespace.shroud.AppModule
 import de.corespace.shroud.core.crypto.Bip39
 import de.corespace.shroud.core.crypto.CryptoController
+import de.corespace.shroud.core.crypto.MessageCrypto
 import de.corespace.shroud.core.crypto.PeerLocks
 import de.corespace.shroud.core.keys.AndroidVaultKeyStore
 import de.corespace.shroud.core.keys.DeviceSecurity
@@ -37,8 +38,8 @@ import java.io.File
  * locked as the chats. The vault's wrap keys are separate auth-bound aliases
  * (`shroud.vault.wrap.<hex8>`). Every writer gets [AppContainer.storageSeal].
  *
- * W1-CRYPTO's `MessageCrypto(ratchetSessions, senderTags)` is built here too once both packages
- * are merged (W1-INT): [ratchetSessions] and [senderTags] are its seams (`core/keys/KeyRecords.kt`).
+ * W1-CRYPTO's [MessageCrypto] is built here too, on [ratchetSessions] and [senderTags] (its seams,
+ * `core/keys/KeyRecords.kt`).
  */
 class KeysModule(container: AppContainer) : AppModule(container) {
     private val app: Context get() = container.appContext
@@ -92,6 +93,12 @@ class KeysModule(container: AppContainer) : AppModule(container) {
     val senderTags: SenderTagStore by lazy {
         SenderTagStore(SealedDirectoryStore(File(keysDir, SENDER_TAGS_DIR), localSealer), sealedLocalState, container.storageSeal)
     }
+
+    /**
+     * The process's one envelope sealer/opener (W1-CRYPTO, plan §1.7.4) for the W2 messaging
+     * engines. Blocking and thread-safe: call it on `Dispatchers.Default`.
+     */
+    val messageCrypto: MessageCrypto by lazy { MessageCrypto(ratchetSessions, senderTags) }
 
     /** Pinned peer identity keys and verified flags (`keys/peer-identity.v1`); logic in W2-CONTACTS. */
     val peerIdentities: PeerIdentityStore by lazy {

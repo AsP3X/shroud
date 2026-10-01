@@ -17,13 +17,16 @@ import kotlinx.coroutines.withContext
  * phrase as well ([de.corespace.shroud.core.crypto.CryptoController]).
  *
  * [appScope] outlives every screen: the Log Out revoke runs there, so leaving a screen never
- * cancels it. [onSignedOut] runs whenever the session ends, so no keys outlive it.
+ * cancels it. [onSignedOut] runs whenever the session ends, so no keys outlive it; its argument is
+ * the wipe flag of [signOutLocally] — true for Log Out and a removal, whose stored identity and
+ * vault go too (`DeviceWipeController.swift:209, :297`), false for a plain 401 streak, which keeps
+ * them (`RootView.swift:213`).
  */
 class SessionController(
     private val api: ShroudApi,
     private val store: SessionStore,
     private val appScope: CoroutineScope,
-    private val onSignedOut: () -> Unit = {},
+    private val onSignedOut: (wipe: Boolean) -> Unit = {},
 ) {
     private val state = MutableStateFlow(store.session)
     val session: StateFlow<Session?> = state.asStateFlow()
@@ -115,7 +118,7 @@ class SessionController(
     fun signOutLocally(wipe: Boolean) {
         if (wipe) store.wipe() else store.clear()
         state.value = null
-        onSignedOut()
+        onSignedOut(wipe)
     }
 
     /** The persisted [Session] keeps lower-case String ids (plan C1); read them back as UUIDs via `userUuid` / `deviceUuid`. */

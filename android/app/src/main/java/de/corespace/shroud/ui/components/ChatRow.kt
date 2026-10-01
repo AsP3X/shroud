@@ -117,8 +117,8 @@ private fun TopLine(title: String, time: String?, muted: Boolean) {
             AnimatedVisibility(
                 visible = muted,
                 modifier = Modifier.alignBy { it.measuredHeight },
-                enter = kitIconSwapIn(Motion.snappy()),
-                exit = kitIconSwapOut(Motion.snappy()),
+                enter = Motion.iconSwap(Motion.snappy()).enter,
+                exit = Motion.iconSwap(Motion.snappy()).exit,
             ) {
                 ShroudIcon(ShroudIcons.BellSlashFill, colors.textSecondary, size = 12.dp)
             }
@@ -170,8 +170,8 @@ private fun BottomLine(
         }
         AnimatedVisibility(
             visible = hasUnseenReactions,
-            enter = kitIconSwapIn(Motion.bouncy()),
-            exit = kitIconSwapOut(Motion.bouncy()),
+            enter = Motion.iconSwap(Motion.bouncy()).enter,
+            exit = Motion.iconSwap(Motion.bouncy()).exit,
         ) {
             Box(Modifier.size(20.dp).background(colors.accent, CircleShape), contentAlignment = Alignment.Center) {
                 ShroudIcon(ShroudIcons.HeartFill, Color.White, size = 11.dp)
@@ -194,8 +194,8 @@ private fun UnreadBadge(count: Int, muted: Boolean) {
     val fill by animateColorAsState(if (muted) colors.mutedBadge else colors.accent, Motion.fade(), label = "unreadFill")
     AnimatedVisibility(
         visible = count > 0,
-        enter = kitIconSwapIn(Motion.bouncy()),
-        exit = kitIconSwapOut(Motion.bouncy()),
+        enter = Motion.iconSwap(Motion.bouncy()).enter,
+        exit = Motion.iconSwap(Motion.bouncy()).exit,
     ) {
         AnimatedContent(
             targetState = lastShown.intValue,

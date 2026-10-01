@@ -12,6 +12,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Android 17+: a self-hosted server on the LAN or the emulator host (asked when needed). -->
     <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
+    <!-- The history-key vault's BiometricPrompt and the lock screen's biometric probes (crypto §10). -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
     <!-- Notifications (P6a: asked once after the first unlock) and the push paths (P1). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />

@@ -1,6 +1,5 @@
 package de.corespace.shroud
 
-import android.app.KeyguardManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
@@ -39,6 +38,7 @@ import de.corespace.shroud.di.WipeHooksImpl
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 
 /**
@@ -129,6 +129,9 @@ class AppContainer(
         push.onProcessStart()            // UnifiedPush restore + background connection (W3-PUSH)
         callsSystem.onProcessStart()     // Telecom registration (W3-CALLS-SYSTEM)
         realtime.onProcessStart()        // AppForegroundCoordinator on appPhase (W1-RT)
+        // A returning network reconnects the socket at once (api-realtime §11.14). Collected before
+        // the monitor starts: the flow has no replay. Main-confined, like the client.
+        appScope.launch { net.connectivity.networkAvailable.collect { realtime.client.onNetworkAvailable() } }
         net.onProcessStart()             // ConnectivityMonitor.start() (W1-NET)
         shell.onProcessStart()           // AppShellController (W3-SHELL; replaces the interim ON_STOP lock)
     }
@@ -155,12 +158,8 @@ class AppContainer(
         return appContext.checkSelfPermission(LOCAL_NETWORK_PERMISSION) != PackageManager.PERMISSION_GRANTED
     }
 
-    /**
-     * A screen lock (PIN, pattern, password) is what the history-key vault will be gated on.
-     * W1-KEYS moves this to `keys.deviceSecurity.isDeviceSecure`.
-     */
-    fun hasScreenLock(): Boolean =
-        (appContext.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager).isDeviceSecure
+    /** A screen lock (PIN, pattern, password) is what the history-key vault is gated on (plan §1.3). */
+    fun hasScreenLock(): Boolean = keys.deviceSecurity.isDeviceSecure
 }
 
 /**

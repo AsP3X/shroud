@@ -67,7 +67,7 @@ fun SkeletonChatList(rows: Int = 7, modifier: Modifier = Modifier) {
     Column(
         modifier
             .clearAndSetSemantics { contentDescription = "Loading" }
-            .kitShimmer(),
+            .shimmering(),
     ) {
         repeat(rows) { index ->
             val (title, subtitle) = SkeletonWidths.at(index)

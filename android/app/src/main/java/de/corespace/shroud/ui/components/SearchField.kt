@@ -108,8 +108,8 @@ fun SearchField(
         }
         AnimatedVisibility(
             visible = query.isNotEmpty(),
-            enter = kitIconSwapIn(Motion.snappy()),
-            exit = kitIconSwapOut(Motion.snappy()),
+            enter = Motion.iconSwap(Motion.snappy()).enter,
+            exit = Motion.iconSwap(Motion.snappy()).exit,
         ) {
             Box(
                 Modifier

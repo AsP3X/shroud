@@ -54,6 +54,7 @@ import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.ui.theme.Motion
 import de.corespace.shroud.ui.theme.ShroudIcons
 import de.corespace.shroud.ui.theme.ShroudTheme
+import de.corespace.shroud.ui.theme.perform
 import de.corespace.shroud.ui.theme.inter
 import dev.chrisbanes.haze.HazeInput
 import dev.chrisbanes.haze.HazeProgressive
@@ -156,9 +157,9 @@ fun GlassBarButton(
         label = "glassBarButtonAlpha",
     )
     val glass = when {
-        prominent -> Modifier.kitBarGlass(CircleShape, prominent = true, interactive = enabled)
+        prominent -> Modifier.glassSurface(CircleShape, GlassStyle.Prominent, interactive = enabled)
         grouped -> Modifier
-        else -> Modifier.kitBarGlass(CircleShape, prominent = false, interactive = enabled)
+        else -> Modifier.glassSurface(CircleShape, GlassStyle.Bar, interactive = enabled)
     }
     Box(
         modifier
@@ -213,7 +214,7 @@ private fun PressHaptic(interaction: MutableInteractionSource, haptic: Haptic, e
 @Composable
 fun GlassBarGroup(modifier: Modifier = Modifier, content: @Composable RowScope.() -> Unit) {
     Row(
-        modifier.kitBarGlass(CircleShape, prominent = false),
+        modifier.glassSurface(CircleShape, GlassStyle.Bar),
         horizontalArrangement = Arrangement.spacedBy(0.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

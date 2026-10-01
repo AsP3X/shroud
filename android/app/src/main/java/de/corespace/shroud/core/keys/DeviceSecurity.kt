@@ -1,6 +1,5 @@
 package de.corespace.shroud.core.keys
 
-import android.annotation.SuppressLint
 import android.app.KeyguardManager
 import android.content.Context
 import android.content.pm.PackageManager
@@ -25,9 +24,8 @@ enum class BiometricLabel(val word: String) {
  * Every property is read live: the user can add or remove a screen lock or a fingerprint while
  * the app is in the background, and the lock screen re-probes on every resume.
  *
- * The biometric queries need the normal permission `USE_BIOMETRIC` in the manifest (a W1-KEYS
- * contract change request to the manifest owner, W1-INT). Without it the platform throws
- * `SecurityException`, which is caught here (no strong biometric, generic label).
+ * The biometric queries need the normal permission `USE_BIOMETRIC`, which the manifest declares.
+ * A `SecurityException` is still caught (no strong biometric, generic label).
  */
 class DeviceSecurity(context: Context) {
     private val app = context.applicationContext
@@ -50,7 +48,6 @@ class DeviceSecurity(context: Context) {
      * <label>". False with weak face unlock only: the prompt then goes straight to the screen lock
      * (crypto §10.4, settings-lock §11.2 *ScreenLockOnly*).
      */
-    @SuppressLint("MissingPermission") // USE_BIOMETRIC: see the class note.
     fun strongBiometricAvailable(): Boolean {
         val manager = app.getSystemService(BiometricManager::class.java) ?: return false
         return try {
@@ -64,7 +61,6 @@ class DeviceSecurity(context: Context) {
      * The strong biometric's noun (crypto §10.4): API 31+ from the system's own button label for
      * `BIOMETRIC_STRONG`, API 30 from `FEATURE_FINGERPRINT`; anything unclear is [BiometricLabel.Generic].
      */
-    @SuppressLint("MissingPermission") // USE_BIOMETRIC: see the class note; a SecurityException is caught.
     fun biometricLabel(): BiometricLabel {
         val buttonLabel = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             try {

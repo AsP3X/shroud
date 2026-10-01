@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -113,14 +114,18 @@ private fun MainBar(
 ) {
     Box(Modifier.fillMaxWidth()) {
         ScrollEdgeEffect(visible = scrolledUnder, extent = extent, backdrop = backdrop)
-        Column(Modifier.fillMaxWidth()) {
-            Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
-            GlassBarRow(
-                leading = leading,
-                title = { GlassBarTitle(title) },
-                trailing = trailing,
-                modifier = Modifier.padding(top = GlassBarMetrics.topPadding),
-            )
+        // The bar's glass controls blur the same scrolled content as the edge effect (API 31+),
+        // and take the opaque fill on API 30 (Glass.kt, GlassBackdrop).
+        CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
+            Column(Modifier.fillMaxWidth()) {
+                Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+                GlassBarRow(
+                    leading = leading,
+                    title = { GlassBarTitle(title) },
+                    trailing = trailing,
+                    modifier = Modifier.padding(top = GlassBarMetrics.topPadding),
+                )
+            }
         }
     }
 }

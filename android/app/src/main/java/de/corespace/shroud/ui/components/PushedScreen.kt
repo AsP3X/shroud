@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -95,21 +96,24 @@ fun PushedScreen(
                 extent = statusTop + PushedBarMetrics.height,
                 backdrop = backdrop,
             )
-            Column(Modifier.fillMaxWidth()) {
-                Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
-                PushedBar(
-                    leading = {
-                        GlassCircleButton(
-                            ShroudIcons.CaretLeftBold,
-                            "Back",
-                            onBack,
-                            tint = colors.textPrimary,
-                            enabled = backEnabled,
-                        )
-                    },
-                    title = { GlassBarTitle(title) },
-                    trailing = trailing,
-                )
+            // The back circle's glass blurs the scrolled content too (API 31+; opaque on API 30).
+            CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
+                Column(Modifier.fillMaxWidth()) {
+                    Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+                    PushedBar(
+                        leading = {
+                            GlassCircleButton(
+                                ShroudIcons.CaretLeftBold,
+                                "Back",
+                                onBack,
+                                tint = colors.textPrimary,
+                                enabled = backEnabled,
+                            )
+                        },
+                        title = { GlassBarTitle(title) },
+                        trailing = trailing,
+                    )
+                }
             }
         }
         bottomBar()

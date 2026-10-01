@@ -2,7 +2,6 @@ package de.corespace.shroud.di
 
 import de.corespace.shroud.AppContainer
 import de.corespace.shroud.AppModule
-import de.corespace.shroud.core.net.ApiClient
 import de.corespace.shroud.core.net.AuthOutcomeListener
 import de.corespace.shroud.core.realtime.AppForegroundCoordinator
 import de.corespace.shroud.core.realtime.RealtimeClient
@@ -34,9 +33,9 @@ class RealtimeModule(container: AppContainer) : AppModule(container) {
         RealtimeClient(
             baseUrl = { container.serverConfiguration.configuration.value.resolvedBaseUrl },
             json = container.json,
-            // Same settings as REST (no cache, no redirects). INT may pass NetModule's shared
-            // client instead once W1-NET exposes it (`ApiClient.http`, plan §1.7.2).
-            baseHttp = ApiClient.defaultHttpClient(),
+            // NetModule's base client: same settings as REST (no cache, no redirects) and one
+            // connection pool and dispatcher; the client adds its 25 s ping with newBuilder().
+            baseHttp = container.net.http,
             scope = container.appScope,
             authOutcomes = { authOutcomes },
             isForeground = { container.appPhase.isStarted },

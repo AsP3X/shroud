@@ -31,11 +31,8 @@ class WipeHooksImpl(private val container: AppContainer) {
     /** `ColorThemePreference.forget()` (W2-AUTH-WIPE). */
     fun forgetAppearance() = Unit
 
-    /**
-     * Drops the keys from memory. Today's `CryptoController.lock()` has no store to wipe;
-     * W1-KEYS adds `lock(wipeStore)` and W1-INT forwards [wipeStore].
-     */
+    /** Drops the keys from memory; [wipeStore] also deletes the stored identity and vault (W1-KEYS). */
     fun lockCrypto(wipeStore: Boolean) {
-        container.keys.cryptoController.lock()
+        container.keys.cryptoController.lock(wipeStore = wipeStore)
     }
 }

@@ -1,7 +1,6 @@
 package de.corespace.shroud.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,8 +21,6 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -178,7 +175,6 @@ fun ToggleRow(
                 contentDescription = title
                 stateDescription = if (checked) "On" else "Off"
             }
-            .then(if (enabled) Modifier else Modifier.swallowTouches())
             .padding(horizontal = SettingsMetrics.textInset, vertical = vertical),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -187,18 +183,7 @@ fun ToggleRow(
             ShroudText(title, inter(16f), colors.textPrimary)
             if (subtitle != null) ShroudText(subtitle, inter(13f), colors.textSecondary)
         }
-        ShroudToggle(checked = checked, onCheckedChange = onCheckedChange, label = title)
-    }
-}
-
-/** Takes every touch inside before the children see it (a disabled row's switch must not flip). */
-private fun Modifier.swallowTouches(): Modifier = pointerInput(Unit) {
-    awaitEachGesture {
-        while (true) {
-            val event = awaitPointerEvent(PointerEventPass.Initial)
-            event.changes.forEach { it.consume() }
-            if (event.changes.none { it.pressed }) break
-        }
+        ShroudToggle(checked = checked, onCheckedChange = onCheckedChange, label = title, enabled = enabled)
     }
 }
 

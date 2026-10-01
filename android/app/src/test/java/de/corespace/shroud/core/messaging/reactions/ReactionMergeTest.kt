@@ -1,5 +1,7 @@
 package de.corespace.shroud.core.messaging.reactions
 
+import de.corespace.shroud.core.model.MessageReaction
+import de.corespace.shroud.core.model.ReactionChip
 import de.corespace.shroud.core.net.ReactionDto
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse

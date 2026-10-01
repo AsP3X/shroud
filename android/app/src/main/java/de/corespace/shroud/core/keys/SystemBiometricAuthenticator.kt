@@ -1,6 +1,5 @@
 package de.corespace.shroud.core.keys
 
-import android.annotation.SuppressLint
 import android.app.Activity
 import android.hardware.biometrics.BiometricManager.Authenticators
 import android.hardware.biometrics.BiometricPrompt
@@ -34,12 +33,10 @@ import kotlin.coroutines.resumeWithException
  */
 class SystemBiometricAuthenticator(private val activity: () -> Activity?) : VaultAuthenticator {
     /**
-     * Needs the normal permission `USE_BIOMETRIC` in the manifest (a W1-KEYS contract change
-     * request to the manifest owner, W1-INT). Without it `authenticate` throws `SecurityException`,
-     * which is caught below and reported as `VaultError.Keystore`, so the unlock fails cleanly
-     * instead of crashing.
+     * Needs the normal permission `USE_BIOMETRIC`, which the manifest declares. A
+     * `SecurityException` is still caught below and reported as `VaultError.Keystore`, so the
+     * unlock fails cleanly instead of crashing.
      */
-    @SuppressLint("MissingPermission")
     override suspend fun authenticate(cipher: Cipher, method: UnlockMethod): Cipher = withContext(Dispatchers.Main.immediate) {
         val host = activity()?.takeUnless { it.isFinishing || it.isDestroyed } ?: throw VaultError.UserCancelled
         suspendCancellableCoroutine { cont ->

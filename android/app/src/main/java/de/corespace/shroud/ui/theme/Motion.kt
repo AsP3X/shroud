@@ -127,10 +127,17 @@ object Motion {
      * (`Motion.swift:61-62`), on [snappy].
      */
     val iconSwap: MotionTransition
-        get() = MotionTransition(
-            enter = scaleIn(snappy(), initialScale = 0.45f) + fadeIn(snappy()),
-            exit = scaleOut(snappy(), targetScale = 0.45f) + fadeOut(snappy()),
-        )
+        get() = iconSwap(snappy())
+
+    /**
+     * [iconSwap] on another animation: iOS drives the transition with whatever animation encloses
+     * it — snappy for the mute bell and the clear-search button, bouncy for the unread and heart
+     * badges (`ChatRowView.swift:56, 111-112`).
+     */
+    fun iconSwap(spec: FiniteAnimationSpec<Float>): MotionTransition = MotionTransition(
+        enter = scaleIn(spec, initialScale = 0.45f) + fadeIn(spec),
+        exit = scaleOut(spec, targetScale = 0.45f) + fadeOut(spec),
+    )
 
     /**
      * A transient surface rising from the bottom edge (toasts): move from the bottom + scale 0.9

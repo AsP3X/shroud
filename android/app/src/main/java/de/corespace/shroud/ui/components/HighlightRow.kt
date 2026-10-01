@@ -18,6 +18,7 @@ import androidx.compose.ui.semantics.Role
 import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.ui.theme.Motion
 import de.corespace.shroud.ui.theme.ShroudTheme
+import de.corespace.shroud.ui.theme.perform
 import kotlinx.coroutines.launch
 
 /**

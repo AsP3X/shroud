@@ -20,6 +20,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Modifier
 import de.corespace.shroud.AppContainer
 import de.corespace.shroud.core.auth.SessionController
+import de.corespace.shroud.ui.components.OverlayHost
 import de.corespace.shroud.ui.components.ShroudSheet
 import de.corespace.shroud.ui.components.Toast
 import de.corespace.shroud.ui.components.ToastHost
@@ -77,50 +78,54 @@ fun ShroudApp(container: AppContainer) {
         }
     }
 
-    Box(Modifier.fillMaxSize()) {
-        if (unlocked && session != null) {
-            SignedInPlaceholder(username = session!!.username, onLogOut = logOut)
-        } else {
-            BackHandler(enabled = router.canPop && !showServerSettings) { router.pop() }
-            AnimatedContent(
-                targetState = router.top,
-                transitionSpec = { pushPop(router.lastWasPush) },
-                label = "onboarding",
-            ) { route ->
-                when (route) {
-                    OnboardingRoute.Welcome -> WelcomeScreen(
-                        server = server,
-                        onStartMessaging = router::showSignUp,
-                        onLogIn = router::showLogIn,
-                        onOpenServerSettings = { showServerSettings = true },
-                    )
-                    OnboardingRoute.SignUp -> SignUpScreen(container, toast, onBack = router::pop, onLogIn = router::showLogIn)
-                    OnboardingRoute.LogIn -> LogInScreen(
-                        container,
-                        onBack = if (router.canPop) router::pop else null,
-                        onSignUp = router::showSignUp,
-                        onLogOut = logOut,
-                        onSessionEnded = { router.reset(it) },
-                    )
+    // Every menu, sheet and dialog draws in this one layer above the app (plan §1.7.12): toasts
+    // stay under them, as on iOS.
+    OverlayHost {
+        Box(Modifier.fillMaxSize()) {
+            if (unlocked && session != null) {
+                SignedInPlaceholder(username = session!!.username, onLogOut = logOut)
+            } else {
+                BackHandler(enabled = router.canPop && !showServerSettings) { router.pop() }
+                AnimatedContent(
+                    targetState = router.top,
+                    transitionSpec = { pushPop(router.lastWasPush) },
+                    label = "onboarding",
+                ) { route ->
+                    when (route) {
+                        OnboardingRoute.Welcome -> WelcomeScreen(
+                            server = server,
+                            onStartMessaging = router::showSignUp,
+                            onLogIn = router::showLogIn,
+                            onOpenServerSettings = { showServerSettings = true },
+                        )
+                        OnboardingRoute.SignUp -> SignUpScreen(container, toast, onBack = router::pop, onLogIn = router::showLogIn)
+                        OnboardingRoute.LogIn -> LogInScreen(
+                            container,
+                            onBack = if (router.canPop) router::pop else null,
+                            onSignUp = router::showSignUp,
+                            onLogOut = logOut,
+                            onSessionEnded = { router.reset(it) },
+                        )
+                    }
                 }
             }
+            ShroudSheet(visible = showServerSettings, onDismiss = { showServerSettings = false }) {
+                ServerSettingsContent(
+                    initial = server,
+                    onSave = { draft ->
+                        // A session belongs to its server: another endpoint signs this phone out
+                        // (the revoke goes to the old server, built before the switch).
+                        if (session != null && draft.resolvedBaseUrl != server.resolvedBaseUrl) {
+                            container.sessionController.logOut()
+                        }
+                        container.serverConfiguration.save(draft)
+                        showServerSettings = false
+                    },
+                    onCancel = { showServerSettings = false },
+                )
+            }
+            ToastHost(toast)
         }
-        ShroudSheet(visible = showServerSettings, onDismiss = { showServerSettings = false }) {
-            ServerSettingsContent(
-                initial = server,
-                onSave = { draft ->
-                    // A session belongs to its server: another endpoint signs this phone out
-                    // (the revoke goes to the old server, built before the switch).
-                    if (session != null && draft.resolvedBaseUrl != server.resolvedBaseUrl) {
-                        container.sessionController.logOut()
-                    }
-                    container.serverConfiguration.save(draft)
-                    showServerSettings = false
-                },
-                onCancel = { showServerSettings = false },
-            )
-        }
-        ToastHost(toast)
     }
 }
 

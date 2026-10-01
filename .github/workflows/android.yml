@@ -7,10 +7,12 @@ on:
   push:
     paths:
       - "android/**"
+      - "scripts/gen_reaction_set.py"
       - ".github/workflows/android.yml"
   pull_request:
     paths:
       - "android/**"
+      - "scripts/gen_reaction_set.py"
       - ".github/workflows/android.yml"
 
 permissions:
@@ -38,6 +40,25 @@ jobs:
       # Caches dependencies and validates the wrapper checksum.
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
+
+      # Robolectric (two list-kit test classes) fetches android-all-instrumented into ~/.m2 on
+      # its first run; keep it between runs.
+      - name: Cache Robolectric runtime jars
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ hashFiles('android/gradle/libs.versions.toml') }}
+
+      # The reaction tables (Kotlin, Swift, TS) come from one generator, which needs Unicode
+      # 15.1+ (Python 3.13+). ReactionSetTest skips this check on an older Python.
+      - name: Install Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Reaction tables are up to date
+        working-directory: .
+        run: python3 scripts/gen_reaction_set.py --check
 
       - name: Unit tests, lint, no Material, no Google services, release build
         run: >-

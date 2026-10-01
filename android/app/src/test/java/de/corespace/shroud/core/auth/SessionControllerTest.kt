@@ -35,6 +35,7 @@ class SessionControllerTest {
     private lateinit var server: MockWebServer
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = true }
     private var signedOutCalls = 0
+    private val signedOutWipes = mutableListOf<Boolean>()
 
     private fun session(token: String = "tok", user: String = "noah") =
         """{"token":"$token","user":{"id":"$USER_ID","username":"$user","share_code":"ABCDEFGHJK"},"device":{"id":"$DEVICE_ID"}}"""
@@ -49,7 +50,7 @@ class SessionControllerTest {
         ShroudApi(ApiClient({ server.url("/api/v1").toString() }, json)),
         store,
         CoroutineScope(Dispatchers.Unconfined),
-        onSignedOut = { signedOutCalls++ },
+        onSignedOut = { wipe -> signedOutCalls++; signedOutWipes += wipe },
     )
 
     @Before
@@ -113,6 +114,8 @@ class SessionControllerTest {
         c.logOut()
         assertNull(c.session.value)
         assertEquals(1, signedOutCalls)
+        // Log Out deletes the stored identity and vault too (DeviceWipeController.swift:209).
+        assertEquals(listOf(true), signedOutWipes)
         assertNull(store().anchorFor("noah"))
         val revoke = server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)!!
         assertEquals("/api/v1/auth/logout", revoke.url.encodedPath)
@@ -129,6 +132,7 @@ class SessionControllerTest {
         assertNull(c.session.value)
         assertNull(store().session)
         assertEquals(1, signedOutCalls)
+        assertEquals(listOf(true), signedOutWipes)
     }
 
     @Test
@@ -146,7 +150,8 @@ class SessionControllerTest {
         assertEquals(SessionController.Validation.Offline, c.validate())
         assertEquals(SessionController.Validation.SignedOut, c.validate())
         assertNull(c.session.value)
-        // A plain sign-out keeps the anchor for the next login.
+        // A plain sign-out keeps the stored keys (RootView.swift:213) and the anchor for the next login.
+        assertEquals(listOf(false), signedOutWipes)
         assertEquals(DEVICE_ID.lowercase(), store().anchorFor("noah"))
     }
 
