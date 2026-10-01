@@ -1,4 +1,14 @@
 //! WebSocket endpoint with first-message session auth, typing, recording, and presence.
+//!
+//! Human: A socket normally makes its user online while it is open. The Android app's opt-in
+//! background connection (a foreground service that keeps the socket open for messages and
+//! calls while the app is not on screen) must not: it says `"background": true` in its auth
+//! frame, and then counts neither as online (no presence, no `last_seen`) nor as in front (its
+//! pushes still go out) until its app comes to the front (`focus:true`). Once the app leaves
+//! again (`focus:false`) it is back to background accounting.
+//! Agent: auth `background` → `SocketMode::Background`; `focus` frames may carry `background`
+//! too (a socket opened on screen and kept by the background connection); presence is
+//! announced only when a socket's online accounting changes.
 
 use std::time::Duration;
 
@@ -15,7 +25,7 @@ use uuid::Uuid;
 use crate::auth::session::{AuthIds, SessionState, ids_for_token, session_state};
 use crate::error::AppError;
 use crate::rate_limit::budgets;
-use crate::realtime::Subscription;
+use crate::realtime::{OnlineChange, SocketMode, Subscription};
 use crate::routes::contacts::are_contacts;
 use crate::routes::presence::{max_last_seen, notify_presence_to_contacts, touch_device_last_seen};
 use crate::routes::privacy::{Visibility, both_allow};
@@ -42,6 +52,13 @@ struct ClientMessage {
     is_recording: Option<bool>,
     /// `focus`: this app is in front (`true`) or has left (`false`).
     focused: Option<bool>,
+    /// `auth`: `true` opens a background socket (Android's background connection), which
+    /// makes its user neither online nor in front until `focus:true`. Absent: an ordinary
+    /// socket, as every client has always opened.
+    /// `focus`: optional; `true` makes the socket a background socket from now on (an app that
+    /// leaves the screen and keeps its socket for the background connection), `false` an
+    /// ordinary one. Absent: unchanged.
+    background: Option<bool>,
 }
 
 /// `GET /ws` — upgrade to WebSocket.
@@ -76,12 +93,15 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     })
     .await;
 
-    let AuthIds {
-        user_id,
-        device_id,
-        session_id,
-    } = match auth {
-        Ok(Ok(ids)) => ids,
+    let (
+        AuthIds {
+            user_id,
+            device_id,
+            session_id,
+        },
+        mode,
+    ) = match auth {
+        Ok(Ok(authed)) => authed,
         Ok(Err(err)) => {
             tracing::warn!(error = %err, "ws.auth failed");
             // A removed device is told so, and wipes itself; anything else stays a plain
@@ -119,7 +139,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         }
     };
 
-    tracing::info!(%user_id, %device_id, "ws.connected");
+    tracing::info!(%user_id, %device_id, ?mode, "ws.connected");
 
     let ok = json!({
         "type": "auth.ok",
@@ -140,7 +160,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         events: mut rx,
     } = match state
         .realtime
-        .subscribe(user_id, device_id, session_id)
+        .subscribe_with(user_id, device_id, session_id, mode)
         .await
     {
         Ok(subscription) => subscription,
@@ -164,9 +184,12 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         }
     };
 
-    // Touch last_seen and announce online to contacts.
-    if let Ok(last_seen) = touch_device_last_seen(&state.pool, device_id).await {
-        notify_presence_to_contacts(&state, user_id, true, Some(last_seen)).await;
+    // Whether this socket makes its user online right now: an ordinary socket does, a
+    // background socket only while its app is in front. Presence is announced, and
+    // `last_seen` touched, only when that changes.
+    let mut counts_online = mode == SocketMode::Foreground;
+    if counts_online {
+        announce_online_change(&state, user_id, device_id, OnlineChange::CameOnline).await;
     }
 
     // Human: A call still ringing for this user reaches a device that connects now — its user
@@ -249,7 +272,11 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                         }
                     }
                     Some(Ok(Message::Text(text))) => {
-                        handle_client_text(&state, user_id, device_id, connection_id, &text).await;
+                        match handle_client_text(&state, user_id, device_id, connection_id, &text).await {
+                            OnlineChange::CameOnline => counts_online = true,
+                            OnlineChange::WentOffline => counts_online = false,
+                            OnlineChange::Unchanged => {}
+                        }
                     }
                     Some(Ok(Message::Binary(_))) | Some(Ok(Message::Pong(_))) => {}
                     Some(Err(_)) => break,
@@ -285,32 +312,59 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         .unsubscribe(user_id, device_id, connection_id)
         .await;
 
-    // Update last_seen; only announce offline if no remaining sessions for this user.
-    let last_seen = touch_device_last_seen(&state.pool, device_id).await.ok();
-    let still_online = state.realtime.is_user_online(user_id).await;
-    if !still_online {
-        let last = match last_seen {
-            Some(ts) => Some(ts),
-            None => max_last_seen(&state.pool, user_id).await.ok().flatten(),
-        };
-        notify_presence_to_contacts(&state, user_id, false, last).await;
+    // A background socket that was not counting leaves no trace: its user was not online
+    // through it, so nothing changes for their contacts.
+    if counts_online {
+        announce_online_change(&state, user_id, device_id, OnlineChange::WentOffline).await;
     }
 
     tracing::info!(%user_id, %device_id, "ws.disconnected");
 }
 
+/// Presence after a socket started or stopped making its user online.
+///
+/// Human: Coming online touches the device's `last_seen` and tells the contacts. Going
+/// offline touches it too, and tells them only when no other socket keeps the user online.
+async fn announce_online_change(
+    state: &AppState,
+    user_id: Uuid,
+    device_id: Uuid,
+    change: OnlineChange,
+) {
+    match change {
+        OnlineChange::Unchanged => {}
+        OnlineChange::CameOnline => {
+            if let Ok(last_seen) = touch_device_last_seen(&state.pool, device_id).await {
+                notify_presence_to_contacts(state, user_id, true, Some(last_seen)).await;
+            }
+        }
+        OnlineChange::WentOffline => {
+            let last_seen = touch_device_last_seen(&state.pool, device_id).await.ok();
+            if !state.realtime.is_user_online(user_id).await {
+                let last = match last_seen {
+                    Some(ts) => Some(ts),
+                    None => max_last_seen(&state.pool, user_id).await.ok().flatten(),
+                };
+                notify_presence_to_contacts(state, user_id, false, last).await;
+            }
+        }
+    }
+}
+
+/// Handles one client frame; RETURNS how a `focus` frame changed whether this socket makes
+/// its user online (the caller keeps track for the disconnect).
 async fn handle_client_text(
     state: &AppState,
     user_id: Uuid,
     device_id: Uuid,
     connection_id: u64,
     text: &str,
-) {
+) -> OnlineChange {
     let parsed: ClientMessage = match serde_json::from_str(text) {
         Ok(m) => m,
         Err(_) => {
             tracing::debug!(%user_id, "ws.client invalid json");
-            return;
+            return OnlineChange::Unchanged;
         }
     };
 
@@ -318,7 +372,7 @@ async fn handle_client_text(
         "typing" => {
             let Some(peer_user_id) = parsed.peer_user_id else {
                 tracing::debug!(%user_id, "ws.typing missing peer_user_id");
-                return;
+                return OnlineChange::Unchanged;
             };
             relay_contact_activity(
                 state,
@@ -336,7 +390,7 @@ async fn handle_client_text(
         "recording" => {
             let Some(peer_user_id) = parsed.peer_user_id else {
                 tracing::debug!(%user_id, "ws.recording missing peer_user_id");
-                return;
+                return OnlineChange::Unchanged;
             };
             relay_contact_activity(
                 state,
@@ -357,17 +411,26 @@ async fn handle_client_text(
         "focus" => {
             let Some(focused) = parsed.focused else {
                 tracing::debug!(%user_id, "ws.focus missing focused");
-                return;
+                return OnlineChange::Unchanged;
             };
-            state
+            let change = state
                 .realtime
-                .set_focus(user_id, device_id, connection_id, focused)
+                .update_focus(
+                    user_id,
+                    device_id,
+                    connection_id,
+                    focused,
+                    parsed.background,
+                )
                 .await;
+            announce_online_change(state, user_id, device_id, change).await;
+            return change;
         }
         other => {
             tracing::debug!(%user_id, r#type = other, "ws.client unknown type");
         }
     }
+    OnlineChange::Unchanged
 }
 
 /// Relays an ephemeral activity frame (typing, recording) to the peer's devices only.
@@ -417,7 +480,12 @@ async fn relay_contact_activity(
     }
 }
 
-async fn authenticate_text(state: &AppState, text: &str) -> Result<AuthIds, AppError> {
+/// The first frame: `{"type":"auth","token":…}`, with `"background": true` for a background
+/// socket.
+async fn authenticate_text(
+    state: &AppState,
+    text: &str,
+) -> Result<(AuthIds, SocketMode), AppError> {
     let parsed: ClientMessage = serde_json::from_str(text)
         .map_err(|_| AppError::validation("Invalid WebSocket auth message."))?;
     if parsed.r#type != "auth" {
@@ -427,5 +495,10 @@ async fn authenticate_text(state: &AppState, text: &str) -> Result<AuthIds, AppE
         .token
         .filter(|value| !value.is_empty())
         .ok_or_else(AppError::unauthorized)?;
-    ids_for_token(&state.pool, &token).await
+    let mode = if parsed.background == Some(true) {
+        SocketMode::Background
+    } else {
+        SocketMode::Foreground
+    };
+    Ok((ids_for_token(&state.pool, &token).await?, mode))
 }

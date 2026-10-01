@@ -32,8 +32,7 @@ pub use client::{
 };
 pub use payload::{Notification, NotificationKind};
 pub use web_push::{
-    SubscriptionClient, UnifiedPushPolicy, VapidKey, WebPushClient, WebPushOptions,
-    WebSubscription,
+    SubscriptionClient, UnifiedPushPolicy, VapidKey, WebPushClient, WebPushOptions, WebSubscription,
 };
 
 use crate::realtime::RealtimeHub;
@@ -815,7 +814,10 @@ impl PushService {
             if except_device == Some(target.device_id) {
                 continue;
             }
-            let voip = target.voip_token.as_ref().zip(target.voip_environment.as_ref());
+            let voip = target
+                .voip_token
+                .as_ref()
+                .zip(target.voip_environment.as_ref());
             if voip.is_none() && !target.is_android() {
                 continue;
             }

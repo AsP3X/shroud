@@ -48,8 +48,11 @@ const DEFAULT_PUSH_HOSTS: &[&str] = &[
 /// UnifiedPush servers an Android subscription may point at without any configuration: the
 /// public ntfy, Conversations' push server, and Mozilla's autopush (which Sunup uses). More
 /// come from `UNIFIEDPUSH_ALLOWED_HOSTS`, or any public host with `UNIFIEDPUSH_PUBLIC_HOSTS`.
-pub const UNIFIEDPUSH_DEFAULT_HOSTS: &[&str] =
-    &["ntfy.sh", "up.conversations.im", "push.services.mozilla.com"];
+pub const UNIFIEDPUSH_DEFAULT_HOSTS: &[&str] = &[
+    "ntfy.sh",
+    "up.conversations.im",
+    "push.services.mozilla.com",
+];
 
 /// Never an Android endpoint, whatever the configuration says: an "embedded FCM distributor"
 /// would hand the app a Google endpoint, and the Android app is Google-free by decision
@@ -1020,7 +1023,10 @@ mod tests {
             None
         );
         assert_eq!(
-            android_route("https://wns2-par02p.notify.windows.com/w/?token=1", &defaults),
+            android_route(
+                "https://wns2-par02p.notify.windows.com/w/?token=1",
+                &defaults
+            ),
             None
         );
         // A self-hosted distributor only once the operator lists it.
@@ -1147,10 +1153,7 @@ mod tests {
                 Some(EndpointRoute::LocalHttp),
                 "{loopback}"
             );
-            assert_eq!(
-                android_route(loopback, &UnifiedPushPolicy::default()),
-                None
-            );
+            assert_eq!(android_route(loopback, &UnifiedPushPolicy::default()), None);
         }
         for remote in [
             "http://ntfy.sh/upX",
@@ -1169,14 +1172,20 @@ mod tests {
             overrides: HashMap::from([
                 (
                     "push.public.example".to_string(),
-                    vec![ip("93.184.215.14"), ip("2606:2800:21f:cb07:6820:80da:af6b:8b2c")],
+                    vec![
+                        ip("93.184.215.14"),
+                        ip("2606:2800:21f:cb07:6820:80da:af6b:8b2c"),
+                    ],
                 ),
                 ("push.private.example".to_string(), vec![ip("10.0.0.5")]),
                 (
                     "push.mixed.example".to_string(),
                     vec![ip("93.184.215.14"), ip("127.0.0.1")],
                 ),
-                ("push.mapped.example".to_string(), vec![ip("::ffff:192.168.1.1")]),
+                (
+                    "push.mapped.example".to_string(),
+                    vec![ip("::ffff:192.168.1.1")],
+                ),
                 ("push.cgnat.example".to_string(), vec![ip("100.64.0.1")]),
                 ("push.none.example".to_string(), vec![]),
             ]),
@@ -1187,7 +1196,11 @@ mod tests {
     async fn public_host_mode_needs_every_address_public() {
         let resolver = resolver();
         assert_eq!(
-            resolver.addresses("push.public.example").await.unwrap().len(),
+            resolver
+                .addresses("push.public.example")
+                .await
+                .unwrap()
+                .len(),
             2
         );
         for private in [
@@ -1222,10 +1235,7 @@ mod tests {
             addresses,
             vec![
                 SocketAddr::new("93.184.215.14".parse().unwrap(), 0),
-                SocketAddr::new(
-                    "2606:2800:21f:cb07:6820:80da:af6b:8b2c".parse().unwrap(),
-                    0
-                ),
+                SocketAddr::new("2606:2800:21f:cb07:6820:80da:af6b:8b2c".parse().unwrap(), 0),
             ]
         );
         let name = reqwest::dns::Name::from_str("push.mixed.example").unwrap();

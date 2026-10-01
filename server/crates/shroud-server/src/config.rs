@@ -506,7 +506,10 @@ mod tests {
         assert!(!policy.allow_local_http);
         assert!(policy.resolve_overrides.is_empty());
         let policy = unifiedpush_from(&[
-            ("UNIFIEDPUSH_ALLOWED_HOSTS", " Push.Example.org, .ntfy.example.net ,"),
+            (
+                "UNIFIEDPUSH_ALLOWED_HOSTS",
+                " Push.Example.org, .ntfy.example.net ,",
+            ),
             ("UNIFIEDPUSH_PUBLIC_HOSTS", "true"),
             ("UNIFIEDPUSH_ALLOW_LOCAL_HTTP", "1"),
         ])
