@@ -25,6 +25,13 @@ enum class WakeResult { NoData, NewData, Failed }
  * `/auth/me`, and only the server's `DEVICE_REMOVED` answer starts the wipe — the same wipe Log Out
  * runs. W3-PUSH's `PushDispatcher` recognises the payload ([isRemoval]) and runs [handle] from an
  * expedited `DeviceRemovalWorker` (which must not carry [DeviceDataWipe.ACCOUNT_WORK_TAG]).
+ *
+ * [WakeResult.NewData] means this phone was wiped. The wipe has already cancelled every
+ * notification (earlier ones may name a contact); the worker then posts the one neutral notice the
+ * web shows — title "Shroud", body "This phone was signed out." (web-parity §5.3, `sw.js:129-135`) —
+ * through W2-NOTIF's channels. iOS posts nothing (silent push). After a wipe without UI the pending
+ * marker makes the next launch's [DeviceWipeController.finishInterruptedWipeIfNeeded] run the
+ * Settings step again, which cancels that notice with the rest.
  */
 object DeviceRemovalWake {
     /** `payloadType` (`DeviceRemovalWake.swift:20`). */
