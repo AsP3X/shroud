@@ -5,14 +5,15 @@ import android.os.storage.StorageManager
 import de.corespace.shroud.AppContainer
 import de.corespace.shroud.AppModule
 import de.corespace.shroud.core.transcription.TranscriptionBenchmark
+import de.corespace.shroud.core.transcription.VoiceTranscription
 import de.corespace.shroud.core.transcription.WhisperModelStore
 import java.io.File
 import java.io.IOException
 
 /**
  * On-device transcription (00-plan §1.7.13, P7). Owner: W2-WHISPER (native engine, model
- * store, benchmark), then W3-TRANSCRIPTION — the `VoiceTranscription` behind the seam W2-INT
- * publishes, built on [whisperModels] and `WhisperContext`.
+ * store, benchmark), then W3-TRANSCRIPTION — the [voice] `VoiceTranscription` behind the seam
+ * W2-INT published, built on [whisperModels] and `WhisperContext`.
  *
  * Created empty by W0-A; only the owner fills it (00-plan §2.0 rule 3, §2.6). Nobody else
  * constructs this package's classes: other packages reach them through this module.
@@ -30,6 +31,13 @@ class TranscriptionModule(container: AppContainer) : AppModule(container) {
             usableSpace = ::allocatableBytes,
         )
     }
+
+    /**
+     * Voice-note transcription for the composer and the bubbles (plan §1.7.13 `VoiceTranscription`).
+     * [VoiceTranscription.Unavailable] until W3-TRANSCRIPTION builds it on [whisperModels] and
+     * `WhisperContext`.
+     */
+    val voice: VoiceTranscription get() = VoiceTranscription.Unavailable
 
     /** The P7 benchmark (speed and memory of each model on this device), for the instrumented test and diagnostics. */
     val benchmark: TranscriptionBenchmark by lazy { TranscriptionBenchmark(container.appContext, whisperModels) }

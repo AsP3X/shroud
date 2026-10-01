@@ -38,7 +38,7 @@ import java.util.UUID
  * - the shell (W2-INT interim, then W3-SHELL): `isUnlocked` / `isSignedIn`, `refreshAuthorization`
  *   on resume, `banner`, `haptics`, `pendingOpen`, and `MainActivity` intents through
  *   `NotificationTap.from(intent)` → `handleTap`;
- * - push (W3-PUSH): [pushHooks], `SystemNotifier.post`, `onPushWhileRunning`, [nameCache] on the
+ * - push (W3-PUSH): [pushHooks] (`PushModule.deliveryHooks`, wired by W2-INT), `SystemNotifier.post`, `onPushWhileRunning`, [nameCache] on the
  *   socket path, `channels.backgroundConnection()` / `backgroundTasks()`.
  */
 class NotificationsModule(container: AppContainer) : AppModule(container) {
@@ -75,9 +75,9 @@ class NotificationsModule(container: AppContainer) : AppModule(container) {
         )
     }
 
-    /** Set by the push layer (W3-PUSH, wired by W2-INT/W3-INT): re-registration and "no delivery" copy for the test. */
+    /** The push layer's re-registration and "no delivery" copy for the test (`PushModule.deliveryHooks`, W3-PUSH). */
     @Volatile
-    var pushHooks: PushDeliveryHooks? = null
+    var pushHooks: () -> PushDeliveryHooks? = { container.push.deliveryHooks }
 
     /** The process's one notifications controller (iOS `NotificationsController.shared`). Main-confined. */
     val controller: NotificationsController by lazy {
@@ -98,7 +98,7 @@ class NotificationsModule(container: AppContainer) : AppModule(container) {
             systemAllows = { NotificationManagerCompat.from(app).areNotificationsEnabled() },
             clock = container.clock,
             scope = container.appScope,
-            pushHooks = { pushHooks },
+            pushHooks = { pushHooks() },
         )
     }
 
