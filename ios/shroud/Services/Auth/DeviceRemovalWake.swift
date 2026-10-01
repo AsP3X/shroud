@@ -49,7 +49,8 @@ enum DeviceRemovalWake {
             controller.recordDeviceRemoved(token: session.token)
             if !wipe.isPresented {
                 _ = controller.consumePendingFullLocalWipe()
-                wipe.start(reason: .sessionEnded)
+                // confirmRemoved already saw DEVICE_REMOVED for this session.
+                wipe.start(reason: .removed)
             }
             while wipe.isPresented, wipe.phase != .failed, ContinuousClock.now < deadline {
                 try? await Task.sleep(for: .milliseconds(200))

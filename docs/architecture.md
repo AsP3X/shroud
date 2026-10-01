@@ -135,8 +135,8 @@ contact the website.
   32 bytes. Every device of the account derives it; nobody else can.
 - associated data: `shroud-device-name-v1:` + the lowercase device id, so a stored name cannot be
   moved onto another device.
-- plaintext: one kind byte (1 iPhone app, 2 iPad app, 3 web browser, 0 other; `| 0x80` when a
-  person typed the name), the UTF-8 name (at most 96 bytes, one line, no control or bidi
+- plaintext: one kind byte (1 iPhone app, 2 iPad app, 3 web browser, 4 Android app, 0 other;
+  `| 0x80` when a person typed the name), the UTF-8 name (at most 96 bytes, one line, no control or bidi
   characters), `0x80`, zeros to 128 bytes. Every name
   seals to the same 156 bytes (`nonce ‖ ciphertext ‖ tag`), so its length does not show.
 

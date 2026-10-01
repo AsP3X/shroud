@@ -433,6 +433,12 @@ export const api = {
       method: "DELETE",
       token,
     }),
+  /** Delivery ack for a peer's message: lower-case id, no body (iOS `MessagesService.swift:157-162`). */
+  markDelivered: (token: string, messageId: string) =>
+    request<void>(`/messages/${encodeURIComponent(messageId.toLowerCase())}/delivered`, {
+      method: "POST",
+      token,
+    }),
   devices: (token: string) => request<{ devices: Device[] }>("/devices", { token }),
   revokeDevice: (token: string, deviceId: string) =>
     request<void>(`/devices/${deviceId}`, { method: "DELETE", token }),

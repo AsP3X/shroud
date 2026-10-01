@@ -1,5 +1,4 @@
 import { ApiError, api, type Conversation, type TransferProgress, type WireMessage } from "./api/client";
-import { apiBase } from "./config";
 import { aesGcmOpen, sealFile } from "./crypto/aes";
 import { b64ToBytes, bytesToB64, utf8, utf8decode } from "./crypto/bytes";
 import type { IdentityMaterial } from "./crypto/identity";
@@ -208,15 +207,11 @@ function acknowledgeDelivery(token: string, messageIds: string[]): void {
 /**
  * `POST /messages/{id}/delivered` with the lower-case id and no body (iOS
  * `MessagesService.swift:157-162`, server `routes/messages.rs` `mark_delivered`), errors
- * swallowed. Raw `fetch` with the API client's headers, because `api` has no call for it.
+ * swallowed.
  */
 async function postDelivered(token: string, messageId: string): Promise<void> {
   try {
-    const res = await fetch(`${apiBase()}/messages/${encodeURIComponent(messageId)}/delivered`, {
-      method: "POST",
-      headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
-    });
-    await res.body?.cancel();
+    await api.markDelivered(token, messageId);
   } catch {
     /* offline or signed out: dropped, like an iOS ack that fails */
   }

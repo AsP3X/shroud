@@ -190,7 +190,7 @@ struct RootView: View {
             // a second wipe after this one has already finished.
             guard pending, !deviceWipe.isPresented else { return }
             _ = sessionController.consumePendingFullLocalWipe()
-            deviceWipe.start(reason: .sessionEnded)
+            deviceWipe.start(reason: sessionController.sessionEndedByDeviceRemoval ? .removed : .sessionEnded)
         }
         // A server picked on the lock screen takes effect once its Log Out is over: the wipe
         // revoked the session on the old server, and nothing of it is left for the new one.
@@ -207,7 +207,9 @@ struct RootView: View {
                 let fullWipe = sessionController.consumePendingFullLocalWipe()
                 router.hasUnlockedMessaging = false
                 if fullWipe {
-                    if !deviceWipe.isPresented { deviceWipe.start(reason: .sessionEnded) }
+                    if !deviceWipe.isPresented {
+                        deviceWipe.start(reason: sessionController.sessionEndedByDeviceRemoval ? .removed : .sessionEnded)
+                    }
                     return
                 }
                 cryptoController.lock(wipeStore: false)

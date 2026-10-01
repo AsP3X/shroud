@@ -50,6 +50,10 @@ final class SessionController {
     /// When true, the next sign-out side effects must wipe identity keys + all local data.
     /// Set only by the repeated-auth-failure path (not user-initiated Log Out).
     private(set) var pendingFullLocalWipe = false
+    /// True when the pending wipe comes from the server's `DEVICE_REMOVED`, so the wipe overlay can
+    /// say "removed from your account" from its first frame (and when the wipe's own logout
+    /// cannot reach the server). Cleared by `logout()`.
+    private(set) var sessionEndedByDeviceRemoval = false
 
     private let authService: AuthService
     private var isForceLoggingOut = false
@@ -89,6 +93,7 @@ final class SessionController {
         sessionValidated = false
         consecutiveAuthenticationFailures = 0
         isForceLoggingOut = false
+        sessionEndedByDeviceRemoval = false
     }
 
     /// Testing seam: inject a session without going through Keychain.
@@ -99,6 +104,7 @@ final class SessionController {
         consecutiveAuthenticationFailures = 0
         pendingFullLocalWipe = false
         isForceLoggingOut = false
+        sessionEndedByDeviceRemoval = false
     }
 
     /// Probes `/auth/me`; does **not** logout on a single 401 — repeated 401s are handled by
@@ -174,6 +180,7 @@ final class SessionController {
             isForceLoggingOut = true
             return
         }
+        sessionEndedByDeviceRemoval = true
         markSessionEnded()
     }
 
