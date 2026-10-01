@@ -199,7 +199,7 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
     /** Bumped by every stop: work that started before publishes nothing. */
     private var activityGeneration = 0L
 
-    private var conversationsRefresh: Job? = null
+    @Volatile private var conversationsRefresh: Job? = null
 
     /**
      * The next successful chat list is the first since the chats were unlocked: notifications of
@@ -569,17 +569,22 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
      * Reloads the chat list (`refreshConversations`, `MessagingController.swift:1002-1014`). Overlapping
      * callers share one fetch; [force] (after a write) waits out the running one and fetches again, so
      * the caller sees its own change.
+     *
+     * The fetch runs in the controller's scope and clears its own entry when it ends, not the caller:
+     * iOS awaits an unstructured `Task` whose cleanup always runs, while a cancelled Kotlin caller
+     * (a poll stopped by `leaveForeground`, a screen that went away) never gets past its `join`. A
+     * finished job left behind would turn every later non-forced refresh into a no-op.
      */
     suspend fun refreshConversations(force: Boolean = false) {
-        conversationsRefresh?.let { existing ->
+        conversationsRefresh?.takeIf { it.isActive }?.let { existing ->
             existing.join()
             if (!force) return
         }
         val job = scope.launch(start = CoroutineStart.LAZY) { performConversationsRefresh() }
         conversationsRefresh = job
+        job.invokeOnCompletion { if (conversationsRefresh === job) conversationsRefresh = null }
         job.start()
         job.join()
-        if (conversationsRefresh === job) conversationsRefresh = null
     }
 
     /** `performConversationsRefresh`, `MessagingController.swift:1016-1061`. Every write is equality-guarded. */

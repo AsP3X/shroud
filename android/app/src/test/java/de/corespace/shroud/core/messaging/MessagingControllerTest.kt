@@ -455,6 +455,28 @@ class MessagingControllerTest {
     }
 
     @Test
+    fun aCancelledCallerDoesNotLeaveTheFinishedFetchBehind() = engineTest { // review W2: stale refresh job
+        val controller = controller()
+        val gate = CompletableDeferred<Unit>()
+        backend.conversationsGate = gate
+        val scope = scopeFor(testScheduler)
+        // A poll refresh whose loop is stopped (leaveForeground → polling.stop()) mid-fetch.
+        val poll = scope.launch { controller.refreshConversations() }
+        runCurrent()
+        poll.cancel()
+        runCurrent()
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(1, backend.conversationsCalls)
+
+        // The next plain refresh fetches again instead of joining the finished job and returning.
+        controller.refreshConversations()
+        assertEquals(2, backend.conversationsCalls)
+        controller.refreshConversations()
+        assertEquals(3, backend.conversationsCalls)
+    }
+
+    @Test
     fun aFailedListKeepsWhatIsShownAndAFailedFirstListSaysWhy() = engineTest { // MessagingController.swift:1050-1059
         val controller = controller()
         backend.conversationsError = FakeBackend.offline()
