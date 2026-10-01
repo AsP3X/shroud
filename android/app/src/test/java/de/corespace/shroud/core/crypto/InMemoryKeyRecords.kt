@@ -42,9 +42,9 @@ class InMemoryRatchetSessionRecords : RatchetSessionRecords {
         return stored.copyOf()
     }
 
-    override fun save(peerUserId: UUID, sessionJson: ByteArray) {
+    override fun save(peerUserId: UUID, session: ByteArray) {
         if (!isUnlocked || unreadable) return
-        sessions[peerUserId] = sessionJson.copyOf()
+        sessions[peerUserId] = session.copyOf()
         synchronized(this) { saveCount++ }
     }
 
@@ -55,11 +55,11 @@ class InMemoryRatchetSessionRecords : RatchetSessionRecords {
     override fun deleteAll() = sessions.clear()
 
     /** The stored session, decoded (tests compare sessions by value, like Swift's `Equatable`). */
-    fun session(peerUserId: UUID): DoubleRatchet.Session? = sessions[peerUserId]?.let(DoubleRatchet.Session::fromJson)
+    fun session(peerUserId: UUID): DoubleRatchet.Session? = sessions[peerUserId]?.let(DoubleRatchet.Session::decode)
 
     /** Puts [session] back as it is (iOS `RatchetSessionStore.save(_:peerUserID:)` in a test). */
     fun put(peerUserId: UUID, session: DoubleRatchet.Session) {
-        sessions[peerUserId] = session.toJson()
+        sessions[peerUserId] = session.encode()
     }
 }
 

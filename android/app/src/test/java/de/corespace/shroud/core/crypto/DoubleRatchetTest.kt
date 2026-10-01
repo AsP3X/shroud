@@ -228,7 +228,7 @@ class DoubleRatchetTest {
         assertTrue(bobSession.touched)
     }
 
-    // ---- wire message and stored session JSON ----
+    // ---- wire message and stored session ----
 
     @Test
     fun messageCountersAreUInt32() {
@@ -239,7 +239,7 @@ class DoubleRatchetTest {
     }
 
     @Test
-    fun sessionJsonRoundTripsWithTheIosFieldNames() {
+    fun storedSessionsRoundTripInTheBinaryLayout() {
         val alice = TestIdentity.random()
         val bob = TestIdentity.random()
         val aliceSession = DoubleRatchet.initiateAsSender(alice.private, bob.public)
@@ -247,39 +247,62 @@ class DoubleRatchetTest {
         val messages = (0 until 4).map { DoubleRatchet.encrypt(utf8("m$it"), aliceSession) }
         DoubleRatchet.decrypt(messages[3], bobSession) // leaves three skipped keys
 
-        val json = bobSession.toJson()
-        val fields = CryptoJson.parseToJsonElement(String(json, Charsets.UTF_8)) as kotlinx.serialization.json.JsonObject
-        assertEquals(
-            setOf(
-                "v", "rootKey", "sendChainKey", "recvChainKey", "sendN", "recvN", "prevChainLength",
-                "dhSendPrivate", "dhSendPublic", "dhRecvPublic", "peerIdentityPublic", "touched", "skipped",
-            ),
-            fields.keys,
-        )
-        assertEquals("1", fields["v"].toString())
-        val decoded = DoubleRatchet.Session.fromJson(json)
+        val encoded = bobSession.encode()
+        // format, flags (all five optional keys and touched), root, peer, 5 keys, 3 counters, count, 3 entries.
+        assertEquals(DoubleRatchet.Session.STORED_FORMAT.toByte(), encoded[0])
+        assertEquals(0x3F, encoded[1].toInt())
+        assertEquals(2 + 7 * 32 + 12 + 2 + 3 * 68, encoded.size)
+        val decoded = DoubleRatchet.Session.decode(encoded)
         assertEquals(bobSession, decoded)
         assertEquals(bobSession.skipped.keys.toList(), decoded!!.skipped.keys.toList()) // order kept
+        // The decoded session owns its arrays: zeroing the input does not touch it.
+        encoded.fill(0)
+        assertEquals(bobSession, decoded)
+        // It keeps working: the skipped keys open their messages.
+        assertEquals("m0", String(DoubleRatchet.decrypt(messages[0], decoded), Charsets.UTF_8))
 
-        // Nil fields are left out (Swift encodeIfPresent).
-        val receiverFields = CryptoJson.parseToJsonElement(String(DoubleRatchet.prepareAsReceiver(bob.private, alice.public).toJson(), Charsets.UTF_8))
-            as kotlinx.serialization.json.JsonObject
-        assertFalse("sendChainKey" in receiverFields)
-        assertFalse("recvChainKey" in receiverFields)
-        assertFalse("dhRecvPublic" in receiverFields)
+        // Absent keys are left out: a fresh receiver has no chains and no remote DH key.
+        val receiver = DoubleRatchet.prepareAsReceiver(bob.private, alice.public)
+        val receiverBytes = receiver.encode()
+        assertEquals(1 shl 2 or (1 shl 3), receiverBytes[1].toInt())
+        assertEquals(2 + 4 * 32 + 12 + 2, receiverBytes.size)
+        assertEquals(receiver, DoubleRatchet.Session.decode(receiverBytes))
+    }
+
+    /**
+     * The stored form never passes a key through a `String` (which nothing can zero): the bytes
+     * hold the raw keys, never their Base64 or hex text, as a JSON encoding would.
+     */
+    @Test
+    fun storedSessionsCarryNoTextFormOfAnyKey() {
+        val alice = TestIdentity.random()
+        val bob = TestIdentity.random()
+        val sender = DoubleRatchet.initiateAsSender(alice.private, bob.public)
+        val session = DoubleRatchet.prepareAsReceiver(bob.private, alice.public)
+        DoubleRatchet.decrypt((0 until 3).map { DoubleRatchet.encrypt(utf8("m$it"), sender) }.last(), session)
+        assertEquals(2, session.skipped.size)
+        val encoded = session.encode()
+        val secrets = listOfNotNull(session.rootKey, session.sendChainKey, session.recvChainKey, session.dhSendPrivate) + session.skipped.values
+        for (secret in secrets) {
+            assertTrue(encoded.hex().contains(secret.hex()))
+            assertFalse(encoded.hex().contains(utf8(B64.encode(secret)).hex()))
+            assertFalse(encoded.hex().contains(utf8(secret.hex()).hex()))
+        }
     }
 
     @Test
     fun storedSessionsThisBuildCannotReadAreNoSession() {
-        val good = String(DoubleRatchet.initiateAsSender(TestIdentity.random().private, TestIdentity.random().public).toJson(), Charsets.UTF_8)
-        assertNotNull(DoubleRatchet.Session.fromJson(utf8(good)))
-        assertNull(DoubleRatchet.Session.fromJson(utf8(good.replace("\"v\":1", "\"v\":2"))))
-        assertNull(DoubleRatchet.Session.fromJson(utf8(good.replace("\"v\":1,", ""))))
-        assertNull(DoubleRatchet.Session.fromJson(utf8(good.replace("\"sendN\":0", "\"sendN\":4294967296"))))
-        val root = Regex("\"rootKey\":\"([^\"]+)\"").find(good)!!.groupValues[1]
-        assertNull(DoubleRatchet.Session.fromJson(utf8(good.replace(root, B64.encode(ByteArray(31))))))
-        assertNull(DoubleRatchet.Session.fromJson(utf8(good.replace(root, root.trimEnd('=')))))
-        assertNull(DoubleRatchet.Session.fromJson(utf8("not json")))
+        val good = DoubleRatchet.initiateAsSender(TestIdentity.random().private, TestIdentity.random().public).encode()
+        assertNotNull(DoubleRatchet.Session.decode(good))
+        assertNull(DoubleRatchet.Session.decode(good.copyOf().also { it[0] = 1 })) // another format
+        assertNull(DoubleRatchet.Session.decode(good.copyOf().also { it[1] = (it[1].toInt() or 0x40).toByte() })) // unknown flag
+        assertNull(DoubleRatchet.Session.decode(good.copyOf(good.size - 1))) // truncated
+        assertNull(DoubleRatchet.Session.decode(good + byteArrayOf(0))) // trailing byte
+        // A skipped count that the bytes do not hold.
+        assertNull(DoubleRatchet.Session.decode(good.copyOf().also { it[it.size - 1] = 1 }))
+        // Wave 1's JSON records (format 1) are not read.
+        assertNull(DoubleRatchet.Session.decode(utf8("""{"v":1,"rootKey":"AAAA"}""")))
+        assertNull(DoubleRatchet.Session.decode(ByteArray(0)))
     }
 
     @Test

@@ -10,10 +10,6 @@ import de.corespace.shroud.core.storage.SealedFile
 import de.corespace.shroud.core.storage.StorageSeal
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonObject
 
 /**
  * Whether this account's identity is on the phone (iOS `IdentityKeyStore.Presence`,
@@ -37,7 +33,7 @@ enum class IdentityPresence { Present, Absent, Unavailable }
  *
  * ```json
  * {"v":1,"user_id":"…","registration_id":8525,"agreement_private":"<b64 SHRD1…>","signing_private":"…",
- *  "spk_id":123,"spk_private":"…","otpk_map":"<b64 SHRD1 of {\"1\":\"<b64 raw>\",…}>"}
+ *  "spk_id":123,"spk_private":"…","otpk_map":"<b64 SHRD1 of [2] ‖ (id u32 ‖ private 32 B)*>"}
  * ```
  *
  * Android additions: each inner seal binds its field name as AAD ([aad], web-parity §3.2), so two
@@ -163,9 +159,7 @@ class IdentityKeyStore(private val record: SealedFile, private val seal: Storage
     fun save(material: IdentityKeyMaterial) {
         if (seal.isSealed) return
         val key = material.historyKey
-        val otpkJson = utf8(
-            JsonObject(material.oneTimePreKeys.associate { it.keyId.toString() to JsonPrimitive(B64.encode(it.privateKey)) }).toString(),
-        )
+        val otpkMap = encodeOneTimePreKeys(material.oneTimePreKeys.map { it.keyId to it.privateKey })
         val stored = try {
             Record(
                 v = VERSION,
@@ -175,10 +169,10 @@ class IdentityKeyStore(private val record: SealedFile, private val seal: Storage
                 signingPrivate = B64.encode(sealPrivate(material.signingPrivateKey, key, Field.SigningPrivate)),
                 spkId = material.signedPreKeyId,
                 spkPrivate = B64.encode(sealPrivate(material.signedPreKeyPrivate, key, Field.SignedPreKeyPrivate)),
-                otpkMap = B64.encode(sealPrivate(otpkJson, key, Field.OneTimePreKeys)),
+                otpkMap = B64.encode(sealPrivate(otpkMap, key, Field.OneTimePreKeys)),
             )
         } finally {
-            otpkJson.fill(0)
+            otpkMap.fill(0)
         }
         if (seal.isSealed) return
         record.write(utf8(CryptoJson.encodeToString(Record.serializer(), stored)))
@@ -207,29 +201,53 @@ class IdentityKeyStore(private val record: SealedFile, private val seal: Storage
         return openPrivate(sealed, historyKey, field)
     }
 
-    /** `{"<id>":"<b64 raw private>"}`; entries with a bad id or key are skipped (`:121-131`). */
-    private fun parseOneTimePreKeys(json: ByteArray): Map<Int, ByteArray> {
-        val obj = try {
-            CryptoJson.parseToJsonElement(json.decodeToString()).jsonObject
-        } catch (_: Exception) {
-            return emptyMap()
-        }
-        val out = HashMap<Int, ByteArray>()
-        for ((idText, value) in obj) {
-            val id = idText.toLongOrNull()?.takeIf { it in 0..0xFFFF_FFFFL && it <= Int.MAX_VALUE }?.toInt() ?: continue
-            val raw = (value as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull?.let(B64::decodeStrict) ?: continue
-            if (raw.size != KEY_BYTES) {
-                raw.fill(0)
-                continue
-            }
-            out[id] = raw
-        }
-        return out
-    }
 
     companion object {
         const val VERSION = 1
         private const val KEY_BYTES = 32
+
+        /** Format byte of the sealed OTPK map ([encodeOneTimePreKeys]). Wave 1's JSON map is not read. */
+        const val OTPK_FORMAT: Byte = 2
+        private const val OTPK_ENTRY_BYTES = 4 + KEY_BYTES
+
+        /**
+         * The one-time prekeys as sealed: `OTPK_FORMAT ‖ (id u32 big-endian ‖ private 32 B)*`, in one
+         * exactly sized array — local only, so not the iOS JSON (`{"<id>":"<b64>"}`), which would
+         * put every private key into `String`s nothing can zero. The caller zeroes the result.
+         */
+        fun encodeOneTimePreKeys(keys: List<Pair<Int, ByteArray>>): ByteArray {
+            val out = ByteArray(1 + keys.size * OTPK_ENTRY_BYTES)
+            out[0] = OTPK_FORMAT
+            var at = 1
+            for ((id, private) in keys) {
+                if (id < 0 || private.size != KEY_BYTES) {
+                    out.fill(0)
+                    throw IllegalArgumentException("invalid one-time prekey")
+                }
+                for (shift in intArrayOf(24, 16, 8, 0)) out[at++] = (id ushr shift).toByte()
+                private.copyInto(out, at)
+                at += KEY_BYTES
+            }
+            return out
+        }
+
+        /**
+         * Inverse of [encodeOneTimePreKeys]; an unknown format or a length that is not whole entries is
+         * an empty pool (`:121-131` skips what does not parse). Ids above `Int.MAX_VALUE` are skipped.
+         * Copies every key out; does not zero [bytes].
+         */
+        fun parseOneTimePreKeys(bytes: ByteArray): Map<Int, ByteArray> {
+            if (bytes.isEmpty() || bytes[0] != OTPK_FORMAT || (bytes.size - 1) % OTPK_ENTRY_BYTES != 0) return emptyMap()
+            val out = HashMap<Int, ByteArray>()
+            var at = 1
+            while (at < bytes.size) {
+                var id = 0L
+                repeat(4) { id = (id shl 8) or (bytes[at++].toLong() and 0xFF) }
+                if (id <= Int.MAX_VALUE) out.put(id.toInt(), bytes.copyOfRange(at, at + KEY_BYTES))?.fill(0)
+                at += KEY_BYTES
+            }
+            return out
+        }
 
         /** The inner seal's AAD for [field]: `shroud.identity.v1:<record key>` (web-parity §3.2). */
         fun aad(field: Field): ByteArray = utf8("shroud.identity.v1:" + field.key)

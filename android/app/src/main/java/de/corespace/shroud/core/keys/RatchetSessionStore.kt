@@ -14,7 +14,7 @@ import java.util.UUID
  * [RatchetSessionRecords] seam `MessageCrypto` (W1-CRYPTO) works against.
  *
  * On disk: `keys/ratchets/<LocalNames.name("ratchet", peer)>` in [records] (the WhenUnlocked
- * Keystore sealer, plan §1.5), the value `LocalHistoryCrypto.seal([VERSION] ‖ session JSON)` with
+ * Keystore sealer, plan §1.5), the value `LocalHistoryCrypto.seal([VERSION] ‖ encoded session)` with
  * context `RatchetKeychain` under the history key and the record's logical name as AAD (web-parity
  * §3.2). The leading version byte is the record's `v`, so a later format can migrate (crypto §7.1).
  *
@@ -65,11 +65,14 @@ class RatchetSessionStore(
      * (the phone locked meanwhile, I/O) is dropped too, as iOS ignores the Keychain status
      * (`:132-145`): the next step re-saves, and a lost step costs at most a skipped message key.
      */
-    override fun save(peerUserId: UUID, sessionJson: ByteArray) {
+    override fun save(peerUserId: UUID, session: ByteArray) {
         if (seal.isSealed) return
         state.withKeyAndNames { key, names ->
             val name = names.name(LocalNames.Kind.RATCHET, peerUserId)
-            val plain = byteArrayOf(VERSION) + sessionJson
+            val plain = ByteArray(1 + session.size).also {
+                it[0] = VERSION
+                session.copyInto(it, 1)
+            }
             val sealed = try {
                 LocalHistoryCrypto.seal(plain, key, LocalHistoryCrypto.Context.RatchetKeychain, aad(name))
             } finally {
@@ -99,7 +102,7 @@ class RatchetSessionStore(
     }
 
     companion object {
-        /** The record format: `[VERSION] ‖ session JSON` (crypto spec §5.4 field names). */
+        /** The record format: `[VERSION] ‖ DoubleRatchet.Session.encode()` (its own format byte inside). */
         const val VERSION: Byte = 1
 
         /** The sealed value's AAD: its location `keys/ratchets/<name>` (web-parity §3.2). */

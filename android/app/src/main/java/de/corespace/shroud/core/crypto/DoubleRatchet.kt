@@ -77,8 +77,10 @@ object DoubleRatchet {
      * Equality compares contents, as Swift's synthesised `Equatable` does; [skipped] compares as a
      * map (its order only decides which keys are dropped first).
      *
-     * Stored as JSON with the iOS field names ([toJson]); `MessageCrypto` hands that to
-     * `RatchetSessionRecords`, which seals it under the history key (plan §1.5).
+     * Stored in a fixed binary layout ([encode]); `MessageCrypto` hands that to
+     * `RatchetSessionRecords`, which seals it under the history key (plan §1.5). Local only, so it
+     * needs no byte compatibility with iOS (which stores JSON) — and unlike JSON it never copies a
+     * key into a `String`, which nothing can zero (crypto §1.6, plan §6.8).
      */
     class Session(
         var rootKey: ByteArray,
@@ -131,30 +133,61 @@ object DoubleRatchet {
         }
 
         /**
-         * The stored JSON: the iOS field names (`:48-63`), byte fields as standard Base64, nil fields
-         * left out, plus `"v": 1`, the version of this local format (crypto spec §7.1), so a later
-         * change can migrate. The caller owns (and should zero) the result.
+         * The stored form, format [STORED_FORMAT] (crypto spec §7.1), all integers big-endian:
+         * ```
+         * format(1) ‖ flags(1) ‖ rootKey(32) ‖ peerIdentityPublic(32)
+         *   ‖ [sendChainKey(32)] ‖ [recvChainKey(32)] ‖ [dhSendPrivate(32)] ‖ [dhSendPublic(32)] ‖ [dhRecvPublic(32)]
+         *   ‖ sendN(u32) ‖ recvN(u32) ‖ prevChainLength(u32)
+         *   ‖ count(u16) ‖ count × (dh(32) ‖ n(u32) ‖ key(32))       skipped keys, oldest first
+         * ```
+         * `flags` bit 0…4 say which optional key follows (in that order), bit 5 is [touched].
+         * Written straight into one exactly sized array — no `String`, no growing buffer — so the
+         * caller can zero every copy of the keys. A skipped entry whose name is not
+         * `"<canonical Base64 of a 32-byte key>:<UInt32>"` (only [skipMessageKeys] writes names) is left out.
          */
-        fun toJson(): ByteArray = utf8(
-            CryptoJson.encodeToString(
-                StoredSession.serializer(),
-                StoredSession(
-                    v = STORED_FORMAT,
-                    rootKey = B64.encode(rootKey),
-                    sendChainKey = sendChainKey?.let(B64::encode),
-                    recvChainKey = recvChainKey?.let(B64::encode),
-                    sendN = sendN,
-                    recvN = recvN,
-                    prevChainLength = prevChainLength,
-                    dhSendPrivate = dhSendPrivate?.let(B64::encode),
-                    dhSendPublic = dhSendPublic?.let(B64::encode),
-                    dhRecvPublic = dhRecvPublic?.let(B64::encode),
-                    peerIdentityPublic = B64.encode(peerIdentityPublic),
-                    touched = touched,
-                    skipped = skipped.mapValuesTo(LinkedHashMap()) { (_, key) -> B64.encode(key) },
-                ),
-            ),
-        )
+        fun encode(): ByteArray {
+            val entries = skipped.mapNotNull { (name, key) -> parseSkippedName(name)?.let { Triple(it.first, it.second, key) } }
+            require(entries.size <= 0xFFFF) { "too many skipped keys" }
+            val optionals = listOf(sendChainKey, recvChainKey, dhSendPrivate, dhSendPublic, dhRecvPublic)
+            var flags = 0
+            optionals.forEachIndexed { i, key -> if (key != null) flags = flags or (1 shl i) }
+            if (touched) flags = flags or FLAG_TOUCHED
+            val size = 2 + 2 * KEY_BYTES + optionals.count { it != null } * KEY_BYTES + 3 * 4 + 2 +
+                entries.size * SKIPPED_ENTRY_BYTES
+            val out = ByteArray(size)
+            var at = 0
+            fun putKey(key: ByteArray) {
+                require(key.size == KEY_BYTES) { "ratchet key is not 32 bytes" }
+                key.copyInto(out, at)
+                at += KEY_BYTES
+            }
+            fun putU32(value: Long) {
+                require(value in 0..UINT32_MAX) { "ratchet counter out of range" }
+                for (shift in intArrayOf(24, 16, 8, 0)) out[at++] = (value ushr shift).toByte()
+            }
+            try {
+                out[at++] = STORED_FORMAT.toByte()
+                out[at++] = flags.toByte()
+                putKey(rootKey)
+                putKey(peerIdentityPublic)
+                optionals.forEach { it?.let(::putKey) }
+                putU32(sendN)
+                putU32(recvN)
+                putU32(prevChainLength)
+                out[at++] = (entries.size ushr 8).toByte()
+                out[at++] = entries.size.toByte()
+                for ((dh, n, key) in entries) {
+                    putKey(dh)
+                    putU32(n)
+                    putKey(key)
+                }
+            } catch (e: Exception) {
+                out.fill(0)
+                throw e
+            }
+            check(at == size)
+            return out
+        }
 
         override fun equals(other: Any?): Boolean {
             if (this === other) return true
@@ -186,84 +219,82 @@ object DoubleRatchet {
         override fun toString(): String = "DoubleRatchet.Session(sendN=$sendN, recvN=$recvN, pn=$prevChainLength, touched=$touched)"
 
         companion object {
-            /** Version of the stored JSON ([toJson]). */
-            const val STORED_FORMAT = 1
+            /** Version of the stored form ([encode]). Format 1 was JSON (wave 1 builds only; never read). */
+            const val STORED_FORMAT = 2
+
+            private const val FLAG_TOUCHED = 1 shl 5
+            private const val KNOWN_FLAGS = 0x3F
+            private const val SKIPPED_ENTRY_BYTES = 2 * KEY_BYTES + 4
 
             /**
-             * Reads [toJson]'s output. Null when the bytes are not a session this build understands:
-             * not JSON, another `v`, a field that is not strict Base64 or not 32 bytes, a counter
-             * outside `UInt32` — the store then reads it as "no session", as iOS does for a record
-             * that does not decode (`RatchetSessionStore.swift:22-31`). Does not zero [json].
+             * Reads [encode]'s output. Null when the bytes are not a session this build understands
+             * — another format, unknown flags, a wrong length — and the store then reads it as "no
+             * session", as iOS does for a record that does not decode (`RatchetSessionStore.swift:22-31`).
+             * Every key is copied out of [bytes] into its own array; does not zero [bytes].
              */
-            fun fromJson(json: ByteArray): Session? {
-                val stored = try {
-                    CryptoJson.decodeFromString(StoredSession.serializer(), String(json, Charsets.UTF_8))
-                } catch (_: IllegalArgumentException) {
-                    return null
-                }
-                if (stored.v != STORED_FORMAT) return null
-                if (listOf(stored.sendN, stored.recvN, stored.prevChainLength).any { it !in 0..UINT32_MAX }) return null
+            fun decode(bytes: ByteArray): Session? {
+                if (bytes.size < 2 + 2 * KEY_BYTES + 3 * 4 + 2) return null
+                if (bytes[0] != STORED_FORMAT.toByte()) return null
+                val flags = bytes[1].toInt() and 0xFF
+                if (flags and KNOWN_FLAGS.inv() != 0) return null
+                val optionalCount = (0 until 5).count { flags and (1 shl it) != 0 }
+                val fixed = 2 + (2 + optionalCount) * KEY_BYTES + 3 * 4 + 2
+                if (bytes.size < fixed) return null
+                val count = ((bytes[fixed - 2].toInt() and 0xFF) shl 8) or (bytes[fixed - 1].toInt() and 0xFF)
+                if (bytes.size != fixed + count * SKIPPED_ENTRY_BYTES) return null
 
-                val decoded = ArrayList<ByteArray>()
-                var valid = true
-                fun key(b64: String?): ByteArray? {
-                    if (b64 == null) return null
-                    val bytes = B64.decodeStrict(b64)
-                    if (bytes == null || bytes.size != KEY_BYTES) {
-                        bytes?.fill(0)
-                        valid = false
-                        return null
-                    }
-                    return bytes.also { decoded += it }
+                var at = 2
+                fun key(): ByteArray = bytes.copyOfRange(at, at + KEY_BYTES).also { at += KEY_BYTES }
+                fun optional(bit: Int): ByteArray? = if (flags and (1 shl bit) != 0) key() else null
+                fun u32(): Long {
+                    var value = 0L
+                    repeat(4) { value = (value shl 8) or (bytes[at++].toLong() and 0xFF) }
+                    return value
                 }
-                val root = key(stored.rootKey)
-                val peer = key(stored.peerIdentityPublic)
-                val sendChain = key(stored.sendChainKey)
-                val recvChain = key(stored.recvChainKey)
-                val dhPrivate = key(stored.dhSendPrivate)
-                val dhPublic = key(stored.dhSendPublic)
-                val dhRecv = key(stored.dhRecvPublic)
+                val root = key()
+                val peer = key()
+                val sendChain = optional(0)
+                val recvChain = optional(1)
+                val dhPrivate = optional(2)
+                val dhPublic = optional(3)
+                val dhRecv = optional(4)
+                val sendN = u32()
+                val recvN = u32()
+                val prevChainLength = u32()
+                at += 2
                 val skipped = LinkedHashMap<String, ByteArray>()
-                for ((name, b64) in stored.skipped) key(b64)?.let { skipped[name] = it }
-                if (!valid || root == null || peer == null) {
-                    decoded.forEach { it.fill(0) }
-                    return null
+                repeat(count) {
+                    val dh = key()
+                    val n = u32()
+                    // The name is public (a DH public key and a counter); only the value is secret.
+                    skipped.put("${B64.encode(dh)}:$n", key())?.fill(0)
                 }
                 return Session(
                     rootKey = root,
                     sendChainKey = sendChain,
                     recvChainKey = recvChain,
-                    sendN = stored.sendN,
-                    recvN = stored.recvN,
-                    prevChainLength = stored.prevChainLength,
+                    sendN = sendN,
+                    recvN = recvN,
+                    prevChainLength = prevChainLength,
                     dhSendPrivate = dhPrivate,
                     dhSendPublic = dhPublic,
                     dhRecvPublic = dhRecv,
                     peerIdentityPublic = peer,
-                    touched = stored.touched,
+                    touched = flags and FLAG_TOUCHED != 0,
                     skipped = skipped,
                 )
             }
+
+            /** `"<dh b64>:<n>"` → (dh, n); null for a name [skipMessageKeys] would not have written. */
+            private fun parseSkippedName(name: String): Pair<ByteArray, Long>? {
+                val colon = name.lastIndexOf(':')
+                if (colon <= 0) return null
+                val dh = B64.decodeStrict(name.substring(0, colon))?.takeIf { it.size == KEY_BYTES } ?: return null
+                val n = name.substring(colon + 1).toLongOrNull()?.takeIf { it in 0..UINT32_MAX } ?: return null
+                return dh to n
+            }
         }
     }
-
-    /** JSON form of [Session] (field names of `DoubleRatchet.swift:48-63`). */
-    @Serializable
-    private class StoredSession(
-        val v: Int,
-        val rootKey: String,
-        val sendChainKey: String? = null,
-        val recvChainKey: String? = null,
-        val sendN: Long,
-        val recvN: Long,
-        val prevChainLength: Long,
-        val dhSendPrivate: String? = null,
-        val dhSendPublic: String? = null,
-        val dhRecvPublic: String? = null,
-        val peerIdentityPublic: String,
-        val touched: Boolean,
-        val skipped: Map<String, String>,
-    )
 
     // ---- bootstrap ----
 

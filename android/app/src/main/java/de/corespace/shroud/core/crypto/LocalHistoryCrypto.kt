@@ -32,7 +32,7 @@ object LocalHistoryCrypto {
         /** Identity, signed-prekey and one-time-prekey privates. */
         IdentityKeychain("shroud-keychain-identity-v1"),
 
-        /** Double Ratchet session JSON, one record per peer. */
+        /** Double Ratchet session (`DoubleRatchet.Session.encode`), one record per peer. */
         RatchetKeychain("shroud-keychain-ratchet-v1"),
 
         /** Per-sender watermark of the first tagged identity box. */

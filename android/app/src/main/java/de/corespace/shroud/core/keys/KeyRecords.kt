@@ -14,8 +14,8 @@ import java.util.UUID
  * Double Ratchet sessions, one record per peer (iOS `RatchetSessionStore`,
  * `ios/shroud/Services/Crypto/RatchetSessionStore.swift:5-57`; crypto spec §7).
  *
- * The store works on the session JSON (field names of crypto spec §5.4); `DoubleRatchet` owns its
- * encoding. On disk every record is sealed with `LocalHistoryCrypto` context `RatchetKeychain`
+ * The store works on the encoded session (`DoubleRatchet.Session.encode`, a binary layout with no
+ * `String` copies of the keys); `DoubleRatchet` owns its encoding. On disk every record is sealed with `LocalHistoryCrypto` context `RatchetKeychain`
  * under the history key, inside the WhenUnlocked Keystore sealer, at
  * `keys/ratchets/<LocalNames.name("ratchet", peer)>` (plan §1.5). Never stored in the clear:
  * "a lost ratchet step costs at most a skipped message key, a plaintext one leaks the chain"
@@ -33,7 +33,7 @@ interface RatchetSessionRecords {
     val isUnlocked: Boolean
 
     /**
-     * The session JSON for [peerUserId], or null when there is none, the record does not open or
+     * The encoded session for [peerUserId], or null when there is none, the record does not open or
      * the store is locked (`RatchetSessionStore.swift:22-31`). The caller owns (and may zero) the
      * returned array.
      *
@@ -48,11 +48,11 @@ interface RatchetSessionRecords {
     fun load(peerUserId: UUID): ByteArray?
 
     /**
-     * Stores [sessionJson] for [peerUserId], replacing the previous session. Dropped silently while
-     * locked (`RatchetSessionStore.swift:33-40`) or while `StorageSeal.isSealed` (a wipe is running,
-     * crypto spec §14). Does not keep a reference to [sessionJson].
+     * Stores [session] (encoded) for [peerUserId], replacing the previous session. Dropped silently
+     * while locked (`RatchetSessionStore.swift:33-40`) or while `StorageSeal.isSealed` (a wipe is
+     * running, crypto spec §14). Does not keep a reference to [session].
      */
-    fun save(peerUserId: UUID, sessionJson: ByteArray)
+    fun save(peerUserId: UUID, session: ByteArray)
 
     /** Forgets [peerUserId]'s session — the user accepted a changed identity key (`RatchetSessionStore.swift:42-49`). */
     fun delete(peerUserId: UUID)

@@ -170,19 +170,45 @@ class IdentityKeyStoreTest {
     }
 
     @Test
-    fun brokenOneTimePreKeysAreSkippedOneByOne() {
+    fun oneTimePreKeysThatDoNotParseAreAnEmptyPool() {
         store.save(material)
         val key = material.historyKey
-        val good = B64.encode(ByteArray(32) { 3 })
-        val map = """{"7":"$good","x":"$good","8":"AAAA","9":42,"-1":"$good","10":"$good"}"""
-        rewrite {
-            it["otpk_map"] = JsonPrimitive(B64.encode(IdentityKeyStore.sealPrivate(map.toByteArray(), key, IdentityKeyStore.Field.OneTimePreKeys)))
+        fun sealMap(bytes: ByteArray) = rewrite {
+            it["otpk_map"] = JsonPrimitive(B64.encode(IdentityKeyStore.sealPrivate(bytes, key, IdentityKeyStore.Field.OneTimePreKeys)))
         }
+        // Ids beyond Int are skipped one by one; the rest load.
+        val ids = listOf(7 to ByteArray(32) { 3 }, 10 to ByteArray(32) { 4 })
+        val encoded = IdentityKeyStore.encodeOneTimePreKeys(ids)
+        val withHugeId = encoded + byteArrayOf(0x80.toByte(), 0, 0, 0) + ByteArray(32) { 5 }
+        sealMap(withHugeId)
         val stored = store.load(key)!!
         assertEquals(listOf(7, 10), stored.oneTimePreKeys.keys.sorted())
+        assertArrayEquals(ByteArray(32) { 4 }, stored.oneTimePreKeys[10])
+        // A torn entry, another format, or wave 1's JSON map: an empty pool, not a failed load.
+        for (broken in listOf(encoded.copyOf(encoded.size - 1), encoded.copyOf().also { it[0] = 1 }, """{"7":"AAAA"}""".toByteArray())) {
+            sealMap(broken)
+            assertEquals(emptyMap<Int, ByteArray>(), store.load(key)!!.oneTimePreKeys)
+        }
         // A missing or unopenable pool is empty, not a failed load (`IdentityKeyStore.swift:121-131`).
         rewrite { it.remove("otpk_map") }
         assertEquals(emptyMap<Int, ByteArray>(), store.load(key)!!.oneTimePreKeys)
+    }
+
+    /**
+     * The one-time prekeys are sealed as raw bytes, never through a `String` (which nothing can
+     * zero): the opened map holds every private key as is and no Base64 or hex text of one.
+     */
+    @Test
+    fun oneTimePreKeysAreSealedWithoutATextFormOfAnyKey() {
+        store.save(material)
+        val sealed = B64.decodeStrict(record()["otpk_map"]!!.jsonPrimitive.content)!!
+        val opened = LocalHistoryCrypto.open(sealed, material.historyKey, LocalHistoryCrypto.Context.IdentityKeychain, IdentityKeyStore.aad(IdentityKeyStore.Field.OneTimePreKeys))
+        assertEquals(IdentityKeyStore.OTPK_FORMAT, opened[0])
+        assertEquals(1 + material.oneTimePreKeys.size * 36, opened.size)
+        for (otpk in material.oneTimePreKeys) {
+            assertTrue(opened.hex().contains(otpk.privateKey.hex()))
+            assertFalse(opened.hex().contains(B64.encode(otpk.privateKey).toByteArray().hex()))
+        }
     }
 
     @Test

@@ -311,20 +311,20 @@ class MessageCrypto internal constructor(
     }
 
     private fun loadSession(peerUserId: UUID): DoubleRatchet.Session? {
-        val json = ratchets.load(peerUserId) ?: return null
+        val stored = ratchets.load(peerUserId) ?: return null
         try {
-            return DoubleRatchet.Session.fromJson(json)
+            return DoubleRatchet.Session.decode(stored)
         } finally {
-            json.fill(0)
+            stored.fill(0)
         }
     }
 
     private fun saveSession(peerUserId: UUID, session: DoubleRatchet.Session) {
-        val json = session.toJson()
+        val encoded = session.encode()
         try {
-            ratchets.save(peerUserId, json)
+            ratchets.save(peerUserId, encoded)
         } finally {
-            json.fill(0)
+            encoded.fill(0)
         }
     }
 
