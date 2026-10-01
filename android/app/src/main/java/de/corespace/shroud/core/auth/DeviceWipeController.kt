@@ -385,6 +385,8 @@ class DeviceWipeController(
             endServerSessionOutcome(token)
         }
         onIo { dataWipe.wipeEverything() }
+        // The call secrets' in-memory map, or a later save would write them back (review W2).
+        step { hooks.clearCalls() }
         step { hooks.forgetNotifications() }
         step { hooks.forgetAppearance() }
         if (checkLeftovers().isEmpty()) onIo { dataWipe.clearPending() }

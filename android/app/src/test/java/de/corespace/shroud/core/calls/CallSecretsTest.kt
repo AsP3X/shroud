@@ -85,6 +85,21 @@ class CallSecretsTest {
         assertNull(store().secret(carol))
     }
 
+    /** Review W2: a wipe that removed the file without `deleteAll` must not be undone by the map in memory. */
+    @Test
+    fun aMapWhoseFileWasWipedIsNeverWrittenBack() {
+        val store = store()
+        store.save(bob, ByteArray(32) { 1 })
+        assertArrayEquals(ByteArray(32) { 1 }, store.secret(bob))
+        // The removal wipe deletes app files directly (DeviceDataWipe.wipeEverything).
+        assertTrue(temp.file("call-secrets.sealed").delete())
+
+        assertNull(store.secret(bob))
+        store.save(carol, ByteArray(32) { 2 })
+        assertNull(store().secret(bob))
+        assertArrayEquals(ByteArray(32) { 2 }, store().secret(carol))
+    }
+
     @Test
     fun onlyThirtyTwoByteSecretsAndUnchangedSavesWriteNothing() {
         val sealer = CountingSealer()

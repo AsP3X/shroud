@@ -139,9 +139,16 @@ class SealedCallSecretStore(
         }
     }
 
-    /** The stored map; null when it exists but cannot be read now (so nothing overwrites it). */
+    /**
+     * The stored map; null when it exists but cannot be read now (so nothing overwrites it). A
+     * non-empty map in memory whose file is gone was wiped behind this store's back (a wipe path
+     * that missed `deleteAll`): it is dropped, never written back (review W2).
+     */
     private fun load(): MutableMap<String, String>? {
-        cache?.let { return it }
+        cache?.let { held ->
+            if (held.isEmpty() || file.exists()) return held
+            cache = null
+        }
         val loaded: MutableMap<String, String> = when (val read = file.readClassified()) {
             is RecordRead.Found -> try {
                 HashMap(json.decodeFromString(MAP, String(read.bytes, Charsets.UTF_8)))

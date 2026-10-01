@@ -209,7 +209,8 @@ class DeviceRemovalWakeTest {
         assertEquals(WakeResult.NewData, h.wake.handle())
         // Emptied at once, writers halted and storage sealed; no overlay.
         for (gone in WipeFixture.ACCOUNT_PATHS) assertFalse("$gone survived", h.fixture.exists(gone))
-        assertEquals(listOf("haltWriters", "forgetNotifications"), h.hooks.calls)
+        // What controllers built in this process hold goes too (review W2: call secrets in memory).
+        assertEquals(listOf("haltWriters", "stopMessaging(true)", "clearCalls", "forgetNotifications", "lockCrypto(true)"), h.hooks.calls)
         assertTrue(h.seal.isSealed)
         assertFalse(h.controller.isPresented.value)
         // The marker stays for the next launch, which ends the session and says so.

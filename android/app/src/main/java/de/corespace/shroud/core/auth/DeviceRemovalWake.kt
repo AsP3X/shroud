@@ -127,7 +127,18 @@ class RemovalWake(
         } catch (_: Exception) {
             // The marker (written first) makes the next launch finish it.
         }
+        // Unlike iOS this process may keep running with controllers built (the background connection,
+        // a ring answered while locked): what they hold in memory goes too, or the next write would
+        // put the removed account's call secrets back on disk (review W2).
+        try {
+            hooks.stopMessaging(wipeDisk = true)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+        }
+        runCatching { hooks.clearCalls() }
         runCatching { hooks.forgetNotifications() }
+        runCatching { hooks.lockCrypto(wipeStore = true) }
         // The next UI start finishes through the marker, not with a second (overlay) wipe.
         session.consumePendingFullLocalWipe()
         return WakeResult.NewData
