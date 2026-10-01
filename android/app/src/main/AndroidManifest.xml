@@ -1,10 +1,68 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  The single manifest of the single, Google-free build (00-plan §5.3; decision record 2026-10-01).
+  No Firebase, GMS or c2dm entries, no direct-boot-aware components: the AppContainer reads
+  credential-encrypted storage and is only built after the first unlock. Shared file — one owner
+  per wave (00-plan §2.6); later changes go through that owner.
+-->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Android 17+: a self-hosted server on the LAN or the emulator host (asked when needed). -->
     <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
+
+    <!-- Notifications (P6a: asked once after the first unlock) and the push paths (P1). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Restarts the opt-in background connection after a reboot. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Background connection: a specialUse foreground service holding the WebSocket (P1). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- Camera, voice messages, calls (P8, calls §6.7–6.8). -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Recents strip: images only (P9). Never ACCESS_MEDIA_LOCATION. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+
+    <!-- Calls: the call foreground service, Telecom, ringing (calls §6.7). Never FOREGROUND_SERVICE_CAMERA (calls D3). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <!-- API 35+: screen-recording callback for the capture cover (P5, shell-chats §3.9). -->
+    <uses-permission android:name="android.permission.DETECT_SCREEN_RECORDING" />
+
+    <uses-feature
+        android:name="android.hardware.camera.any"
+        android:required="false" />
+
+    <!-- Package visibility (API 30+): Custom Tabs, mailto links, UnifiedPush distributors. -->
+    <queries>
+        <intent>
+            <action android:name="android.support.customtabs.action.CustomTabsService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SENDTO" />
+            <data android:scheme="mailto" />
+        </intent>
+        <intent>
+            <action android:name="org.unifiedpush.android.distributor.REGISTER" />
+        </intent>
+    </queries>
 
     <!--
       Invariant 4: nothing the app stores goes into a cloud backup or a device-to-device
@@ -24,15 +82,144 @@
         android:theme="@style/Theme.Shroud"
         tools:targetApi="37">
 
+        <!--
+          The one activity of the app. No launcher filter: the two aliases below are the entry
+          points (launcher icon style, settings-lock §8.4). Exported for the App Links filter
+          (P10c, contacts §5.10); singleTask so links and notification taps reach onNewIntent.
+        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|density|uiMode">
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="shroud.corespace.de"
+                    android:pathPrefix="/u/" />
+            </intent-filter>
+        </activity>
+
+        <!-- Launcher icon styles (BrandLogoPreference): exactly one alias is enabled. -->
+        <activity-alias
+            android:name=".LauncherDetailed"
+            android:targetActivity=".MainActivity"
+            android:enabled="true"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
+        </activity-alias>
+        <!-- W3-SETTINGS-A adds @mipmap/ic_launcher_simple; until then both styles share one icon. -->
+        <activity-alias
+            android:name=".LauncherSimple"
+            android:targetActivity=".MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- Lock-screen host of the call screen (calls §6.9); stub until W3-CALLS-SYSTEM. -->
+        <activity
+            android:name=".ui.calls.CallActivity"
+            android:exported="false"
+            android:launchMode="singleInstance"
+            android:taskAffinity="de.corespace.shroud.call"
+            android:excludeFromRecents="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|density|uiMode" />
+
+        <!-- The whole call, ring to end (calls §6.1, §6.7); stub until W3-CALLS-SYSTEM. -->
+        <service
+            android:name=".core.calls.system.CallService"
+            android:exported="false"
+            android:foregroundServiceType="phoneCall|microphone|mediaProjection" />
+
+        <!-- Opt-in background connection (P1, 00-plan §1.7.10); stub until W3-PUSH. -->
+        <service
+            android:name=".core.push.backgroundconnection.BackgroundConnectionService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the connection to the user's Shroud server open to receive messages and calls without a push service" />
+        </service>
+
+        <!--
+          UnifiedPush (AND_3): distributors must reach this receiver, so it is exported; every
+          intent is checked against the stored connection token and must decrypt (RFC 8291) under
+          keys only this phone and the Shroud server hold (00-plan §1.7.10). Stub until W3-PUSH.
+        -->
+        <receiver
+            android:name=".core.push.unifiedpush.UnifiedPushReceiver"
+            android:exported="true"
+            tools:ignore="ExportedReceiver">
+            <intent-filter>
+                <action android:name="org.unifiedpush.android.connector.NEW_ENDPOINT" />
+                <action android:name="org.unifiedpush.android.connector.REGISTRATION_FAILED" />
+                <action android:name="org.unifiedpush.android.connector.UNREGISTERED" />
+                <action android:name="org.unifiedpush.android.connector.MESSAGE" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Restarts the background connection after a reboot (first unlock); stub until W3-PUSH. -->
+        <receiver
+            android:name=".core.push.BootCompletedReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Hands decrypted media to share targets on demand; stub until W3-MEDIA-VIEW. -->
+        <provider
+            android:name=".core.media.share.DecryptedMediaProvider"
+            android:authorities="${applicationId}.media"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
+        <!--
+          androidx.startup: emoji2 would query the GMS downloadable-font provider at start; the
+          bundled font is installed by hand instead (P16c). WorkManager initialises on demand
+          (ShroudApplication is its Configuration.Provider), so nothing touches its database
+          before the removal-wake worker (W3-PUSH) is first scheduled.
+        -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.emoji2.text.EmojiCompatInitializer"
+                tools:node="remove" />
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                tools:node="remove" />
+        </provider>
+
+        <!--
+          Room (through WorkManager) declares this service direct-boot aware. Nothing of the app
+          runs before the first unlock — the container reads credential-encrypted storage — so
+          it is not (00-plan §5.3: no direct-boot-aware components). Room is only on the runtime
+          classpath, hence lint's MissingClass.
+        -->
+        <service
+            android:name="androidx.room.MultiInstanceInvalidationService"
+            android:directBootAware="false"
+            tools:ignore="MissingClass"
+            tools:replace="android:directBootAware" />
     </application>
 </manifest>
