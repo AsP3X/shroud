@@ -60,6 +60,7 @@ import dev.chrisbanes.haze.HazeProgressive
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.blur.HazeBlurStyle
 import dev.chrisbanes.haze.blur.hazeBlur
+import dev.chrisbanes.haze.hazeSource
 import kotlin.math.max
 
 /**
@@ -359,6 +360,13 @@ fun ScrollEdgeEffect(
             .background(brush),
     )
 }
+
+/**
+ * Marks scroll content as the [backdrop] a [ScrollEdgeEffect] blurs. Only where the platform blurs
+ * (API 31+): below that the effect is a plain gradient and recording the content would be waste.
+ */
+internal fun Modifier.edgeEffectSource(backdrop: HazeState): Modifier =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) hazeSource(backdrop) else this
 
 /** The numbers of [ScrollEdgeEffect] (shell-chats §6.4). */
 object ScrollEdgeEffectSpec {

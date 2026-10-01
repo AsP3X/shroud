@@ -9,6 +9,7 @@ import android.graphics.Shader
 import android.graphics.Typeface
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.content.res.ResourcesCompat
+import androidx.core.graphics.createBitmap
 import de.corespace.shroud.R
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -28,7 +29,7 @@ object AvatarBitmap {
     fun render(context: Context, seed: String, initials: String, sizeDp: Int = 40): Bitmap {
         val metrics = layout(sizeDp, context.resources.displayMetrics.density)
         val px = metrics.sizePx
-        val bitmap = Bitmap.createBitmap(px, px, Bitmap.Config.ARGB_8888)
+        val bitmap = createBitmap(px, px)
         val canvas = Canvas(bitmap)
         val (top, bottom) = AvatarPalette.colors(seed)
         val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {

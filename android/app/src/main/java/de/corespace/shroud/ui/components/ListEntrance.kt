@@ -14,9 +14,9 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import de.corespace.shroud.ui.theme.Motion
 import de.corespace.shroud.ui.theme.ShroudTheme
-import kotlinx.coroutines.delay
 import kotlin.math.max
 import kotlin.math.min
+import kotlinx.coroutines.delay
 
 /**
  * The timing of the staggered list entrance (`Motion.swift:133-214`; shell-chats §10.12), pure so

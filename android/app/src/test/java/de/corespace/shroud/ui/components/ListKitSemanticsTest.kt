@@ -14,7 +14,6 @@ import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.state.ToggleableState
 import de.corespace.shroud.core.model.ChatPeerActivity
 import de.corespace.shroud.ui.theme.ShroudIcons
-import kotlinx.coroutines.CompletableDeferred
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -25,6 +24,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import kotlinx.coroutines.CompletableDeferred
 
 /**
  * What TalkBack gets from the list kit (the spec's a11y lines: shell-chats §10.1-10.8, §6.2-6.3;

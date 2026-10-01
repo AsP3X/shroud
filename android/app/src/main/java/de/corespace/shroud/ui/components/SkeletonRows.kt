@@ -31,7 +31,7 @@ import de.corespace.shroud.ui.theme.ShroudTheme
  * the rows arrive. Bars never push the time bar out on a narrow phone. Hidden from TalkBack.
  */
 @Composable
-fun SkeletonChatRow(titleWidth: Dp = 120.dp, subtitleWidth: Dp = 200.dp, modifier: Modifier = Modifier) {
+fun SkeletonChatRow(modifier: Modifier = Modifier, titleWidth: Dp = 120.dp, subtitleWidth: Dp = 200.dp) {
     val fill = ShroudTheme.colors.backgroundGrouped
     Row(
         modifier
@@ -71,7 +71,7 @@ fun SkeletonChatList(rows: Int = 7, modifier: Modifier = Modifier) {
     ) {
         repeat(rows) { index ->
             val (title, subtitle) = SkeletonWidths.at(index)
-            SkeletonChatRow(title.dp, subtitle.dp)
+            SkeletonChatRow(titleWidth = title.dp, subtitleWidth = subtitle.dp)
         }
     }
 }

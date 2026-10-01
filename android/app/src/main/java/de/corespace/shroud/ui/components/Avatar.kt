@@ -75,10 +75,10 @@ fun Avatar(
 @Composable
 fun SymbolAvatar(
     icon: ImageVector,
+    modifier: Modifier = Modifier,
     size: Dp = 52.dp,
     iconSize: Dp = 22.dp,
     brush: Brush = BrandColors.brandGradient,
-    modifier: Modifier = Modifier,
 ) {
     Box(
         modifier
@@ -94,7 +94,7 @@ fun SymbolAvatar(
 
 /** The usual list avatar: initials of [name] on the gradient of [seed] (`ChatRowView.swift:20-23, 38`). */
 @Composable
-fun NameAvatar(name: String, seed: String = name, size: Dp = 52.dp, fontSize: TextUnit? = null, modifier: Modifier = Modifier) {
+fun NameAvatar(name: String, modifier: Modifier = Modifier, seed: String = name, size: Dp = 52.dp, fontSize: TextUnit? = null) {
     Avatar(AvatarPalette.initials(name), size, AvatarPalette.brush(seed), fontSize, modifier)
 }
 

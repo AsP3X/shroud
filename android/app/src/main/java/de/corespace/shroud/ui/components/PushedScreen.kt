@@ -24,6 +24,9 @@ import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -35,7 +38,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import de.corespace.shroud.ui.theme.ShroudIcons
 import de.corespace.shroud.ui.theme.ShroudTheme
-import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import kotlin.math.max
 
@@ -72,6 +74,8 @@ fun PushedScreen(
     val colors = ShroudTheme.colors
     val backdrop = rememberHazeState()
     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    // Derived, so scrolling only recomposes when content starts or stops passing under the bar.
+    val scrolledUnder by remember(scrollState) { derivedStateOf { scrollState.value > 0 } }
     BackHandler(enabled = !backEnabled) {
         // Back is off while the screen finishes something it must not abandon.
     }
@@ -80,14 +84,14 @@ fun PushedScreen(
             Column(
                 Modifier
                     .fillMaxSize()
-                    .hazeSource(backdrop)
+                    .edgeEffectSource(backdrop)
                     .nestedScroll(rememberKeyboardDismissOnDrag())
                     .verticalScroll(scrollState)
                     .padding(top = statusTop + PushedBarMetrics.height),
                 content = content,
             )
             ScrollEdgeEffect(
-                visible = scrollState.value > 0,
+                visible = scrolledUnder,
                 extent = statusTop + PushedBarMetrics.height,
                 backdrop = backdrop,
             )

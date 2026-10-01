@@ -40,7 +40,6 @@ import androidx.compose.ui.unit.dp
 import de.corespace.shroud.ui.theme.ShroudIcons
 import de.corespace.shroud.ui.theme.ShroudTheme
 import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 
 /**
@@ -87,7 +86,7 @@ fun MainScrollScreen(
             state = state,
             modifier = Modifier
                 .fillMaxSize()
-                .hazeSource(backdrop)
+                .edgeEffectSource(backdrop)
                 .nestedScroll(rememberKeyboardDismissOnDrag()),
             contentPadding = PaddingValues(top = barBlock, bottom = bottom),
         ) {
