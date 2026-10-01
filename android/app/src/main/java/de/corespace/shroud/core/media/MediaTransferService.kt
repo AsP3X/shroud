@@ -21,6 +21,7 @@ import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody
 import okio.BufferedSink
+import org.bouncycastle.crypto.modes.gcm.Tables64kGCMMultiplier
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileInputStream
@@ -31,6 +32,9 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.security.MessageDigest
 import java.util.UUID
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * Upload and download of sealed media blobs — iOS `MediaService` (`ios/shroud/Services/API/MediaService.swift:7-84`)
@@ -46,7 +50,9 @@ import java.util.UUID
  * seals the plaintext as OkHttp writes it ([SealingBody]) — no sealed copy in memory or on disk for
  * large media. Key and nonce are fixed for the upload, so a body OkHttp writes a second time (a
  * retry on a fresh connection) is byte-identical. Plaintext up to [ONE_SHOT_BYTES] is sealed in one
- * JCA call (Conscrypt, hardware AES); larger sources stream through BouncyCastle's GCM (media D2).
+ * JCA call (Conscrypt, hardware AES); larger sources stream through [StreamingGcm] — the platform's
+ * AES/CTR plus a table GHASH, byte-identical to `MediaCrypto.sealStream` but not limited by
+ * BouncyCastle's software AES (media D2 and risk R1; plan W1-CRYPTO acceptance note).
  * The upload row is created right before the PUT, as iOS does: the server deletes unlinked uploads
  * after 60 min (`media.rs:37-39`). Uploads are not cancellable once bytes move (iOS
  * `MessagingController.swift:2904-2911`), but cancelling the caller cancels the request.
@@ -110,6 +116,8 @@ class MediaTransferService(
      * @throws MediaCrypto.MediaError.InvalidKey when [keyBase64] is not a strict Base64 32-byte key (no request made).
      * @throws MediaCrypto.MediaError.DecryptFailed when the blob does not open with it.
      * @throws CryptoError.Locked while chats are locked (no request made) or when they lock meanwhile.
+     * @throws IOException when [targetMessageId] was removed from the cache meanwhile (a delete for
+     *   everyone, `LocalMediaCache.remove`): nothing is stored.
      */
     override suspend fun downloadInto(
         mediaObjectId: UUID,
@@ -155,7 +163,7 @@ class MediaTransferService(
             }
         } else {
             CancellableInputStream(FileInputStream(sealed), job).use { input ->
-                MediaCrypto.openStream(input, WriterOutputStream(writer), key)
+                StreamingGcm.open(input, WriterOutputStream(writer), key)
             }
         }
     }
@@ -237,8 +245,8 @@ class MediaTransferService(
             val (k, n) = snapshot()
             try {
                 ReplayCheckedInputStream(plain.open(), plain.length, digests).use { input ->
-                    // Same key and nonce on every write: a fixed-entropy draw (key, then nonce).
-                    MediaCrypto.sealStream(input, sink.outputStream(), FixedEntropy(k, n)).fill(0)
+                    // Same key and nonce on every write.
+                    StreamingGcm.seal(input, sink.outputStream(), k, n)
                 }
             } finally {
                 k.fill(0)
@@ -345,15 +353,6 @@ class MediaTransferService(
         }
     }
 
-    /** Hands out copies of a fixed key and nonce, in `MediaCrypto`'s draw order. */
-    private class FixedEntropy(private val key: ByteArray, private val nonce: ByteArray) : Entropy {
-        override fun bytes(count: Int): ByteArray = when (count) {
-            key.size -> key.copyOf()
-            nonce.size -> nonce.copyOf()
-            else -> throw IllegalStateException("unexpected draw of $count bytes")
-        }
-    }
-
     /** Stops a long decrypt when the caller is cancelled (checked per read). */
     private class CancellableInputStream(input: InputStream, private val job: Job) : FilterInputStream(input) {
         override fun read(): Int {
@@ -374,7 +373,7 @@ class MediaTransferService(
     }
 
     companion object {
-        /** Below this, seal and open in one JCA call (media D2: Conscrypt one-shot ≤ 16 MiB, BouncyCastle streaming above). */
+        /** Below this, seal and open in one JCA call (media D2: Conscrypt one-shot ≤ 16 MiB, [StreamingGcm] above). */
         const val ONE_SHOT_BYTES = 16L * 1024 * 1024
 
         /** The streaming upload's replay check granularity: one SHA-256 per MiB of plaintext (64 KiB of digests for 2 GiB). */
@@ -394,6 +393,236 @@ class MediaTransferService(
                 "This media is too large after encryption ($megabytes MB). Try a shorter video or lower photo quality.",
                 400,
             )
+        }
+    }
+}
+
+/**
+ * Streaming AES-256-GCM for media blobs larger than [MediaTransferService.ONE_SHOT_BYTES], built
+ * from the platform's `AES/CTR/NoPadding` (Conscrypt on a phone: BoringSSL with the ARMv8 AES
+ * instructions) and BouncyCastle's 64 KiB-table GHASH — media-voice-links risk R1 and the plan's
+ * W1-CRYPTO acceptance note: BouncyCastle's all-Java GCM (`MediaCrypto.sealStream`/`openStream`)
+ * measured 44–45 MB/s on the API 37 emulator, under the 50 MB/s target, so the hardware CTR path
+ * is the one transfers use.
+ *
+ * It is GCM exactly as NIST SP 800-38D defines it for a 96-bit nonce and no AAD, so its output is
+ * byte-identical to `MediaCrypto.sealFile`/`sealStream`, CryptoKit (`MediaCrypto.swift:40-53`) and
+ * WebCrypto (`web/src/crypto/aes.ts:29-46`) — `StreamingGcmTest` pins it against all of them:
+ * - `H = AES_K(0¹²⁸)`, `J0 = nonce ‖ 0x00000001`, keystream blocks `AES_K(nonce ‖ ctr)` from
+ *   `ctr = 2`;
+ * - `tag = AES_K(J0) ⊕ GHASH_H(C ‖ 0-pad ‖ [0]₆₄ ‖ [8·len(C)]₆₄)`;
+ * - blob = `nonce ‖ C ‖ tag`.
+ *
+ * GCM increments only the low 32 bits of the counter block (inc32) while the JCA's CTR carries
+ * into all 128; they agree as long as the low word does not wrap, i.e. for up to
+ * [MAX_PLAINTEXT_BYTES] (≈ 64 GiB, far above the 2 GiB server cap), which [seal] and [open] enforce.
+ *
+ * [open] releases plaintext before the tag is checked at the end (like `MediaCrypto.openStream`):
+ * callers write it into an uncommitted SHRM1 writer and commit only after it returned. Accepted
+ * residuals, as in `MediaCrypto`: the JCA ciphers' key schedules and the GHASH tables (derived from
+ * `H`, not the key) cannot be wiped; they are garbage after the call. Never logs keys or content.
+ */
+internal object StreamingGcm {
+    private const val BLOCK_BYTES = 16
+    private const val TAG_BYTES = Primitives.GCM_TAG_BYTES
+    private const val NONCE_BYTES = Primitives.GCM_NONCE_BYTES
+
+    /** Plaintext per pass through the ciphers. */
+    private const val CHUNK_BYTES = 1024 * 1024
+
+    /** Counter blocks 2 … 2³² − 1 carry the keystream: beyond this inc32 would wrap. */
+    const val MAX_PLAINTEXT_BYTES: Long = (0xFFFF_FFFFL - 1) * BLOCK_BYTES
+
+    /**
+     * Writes `nonce ‖ AES-256-GCM(key, nonce, input) ‖ tag` to [output]. Neither stream is closed;
+     * an I/O error propagates (the partial output is garbage). The buffers are zeroed before it
+     * returns.
+     */
+    fun seal(input: InputStream, output: OutputStream, key: ByteArray, nonce: ByteArray) {
+        val session = Session(key, nonce)
+        val plain = ByteArray(CHUNK_BYTES)
+        val sealed = ByteArray(CHUNK_BYTES + BLOCK_BYTES)
+        try {
+            output.write(nonce)
+            while (true) {
+                val read = input.read(plain)
+                if (read < 0) break
+                if (read == 0) continue
+                val produced = session.crypt(plain, 0, read, sealed, encrypt = true)
+                output.write(sealed, 0, produced)
+            }
+            val produced = session.finishCipher(sealed, encrypt = true)
+            if (produced > 0) output.write(sealed, 0, produced)
+            output.write(session.tag())
+        } finally {
+            plain.fill(0)
+            sealed.fill(0)
+            session.destroy()
+        }
+    }
+
+    /**
+     * Opens `nonce ‖ C ‖ tag` from [input] into [output]. Plaintext goes out **before** the tag is
+     * checked at the end. A key that is not 32 bytes → [MediaCrypto.MediaError.InvalidKey]; a
+     * stream shorter than 28 bytes, a wrong key, a tampered or truncated blob →
+     * [MediaCrypto.MediaError.DecryptFailed] (after unauthenticated output). I/O errors propagate;
+     * neither stream is closed.
+     */
+    fun open(input: InputStream, output: OutputStream, key: ByteArray) {
+        if (key.size != MediaCrypto.KEY_BYTES) throw MediaCrypto.MediaError.InvalidKey
+        val nonce = ByteArray(NONCE_BYTES)
+        if (readFully(input, nonce) != NONCE_BYTES) throw MediaCrypto.MediaError.DecryptFailed
+        val session = Session(key, nonce)
+        // The last 16 bytes read so far might be the tag: they are held back until more follow.
+        val sealed = ByteArray(CHUNK_BYTES + TAG_BYTES)
+        val plain = ByteArray(CHUNK_BYTES + TAG_BYTES + BLOCK_BYTES)
+        var held = 0
+        try {
+            while (true) {
+                val read = input.read(sealed, held, sealed.size - held)
+                if (read < 0) break
+                held += read
+                if (held <= TAG_BYTES) continue
+                val ciphertext = held - TAG_BYTES
+                val produced = session.crypt(sealed, 0, ciphertext, plain, encrypt = false)
+                output.write(plain, 0, produced)
+                sealed.copyInto(sealed, 0, ciphertext, held)
+                held = TAG_BYTES
+            }
+            if (held != TAG_BYTES) throw MediaCrypto.MediaError.DecryptFailed
+            val produced = session.finishCipher(plain, encrypt = false)
+            if (produced > 0) output.write(plain, 0, produced)
+            val expected = session.tag()
+            val matches = MessageDigest.isEqual(expected, sealed.copyOf(TAG_BYTES))
+            expected.fill(0)
+            if (!matches) throw MediaCrypto.MediaError.DecryptFailed
+        } finally {
+            sealed.fill(0)
+            plain.fill(0)
+            session.destroy()
+        }
+    }
+
+    /** Reads until [buffer] is full or the stream ends; the count read (`readNBytes` needs API 33). */
+    private fun readFully(input: InputStream, buffer: ByteArray): Int {
+        var filled = 0
+        while (filled < buffer.size) {
+            val read = input.read(buffer, filled, buffer.size - filled)
+            if (read < 0) break
+            filled += read
+        }
+        return filled
+    }
+
+    /** One GCM message: the CTR cipher, the running GHASH over the ciphertext and the tag mask `AES_K(J0)`. */
+    private class Session(key: ByteArray, nonce: ByteArray) {
+        private val ctr: Cipher
+        private val ghash: Ghash
+        private val tagMask: ByteArray
+        private var processed = 0L
+
+        init {
+            require(key.size == MediaCrypto.KEY_BYTES) { "media keys are 32 bytes" }
+            require(nonce.size == NONCE_BYTES) { "GCM nonces are 12 bytes here" }
+            val spec = SecretKeySpec(key, "AES")
+            val ecb = Cipher.getInstance("AES/ECB/NoPadding").apply { init(Cipher.ENCRYPT_MODE, spec) }
+            val counter = ByteArray(BLOCK_BYTES)
+            val h = ecb.doFinal(counter) // AES_K(0¹²⁸)
+            nonce.copyInto(counter)
+            counter[BLOCK_BYTES - 1] = 1
+            tagMask = ecb.doFinal(counter) // AES_K(J0)
+            counter[BLOCK_BYTES - 1] = 2 // inc32(J0): the first keystream block
+            ctr = Cipher.getInstance("AES/CTR/NoPadding").apply { init(Cipher.ENCRYPT_MODE, spec, IvParameterSpec(counter)) }
+            ghash = Ghash(h)
+            h.fill(0)
+            counter.fill(0)
+        }
+
+        /** Encrypts or decrypts [length] bytes into [output]; GHASH always runs over the ciphertext side. */
+        fun crypt(input: ByteArray, offset: Int, length: Int, output: ByteArray, encrypt: Boolean): Int {
+            processed += length
+            if (processed > MAX_PLAINTEXT_BYTES) throw IOException("media too large for one GCM message")
+            if (!encrypt) ghash.update(input, offset, length)
+            val produced = ctr.update(input, offset, length, output, 0)
+            if (encrypt) ghash.update(output, 0, produced)
+            return produced
+        }
+
+        /** Whatever the CTR cipher still holds (nothing for a stream mode, but the JCA allows it). */
+        fun finishCipher(output: ByteArray, encrypt: Boolean): Int {
+            val produced = ctr.doFinal(output, 0)
+            if (encrypt && produced > 0) ghash.update(output, 0, produced)
+            return produced
+        }
+
+        /** `AES_K(J0) ⊕ GHASH`; call once, after [finishCipher]. */
+        fun tag(): ByteArray {
+            val tag = ghash.finish()
+            for (i in 0 until TAG_BYTES) tag[i] = (tag[i].toInt() xor tagMask[i].toInt()).toByte()
+            return tag
+        }
+
+        fun destroy() {
+            tagMask.fill(0)
+            ghash.destroy()
+        }
+    }
+
+    /** GHASH over a byte stream of any chunking (no AAD), then the lengths block. */
+    private class Ghash(h: ByteArray) {
+        private val multiplier = Tables64kGCMMultiplier().apply { init(h) }
+        private val x = ByteArray(BLOCK_BYTES)
+        private val partial = ByteArray(BLOCK_BYTES)
+        private var partialLength = 0
+        private var total = 0L
+
+        fun update(data: ByteArray, offset: Int, length: Int) {
+            var at = offset
+            var left = length
+            total += length
+            if (partialLength > 0) {
+                val take = minOf(left, BLOCK_BYTES - partialLength)
+                data.copyInto(partial, partialLength, at, at + take)
+                partialLength += take
+                at += take
+                left -= take
+                if (partialLength < BLOCK_BYTES) return
+                block(partial, 0)
+                partialLength = 0
+            }
+            while (left >= BLOCK_BYTES) {
+                block(data, at)
+                at += BLOCK_BYTES
+                left -= BLOCK_BYTES
+            }
+            if (left > 0) {
+                data.copyInto(partial, 0, at, at + left)
+                partialLength = left
+            }
+        }
+
+        /** Pads the last block with zeros, folds in `[0]₆₄ ‖ [8·len(C)]₆₄` and returns the hash. */
+        fun finish(): ByteArray {
+            if (partialLength > 0) {
+                partial.fill(0, partialLength)
+                block(partial, 0)
+                partialLength = 0
+            }
+            val lengths = ByteArray(BLOCK_BYTES)
+            val bits = total * 8
+            for (i in 0 until 8) lengths[BLOCK_BYTES - 1 - i] = (bits ushr (8 * i)).toByte()
+            block(lengths, 0)
+            return x.copyOf()
+        }
+
+        fun destroy() {
+            x.fill(0)
+            partial.fill(0)
+        }
+
+        private fun block(source: ByteArray, offset: Int) {
+            for (i in 0 until BLOCK_BYTES) x[i] = (x[i].toInt() xor source[offset + i].toInt()).toByte()
+            multiplier.multiplyH(x)
         }
     }
 }
