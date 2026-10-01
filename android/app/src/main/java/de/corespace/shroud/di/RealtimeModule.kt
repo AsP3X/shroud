@@ -51,7 +51,8 @@ class RealtimeModule(container: AppContainer) : AppModule(container) {
             messaging = { null },
             calls = { null },
             // iOS `router.isUnlocked` until W3-SHELL's AppShellController owns it: chats unlocked.
-            isUnlocked = { container.cryptoController.unlockedUserId.value != null },
+            // Through the module, not the onboarding shim `container.cryptoController` (W3-INT removes it).
+            isUnlocked = { container.keys.cryptoController.unlockedUserId.value != null },
             phase = container.appPhase,
             scope = container.appScope,
             backgroundConnectionHeld = { client.isHeld(RealtimeClient.Holder.Background) },
