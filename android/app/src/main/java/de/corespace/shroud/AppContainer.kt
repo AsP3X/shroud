@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import de.corespace.shroud.core.auth.SessionController
+import de.corespace.shroud.core.auth.WipeHooks
 import de.corespace.shroud.core.crypto.Bip39
 import de.corespace.shroud.core.crypto.CryptoController
 import de.corespace.shroud.core.lifecycle.AppPhaseMonitor
@@ -124,12 +125,8 @@ class AppContainer(
 
     val shell by lazy { ShellModule(this) }                               // W3-SHELL
 
-    /**
-     * The Log Out / removal wipe's view of every package (00-plan §1.7.6). Typed as the
-     * implementation until W1-INT publishes the `core/auth/WipeHooks` seam; then
-     * `val wipeHooks: WipeHooks by lazy { WipeHooksImpl(this) }`.
-     */
-    val wipeHooks: WipeHooksImpl by lazy { WipeHooksImpl(this) }
+    /** The Log Out / removal wipe's view of every package (00-plan §1.7.6); `DeviceWipeController` (W2-AUTH-WIPE) calls it. */
+    val wipeHooks: WipeHooks by lazy { WipeHooksImpl(this) }
 
     /**
      * Called once per process from [ShroudApplication] after the user unlocked the phone (the

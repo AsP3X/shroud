@@ -41,3 +41,9 @@ data class ReactionChip(
     /** Never prints the emoji. */
     override fun toString(): String = "ReactionChip(emoji=${emojis.size}, users=${userIds.size}, includesMe=$includesMe)"
 }
+
+/**
+ * A reaction change the server refused (`MessagingController.swift:4988-4992`): the thread shows
+ * [message] once as a toast. [id] is random, so two equal failures are still two toasts.
+ */
+data class ReactionFailure(val id: UUID, val messageId: UUID, val message: String)
