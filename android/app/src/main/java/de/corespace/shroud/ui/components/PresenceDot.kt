@@ -14,7 +14,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.State
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.tooling.preview.Preview
@@ -32,22 +32,21 @@ import de.corespace.shroud.ui.theme.ShroudTheme
 @Composable
 fun PresenceDot(size: Dp = 7.dp, modifier: Modifier = Modifier) {
     val color = ShroudTheme.colors.online
-    val pulses = !ShroudTheme.reduceMotion
-    val clock = if (pulses) {
-        val t by rememberInfiniteTransition(label = "presenceHalo").animateFloat(
+    // The loop time is read in the draw phase only, so the halo redraws without recomposing.
+    val clock: State<Float>? = if (ShroudTheme.reduceMotion) {
+        null
+    } else {
+        rememberInfiniteTransition(label = "presenceHalo").animateFloat(
             initialValue = 0f,
             targetValue = PresenceHalo.CYCLE_MS.toFloat(),
             animationSpec = infiniteRepeatable(tween(PresenceHalo.CYCLE_MS, easing = LinearEasing), RepeatMode.Restart),
             label = "presenceHaloTime",
         )
-        { t }
-    } else {
-        null
     }
     Canvas(modifier.clearAndSetSemantics {}.size(size)) {
         val radius = this.size.minDimension / 2
         if (clock != null) {
-            val frame = PresenceHalo.frame(clock())
+            val frame = PresenceHalo.frame(clock.value)
             if (frame.alpha > 0f) drawCircle(color.copy(alpha = frame.alpha), radius = radius * frame.scale)
         }
         drawCircle(color, radius = radius)

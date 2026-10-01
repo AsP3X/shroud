@@ -261,7 +261,7 @@ private fun ChatRowSamples(dark: Boolean) {
             ChatRow("Design Team", "Nina: Final icons are ready", "12:45", { NameAvatar("Design Team") }, unreadCount = 3, onClick = {})
             ChatRow("Jane Cooper", "online", null, { NameAvatar("Jane Cooper") }, activity = ChatPeerActivity.Recording, onClick = {}, subtitleAccent = true)
             ChatRow("Family", "Photo", "11:02", { NameAvatar("Family") }, unreadCount = 120, muted = true, hasUnseenReactions = true, onClick = {})
-            ChatRow("Notes to me", "Personal notes, photos & todos", "Yesterday", { SymbolAvatar(ShroudIcons.LockFill) }, selected = true, onClick = {})
+            ChatRow("Notes to me", "Personal notes, photos & todos", "Yesterday", { SymbolAvatar(ShroudIcons.BookmarkSimpleFill) }, selected = true, onClick = {})
         }
     }
 }

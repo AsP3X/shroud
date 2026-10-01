@@ -111,7 +111,7 @@ private fun AvatarPreview() {
             NameAvatar("Design Team")
             NameAvatar("jane_cooper", size = 40.dp, fontSize = 15.sp)
             Avatar("NV", size = 88.dp, fontSize = 32.sp)
-            SymbolAvatar(ShroudIcons.LockFill)
+            SymbolAvatar(ShroudIcons.BookmarkSimpleFill)
         }
     }
 }

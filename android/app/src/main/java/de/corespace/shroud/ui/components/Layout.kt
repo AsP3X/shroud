@@ -7,6 +7,7 @@ import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -24,6 +25,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawWithContent
@@ -42,6 +46,12 @@ import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.unit.DpOffset
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import de.corespace.shroud.ui.theme.Motion
 import androidx.compose.ui.unit.dp
 import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.ui.theme.BrandColors
@@ -77,8 +87,9 @@ fun GroupedScreen(modifier: Modifier = Modifier, content: @Composable BoxScope.(
 //    members; once the members exist they win (Kotlin: "extension is shadowed by a member") and
 //    these become dead — delete them;
 //  * `View.perform` → delete and import `de.corespace.shroud.ui.theme.perform`;
-//  * `kitShimmer()` → `shimmering()`, `kitBarGlass(…)` → `glassSurface(shape, GlassStyle.Bar /
-//    Prominent, interactive = true)`, `kitIconSwapIn/Out` → `Motion.iconSwap`.
+//  * `kitShimmer()` → `shimmering()`, `kitBarGlass(shape, prominent, interactive)` →
+//    `glassSurface(shape, if (prominent) GlassStyle.Prominent else GlassStyle.Bar, interactive)`,
+//    `kitIconSwapIn/Out(spec)` → `Motion.iconSwap` (with the spec the call site names).
 // Values are those of shell-chats §15.1 / design-inventory addendum Theme (dark = D8).
 
 /** `MutedBadge` asset: the unread count of a muted chat (`Theme.swift:33-34`). */
@@ -112,6 +123,14 @@ internal val ShroudIcons.HeartFill: ImageVector by lazy {
     kitIcon(
         "HeartFill", 256f, false,
         "M240,102c0,70-103.79,126.66-108.21,129a8,8,0,0,1-7.58,0C119.79,228.66,16,172,16,102A62.07,62.07,0,0,1,78,40c20.65,0,38.73,8.88,50,23.89C139.27,48.88,157.35,40,178,40A62.07,62.07,0,0,1,240,102Z",
+    )
+}
+
+/** Phosphor `bookmark-simple-fill` (the Notes avatar, `ChatsView.swift:341-345`). */
+internal val ShroudIcons.BookmarkSimpleFill: ImageVector by lazy {
+    kitIcon(
+        "BookmarkSimpleFill", 256f, false,
+        "M184,32H72A16,16,0,0,0,56,48V224a8,8,0,0,0,12.24,6.78L128,193.43l59.77,37.35A8,8,0,0,0,200,224V48A16,16,0,0,0,184,32Z",
     )
 }
 
@@ -209,15 +228,49 @@ internal fun kitIconSwapOut(spec: FiniteAnimationSpec<Float>): ExitTransition =
 /**
  * Bar-control glass (shell-chats §6.1, tier *Bar control*) without a backdrop blur: the *Glass —
  * Without Blur* fill, 1 dp stroke, shadow 0/4/12 #0B0B1214. [prominent] tints it with the accent
- * (stroke #FFFFFF33) for the one action a bar wants pressed (`GlassBar.swift:85-90`).
+ * (stroke #FFFFFF33) for the one action a bar wants pressed (`GlassBar.swift:85-90`). [interactive]
+ * is iOS `.interactive()`: the glass swells to 1.06 while a finger is down (`Motion.press` in,
+ * `Motion.release` out, none under reduce motion); it only observes the finger, the caller's
+ * click handles the tap.
  */
-internal fun Modifier.kitBarGlass(shape: Shape, prominent: Boolean): Modifier = composed {
+internal fun Modifier.kitBarGlass(shape: Shape, prominent: Boolean, interactive: Boolean = false): Modifier = composed {
     val colors = ShroudTheme.colors
+    val reduce = ShroudTheme.reduceMotion
+    var pressed by remember { mutableStateOf(false) }
+    val swell by animateFloatAsState(
+        targetValue = if (interactive && pressed && !reduce) KIT_GLASS_SWELL else 1f,
+        animationSpec = if (pressed) Motion.press() else Motion.release(),
+        label = "barGlassSwell",
+    )
+    val press = if (interactive) {
+        Modifier
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    pressed = true
+                    try {
+                        waitForUpOrCancellation(PointerEventPass.Initial)
+                    } finally {
+                        pressed = false
+                    }
+                }
+            }
+            .graphicsLayer {
+                scaleX = swell
+                scaleY = swell
+            }
+    } else {
+        Modifier
+    }
     this
+        .then(press)
         .dropShadow(shape, Shadow(radius = 12.dp, color = Color(0x140B0B12), offset = DpOffset(0.dp, 4.dp)))
         .background(if (prominent) colors.accent else colors.glassOpaque, shape)
         .border(1.dp, if (prominent) Color(0x33FFFFFF) else colors.glassBarStroke, shape)
 }
+
+/** How far interactive bar glass swells under the finger (conversation-compose-media §2.4). */
+private const val KIT_GLASS_SWELL = 1.06f
 
 /**
  * The skeleton sweep of `Motion.swift:216-275` (shell-chats §10.6): a white band 0.6 × the width
