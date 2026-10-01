@@ -1,5 +1,6 @@
 package de.corespace.shroud.core.transcription
 
+import android.annotation.SuppressLint
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -7,6 +8,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import okhttp3.Call
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -58,8 +60,8 @@ class WhisperModelException(message: String, cause: Throwable? = null) : IOExcep
 
 /**
  * Whisper weights on disk: `noBackupFilesDir/whisper/<file>` (00-plan §1.5). Public weights, so not
- * sealed and **kept** across Log Out and removal (iOS keeps them too, `DeviceDataWipe.swift:227-236`;
- * W2-AUTH-WIPE lists the directory in its keep list). The Android port of WhisperKit's download and
+ * sealed and **kept** across Log Out and removal (iOS keeps them too, `DeviceDataWipe.swift:225-232`;
+ * the wipe's keep list, W2-AUTH-WIPE, must name the directory). The Android port of WhisperKit's download and
  * model folder (`WhisperKitEngine.swift:16-39, :145-173`).
  *
  * Downloads come from the pinned revision of `huggingface.co/ggerganov/whisper.cpp` over HTTPS with
@@ -72,9 +74,12 @@ class WhisperModelException(message: String, cause: Throwable? = null) : IOExcep
  * installed); W3-TRANSCRIPTION's `TranscriptionSession` adds its own single flight on top.
  *
  * @param baseUrl the directory URL the files are fetched from; tests point it at a MockWebServer.
- * @param usableSpace free bytes for the model directory (`File.usableSpace`; tests fake a full disk).
+ * @param usableSpace free bytes for the model directory; `TranscriptionModule` passes
+ *   `StorageManager.getAllocatableBytes` (clearable caches count), tests fake a full disk, and the
+ *   plain `File.usableSpace` default is the conservative fallback.
  * @param catalog every file this store manages; anything else in [directory] is pruned before a download.
  */
+@SuppressLint("UsableSpace") // the default only; the app passes StorageManager.getAllocatableBytes
 class WhisperModelStore(
     val directory: File,
     http: OkHttpClient,
@@ -108,24 +113,27 @@ class WhisperModelStore(
     /**
      * Returns the installed file of [model], downloading it first when needed.
      *
-     * @param progress fraction 0…1 of the file on disk (a resumed download starts above 0), on a
-     *   background thread, at most once per 0.1 % plus a final 1.0.
+     * Disk and network work runs on the IO dispatcher; callers may be on the main thread.
+     *
+     * @param progress fraction 0…1 of the file on disk (a resumed download starts above 0), at most
+     *   once per 0.1 % from the download's thread, plus a final 1.0 from the caller's.
      * @throws WhisperModelException on a network or HTTP failure, too little space, or a file that
      *   fails the size or SHA-256 check (the partial file is deleted then; after a network failure it
      *   is kept for the next attempt).
      */
     suspend fun ensure(model: WhisperModelSpec, progress: ((Double) -> Unit)? = null): File =
         lockOf(model).withLock {
-            val target = file(model)
-            if (!isInstalled(model)) download(model, progress)
+            withContext(io) { if (!isInstalled(model)) download(model, progress) }
             progress?.invoke(1.0)
-            target
+            file(model)
         }
 
     /** Deletes [model] and any partial download of it. */
     suspend fun delete(model: WhisperModelSpec) = lockOf(model).withLock {
-        file(model).delete()
-        partFile(model).delete()
+        withContext(io) {
+            file(model).delete()
+            partFile(model).delete()
+        }
     }
 
     /** Deletes files in [directory] that are no model of the catalog (older revisions, strays). Never throws. */

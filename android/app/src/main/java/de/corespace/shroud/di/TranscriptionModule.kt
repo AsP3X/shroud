@@ -1,10 +1,13 @@
 package de.corespace.shroud.di
 
+import android.annotation.SuppressLint
+import android.os.storage.StorageManager
 import de.corespace.shroud.AppContainer
 import de.corespace.shroud.AppModule
 import de.corespace.shroud.core.transcription.TranscriptionBenchmark
 import de.corespace.shroud.core.transcription.WhisperModelStore
 import java.io.File
+import java.io.IOException
 
 /**
  * On-device transcription (00-plan §1.7.13, P7). Owner: W2-WHISPER (native engine, model
@@ -21,9 +24,22 @@ class TranscriptionModule(container: AppContainer) : AppModule(container) {
      * token), from the pinned Hugging Face revision.
      */
     val whisperModels: WhisperModelStore by lazy {
-        WhisperModelStore(File(container.appContext.noBackupFilesDir, WhisperModelStore.DIRECTORY), container.net.http)
+        WhisperModelStore(
+            directory = File(container.appContext.noBackupFilesDir, WhisperModelStore.DIRECTORY),
+            http = container.net.http,
+            usableSpace = ::allocatableBytes,
+        )
     }
 
     /** The P7 benchmark (speed and memory of each model on this device), for the instrumented test and diagnostics. */
     val benchmark: TranscriptionBenchmark by lazy { TranscriptionBenchmark(container.appContext, whisperModels) }
+
+    /** Free space for a model download, counting cache files the system would clear for it. */
+    @SuppressLint("UsableSpace") // the fallback only, when the volume has no StorageManager UUID
+    private fun allocatableBytes(directory: File): Long = try {
+        val storage = container.appContext.getSystemService(StorageManager::class.java)
+        storage.getAllocatableBytes(storage.getUuidForPath(directory))
+    } catch (_: IOException) {
+        directory.usableSpace
+    }
 }

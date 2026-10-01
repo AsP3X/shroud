@@ -241,7 +241,10 @@ class WhisperContext private constructor(private var handle: Long) : Closeable {
     @Volatile
     private var closed = false
 
-    /** Best language over the opening 30 s of 16 kHz mono [pcm16k], or null (empty audio, failure). */
+    /**
+     * Best language over the opening 30 s of 16 kHz mono [pcm16k], or null (empty audio, failure).
+     * One encoder pass plus one decoder step (as long as a 30 s window's encode); not abortable.
+     */
     fun detectLanguage(pcm16k: FloatArray, threads: Int = defaultThreads()): WhisperLanguage? = synchronized(lock) {
         val found = WhisperNative.detectLanguage(live(), pcm16k, threads) ?: return null
         val probability = found.getOrNull(1)?.toDoubleOrNull() ?: return null
