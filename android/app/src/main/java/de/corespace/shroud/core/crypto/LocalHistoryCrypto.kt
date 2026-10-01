@@ -58,6 +58,11 @@ object LocalHistoryCrypto {
      * The 32-byte store key for [context] (`LocalHistoryCrypto.swift:81-88`). The caller owns the
      * result and zeroes it when done. [masterKey] must be the 32-byte `historyKey`; anything else is
      * a programming error ([IllegalArgumentException]).
+     *
+     * [seal] and [open] derive the subkey per call, so the history key passes through HKDF on every
+     * record. [Primitives.hkdf] zeroes everything it derives, but a store that seals many records
+     * (W1-KEYS `SealedLocalState.withSubkey`) should derive its subkey once per unlock and zero it
+     * on lock rather than hand the root key down per record.
      */
     fun subkey(masterKey: ByteArray, context: Context): ByteArray {
         require(masterKey.size == MASTER_KEY_BYTES) { "the history key is $MASTER_KEY_BYTES bytes" }

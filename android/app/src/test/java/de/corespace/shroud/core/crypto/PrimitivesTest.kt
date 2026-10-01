@@ -1,10 +1,21 @@
 package de.corespace.shroud.core.crypto
 
+import org.bouncycastle.crypto.digests.SHA256Digest
+import org.bouncycastle.crypto.generators.HKDFBytesGenerator
+import org.bouncycastle.crypto.macs.HMac
+import org.bouncycastle.crypto.params.HKDFParameters
+import org.bouncycastle.crypto.params.KeyParameter
+import org.bouncycastle.crypto.params.X25519PrivateKeyParameters
+import org.bouncycastle.crypto.params.X25519PublicKeyParameters
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
+import kotlin.random.Random
 
 /**
  * CryptoKit-equivalent primitives (crypto spec §1.2). The Shroud vectors are crypto spec §16.3
@@ -122,6 +133,111 @@ class PrimitivesTest {
             "b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad",
             Primitives.hmacSha256(ByteArray(0), ByteArray(0)).hex(),
         )
+    }
+
+    @Test
+    fun hkdfWithLongInputsMatchesRfc5869TestCase2() {
+        // An 80-byte salt is longer than the SHA-256 block, so the extract key is hashed first.
+        val okm = Primitives.hkdf(
+            ikm = ByteArray(80) { it.toByte() },
+            salt = ByteArray(80) { (0x60 + it).toByte() },
+            info = ByteArray(80) { (0xb0 + it).toByte() },
+            length = 82,
+        )
+        assertEquals(
+            "b11e398dc80327a1c8e7f78c596a49344f012eda2d4efad8a050cc4c19afa97c" +
+                "59045a99cac7827271cb41c65e590e09da3275600c2f09b8367793a9aca3db71" +
+                "cc30c58179ec3e87c14c01d5c1f3434f1d87",
+            okm.hex(),
+        )
+    }
+
+    @Test
+    fun hmacSha256HashesKeysLongerThanABlockRfc4231Case6() {
+        assertEquals(
+            "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54",
+            Primitives.hmacSha256(
+                ByteArray(131) { 0xaa.toByte() },
+                utf8("Test Using Larger Than Block-Size Key - Hash Key First"),
+            ).hex(),
+        )
+    }
+
+    /** The wipeable HMAC/HKDF agree with BouncyCastle's `HMac`/`HKDFBytesGenerator` (test oracle only). */
+    @Test
+    fun hmacAndHkdfAgreeWithBouncyCastleAcrossLengths() {
+        val random = Random(20261001)
+        val keyLengths = listOf(0, 1, 31, 32, 33, 63, 64, 65, 128, 200)
+        for (keyLength in keyLengths) {
+            for (dataLength in listOf(0, 1, 55, 56, 64, 100, 1000)) {
+                val key = random.nextBytes(keyLength)
+                val data = random.nextBytes(dataLength)
+                val oracle = HMac(SHA256Digest()).run {
+                    init(KeyParameter(key))
+                    update(data, 0, data.size)
+                    ByteArray(32).also { doFinal(it, 0) }
+                }
+                assertArrayEquals("key $keyLength, data $dataLength", oracle, Primitives.hmacSha256(key, data))
+            }
+            for (length in listOf(1, 31, 32, 33, 64, 65, 255 * 32)) {
+                val ikm = random.nextBytes(32)
+                val salt = random.nextBytes(keyLength)
+                val info = random.nextBytes(random.nextInt(0, 40))
+                val oracle = ByteArray(length).also {
+                    HKDFBytesGenerator(SHA256Digest()).run {
+                        init(HKDFParameters(ikm, salt, info))
+                        generateBytes(it, 0, length)
+                    }
+                }
+                assertArrayEquals("salt $keyLength, length $length", oracle, Primitives.hkdf(ikm, salt, info, length))
+            }
+        }
+    }
+
+    @Test
+    fun hmacAndHkdfLeaveTheirInputsUntouched() {
+        val key = ByteArray(32) { 7 }
+        val data = ByteArray(70) { 8 }
+        val salt = ByteArray(23) { 9 }
+        val info = ByteArray(12) { 10 }
+        Primitives.hmacSha256(key, data)
+        Primitives.hkdf(key, salt, info, 100)
+        Primitives.x25519(key, Primitives.x25519Public(ByteArray(32) { 0x22 }))
+        assertArrayEquals(ByteArray(32) { 7 }, key)
+        assertArrayEquals(ByteArray(70) { 8 }, data)
+        assertArrayEquals(ByteArray(23) { 9 }, salt)
+        assertArrayEquals(ByteArray(12) { 10 }, info)
+    }
+
+    /**
+     * Keys must not outlive a lock in RAM (plan §1.4). These BouncyCastle types clone the key they
+     * are given and offer no wipe, so the key paths must not use them (a heap check is not
+     * possible in a unit test; this pins the design reviewed in [Primitives]'s KDoc).
+     */
+    @Test
+    fun keyPathsUseNoUnwipeableKeyCopies() {
+        val source = listOf(File("src/main/java"), File("app/src/main/java"))
+            .map { File(it, "de/corespace/shroud/core/crypto/Primitives.kt") }
+            .first { it.isFile }
+            .readText()
+        for (type in listOf("KeyParameter", "HKDFParameters", "HKDFBytesGenerator", "HMac(", "X25519PrivateKeyParameters", "X25519PublicKeyParameters")) {
+            assertFalse(type, source.lines().any { !it.trimStart().startsWith("*") && type in it })
+        }
+    }
+
+    @Test
+    fun x25519AgreesWithTheParameterObjectsAcrossKeys() {
+        val random = Random(7748)
+        repeat(50) {
+            val a = random.nextBytes(32)
+            val b = random.nextBytes(32)
+            val bPub = X25519PrivateKeyParameters(b, 0).generatePublicKey().encoded
+            assertArrayEquals(X25519PrivateKeyParameters(a, 0).generatePublicKey().encoded, Primitives.x25519Public(a))
+            val oracle = ByteArray(32).also { X25519PrivateKeyParameters(a, 0).generateSecret(X25519PublicKeyParameters(bPub, 0), it, 0) }
+            val secret = Primitives.x25519(a, bPub)
+            assertArrayEquals(oracle, secret)
+            assertTrue(secret.any { it != 0.toByte() })
+        }
     }
 
     @Test
