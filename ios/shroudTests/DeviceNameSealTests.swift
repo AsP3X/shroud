@@ -79,7 +79,24 @@ struct DeviceNameSealTests {
         let opened = DeviceNameSeal.open(sealed, deviceID: deviceID, historyKey: historyKey)
         #expect(opened == .init(name: "Pixel 9 Pro", kind: .other, custom: true))
         #expect(DeviceKind(label: opened) == .unknown)
-        #expect(DeviceKind(label: .init(name: "Niklas’s Android phone", kind: .other)) == .android)
+        // A name that only looks like a phone is the guess "Phone", never "Android app": only the
+        // sealed kind 4 says that (decision S1, as the web's deviceKind()).
+        let guessed = DeviceKind(label: .init(name: "Niklas’s Android phone", kind: .other))
+        #expect(guessed == .phone)
+        #expect(guessed.label == "Phone")
+        #expect(guessed.systemImage == "smartphone")
+    }
+
+    @Test @MainActor
+    func aKindZeroNameThatLooksLikeAPhoneReadsPhone() {
+        for name in ["Work Phone", "Pixel 9 phone", "Chrome on Android"] {
+            let kind = DeviceKind(label: .init(name: name, kind: .other))
+            #expect(kind == .phone, "\(name)")
+            #expect(kind.label == "Phone", "\(name)")
+        }
+        // A plain model name without either word stays unknown; the sealed kind decides first.
+        #expect(DeviceKind(label: .init(name: "Pixel 9", kind: .other)) == .unknown)
+        #expect(DeviceKind(label: .init(name: "Pixel 9", kind: .android)).label == "Android app")
     }
 
     @Test @MainActor

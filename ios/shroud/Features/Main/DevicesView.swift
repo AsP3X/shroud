@@ -786,10 +786,13 @@ private struct DeviceDetailSheet: View {
 ///
 /// Human: The Android app seals kind 4, which shows as "Android app" with the green phone tile
 /// (android-port decision P4). Before this build knew kind 4 it read as `.other` and fell back
-/// to the name guess, so "Pixel 9 Pro" showed as "Unknown".
+/// to the name guess, so "Pixel 9 Pro" showed as "Unknown". A name that only looks like a phone
+/// ("android", "phone") stays the guess "Phone" with the same tile: it may be any phone, or an
+/// Android device renamed by a client that dropped its kind — only the sealed kind says
+/// "Android app" (decision S1; the web's `deviceKind()` does the same).
 /// Agent: Internal (not private) for `DeviceNameSealTests`.
 enum DeviceKind: Equatable {
-    case iPhone, iPad, android, browser, mac, pc, unknown
+    case iPhone, iPad, android, phone, browser, mac, pc, unknown
 
     init(label: DeviceNameSeal.Label?) {
         switch label?.kind {
@@ -805,7 +808,7 @@ enum DeviceKind: Equatable {
         } else if lower.contains("ipad") {
             self = .iPad
         } else if lower.contains("android") || lower.contains("phone") {
-            self = .android
+            self = .phone
         } else if ["chrome", "safari", "firefox", "edge", "browser", " on "].contains(where: lower.contains) {
             self = .browser
         } else if lower.contains("mac") {
@@ -822,6 +825,7 @@ enum DeviceKind: Equatable {
         case .iPhone: "iPhone app"
         case .iPad: "iPad app"
         case .android: "Android app"
+        case .phone: "Phone"
         case .browser: "Web browser"
         case .mac: "Mac"
         case .pc: "Computer"
@@ -833,7 +837,7 @@ enum DeviceKind: Equatable {
         switch self {
         case .iPhone: "iphone"
         case .iPad: "ipad"
-        case .android: "smartphone"
+        case .android, .phone: "smartphone"
         case .browser: "globe"
         case .mac: "laptopcomputer"
         case .pc: "pc"
@@ -844,7 +848,7 @@ enum DeviceKind: Equatable {
     var tint: Color {
         switch self {
         case .iPhone, .iPad: Color(red: 46 / 255, green: 143 / 255, blue: 224 / 255)
-        case .android: Color(red: 47 / 255, green: 168 / 255, blue: 91 / 255)
+        case .android, .phone: Color(red: 47 / 255, green: 168 / 255, blue: 91 / 255)
         case .browser: Color(red: 247 / 255, green: 107 / 255, blue: 28 / 255)
         case .mac, .pc: Color(red: 155 / 255, green: 74 / 255, blue: 230 / 255)
         case .unknown: Theme.textSecondary
