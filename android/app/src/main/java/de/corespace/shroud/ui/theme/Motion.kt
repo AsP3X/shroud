@@ -149,14 +149,14 @@ object Motion {
     /**
      * A new chat bubble grows out of the corner it was "spoken" from: insertion scale 0.82 from the
      * bottom-trailing (mine) or bottom-leading corner + opacity; removal scale 0.9 + opacity
-     * (`Motion.swift:52-59`; not used by an iOS view today, kept for the thread). The insertion rides
-     * [bouncy] ("it happened"), the removal [standard]. The anchor is the physical corner: right
-     * for mine, left for theirs.
+     * (`Motion.swift:52-59`). The thread applies it to arriving bubbles and drives both halves with
+     * [bouncy] (`ConversationView.swift:913-917`, `:961-967`); under Reduce Motion it uses
+     * [reducedTransition] instead. The anchor is the physical corner: right for mine, left for theirs.
      */
     fun bubbleIn(isMine: Boolean): MotionTransition =
         MotionTransition(
             enter = scaleIn(bouncy(), 0.82f, TransformOrigin(if (isMine) 1f else 0f, 1f)) + fadeIn(bouncy()),
-            exit = scaleOut(standard(), 0.9f) + fadeOut(standard()),
+            exit = scaleOut(bouncy(), 0.9f) + fadeOut(bouncy()),
         )
 
     /** The opacity-only stand-in every transition collapses to under Reduce Motion. */

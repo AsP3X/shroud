@@ -1,8 +1,11 @@
 package de.corespace.shroud.ui.components
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.FiniteAnimationSpec
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -38,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
@@ -83,34 +87,51 @@ fun SectionCaption(text: String, modifier: Modifier = Modifier) {
     )
 }
 
-/** Grey rounded bar standing in for text that is still arriving (`ShimmerPlaceholder`). */
+/**
+ * Grey rounded bar standing in for a phrase word that is still arriving
+ * (`ShroudUI/Components/ShimmerPlaceholder.swift:4-36`; design-inventory addendum Shimmer SH.1):
+ * radius 6, `backgroundGrouped`, overlaid with a horizontal gradient grouped → background →
+ * grouped 1.8 × the bar's width, offset by width × phase while the phase runs −1 → 1 linearly every
+ * [PHRASE_SHIMMER_MS] (`:31-34`). The highlight is the page background: white in light mode,
+ * black in dark mode. Reduce Motion is not consulted (iOS doesn't). Not the list skeleton sweep
+ * ([shimmering]).
+ */
 @Composable
 fun ShimmerPlaceholder(width: Dp, height: Dp, modifier: Modifier = Modifier) {
     val colors = ShroudTheme.colors
-    val transition = rememberInfiniteTransition(label = "shimmer")
-    val phase by transition.animateFloat(0f, 1f, infiniteRepeatable(tween(1100), RepeatMode.Restart), label = "shimmerPhase")
-    val highlight = if (colors.isDark) Color.White.copy(alpha = 0.10f) else Color.White.copy(alpha = 0.7f)
-    BoxWithConstraints(
+    val phase by rememberInfiniteTransition(label = "shimmer").animateFloat(
+        initialValue = -1f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(PHRASE_SHIMMER_MS, easing = LinearEasing), RepeatMode.Restart),
+        label = "shimmerPhase",
+    )
+    Box(
         modifier
             .size(width, height)
             .clip(RoundedCornerShape(6.dp))
-            .background(colors.backgroundGrouped),
-    ) {
-        val w = constraints.maxWidth.toFloat()
-        Box(
-            Modifier
-                .fillMaxHeight()
-                .fillMaxWidth()
-                .background(
+            .drawBehind {
+                val w = size.width
+                val start = phraseShimmerStart(phase, w)
+                // Clamped ends are the grouped fill, so the bar outside the gradient stays grey.
+                drawRect(
                     Brush.horizontalGradient(
-                        listOf(Color.Transparent, highlight, Color.Transparent),
-                        startX = -w + phase * 2 * w,
-                        endX = phase * 2 * w,
+                        listOf(colors.backgroundGrouped, colors.background, colors.backgroundGrouped),
+                        startX = start,
+                        endX = start + PHRASE_SHIMMER_SPAN * w,
                     ),
-                ),
-        )
-    }
+                )
+            },
+    )
 }
+
+/** One sweep of [ShimmerPlaceholder]: `.linear(duration: 0.85)` (`ShimmerPlaceholder.swift:32`). */
+const val PHRASE_SHIMMER_MS = 850
+
+/** The gradient spans 1.8 × the bar's width (`ShimmerPlaceholder.swift:25`). */
+const val PHRASE_SHIMMER_SPAN = 1.8f
+
+/** Left edge of [ShimmerPlaceholder]'s gradient: `geometry.size.width * phase` (`ShimmerPlaceholder.swift:26`). */
+fun phraseShimmerStart(phase: Float, width: Float): Float = width * phase
 
 /** Two-step stepper of the Log In and Sign Up flows (`FlowStepper.swift`). */
 @Composable
@@ -181,12 +202,14 @@ fun PasswordStrengthMeter(evaluation: PasswordStrength, modifier: Modifier = Mod
         ) {
             ShroudText("PASSWORD STRENGTH", inter(11f, FontWeight.SemiBold, letterSpacing = 0.8.sp), colors.textSecondary)
             Spacer(Modifier.weight(1f))
-            AnimatedContent(
-                targetState = level,
-                transitionSpec = { (scaleIn(Motion.snappy(), 0.45f) + fadeIn()) togetherWith (scaleOut(Motion.snappy(), 0.45f) + fadeOut()) },
-                label = "strengthBadge",
-            ) { shown ->
-                if (shown != PasswordStrengthLevel.Empty) StrengthBadge(shown)
+            // The badge pops in and out (iconSwap) only when it appears or disappears; between
+            // levels it stays and eases its colours, glyph and text (`PasswordStrengthMeter.swift:32-35`,
+            // settings-lock addendum PasswordStrengthMeter M1). It keeps the last level while it leaves.
+            var badgeLevel by remember { mutableStateOf(level) }
+            if (level != PasswordStrengthLevel.Empty && badgeLevel != level) badgeLevel = level
+            val badgeTransition = Motion.iconSwap.respecting(reduce)
+            Appear(visible = level != PasswordStrengthLevel.Empty, enter = badgeTransition.enter, exit = badgeTransition.exit) {
+                StrengthBadge(badgeLevel)
             }
         }
         BoxWithConstraints(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(colors.strengthTrack)) {
@@ -208,28 +231,46 @@ fun PasswordStrengthMeter(evaluation: PasswordStrength, modifier: Modifier = Mod
     }
 }
 
+/**
+ * The strength badge (`PasswordStrengthMeter.swift:43-55`): glyph 11 + level 11 Bold, padding 7 / 2,
+ * capsule. Colours ease with `Motion.snappy` (Reduce Motion: the short fade), glyph and text
+ * cross-fade, the capsule's width follows the text.
+ */
 @Composable
 private fun StrengthBadge(level: PasswordStrengthLevel) {
     val colors = ShroudTheme.colors
-    val (fg, bg) = when (level) {
+    val reduce = ShroudTheme.reduceMotion
+    val (fgTarget, bgTarget) = when (level) {
         PasswordStrengthLevel.Strong, PasswordStrengthLevel.Good -> colors.successText to colors.successBackground
         PasswordStrengthLevel.Fair -> colors.warningText to colors.warningBackground
         PasswordStrengthLevel.Weak -> colors.dangerText to colors.danger.copy(alpha = 0.12f)
         PasswordStrengthLevel.Empty -> colors.textSecondary to colors.backgroundGrouped
     }
-    val icon = when (level) {
-        PasswordStrengthLevel.Strong, PasswordStrengthLevel.Good -> ShroudIcons.ShieldCheck
-        PasswordStrengthLevel.Fair -> ShroudIcons.ShieldHalf
-        else -> ShroudIcons.ShieldAlert
-    }
+    val fg by animateColorAsState(fgTarget, Motion.respecting(reduce, Motion.snappy()), label = "badgeForeground")
+    val bg by animateColorAsState(bgTarget, Motion.respecting(reduce, Motion.snappy()), label = "badgeBackground")
     Row(
-        Modifier.clip(CircleShape).background(bg).padding(horizontal = 7.dp, vertical = 2.dp),
+        Modifier
+            .clip(CircleShape)
+            .background(bg)
+            .animateContentSize(Motion.respecting(reduce, Motion.snappy()))
+            .padding(horizontal = 7.dp, vertical = 2.dp),
         horizontalArrangement = Arrangement.spacedBy(3.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        ShroudIcon(icon, fg, size = 11.dp)
-        ShroudText(level.label, inter(11f, FontWeight.Bold), fg)
+        Crossfade(targetState = strengthBadgeIcon(level), animationSpec = Motion.fade(), label = "badgeGlyph") { icon ->
+            ShroudIcon(icon, fg, size = 11.dp)
+        }
+        Crossfade(targetState = level.label, animationSpec = Motion.fade(), label = "badgeText") { text ->
+            ShroudText(text, inter(11f, FontWeight.Bold), fg)
+        }
     }
+}
+
+/** strong / good: shield-check; fair: shield-half; weak: shield-alert (settings-lock addendum M4: design icons). */
+private fun strengthBadgeIcon(level: PasswordStrengthLevel) = when (level) {
+    PasswordStrengthLevel.Strong, PasswordStrengthLevel.Good -> ShroudIcons.ShieldCheck
+    PasswordStrengthLevel.Fair -> ShroudIcons.ShieldHalf
+    else -> ShroudIcons.ShieldAlert
 }
 
 @Composable
@@ -259,25 +300,42 @@ private fun Requirement(label: String, met: Boolean) {
 }
 
 /**
- * Word-number badge that flashes accent once when its word arrives (`PhraseWordNumberBadge`).
+ * Word-number badge that flashes accent once when its word arrives
+ * (`ShroudUI/Components/EncryptionPhraseCard.swift:74-113`): 20 × 20, radius 6, `accentSoft` with
+ * the number 10 SemiBold monospaced `accentText`. Only a change **to** revealed pulses (iOS
+ * `onChange` never sees the initial value, `:93`; settings-lock addendum EncryptionPhraseCard E1):
+ * fill `accent`, text white, scale 1.12 on the word-reveal spring, back after
+ * [Motion.BADGE_PULSE_MS] with `Motion.fade` (`:100-110`, E2). A change to hidden ends the pulse at
+ * once (`:94-96`). Reduce Motion keeps the colour flash and drops the scale (`:91-92`).
  */
 @Composable
 fun PhraseWordNumberBadge(number: Int, isRevealed: Boolean, modifier: Modifier = Modifier) {
     val colors = ShroudTheme.colors
     val reduce = ShroudTheme.reduceMotion
     var pulsing by remember { mutableStateOf(false) }
+    // The value the last effect saw: a badge composed already revealed (Log In's phrase step, Sign
+    // Up returning to the phrase) must not flash.
+    val last = remember { booleanArrayOf(isRevealed) }
     LaunchedEffect(isRevealed) {
+        val was = last[0]
+        last[0] = isRevealed
         if (!isRevealed) {
             pulsing = false
             return@LaunchedEffect
         }
+        if (!badgePulses(was, isRevealed)) return@LaunchedEffect
         pulsing = true
         delay(Motion.BADGE_PULSE_MS)
         pulsing = false
     }
-    val fill by animateColorAsState(if (pulsing) colors.accent else colors.accentSoft, if (pulsing) Motion.wordReveal() else Motion.fade(), label = "badgeFill")
-    val text by animateColorAsState(if (pulsing) Color.White else colors.accentText, if (pulsing) Motion.wordReveal() else Motion.fade(), label = "badgeText")
-    val scale by animateFloatAsState(if (pulsing && !reduce) 1.12f else 1f, Motion.wordReveal(), label = "badgeScale")
+    val spec: FiniteAnimationSpec<Color> = if (pulsing) Motion.wordReveal() else Motion.fade()
+    val fill by animateColorAsState(if (pulsing) colors.accent else colors.accentSoft, spec, label = "badgeFill")
+    val text by animateColorAsState(if (pulsing) Color.White else colors.accentText, spec, label = "badgeText")
+    val scale by animateFloatAsState(
+        if (pulsing && !reduce) 1.12f else 1f,
+        if (pulsing) Motion.wordReveal() else Motion.fade(),
+        label = "badgeScale",
+    )
     Box(
         modifier
             .graphicsLayer { scaleX = scale; scaleY = scale }
@@ -289,6 +347,9 @@ fun PhraseWordNumberBadge(number: Int, isRevealed: Boolean, modifier: Modifier =
         ShroudText("$number", inter(10f, FontWeight.SemiBold, monospaced = true), text)
     }
 }
+
+/** Whether a badge pulses when its word goes from [was] to [now] revealed: only on false → true (E1). */
+fun badgePulses(was: Boolean, now: Boolean): Boolean = !was && now
 
 /**
  * The generated phrase in six rows of two (`EncryptionPhraseCard.swift`); words past
