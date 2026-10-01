@@ -1,4 +1,5 @@
 import { ApiError, api, type Conversation, type TransferProgress, type WireMessage } from "./api/client";
+import { apiBase } from "./config";
 import { aesGcmOpen, sealFile } from "./crypto/aes";
 import { b64ToBytes, bytesToB64, utf8, utf8decode } from "./crypto/bytes";
 import type { IdentityMaterial } from "./crypto/identity";
@@ -160,6 +161,72 @@ async function withPeerLock<T>(peerUserId: string, fn: () => Promise<T>): Promis
   }
 }
 
+/*
+ * Delivery acks, as on iOS: every message of the other person's that reaches this browser for
+ * the first time is acknowledged with `POST /messages/{id}/delivered`, so the sender sees two
+ * ticks before the chat is read — an iPhone or Android sender otherwise sees one tick until
+ * then. iOS acks a thread page's new inbound ids once the page is shown
+ * (`MessagingController.swift:1340-1344`), an older page's (`:1447-1451`) and a socket message
+ * before it is decoded (`:4318-4320`); here `loadHistoryPage`, `fetchLatest` and
+ * `ingestIncoming` do the same.
+ *
+ * "For the first time" is iOS's "not already in the thread": its body is not in this browser's
+ * plaintext cache yet, and this tab has not acked it before. Notes (our own chat) never acks.
+ * Neither does a message deleted for everyone: there is nothing left to deliver, and a chat the
+ * peer cleared would otherwise send one request per tombstone on every reload.
+ *
+ * The server marks only this device's delivery row and tells the sender's devices
+ * (`message.delivered`); an ack that is repeated (204) or not for this device (404) changes
+ * nothing. So acks go out one at a time in the background, never hold up a chat opening, and a
+ * failed one is not retried — like iOS's `try?`.
+ */
+const acknowledgedDeliveries = new Set<string>();
+let deliveryQueue: Promise<void> = Promise.resolve();
+
+/**
+ * Whether `dto` is the peer's message this browser has not seen before. Asked before decoding,
+ * which caches the body.
+ */
+function deliveryAckDue(dto: WireMessage, me: string, peerUserId: string): boolean {
+  if (peerUserId.toLowerCase() === me.toLowerCase()) return false; // Notes
+  if (dto.sender_user_id.toLowerCase() === me.toLowerCase()) return false;
+  if (dto.deleted_for_everyone) return false;
+  if (acknowledgedDeliveries.has(dto.id.toLowerCase())) return false;
+  return loadPlaintext(dto.id) == null;
+}
+
+/** Queues one ack per id not acked yet in this tab; returns at once. */
+function acknowledgeDelivery(token: string, messageIds: string[]): void {
+  for (const raw of messageIds) {
+    const id = raw.toLowerCase();
+    if (acknowledgedDeliveries.has(id)) continue;
+    acknowledgedDeliveries.add(id);
+    deliveryQueue = deliveryQueue.then(() => postDelivered(token, id));
+  }
+}
+
+/**
+ * `POST /messages/{id}/delivered` with the lower-case id and no body (iOS
+ * `MessagesService.swift:157-162`, server `routes/messages.rs` `mark_delivered`), errors
+ * swallowed. Raw `fetch` with the API client's headers, because `api` has no call for it.
+ */
+async function postDelivered(token: string, messageId: string): Promise<void> {
+  try {
+    const res = await fetch(`${apiBase()}/messages/${encodeURIComponent(messageId)}/delivered`, {
+      method: "POST",
+      headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
+    });
+    await res.body?.cancel();
+  } catch {
+    /* offline or signed out: dropped, like an iOS ack that fails */
+  }
+}
+
+/** Resolves once every ack queued so far went out (selftests). */
+export function deliveryAcksSettled(): Promise<void> {
+  return deliveryQueue;
+}
+
 /** The pinned identity key. A later change is remembered and the old key is what decrypts. */
 export async function peerIdentityPublic(token: string, peerUserId: string): Promise<Uint8Array> {
   return pinnedPeerIdentity(token, peerUserId);
@@ -194,7 +261,11 @@ export async function ingestIncoming(
   token: string,
   material: IdentityMaterial,
 ): Promise<ChatMessage> {
-  return withPeerLock(peerUserId, () => decodeIncoming(dto, me, peerUserId, token, material));
+  return withPeerLock(peerUserId, () => {
+    // Acked before decoding, as iOS `ingestIncoming` does (`MessagingController.swift:4318-4320`).
+    if (deliveryAckDue(dto, me, peerUserId)) acknowledgeDelivery(token, [dto.id]);
+    return decodeIncoming(dto, me, peerUserId, token, material);
+  });
 }
 
 /** The lowest seq of a page's reactions left unopened: the sender's key was out of reach. */
@@ -240,8 +311,10 @@ export async function fetchLatest(
       .filter((dto) => !knownIds.has(dto.id) && !seenAnnotations.has(dto.id.toLowerCase()));
     const out: ChatMessage[] = [];
     const unopened: Unopened = { seq: null };
+    const due = fresh.filter((dto) => deliveryAckDue(dto, me, peer)).map((dto) => dto.id);
     for (const dto of fresh) out.push(await decodeWithReactions(dto, me, peer, token, material, unopened));
     forgetTombstones(fresh);
+    acknowledgeDelivery(token, due);
     return { messages: out, reactionSeq: res.reaction_seq ?? null, reactionUnopened: unopened.seq };
   });
 }
@@ -666,10 +739,14 @@ export async function loadHistoryPage(
     const res = await api.listMessages(token, peer, extra);
     const out: ChatMessage[] = [];
     const unopened: Unopened = { seq: null };
-    for (const dto of [...res.messages].reverse()) {
+    const chronological = [...res.messages].reverse();
+    const due = chronological.filter((dto) => deliveryAckDue(dto, me, peer)).map((dto) => dto.id);
+    for (const dto of chronological) {
       out.push(await decodeWithReactions(dto, me, peer, token, material, unopened));
     }
     forgetTombstones(res.messages);
+    // Once the page is decoded, so its acks never hold up the chat (iOS `:1340-1344`, `:1447-1451`).
+    acknowledgeDelivery(token, due);
     const oldest = res.messages[res.messages.length - 1];
     const more = (res.has_more || res.messages.length >= limit) && oldest;
     return {

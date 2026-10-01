@@ -16,9 +16,16 @@ import { b64ToBytes, bytesToB64, concatBytes, randomBytes, utf8 } from "./bytes"
  *   key       = HKDF-SHA256(historyKey, salt "shroud-v1", info "shroud-device-name-v1", 32)
  *   aad       = "shroud-device-name-v1:" + lowercase device id
  *   plaintext = kind(1) ‖ UTF-8 name ‖ 0x80 ‖ 0x00… to 128 bytes
- *   kind      = 1 iPhone app, 2 iPad app, 3 web browser, 0 anything else; | 0x80 when a person
- *               typed the name (an iPhone then stops putting its own name back)
+ *   kind      = 1 iPhone app, 2 iPad app, 3 web browser, 4 Android app, 0 anything else;
+ *               | 0x80 when a person typed the name (an iPhone or Android phone then stops
+ *               putting its own name back)
  *   sealed    = nonce(12) ‖ AES-256-GCM ciphertext(128) ‖ tag(16), sent as standard Base64
+ *
+ * Kind 4 is the Android app's (port plan decision P4; the same byte as iOS
+ * `DeviceNameSeal.Kind.android` and the Android app's `DeviceNameSeal.Kind.Android`).
+ * A build without it reads 4 as "other", and a rename from such a build writes "other" back;
+ * the Android app repairs that kind on its next unlock. Reading the kind here keeps a rename
+ * from this browser from dropping it.
  */
 
 const LABEL = "shroud-device-name-v1";
@@ -28,8 +35,8 @@ const PADDED_BYTES = 128;
 /** Longest name in UTF-8 bytes; the kind and the padding need two bytes more. */
 export const DEVICE_NAME_MAX_BYTES = 96;
 
-export type DeviceKind = "iphone" | "ipad" | "web" | "other";
-const KIND_BYTES: Record<DeviceKind, number> = { other: 0, iphone: 1, ipad: 2, web: 3 };
+export type DeviceKind = "iphone" | "ipad" | "web" | "android" | "other";
+const KIND_BYTES: Record<DeviceKind, number> = { other: 0, iphone: 1, ipad: 2, web: 3, android: 4 };
 
 /** `custom`: a person chose this name, rather than the device naming itself. */
 export type DeviceLabel = { name: string; kind: DeviceKind; custom?: boolean };
