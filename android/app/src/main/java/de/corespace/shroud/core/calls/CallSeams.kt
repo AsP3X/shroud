@@ -11,17 +11,30 @@ import java.util.UUID
 // The seams around the call controller (plan §1.7.11, calls §3–§6). Published by W1-INT with the
 // final signatures; W2-CALLS-CORE's CallController drives a CallMediaEngine (W3-CALLS-MEDIA; fakes
 // in W2) and a CallSystem (W3-CALLS-SYSTEM). Changing one is a contract change request.
+//
+// W2-CALLS-CORE (the owner in W2) added, before any implementation exists: CallMediaEngine
+// canSendVideo / canSendScreen (the controller reads them, CallController.swift:662, 1736-1739),
+// CallMediaCallbacks onScreenFirstFrame / onScreenCaptureEnded (the broadcast's `.firstFrame` and
+// `.disconnected`, CallController.swift:1818-1829, now that the engine owns the MediaProjection),
+// and a companion on ScreenShareQuality for the quality math (ScreenShareQualityMath.kt).
 
 /** One ICE candidate as signalled (calls §4.3). */
 data class IceCandidatePayload(val candidate: String, val sdpMid: String?, val sdpMLineIndex: Int?)
 
-/** Screen-share encoding the sharer picks (calls §8). */
+/**
+ * Screen-share encoding the sharer picks (calls §7.1): [frameRate] is 15, 30 or 60. Labels, the
+ * bitrate table, `wireSize` and the default (`ScreenShareQuality.Standard`, 1080p · 15 fps) live in
+ * `ScreenShareQualityMath.kt`.
+ */
 data class ScreenShareQuality(val resolution: Resolution, val frameRate: Int) {
     enum class Resolution(val raw: String) {
         P720("720p"),
         P1080("1080p"),
         Source("source"),
     }
+
+    /** Extended by `ScreenShareQualityMath.kt` (`Standard`, `FRAME_RATES`, `fromStored`). */
+    companion object
 }
 
 /** The MediaProjection consent result, handed to the engine to start capture. */
@@ -39,6 +52,16 @@ interface CallMediaCallbacks {
     fun onCameraPaused(paused: Boolean)
     fun onRemoteScreen(track: VideoTrack?)
     fun onRemoteScreenFrame()
+
+    /** The first frame of our screen went out after [CallMediaEngine.startScreen] (the broadcast's `.firstFrame`, CC:1818-1826). */
+    fun onScreenFirstFrame()
+
+    /**
+     * Our screen capture stopped by itself — the system chip's Stop, the screen locked, another
+     * projection took over, the shared app went away (the broadcast's `.disconnected`,
+     * CC:1827-1828). Not called for a [CallMediaEngine.stopScreen] the controller asked for.
+     */
+    fun onScreenCaptureEnded()
 }
 
 /** WebRTC behind one interface (calls §5); W3-CALLS-MEDIA implements it, W2 tests use a fake. */
@@ -52,6 +75,12 @@ interface CallMediaEngine {
     suspend fun applyAnswer(sdp: String): Boolean
     val hasRemoteDescription: Boolean
     val canOffer: Boolean
+
+    /** The camera section (first video) can send: not stopped, direction `sendrecv`/`sendonly` (ME:119-124). False with an older peer. */
+    val canSendVideo: Boolean
+
+    /** The screen section (second video) can send (ME:119-124). False with an older peer. */
+    val canSendScreen: Boolean
     fun addRemoteCandidates(candidates: List<IceCandidatePayload>)
     fun setMicrophoneEnabled(enabled: Boolean)
 
