@@ -56,7 +56,7 @@ pub const UNIFIEDPUSH_DEFAULT_HOSTS: &[&str] = &[
 
 /// Never an Android endpoint, whatever the configuration says: an "embedded FCM distributor"
 /// would hand the app a Google endpoint, and the Android app is Google-free by decision
-/// (`android-port-specs/00-plan.md`, decision record 1).
+/// (docs/architecture.md, *Notifications*: Web Push endpoints).
 const REFUSED_ANDROID_HOST_SUFFIXES: &[&str] = &["googleapis.com"];
 
 /// Upper bound for the DNS lookup of a public-host-mode distributor.
