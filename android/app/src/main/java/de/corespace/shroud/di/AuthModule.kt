@@ -27,9 +27,9 @@ class AuthModule(container: AppContainer) : AppModule(container) {
                 json = container.json,
             ),
             appScope = container.appScope,
-            // No keys outlive the session. Log Out and a removal also delete the stored identity and
-            // vault (iOS DeviceWipeController.swift:209, :297); a plain sign-out keeps them
-            // (RootView.swift:213). W2-AUTH-WIPE's wipe takes this over.
+            // No keys outlive the session. Log Out, a removal and a 401 streak also delete the stored
+            // identity and vault: all three are full wipes on iOS (RootView.swift:186-194, :206-213;
+            // DeviceWipeController.swift:209, :297). W2-AUTH-WIPE's wipe takes this over.
             onSignedOut = { wipe -> container.keys.cryptoController.lock(wipeStore = wipe) },
         )
     }

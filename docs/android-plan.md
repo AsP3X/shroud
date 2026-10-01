@@ -24,8 +24,8 @@ foundations, W2 engines, W3 screens and platform, W4 hardening and release). Wav
   in for it and going to the background drops the keys (invariant 5), except while the vault's own
   prompt is up.
 - **Session:** every authenticated request and the socket report to the session; three 401s in a
-  row sign out (keys kept), `DEVICE_REMOVED` signs out and deletes the stored identity and vault at
-  once, token-checked. Log Out deletes them too. The full wipe overlay is wave 2/3.
+  row and `DEVICE_REMOVED` (token-checked) both sign out and delete the stored identity and vault at
+  once, as iOS's full wipe does. Log Out deletes them too. The full wipe overlay is wave 2/3.
 - **UI kit:** every colour token, SwiftUI-matched motion, haptics, icons, tiered glass, toasts,
   list rows, bars, settings parts, menus, sheets, dialogs, pull to refresh — no Material.
 - **Seams for wave 2** are published with their final signatures (messaging, contacts, media,

@@ -170,7 +170,8 @@ class SessionControllerTest {
         repeat(3) { runCatching { api.contacts("tok") } }
         assertNull(c.session.value)
         assertEquals(SessionController.Validation.SignedOut, c.sessionAfterFailure())
-        assertEquals(listOf(false), signedOutWipes)
+        // The third 401 runs the full wipe: onSignedOut(wipe = true) deletes the identity and vault.
+        assertEquals(listOf(true), signedOutWipes)
     }
 
     @Test
@@ -201,9 +202,11 @@ class SessionControllerTest {
         assertEquals(SessionController.Validation.Offline, c.validate())
         assertEquals(SessionController.Validation.SignedOut, c.validate())
         assertNull(c.session.value)
-        // A plain sign-out keeps the stored keys (RootView.swift:213) and the anchor for the next login.
-        assertEquals(listOf(false), signedOutWipes)
-        assertEquals(DEVICE_ID.lowercase(), store().anchorFor("noah"))
+        // The third 401 is iOS markSessionEnded(): the full wipe, stored identity, vault and device
+        // anchor included (RootView.swift:186-194, :206-213), as for a removal.
+        assertEquals(listOf(true), signedOutWipes)
+        assertNull(store().anchorFor("noah"))
+        assertEquals(SessionController.Validation.SignedOut, c.consumeEnding())
     }
 
     @Test

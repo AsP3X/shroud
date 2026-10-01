@@ -21,9 +21,13 @@ import kotlinx.coroutines.withContext
  *
  * [appScope] outlives every screen: the Log Out revoke runs there, so leaving a screen never
  * cancels it. [onSignedOut] runs whenever the session ends, so no keys outlive it; its argument is
- * the wipe flag of [signOutLocally] — true for Log Out and a removal, whose stored identity and
- * vault go too (`DeviceWipeController.swift:209, :297`), false for a plain 401 streak, which keeps
- * them (`RootView.swift:213`).
+ * the wipe flag of [signOutLocally]. Log Out, a removal and a 401 streak are all full wipes on iOS:
+ * the streak goes through `markSessionEnded()` (`SessionController.swift:157-161, :193-200`), whose
+ * pending wipe RootView runs as `deviceWipe.start(reason: .sessionEnded)` (`RootView.swift:186-194,
+ * :206-213`) — "cleared exactly like Log Out does it", stored identity, vault and device anchor
+ * included (`DeviceWipeController.swift:209, :297`). Only a sign-out without a pending wipe keeps
+ * them (`RootView.swift:213`). Until W2-AUTH-WIPE's `DeviceWipeController(SessionEnded)` takes this
+ * over, the streak deletes them here at once, as a removal does.
  *
  * Every authenticated answer reaches the session through [authOutcomes] (iOS `SessionAuthBridge`,
  * `SessionController.swift:8-35`), which the INT package sets on the one `ApiClient` and the one
@@ -128,14 +132,16 @@ class SessionController(
     /**
      * One real 401 on a request with the session's token (`recordAuthenticationFailure`,
      * `SessionController.swift:155-161`): the session ends only after [AUTH_FAILURE_THRESHOLD] in a
-     * row. Offline and other statuses never get here (`ApiClient` reports only 2xx and 401).
+     * row, with the full local wipe (`markSessionEnded()`, `:193-200`; settings-lock §13.1): the
+     * server no longer accepts this session, so the account's sealed keys do not stay on the phone.
+     * Offline and other statuses never get here (`ApiClient` reports only 2xx and 401).
      */
     internal suspend fun recordAuthenticationFailure() {
         if (state.value == null) return
         // Counted on main before any suspension, so answers arriving together never undercount.
         authFailures += 1
         if (authFailures >= AUTH_FAILURE_THRESHOLD) {
-            endByServer(Validation.SignedOut, wipe = false)
+            endByServer(Validation.SignedOut, wipe = true)
             return
         }
         val count = authFailures
