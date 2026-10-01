@@ -287,7 +287,10 @@ class InterimSession private constructor(private val container: AppContainer) {
         if (!isUnlocked.value) return
         messaging.start()
         feedNotificationNames()
-        container.auth.syncDeviceName()
+        // Detached, as iOS does (`RootView.swift:312`): two network round trips must not hold up
+        // this collector, or a lock arriving meanwhile would wait for them (or be conflated away).
+        // DeviceNameSync is single-flight and swallows its own errors.
+        scope.launch { container.auth.syncDeviceName() }
     }
 
     private suspend fun locked() {
