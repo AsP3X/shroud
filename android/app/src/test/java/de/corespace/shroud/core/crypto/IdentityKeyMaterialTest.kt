@@ -1,5 +1,6 @@
 package de.corespace.shroud.core.crypto
 
+import de.corespace.shroud.core.keys.IdentityKeyStore
 import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters
 import org.bouncycastle.crypto.signers.Ed25519Signer
 import org.junit.Assert.assertEquals
@@ -77,5 +78,58 @@ class IdentityKeyMaterialTest {
         val spk = decoder.decode(request.signedPreKey.publicKey)
         verifier.update(spk, 0, spk.size)
         assertTrue(verifier.verifySignature(signature))
+    }
+
+    /**
+     * `IdentityKeyMaterial(stored:historyKey:)` (`IdentityKeyStore.swift:292-307`; crypto spec
+     * §9.3): the stored privates with this device's prekeys, OTPKs sorted by id, every public value
+     * and the signed-prekey signature recomputed.
+     */
+    @Test
+    fun restoreRebuildsTheSameIdentityWithTheStoredPreKeys() {
+        val m = IdentityKeyMaterial.establish(bip39, words, "u", oneTimePreKeyCount = 4)
+        val stored = IdentityKeyStore.StoredIdentity(
+            userId = "u",
+            registrationId = m.registrationId,
+            agreementPrivate = m.agreementPrivateKey.copyOf(),
+            signingPrivate = m.signingPrivateKey.copyOf(),
+            signedPreKeyId = m.signedPreKeyId,
+            signedPreKeyPrivate = m.signedPreKeyPrivate.copyOf(),
+            oneTimePreKeys = m.oneTimePreKeys.reversed().associate { it.keyId to it.privateKey.copyOf() },
+        )
+        val restored = IdentityKeyMaterial.restore(stored, m.historyKey)
+        stored.wipe() // restore keeps its own copies
+        assertTrue(restored.agreementPublic.contentEquals(m.agreementPublic))
+        assertTrue(restored.identityPublicKey.contentEquals(m.agreementPublic))
+        assertTrue(restored.signingPublic.contentEquals(m.signingPublic))
+        assertTrue(restored.signedPreKeyPublic.contentEquals(m.signedPreKeyPublic))
+        assertTrue(restored.historyKey.contentEquals(m.historyKey))
+        assertEquals(m.signedPreKeyId, restored.signedPreKeyId)
+        assertEquals(m.registrationId, restored.registrationId)
+        assertEquals(listOf(1, 2, 3, 4), restored.oneTimePreKeys.map { it.keyId })
+        for ((a, b) in m.oneTimePreKeys.zip(restored.oneTimePreKeys)) assertTrue(a.publicKey.contentEquals(b.publicKey))
+        assertTrue(restored.matches(bip39, words))
+        // BouncyCastle's Ed25519 is deterministic: the recomputed signature equals the original.
+        assertTrue(restored.signedPreKeySignature.contentEquals(m.signedPreKeySignature))
+    }
+
+    /** Call secrets agree with the identity key (plan C29): X25519 both ways gives one secret. */
+    @Test
+    fun agreementIsX25519WithTheIdentityKey() {
+        val m = IdentityKeyMaterial.establish(bip39, words, "u", oneTimePreKeyCount = 0)
+        val peerPrivate = ByteArray(32) { 0x22 }
+        val peerPublic = Primitives.x25519Public(peerPrivate)
+        val ours = m.agreement(peerPublic)
+        assertTrue(ours.contentEquals(Primitives.x25519(peerPrivate, m.identityPublicKey)))
+        assertTrue(runCatching { m.agreement(ByteArray(32)) }.exceptionOrNull() === CryptoError.InvalidPeerKey)
+    }
+
+    @Test
+    fun wipeZeroesEveryPrivateValue() {
+        val m = IdentityKeyMaterial.establish(bip39, words, "u", oneTimePreKeyCount = 2)
+        m.wipe()
+        for (secret in listOf(m.agreementPrivateKey, m.signingPrivateKey, m.historyKey, m.signedPreKeyPrivate) + m.oneTimePreKeys.map { it.privateKey }) {
+            assertTrue(secret.all { it == 0.toByte() })
+        }
     }
 }

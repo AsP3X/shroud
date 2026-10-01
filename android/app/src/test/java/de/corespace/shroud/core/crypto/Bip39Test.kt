@@ -7,7 +7,10 @@ import org.junit.Test
 import java.io.File
 import java.security.MessageDigest
 
-/** Mirrors `ios/shroudTests/BIP39SeedTests.swift` and `EncryptionPhraseGeneratorTests.swift`. */
+/**
+ * Mirrors `ios/shroudTests/BIP39SeedTests.swift`, `EncryptionPhraseGeneratorTests.swift` and
+ * `EncryptionPhraseParserTests.swift` (crypto spec §16.1, §17.1).
+ */
 class Bip39Test {
     private val bip39 = TestWordlist.bip39
     private val abandonAbout = List(11) { "abandon" } + "about"
@@ -71,5 +74,67 @@ class Bip39Test {
         assertNull(bip39.parse("abandon abandon"))
         assertNull(bip39.parse(List(12) { "abandon" }.joinToString(" ")))
         assertTrue(bip39.isWord("Zoo"))
+    }
+
+    /**
+     * `generatedPhraseUsesWordlistEntries` (`EncryptionPhraseGeneratorTests.swift:15-26`), pinned to
+     * the computed words of crypto spec §16.1 as the stronger vector.
+     */
+    @Test
+    fun knownEntropyGivesTheLeisureClawVector() {
+        val entropy = hexToBytes("7FA542109C33886D14C25E9103B8476A")
+        assertEquals(
+            "leisure claw loud debris decade custom fantasy envelope much build balcony stairs".split(" "),
+            bip39.fromEntropy(entropy),
+        )
+    }
+
+    /** `liveGenerationProducesTwelveUniqueOrValidWords` (`EncryptionPhraseGeneratorTests.swift:28-35`). */
+    @Test
+    fun liveGenerationHasAtLeastEightDistinctWords() {
+        val words = bip39.generate()
+        assertEquals(12, words.size)
+        assertTrue(words.all { it.isNotEmpty() })
+        assertTrue(words.toSet().size >= 8)
+    }
+
+    /** `parseNormalizesCaseAndExtraWhitespace` (`EncryptionPhraseParserTests.swift:15-20`). */
+    @Test
+    fun parseNormalisesCaseAndExtraWhitespace() {
+        val phrase = "  Abandon   ABANDON  abandon abandon abandon abandon abandon abandon abandon abandon abandon about  "
+        assertEquals(abandonAbout, bip39.parse(phrase))
+    }
+
+    /** Swift splits on `.whitespacesAndNewlines` (Unicode): a paste with no-break spaces or U+2028 still parses (crypto §17.1). */
+    @Test
+    fun parseSplitsOnUnicodeWhitespace() {
+        assertEquals(abandonAbout, bip39.parse(abandonAbout.joinToString("\u00A0")))
+        assertEquals(abandonAbout, bip39.parse(abandonAbout.joinToString("\u2028")))
+        assertEquals(abandonAbout, bip39.parse(abandonAbout.joinToString("\u3000\t")))
+        assertEquals(abandonAbout, bip39.parse(abandonAbout.joinToString("\u0085")))
+    }
+
+    /** `parseRejectsFewerThanTwelveWords`, `parseRejectsInvalidChecksum` (`EncryptionPhraseParserTests.swift:22-31`). */
+    @Test
+    fun parseRejectsShortPhrasesAndBadChecksums() {
+        assertNull(bip39.parse("one two three"))
+        assertNull(bip39.parse(List(12) { "abandon" }.joinToString(" ")))
+    }
+
+    /** `parseLenientDoesNotRequireChecksum` (`EncryptionPhraseParserTests.swift:33-40`). */
+    @Test
+    fun parseLenientDoesNotRequireChecksum() {
+        val words = bip39.parseLenient("one two three four five six seven eight nine ten eleven twelve thirteen")
+        assertEquals(12, words?.size)
+        assertEquals("twelve", words?.last())
+        assertNull(bip39.parseLenient("one two"))
+        assertEquals(List(12) { "abandon" }, bip39.parseLenient(List(12) { "ABANDON" }.joinToString("\u00A0")))
+    }
+
+    @Test
+    fun phraseErrorsNeverQuoteAWord() {
+        val error = runCatching { bip39.validate(List(11) { "abandon" } + "hunter2") }.exceptionOrNull()
+        assertTrue(error is Bip39.PhraseException.UnknownWord)
+        assertTrue(!error!!.message!!.contains("hunter2"))
     }
 }
