@@ -1,5 +1,6 @@
 package de.corespace.shroud.core.keys
 
+import de.corespace.shroud.core.crypto.CryptoError
 import de.corespace.shroud.core.crypto.LocalHistoryCrypto
 import de.corespace.shroud.core.crypto.utf8
 import de.corespace.shroud.core.storage.RecordRead
@@ -31,10 +32,20 @@ class RatchetSessionStore(
 ) : RatchetSessionRecords {
     override val isUnlocked: Boolean get() = state.isUnlocked
 
-    /** `RatchetSessionStore.swift:22-31`: null while locked, without a record, or when it does not open. */
+    /**
+     * `RatchetSessionStore.swift:22-31`: null while chats are locked, without a record, or when it
+     * does not open. A record the phone cannot read now ([RecordRead.DeviceLocked], the
+     * WhenUnlocked sealer while the phone is locked; [RecordRead.Failed], a transient Keystore or
+     * I/O error) throws [CryptoError.Locked]: it is there, so it must never read as "no session"
+     * ([RatchetSessionRecords.load], crypto D5).
+     */
     override fun load(peerUserId: UUID): ByteArray? = state.withKeyAndNames { key, names ->
         val name = names.name(LocalNames.Kind.RATCHET, peerUserId)
-        val read = records.read(name) as? RecordRead.Found ?: return@withKeyAndNames null
+        val read = when (val result = records.read(name)) {
+            is RecordRead.Found -> result
+            RecordRead.NotFound -> return@withKeyAndNames null
+            RecordRead.DeviceLocked, RecordRead.Failed -> throw CryptoError.Locked
+        }
         val opened = try {
             LocalHistoryCrypto.open(read.bytes, key, LocalHistoryCrypto.Context.RatchetKeychain, aad(name))
         } catch (_: Exception) {

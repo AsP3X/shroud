@@ -36,8 +36,10 @@ enum class OpenAs {
  *
  * Android differences, none visible on the wire:
  * - **Locked ratchets (crypto D5, web parity).** [seal] throws [CryptoError.Locked] while
- *   [RatchetSessionRecords.isUnlocked] is false. iOS reads a locked store as "no session", starts a
- *   fresh initiator session and silently drops its save, forking the ratchet.
+ *   [RatchetSessionRecords.isUnlocked] is false, and when the session record exists but the phone
+ *   cannot read it now (locked phone, transient Keystore error: [RatchetSessionRecords.load]
+ *   throws). iOS reads both as "no session", starts a fresh initiator session over the established
+ *   one and forks the ratchet. A v3 open in that state reads the peer box and saves nothing.
  * - **Per-peer monitor (plan §1.4).** iOS runs on the main actor, so a ratchet load → mutate → save
  *   is atomic (`ios/shroud/Services/Messaging/MessageDecoder.swift:186-213`). Here callers run on
  *   `Dispatchers.Default`, so every ratchet read-modify-write holds a monitor per peer, on top of
@@ -100,7 +102,8 @@ class MessageCrypto internal constructor(
      * Seals a 1:1 message for [peerUserId] (`MessageCrypto.swift:120-199`):
      *
      * 1. `useRatchet = false` → [sealV2].
-     * 2. While the ratchet store is locked → [CryptoError.Locked] (D5).
+     * 2. While the ratchet store is locked, or the stored session cannot be read now →
+     *    [CryptoError.Locked] (D5): the caller queues the send and retries after unlock.
      * 3. **v3** when a session exists or we are the deterministic initiator,
      *    `Ids.precedes(ourUserId, peerUserId)` (the lower lower-case id, `:150-156`); otherwise
      *    **v2**, so both sides can write first without poisoning ratchet state (dual initiator). The

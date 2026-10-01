@@ -5,6 +5,11 @@ import de.corespace.shroud.core.storage.ScriptedSealer
 import de.corespace.shroud.core.storage.SealResult
 import de.corespace.shroud.core.storage.SealedDirectoryStore
 import de.corespace.shroud.core.storage.StorageSeal
+import de.corespace.shroud.core.crypto.CryptoError
+import de.corespace.shroud.core.crypto.CryptoFixtures
+import de.corespace.shroud.core.crypto.InMemorySenderTagWatermarks
+import de.corespace.shroud.core.crypto.MessageCrypto
+import de.corespace.shroud.core.crypto.TestIdentity
 import de.corespace.shroud.core.crypto.hex
 import de.corespace.shroud.testing.SealedTestKey
 import de.corespace.shroud.testing.TempDirRule
@@ -12,6 +17,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -104,13 +110,53 @@ class RatchetSessionStoreTest {
         assertNull(store.load(alice))
     }
 
+    /**
+     * A record the phone cannot read right now is there: it must not read as "no session", or a
+     * seal starts a fresh initiator session over it and forks the ratchet (crypto D5).
+     */
     @Test
-    fun anUnreadableRecordLoadsAsNoSession() {
+    fun aRecordThePhoneCannotReadNowThrowsLockedInsteadOfReadingAsNone() {
         store.save(alice, session)
-        sealer.readFailure = SealResult.DeviceLocked
-        assertNull(store.load(alice))
+        for (failure in listOf(SealResult.DeviceLocked, SealResult.Failed)) {
+            sealer.readFailure = failure
+            assertThrows(CryptoError.Locked::class.java) { store.load(alice) }
+            // No record at all is still "no session", whatever the sealer would say.
+            assertNull(store.load(bob))
+        }
         sealer.readFailure = null
-        // A record from another history key does not open either.
+        assertArrayEquals(session, store.load(alice))
+    }
+
+    /** End to end through [MessageCrypto]: a locked phone never gets a fresh session written over the stored one. */
+    @Test
+    fun sealingWhileThePhoneIsLockedLeavesTheStoredSessionAlone() {
+        val (ourUser, peerUser) = CryptoFixtures.sortedUserIds()
+        val us = TestIdentity.random()
+        val peer = TestIdentity.random()
+        val crypto = MessageCrypto(store, InMemorySenderTagWatermarks())
+        crypto.seal("first".toByteArray(), peerUser, peer.public, us.private, us.public, ourUser)
+        val name = LocalNames.derive(SealedTestKey.bytes()).name(LocalNames.Kind.RATCHET, peerUser)
+        val stored = File(dir, name).readBytes()
+        val seals = sealer.sealCount
+
+        sealer.readFailure = SealResult.DeviceLocked
+        sealer.sealFails = true // the WhenUnlocked sealer refuses writes while the phone is locked
+        assertThrows(CryptoError.Locked::class.java) {
+            crypto.seal("second".toByteArray(), peerUser, peer.public, us.private, us.public, ourUser)
+        }
+        sealer.readFailure = SealResult.Failed
+        sealer.sealFails = false // a transient error while unlocked: a write would succeed
+        assertThrows(CryptoError.Locked::class.java) {
+            crypto.seal("second".toByteArray(), peerUser, peer.public, us.private, us.public, ourUser)
+        }
+        assertEquals(seals, sealer.sealCount)
+        assertArrayEquals(stored, File(dir, name).readBytes())
+    }
+
+    @Test
+    fun aRecordThatDoesNotOpenLoadsAsNoSession() {
+        store.save(alice, session)
+        // A record from another history key does not open.
         val otherState = SealedLocalState().apply { setHistoryKeyForTesting(ByteArray(32) { 1 }) }
         val name = LocalNames.derive(SealedTestKey.bytes()).name(LocalNames.Kind.RATCHET, alice)
         val bytes = (SealedDirectoryStore(dir, sealer).read(name) as RecordRead.Found).bytes

@@ -14,6 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
  * for two parties, as on iOS: sessions are keyed by the peer's user id only.
  *
  * [isUnlocked] = false behaves like a locked store: [load] reads nothing, [save] is dropped.
+ * [unreadable] = true behaves like a locked phone with chats unlocked (see there).
  */
 class InMemoryRatchetSessionRecords : RatchetSessionRecords {
     private val sessions = ConcurrentHashMap<UUID, ByteArray>()
@@ -26,10 +27,23 @@ class InMemoryRatchetSessionRecords : RatchetSessionRecords {
     var saveCount: Int = 0
         private set
 
-    override fun load(peerUserId: UUID): ByteArray? = if (isUnlocked) sessions[peerUserId]?.copyOf() else null
+    /**
+     * Chats unlocked but the phone locked (or a transient Keystore error): an existing record
+     * cannot be read — [load] throws [CryptoError.Locked] as the sealed store does — and a save is
+     * dropped, as the WhenUnlocked sealer refuses to write.
+     */
+    @Volatile
+    var unreadable: Boolean = false
+
+    override fun load(peerUserId: UUID): ByteArray? {
+        if (!isUnlocked) return null
+        val stored = sessions[peerUserId] ?: return null
+        if (unreadable) throw CryptoError.Locked
+        return stored.copyOf()
+    }
 
     override fun save(peerUserId: UUID, sessionJson: ByteArray) {
-        if (!isUnlocked) return
+        if (!isUnlocked || unreadable) return
         sessions[peerUserId] = sessionJson.copyOf()
         synchronized(this) { saveCount++ }
     }

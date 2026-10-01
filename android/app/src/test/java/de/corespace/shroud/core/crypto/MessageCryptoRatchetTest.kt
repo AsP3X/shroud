@@ -227,6 +227,45 @@ class MessageCryptoRatchetTest {
         assertEquals(saves, records.saveCount)
     }
 
+    /**
+     * Chats unlocked, phone locked (an auto-lock delay, the background connection): the session
+     * record exists but the WhenUnlocked sealer cannot read it. Sealing must not start a fresh
+     * initiator session over it — that forks the ratchet for good — but throw, so the outbox
+     * retries after unlock; nothing is saved.
+     */
+    @Test
+    fun aSessionThePhoneCannotReadNowIsNeverReplacedByAFreshOne() {
+        assertEquals("A1", bobReads(aliceSends("A1")))
+        assertEquals("B1", aliceReads(bobSends("B1")))
+        val aliceBefore = records.session(bobUser)
+        val saves = records.saveCount
+        records.unreadable = true
+        assertThrows(CryptoError.Locked::class.java) { aliceSends("A2") }
+        assertThrows(CryptoError.Locked::class.java) { bobSends("B2") }
+        assertEquals(saves, records.saveCount)
+        records.unreadable = false
+        assertEquals(aliceBefore, records.session(bobUser))
+        // The chain carries on: no fork, both sides still read through the ratchet.
+        val a2 = aliceSends("A2")
+        assertEquals("A2", String(crypto.open(ratchetOnly(a2), aliceUser, bob.private, bob.public, alice.public, sentAt = Instant.now()), Charsets.UTF_8))
+    }
+
+    /** The same state on the receiving side: the peer box opens it, and no ratchet step is saved. */
+    @Test
+    fun openingWhileTheSessionIsUnreadableUsesThePeerBoxAndSavesNothing() {
+        val a1 = aliceSends("A1")
+        val a2 = aliceSends("A2")
+        assertEquals("A1", bobReads(a1))
+        val bobBefore = records.session(aliceUser)
+        val saves = records.saveCount
+        records.unreadable = true
+        assertEquals("A2", bobReads(a2))
+        assertEquals(saves, records.saveCount)
+        records.unreadable = false
+        assertEquals(bobBefore, records.session(aliceUser))
+        assertEquals("A2", String(crypto.open(ratchetOnly(a2), aliceUser, bob.private, bob.public, alice.public, sentAt = Instant.now()), Charsets.UTF_8))
+    }
+
     // ---- Android: no state change on a failed seal ----
 
     @Test

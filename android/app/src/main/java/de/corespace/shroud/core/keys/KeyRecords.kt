@@ -36,6 +36,14 @@ interface RatchetSessionRecords {
      * The session JSON for [peerUserId], or null when there is none, the record does not open or
      * the store is locked (`RatchetSessionStore.swift:22-31`). The caller owns (and may zero) the
      * returned array.
+     *
+     * A record that **exists but cannot be read right now** — the phone is locked (the WhenUnlocked
+     * sealer refuses, `RecordRead.DeviceLocked`) or a transient Keystore / I/O error
+     * (`RecordRead.Failed`) — throws [de.corespace.shroud.core.crypto.CryptoError.Locked] instead
+     * of reading as "no session". Android-only (iOS reads it as `nil`): a null here makes `seal`
+     * start a fresh initiator session over the established one, which forks the ratchet for good
+     * (crypto D5). `seal` lets the error through, so the send is queued and retried after unlock;
+     * the v3 open falls back to the peer box and saves nothing.
      */
     fun load(peerUserId: UUID): ByteArray?
 
