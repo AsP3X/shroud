@@ -18,6 +18,13 @@ import java.io.IOException
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
+/** A Whisper weights file the store can fetch and verify: name, exact size and SHA-256 (lower-case hex). */
+interface WhisperModelSpec {
+    val fileName: String
+    val sizeBytes: Long
+    val sha256: String
+}
+
 /**
  * The Whisper weights Android offers (media-voice-links §9.9; P7): ggml q5_1 files from the
  * whisper.cpp model repository, each pinned by size and SHA-256 (checked 2026-10-01 against
@@ -26,7 +33,12 @@ import java.util.concurrent.TimeUnit
  * @property id the `TranscriptionModelId` raw value (`base`, `small`; iOS `TranscriptionModelID`,
  *   `TranscriptionTypes.swift:5-23`) under prefs `transcription.model` (W3-TRANSCRIPTION).
  */
-enum class WhisperModelFile(val id: String, val fileName: String, val sizeBytes: Long, val sha256: String) {
+enum class WhisperModelFile(
+    val id: String,
+    override val fileName: String,
+    override val sizeBytes: Long,
+    override val sha256: String,
+) : WhisperModelSpec {
     /** The default (P7): fast on mid-range phones, the web's default size class. */
     BaseQ5_1("base", "ggml-base-q5_1.bin", 59_707_625L, "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898"),
 
@@ -61,6 +73,7 @@ class WhisperModelException(message: String, cause: Throwable? = null) : IOExcep
  *
  * @param baseUrl the directory URL the files are fetched from; tests point it at a MockWebServer.
  * @param usableSpace free bytes for the model directory (`File.usableSpace`; tests fake a full disk).
+ * @param catalog every file this store manages; anything else in [directory] is pruned before a download.
  */
 class WhisperModelStore(
     val directory: File,
@@ -68,6 +81,7 @@ class WhisperModelStore(
     private val baseUrl: HttpUrl = PINNED_BASE_URL.toHttpUrl(),
     private val io: CoroutineDispatcher = Dispatchers.IO,
     private val usableSpace: (File) -> Long = { it.usableSpace },
+    private val catalog: List<WhisperModelSpec> = WhisperModelFile.entries,
 ) {
     private val client: OkHttpClient = http.newBuilder()
         .followRedirects(true)
@@ -76,16 +90,19 @@ class WhisperModelStore(
         .callTimeout(0, TimeUnit.SECONDS)
         .build()
 
-    private val locks = WhisperModelFile.entries.associateWith { Mutex() }
+    private val locks: Map<String, Mutex> = catalog.associate { it.fileName to Mutex() }
+
+    private fun lockOf(model: WhisperModelSpec): Mutex =
+        requireNotNull(locks[model.fileName]) { "${model.fileName} is not in this store's catalog" }
 
     /** Where [model] lives once installed. */
-    fun file(model: WhisperModelFile): File = File(directory, model.fileName)
+    fun file(model: WhisperModelSpec): File = File(directory, model.fileName)
 
     /** True when [model] is downloaded and verified (a file of the pinned size; only verified files get this name). */
-    fun isInstalled(model: WhisperModelFile): Boolean = file(model).length() == model.sizeBytes
+    fun isInstalled(model: WhisperModelSpec): Boolean = file(model).length() == model.sizeBytes
 
     /** Bytes on disk for [model]: the pinned size when installed, else what a resumed download keeps. */
-    fun downloadedBytes(model: WhisperModelFile): Long =
+    fun downloadedBytes(model: WhisperModelSpec): Long =
         if (isInstalled(model)) model.sizeBytes else partFile(model).length().coerceAtMost(model.sizeBytes)
 
     /**
@@ -97,8 +114,8 @@ class WhisperModelStore(
      *   fails the size or SHA-256 check (the partial file is deleted then; after a network failure it
      *   is kept for the next attempt).
      */
-    suspend fun ensure(model: WhisperModelFile, progress: ((Double) -> Unit)? = null): File =
-        locks.getValue(model).withLock {
+    suspend fun ensure(model: WhisperModelSpec, progress: ((Double) -> Unit)? = null): File =
+        lockOf(model).withLock {
             val target = file(model)
             if (!isInstalled(model)) download(model, progress)
             progress?.invoke(1.0)
@@ -106,20 +123,20 @@ class WhisperModelStore(
         }
 
     /** Deletes [model] and any partial download of it. */
-    suspend fun delete(model: WhisperModelFile) = locks.getValue(model).withLock {
+    suspend fun delete(model: WhisperModelSpec) = lockOf(model).withLock {
         file(model).delete()
         partFile(model).delete()
     }
 
-    /** Deletes files in [directory] that are no model of [WhisperModelFile] (older revisions, strays). Never throws. */
+    /** Deletes files in [directory] that are no model of the catalog (older revisions, strays). Never throws. */
     fun pruneUnknownFiles() {
-        val known = WhisperModelFile.entries.flatMap { listOf(it.fileName, it.fileName + PART_SUFFIX) }.toSet()
+        val known = catalog.flatMap { listOf(it.fileName, it.fileName + PART_SUFFIX) }.toSet()
         directory.listFiles()?.forEach { if (it.isFile && it.name !in known) it.delete() }
     }
 
-    private fun partFile(model: WhisperModelFile) = File(directory, model.fileName + PART_SUFFIX)
+    private fun partFile(model: WhisperModelSpec) = File(directory, model.fileName + PART_SUFFIX)
 
-    private suspend fun download(model: WhisperModelFile, progress: ((Double) -> Unit)?) {
+    private suspend fun download(model: WhisperModelSpec, progress: ((Double) -> Unit)?) {
         if (!directory.isDirectory && !directory.mkdirs() && !directory.isDirectory) {
             throw WhisperModelException("could not create the model directory")
         }
@@ -143,7 +160,7 @@ class WhisperModelStore(
     }
 
     /** One GET (ranged when a partial file exists) appended to [part]; cancelling the coroutine cancels the call. */
-    private suspend fun fetch(model: WhisperModelFile, part: File, progress: ((Double) -> Unit)?) = coroutineScope {
+    private suspend fun fetch(model: WhisperModelSpec, part: File, progress: ((Double) -> Unit)?) = coroutineScope {
         val have = part.length()
         val request = Request.Builder()
             .url(baseUrl.newBuilder().addPathSegment(model.fileName).build())
@@ -159,10 +176,11 @@ class WhisperModelStore(
         }
     }
 
-    private fun transfer(call: Call, model: WhisperModelFile, part: File, have: Long, progress: ((Double) -> Unit)?) {
+    private fun transfer(call: Call, model: WhisperModelSpec, part: File, have: Long, progress: ((Double) -> Unit)?) {
         val response = try {
             call.execute()
         } catch (e: IOException) {
+            if (call.isCanceled()) throw CancellationException("the model download was cancelled")
             throw WhisperModelException("the model download failed", e)
         }
         response.use {
@@ -210,7 +228,9 @@ class WhisperModelStore(
                 part.delete()
                 throw e
             } catch (e: IOException) {
-                // Network failure or a cancelled call: keep what arrived for the next attempt.
+                // Network failure or a cancelled call: keep what arrived for the next attempt. A
+                // cancelled call stays a cancellation, so the caller's coroutine unwinds quietly.
+                if (call.isCanceled()) throw CancellationException("the model download was cancelled")
                 throw WhisperModelException("the model download was interrupted", e)
             }
         }

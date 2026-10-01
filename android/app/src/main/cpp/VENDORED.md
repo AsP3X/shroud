@@ -39,5 +39,5 @@ find . -type f | while read -r f; do cmp -s "$f" "/tmp/whisper.cpp-1.9.4/$f" || 
 
 Replace the kept paths from the new tag's archive, update the table above, the commit in
 `CMakeLists.txt` (`SHROUD_WHISPER_COMMIT`, the git stand-in) and `WHISPER_VERSION`, then re-run the
-benchmark (`TranscriptionBenchmarkTest`). The CPU variant list comes from ggml's CMake and needs no
+benchmark (`TranscriptionBenchmarkDeviceTest`). The CPU variant list comes from ggml's CMake and needs no
 edit unless ggml renames its backends.

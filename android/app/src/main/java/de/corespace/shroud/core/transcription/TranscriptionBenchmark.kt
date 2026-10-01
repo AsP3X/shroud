@@ -23,7 +23,7 @@ import kotlin.math.min
  * on the opening, then one whole-note pass with it forced ([WhisperDecodeOptions.voiceNote]). The RTF
  * the gate reads is (detect + transcribe) / audio length; model loading is reported apart.
  *
- * Runs on any device with the model downloaded through [models]; `TranscriptionBenchmarkTest`
+ * Runs on any device with the model downloaded through [models]; `TranscriptionBenchmarkDeviceTest`
  * (androidTest) drives it with public-domain fixtures. Nothing is logged here — the caller decides
  * what to print, and [Report.lines] leaves transcripts out unless asked (they are user content when
  * the clips are).

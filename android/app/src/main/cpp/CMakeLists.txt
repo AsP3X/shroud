@@ -35,11 +35,12 @@ add_compile_options(
 
 # ggml asks git for its commit. Inside the Shroud repository that would be our HEAD plus a dirty
 # flag, varying from checkout to checkout; a stand-in answers with the vendored tag's commit.
-set(SHROUD_WHISPER_COMMIT 927cfce34f31707e17f2bff35c349632fb9e2c3a)
+set(SHROUD_WHISPER_COMMIT 927cfce34f31707e17f2bff35c349632fb9e2c3a)   # VENDORED.md
+string(SUBSTRING ${SHROUD_WHISPER_COMMIT} 0 7 SHROUD_WHISPER_SHORT_COMMIT)
 set(SHROUD_NO_GIT ${CMAKE_BINARY_DIR}/shroud-vendored-git)
 file(WRITE ${SHROUD_NO_GIT}
     "#!/bin/sh\n# Stand-in for git inside the vendored ggml tree (shroud CMakeLists.txt).\n"
-    "if [ \"$1\" = rev-parse ]; then echo 927cfce; fi\nexit 0\n")
+    "if [ \"$1\" = rev-parse ]; then echo ${SHROUD_WHISPER_SHORT_COMMIT}; fi\nexit 0\n")
 file(CHMOD ${SHROUD_NO_GIT} PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
 set(GIT_EXE ${SHROUD_NO_GIT} CACHE FILEPATH "Stand-in git for the vendored ggml (reproducible GGML_COMMIT)" FORCE)
 
