@@ -44,6 +44,7 @@ internal object Vector {
     val secret: ByteArray get() = CallCrypto.callSecret(alicePrivate, alicePublic, bobPublic)
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 internal class SchedulerClock(private val scheduler: TestCoroutineScheduler) : AppClock {
     override fun nowMillis(): Long = START + scheduler.currentTime
     override fun elapsedMillis(): Long = scheduler.currentTime
@@ -333,6 +334,9 @@ internal class CallWorld(val scheduler: TestCoroutineScheduler, eager: Boolean =
     var dropSignalType: String? = null
     var createDelayMs = 0L
     var createError: ApiError? = null
+
+    /** `GET /calls/{id}` fails with a transport error. */
+    var offline = false
     var iceServers: List<IceServerDto> = listOf(IceServerDto(listOf("stun:stun.example:3478")))
 
     val aliceId: UUID = UUID.fromString("00000000-0000-0000-0000-00000000000a")
@@ -458,6 +462,7 @@ internal class CallWorld(val scheduler: TestCoroutineScheduler, eager: Boolean =
 
         override suspend fun call(token: String, callId: UUID): CallDto {
             requests += "get:${me.name}"
+            if (offline) throw ApiError.Transport("offline")
             return (calls[callId] ?: throw notFound()).dto(me)
         }
 

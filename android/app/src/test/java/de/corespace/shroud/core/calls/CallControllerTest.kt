@@ -295,6 +295,36 @@ class CallControllerTest {
         assertEquals("Connection lost", alice.call!!.endedText)
     }
 
+    /** iOS: a reconcile that cannot reach the server ends nothing; the heartbeat and the server limit decide (CC:1487-1502). */
+    @Test
+    fun aReconcileWithoutAnAnswerEndsNothing() = world { world ->
+        val (alice, _) = connect(world)
+        val callId = world.calls.keys.single()
+        world.endSilently(callId, "ended", "connection_lost")
+        world.offline = true
+        backgroundScope.launch { alice.controller.toggleMute() }
+        world.settle()
+        assertEquals(CallPhase.Active, alice.phase)
+        // The next heartbeat hears the server.
+        world.advance(CallController.HEARTBEAT_MS)
+        assertEquals("Connection lost", alice.call!!.endedText)
+    }
+
+    /** A pushed name is trimmed and cut to 64 characters (calls §2.7). */
+    @Test
+    fun aPushedNameIsTrimmedAndCut() = world { world ->
+        val bob = world.device("bob", world.bobId)
+        val callId = UUID.randomUUID()
+        bob.controller.handleCallPush(CallPush(NotificationKind.Call, callId, world.aliceId, "  " + "x".repeat(80) + " ", CallPush.Source.UnifiedPush))
+        assertEquals("x".repeat(64), bob.call!!.peerUsername)
+        // The confirming read fails (the server does not know it): the ring goes on (CC:802) until
+        // the ring check hears the 404.
+        world.settle()
+        assertEquals(CallPhase.IncomingRinging, bob.phase)
+        world.advance(CallController.RING_CHECK_MS)
+        assertEquals("Call ended", bob.call!!.endedText)
+    }
+
     /** A media state lost in a socket gap comes back on the heartbeat (CC:1866-1878). */
     @Test
     fun aLostMediaStateIsCaughtUpByTheHeartbeat() = world { world ->
@@ -724,7 +754,7 @@ class CallControllerTest {
         assertTrue(row.isOutgoing)
         assertEquals("bob", row.peerUsername)
         assertEquals(65L, row.duration!!.seconds)
-        assertEquals("1:05", CallHistory.durationLabel(row.duration!!))
+        assertEquals("1:05", CallHistory.durationLabel(row.duration))
     }
 
     @Test

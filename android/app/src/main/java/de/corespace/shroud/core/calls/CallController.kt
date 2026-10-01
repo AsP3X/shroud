@@ -302,17 +302,14 @@ class CallController(
             m.earlyEvents += event
             return
         }
-        when (event) {
-            is RealtimeEvent.CallRing -> handleRing(event.call)
-            is RealtimeEvent.CallAccepted -> handleAccepted(event.call)
-            is RealtimeEvent.CallEnded -> {
-                handleEnded(event.call)
-                // Every call of ours ends up here, also those of our other devices.
-                scope.launch { refreshHistory() }
-            }
-            is RealtimeEvent.CallSignal -> handleSignal(event)
-            else -> Unit
+        if (event is RealtimeEvent.CallRing) handleRing(event.call)
+        if (event is RealtimeEvent.CallAccepted) handleAccepted(event.call)
+        if (event is RealtimeEvent.CallEnded) {
+            handleEnded(event.call)
+            // Every call of ours ends up here, also those of our other devices.
+            scope.launch { refreshHistory() }
         }
+        if (event is RealtimeEvent.CallSignal) handleSignal(event)
     }
 
     // ---- Push (CC:457-548; Android: CallPush from UnifiedPush or the background socket) ----
@@ -343,7 +340,8 @@ class CallController(
     private fun ringFromPush(push: CallPush) {
         val id = push.callId
         val modality = if (push.kind == NotificationKind.VideoCall) CallModality.Video else CallModality.Voice
-        val name = push.callerName?.trim()?.takeIf { it.isNotEmpty() } ?: CallTexts.INCOMING_CALL_PLACEHOLDER
+        // Opened names are trimmed and cut to 64 characters (calls §2.7, NotificationPayload.swift:66-95).
+        val name = push.callerName?.trim()?.take(MAX_PUSH_NAME)?.takeIf { it.isNotEmpty() } ?: CallTexts.INCOMING_CALL_PLACEHOLDER
         if (callWasFinished(id)) return
         val m = machine
         // Another call is in progress: this one is not shown (CC:485-489).
@@ -1359,7 +1357,10 @@ class CallController(
             applyServerStatus(info, m)
         } catch (e: CancellationException) {
             throw e
-        } catch (e: ApiError.Server) {
+        } catch (e: ApiError) {
+            // As iOS: an API answer ends the call only when the server no longer knows it; a
+            // transport error is no answer, and the heartbeat and the 45 s server limit decide
+            // (CC:1493-1496; calls §4.12 says otherwise, the code wins).
             if (e.isNotFound) finish(m, fallback ?: CallTexts.CALL_ENDED, null, "ended", KitClose.Report(CallEndCause.Remote))
         } catch (_: Exception) {
             if (fallback != null) finish(m, fallback, null, "ended", KitClose.Report(CallEndCause.Remote))
@@ -2021,6 +2022,7 @@ class CallController(
         const val ENDING_VISIBLE_MS = 2_000L
         const val ERROR_VISIBLE_MS = 4_000L
         const val FINISHED_MEMORY = 20
+        private const val MAX_PUSH_NAME = 64
 
         private const val NEVER = Long.MIN_VALUE
 
