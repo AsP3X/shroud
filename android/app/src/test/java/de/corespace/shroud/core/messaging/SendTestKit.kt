@@ -462,8 +462,12 @@ class SendFakeMediaTransfers(private val media: SendFakeMediaStore) : MediaTrans
     /** When set, a download waits for it (a download "in flight"). */
     var gate: CompletableDeferred<Unit>? = null
 
+    /** When set, every upload waits for it after it started (an upload "in flight"). */
+    var uploadGate: CompletableDeferred<Unit>? = null
+
     override suspend fun upload(source: PlainSource, token: String, onProgress: ((Double) -> Unit)?): UploadedBlob {
         uploads += source
+        uploadGate?.await()
         if (failUploads > 0) {
             failUploads--
             throw ApiError.Transport("The network connection was lost.")

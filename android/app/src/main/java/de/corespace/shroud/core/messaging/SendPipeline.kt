@@ -273,7 +273,7 @@ class SendPipeline(
     val annotations = AnnotationSender(state, deps, scope)
 
     /** The running outbox flush; overlapping callers await it (`OutboundSendQueue`, `OutboundPending.swift:62-85`). */
-    private var flushJob: Deferred<Unit>? = null
+    @Volatile private var flushJob: Deferred<Unit>? = null
 
     /** Stops every send, retry and flush in flight (sign-out, wipe: `outboundQueue.cancel()`, MC:526). Their bubbles stay queued. */
     override fun cancelAll() {
@@ -1385,17 +1385,17 @@ class SendPipeline(
      * have survived a restart; photos, videos and voice notes re-send from the sealed cache.
      */
     override suspend fun flushOutbox() {
-        flushJob?.let {
+        flushJob?.takeIf { it.isActive }?.let {
             it.await()
             return
         }
-        val flush = scope.async(start = CoroutineStart.LAZY) { performPendingFlush() }
+        // The flush runs in the pipeline's scope and ends its own entry: a cancelled waiter (a poll
+        // stopped by leaveForeground) does not stop it, so clearing the entry from the waiter
+        // would let the next caller start a second flush that uploads every queued media again.
+        val flush = scope.async { performPendingFlush() }
         flushJob = flush
-        try {
-            flush.await()
-        } finally {
-            if (flushJob === flush) flushJob = null
-        }
+        flush.invokeOnCompletion { if (flushJob === flush) flushJob = null }
+        flush.await()
     }
 
     private suspend fun performPendingFlush() {

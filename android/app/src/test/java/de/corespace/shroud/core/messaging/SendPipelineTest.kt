@@ -26,6 +26,7 @@ import de.corespace.shroud.testing.TempDirRule
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertArrayEquals
@@ -506,6 +507,36 @@ class SendPipelineTest {
         assertEquals(w.server.dtoFor(request).id, sent.id)
         assertEquals(ReceiptStatus.Sent, sent.receipt)
         assertNull(sent.sendError)
+    }
+
+    @Test
+    fun aCancelledFlushCallerDoesNotLetASecondFlushUploadAgain() = runTest(main.dispatcher) { // review W2: flushJob
+        val w = world()
+        w.online = false
+        val pipeline = w.pipeline()
+        pipeline.sendImage(MediaImageSource.FileBytes(photo), w.peer, "Later", MediaComposeQuality.Original, MediaEdits.Identity, null)
+        w.online = true
+        val before = w.transfers.uploads.size
+        val gate = CompletableDeferred<Unit>()
+        w.transfers.uploadGate = gate
+
+        // pollWithoutSocket's flush, whose loop leaveForeground stops while the upload runs.
+        val poll = backgroundScope.launch { pipeline.flushOutbox() }
+        assertEquals(before + 1, w.transfers.uploads.size)
+        poll.cancel()
+        // Back in front: the next flush joins the one still uploading instead of starting another.
+        val again = backgroundScope.async { pipeline.flushOutbox() }
+        gate.complete(Unit)
+        again.await()
+
+        assertEquals(before + 1, w.transfers.uploads.size)
+        assertEquals(1, w.server.requests.size)
+        val sent = w.state.messages(w.peer)!!.single()
+        assertFalse(sent.pendingSync)
+        assertEquals(w.server.dtoFor(w.server.lastRequest()).id, sent.id)
+        // Once it ended, a later flush runs again (nothing left to send).
+        pipeline.flushOutbox()
+        assertEquals(1, w.server.requests.size)
     }
 
     @Test
