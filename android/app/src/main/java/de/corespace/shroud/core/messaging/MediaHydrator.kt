@@ -252,7 +252,7 @@ class MediaHydrator(
      * it (plan §1.4, messaging-core §23 item 2), so a concurrent page decode cannot open it twice.
      */
     internal suspend fun payloadData(message: ChatMessage): ByteArray? {
-        cachedPayload(message.id)?.let { return it }
+        cachedPayload(message.id, message.senderUserId)?.let { return it }
         // A cached text may be the display label if something wrote the wrong blob — ignored (MC:4021).
         val token = state.session?.token ?: return null
         val apiPeer = state.apiPeer(message.peerUserId)
@@ -263,7 +263,7 @@ class MediaHydrator(
             // Our own message: the self box, no ratchet (MC:4032-4040).
             val payload = deps.open(envelope, apiPeer, null, OpenAs.Sender, dto.createdAt) ?: return null
             if (MediaMessagePayload.parse(payload) == null) return null
-            savePlaintext(message.id, payload)
+            savePlaintext(message.id, message.senderUserId, payload)
             return payload
         }
 
@@ -272,24 +272,24 @@ class MediaHydrator(
         val dto = response.messages.firstOrNull { it.id == message.id } ?: return null
         val envelope = dto.ciphertext?.let(MessageCrypto::fromWire) ?: return null
         // A concurrent decode of the same message may have cached it meanwhile (MC:4060-4063).
-        cachedPayload(message.id)?.let { return it }
+        cachedPayload(message.id, message.senderUserId)?.let { return it }
         val senderPublic = deps.peerIdentities().resolvePublicKey(dto.senderUserId)
         return deps.peerLocks.withPeer(dto.senderUserId) {
             // Only when no plaintext at all is cached: a non-payload blob must not burn a second open (MC:4069-4073).
-            if (withContext(deps.io) { deps.store().plaintext(message.id) } != null) return@withPeer null
+            if (withContext(deps.io) { deps.store().plaintext(message.id, message.senderUserId) } != null) return@withPeer null
             val payload = deps.open(envelope, dto.senderUserId, senderPublic, OpenAs.Recipient, dto.createdAt) ?: return@withPeer null
             if (MediaMessagePayload.parse(payload) == null) return@withPeer null
-            savePlaintext(message.id, payload)
+            savePlaintext(message.id, message.senderUserId, payload)
             payload
         }
     }
 
     /** `MessageDecoder.isMediaPayloadData` on the cached plaintext (MC:4018). */
-    private suspend fun cachedPayload(messageId: UUID): ByteArray? =
-        withContext(deps.io) { deps.store().plaintext(messageId) }?.takeIf { MediaMessagePayload.parse(it) != null }
+    private suspend fun cachedPayload(messageId: UUID, senderUserId: UUID): ByteArray? =
+        withContext(deps.io) { deps.store().plaintext(messageId, senderUserId) }?.takeIf { MediaMessagePayload.parse(it) != null }
 
-    private suspend fun savePlaintext(messageId: UUID, plaintext: ByteArray) =
-        withContext(deps.io) { deps.store().savePlaintext(messageId, plaintext) }
+    private suspend fun savePlaintext(messageId: UUID, senderUserId: UUID, plaintext: ByteArray) =
+        withContext(deps.io) { deps.store().savePlaintext(messageId, senderUserId, plaintext) }
 
     // ---- helpers ----
 

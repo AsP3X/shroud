@@ -121,14 +121,20 @@ class MessageDecoder(
             )
         }
 
-        val existing = context.threads[peer]?.firstOrNull { it.id == dto.id }
-            ?: context.threads.values.asSequence().flatten().firstOrNull { it.id == dto.id }
+        // A held copy skips the envelope and with it the sender check (invariant 12). Message ids
+        // are chosen by the server, so a copy is reused only for the same sender — and for a peer's
+        // message, from that peer's chat: another chat's message re-served under this id is opened
+        // for real, and fails. iOS reuses by id alone (`MessageDecoder.swift:60-61`); review W2.
+        val existing = (
+            context.threads[peer]?.firstOrNull { it.id == dto.id }
+                ?: context.threads.values.asSequence().flatten().firstOrNull { it.id == dto.id }
+            )?.takeIf { it.senderUserId == dto.senderUserId && (isMine || it.peerUserId == dto.senderUserId) }
         if (existing != null && !existing.deleted && !ThreadMessageMerge.isFailedDecryptText(existing.text)) {
             return fromHeld(existing, base, isMedia)
         }
 
         // `:138-166`: an earlier open left the plaintext in the cache.
-        cachedPlaintext(dto.id, isMedia)?.let { cached ->
+        cachedPlaintext(dto.id, dto.senderUserId, isMedia)?.let { cached ->
             return if (isMedia) decodeMedia(base, cached) else textMessage(base, cached)
         }
 
@@ -147,7 +153,7 @@ class MessageDecoder(
             throw e
         } catch (_: Exception) {
             // `:246-293`: whatever this device still has, else the placeholder.
-            val cached = withContext(io) { store.plaintext(dto.id) }
+            val cached = withContext(io) { store.plaintext(dto.id, dto.senderUserId) }
             if (!isMedia && cached != null) {
                 LenientJson.utf8OrNull(cached)?.let { return textMessage(base, MessageTextPayload.parse(it)) }
             }
@@ -177,9 +183,10 @@ class MessageDecoder(
         if (!isMedia) {
             withContext(io) {
                 // `:75-86`: re-seal what the bubble carries, quote included.
-                if (store.plaintext(dto.id) == null) {
+                if (store.plaintext(dto.id, dto.senderUserId) == null) {
                     store.savePlaintext(
                         dto.id,
+                        dto.senderUserId,
                         MessageTextPayload.wire(existing.text, existing.replyTo, existing.linkPreview).toByteArray(Charsets.UTF_8),
                     )
                 }
@@ -198,7 +205,7 @@ class MessageDecoder(
         if (!merged.hasFullMedia && holdsMedia && hasMedia(dto.id)) merged = merged.copy(hasFullMedia = true)
         // `:117-133`: iOS 26/27's JSONDecoder failed the payload and stamped every media note a photo.
         if (isMedia && existing.kind == ChatMessageKind.Image) {
-            val plain = withContext(io) { store.plaintext(dto.id) }
+            val plain = withContext(io) { store.plaintext(dto.id, dto.senderUserId) }
             val payload = plain?.let(MediaMessagePayload::parse)
             if (plain != null && payload != null && (payload.isVoice || payload.isVideo || payload.isLink)) {
                 return decodeMedia(base, plain)
@@ -219,7 +226,7 @@ class MessageDecoder(
         val lockPeer = if (isSelfNote) me else peer
         return peerLocks.withPeer(lockPeer) {
             // A concurrent decode of the same message may have opened it while we waited.
-            withContext(io) { store.plaintext(dto.id) }
+            withContext(io) { store.plaintext(dto.id, dto.senderUserId) }
                 ?.takeIf { dto.contentType != ContentType.MEDIA || MediaMessagePayload.parse(it) != null }
                 ?.let { return@withPeer it }
             val plain = withContext(compute) {
@@ -231,14 +238,17 @@ class MessageDecoder(
                     }
                 } ?: throw CryptoError.Locked
             }
-            withContext(io) { store.savePlaintext(dto.id, plain) }
+            withContext(io) { store.savePlaintext(dto.id, dto.senderUserId, plain) }
             plain
         }
     }
 
-    /** The cached plaintext when it fits the content type (`MessageDecoder.swift:138-140`). */
-    private suspend fun cachedPlaintext(id: UUID, isMedia: Boolean): ByteArray? {
-        val cached = withContext(io) { store.plaintext(id) } ?: return null
+    /**
+     * The cached plaintext when it fits the content type (`MessageDecoder.swift:138-140`) and was
+     * saved for this [sender] (the cache is bound to it, so a re-served id finds nothing).
+     */
+    private suspend fun cachedPlaintext(id: UUID, sender: UUID, isMedia: Boolean): ByteArray? {
+        val cached = withContext(io) { store.plaintext(id, sender) } ?: return null
         return if (!isMedia || MediaMessagePayload.parse(cached) != null) cached else null
     }
 

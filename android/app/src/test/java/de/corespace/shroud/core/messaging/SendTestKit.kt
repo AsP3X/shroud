@@ -259,10 +259,21 @@ class SendFakeMessagingStore(private val media: SendFakeMediaStore) : MessagingS
     override fun persist(userId: UUID, snapshot: MessagingSnapshot): Set<UUID> = emptySet()
     override fun persistThread(userId: UUID, storePeer: UUID, messages: List<ChatMessage>, roster: RosterSnapshot): Set<UUID> = emptySet()
     override suspend fun flush() = Unit
-    override fun plaintext(messageId: UUID): ByteArray? = plaintexts[messageId]?.copyOf()
+    /** The sender each entry was saved for; an entry a test put in [plaintexts] by hand fits any sender. */
+    val plaintextSenders = ConcurrentHashMap<UUID, UUID>()
 
-    override fun savePlaintext(messageId: UUID, bytes: ByteArray) {
+    override fun plaintext(messageId: UUID, senderUserId: UUID): ByteArray? =
+        plaintexts[messageId]?.takeIf { plaintextSenders[messageId].let { it == null || it == senderUserId } }?.copyOf()
+
+    override fun savePlaintext(messageId: UUID, senderUserId: UUID, bytes: ByteArray) {
         plaintexts[messageId] = bytes.copyOf()
+        plaintextSenders[messageId] = senderUserId
+    }
+
+    /** A test's by-hand entry, fitting any sender. */
+    fun savePlaintext(messageId: UUID, bytes: ByteArray) {
+        plaintexts[messageId] = bytes.copyOf()
+        plaintextSenders.remove(messageId)
     }
 
     override fun removeCaches(messageIds: Collection<UUID>) {

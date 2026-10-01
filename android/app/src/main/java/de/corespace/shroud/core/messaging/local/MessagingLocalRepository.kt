@@ -118,9 +118,9 @@ class MessagingLocalRepository(
 
     // ---- Plaintext cache (`:55-75`) ----
 
-    override fun plaintext(messageId: UUID): ByteArray? = plaintextCache.data(messageId)
+    override fun plaintext(messageId: UUID, senderUserId: UUID): ByteArray? = plaintextCache.data(messageId, senderUserId)
 
-    override fun savePlaintext(messageId: UUID, bytes: ByteArray) = plaintextCache.save(messageId, bytes)
+    override fun savePlaintext(messageId: UUID, senderUserId: UUID, bytes: ByteArray) = plaintextCache.save(messageId, senderUserId, bytes)
 
     // ---- Hydrate (`:110-186`) ----
 
@@ -461,7 +461,7 @@ class MessagingLocalRepository(
     private fun attachEnvelopePreview(message: ChatMessage): ChatMessage {
         val carries = message.kind == ChatMessageKind.Image || message.kind == ChatMessageKind.Video || message.hasLargeLinkImage
         if (!carries) return message
-        val plain = plaintextCache.data(message.id) ?: return message
+        val plain = plaintextCache.data(message.id, message.senderUserId) ?: return message
         val payload = try {
             MediaMessagePayload.parse(plain)
         } finally {
@@ -487,7 +487,7 @@ class MessagingLocalRepository(
             if (message.deleted || message.kind != ChatMessageKind.Text || message.mediaObjectId != null) continue
             if (LocalTombstones.isFailedDecryptText(message.text) || message.id in skip) continue
             val wire = MessageTextPayload.wire(message.text, message.replyTo, message.linkPreview)
-            if (plaintextCache.text(message.id) != wire) plaintextCache.save(message.id, wire)
+            if (plaintextCache.text(message.id, message.senderUserId) != wire) plaintextCache.save(message.id, message.senderUserId, wire)
         }
     }
 

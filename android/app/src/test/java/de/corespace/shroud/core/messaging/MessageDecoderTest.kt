@@ -235,6 +235,32 @@ class MessageDecoderTest {
         assertEquals(3000, message.durationMs)
     }
 
+    /** Review W2 (invariant 12): an id the server re-serves for another sender never reuses what this device holds. */
+    @Test
+    fun aMessageIdReServedForAnotherSenderIsOpenedForReal() = runTest {
+        val bob = UUID.randomUUID()
+        peerKeys.keys[peer] = ByteArray(32) { 9 }
+        peerKeys.keys[bob] = ByteArray(32) { 5 }
+        val decoder = decoder()
+        // Alice's message: opened once, held in her chat and cached for her.
+        val fromAlice = Dtos.message(sender = peer, ciphertext = Dtos.sealed("for your eyes"))
+        val alices = decoder.decode(fromAlice, context())
+        assertEquals("for your eyes", alices.text)
+
+        // The server serves the same id as Bob's message: neither the held copy nor the cache answers.
+        val forged = Dtos.message(id = fromAlice.id, sender = bob, ciphertext = Dtos.sealed("FAIL"))
+        val withHeld = decoder.decode(forged, context(threads = mapOf(peer to listOf(alices))))
+        assertEquals("[Unable to decrypt]", withHeld.text)
+        assertEquals(bob, withHeld.senderUserId)
+        assertEquals("[Unable to decrypt]", decoder.decode(forged, context()).text)
+        assertEquals(bob, opener.calls.last().peerUserId)
+
+        // Alice's own copy still reads, from the cache.
+        val opens = opener.calls.size
+        assertEquals("for your eyes", decoder.decode(fromAlice.copy(ciphertext = Dtos.sealed("FAIL")), context()).text)
+        assertEquals(opens, opener.calls.size)
+    }
+
     @Test
     fun aFailedHeldCopyIsDecodedAgain() = runTest {
         val dto = Dtos.message(sender = peer, ciphertext = Dtos.sealed("now readable"))

@@ -85,7 +85,7 @@ class MessagingStoreBehaviourTest {
         val repository = fixture.repository()
         fixture.lock()
         assertEquals(emptySet<UUID>(), fixture.persist(repository, mapOf(peer to listOf(fixture.message(peer, "hi")))))
-        repository.savePlaintext(UUID.randomUUID(), "x".toByteArray())
+        repository.savePlaintext(UUID.randomUUID(), fixture.userId, "x".toByteArray())
         assertNull(repository.reactionCursors(fixture.userId))
         repository.saveReactionCursors(fixture.userId, mapOf(peer to 3))
         assertFalse(fixture.shroudDir.exists())
@@ -94,7 +94,7 @@ class MessagingStoreBehaviourTest {
         fixture.storageSeal.seal()
         fixture.persist(repository, mapOf(peer to listOf(fixture.message(peer, "hi"))))
         fixture.persistThread(repository, peer, listOf(fixture.message(peer, "hi")))
-        repository.savePlaintext(UUID.randomUUID(), "x".toByteArray())
+        repository.savePlaintext(UUID.randomUUID(), fixture.userId, "x".toByteArray())
         repository.saveReactionCursors(fixture.userId, mapOf(peer to 3))
         repository.noteAnnotation(UUID.randomUUID(), UUID.randomUUID())
         assertFalse(fixture.shroudDir.exists())
@@ -104,25 +104,42 @@ class MessagingStoreBehaviourTest {
     fun aChatLockDropsThePlaintextKeptInMemory() {
         val repository = fixture.repository()
         val id = UUID.randomUUID()
-        repository.savePlaintext(id, "secret".toByteArray())
-        assertEquals("secret", repository.plaintext(id)?.toString(Charsets.UTF_8))
+        repository.savePlaintext(id, fixture.userId, "secret".toByteArray())
+        assertEquals("secret", repository.plaintext(id, fixture.userId)?.toString(Charsets.UTF_8))
 
         fixture.lock()
-        assertNull(repository.plaintext(id))
+        assertNull(repository.plaintext(id, fixture.userId))
         // Same key again, file gone: only a plaintext still in memory could answer now.
         assertTrue(fixture.plaintextFile(id).delete())
         fixture.unlock()
-        assertNull(repository.plaintext(id))
+        assertNull(repository.plaintext(id, fixture.userId))
+    }
+
+    /** Review W2 (invariant 12): message ids are server-chosen; a cached plaintext answers only for its sender. */
+    @Test
+    fun aCachedPlaintextIsBoundToItsSender() {
+        val repository = fixture.repository()
+        val id = UUID.randomUUID()
+        val alice = UUID.randomUUID()
+        val bob = UUID.randomUUID()
+        repository.savePlaintext(id, alice, "from alice".toByteArray())
+        assertNull(repository.plaintext(id, bob))
+        assertEquals("from alice", repository.plaintext(id, alice)?.toString(Charsets.UTF_8))
+
+        // From disk too: the sender is part of the record's AAD.
+        val fresh = fixture.repository()
+        assertNull(fresh.plaintext(id, bob))
+        assertEquals("from alice", fresh.plaintext(id, alice)?.toString(Charsets.UTF_8))
     }
 
     @Test
     fun lockSensitiveMemoryDropsThePlaintextKeptInMemory() {
         val repository = fixture.repository()
         val id = UUID.randomUUID()
-        repository.savePlaintext(id, "secret".toByteArray())
+        repository.savePlaintext(id, fixture.userId, "secret".toByteArray())
         repository.lockSensitiveMemory()
         assertTrue(fixture.plaintextFile(id).delete())
-        assertNull(repository.plaintext(id))
+        assertNull(repository.plaintext(id, fixture.userId))
     }
 
     // ---- Serial writer (messaging-core §23.3) ----
@@ -198,7 +215,7 @@ class MessagingStoreBehaviourTest {
                 repeat(25) { n ->
                     val message = fixture.message(p, "message $n")
                     thread = thread + message
-                    repository.savePlaintext(message.id, "sealed $n".toByteArray())
+                    repository.savePlaintext(message.id, message.senderUserId, "sealed $n".toByteArray())
                     fixture.persistThread(repository, p, thread)
                     if (n % 5 == 0) repository.removeCaches(listOf(message.id))
                 }
@@ -240,7 +257,7 @@ class MessagingStoreBehaviourTest {
                 unreadByPeer = mapOf(peer to 2),
             ),
         )
-        repository.savePlaintext(annotation, "{\"t\":\"transcript\"}".toByteArray())
+        repository.savePlaintext(annotation, fixture.userId, "{\"t\":\"transcript\"}".toByteArray())
         repository.noteAnnotation(voice.id, annotation)
         repository.saveReactionCursors(fixture.userId, mapOf(peer to 7))
 
@@ -266,7 +283,7 @@ class MessagingStoreBehaviourTest {
         repository.hydrate(fixture.userId)
         val voice = UUID.randomUUID()
         val annotation = UUID.randomUUID()
-        repository.savePlaintext(annotation, "{\"t\":\"transcript\",\"c\":\"Bis gleich!\"}".toByteArray())
+        repository.savePlaintext(annotation, fixture.userId, "{\"t\":\"transcript\",\"c\":\"Bis gleich!\"}".toByteArray())
         repository.noteAnnotation(voice, annotation)
         assertEquals(setOf(annotation), repository.annotationsFor(voice))
         // The index outlives the process.
@@ -274,7 +291,7 @@ class MessagingStoreBehaviourTest {
 
         repository.removeCaches(listOf(voice))
 
-        assertNull(repository.plaintext(annotation))
+        assertNull(repository.plaintext(annotation, fixture.userId))
         assertFalse(fixture.plaintextFile(annotation).exists())
         assertEquals(emptySet<UUID>(), repository.annotationsFor(voice))
         assertEquals(emptySet<UUID>(), fixture.repository().also { it.hydrate(fixture.userId) }.annotationsFor(voice))
@@ -315,7 +332,7 @@ class MessagingStoreBehaviourTest {
         repository.hydrate(fixture.userId)
         val voice = fixture.message(peer, "Voice message").copy(kind = ChatMessageKind.Voice, transcript = "hello there")
         val annotation = UUID.randomUUID()
-        repository.savePlaintext(annotation, "{\"t\":\"transcript\"}".toByteArray())
+        repository.savePlaintext(annotation, fixture.userId, "{\"t\":\"transcript\"}".toByteArray())
         repository.noteAnnotation(voice.id, annotation)
         fixture.persistThread(repository, peer, listOf(voice.copy(deleted = true)))
 
@@ -329,7 +346,7 @@ class MessagingStoreBehaviourTest {
         val repository = fixture.repository()
         repository.hydrate(fixture.userId)
         val id = UUID.randomUUID()
-        repository.savePlaintext(id, "secret".toByteArray())
+        repository.savePlaintext(id, fixture.userId, "secret".toByteArray())
         fixture.media.put(id, "jpeg".toByteArray())
         fixture.lock()
 
@@ -385,9 +402,9 @@ class MessagingStoreBehaviourTest {
         val image = fixture.message(peer, "Photo").copy(kind = ChatMessageKind.Image, mediaObjectId = UUID.randomUUID(), imageWidth = 4, imageHeight = 3)
         val video = fixture.message(peer, "Video").copy(kind = ChatMessageKind.Video, mediaObjectId = UUID.randomUUID(), durationMs = 1200)
         val link = fixture.message(peer, "https://example.com/a").copy(mediaObjectId = UUID.randomUUID(), linkPreview = LinkPreview("https://example.com/a", title = "A"))
-        repository.savePlaintext(image.id, payload("image", thumb, 1500))
-        repository.savePlaintext(video.id, payload("video", thumb, 2_500_000))
-        repository.savePlaintext(link.id, payload("link", thumb, 900))
+        repository.savePlaintext(image.id, image.senderUserId, payload("image", thumb, 1500))
+        repository.savePlaintext(video.id, video.senderUserId, payload("video", thumb, 2_500_000))
+        repository.savePlaintext(link.id, link.senderUserId, payload("link", thumb, 900))
         fixture.media.put(image.id, "jpeg".toByteArray())
         fixture.persistThread(repository, peer, listOf(image, video, link))
 
@@ -405,7 +422,7 @@ class MessagingStoreBehaviourTest {
         assertEquals(Bytes.of(thumb), l.previewJpeg)
         assertEquals(900L, l.mediaByteCount)
         // The link message's media payload (with its blob key) was not replaced by its text wire.
-        assertTrue(repository.plaintext(link.id)!!.toString(Charsets.UTF_8).contains("\"k\":\"blob-key\""))
+        assertTrue(repository.plaintext(link.id, link.senderUserId)!!.toString(Charsets.UTF_8).contains("\"k\":\"blob-key\""))
     }
 
     // ---- Written-state skip across a cold start (`MessagingLocalRepository.swift:165-176`) ----
@@ -450,7 +467,7 @@ class MessagingStoreBehaviourTest {
         val pending = fixture.message(peer, "on its way").copy(isMine = true, senderUserId = me, receipt = ReceiptStatus.Sending, pendingSync = true)
         val gone = LocalTombstones.tombstone(fixture.message(peer, "gone"))
         val note = fixture.message(NOTES_PEER_ID, "[todo:0]Buy milk").copy(kind = ChatMessageKind.Todo, todoDone = false)
-        repository.savePlaintext(voice.id, "{\"t\":\"voice\",\"mime\":\"audio/mp4\",\"k\":\"blob-key\"}".toByteArray())
+        repository.savePlaintext(voice.id, voice.senderUserId, "{\"t\":\"voice\",\"mime\":\"audio/mp4\",\"k\":\"blob-key\"}".toByteArray())
         fixture.persist(
             repository,
             mapOf(peer to listOf(reply, link, voice, pending, gone), NOTES_PEER_ID to listOf(note)),
@@ -484,7 +501,7 @@ class MessagingStoreBehaviourTest {
         val pendingOld = fixture.message(peer, "pending", createdAt = daysAgo(91)).copy(pendingSync = true)
         val recent = fixture.message(peer, "recent", createdAt = daysAgo(1))
         val ancientNote = fixture.message(NOTES_PEER_ID, "note", createdAt = daysAgo(400))
-        repository.savePlaintext(old.id, "old".toByteArray())
+        repository.savePlaintext(old.id, old.senderUserId, "old".toByteArray())
         fixture.media.put(old.id, "m4a".toByteArray())
 
         val dropped = fixture.persist(repository, mapOf(peer to listOf(old, pendingOld, recent), NOTES_PEER_ID to listOf(ancientNote)))
@@ -502,7 +519,7 @@ class MessagingStoreBehaviourTest {
         val repository = fixture.repository()
         val old = fixture.message(peer, "old", createdAt = daysAgo(100))
         val recent = fixture.message(peer, "recent")
-        repository.savePlaintext(old.id, "old".toByteArray())
+        repository.savePlaintext(old.id, old.senderUserId, "old".toByteArray())
 
         val dropped = fixture.persistThread(repository, peer, listOf(old, recent))
 

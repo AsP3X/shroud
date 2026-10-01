@@ -36,14 +36,14 @@ class MessagingLocalRepositoryTest {
     @Test
     fun hydrateRefreshesAPlaintextEntryThatDiffers() {
         val repository = seededRepository()
-        repository.savePlaintext(messageId, "stale".toByteArray())
+        repository.savePlaintext(messageId, fixture.userId, "stale".toByteArray())
 
         repository.hydrate(fixture.userId)
 
-        assertEquals("hello", repository.plaintext(messageId)?.toString(Charsets.UTF_8))
+        assertEquals("hello", repository.plaintext(messageId, fixture.userId)?.toString(Charsets.UTF_8))
         // A fresh repository reads the disk copy, not the in-memory one.
         val reopened = fixture.repository()
-        assertEquals("hello", reopened.plaintext(messageId)?.toString(Charsets.UTF_8))
+        assertEquals("hello", reopened.plaintext(messageId, fixture.userId)?.toString(Charsets.UTF_8))
     }
 
     /** `seededRepository` (`:51-76`). */

@@ -169,12 +169,26 @@ class FakeMessagingStore : MessagingStore {
         flushCount++
     }
 
-    override fun plaintext(messageId: UUID): ByteArray? = plaintexts[messageId]?.copyOf()
+    /** The sender each entry was saved for; an entry a test put in [plaintexts] by hand fits any sender. */
+    val plaintextSenders = HashMap<UUID, UUID>()
 
-    override fun savePlaintext(messageId: UUID, bytes: ByteArray) {
+    override fun plaintext(messageId: UUID, senderUserId: UUID): ByteArray? =
+        plaintexts[messageId]?.takeIf { plaintextSenders[messageId].let { it == null || it == senderUserId } }?.copyOf()
+
+    /** A test's by-hand entry for [messageId], bound to [senderUserId] like a real save. */
+    fun savePlaintext(messageId: UUID, bytes: ByteArray) {
         plaintexts[messageId] = bytes.copyOf()
+        plaintextSenders.remove(messageId)
+    }
+
+    override fun savePlaintext(messageId: UUID, senderUserId: UUID, bytes: ByteArray) {
+        plaintexts[messageId] = bytes.copyOf()
+        plaintextSenders[messageId] = senderUserId
         savedPlaintext += messageId
     }
+
+    /** Test shorthand: the entry whoever sent it. */
+    fun plaintext(messageId: UUID): ByteArray? = plaintexts[messageId]?.copyOf()
 
     override fun removeCaches(messageIds: Collection<UUID>) {
         events += "removeCaches"

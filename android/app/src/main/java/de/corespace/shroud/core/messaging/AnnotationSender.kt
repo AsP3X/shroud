@@ -140,7 +140,7 @@ class AnnotationSender internal constructor(
             )
             withContext(deps.io) {
                 val store = deps.store()
-                store.savePlaintext(dto.id, plaintext)
+                store.savePlaintext(dto.id, dto.senderUserId, plaintext)
                 store.noteAnnotation(voiceId, dto.id)
             }
         } catch (e: CancellationException) {

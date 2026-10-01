@@ -143,8 +143,12 @@ interface MessagingStore {
     /** Waits for every queued write (before a lock drops the key). */
     suspend fun flush()
 
-    fun plaintext(messageId: UUID): ByteArray?
-    fun savePlaintext(messageId: UUID, bytes: ByteArray)
+    /**
+     * The cached plaintext of [messageId] as sent by [senderUserId]; null when there is none or it
+     * was saved for another sender (message ids are server-chosen: invariant 12, review W2).
+     */
+    fun plaintext(messageId: UUID, senderUserId: UUID): ByteArray?
+    fun savePlaintext(messageId: UUID, senderUserId: UUID, bytes: ByteArray)
 
     /** Plaintext + local media + annotation index (Android D5). */
     fun removeCaches(messageIds: Collection<UUID>)

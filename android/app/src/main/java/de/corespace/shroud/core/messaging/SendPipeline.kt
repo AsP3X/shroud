@@ -498,7 +498,7 @@ class SendPipeline(
         val sealed = deps.seal(plaintext, apiPeer, signed.me, peerPublic)
         val dto = deps.api.sendMessage(signed.token, SendMessageRequest(apiPeer, messageId, ContentType.TEXT, MessageCrypto.toWire(sealed)))
         // Cache what was sealed (quote included) so a later decode rebuilds the same bubble (MC:4851-4852).
-        savePlaintext(dto.id, plaintext)
+        savePlaintext(dto.id, dto.senderUserId, plaintext)
         return PostedText(dto, wire.sealedPreview)
     }
 
@@ -536,7 +536,7 @@ class SendPipeline(
         val generation = state.lockGeneration
         state.edit(NOTES_PEER_ID) { it + message }
         val wireText = if (kind == ChatMessageKind.Todo) todoWire(text, todoDone ?: false) else noteWire.wire
-        savePlaintext(message.id, wireText.toByteArray(Charsets.UTF_8))
+        savePlaintext(message.id, message.senderUserId, wireText.toByteArray(Charsets.UTF_8))
         if (state.lockGeneration != generation) return
         state.persistThread(NOTES_PEER_ID)
 
@@ -1587,8 +1587,8 @@ class SendPipeline(
         false
     }
 
-    private suspend fun savePlaintext(messageId: UUID, plaintext: ByteArray) =
-        withContext(deps.io) { deps.store().savePlaintext(messageId, plaintext) }
+    private suspend fun savePlaintext(messageId: UUID, senderUserId: UUID, plaintext: ByteArray) =
+        withContext(deps.io) { deps.store().savePlaintext(messageId, senderUserId, plaintext) }
 
     /**
      * Caches the payload of the row the server kept for a media send and returns that row's blob id.
@@ -1605,7 +1605,7 @@ class SendPipeline(
     private suspend fun cacheSentPayload(dto: MessageDto, blob: UploadedBlob, payload: ByteArray, apiPeer: UUID): UUID {
         val stored = dto.mediaObjectId ?: blob.mediaObjectId
         if (stored == blob.mediaObjectId) {
-            savePlaintext(dto.id, payload)
+            savePlaintext(dto.id, dto.senderUserId, payload)
             return stored
         }
         val kept = try {
@@ -1615,7 +1615,7 @@ class SendPipeline(
         } catch (_: Exception) {
             null
         }
-        if (kept != null && MediaMessagePayload.parse(kept) != null) savePlaintext(dto.id, kept)
+        if (kept != null && MediaMessagePayload.parse(kept) != null) savePlaintext(dto.id, dto.senderUserId, kept)
         return stored
     }
 

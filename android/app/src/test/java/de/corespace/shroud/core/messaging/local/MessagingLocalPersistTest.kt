@@ -100,11 +100,11 @@ class MessagingLocalPersistTest {
         val repository = fixture.repository()
         val link = message(peerA, "https://example.com").copy(mediaObjectId = UUID.randomUUID())
         val payload = "{\"t\":\"link\",\"k\":\"blob-key\"}".toByteArray()
-        repository.savePlaintext(link.id, payload)
+        repository.savePlaintext(link.id, link.senderUserId, payload)
 
         fixture.persistThread(repository, peerA, listOf(link))
 
-        assertArrayEquals(payload, repository.plaintext(link.id))
+        assertArrayEquals(payload, repository.plaintext(link.id, link.senderUserId))
     }
 
     /** `testThreadSaveCachesTheReplyQuote` (`:90-101`): a reply's cache holds its quote, as the full save writes it. */
@@ -119,7 +119,7 @@ class MessagingLocalPersistTest {
 
         fixture.persistThread(repository, peerA, listOf(reply))
 
-        assertEquals(wire, repository.plaintext(reply.id)?.toString(Charsets.UTF_8))
+        assertEquals(wire, repository.plaintext(reply.id, reply.senderUserId)?.toString(Charsets.UTF_8))
     }
 
     /**
@@ -136,7 +136,7 @@ class MessagingLocalPersistTest {
             replyTo = MessageReplyReference(messageId = UUID.randomUUID(), senderUserId = peerA, kind = MessageReplyReference.Kind.Text, snippet = "?"),
         )
         val live = message(peerA, "still here")
-        repository.savePlaintext(tombstone.id, "{\"t\":\"voice\",\"c\":\"the secret\"}".toByteArray())
+        repository.savePlaintext(tombstone.id, tombstone.senderUserId, "{\"t\":\"voice\",\"c\":\"the secret\"}".toByteArray())
         fixture.media.put(tombstone.id, "m4a".toByteArray())
         fixture.persistThread(repository, peerA, listOf(tombstone, live))
 
@@ -151,7 +151,7 @@ class MessagingLocalPersistTest {
         assertFalse(thread[0].hasFullMedia)
         assertEquals("still here", thread[1].text)
         val fresh = fixture.repository()
-        assertNull(fresh.plaintext(tombstone.id))
+        assertNull(fresh.plaintext(tombstone.id, tombstone.senderUserId))
         assertFalse(fixture.media.has(tombstone.id))
         val rows = fixture.store().loadThread(peerA, fixture.userId)!!
         assertNull(rows[0].transcript)
