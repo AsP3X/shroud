@@ -11,6 +11,7 @@ import de.corespace.shroud.core.model.MediaTransfer
 import de.corespace.shroud.core.model.ReactionFailure
 import de.corespace.shroud.core.net.ContactItemDto
 import de.corespace.shroud.core.net.ContactRequestDto
+import de.corespace.shroud.core.net.ConversationItemDto
 import de.corespace.shroud.core.net.ReactionDto
 import de.corespace.shroud.core.net.wire.MessageReplyReference
 import de.corespace.shroud.core.realtime.RealtimeEvent
@@ -72,6 +73,11 @@ interface ThreadState {
     /**
      * The server re-keyed an optimistic message (memory: *Server re-keys sent messages*): replace it
      * with [sent], drop the optimistic id's caches, move its transfer and tell the sinks.
+     *
+     * Call it after the plaintext and media were saved under `sent.id`: the optimistic id's caches
+     * are removed here. The bubble keeps its place (appended when it is gone); for Notes any copy
+     * of either id under our own user id is dropped too (`MessagingController.swift:4801-4815`), and
+     * transcripts shared while it was sending are folded in. Persists the snapshot.
      */
     fun rekey(storePeer: UUID, optimisticId: UUID, sent: ChatMessage)
 
@@ -243,6 +249,34 @@ interface ReactionsEngine {
     suspend fun catchUp(storePeer: UUID)
     suspend fun flushPendingSaves()
     fun reset()
+
+    // ---- Added in W2 by W2-MSG-CORE, the seam's W2 owner: where iOS's controller reaches into its
+    // reaction state, `MessagingController` calls these. Additive with no-op defaults, so the W1-INT
+    // shape still compiles; the names and signatures are the ones W2-MSG-SEND's `ReactionEngine`
+    // already has (its contract change request CR-2) — it only adds `override` (and drops the
+    // default value of `markSeen`'s `upTo`, which an override may not repeat). ----
+
+    /**
+     * Zeroes the heart badge of chats this device already marked seen, for a list that may predate
+     * the seen call (`applyingLocalReactionSeen`, `MessagingController.swift:5598-5609`). Applied to
+     * every server list before it is published (`:1029-1031`).
+     */
+    fun applyingLocalSeen(list: List<ConversationItemDto>): List<ConversationItemDto> = list
+
+    /**
+     * Clears a chat's heart badge here and asks the server to clear it everywhere, up to [upTo] or
+     * the chat's latest known `seq` (`markReactionsSeen`, `MessagingController.swift:5576-5595`).
+     * The controller calls it for the open chat while its list row still counts unseen reactions
+     * (`hasPendingUnseenReactions`, `:1047-1049, 1408-1410`; messaging-core §19.8).
+     */
+    fun markSeen(storePeer: UUID, upTo: Long? = null) {}
+
+    /**
+     * A thread as it may be written to disk: our unconfirmed entry replaced by the one the server
+     * last confirmed (`settledReactions`, `MessagingController.swift:4694, 4715`). Applied to every
+     * thread the store writes.
+     */
+    fun settled(messages: List<ChatMessage>): List<ChatMessage> = messages
 }
 
 /** Media download / hydrate and payload recovery (messaging-core §13, §9.1); implemented by `MediaHydrator` (W2-MSG-SEND). */
