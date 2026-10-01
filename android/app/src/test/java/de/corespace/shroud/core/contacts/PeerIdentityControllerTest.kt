@@ -101,6 +101,24 @@ class PeerIdentityControllerTest {
         assertArrayEquals(first, identities.publicKeyForSending(peer))
     }
 
+    /** `PeerIdentityStoreTests.roundTripAndClear` through the controller: a pin outlives the process. */
+    @Test
+    fun aPinAndItsVerifiedFlagSurviveARestart() = runTest(main.dispatcher) {
+        serves(first)
+        val identities = controller()
+        identities.resolvePublicKey(peer)
+        identities.confirmSafety(peer)
+        val reopened = PeerIdentityStore(SealedFile(file, sealer), StorageSeal())
+        val restarted = controller(on = reopened)
+        serves(next)
+        assertTrue(restarted.isSafetyVerified(peer))
+        assertArrayEquals(first, restarted.resolvePublicKey(peer))
+        runCurrent()
+        assertEquals(PeerIdentityChange(Bytes.of(first), Bytes.of(next)), restarted.identityChange(peer))
+        restarted.wipe()
+        assertNull(PeerIdentityStore(SealedFile(file, sealer), StorageSeal()).publicKey(peer))
+    }
+
     @Test
     fun theSameKeyChangesNothing() = runTest(main.dispatcher) {
         store.save(peer, first)

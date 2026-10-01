@@ -55,7 +55,10 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * Thread-safe; callable from any dispatcher (the decrypt path runs on `Dispatchers.Default` inside
  * `PeerLocks`, so this class never takes a peer lock around its own work). Store reads and writes of
- * the suspend paths run on [io]. State is published through atomic `StateFlow` updates; work started
+ * the suspend paths run on [io]; the non-suspend members the screens call ([isSafetyVerified],
+ * [safetyNumber], [confirmSafety], [acceptNewIdentity]) use the store on the caller's thread, as iOS
+ * uses the Keychain on the main actor — the record is read once and then served from memory, and the
+ * two writes are user actions. State is published through atomic `StateFlow` updates; work started
  * before [clearMemory] or [wipe] publishes nothing afterwards. Never logs ids or keys.
  *
  * @param token the session's bearer token, null when signed out.
