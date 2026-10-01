@@ -2,6 +2,7 @@ package de.corespace.shroud.core.transcription
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.concurrent.atomic.AtomicInteger
@@ -93,6 +94,43 @@ class WhisperRunTest {
         assertTrue(probe.noTimestamps)
         assertEquals(0, probe.offsetMs)
         assertEquals(8_000, probe.durationMs)
+    }
+
+    /** The probe hears only its 8 s: the samples are cut, since whisper.cpp's duration_ms does not bound the encoder. */
+    @Test
+    fun aClipCutsTheSamples() {
+        val pcm = FloatArray(16_000 * 20) { it.toFloat() }
+
+        assertSame(pcm, WhisperContext.clip(pcm, 0, 0))
+        assertEquals(128_000, WhisperContext.clip(pcm, 0, 8_000).size)
+        val middle = WhisperContext.clip(pcm, 2_000, 1_000)
+        assertEquals(16_000, middle.size)
+        assertEquals(32_000f, middle[0])
+        assertEquals(16_000 * 15, WhisperContext.clip(pcm, 5_000, 0).size)
+        assertEquals("a clip past the end is cut at the end", 16_000 * 2, WhisperContext.clip(pcm, 18_000, 8_000).size)
+        assertEquals(0, WhisperContext.clip(pcm, 30_000, 8_000).size)
+    }
+
+    @Test
+    fun segmentsOfAnOffsetClipMoveBackOntoTheWholeTimeline() {
+        val segments = listOf(NativeSegment("a".toByteArray(), 0, 1_000, -0.1f, 1, 2))
+
+        val moved = WhisperContext.placed(segments, offsetMs = 2_000, clipMs = 5_000).single()
+
+        assertEquals(2_000L, moved.t0Ms)
+        assertEquals(3_000L, moved.t1Ms)
+        assertSame(segments, WhisperContext.placed(segments, offsetMs = 0, clipMs = 5_000))
+    }
+
+    /** Without timestamps whisper.cpp closes a segment at its 30 s window end, past an 8 s probe. */
+    @Test
+    fun segmentTimesStopAtTheEndOfTheClip() {
+        val probe = listOf(NativeSegment("a".toByteArray(), 0, 30_000, -0.1f, 1, 2))
+
+        val placed = WhisperContext.placed(probe, offsetMs = 0, clipMs = 8_000).single()
+
+        assertEquals(0L, placed.t0Ms)
+        assertEquals(8_000L, placed.t1Ms)
     }
 
     @Test

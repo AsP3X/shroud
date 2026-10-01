@@ -49,7 +49,8 @@ internal object WhisperNative {
     /**
      * `whisper_full` with greedy sampling over 16 kHz mono [pcm]: the segments, or null when whisper
      * failed or [abort] stopped it. [language] null or "" lets whisper detect it. [durationMs] 0 = to
-     * the end.
+     * the end. Note that whisper.cpp bounds only its seek loop with [offsetMs]/[durationMs] — the
+     * encoder still reads whole 30 s windows — so [WhisperContext] cuts the samples and passes 0, 0.
      */
     external fun transcribe(
         ctx: Long, pcm: FloatArray, language: String?, threads: Int,
@@ -85,7 +86,8 @@ internal object WhisperNative {
  * @property textUtf8 the segment's text as whisper produced it: raw UTF-8, because byte-level tokens
  *   can split a multi-byte character across two segments ([WhisperRun.text] joins before decoding).
  * @property t0Ms start in the audio, ms (whisper's 10 ms steps).
- * @property t1Ms end in the audio, ms.
+ * @property t1Ms end in the audio, ms (without timestamps whisper.cpp reports its 30 s window end;
+ *   [WhisperContext] caps it at the end of the audio).
  * @property avgTokenLogprob mean log probability of the segment's text tokens (ids below EOT), NaN
  *   when it has none — the input of the iOS-style confidence (media §9.9).
  * @property textTokens how many text tokens [avgTokenLogprob] averages.
@@ -111,7 +113,8 @@ class WhisperAbortedException : CancellationException("the whisper run was abort
  *
  * @property language two-letter code to force; null lets whisper detect it on each window (iOS
  *   detects first and forces, `WhisperKitEngine.swift:77-100` — the engine's job).
- * @property durationMs audio to process from [offsetMs]; 0 = to the end.
+ * @property offsetMs where the audio to process starts; [WhisperContext] cuts the samples there.
+ * @property durationMs audio to process from [offsetMs]; 0 = to the end. Whisper hears nothing past it.
  * @property entropyThold whisper.cpp's analogue of WhisperKit's compression-ratio threshold.
  */
 data class WhisperDecodeOptions(
@@ -266,15 +269,20 @@ class WhisperContext private constructor(private var handle: Long) : Closeable {
         cancellation?.setOnCancel(::abort)
         try {
             if (cancellation?.isCancelled == true) throw WhisperAbortedException()
+            // whisper.cpp's own offset_ms/duration_ms only bound its seek loop: the encoder still
+            // reads a whole 30 s window, so an 8 s probe would decode words past 8 s. The clip is
+            // cut from the samples instead (whisper pads it with silence), as WhisperKit's
+            // clipTimestamps do (`WhisperKitEngine.swift:118-121`), and the times shifted back.
+            val clip = clip(pcm16k, options.offsetMs, options.durationMs)
             val segments = WhisperNative.transcribe(
-                ctx, pcm16k, options.language, options.threads.coerceAtLeast(1),
-                options.noTimestamps, options.offsetMs, options.durationMs,
+                ctx, clip, options.language, options.threads.coerceAtLeast(1),
+                options.noTimestamps, 0, 0,
                 options.logprobThold, options.noSpeechThold, options.entropyThold, options.temperatureInc,
             )
             if (synchronized(abortLock) { abortRequested }) throw WhisperAbortedException()
             if (segments == null) throw WhisperException("whisper_full failed")
             val language = segments.firstOrNull()?.langId?.let(WhisperNative::languageCode)
-            WhisperRun(segments.toList(), language)
+            WhisperRun(placed(segments.toList(), options.offsetMs.coerceAtLeast(0).toLong(), clip.size / SAMPLES_PER_MS), language)
         } finally {
             cancellation?.setOnCancel(null)
             synchronized(abortLock) { running = 0 }
@@ -315,6 +323,30 @@ class WhisperContext private constructor(private var handle: Long) : Closeable {
     }
 
     companion object {
+        /** Samples of `[offsetMs, offsetMs + durationMs)` (`durationMs` 0 = to the end), clamped to [pcm16k]. */
+        internal fun clip(pcm16k: FloatArray, offsetMs: Int, durationMs: Int): FloatArray {
+            if (offsetMs <= 0 && durationMs <= 0) return pcm16k
+            val start = (offsetMs.coerceAtLeast(0).toLong() * SAMPLES_PER_MS).coerceAtMost(pcm16k.size.toLong()).toInt()
+            val end = if (durationMs <= 0) pcm16k.size else
+                (start + durationMs.toLong() * SAMPLES_PER_MS).coerceAtMost(pcm16k.size.toLong()).toInt()
+            return pcm16k.copyOfRange(start, end)
+        }
+
+        /**
+         * [segments] of a clip [clipMs] long, put back onto the timeline of the whole audio: times
+         * capped at the clip's end (without timestamps whisper.cpp ends a segment at its 30 s window,
+         * past the audio) and moved by [offsetMs].
+         */
+        internal fun placed(segments: List<NativeSegment>, offsetMs: Long, clipMs: Long): List<NativeSegment> =
+            if (offsetMs <= 0 && segments.all { it.t1Ms <= clipMs }) segments else segments.map {
+                NativeSegment(
+                    it.textUtf8, it.t0Ms.coerceAtMost(clipMs) + offsetMs, it.t1Ms.coerceAtMost(clipMs) + offsetMs,
+                    it.avgTokenLogprob, it.textTokens, it.langId,
+                )
+            }
+
+        private const val SAMPLES_PER_MS = 16L
+
         /** `n_threads = min(4, availableProcessors)` (media §9.9). */
         fun defaultThreads(): Int = min(4, Runtime.getRuntime().availableProcessors()).coerceAtLeast(1)
 
