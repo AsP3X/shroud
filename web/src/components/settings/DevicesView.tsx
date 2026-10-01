@@ -42,12 +42,15 @@ type DeviceKind = { label: string; Icon: ComponentType<IconProps>; tint: string 
 
 /**
  * What a device is: the kind sealed with its name, else a guess from the name — the same rules
- * as iOS `DeviceKind`.
+ * as iOS `DeviceKind` (`DevicesView.swift:785-846`). The Android app seals kind 4 (port plan
+ * decision P4): "Android app", the phone icon, green. A name that only looks like a phone keeps
+ * the guess "Phone" — it may be an Android device renamed by a client that dropped its kind.
  */
 function deviceKind(label: DeviceLabel | null): DeviceKind {
   if (label?.kind === "iphone") return { label: "iPhone app", Icon: Smartphone, tint: "#2e8fe0" };
   if (label?.kind === "ipad") return { label: "iPad app", Icon: Tablet, tint: "#2e8fe0" };
   if (label?.kind === "web") return { label: "Web browser", Icon: Globe, tint: "#f76b1c" };
+  if (label?.kind === "android") return { label: "Android app", Icon: Smartphone, tint: "#2fa85b" };
   const lower = (label?.name ?? "").toLowerCase();
   if (lower.includes("iphone")) return { label: "iPhone app", Icon: Smartphone, tint: "#2e8fe0" };
   if (lower.includes("ipad")) return { label: "iPad app", Icon: Tablet, tint: "#2e8fe0" };
@@ -191,7 +194,8 @@ export function DevicesView({
   async function rename(device: Device, name: string): Promise<string | null> {
     if (!historyKey) return "Unlock Shroud to rename devices.";
     try {
-      // Keeps the device's kind; `custom` stops an iPhone putting its own name back.
+      // Keeps the device's kind (an Android phone's 4 included); `custom` stops an iPhone or an
+      // Android phone putting its own name back.
       const kind = labelOf(device)?.kind ?? (isCurrent(device) ? "web" : "other");
       await saveDeviceName(session.token, device.id, historyKey, { name, kind, custom: true });
     } catch (err) {
