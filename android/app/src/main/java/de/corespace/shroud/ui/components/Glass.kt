@@ -66,6 +66,12 @@ enum class GlassStyle {
  * - [Blurred]: a source is provided and the platform blurs (API 31+): backdrop blur + tier fill.
  * - [Opaque]: a source is provided but the platform cannot blur (API 30): the near-opaque
  *   fallback fill, so text behind never shows through; shape, rim and shadow stay.
+ *
+ * shell-chats §6.1 also sends "no source" to the opaque fill. [Flat] keeps the translucent fill
+ * there instead, so onboarding's glass circles and capsules (flat background, no source) look as
+ * they do today and as the design draws them. Rule for screens: glass that floats over scrolling
+ * content must sit under a [LocalGlassBackdrop] (the shell and sheets provide one), which gives the
+ * blur on API 31+ and the opaque fill on API 30.
  */
 enum class GlassBackdrop { Flat, Blurred, Opaque }
 

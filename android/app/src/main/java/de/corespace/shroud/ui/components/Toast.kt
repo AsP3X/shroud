@@ -163,7 +163,8 @@ fun rememberToastState(): ToastState = remember { ToastState() }
  * - TalkBack announces the message (polite live region); the timeout honours the user's
  *   accessibility timeout setting ([AccessibilityManager.getRecommendedTimeoutMillis]).
  *
- * Place it last inside the screen's root `Box` so it draws on top.
+ * Place it last inside the screen's root `Box`, so it draws on top, and outside any inset padding:
+ * it adds the system bottom inset itself.
  */
 @Composable
 fun ToastHost(state: ToastState, bottomInset: Dp = 0.dp) {
