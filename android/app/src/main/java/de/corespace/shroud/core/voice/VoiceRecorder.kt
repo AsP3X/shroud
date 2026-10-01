@@ -247,7 +247,12 @@ class VoiceRecorder(
                     take.failed = true
                     break
                 }
-                if (read == 0 || take.cancelled) continue
+                if (take.cancelled) continue
+                if (read == 0) {
+                    // Nothing captured (a source that is being stopped): don't spin.
+                    Thread.sleep(EMPTY_READ_BACKOFF_MS)
+                    continue
+                }
                 take.encoder.write(buffer, 0, read)
                 take.frames += read
                 meter.add(buffer, 0, read) { level ->
@@ -351,6 +356,8 @@ class VoiceRecorder(
 
         /** 10 ms per microphone read, so a stop request is seen within one read. */
         const val CHUNK_FRAMES = VoiceFormat.SAMPLE_RATE / 100
+
+        private const val EMPTY_READ_BACKOFF_MS = 5L
 
         /** iOS `VoiceRecorder.normalize(average:peak:)` (`VoiceRecorder.swift:174-182`). */
         fun normalize(averageDb: Float, peakDb: Float): Float = VoiceLevel.normalize(averageDb, peakDb)

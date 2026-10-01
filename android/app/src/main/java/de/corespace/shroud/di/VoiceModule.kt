@@ -19,6 +19,8 @@ import de.corespace.shroud.core.voice.VoiceFormat
 import de.corespace.shroud.core.voice.VoicePlaybackCoordinator
 import de.corespace.shroud.core.voice.VoiceRecorder
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.UUID
@@ -58,7 +60,15 @@ class VoiceModule(container: AppContainer) : AppModule(container) {
             hasPermission = { app.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED },
             createTempFile = { container.keys.sensitiveTempFiles.create(VoiceFormat.TEMP_STEM, VoiceFormat.TEMP_EXTENSION) },
             appPhase = container.appPhase.phase,
-        )
+        ).also { recorder ->
+            // Playback and recording cannot share the route (`ConversationView.swift:1419-1420`): a note
+            // paused by the take's exclusive focus would otherwise resume when the take ends.
+            container.appScope.launch {
+                recorder.state.map { it.recording }.distinctUntilChanged().collect { recording ->
+                    if (recording && playbackLazy.isInitialized()) playback.stop()
+                }
+            }
+        }
     }
 
     private val playbackLazy = lazy { VoicePlaybackCoordinator(ExoVoicePlayer(app), container.appScope) }
