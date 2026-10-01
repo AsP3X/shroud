@@ -72,7 +72,8 @@ abstract class CryptoException(message: String, cause: Throwable? = null) : Exce
  *   leave an unlock that is completing alone (crypto §10.7, settings-lock §11.5).
  *
  * State flows are written with equality guards (plan §1.1 rule 3). CPU work runs on [compute], disk
- * and Keystore on [io]. Never logs the phrase, keys or ids.
+ * and Keystore on [io]; every hop that produces a key goes through [withContextHandingOver], so a
+ * caller cancelled meanwhile never leaves it unwiped on the heap. Never logs the phrase, keys or ids.
  */
 class CryptoController(
     private val api: ShroudApi,
@@ -177,7 +178,7 @@ class CryptoController(
                     promptInFlight.value = false
                 }
                 val restored = try {
-                    withContext(io) {
+                    withContextHandingOver(io, wipe = IdentityKeyMaterial::wipe) {
                         // The privates are sealed under the history key, so they open only now.
                         val stored = identityStore.load(historyKey)
                         if (stored == null || !stored.userId.equals(userId, ignoreCase = true)) {
@@ -316,7 +317,7 @@ class CryptoController(
     // ---- internals ----
 
     private suspend fun derive(words: List<String>, userId: String, oneTimePreKeyCount: Int): IdentityKeyMaterial =
-        withContext(compute) {
+        withContextHandingOver(compute, wipe = IdentityKeyMaterial::wipe) {
             val validated = bip39.validate(words)
             IdentityKeyMaterial.establish(bip39, validated, userId, oneTimePreKeyCount)
         }
@@ -325,8 +326,8 @@ class CryptoController(
     private suspend fun openStoredShell(words: List<String>, userId: String): IdentityKeyMaterial? {
         val probe = derive(words, userId, oneTimePreKeyCount = 0)
         try {
-            return withContext(io) {
-                val stored = identityStore.load(probe.historyKey) ?: return@withContext null
+            return withContextHandingOver(io, wipe = IdentityKeyMaterial::wipe) {
+                val stored = identityStore.load(probe.historyKey) ?: return@withContextHandingOver null
                 try {
                     IdentityKeyMaterial.restore(stored, probe.historyKey)
                 } finally {

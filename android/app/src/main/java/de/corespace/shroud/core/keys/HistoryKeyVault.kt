@@ -13,6 +13,7 @@ import de.corespace.shroud.core.storage.SealedFile
 import de.corespace.shroud.core.storage.StorageSeal
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import de.corespace.shroud.core.crypto.withContextHandingOver
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
@@ -220,7 +221,8 @@ class HistoryKeyVault(
         if (!isDeviceSecure()) throw VaultError.PasscodeNotSet
         val vault = withContext(io) { vaultFor(userId) } ?: throw VaultError.NotFound
         val authenticated = withTimeoutOrNull(authTimeout) { authenticate(vault, method) } ?: throw VaultError.TimedOut
-        return withContext(io) { open(authenticated, vault.blob, userId) }
+        // Handed over or wiped: a caller cancelled meanwhile never leaves the key on the heap.
+        return withContextHandingOver(io, wipe = { it.fill(0) }) { open(authenticated, vault.blob, userId) }
     }
 
     /** Deletes the record and every wrap-key alias (`clear`, `:454-459`). Never needs authentication. */
