@@ -169,8 +169,10 @@ class ApiClient(
 
     /**
      * GET raw bytes into [target] (sealed videos up to 2 GiB, which must not pass through memory);
-     * returns the bytes written. [target] is created or truncated; a transfer that fails or is
-     * cancelled deletes it, so no partial file is left behind.
+     * returns the bytes written. [target] (whose directory must exist) is only touched once the
+     * server answered 2xx: then it is created or truncated, and a body that breaks off or a
+     * cancelled caller deletes it, so no partial file is left behind. Cancellation is checked
+     * between 64 KiB chunks; a stalled body ends with the 20 s read timeout.
      */
     suspend fun getToFile(path: String, token: String, target: File, onProgress: ((Double) -> Unit)? = null): Long {
         val request = request("GET", path, token, null, emptyMap())
