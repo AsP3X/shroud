@@ -75,15 +75,20 @@ internal object IsoBmff {
         val associations: Map<Long, List<Int>>,
     )
 
-    /** The `ftyp` major brand and compatible brands, or null when the file does not start with `ftyp`. */
+    /**
+     * The `ftyp` major brand and the compatible brands present, or null when the bytes do not start
+     * with `ftyp`. Like the web's `isHeif` (`web/src/media/heic.ts:5-10`) a header cut after the major
+     * brand still sniffs.
+     */
     fun brands(b: ByteArray): List<String>? {
-        if (b.size < 16 || !b.hasAscii(4, "ftyp")) return null
+        if (b.size < 12 || !b.hasAscii(4, "ftyp")) return null
         val size = b.u32be(0)
-        if (size < 16 || size > b.size) return null
+        if (size < 12) return null
         val brands = ArrayList<String>()
         brands += b.fourCc(8)
+        val end = minOf(size, b.size.toLong()).toInt()
         var i = 16
-        while (i + 4 <= size) {
+        while (i + 4 <= end) {
             brands += b.fourCc(i)
             i += 4
         }

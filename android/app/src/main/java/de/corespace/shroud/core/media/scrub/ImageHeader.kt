@@ -105,15 +105,13 @@ object ImageHeader {
         return null
     }
 
-    /** `IHDR` size, swapped for orientations 5…8 of an `eXIf` chunk. */
+    /** `IHDR` size (read like the web, from the first 24 bytes), swapped for orientations 5…8 of an `eXIf` chunk. */
     private fun pngSize(b: ByteArray): Pair<Int, Int>? {
-        val chunks = PngScrubber.chunks(b) ?: return null
-        val header = chunks.first()
-        if (header.length < 8) return null
-        val width = b.u32be(header.data)
-        val height = b.u32be(header.data + 4)
+        if (b.size < 24 || !b.hasAscii(12, "IHDR")) return null
+        val width = b.u32be(16)
+        val height = b.u32be(20)
         if (width > Int.MAX_VALUE || height > Int.MAX_VALUE) return null
-        val exif = chunks.firstOrNull { it.type == "eXIf" }
+        val exif = PngScrubber.chunks(b)?.firstOrNull { it.type == "eXIf" }
         val orientation = exif?.let { MinimalTiff.orientation(b, it.data, it.data + it.length) } ?: 1
         return oriented(width.toInt(), height.toInt(), orientation)
     }
