@@ -42,7 +42,6 @@ class SessionControllerTest {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = true }
     private var marks = 0
     private var wipePresented = false
-    private val signedOutWipes = mutableListOf<Boolean>()
 
     private fun session(token: String = "tok", user: String = "noah") =
         """{"token":"$token","user":{"id":"$USER_ID","username":"$user","share_code":"ABCDEFGHJK"},"device":{"id":"$DEVICE_ID"}}"""
@@ -62,7 +61,6 @@ class SessionControllerTest {
             CoroutineScope(Dispatchers.Unconfined),
             wipeMarker = { marks++ },
             isWipePresented = { wipePresented },
-            onSignedOut = { wipe -> signedOutWipes += wipe },
         ).also { client.authOutcomes = it.authOutcomes }
     }
 
@@ -284,8 +282,6 @@ class SessionControllerTest {
         assertTrue(c.pendingFullLocalWipe.value)
         assertTrue(c.sessionEndedByDeviceRemoval.value)
         assertEquals(1, marks)
-        // No keys dropped here: the wipe locks crypto itself, in order.
-        assertEquals(emptyList<Boolean>(), signedOutWipes)
     }
 
     @Test
@@ -380,8 +376,6 @@ class SessionControllerTest {
         val revoke = server.takeRequest(5, TimeUnit.SECONDS)!!
         assertEquals("/api/v1/auth/logout", revoke.url.encodedPath)
         assertEquals("Bearer tok", revoke.headers["Authorization"])
-        // The wipe drops the keys itself; logout does not.
-        assertEquals(emptyList<Boolean>(), signedOutWipes)
     }
 
     @Test
@@ -394,29 +388,12 @@ class SessionControllerTest {
         // The background revoke of the old token: its DEVICE_REMOVED answer finds no session to end.
         assertEquals("Bearer test-token", server.takeRequest(5, TimeUnit.SECONDS)!!.headers["Authorization"])
         assertFalse(c.sessionEndedByDeviceRemoval.value)
-        @Suppress("DEPRECATION")
-        assertEquals(SessionController.Validation.DeviceRemoved, c.consumeEnding())
+        assertEquals(SessionController.Validation.DeviceRemoved, c.sessionAfterFailure())
 
         server.enqueue(MockResponse(code = 201, body = session(token = "next")))
         c.register("noah", "pw")
         c.recordDeviceRemoved("next")
         assertTrue(c.pendingFullLocalWipe.value)
-    }
-
-    @Test
-    @Suppress("DEPRECATION")
-    fun theInterimLogOutStillSignsOutAtOnce() = runTest {
-        server.enqueue(MockResponse(code = 201, body = session()))
-        server.enqueue(MockResponse(code = 204))
-        val c = controller()
-        c.register("noah", "pw")
-        server.takeRequest()
-        c.logOut()
-        assertNull(c.session.value)
-        assertEquals(listOf(true), signedOutWipes)
-        assertNull(c.endedByServer.value)
-        assertEquals(SessionController.Validation.Offline, c.sessionAfterFailure())
-        assertEquals("/api/v1/auth/logout", server.takeRequest(5, TimeUnit.SECONDS)!!.url.encodedPath)
     }
 
     private companion object {

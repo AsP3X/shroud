@@ -40,8 +40,6 @@ import kotlinx.coroutines.withContext
  *
  * @param wipeMarker persists "a wipe is pending" ([DeviceDataWipe]); tests pass a fake.
  * @param isWipePresented whether the device wipe is already running (`SessionAuthBridge.deviceWipe?.isPresented`).
- * @param onSignedOut only for the deprecated [logOut] / [signOutLocally] path: drops the keys
- *   (its argument is the wipe flag). The device wipe locks crypto itself, in order.
  * @param io where the session store's disk and Keystore work runs.
  */
 class SessionController(
@@ -50,7 +48,6 @@ class SessionController(
     private val appScope: CoroutineScope,
     private val wipeMarker: WipePendingMarker = WipePendingMarker.None,
     private val isWipePresented: () -> Boolean = { false },
-    private val onSignedOut: (wipe: Boolean) -> Unit = {},
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) {
     private val state = MutableStateFlow(store.session)
@@ -85,6 +82,7 @@ class SessionController(
     /** A forced sign-out (or an interrupted wipe's finish) is under way: no further 401 or removal counts (`:59`). */
     private var isForceLoggingOut = false
 
+    /** Why the server ended the last session, kept after [logout] for [sessionAfterFailure] (Log In's retry check). */
     private val ended = MutableStateFlow<Validation?>(null)
 
     /**
@@ -275,45 +273,6 @@ class SessionController(
         ended.value = null
         state.value = session
         return session
-    }
-
-    // ---- Interim API of the onboarding screens and `ui/ShroudApp.kt` (removed by W2-INT / W3) ----
-
-    /**
-     * Why the server ended the last session — [Validation.DeviceRemoved] or [Validation.SignedOut] —
-     * published when the device wipe ends the local session ([logout]), until the root consumes it
-     * with [consumeEnding]. The wipe overlay states the reason now ([sessionEndedByDeviceRemoval]).
-     */
-    @Deprecated("The device wipe overlay states the reason (sessionEndedByDeviceRemoval, WipeReason).")
-    val endedByServer: StateFlow<Validation?> = ended.asStateFlow()
-
-    /** Returns [endedByServer] once and clears it. */
-    @Deprecated("The device wipe overlay states the reason (sessionEndedByDeviceRemoval, WipeReason).")
-    fun consumeEnding(): Validation? = ended.value.also { ended.value = null }
-
-    /**
-     * The pre-wipe Log Out: forgets the session here at once (session, anchor, keys through
-     * [onSignedOut]) and revokes it in the background. Log Out is `DeviceWipeController.start(WipeReason.Logout)`.
-     */
-    @Deprecated("Run the device wipe: DeviceWipeController.start(WipeReason.Logout).")
-    fun logOut() {
-        val token = state.value?.token
-        @Suppress("DEPRECATION")
-        signOutLocally(wipe = true)
-        if (token != null) revokeInBackground(token)
-    }
-
-    /** Drops the session at once without the device wipe. */
-    @Deprecated("Run the device wipe: DeviceWipeController.start(…).")
-    fun signOutLocally(wipe: Boolean) {
-        ended.value = null
-        consecutiveAuthenticationFailures = 0
-        isForceLoggingOut = false
-        pendingWipe.value = false
-        removal.value = false
-        if (wipe) store.wipe() else store.clear()
-        state.value = null
-        onSignedOut(wipe)
     }
 
     companion object {

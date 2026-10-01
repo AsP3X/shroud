@@ -61,7 +61,6 @@ class AuthModule(container: AppContainer) : AppModule(container) {
             wipeMarker = { deviceDataWipe.markPending() },
             isWipePresented = { deviceWipe.isPresented.value },
             // The deprecated immediate Log Out still drops the keys (until the shell runs the wipe).
-            onSignedOut = { wipe -> container.keys.cryptoController.lock(wipeStore = wipe) },
         )
     }
 
