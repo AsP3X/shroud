@@ -134,6 +134,7 @@ class ListKitSemanticsTest {
         val title = ui.nodesWithText("Can't load calls").single()
         assertTrue(SemanticsProperties.Heading in title.config)
         val button = ui.node("Try again")
+        assertEquals(Role.Button, button.config[SemanticsProperties.Role])
         button.config[SemanticsActions.OnClick].action!!.invoke()
         ui.idle()
         val busy = ui.node("Retrying")
@@ -141,7 +142,7 @@ class ListKitSemanticsTest {
         assertEquals(1, retries)
         pending.complete(Unit)
         ui.idle()
-        assertFalse(SemanticsProperties.Disabled in ui.node("Try again").config)
+        assertFalse(ui.describe(), SemanticsProperties.Disabled in ui.node("Try again").config)
     }
 
     @Test

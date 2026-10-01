@@ -54,6 +54,8 @@ fun ListLoadError(title: String, message: String, onRetry: suspend () -> Unit, m
     val colors = ShroudTheme.colors
     val scope = rememberCoroutineScope()
     var retrying by remember { mutableStateOf(false) }
+    // Read once per composition, so the spoken label and the enabled state never disagree.
+    val label = ListLoadErrorCopy.buttonLabel(retrying)
     Column(
         modifier
             .fillMaxWidth()
@@ -89,7 +91,7 @@ fun ListLoadError(title: String, message: String, onRetry: suspend () -> Unit, m
                         }
                     },
                 )
-                .clearAndSetSemantics { contentDescription = ListLoadErrorCopy.buttonLabel(retrying) },
+                .clearAndSetSemantics { contentDescription = label },
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
