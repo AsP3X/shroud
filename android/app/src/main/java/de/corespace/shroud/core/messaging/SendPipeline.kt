@@ -15,6 +15,7 @@ import de.corespace.shroud.core.media.MediaComposeQuality
 import de.corespace.shroud.core.media.MediaImageSource
 import de.corespace.shroud.core.media.MediaTransfers
 import de.corespace.shroud.core.media.PlainSource
+import de.corespace.shroud.core.media.UploadedBlob
 import de.corespace.shroud.core.media.VideoPipeline
 import de.corespace.shroud.core.media.edit.MediaEdits
 import de.corespace.shroud.core.media.video.VideoSendPlan
@@ -407,7 +408,7 @@ class SendPipeline(
         )
         moveMedia(messageId, dto.id, image)
         // The payload holds the blob key — keep it, not just the text, so reloads can decode (MC:1762-1763).
-        savePlaintext(dto.id, sealed.payload)
+        val storedBlob = cacheSentPayload(dto, blob, sealed.payload, apiPeer)
 
         val sent = ChatMessage(
             id = dto.id,
@@ -418,7 +419,7 @@ class SendPipeline(
             createdAtWire = dto.createdAtWire,
             isMine = true,
             receipt = receipt(dto),
-            mediaObjectId = blob.mediaObjectId,
+            mediaObjectId = storedBlob,
             imageWidth = width,
             imageHeight = height,
             hasFullMedia = true,
@@ -836,7 +837,7 @@ class SendPipeline(
         )
         moveMedia(optimisticId, dto.id, image.bytes)
         // The media payload (with the file key), not just the caption: needed for reloads (MC:3253-3254).
-        savePlaintext(dto.id, sealed.payload)
+        val storedBlob = cacheSentPayload(dto, blob, sealed.payload, apiPeer)
         val sent = ChatMessage(
             id = dto.id,
             peerUserId = storePeer,
@@ -847,7 +848,7 @@ class SendPipeline(
             isMine = true,
             receipt = receipt(dto),
             kind = ChatMessageKind.Image,
-            mediaObjectId = blob.mediaObjectId,
+            mediaObjectId = storedBlob,
             imageWidth = image.width,
             imageHeight = image.height,
             hasFullMedia = true,
@@ -1106,7 +1107,7 @@ class SendPipeline(
             SendMessageRequest(apiPeer, optimisticId, ContentType.MEDIA, MessageCrypto.toWire(sealed.envelope), blob.mediaObjectId),
         )
         moveMedia(optimisticId, dto.id, null)
-        savePlaintext(dto.id, sealed.payload)
+        val storedBlob = cacheSentPayload(dto, blob, sealed.payload, apiPeer)
         val usedPreview = sealed.usedPreview?.let(Bytes::of)
         val sent = ChatMessage(
             id = dto.id,
@@ -1118,7 +1119,7 @@ class SendPipeline(
             isMine = true,
             receipt = receipt(dto),
             kind = ChatMessageKind.Video,
-            mediaObjectId = blob.mediaObjectId,
+            mediaObjectId = storedBlob,
             imageWidth = video.width,
             imageHeight = video.height,
             hasFullMedia = true,
@@ -1334,7 +1335,7 @@ class SendPipeline(
             SendMessageRequest(apiPeer, optimisticId, ContentType.MEDIA, MessageCrypto.toWire(sealed), blob.mediaObjectId),
         )
         moveMedia(optimisticId, dto.id, (audio as? PlainSource.InMemory)?.data)
-        savePlaintext(dto.id, payloadData)
+        val storedBlob = cacheSentPayload(dto, blob, payloadData, apiPeer)
 
         val sent = ChatMessage(
             id = dto.id,
@@ -1346,7 +1347,7 @@ class SendPipeline(
             isMine = true,
             receipt = receipt(dto),
             kind = ChatMessageKind.Voice,
-            mediaObjectId = blob.mediaObjectId,
+            mediaObjectId = storedBlob,
             hasFullMedia = true,
             durationMs = durationMs,
             voiceWaveform = waveform,
@@ -1588,6 +1589,35 @@ class SendPipeline(
 
     private suspend fun savePlaintext(messageId: UUID, plaintext: ByteArray) =
         withContext(deps.io) { deps.store().savePlaintext(messageId, plaintext) }
+
+    /**
+     * Caches the payload of the row the server kept for a media send and returns that row's blob id.
+     *
+     * A retried `client_message_id` (a lost answer, a flush racing a retry) is an idempotent replay
+     * on the server (`routes/messages.rs` "Idempotent replay" → `load_by_client_id`): it answers with
+     * the first attempt's row, whose blob and file key are not this attempt's fresh upload (left
+     * unlinked, deleted by the server after an hour). Caching this attempt's payload would pair the
+     * server's blob with the wrong key, so once the local file is gone the media could never be
+     * fetched again. The server's own envelope is opened instead (our self box); when that fails,
+     * nothing is cached and [MediaHydrator.payloadData] recovers it from the server later. iOS caches
+     * this attempt's payload either way (MC:3253-3254) — a flaw shared with the reference.
+     */
+    private suspend fun cacheSentPayload(dto: MessageDto, blob: UploadedBlob, payload: ByteArray, apiPeer: UUID): UUID {
+        val stored = dto.mediaObjectId ?: blob.mediaObjectId
+        if (stored == blob.mediaObjectId) {
+            savePlaintext(dto.id, payload)
+            return stored
+        }
+        val kept = try {
+            dto.ciphertext?.let(MessageCrypto::fromWire)?.let { deps.open(it, apiPeer, null, OpenAs.Sender, dto.createdAt) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+        if (kept != null && MediaMessagePayload.parse(kept) != null) savePlaintext(dto.id, kept)
+        return stored
+    }
 
     /**
      * After a send: [sent] takes the optimistic bubble's place ([ThreadState.rekey]: caches, transfer,

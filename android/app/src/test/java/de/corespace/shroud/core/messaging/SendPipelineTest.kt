@@ -540,6 +540,32 @@ class SendPipelineTest {
     }
 
     @Test
+    fun aReplayedPhotoCachesThePayloadOfTheRowTheServerKept() = runTest(main.dispatcher) { // review W2: idempotent replay
+        val w = world()
+        val pipeline = w.pipeline()
+        // The server stored the first attempt, but its answer never came back.
+        w.server.loseNextAnswer = true
+        pipeline.sendImage(MediaImageSource.FileBytes(photo), w.peer, "Twice", MediaComposeQuality.Original, MediaEdits.Identity, null)
+        val failed = w.state.messages(w.peer)!!.single()
+        val firstBlob = w.server.requests.single().mediaObjectId!!
+
+        // The retry uploads a fresh blob under a fresh key; the server replays the first row.
+        assertNull(pipeline.retryFailedImage(failed.id, w.peer))
+        assertEquals(2, w.transfers.uploads.size)
+        assertNotEquals(firstBlob, w.server.lastRequest().mediaObjectId)
+        val row = w.server.messages.single()
+        assertEquals(firstBlob, row.mediaObjectId)
+
+        val sent = w.state.messages(w.peer)!!.single()
+        assertEquals(row.id, sent.id)
+        assertEquals(firstBlob, sent.mediaObjectId)
+        // The cached key opens the blob the server linked, so a later re-download works.
+        val cached = MediaMessagePayload.parse(w.store.plaintexts.getValue(row.id))!!
+        assertArrayEquals(photo, w.transfers.open(firstBlob, cached.k))
+        assertEquals("Twice", cached.c)
+    }
+
+    @Test
     fun aFailedPhotoRetriesWithTheSameIdAndBytes() = runTest(main.dispatcher) {
         val w = world()
         val pipeline = w.pipeline()
