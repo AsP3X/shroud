@@ -1,6 +1,5 @@
 package de.corespace.shroud.ui.components
 
-import android.os.Build
 import android.os.SystemClock
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
@@ -27,7 +26,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
@@ -63,8 +61,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.disabled
-import androidx.compose.ui.semantics.isTraversalGroup
-import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -73,7 +69,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import de.corespace.shroud.ui.theme.Motion
-import de.corespace.shroud.ui.theme.ShroudIcons
 import de.corespace.shroud.ui.theme.ShroudTheme
 import de.corespace.shroud.ui.theme.inter
 import kotlinx.coroutines.launch
@@ -85,8 +80,8 @@ import kotlin.math.roundToInt
  * One row of a context menu, a menu picker or the message menu card.
  *
  * [submenu] makes the row open a nested list in the same card (the chat list's "Mute" ▸
- * durations, `ChatsView.swift:245-252`; shell-chats D6). [checked] draws the leading check of a
- * picker's current value. [onClick] runs after the menu began to close.
+ * durations, `ChatsView.swift:245-252`; shell-chats §8.8, D6). [checked] draws the leading check
+ * of a picker's current value. [onClick] runs as the menu starts to close.
  */
 data class MenuAction(
     val title: String,
@@ -100,7 +95,7 @@ data class MenuAction(
 
 /**
  * [Light] follows the appearance: the chat list's long-press menu (design `Chats — Chat Menu`
- * AqgbA), pickers and the link options. [Dark] is dark in both appearances: the message menu card
+ * AqgbA), pickers, link options. [Dark] is dark in both appearances: the message menu card
  * (`MessageActionMenu.swift:416-528`, conversation-thread §16.8).
  */
 enum class MenuStyle { Light, Dark }
@@ -114,14 +109,19 @@ enum class MenuStyle { Light, Dark }
  * 8 dp each side, rounded and shadowed — and the app behind blurs (API 31+; a plain scrim on
  * Android 11). The card sits 8 dp under the anchor, or 8 dp above it when it would not fit above
  * the navigation bar. Tapping outside, back (also predictive) or any item closes it; an item's
- * action runs as the menu starts to close. A row with a submenu cross-fades the card into the
- * submenu, with a back row on top; back then returns to the first list.
+ * action runs as the menu starts to close, so a confirmation it opens lands on top. A row with a
+ * submenu cross-fades the card into the submenu, with a back row on top; back then returns to the
+ * first list.
  *
- * Agent: [anchor] is in root coordinates (`LayoutCoordinates.boundsInRoot()`) and px. Keep the
+ * Agent: [anchor] is in root coordinates and px (`LayoutCoordinates.boundsInRoot()`). Keep the
  * composable in composition while it is open (`if (menuFor != null) ContextMenu(…)`): [onDismiss]
  * is called once the closing animation has run, so the caller drops it then. Long-press triggers
- * (`combinedClickable`) already buzz on open; the menu itself does not. [dimsBackground] defaults
- * to dimming only when there is a [header] (iOS `Menu`s, like pickers, open over a clear backdrop).
+ * (`combinedClickable`) buzz on open (`Haptic.LongPress`); the menu itself does not. Scrim taps in
+ * the first 0.4 s after a lifted menu opened are ignored (the release of the opening hold).
+ * [paneTitle] is what TalkBack announces ("Chat options"). [dimsBackground] defaults to dimming
+ * only when there is a [header] (iOS `Menu`s, like pickers, open over a clear backdrop). The
+ * conversation's message menu has its own Telegram layout and builds its card from
+ * [ContextMenuCardSurface], [ContextMenuItem] and [ContextMenuSeparator].
  */
 @Composable
 fun ContextMenu(
@@ -153,7 +153,7 @@ object ContextMenuDefaults {
     /** Gap between the anchor and the card (iOS system menu; shell-chats D15). */
     val AnchorGap: Dp = 8.dp
 
-    /** The card never comes closer to the screen's sides than this. */
+    /** The card never comes closer to the screen's sides than this (shell-chats §8.7: 16 dp). */
     val SideInset: Dp = 16.dp
 
     /** Room kept above the card under the status bar. */
@@ -165,7 +165,13 @@ object ContextMenuDefaults {
     /** Each side of a lifted header is pulled in this far (396 wide at 412). */
     val HeaderInset: Dp = 8.dp
 
-    /** Card height for [rows] rows: 6 dp vertical padding (light) or 1 dp hairlines (dark). */
+    /** Corner radius of a lifted header (design AqgbA: r18). */
+    val HeaderRadius: Dp = 18.dp
+
+    /**
+     * Card height for [rows] rows: the light card adds 6 dp of padding above and below; the dark
+     * card a 1 dp hairline between rows (`MessageContextMenuCard.height`, MAM:433-436).
+     */
     fun cardHeight(rows: Int, style: MenuStyle): Dp = when (style) {
         MenuStyle.Light -> RowHeight * rows + 12.dp
         MenuStyle.Dark -> RowHeight * rows + 1.dp * max(rows - 1, 0)
@@ -223,10 +229,9 @@ object ContextMenuPlacement {
 // ---- Card building blocks (shared with the message menu, conversation-thread §16.8) -----------
 
 /**
- * A menu card listing [actions]; rows with a submenu or the check of a picker included. Flat: the
- * caller decides what a tap does ([onAction]). [ContextMenu] uses it; the conversation's message
- * menu builds its own card from [ContextMenuCardSurface], [ContextMenuItem] and
- * [ContextMenuSeparator] (it adds the muted receipt row).
+ * A menu card listing [actions] (rows with a submenu caret or a picker's check included). Flat:
+ * the caller decides what a tap does ([onAction]). [ContextMenu] and [MenuPicker] use it inside
+ * their overlay; on its own it is the card of an overlay a later package lays out itself.
  */
 @Composable
 fun ContextMenuCard(
@@ -236,14 +241,24 @@ fun ContextMenuCard(
     modifier: Modifier = Modifier,
     width: Dp = ContextMenuDefaults.CardWidth,
 ) {
-    ContextMenuCardImpl(actions, style, onAction, modifier, width, if (style == MenuStyle.Light) MenuCardMetrics.Light else MenuCardMetrics.Dark, opaque = true)
+    ContextMenuCardImpl(
+        actions = actions,
+        style = style,
+        onAction = onAction,
+        modifier = modifier,
+        width = width,
+        metrics = if (style == MenuStyle.Light) MenuCardMetrics.Light else MenuCardMetrics.Dark,
+        translucent = false,
+        back = null,
+    )
 }
 
 /**
  * The card itself: [MenuStyle.Light] = card glass (radius 22, 6 dp vertical padding, 1 dp
- * stroke, 0/12/32 shadow — design AqgbA); [MenuStyle.Dark] = `#1F1F24` @ 0.94, radius 14,
- * 0.5 dp white @ 0.08 stroke (`MessageActionMenu.swift:470-480`). [translucent] lets the light
- * card show the blurred backdrop through (only over a blurred backdrop).
+ * stroke, 0/12/32 shadow — design AqgbA, `Light context menu`); [MenuStyle.Dark] = `#1F1F24` @
+ * 0.94, radius 14, 0.5 dp white @ 0.08 stroke (`MessageActionMenu.swift:470-480`). [translucent]
+ * lets the light card show the blurred backdrop through — only over a blurred backdrop; otherwise
+ * it takes the near-opaque no-blur fill (design Gwp1b).
  */
 @Composable
 fun ContextMenuCardSurface(
@@ -279,7 +294,7 @@ fun ContextMenuCardSurface(
     }
 }
 
-/** The 1 dp hairline between rows of the dark card (white @ 0.08); the light card has none. */
+/** The 1 dp hairline between rows of the dark card (white @ 0.08, MAM:486-490); the light card has none. */
 @Composable
 fun ContextMenuSeparator(style: MenuStyle) {
     if (style == MenuStyle.Dark) {
@@ -291,8 +306,8 @@ fun ContextMenuSeparator(style: MenuStyle) {
  * One row: optional leading glyph (or the picker's check), title, a trailing caret when it opens a
  * submenu. Pressed: the highlight lands at once and fades out (`HighlightRowButtonStyle`,
  * `Motion.swift:100-120`), with a light haptic. [muted] draws an information row that is not a
- * button (the message menu's receipt). [showsIconSlot] keeps titles aligned when only some rows
- * have a glyph.
+ * button (the message menu's receipt, MAM:449-453). [showsIconSlot] keeps titles aligned when only
+ * some rows have a glyph.
  */
 @Composable
 fun ContextMenuItem(
@@ -335,30 +350,45 @@ internal data class MenuCardMetrics(
         /** Design AqgbA: padding h 16, gap 12, glyph 19, label 17 Regular. */
         val Light = MenuCardMetrics(MenuStyle.Light, labelSize = 17f, glyphSize = 19.dp, iconSlot = 19.dp, horizontalPadding = 16.dp)
 
-        /** Settings pickers (settings-lock §2.5): 16 sp rows on the light card. */
-        val Picker = Light.copy(labelSize = 16f)
+        /** Settings pickers (settings-lock §2.5): 16 sp rows on the light card, check 14. */
+        val Picker = Light.copy(labelSize = 16f, iconSlot = 14.dp)
 
         /** MAM:497-521: icon 15 medium in a 22 wide box, title 16, padding h 14. */
         val Dark = MenuCardMetrics(MenuStyle.Dark, labelSize = 16f, glyphSize = 15.dp, iconSlot = 22.dp, horizontalPadding = 14.dp)
     }
 }
 
+/**
+ * A card of [actions]; with [back] a submenu's card, led by a back row ([backTitle] with a
+ * leading caret, shell-chats §8.8).
+ */
 @Composable
-private fun ContextMenuCardImpl(
+internal fun ContextMenuCardImpl(
     actions: List<MenuAction>,
     style: MenuStyle,
     onAction: (MenuAction) -> Unit,
     modifier: Modifier,
     width: Dp,
     metrics: MenuCardMetrics,
-    opaque: Boolean,
-    backRow: MenuAction? = null,
+    translucent: Boolean,
+    back: (() -> Unit)?,
+    backTitle: String = "",
 ) {
-    val showsIconSlot = actions.any { it.icon != null || it.checked } || backRow != null
-    ContextMenuCardSurface(style, modifier.width(width), translucent = !opaque) {
-        val rows = if (backRow != null) listOf(backRow) + actions else actions
-        rows.forEachIndexed { index, action ->
-            if (index > 0) ContextMenuSeparator(style)
+    val showsIconSlot = actions.any { it.icon != null || it.checked } || back != null
+    ContextMenuCardSurface(style, modifier.width(width), translucent = translucent) {
+        if (back != null) {
+            ContextMenuItemImpl(
+                action = MenuAction(title = backTitle, icon = OverlayIcons.CaretLeft),
+                style = style,
+                onClick = back,
+                modifier = Modifier,
+                muted = false,
+                showsIconSlot = true,
+                metrics = metrics,
+            )
+        }
+        actions.forEachIndexed { index, action ->
+            if (index > 0 || back != null) ContextMenuSeparator(style)
             ContextMenuItemImpl(
                 action = action,
                 style = style,
@@ -412,7 +442,6 @@ private fun ContextMenuItemImpl(
         label = "menuRowHighlight",
     )
     val highlightColor = if (dark) Color.White.copy(alpha = 0.10f) else palette.rowPressed
-    val clickable = !muted && action.enabled
     Row(
         modifier
             .fillMaxWidth()
@@ -425,7 +454,7 @@ private fun ContextMenuItemImpl(
                     Modifier.clickable(
                         interactionSource = interaction,
                         indication = null,
-                        enabled = clickable,
+                        enabled = action.enabled,
                         role = Role.Button,
                         onClick = onClick,
                     )
@@ -443,7 +472,8 @@ private fun ContextMenuItemImpl(
         if (showsIconSlot) {
             Box(Modifier.width(metrics.iconSlot), contentAlignment = Alignment.Center) {
                 when {
-                    action.checked -> ShroudIcon(ShroudIcons.Check, if (dark) Color.White else colors.accent, size = 14.dp)
+                    // The title names the row; glyphs stay silent (MAM:505-506).
+                    action.checked -> ShroudIcon(OverlayIcons.CheckBold, if (dark) Color.White else colors.accent, size = 14.dp)
                     action.icon != null -> ShroudIcon(action.icon, glyphColor, size = metrics.glyphSize)
                 }
             }
@@ -465,6 +495,10 @@ private fun ContextMenuItemImpl(
 /** How the card comes in: lifted with its row (Telegram spring) or popped from its anchor. */
 private enum class MenuEntrance { Lift, Pop }
 
+/**
+ * The overlay behind [ContextMenu] and [MenuPicker]: scrim, optional lifted [header], card.
+ * Opens on composition, closes itself (animated) and then calls [onDismiss].
+ */
 @Composable
 internal fun ContextMenuOverlay(
     anchor: Rect,
@@ -484,7 +518,7 @@ internal fun ContextMenuOverlay(
     var submenuOf by remember { mutableStateOf<MenuAction?>(null) }
     val scope = rememberCoroutineScope()
     val currentOnDismiss by rememberUpdatedState(onDismiss)
-    val blurs = dims && style == MenuStyle.Light && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    val blurs = dims && style == MenuStyle.Light && overlayCanBlur()
 
     LaunchedEffect(Unit) {
         progress.animateTo(
@@ -505,11 +539,9 @@ internal fun ContextMenuOverlay(
             }
         }
     }
-    val backRow = submenuOf?.let { MenuAction(title = it.title, icon = OverlayIcons.CaretLeft) }
     val onAction: (MenuAction) -> Unit = { action ->
         when {
-            closing -> Unit
-            backRow != null && action === backRow -> submenuOf = null
+            closing || !action.enabled -> Unit
             action.submenu != null -> submenuOf = action
             else -> {
                 // Dismiss first, then act (CV:2204-2254): a confirmation the action opens lands on top.
@@ -535,18 +567,15 @@ internal fun ContextMenuOverlay(
         var origin by remember { mutableStateOf(Offset.Zero) }
         val localAnchor = anchor.translate(-origin.x, -origin.y)
         val decisionHeight = with(density) {
-            val heights = listOf(actions.size) + actions.mapNotNull { it.submenu?.size?.plus(1) }
-            ContextMenuDefaults.cardHeight(heights.max(), style).toPx()
+            val rows = listOf(actions.size) + actions.mapNotNull { it.submenu?.size?.plus(1) }
+            ContextMenuDefaults.cardHeight(rows.max(), style).toPx()
         }
 
         Box(
             Modifier
                 .fillMaxSize()
                 .onGloballyPositioned { origin = it.positionInRoot() }
-                .semantics {
-                    this.paneTitle = paneTitle
-                    isTraversalGroup = true
-                },
+                .overlayPane(paneTitle, onDismiss = close),
         ) {
             // Scrim: light menus blur the app behind and tint it; the dark card uses the message
             // menu's two solid layers (MAM:837-853); menus without a header only catch the tap.
@@ -557,19 +586,25 @@ internal fun ContextMenuOverlay(
                     .then(
                         when {
                             !dims -> Modifier
-                            style == MenuStyle.Dark -> Modifier.background(Color.Black.copy(alpha = 0.42f)).background(Color(0xFF0F0F14).copy(alpha = 0.28f))
+                            style == MenuStyle.Dark -> Modifier
+                                .background(Color.Black.copy(alpha = 0.42f))
+                                .background(Color(0xFF0F0F14).copy(alpha = 0.28f))
                             blurs -> Modifier.background(palette.menuScrim)
                             else -> Modifier.background(palette.menuScrimNoBlur)
                         },
                     )
-                    .dismissOnTap(openedAt, onDismiss = close),
+                    .dismissOnTap(
+                        openedAt = openedAt,
+                        guardMillis = if (entrance == MenuEntrance.Lift) MENU_OPEN_TAP_GUARD_MS else 0L,
+                        onDismiss = close,
+                    ),
             )
 
             Layout(
                 content = {
                     if (header != null) {
                         val p = progress.value.coerceIn(0f, 1f)
-                        val shape = RoundedCornerShape(18.dp * p)
+                        val shape = RoundedCornerShape(ContextMenuDefaults.HeaderRadius * p)
                         Box(
                             Modifier
                                 .layoutId(HeaderId)
@@ -593,8 +628,9 @@ internal fun ContextMenuOverlay(
                                 modifier = Modifier,
                                 width = ContextMenuDefaults.CardWidth,
                                 metrics = metrics,
-                                opaque = !blurs,
-                                backRow = if (submenu != null) backRow else null,
+                                translucent = blurs,
+                                back = if (submenu != null) ({ submenuOf = null }) else null,
+                                backTitle = submenu?.title.orEmpty(),
                             )
                         }
                     }
@@ -626,17 +662,18 @@ internal fun ContextMenuOverlay(
                 )
                 layout(constraints.maxWidth, constraints.maxHeight) {
                     headerPlaceable?.placeWithLayer((localAnchor.left + inset).roundToInt(), localAnchor.top.roundToInt()) {
-                        val b = back.coerceIn(0f, 1f)
-                        scaleX = 1f - 0.04f * b
-                        scaleY = 1f - 0.04f * b
+                        val lean = backLeanScale(back, maxShrink = 0.04f)
+                        scaleX = lean
+                        scaleY = lean
                     }
                     cardPlaceable.placeWithLayer(placement.x.roundToInt(), placement.y.roundToInt()) {
                         val visible = progress.value
-                        val b = back.coerceIn(0f, 1f)
                         val grow = if (reduceMotion) 1f else 0.9f + 0.1f * visible
+                        val lean = backLeanScale(back)
                         alpha = visible.coerceIn(0f, 1f)
-                        scaleX = grow * (1f - 0.06f * b)
-                        scaleY = grow * (1f - 0.06f * b)
+                        scaleX = grow * lean
+                        scaleY = grow * lean
+                        // Grows out of the corner nearest the anchor (settings-lock §2.5).
                         transformOrigin = TransformOrigin(
                             pivotFractionX = if (placement.alignEnd) 1f else 0f,
                             pivotFractionY = if (placement.below) 0f else 1f,
@@ -656,7 +693,8 @@ private const val CardId = "card"
 
 /**
  * Glyphs the overlays need that `ShroudIcons` does not have yet (Phosphor 2.1.1 regular, MIT —
- * the paths of `assets/regular/<name>.svg`). W1-UI-THEME's icon set may carry them later.
+ * the paths of `assets/regular/<name>.svg`, already listed in `assets/licenses/icons.txt` as the
+ * Phosphor set). W1-UI-THEME's icon set carries them as well; W1-INT may point these at it.
  */
 internal object OverlayIcons {
     /** Phosphor `caret-right`: a row that opens a submenu. */
@@ -675,6 +713,11 @@ internal object OverlayIcons {
             "CaretUpDown",
             "M181.66,170.34a8,8,0,0,1,0,11.32l-48,48a8,8,0,0,1-11.32,0l-48-48a8,8,0,0,1,11.32-11.32L128,212.69l42.34-42.35A8,8,0,0,1,181.66,170.34Zm-96-84.68L128,43.31l42.34,42.35a8,8,0,0,0,11.32-11.32l-48-48a8,8,0,0,0-11.32,0l-48,48A8,8,0,0,0,85.66,85.66Z",
         )
+    }
+
+    /** Phosphor `check-bold`: a picker's current value (settings-lock §2.5: "check 14 bold accent"). */
+    val CheckBold: ImageVector by lazy {
+        phosphor("CheckBold", "M232.49,80.49l-128,128a12,12,0,0,1-17,0l-56-56a12,12,0,1,1,17-17L96,183,215.51,63.51a12,12,0,0,1,17,17Z")
     }
 
     private fun phosphor(name: String, path: String): ImageVector =

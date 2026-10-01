@@ -8,6 +8,7 @@ import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FiniteAnimationSpec
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -40,6 +41,10 @@ import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.dismiss
+import androidx.compose.ui.semantics.isTraversalGroup
+import androidx.compose.ui.semantics.paneTitle
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import de.corespace.shroud.ui.theme.ShroudTheme
@@ -47,8 +52,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /**
- * The root layer every menu, sheet and dialog of the app is drawn in (plan §1.7.12; W1-INT puts it
- * around the whole of `ShroudApp`).
+ * The root layer every menu, sheet and dialog of the app is drawn in (00-plan §1.7.12; W1-INT puts
+ * it around the whole of `ShroudApp`).
  *
  * Human: iOS presents sheets, menus and alerts above everything — the tab bar, toasts, the call
  * pill — wherever the code that opens them sits. Android has no such layer without separate
@@ -144,10 +149,10 @@ internal class OverlayLayerEntry(val id: Long) {
  * building block of every overlay here, public for overlays of later packages (message menu,
  * viewers) that need the same root layer.
  *
- * Keep [active] true while the layer animates out (e.g. `transitionState.currentState ||
- * transitionState.targetState`), or the exit is cut off. [modal] layers hide what is below from
+ * Keep [active] true while the layer animates out ([rememberOverlayTransition] and
+ * [isOverlayUp] do that), or the exit is cut off. [modal] layers hide what is below from
  * TalkBack. [backdropBlur] is read while drawing (animate it without recomposing) and blurs the
- * app content below on API 31+.
+ * app content below on API 31+ ([overlayCanBlur]).
  */
 @Composable
 fun OverlayLayer(
@@ -177,6 +182,25 @@ fun OverlayLayer(
     }
 }
 
+/**
+ * True when an [OverlayLayer] declared here can blur the app behind it: API 31+ (RenderEffect)
+ * and an [OverlayHost] to apply it. Otherwise overlays use their no-blur fills (design
+ * `Glass — Without Blur`, Gwp1b).
+ */
+@Composable
+fun overlayCanBlur(): Boolean = LocalOverlayHost.current != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+
+/**
+ * The visibility of an overlay that animates in and out: drive its enter/exit transitions from
+ * it, and keep its [OverlayLayer] up while [isOverlayUp] (shown, or still running its exit).
+ */
+@Composable
+fun rememberOverlayTransition(visible: Boolean): MutableTransitionState<Boolean> =
+    remember { MutableTransitionState(false) }.apply { targetState = visible }
+
+/** Shown, or still animating out. */
+val MutableTransitionState<Boolean>.isOverlayUp: Boolean get() = currentState || targetState
+
 private val NoBackdropBlur: () -> Dp = { 0.dp }
 
 @Composable
@@ -199,9 +223,11 @@ private fun Modifier.backdropBlur(state: OverlayHostState): Modifier = graphicsL
 
 /**
  * Overlay colours, light and dark — the shell-chats §15.1 tokens (`menuScrim`, `sheetScrim`,
- * `cardGlass`, `cardStroke`, `cardOpaque`, `chevron`, `rowPressed`) and the design's no-blur menu
- * scrim (`Glass — Without Blur`, design-inventory §2). W1-UI-THEME adds the same values to
- * `ShroudColors`; they live here until W1-INT points these components at the tokens.
+ * `cardGlass`, `cardStroke`, `cardOpaque`, `chevron`, `rowPressed`), the design's no-blur menu
+ * scrim (`Glass — Without Blur`, design-inventory §2) and the attach sheet's scrim
+ * (`MediaColors.sheetScrim`, conversation-compose-media §2.3). W1-UI-THEME adds the same values
+ * to `ShroudColors` / `MediaColors`; they live here until W1-INT points these components at the
+ * tokens (contract change request in the W1-UI-OVERLAYS report).
  */
 @Immutable
 internal data class OverlayPalette(
@@ -209,8 +235,10 @@ internal data class OverlayPalette(
     val menuScrim: Color,
     /** Behind the light context menu without blur (API 30); design `Gwp1b`. */
     val menuScrimNoBlur: Color,
-    /** Behind action sheets, alerts and inset sheets; design `New Chat` `Scrim`. */
+    /** Behind action sheets, alerts, inset sheets and large sheets; design `New Chat` `Scrim`. */
     val sheetScrim: Color,
+    /** Behind the compact (attach) sheet; design `Attach Open` `Scrim` (35 %). */
+    val compactSheetScrim: Color,
     /** Light menu card over a blurred backdrop. */
     val cardGlass: Color,
     val cardStroke: Color,
@@ -226,6 +254,7 @@ internal val LightOverlayPalette = OverlayPalette(
     menuScrim = Color(0x59F2F2F7),
     menuScrimNoBlur = Color(0x590B0B12),
     sheetScrim = Color(0x470B0B12),
+    compactSheetScrim = Color(0x590B0B12),
     cardGlass = Color(0xD1FFFFFF),
     cardStroke = Color(0x99FFFFFF),
     cardOpaque = Color(0xF5FFFFFF),
@@ -237,6 +266,7 @@ internal val DarkOverlayPalette = OverlayPalette(
     menuScrim = Color(0x470F0F14),
     menuScrimNoBlur = Color(0x590B0B12),
     sheetScrim = Color(0x470B0B12),
+    compactSheetScrim = Color(0x590B0B12),
     cardGlass = Color(0xF01F1F24),
     cardStroke = Color(0x14FFFFFF),
     cardOpaque = Color(0xF51F1F24),
@@ -250,16 +280,25 @@ internal fun overlayPalette(): OverlayPalette =
 
 /** Shadow colours of the design's overlay surfaces (`#0B0B12` at the alpha the design gives). */
 internal object OverlayShadows {
-    /** Card glass: 0/12/32 #0B0B1229. */
+    /** Card glass: 0/12/32 #0B0B1229 (design `Light context menu`). */
     val card = Color(0x290B0B12)
 
     /** Lifted context-menu row: 0/8/24 #0B0B121F (shell-chats §8.7). */
     val liftedRow = Color(0x1F0B0B12)
+
+    /** Inset sheet (Device Details nUbf0): 0/−4/30 #0B0B1229. */
+    val insetSheet = Color(0x290B0B12)
+
+    /** Compact sheet (Attach w4lZ1): 0/−8/32 #0B0B1233. */
+    val compactSheet = Color(0x330B0B12)
+
+    /** Onboarding sheet (aNX3S): 0/−12/40 #0B0B1240. */
+    val fullSheet = Color(0x400B0B12)
 }
 
 /**
- * Menu springs of `Motion.swift:36-39` (W1-UI-THEME adds them to `Motion` as `menuLift()` /
- * `menuDrop()`; same numbers).
+ * Menu springs of `Motion.swift:36-39` and the ease curves of `.easeInOut` (W1-UI-THEME adds them
+ * to `Motion` as `menuLift()` / `menuDrop()` / `easeInOut(ms)`; same numbers).
  */
 internal object OverlayMotion {
     /** Telegram's context-menu spring: mass 5, stiffness 900, damping 104 (MOT:36). */
@@ -275,8 +314,9 @@ internal object OverlayMotion {
 }
 
 /**
- * The few haptics the overlays fire, with the mapping of plan §1.7.12 (C19). W1-UI-THEME's
- * `View.perform(Haptic)` holds the full table; these two stay identical to it.
+ * The few haptics the overlays fire, with the mapping of 00-plan §1.7.12 (C19). W1-UI-THEME's
+ * `View.perform(Haptic)` holds the full table; these stay identical to it (W1-INT may route them
+ * through it).
  */
 internal object OverlayHaptics {
     /** `Haptic.Light`: iOS impact light. */
@@ -286,17 +326,19 @@ internal object OverlayHaptics {
 
     /** `Haptic.SegmentTick`: pull-to-refresh crossing its threshold. */
     fun segmentTick(view: View) {
-        view.performHapticFeedback(
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) HapticFeedbackConstants.SEGMENT_TICK
-            else HapticFeedbackConstants.CLOCK_TICK,
-        )
+        view.performHapticFeedback(segmentTickConstant(Build.VERSION.SDK_INT))
     }
+
+    /** `SEGMENT_TICK` on Android 14+, else `CLOCK_TICK` (00-plan §1.7.12). */
+    fun segmentTickConstant(sdk: Int): Int =
+        if (sdk >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) HapticFeedbackConstants.SEGMENT_TICK else HapticFeedbackConstants.CLOCK_TICK
 }
 
 /**
  * Back for an overlay: system back, the back gesture and predictive back all call [onBack]; while
  * a predictive back gesture runs, the returned state follows its progress (0…1) so the surface
- * can lean back, and returns to 0 when the gesture is cancelled.
+ * can lean back. It settles back to 0 when the gesture is cancelled and after [onBack] ran (an
+ * overlay that stays up — a submenu going back to its first list — must not stay leaning).
  */
 @Composable
 internal fun rememberOverlayBack(enabled: Boolean, onBack: () -> Unit): State<Float> {
@@ -310,24 +352,56 @@ internal fun rememberOverlayBack(enabled: Boolean, onBack: () -> Unit): State<Fl
         try {
             events.collect { event -> progress.snapTo(event.progress) }
             currentOnBack()
+            scope.launch { progress.animateTo(0f, tween(BACK_SETTLE_MS)) }
         } catch (cancelled: CancellationException) {
-            scope.launch { progress.animateTo(0f, tween(150)) }
+            scope.launch { progress.animateTo(0f, tween(BACK_SETTLE_MS)) }
             throw cancelled
         }
     }
     return progress.asState()
 }
 
+private const val BACK_SETTLE_MS = 150
+
+/**
+ * How far a surface leans away while a predictive back gesture runs: it shrinks by up to
+ * [maxShrink] of its size. Pure, so the overlays share one curve.
+ */
+internal fun backLeanScale(progress: Float, maxShrink: Float = 0.06f): Float = 1f - maxShrink * progress.coerceIn(0f, 1f)
+
 /**
  * A scrim's tap: dismisses, except within [guardMillis] of opening — the lift of the finger that
  * opened a long-press menu must not close it again (`ConversationView.swift:1936-1937`,
- * memory "hold release fires bubble controls").
+ * memory "hold release fires bubble controls"). The scrim also swallows every other touch, so
+ * nothing below an open overlay can be reached.
  */
-internal fun Modifier.dismissOnTap(openedAt: Long, guardMillis: Long = 400, onDismiss: () -> Unit): Modifier = composed {
+internal fun Modifier.dismissOnTap(openedAt: Long, guardMillis: Long = 0, onDismiss: () -> Unit): Modifier = composed {
     val currentOnDismiss by rememberUpdatedState(onDismiss)
     pointerInput(openedAt, guardMillis) {
         detectTapGestures {
-            if (SystemClock.uptimeMillis() - openedAt >= guardMillis) currentOnDismiss()
+            if (tapDismisses(openedAt, SystemClock.uptimeMillis(), guardMillis)) currentOnDismiss()
+        }
+    }
+}
+
+/** True when a scrim tap at [now] closes an overlay opened at [openedAt] (both `uptimeMillis`). */
+internal fun tapDismisses(openedAt: Long, now: Long, guardMillis: Long): Boolean = now - openedAt >= guardMillis
+
+/** The long-press menus ignore scrim taps this long after opening (`ConversationView.swift:1936-1937`). */
+internal const val MENU_OPEN_TAP_GUARD_MS = 400L
+
+/**
+ * The modal pane of an overlay for TalkBack: announced by [title] when it appears, read as one
+ * traversal group, closable with TalkBack's dismiss action (the scrim tap and back do it for
+ * everyone else).
+ */
+internal fun Modifier.overlayPane(title: String, onDismiss: (() -> Unit)?): Modifier = semantics {
+    paneTitle = title
+    isTraversalGroup = true
+    if (onDismiss != null) {
+        dismiss {
+            onDismiss()
+            true
         }
     }
 }
