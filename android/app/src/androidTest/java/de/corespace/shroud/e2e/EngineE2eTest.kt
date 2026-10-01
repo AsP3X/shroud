@@ -3,9 +3,11 @@ package de.corespace.shroud.e2e
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.corespace.shroud.AppContainer
+import de.corespace.shroud.LOCAL_NETWORK_PERMISSION
 import de.corespace.shroud.ShroudApplication
 import de.corespace.shroud.core.auth.WipePhase
 import de.corespace.shroud.core.auth.WipeReason
@@ -70,7 +72,7 @@ import kotlin.math.sin
  * Run by `android/e2e/engine-e2e.sh` (stack, peer, instrumentation). Skipped when the API or the peer
  * cannot be reached, or the device has no screen lock (the vault needs one: `emulator-setup.sh`).
  * Instrumentation arguments: `shroudApi` (default `http://10.0.2.2:8080/api/v1`), `shroudPeer`
- * (default `http://10.0.2.2:8099`).
+ * (default `http://10.0.2.2:8099`), `shroudRequired` (`true`: fail instead of skip).
  */
 @RunWith(AndroidJUnit4::class)
 class EngineE2eTest {
@@ -86,12 +88,20 @@ class EngineE2eTest {
 
     private val messaging: MessagingController get() = container.messaging.controller
 
+    /** `engine-e2e.sh` passes `shroudRequired=true`: there a missing stack fails instead of skipping. */
+    private val required = arguments.getString("shroudRequired") == "true"
+
+    private fun require(message: String, condition: Boolean) = if (required) assertTrue(message, condition) else assumeTrue(message, condition)
+
     @Before
     fun setUp() {
-        assumeTrue("the local stack is not reachable at $baseUrl (android/e2e/stack-up.sh)", reachable("$baseUrl/health/live"))
-        assumeTrue("the web peer is not reachable at $peerUrl (android/e2e/engine-e2e.sh)", reachable("$peerUrl/health"))
+        // Android 17: the server and the peer are on the host's loopback (10.0.2.2), a local-network
+        // address. The test run reinstalls the app, which drops emulator-setup.sh's grant.
+        if (Build.VERSION.SDK_INT >= 37) instrumentation.uiAutomation.grantRuntimePermission(app.packageName, LOCAL_NETWORK_PERMISSION)
+        require("the local stack is not reachable at $baseUrl (android/e2e/stack-up.sh)", reachable("$baseUrl/health/live"))
+        require("the web peer is not reachable at $peerUrl (android/e2e/engine-e2e.sh)", reachable("$peerUrl/health"))
         DeviceLock.ensureUnlocked()
-        assumeTrue("needs a screen lock: android/e2e/emulator-setup.sh", DeviceLock.isSecure)
+        require("needs a screen lock: android/e2e/emulator-setup.sh", DeviceLock.isSecure)
         val server = container.serverConfiguration
         val url = baseUrl.toHttpUrl()
         if (server.configuration.value.resolvedBaseUrl != baseUrl) {
@@ -261,8 +271,8 @@ class EngineE2eTest {
     // ---- Thread helpers ----------------------------------------------------------------------------
 
     /** Our sent text bubble, once the server re-keyed it (`ThreadState.rekey`). */
-    private fun mine(text: String, peer: UUID): ChatMessage = eventually("\"$text\" is sent") {
-        messaging.threads.value[peer]?.lastOrNull { it.isMine && it.text == text && !it.pendingSync && it.sendError == null }
+    private fun mine(text: String, peer: UUID): ChatMessage = eventuallyBlocking("\"$text\" is sent", 30_000) {
+        onMain { messaging.threads.value[peer]?.lastOrNull { it.isMine && it.text == text && !it.pendingSync && it.sendError == null } }
             ?.takeIf { serverKnows(it.id) }
     }
 

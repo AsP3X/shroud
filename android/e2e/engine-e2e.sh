@@ -37,5 +37,6 @@ GRADLE="${GRADLE:-./gradlew}"
 "$GRADLE" :app:connectedDebugAndroidTest \
     -Pandroid.testInstrumentationRunnerArguments.class=de.corespace.shroud.e2e.EngineE2eTest \
     -Pandroid.testInstrumentationRunnerArguments.shroudApi="http://10.0.2.2:$API_PORT/api/v1" \
-    -Pandroid.testInstrumentationRunnerArguments.shroudPeer="http://10.0.2.2:$PEER_PORT"
+    -Pandroid.testInstrumentationRunnerArguments.shroudPeer="http://10.0.2.2:$PEER_PORT" \
+    -Pandroid.testInstrumentationRunnerArguments.shroudRequired=true
 echo "engine e2e passed; peer log: $STATE_DIR/peer.log"
