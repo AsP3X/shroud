@@ -102,7 +102,10 @@ object LinkDetector {
     fun firstPreviewableUrl(text: String): String? = links(text).firstOrNull { !it.isEmail }?.url
 
     /** One run of [splitLinks]: plain text ([link] null) or the text of one link. */
-    data class TextPart(val text: String, val link: DetectedLink?)
+    data class TextPart(val text: String, val link: DetectedLink?) {
+        /** Never prints the text: message text is content. */
+        override fun toString(): String = "TextPart(length=${text.length}, link=${link != null})"
+    }
 
     /**
      * [text] cut into plain runs and links, in order, covering every character once — web

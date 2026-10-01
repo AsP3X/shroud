@@ -7,6 +7,7 @@ import android.graphics.ColorSpace
 import android.graphics.ImageDecoder
 import android.graphics.Paint
 import android.graphics.Rect
+import androidx.core.graphics.createBitmap
 import de.corespace.shroud.core.net.wire.LinkPreview
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
@@ -141,7 +142,7 @@ object LinkPreviewImages : LinkImagePreparer {
     /** [source] (or its [crop]) drawn onto an opaque white `width × height` canvas (`LinkPreviewFetcher.swift:416-435`). */
     private fun flattened(source: Bitmap, crop: Rect?, width: Int, height: Int): Bitmap? =
         try {
-            val target = Bitmap.createBitmap(max(1, width), max(1, height), Bitmap.Config.ARGB_8888)
+            val target = createBitmap(max(1, width), max(1, height))
             val canvas = Canvas(target)
             canvas.drawColor(Color.WHITE)
             canvas.drawBitmap(source, crop, Rect(0, 0, target.width, target.height), Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG))

@@ -7,6 +7,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.browser.customtabs.CustomTabsClient
 import androidx.browser.customtabs.CustomTabsIntent
+import androidx.core.net.toUri
 
 /**
  * Opens a tapped link the way Telegram does by default — iOS `InAppBrowser`
@@ -37,7 +38,7 @@ object LinkOpener {
      * matching the app's appearance setting.
      */
     fun open(context: Context, url: String, colorScheme: Int = CustomTabsIntent.COLOR_SCHEME_SYSTEM): Boolean {
-        val uri = Uri.parse(url.trim()).normalizeScheme()
+        val uri = url.trim().toUri().normalizeScheme()
         return when (uri.scheme) {
             "http", "https" -> openWeb(context, uri, colorScheme)
             "mailto" -> start(context, Intent(Intent.ACTION_SENDTO, uri).withoutReferrer())

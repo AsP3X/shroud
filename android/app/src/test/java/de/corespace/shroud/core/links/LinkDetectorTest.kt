@@ -85,6 +85,13 @@ class LinkDetectorTest {
     }
 
     @Test
+    fun linksNeverPrintTheirText() {
+        val link = LinkDetector.links("see secret.example.com now").single()
+        assertTrue(!link.toString().contains("secret"))
+        assertTrue(LinkDetector.splitLinks("see secret.example.com now").none { it.toString().contains("secret") })
+    }
+
+    @Test
     fun emptyTextHasNoLinks() {
         assertTrue(LinkDetector.links("").isEmpty())
         assertNull(LinkDetector.firstPreviewableUrl(""))

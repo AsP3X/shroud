@@ -13,7 +13,10 @@ import de.corespace.shroud.core.net.wire.LinkPreview
  * tap opens, kept as built: the URL as typed, `https://` + a bare host, or `mailto:` + the address.
  * E-mail addresses are tappable but never get a preview.
  */
-data class DetectedLink(val start: Int, val length: Int, val url: String, val isEmail: Boolean)
+data class DetectedLink(val start: Int, val length: Int, val url: String, val isEmail: Boolean) {
+    /** Never prints the link: message text is content. */
+    override fun toString(): String = "DetectedLink(start=$start, length=$length, isEmail=$isEmail)"
+}
 
 /**
  * What the composer holds for the link in the draft (iOS `LinkPreviewDraft`,

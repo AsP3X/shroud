@@ -297,7 +297,6 @@ class LinkPreviewFetcher internal constructor(
             .connectionPool(ConnectionPool(2, 1, TimeUnit.MINUTES))
             .followRedirects(false)
             .followSslRedirects(false)
-            .retryOnConnectionFailure(false)
             .connectTimeout(8, TimeUnit.SECONDS)
             .readTimeout(8, TimeUnit.SECONDS)
             .writeTimeout(8, TimeUnit.SECONDS)

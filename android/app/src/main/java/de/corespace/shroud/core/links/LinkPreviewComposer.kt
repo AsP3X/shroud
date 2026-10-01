@@ -46,10 +46,7 @@ class LinkPreviewComposer(
         data object Idle : Phase
 
         /** Fetching [url] (the link as the detector found it). */
-        class Loading(val url: String) : Phase {
-            override fun equals(other: Any?): Boolean = other is Loading && other.url == url
-            override fun hashCode(): Int = url.hashCode()
-
+        data class Loading(val url: String) : Phase {
             /** Never prints the link: drafts are message content. */
             override fun toString(): String = "Loading"
         }
