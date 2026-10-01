@@ -15,6 +15,31 @@ PIN="${SHROUD_E2E_PIN:-1234}"
 
 adb_cmd get-state >/dev/null 2>&1 || die "no device${SERIAL:+ $SERIAL} (adb devices)"
 
+# 0. A cold boot: wait for sys.boot_completed, then for the window manager and keyguard to settle
+# (a focused window twice in a row), before anything touches the lock. Setting or entering the PIN
+# while the keyguard is still coming up got lost on API 37 and left the phone locked.
+booted=0
+for i in $(seq 1 120); do
+    if [ "$(adb_cmd shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then
+        booted=1
+        break
+    fi
+    sleep 1
+done
+[ "$booted" = 1 ] || die "the device did not finish booting"
+settled=0
+for i in $(seq 1 30); do
+    # No `grep -m1`/`-q` here: under pipefail its early exit fails the pipeline (SIGPIPE).
+    if [ -n "$(adb_cmd shell dumpsys window | tr -d '\r' | grep 'mCurrentFocus=Window' || true)" ]; then
+        settled=$((settled + 1))
+        [ "$settled" -ge 2 ] && break
+    else
+        settled=0
+    fi
+    sleep 1
+done
+[ "$settled" -ge 2 ] || echo "warning: no focused window yet; the unlock may need a second run" >&2
+
 # 1. Screen lock.
 set_out="$(adb_cmd shell locksettings set-pin "$PIN" 2>&1 || true)"
 if echo "$set_out" | grep -qi "set to"; then

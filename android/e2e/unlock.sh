@@ -24,12 +24,19 @@ if ! locked; then
     echo "unlocked"
     exit 0
 fi
-adb_cmd shell wm dismiss-keyguard
-sleep 1
-adb_cmd shell input text "$PIN"
-adb_cmd shell input keyevent KEYCODE_ENTER
-sleep 1
-if locked; then
-    die "still locked (is the PIN $PIN?)"
-fi
-echo "unlocked with the PIN"
+# Right after a cold boot the keyguard can still be settling: the first PIN entry is then lost
+# and the phone stays locked, which leaves Keystore refusing every auth-bound key ("Secure lock
+# screen must be enabled…"). Try a few times, waiting for the bouncer between attempts.
+for attempt in 1 2 3 4; do
+    adb_cmd shell wm dismiss-keyguard
+    sleep 1
+    adb_cmd shell input text "$PIN"
+    adb_cmd shell input keyevent KEYCODE_ENTER
+    sleep $((attempt + 1))
+    if ! locked; then
+        echo "unlocked with the PIN${attempt:+ (attempt $attempt)}"
+        exit 0
+    fi
+    adb_cmd shell input keyevent KEYCODE_WAKEUP
+done
+die "still locked after 4 attempts (is the PIN $PIN?)"

@@ -35,10 +35,12 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * The wave 1 exit gate on an emulator against the local stack (00-plan §2.2 W1-INT, §6.3):
- * `GET /config` and the socket's `auth.ok` with a fresh account, and the vault round trip with real
+ * `GET /config` and the socket's `auth.ok` with a fresh account, presence accounting of a socket the
+ * background connection holds (W1-RT against X1-SRV-UP), and the vault round trip with real
  * key routes — sign up publishes the bundle, a "relaunched" controller opens the history key with
  * the screen lock and publishes nothing.
  *
@@ -104,6 +106,87 @@ class W1SmokeTest {
             runBlocking(Dispatchers.Main) { client.shutdown() }
             scope.cancel()
         }
+    }
+
+    /** Polls [userId]'s presence as seen by [viewer] until it is [online] (or fails after [timeoutMs]). */
+    private fun awaitPresence(viewer: Session, userId: UUID, online: Boolean, what: String, timeoutMs: Long = 10_000) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var last: Boolean? = null
+        while (System.currentTimeMillis() < deadline) {
+            last = runBlocking { api.presence(viewer.token, userId).online }
+            if (last == online) return
+            Thread.sleep(250)
+        }
+        throw AssertionError("$what: expected online=$online, still $last after $timeoutMs ms")
+    }
+
+    /**
+     * W1-RT acceptance against X1-SRV-UP, end to end: a socket held only by the background
+     * connection never shows the user online; a messaging hold in front does; letting go again
+     * returns to background accounting; and once the background connection lets go of a socket a
+     * call or messaging keeps, an away socket counts online again (the `"background": false` frame).
+     */
+    @Test
+    fun aBackgroundHeldSocketDoesNotMakeTheUserOnline() {
+        val a = signUp()
+        val b = signUp()
+        runBlocking {
+            api.createContactRequest(a.token, UUID.fromString(b.userId))
+            val request = api.contactRequests(b.token).single()
+            api.acceptContactRequest(b.token, request.id)
+        }
+        val aId = UUID.fromString(a.userId)
+        awaitPresence(b, aId, online = false, what = "no socket yet")
+
+        val foreground = AtomicBoolean(true)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        val client = runBlocking(Dispatchers.Main) {
+            RealtimeClient(
+                baseUrl = { baseUrl },
+                json = container.json,
+                baseHttp = ApiClient.defaultHttpClient(),
+                scope = scope,
+                authOutcomes = { null },
+                isForeground = { foreground.get() },
+            ).also { it.hold(RealtimeClient.Holder.Background, a.token) }
+        }
+        try {
+            runBlocking { withTimeout(20_000) { client.state.first { it is RealtimeClient.ConnectionState.Connected } } }
+            // Held only by the background connection, even with the app in front: offline, and it stays so.
+            Thread.sleep(1_500)
+            awaitPresence(b, aId, online = false, what = "background-held socket", timeoutMs = 1_000)
+
+            // The chats unlock in front: messaging holds the same socket and says focus:true.
+            runBlocking(Dispatchers.Main) {
+                client.noteFocus(true)
+                client.hold(RealtimeClient.Holder.Messaging, a.token)
+            }
+            awaitPresence(b, aId, online = true, what = "messaging hold in front")
+
+            // The chats lock: messaging lets go, the background connection keeps the socket.
+            runBlocking(Dispatchers.Main) { client.release(RealtimeClient.Holder.Messaging) }
+            awaitPresence(b, aId, online = false, what = "messaging released")
+
+            // In front again, then leaving with the socket kept (keepSocket): offline.
+            runBlocking(Dispatchers.Main) { client.hold(RealtimeClient.Holder.Messaging, a.token) }
+            awaitPresence(b, aId, online = true, what = "messaging hold again")
+            foreground.set(false)
+            runBlocking(Dispatchers.Main) {
+                client.noteFocus(false)
+                client.deliverFocus()
+            }
+            awaitPresence(b, aId, online = false, what = "left with the background connection on")
+
+            // The background connection is switched off while messaging (a call) keeps the socket:
+            // an ordinary away socket, online again, as on iOS and the web.
+            runBlocking(Dispatchers.Main) { client.release(RealtimeClient.Holder.Background) }
+            awaitPresence(b, aId, online = true, what = "background connection released")
+            assertTrue(client.isConnected)
+        } finally {
+            runBlocking(Dispatchers.Main) { client.shutdown() }
+            scope.cancel()
+        }
+        awaitPresence(b, aId, online = false, what = "socket closed")
     }
 
     @Test
