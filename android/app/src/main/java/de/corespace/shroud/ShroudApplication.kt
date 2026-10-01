@@ -84,7 +84,7 @@ class ShroudApplication : Application(), Configuration.Provider {
         started = true
         container.onProcessStart()
         // Invariant 5 (interim until W3-SHELL's auto-lock, shell-chats §3.7): going to the
-        // background drops the messaging keys from memory.
+        // background drops decrypted chats and the messaging keys from memory.
         ProcessLifecycleOwner.get().lifecycle.addObserver(
             object : DefaultLifecycleObserver {
                 override fun onStop(owner: LifecycleOwner) {
@@ -95,21 +95,23 @@ class ShroudApplication : Application(), Configuration.Provider {
     }
 
     /**
-     * Locks the keys now — unless the vault's own system prompt is up: on some skins (Samsung One
-     * UI) the biometric prompt stops our activity, and locking under it would undo the unlock the
-     * user is in the middle of (crypto §10.7, settings-lock §11.5). The lock then waits for the
-     * prompt to end and still happens if the app is in the background by then.
+     * Locks the chats: batched saves and queued writes reach disk and decrypted threads leave memory
+     * (`lockChatsInMemory`, `RootView.swift:315-320`), then the keys go — unless the vault's own
+     * system prompt is up: on some skins (Samsung One UI) the biometric prompt stops our activity,
+     * and locking under it would undo the unlock the user is in the middle of (crypto §10.7,
+     * settings-lock §11.5). The lock then waits for the prompt to end and still happens if the app
+     * is in the background by then.
      */
     private fun lockWhenBackgrounded() {
         val keys = container.keys.cryptoController
-        if (!keys.vaultPromptInFlight.value) {
-            keys.lock()
-            return
-        }
         pendingPromptLock?.cancel()
         pendingPromptLock = container.appScope.launch {
-            keys.vaultPromptInFlight.first { !it }
-            if (appPhase.phase.value == AppPhase.Background) keys.lock()
+            if (keys.vaultPromptInFlight.value) {
+                keys.vaultPromptInFlight.first { !it }
+                if (appPhase.phase.value != AppPhase.Background) return@launch
+            }
+            container.messaging.controllerIfBuilt?.lockSensitiveMemory()
+            keys.lock()
         }
     }
 
