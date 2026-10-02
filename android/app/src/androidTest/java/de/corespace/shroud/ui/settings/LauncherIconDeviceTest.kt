@@ -46,8 +46,8 @@ class LauncherIconDeviceTest {
     private val preference = BrandLogoPreference(context)
 
     @After
-    fun backToDetailed() = runBlocking {
-        preference.choose(BrandLogoStyle.Detailed)
+    fun backToDetailed() {
+        runBlocking { preference.choose(BrandLogoStyle.Detailed) }
         device.pressHome()
     }
 
