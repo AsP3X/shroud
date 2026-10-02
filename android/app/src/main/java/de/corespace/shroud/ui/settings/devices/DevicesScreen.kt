@@ -38,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
@@ -78,7 +79,6 @@ import kotlinx.coroutines.delay
 import java.time.Instant
 import java.time.ZoneId
 import java.util.Date
-import java.util.Locale
 
 /**
  * Settings › Devices: this device, the other devices, the device limit, the details sheet with
@@ -123,7 +123,9 @@ fun DevicesScreen(onBack: () -> Unit, onCount: ((Int) -> Unit)? = null) {
     val noun = remember(context) { DeviceNoun.current(context) }
     val clock = container.clock
     val is24h = DateFormat.is24HourFormat(context)
-    val timeLabel: (Instant) -> String = { ChatListFormatting.timeLabel(it, clock.now(), ZoneId.systemDefault(), Locale.getDefault(), is24h) }
+    // The app's locale as Compose observes it: a language change re-renders the time labels.
+    val locale = LocalConfiguration.current.locales[0]
+    val timeLabel: (Instant) -> String = { ChatListFormatting.timeLabel(it, clock.now(), ZoneId.systemDefault(), locale, is24h) }
 
     var pendingRevoke by remember { mutableStateOf<LinkedDeviceDto?>(null) }
     var showRevokeAllConfirm by remember { mutableStateOf(false) }

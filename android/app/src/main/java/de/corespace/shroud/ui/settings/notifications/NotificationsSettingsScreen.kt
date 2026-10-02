@@ -37,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
@@ -85,7 +86,6 @@ import de.corespace.shroud.ui.theme.inter
 import de.corespace.shroud.ui.theme.perform
 import kotlinx.coroutines.launch
 import java.time.ZoneId
-import java.util.Locale
 import java.util.UUID
 
 /**
@@ -159,6 +159,8 @@ fun NotificationsSettingsScreen(onBack: () -> Unit, onOpenSound: () -> Unit) {
 
     val clock = container.clock
     val is24h = DateFormat.is24HourFormat(context)
+    // The app's locale as Compose observes it: a language change re-renders the mute labels.
+    val locale = LocalConfiguration.current.locales[0]
     val muted = conversations.filter { messaging.isMuted(it.peer.id) }
     var showResetConfirm by remember { mutableStateOf(false) }
 
@@ -171,7 +173,7 @@ fun NotificationsSettingsScreen(onBack: () -> Unit, onOpenSound: () -> Unit) {
                 noun = noun,
                 unifiedPush = delivery.unifiedPush is UnifiedPushState.Registered,
                 muted = muted.map { conversation ->
-                    val label = MuteDuration.label(messaging.mute(conversation.peer.id), clock.now(), ZoneId.systemDefault(), Locale.getDefault(), is24h)
+                    val label = MuteDuration.label(messaging.mute(conversation.peer.id), clock.now(), ZoneId.systemDefault(), locale, is24h)
                     MutedChat(conversation.peer, label ?: NotificationsCopy.MUTED)
                 },
                 deliverySection = { PushDeliverySection(onOpen = { navigation.push(SettingsRoute.PushDelivery) }) },
