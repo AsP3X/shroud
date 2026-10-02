@@ -190,6 +190,10 @@ class CallController(
     /**
      * Wires the media engine and the system integration (W3-INT; W2 tests pass fakes). The engine
      * reports back through this controller from then on.
+     *
+     * Does not read [CallMediaEngine.eglContext]. That read loads the native WebRTC library, so a
+     * process started by a push, boot, or the call screen would load it before anyone places a call.
+     * [publishEngineContext] runs immediately before each [CallMediaEngine.start].
      */
     fun attach(engine: CallMediaEngine, system: CallSystem) {
         this.engine?.setCallbacks(null)
@@ -197,7 +201,7 @@ class CallController(
         this.system = system
         engine.setCallbacks(callbacks)
         engine.screenQuality = uiState.value.screenShareQuality
-        uiState.update { it.copy(eglContext = engine.eglContext) }
+        uiState.update { it.copy(eglContext = null) }
     }
 
     // ---- History (CC:318-425) ----
@@ -423,6 +427,7 @@ class CallController(
             val relayOnly = relayPolicy(ice, preferences.alwaysRelayCalls)
             val camera = if (modality == CallModality.Video) permissions.camera() else false
             if (!current(m)) return
+            publishEngineContext(engine)
             engine.start(ice, video = camera, offering = true, relayOnly = relayOnly)
             publishLocalPreview(modality, m)
             // The offer is prepared while it rings (docs/calls.md).
@@ -726,6 +731,7 @@ class CallController(
             val relayOnly = relayPolicy(ice, preferences.alwaysRelayCalls)
             val camera = if (video) permissions.camera() else false
             if (!current(m)) return
+            publishEngineContext(engine)
             engine.start(ice, video = camera, offering = false, relayOnly = relayOnly)
             publishLocalPreview(active?.modality ?: CallModality.Voice, m)
             system?.mediaStarted(id, engine.isCameraOn)
@@ -1763,6 +1769,11 @@ class CallController(
         uiState.update {
             it.copy(localVideoTrack = engine.localVideoTrack, canSwitchCamera = engine.canSwitchCamera, usesFrontCamera = engine.usesFrontCamera)
         }
+    }
+
+    /** Hands the call screen the shared EGL context. This is the first read that loads WebRTC. */
+    private fun publishEngineContext(engine: CallMediaEngine) {
+        uiState.update { it.copy(eglContext = engine.eglContext) }
     }
 
     /** The engine's first word on our camera (CC:1951-1966). */

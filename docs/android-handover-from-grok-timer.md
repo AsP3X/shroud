@@ -306,3 +306,24 @@ consent and the already-removed toast are the UI pieces this work is waiting on.
   `.tsx` was not edited.
 - iPhone-recorded transcription fixture: missing.
 - Real screen-share frames: need the consent Activity.
+
+---
+
+## 8. Gaps 8–15, on this commit
+
+`grok/g9-prep` now contains this commit. It is still not merged into `grok/phase-a`, and it was not merged into `claude/android-ui`. Production `CallController.attach` stays only on `g9-prep`. Constructing `callsMedia.engine` no longer loads `jingle_peerconnection_so`. `attach` does not read `eglContext`. The context is published immediately before each `engine.start`.
+
+Switch the UI to these members when you want them. The old members still compile.
+
+| Gap | What landed |
+| --- | --- |
+| #13 | `QualitySelector.fromOrderedList(FHD, HD, SD)`. An HD-only camera records HD. `MediaViewDeviceTest` was not rerun; the emulators were already yours. |
+| #8 | Lazy `WebRtcRuntime.acquire`. A JVM test constructs `CallMediaEngine` without the native library. |
+| #10 | `CallSystem.audioRoutes`, `currentRoute`, `selectRoute(route)`. `CallAudioRoute` is `type`, `name`, and `id`. Without Telecom the list is Earpiece and Speaker. `setSpeaker` stays. |
+| #12 | Already public. `container.calls.permissions` is `AndroidCallPermissions`, and `prompt: CallPermissionPrompt?` is the setter C14 registers. |
+| #14 | `CameraCapture.bindState` is `Unbound`, `Binding`, `Bound(hasFront, hasBack)`, or `Failed`. Also `zoomRange: ClosedFloatingPointRange<Float>?` and `hasFlashUnit`. |
+| #15 | `shareTarget(messageId): ShareTarget?` with `uri` and `mime`. `shareUri` is unchanged. |
+| #11 | `EditedMediaItemSequence.withAudioAndVideoFrom` / `withVideoFrom`. The OpenGL HDR tone-map is unchanged. |
+| #9 | `testOptions.unitTests.all { maxHeapSize = "2g" }`. No `forkEvery`. |
+
+`DevicesModel.revoke` and `mediaDurationMs` from section 6 are still UI work. Do not call `attach` from a screen. Do not remove the `ON_STOP` lock on `phase-a`.
