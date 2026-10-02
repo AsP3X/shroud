@@ -22,11 +22,10 @@ import java.util.UUID
  * Call system integration (00-plan §1.7.11). Telecom registration runs in [onProcessStart].
  * G9 attaches this [system] to the call controller; this module does not call `CallController.attach`.
  *
- * G3's push dispatcher must deliver a call push through [onCallPush] (or
- * [de.corespace.shroud.core.calls.CallController.handleCallPush] directly). That path calls
- * [CallSystem.reportIncoming]. [de.corespace.shroud.core.push] is still a stub, so nothing else
- * rings from a push until G3 wires it. Until G9 attaches the system, [onCallPush] reaches the
- * controller and does not ring.
+ * UnifiedPush and the background socket deliver a call through
+ * [de.corespace.shroud.core.calls.CallController.handleCallPush] (`PushModule`). That reports an
+ * incoming call only when a [CallSystem] is attached. Until G9 attaches [system], a push reaches
+ * the controller and does not ring.
  */
 class CallsSystemModule(container: AppContainer) : AppModule(container) {
     private val systemLazy = lazy { create() }
@@ -45,9 +44,8 @@ class CallsSystemModule(container: AppContainer) : AppModule(container) {
     }
 
     /**
-     * Ring entry while the push dispatcher is a stub. G3 must call
-     * [de.corespace.shroud.core.calls.CallController.handleCallPush], which reports the incoming
-     * call through the attached [CallSystem].
+     * Ring entry for a call push. Reports through the attached [CallSystem]; with nothing attached
+     * the controller accepts the push and does not ring.
      */
     fun onCallPush(push: CallPush) {
         container.calls.controller.handleCallPush(push)

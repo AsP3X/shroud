@@ -52,6 +52,10 @@ internal class AndroidCallSystem(
     private var telecomActivated = false
     private var service: Service? = null
     private var startId = 0
+    /** `startForegroundService` has returned and [onServiceStart] has not run yet. */
+    private var foregroundStartPending = false
+    /** The call ended during that window. Stopping now would crash the process. */
+    private var stopAfterStart = false
     private var lastId: UUID? = null
 
     override val isOnEarpiece: StateFlow<Boolean> = earpiece
@@ -231,11 +235,12 @@ internal class AndroidCallSystem(
     fun onServiceStart(host: Service, intent: Intent?, startId: Int) {
         service = host
         this.startId = startId
+        val promote = intent?.getBooleanExtra(CallService.EXTRA_PROMOTE, false) == true
+        if (promote) foregroundStartPending = false
         if (intent == null) {
-            if (session == null) stopService()
+            if (session == null || stopAfterStart) stopService()
             return
         }
-        val promote = intent.getBooleanExtra(CallService.EXTRA_PROMOTE, false)
         val wasForeground = promoted
         if (promote) bringToForeground(host)
         when (intent.action) {
@@ -243,7 +248,7 @@ internal class AndroidCallSystem(
             CallService.ACTION_HANGUP -> endFromShade(intent, CallEndCause.Local)
             CallService.ACTION_SPEAKER -> callbacks.onToggleSpeaker()
         }
-        if (session == null) {
+        if (stopAfterStart || session == null) {
             stopService()
         } else if (!promoted && !wasForeground) {
             host.stopSelf(startId)
@@ -255,6 +260,7 @@ internal class AndroidCallSystem(
         val retry = session != null && promoted
         service = null
         promoted = false
+        foregroundStartPending = false
         if (retry) foregroundRefused = true
     }
 
@@ -371,8 +377,10 @@ internal class AndroidCallSystem(
             bringToForeground(running)
             return
         }
+        if (foregroundStartPending) return
         val ok = ForegroundStart.tryStart(starter, CallService.promoteIntent(context, id))
         foregroundRefused = !ok
+        foregroundStartPending = ok
     }
 
     private fun bringToForeground(host: Service) {
@@ -407,6 +415,13 @@ internal class AndroidCallSystem(
     }
 
     private fun stopService() {
+        // startForegroundService without startForeground crashes the process. If the call
+        // ends before onServiceStart, wait for that start, promote, then stop.
+        if (foregroundStartPending && service == null) {
+            stopAfterStart = true
+            return
+        }
+        stopAfterStart = false
         val host = service
         val id = startId
         promoted = false

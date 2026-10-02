@@ -22,6 +22,7 @@ import de.corespace.shroud.core.storage.PrefsFiles
 import de.corespace.shroud.core.storage.SealedFile
 import de.corespace.shroud.ui.components.AvatarBitmap
 import de.corespace.shroud.ui.components.AvatarPalette
+import kotlinx.coroutines.launch
 import java.io.File
 import java.util.UUID
 
@@ -101,10 +102,21 @@ class NotificationsModule(container: AppContainer) : AppModule(container) {
         )
     }
 
-    /** Channels for the current preferences (notifications-push §5.6, §5.19); names ready for the first announcement. */
+    /**
+     * Channels for the current preferences (notifications-push §5.6, §5.19); names ready for the
+     * first announcement. A process woken by a push has no activity, so the shell never sets
+     * [NotificationsController.isSignedIn]; without a session here, [NotificationsController.onPushWhileRunning]
+     * would swallow the system notification. The shell still overrides it while it is on screen.
+     */
     override fun onProcessStart() {
         runCatching { channels.ensure() }
         nameCache.preload()
+        val notifications = controller
+        val sessions = container.auth.sessionController.session
+        notifications.isSignedIn = sessions.value != null
+        container.appScope.launch {
+            sessions.collect { notifications.isSignedIn = it != null }
+        }
     }
 
     /** The 40 dp gradient avatar of the shade (design *Notifications — Shade*), seeded like the app's (P15). */

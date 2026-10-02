@@ -61,6 +61,7 @@ class PushDispatcherTest {
         assertEquals(1, fx.posted.size)
         assertEquals(NotificationKind.Message, fx.posted.single().first)
         assertEquals("Cached", fx.posted.single().second)
+        assertEquals(listOf(peer to "Ada"), fx.remembered)
     }
 
     @Test
@@ -153,6 +154,7 @@ class PushDispatcherTest {
         val cancelled: MutableList<UUID>,
         val calls: MutableList<CallPush>,
         val removals: IntArray,
+        val remembered: MutableList<Pair<UUID, String>>,
     )
 
     private fun sink(running: Boolean = false): Sink {
@@ -160,6 +162,7 @@ class PushDispatcherTest {
         val cancelled = mutableListOf<UUID>()
         val calls = mutableListOf<CallPush>()
         val removals = intArrayOf(0)
+        val remembered = mutableListOf<Pair<UUID, String>>()
         val dispatcher = PushDispatcher(
             dedup = PushDedup(),
             clock = object : AppClock {
@@ -173,7 +176,8 @@ class PushDispatcherTest {
             scheduleRemoval = { removals[0]++ },
             nameFor = { "Cached" },
             selfUserId = { self.toString() },
+            rememberName = { id, name -> remembered += id to name },
         )
-        return Sink(dispatcher, posted, cancelled, calls, removals)
+        return Sink(dispatcher, posted, cancelled, calls, removals, remembered)
     }
 }

@@ -16,6 +16,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
@@ -82,6 +83,17 @@ class CallSystemTest {
         world.system.reportIncoming(id, "", video = false)
         world.system.reportEnded(id, CallEndCause.Remote)
         assertTrue(world.shade.active.isEmpty())
+    }
+
+    @Test
+    fun hangupDuringForegroundStartStillPromotesBeforeStopping() {
+        val world = World()
+        val id = UUID.randomUUID()
+        world.system.reportIncoming(id, "", video = false)
+        world.system.reportEnded(id, CallEndCause.Remote)
+        val host = Robolectric.buildService(CallService::class.java).create().get()
+        world.system.onServiceStart(host, CallService.promoteIntent(host, id), 7)
+        assertEquals(SystemNotifier.ID_CALL, shadowOf(host).lastForegroundNotificationId)
     }
 
     @Test

@@ -18,6 +18,8 @@ import java.util.UUID
  * locked (plan §1.4, §1.7.10). Call kinds go to [calls]; `read` closes the chat; `device_removed`
  * schedules the removal worker; everything else is posted unless the app is already showing it.
  * The same id inside [PushDedup]'s window is dropped. Names on the socket path come from [nameFor].
+ * A push's sender is given to [rememberName] even when that push is the duplicate, so the next
+ * locked socket delivery still has the name.
  */
 class PushDispatcher(
     private val dedup: PushDedup,
@@ -29,6 +31,7 @@ class PushDispatcher(
     private val scheduleRemoval: () -> Unit,
     private val nameFor: (UUID) -> String?,
     private val selfUserId: () -> String?,
+    private val rememberName: (UUID, String) -> Unit = { _, _ -> },
 ) {
     /** Decrypted Web Push JSON. Null plaintext is ignored. */
     fun dispatchPlaintext(bytes: ByteArray) {
@@ -150,6 +153,8 @@ class PushDispatcher(
     }
 
     private fun deliver(contents: PushContents, name: String?, source: CallPush.Source) {
+        val peer = contents.peerUserId
+        if (source == CallPush.Source.UnifiedPush && peer != null && !name.isNullOrBlank()) rememberName(peer, name)
         if (!dedup.accept(key(contents), clock.elapsedMillis())) return
         val kind = contents.kind
         if (kind != null && kind.isCall) {

@@ -601,8 +601,18 @@ const routes: Record<string, (b: Record<string, unknown>, url: URL) => Promise<u
   "POST /delivered": (b) => markDelivered(b as { messageId: string }),
   "POST /privacy": (b) => setPrivacy(b),
   "GET /conversations": () => conversations(),
+  "GET /presence": async (_, url) => {
+    const user = url.searchParams.get("user");
+    if (!user) throw new HttpError(400, "user required");
+    const presence = await api.presence(need().token, user.toLowerCase());
+    return { userId: presence.user_id, online: presence.online };
+  },
   "GET /messages": (_, url) => readMessages(url.searchParams.get("peer") ?? ""),
   "GET /devices": () => devices(),
+  "GET /whoami": () => {
+    const me = need();
+    return { userId: me.userId, username: me.username, deviceId: me.deviceId };
+  },
   "POST /revoke": (b) => revoke(b as { deviceId: string }),
   "POST /socket": async (b) => ((b as { on?: boolean }).on === false ? socketOff() : socketOn()),
   "POST /typing": async (b) => {

@@ -1,6 +1,7 @@
 package de.corespace.shroud.core.push
 
 import android.app.Application
+import android.app.Notification
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.work.ListenableWorker
@@ -55,6 +56,17 @@ class DeviceRemovalWorkerTest {
     fun tearDown() {
         DeviceRemovalWorker.wakeOverride = null
         server?.close()
+    }
+
+    @Test
+    fun preApi31ExpeditedWorkHasAForegroundNotification() = runBlocking {
+        val worker = TestListenableWorkerBuilder<DeviceRemovalWorker>(context()).build()
+        val info = worker.getForegroundInfo()
+        assertEquals(DeviceRemovalWorker.NOTIFICATION_ID, info.notificationId)
+        assertEquals(
+            DeviceRemovalWorker.CHECKING_TEXT,
+            info.notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString(),
+        )
     }
 
     @Test
