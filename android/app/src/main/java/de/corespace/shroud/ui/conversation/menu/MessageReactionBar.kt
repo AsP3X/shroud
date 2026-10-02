@@ -99,7 +99,7 @@ fun MessageReactionBar(
     selected: Set<String>,
     modifier: Modifier = Modifier,
     drawsCapsule: Boolean = true,
-    emojiModifier: (String) -> Modifier = { Modifier },
+    emojiModifier: @Composable (String) -> Modifier = { Modifier },
 ) {
     val frames = remember { ReactionPickFrames() }
     val capsule = if (drawsCapsule) {

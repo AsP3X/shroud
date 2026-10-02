@@ -145,7 +145,7 @@ fun MessageReactionPanel(
                 label = "reactionPanelContent",
             ) { isExpanded ->
                 // The quick seven glide between the bar and the grid's first row (`reactionGlide`, `:393-404`).
-                val glide: (String) -> Modifier = { emoji ->
+                val glide: @Composable (String) -> Modifier = { emoji ->
                     if (emoji in MessageReactionBarMetrics.reactions) {
                         Modifier.sharedElement(rememberSharedContentState(GLIDE_KEY + emoji), this@AnimatedContent)
                     } else {

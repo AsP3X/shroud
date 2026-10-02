@@ -112,7 +112,7 @@ fun MessageReactionGrid(
     onQueryChange: (String) -> Unit,
     results: List<String>,
     modifier: Modifier = Modifier,
-    emojiModifier: (String) -> Modifier = { Modifier },
+    emojiModifier: @Composable (String) -> Modifier = { Modifier },
 ) {
     val frames = remember { ReactionPickFrames() }
     val focusManager = LocalFocusManager.current

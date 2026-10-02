@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -90,7 +91,24 @@ fun ChatJumpToLatestButton(isVisible: Boolean, count: Int, onClick: () -> Unit, 
     val swap = Motion.iconSwap.respecting(reduceMotion)
     Box(modifier.size(JumpToLatestMetrics.SIZE.dp), contentAlignment = Alignment.Center) {
         AnimatedVisibility(visible = isVisible, enter = swap.enter, exit = swap.exit) {
-            Box(contentAlignment = Alignment.Center) {
+            // 48 dp to the finger around the 40 dp glass (iOS 44, decision D13); the glass inside
+            // sees the same press and swells.
+            Box(
+                Modifier
+                    .requiredSize(48.dp)
+                    .pressable(scale = 1f, dimming = 0f, onClick = onClick)
+                    .clearAndSetSemantics {
+                        contentDescription = JumpToLatestMetrics.LABEL
+                        stateDescription = JumpToLatestMetrics.spokenCount(count)
+                        role = Role.Button
+                        // `this.`: the parameter of the same name would shadow the semantics action.
+                        this.onClick {
+                            onClick()
+                            true
+                        }
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
                 Box(
                     Modifier
                         .size(JumpToLatestMetrics.SIZE.dp)
@@ -99,22 +117,6 @@ fun ChatJumpToLatestButton(isVisible: Boolean, count: Int, onClick: () -> Unit, 
                 ) {
                     ShroudIcon(ShroudIcons.ChevronDown, colors.accent, size = 20.dp)
                 }
-                // 48 dp to the finger around the 40 dp glass (iOS 44, decision D13).
-                Box(
-                    Modifier
-                        .requiredSize(48.dp)
-                        .clip(CircleShape)
-                        .pressable(scale = 1f, dimming = 0f, onClick = onClick)
-                        .clearAndSetSemantics {
-                            contentDescription = JumpToLatestMetrics.LABEL
-                            stateDescription = JumpToLatestMetrics.spokenCount(count)
-                            role = Role.Button
-                            onClick {
-                                onClick()
-                                true
-                            }
-                        },
-                )
             }
         }
         // Centred on the circle's top edge (memory *Overlay alignmentGuide ignored*: offset the
