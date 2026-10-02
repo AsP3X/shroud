@@ -1,0 +1,272 @@
+package de.corespace.shroud.ui.conversation.composer
+
+import android.graphics.Bitmap
+import android.net.Uri
+import de.corespace.shroud.core.links.LinkPreviewAttachment
+import de.corespace.shroud.core.links.LinkPreviewComposer
+import de.corespace.shroud.core.links.LinkPreviewDraft
+import de.corespace.shroud.core.links.LinkPreviewException
+import de.corespace.shroud.core.media.MediaComposeQuality
+import de.corespace.shroud.core.media.MediaImageSource
+import de.corespace.shroud.core.media.edit.MediaEdits
+import de.corespace.shroud.core.media.video.VideoProbe
+import de.corespace.shroud.core.media.video.VideoSendPlan
+import de.corespace.shroud.core.messaging.MessageArtifactSinks
+import de.corespace.shroud.core.model.ChatMessage
+import de.corespace.shroud.core.model.ChatMessageKind
+import de.corespace.shroud.core.model.Haptic
+import de.corespace.shroud.core.net.wire.MessageReplyReference
+import de.corespace.shroud.core.voice.VoiceRecorder
+import de.corespace.shroud.ui.components.Toast
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import java.time.Instant
+import java.util.UUID
+
+/** [ComposeServices] recording every call, for [ComposeControllerTest]. Main-confined like the real one. */
+internal class FakeComposeServices(override val sendScope: CoroutineScope) : ComposeServices {
+    override var myUserId: UUID? = ME
+    val usernames = HashMap<UUID, String>()
+    override fun username(peer: UUID): String? = usernames[peer]
+    override val threads = MutableStateFlow<Map<UUID, List<ChatMessage>>>(emptyMap())
+
+    data class SentText(val text: String, val peer: UUID, val replyTo: MessageReplyReference?, val linkPreview: LinkPreviewAttachment?)
+    data class SentImage(val source: MediaImageSource, val caption: String, val quality: MediaComposeQuality, val edits: MediaEdits, val replyTo: MessageReplyReference?)
+    data class SentVideo(val plan: VideoSendPlan, val replyTo: MessageReplyReference?)
+    data class SentVoice(val durationMs: Int, val waveform: ByteArray?, val replyTo: MessageReplyReference?, val transcriptProvider: (suspend (UUID) -> String?)?)
+
+    val texts = ArrayList<SentText>()
+    val todos = ArrayList<String>()
+    val images = ArrayList<SentImage>()
+    val videos = ArrayList<SentVideo>()
+    val voices = ArrayList<SentVoice>()
+    val typing = ArrayList<Boolean>()
+    val recordingSignals = ArrayList<Boolean>()
+
+    /** Errors the next image / video / voice sends return, in order (null = sent). */
+    val imageErrors = ArrayDeque<String?>()
+    val videoErrors = ArrayDeque<String?>()
+    var voiceError: String? = null
+
+    /** While set, image sends wait on it (the "Sending media…" card is up meanwhile). */
+    var imageGate: CompletableDeferred<Unit>? = null
+
+    override suspend fun sendText(text: String, peer: UUID, replyTo: MessageReplyReference?, linkPreview: LinkPreviewAttachment?) {
+        texts += SentText(text, peer, replyTo, linkPreview)
+    }
+
+    override fun sendTodo(text: String) {
+        todos += text
+    }
+
+    override suspend fun sendImage(
+        source: MediaImageSource,
+        peer: UUID,
+        caption: String,
+        quality: MediaComposeQuality,
+        edits: MediaEdits,
+        replyTo: MessageReplyReference?,
+    ): String? {
+        imageGate?.await()
+        images += SentImage(source, caption, quality, edits, replyTo)
+        return imageErrors.removeFirstOrNull()
+    }
+
+    override suspend fun sendVideo(plan: VideoSendPlan, peer: UUID, replyTo: MessageReplyReference?): String? {
+        videos += SentVideo(plan, replyTo)
+        return videoErrors.removeFirstOrNull()
+    }
+
+    override suspend fun sendVoice(
+        audio: ByteArray,
+        durationMs: Int,
+        peer: UUID,
+        waveform: ByteArray?,
+        replyTo: MessageReplyReference?,
+        transcriptProvider: (suspend (messageId: UUID) -> String?)?,
+    ): String? {
+        voices += SentVoice(durationMs, waveform, replyTo, transcriptProvider)
+        return voiceError
+    }
+
+    override fun setTyping(peer: UUID, isTyping: Boolean) {
+        typing += isTyping
+    }
+
+    override fun setRecording(peer: UUID, isRecording: Boolean) {
+        recordingSignals += isRecording
+    }
+
+    /** Full media lands for these ids when downloaded; others end empty-handed. */
+    val downloadable = HashSet<UUID>()
+    val downloads = ArrayList<UUID>()
+    val cancelledDownloads = ArrayList<UUID>()
+    var downloadGate: CompletableDeferred<Unit>? = null
+
+    private suspend fun download(message: ChatMessage) {
+        downloads += message.id
+        downloadGate?.await()
+        if (message.id in downloadable) {
+            val peer = message.peerUserId
+            threads.value = threads.value + (peer to threads.value[peer].orEmpty().map { if (it.id == message.id) it.copy(hasFullMedia = true) else it })
+        }
+    }
+
+    override suspend fun ensureImageLoaded(message: ChatMessage) = download(message)
+    override suspend fun ensureVideoLoaded(message: ChatMessage) = download(message)
+    override fun cancelMediaDownload(messageId: UUID) {
+        cancelledDownloads += messageId
+        downloadGate?.complete(Unit)
+    }
+
+    val sinks = ArrayList<MessageArtifactSinks>()
+    override fun registerArtifactSink(sink: MessageArtifactSinks): AutoCloseable {
+        sinks += sink
+        return AutoCloseable { sinks -= sink }
+    }
+
+    var contacts: List<String> = emptyList()
+    override fun contactUsernames(): List<String> = contacts
+
+    // ---- Voice ----
+    override val recorderState = MutableStateFlow(VoiceRecorder.RecState())
+    var micGranted = true
+    override fun hasMicPermission(): Boolean = micGranted
+
+    /** What the next start does: true / false, or throws. */
+    var startOutcome: () -> Boolean = { true }
+    var starts = 0
+    var cancels = 0
+    var finishOutcome: () -> VoiceRecorder.Recording? = { VoiceRecorder.Recording(byteArrayOf(1, 2, 3), 1_500, ByteArray(44) { 7 }) }
+    var playbackStops = 0
+
+    override suspend fun startRecording(): Boolean {
+        starts++
+        val started = startOutcome()
+        if (started) recorderState.value = VoiceRecorder.RecState(recording = true)
+        return started
+    }
+
+    override suspend fun finishRecording(): VoiceRecorder.Recording? {
+        recorderState.value = VoiceRecorder.RecState()
+        return finishOutcome()
+    }
+
+    override fun cancelRecording() {
+        cancels++
+        recorderState.value = VoiceRecorder.RecState()
+    }
+
+    override fun stopPlayback() {
+        playbackStops++
+    }
+
+    // ---- Transcription ----
+    var modelPrepares = 0
+    var modelInstalled = false
+    val transcribed = ArrayList<Pair<List<String>, UUID>>()
+    override fun prepareTranscriptionModel() {
+        modelPrepares++
+    }
+
+    override suspend fun transcriptionModelInstalled(): Boolean = modelInstalled
+    override suspend fun transcribe(audio: ByteArray, hints: List<String>, conversationId: UUID, tracking: UUID): String {
+        transcribed += hints to tracking
+        return "hello"
+    }
+
+    // ---- Links ----
+    /** The previews the fake fetcher knows, by URL. */
+    val previews = HashMap<String, LinkPreviewDraft>()
+    override fun newLinkComposer(scope: CoroutineScope): LinkPreviewComposer = LinkPreviewComposer(
+        fetcher = { url -> previews[url] ?: throw LinkPreviewException(LinkPreviewException.Reason.Empty) },
+        scope = scope,
+        debounceMs = 0,
+    )
+
+    // ---- Media ----
+    var camera = true
+    override fun hasCamera(): Boolean = camera
+    val mimeTypes = HashMap<Uri, String>()
+    override fun mimeType(uri: Uri): String? = mimeTypes[uri]
+    val undecodable = HashSet<Uri>()
+    override suspend fun decodePreview(source: MediaImageSource, maxEdge: Int): Bitmap? {
+        val uri = (source as? MediaImageSource.ContentUri)?.uri
+        if (uri != null && uri in undecodable) return null
+        return Bitmap.createBitmap(4, 3, Bitmap.Config.ARGB_8888)
+    }
+
+    val probes = HashMap<Uri, VideoProbe>()
+    override suspend fun probeVideo(uri: Uri): VideoProbe? = probes[uri]
+    override suspend fun videoPoster(uri: Uri, maxEdge: Int): Bitmap? = null
+
+    var photoAccessAsked = false
+    override fun photoAccessRequested(): Boolean = photoAccessAsked
+    override fun markPhotoAccessRequested() {
+        photoAccessAsked = true
+    }
+
+    companion object {
+        val ME: UUID = UUID.fromString("00000000-0000-4000-8000-00000000000a")
+        val PEER: UUID = UUID.fromString("00000000-0000-4000-8000-00000000000b")
+
+        fun probe(seconds: Double = 8.0) = VideoProbe(seconds, 1920, 1080, 2_000_000, true, "mp4", "video/avc", "audio/mp4a-latm")
+
+        fun message(
+            id: UUID = UUID.randomUUID(),
+            text: String = "Hi",
+            kind: ChatMessageKind = ChatMessageKind.Text,
+            isMine: Boolean = false,
+            hasFullMedia: Boolean = false,
+            mediaObjectId: UUID? = null,
+            deleted: Boolean = false,
+            receipt: de.corespace.shroud.core.model.ReceiptStatus = de.corespace.shroud.core.model.ReceiptStatus.Sent,
+            width: Int? = null,
+            height: Int? = null,
+            createdAt: Instant = Instant.parse("2026-09-30T10:15:00Z"),
+        ) = ChatMessage(
+            id = id,
+            peerUserId = PEER,
+            senderUserId = if (isMine) ME else PEER,
+            text = text,
+            createdAt = createdAt,
+            isMine = isMine,
+            deleted = deleted,
+            receipt = receipt,
+            kind = kind,
+            mediaObjectId = mediaObjectId,
+            imageWidth = width,
+            imageHeight = height,
+            hasFullMedia = hasFullMedia,
+        )
+    }
+}
+
+/** [ComposeHost] recording what the controller asks of the conversation screen. */
+internal class FakeComposeHost : ComposeHost {
+    val toasts = ArrayList<Toast>()
+    var pins = 0
+    val jumps = ArrayList<UUID>()
+    val deleteRequests = ArrayList<ChatMessage>()
+    override var isShowingMessageMenu: Boolean = false
+
+    override fun pinToBottom() {
+        pins++
+    }
+
+    override fun jumpToQuoted(messageId: UUID) {
+        jumps += messageId
+    }
+
+    override fun showToast(toast: Toast) {
+        toasts += toast
+    }
+
+    override fun requestDelete(message: ChatMessage) {
+        deleteRequests += message
+    }
+}
+
+/** The haptics a controller asked the view for. */
+internal fun List<ComposeEffect>.haptics(): List<Haptic> = filterIsInstance<ComposeEffect.PlayHaptic>().map { it.haptic }
