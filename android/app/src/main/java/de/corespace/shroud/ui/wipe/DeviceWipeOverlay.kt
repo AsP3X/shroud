@@ -203,7 +203,7 @@ internal fun DeviceWipeOverlayContent(
             ) {
                 WipeEmblem(phase, progress, noun, animating)
                 Heading(title, WipeOverlayText.subtitle(phase, state.reason, state.handle, state.leftovers, noun))
-                StepsCard(rows, state.details)
+                StepsCard(rows, state.details, spinning = presented)
             }
         }
         Box(
@@ -240,9 +240,9 @@ private fun Heading(title: String, subtitle: String) {
     }
 }
 
-/** The six rows on `background`, r14, 1 dp separators (`steps`, `:122-136`). */
+/** The six rows on `background`, r14, 1 dp separators (`steps`, `:122-136`); the running row's arc turns only while [spinning]. */
 @Composable
-private fun StepsCard(rows: Map<WipeStep, WipeOverlayText.RowState>, details: Map<WipeStep, String>) {
+private fun StepsCard(rows: Map<WipeStep, WipeOverlayText.RowState>, details: Map<WipeStep, String>, spinning: Boolean) {
     val colors = ShroudTheme.colors
     Column(
         Modifier
@@ -254,7 +254,7 @@ private fun StepsCard(rows: Map<WipeStep, WipeOverlayText.RowState>, details: Ma
         WipeStep.entries.forEachIndexed { index, step ->
             if (index > 0) Box(Modifier.fillMaxWidth().heightIn(min = 1.dp, max = 1.dp).background(colors.separator))
             val state = rows.getValue(step)
-            StepRow(step, state, WipeOverlayText.rowDetail(step, state, details), WipeOverlayText.rowStatus(step, state, details))
+            StepRow(step, state, WipeOverlayText.rowDetail(step, state, details), WipeOverlayText.rowStatus(step, state, details), spinning)
         }
     }
 }
@@ -265,7 +265,7 @@ private fun StepsCard(rows: Map<WipeStep, WipeOverlayText.RowState>, details: Ma
  * title, with "Waiting" / "In progress" / the detail as its state.
  */
 @Composable
-private fun StepRow(step: WipeStep, state: WipeOverlayText.RowState, detail: String?, spoken: String) {
+private fun StepRow(step: WipeStep, state: WipeOverlayText.RowState, detail: String?, spoken: String, spinning: Boolean) {
     val colors = ShroudTheme.colors
     val pending = state == WipeOverlayText.RowState.Pending
     val titleColor by animateColorAsState(if (pending) colors.textSecondary else colors.textPrimary, Motion.snappy(), label = "stepTitle")
@@ -280,7 +280,7 @@ private fun StepRow(step: WipeStep, state: WipeOverlayText.RowState, detail: Str
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        StepStatus(state)
+        StepStatus(state, spinning)
         ShroudText(step.title, inter(16f, if (pending) FontWeight.Normal else FontWeight.Medium), titleColor, Modifier.weight(1f).padding(vertical = 4.dp))
         Crossfade(detail, animationSpec = Motion.fade(), label = "stepDetail") { text ->
             if (text != null) ShroudText(text, inter(14f), colors.textSecondary, maxLines = 1)
@@ -293,7 +293,7 @@ private fun StepRow(step: WipeStep, state: WipeOverlayText.RowState, detail: Str
  * (`WipeStepStatus`, `:329-368`); a finished state pops in from 0.5 with a fade (`Motion.snappy`).
  */
 @Composable
-private fun StepStatus(state: WipeOverlayText.RowState) {
+private fun StepStatus(state: WipeOverlayText.RowState, spinning: Boolean) {
     val colors = ShroudTheme.colors
     AnimatedContent(
         targetState = state,
@@ -306,7 +306,7 @@ private fun StepStatus(state: WipeOverlayText.RowState) {
         Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
             when (shown) {
                 WipeOverlayText.RowState.Pending -> Box(Modifier.size(24.dp).border(1.5.dp, colors.separator, CircleShape))
-                WipeOverlayText.RowState.Active -> WipeSpinner()
+                WipeOverlayText.RowState.Active -> WipeSpinner(spinning)
                 WipeOverlayText.RowState.Done -> Box(Modifier.size(24.dp).clip(CircleShape).background(colors.accent), contentAlignment = Alignment.Center) {
                     ShroudIcon(ShroudIcons.CheckBold, Color.White, size = 11.dp)
                 }
@@ -320,15 +320,16 @@ private fun StepStatus(state: WipeOverlayText.RowState) {
 
 /**
  * The running row's arc (`WipeSpinner`, `:370-387`): a 2.2 dp `separator` track and a 0.28-turn
- * accent arc with round caps, inset 1.1, one turn per 0.8 s; still under Reduce Motion.
+ * accent arc with round caps, inset 1.1, one turn per 0.8 s; still under Reduce Motion and on a
+ * leaving overlay ([spinning] false — nothing repeats inside the exit fade).
  */
 @Composable
-private fun WipeSpinner() {
+private fun WipeSpinner(spinning: Boolean) {
     val colors = ShroudTheme.colors
     val reduce = ShroudTheme.reduceMotion
     var turns by remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(reduce) {
-        if (reduce) return@LaunchedEffect
+    LaunchedEffect(reduce, spinning) {
+        if (reduce || !spinning) return@LaunchedEffect
         val start = withFrameNanos { it }
         while (true) withFrameNanos { now -> turns = ((now - start) / 1e9f / SPINNER_TURN_S) % 1f }
     }

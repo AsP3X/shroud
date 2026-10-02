@@ -83,6 +83,7 @@ import de.corespace.shroud.ui.theme.ShroudIcons
 import de.corespace.shroud.ui.theme.ShroudTheme
 import de.corespace.shroud.ui.theme.inter
 import de.corespace.shroud.ui.theme.rememberHaptics
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -140,10 +141,8 @@ internal fun SignUpContent(
     var accountError by remember { mutableStateOf<String?>(null) }
     var phraseError by remember { mutableStateOf<String?>(null) }
     val passwordFocus = remember { FocusRequester() }
-    // The account this screen created, with the name and password it was created with: a retry
-    // after the keys failed to publish reuses it. Never a session from anywhere else (that could
-    // be an existing account whose keys this screen must not replace).
-    var registered by remember { mutableStateOf<Pair<Session, String>?>(null) }
+    // Holds the account this screen created, so a retry after the keys failed to publish reuses it.
+    val submission = remember(services) { SignUpSubmission(services) }
     val localNetwork = rememberLocalNetworkAccess(services::needsLocalNetworkPermission)
 
     val evaluation = PasswordStrength.evaluate(password)
@@ -188,28 +187,18 @@ internal fun SignUpContent(
         submitting = true
         scope.launch {
             try {
-                services.bip39.validate(words)
-                if (!localNetwork.ensure()) {
-                    phraseError = LocalNetworkAccess.DENIED_MESSAGE
-                    return@launch
+                val outcome = submission.create(username, password, words, localNetwork::ensure) {
+                    // The account exists: the password manager may save it now (S3).
+                    committed[0] = true
+                    autofill?.commit()
                 }
-                val name = SessionController.normalize(username)
-                val session = registered
-                    ?.takeIf { (s, pw) -> s.username == name && pw == password && services.session.value == s }
-                    ?.first
-                    ?: services.register(username, password).also {
-                        registered = it to password
-                        committed[0] = true
-                        autofill?.commit()
+                when (outcome) {
+                    SignUpSubmission.Outcome.Unlocked -> onUnlocked()
+                    is SignUpSubmission.Outcome.AccountError -> {
+                        accountError = outcome.message
+                        step = SignUpStep.Account
                     }
-                services.establishFromSignup(words, session)
-                onUnlocked()
-            } catch (e: Throwable) {
-                if (e is ApiError.Server && e.code in CREDENTIAL_ERRORS) {
-                    accountError = e.userMessage
-                    step = SignUpStep.Account
-                } else {
-                    phraseError = if (e is Bip39.PhraseException || e is CryptoException) CryptoController.userMessage(e) else SessionController.userMessage(e)
+                    is SignUpSubmission.Outcome.PhraseError -> phraseError = outcome.message
                 }
             } finally {
                 submitting = false
@@ -341,14 +330,92 @@ internal fun SignUpContent(
     }
 }
 
-/** Server errors that are about the name or password, shown back on the account step. */
-private val CREDENTIAL_ERRORS = setOf(
-    ErrorCodes.USERNAME_TAKEN,
-    ErrorCodes.USERNAME_RESERVED,
-    ErrorCodes.VALIDATION_ERROR,
-    ErrorCodes.PASSWORD_TOO_SHORT,
-    ErrorCodes.PASSWORD_TOO_COMMON,
-)
+/**
+ * Sign Up's **Create Account** (`SignUpView.swift:299-344`; settings-lock addendum S.6), apart from
+ * drawing so it runs on the JVM. Main-confined, like the screen that holds it.
+ *
+ * Order: the phrase is checked (12 BIP39 words), the screen lock is checked again (iOS checks
+ * `canProtectWrapKey` here, before any request — Android also checks at Continue, S.7), the
+ * local-network permission is asked (Android 17), then `POST /auth/register` and the keys
+ * (`establishFromSignup`: derive, store the vault, `PUT /keys/bundle`).
+ *
+ * The account this submission created is remembered with the name and password it was created
+ * with: when the keys fail to publish, a retry reuses it instead of registering again (which the
+ * server would refuse with "That username is already taken." — the iOS gap S.6 names). It is never
+ * a session from anywhere else: that could be an existing account whose keys this screen must not
+ * replace.
+ */
+internal class SignUpSubmission(private val services: OnboardingServices) {
+    /** What Create Account led to. */
+    sealed interface Outcome {
+        /** The account and its keys exist: reveal the chats (`router.unlockMessages()`, `:334`). */
+        data object Unlocked : Outcome
+
+        /** The server objected to the name or password: shown back on the account step (S.7). */
+        data class AccountError(val message: String) : Outcome
+
+        /** Anything else, shown on the phrase step. */
+        data class PhraseError(val message: String) : Outcome
+    }
+
+    private var registered: Pair<Session, String>? = null
+
+    /**
+     * Creates the account for [username] / [password] with [words]. [ensureLocalNetwork] asks for
+     * Android 17's local-network permission when the server needs it; [onRegistered] runs once the
+     * server created the account (the autofill save, S3).
+     */
+    suspend fun create(
+        username: String,
+        password: String,
+        words: List<String>,
+        ensureLocalNetwork: suspend () -> Boolean,
+        onRegistered: () -> Unit = {},
+    ): Outcome = try {
+        services.bip39.validate(words)
+        when {
+            // `!HistoryKeyVault.canProtectWrapKey` (`:313-316`): the lock can go between Continue and Create.
+            !services.hasScreenLock() -> Outcome.PhraseError(CryptoController.userMessage(CryptoException.NoScreenLock()))
+            !ensureLocalNetwork() -> Outcome.PhraseError(LocalNetworkAccess.DENIED_MESSAGE)
+            else -> {
+                services.establishFromSignup(words, accountFor(username, password, onRegistered))
+                Outcome.Unlocked
+            }
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Throwable) {
+        when {
+            e is ApiError.Server && e.code in CREDENTIAL_ERRORS -> Outcome.AccountError(e.userMessage)
+            // `BIP39Seed.SeedError | CryptoControllerError | HistoryKeyVault.VaultError` (`:338-341`).
+            e is Bip39.PhraseException || e is CryptoException -> Outcome.PhraseError(CryptoController.userMessage(e))
+            else -> Outcome.PhraseError(SessionController.userMessage(e))
+        }
+    }
+
+    /** The account this submission created for the same name and password while it is still the session, else a new one. */
+    private suspend fun accountFor(username: String, password: String, onRegistered: () -> Unit): Session {
+        val name = SessionController.normalize(username)
+        registered
+            ?.takeIf { (session, pw) -> session.username == name && pw == password && services.session.value == session }
+            ?.let { return it.first }
+        return services.register(username, password).also {
+            registered = it to password
+            onRegistered()
+        }
+    }
+
+    private companion object {
+        /** Server errors about the name or password (`server/.../error.rs`, `auth/username.rs`, `auth/password.rs`). */
+        val CREDENTIAL_ERRORS = setOf(
+            ErrorCodes.USERNAME_TAKEN,
+            ErrorCodes.USERNAME_RESERVED,
+            ErrorCodes.VALIDATION_ERROR,
+            ErrorCodes.PASSWORD_TOO_SHORT,
+            ErrorCodes.PASSWORD_TOO_COMMON,
+        )
+    }
+}
 
 @Composable
 private fun AccountStep(

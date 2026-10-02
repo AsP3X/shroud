@@ -104,6 +104,7 @@ import de.corespace.shroud.ui.theme.ShroudIcons
 import de.corespace.shroud.ui.theme.ShroudTheme
 import de.corespace.shroud.ui.theme.inter
 import de.corespace.shroud.ui.theme.rememberHaptics
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -117,23 +118,25 @@ private enum class Phase { Credentials, Phrase }
  * open a server session; the phrase unlocks messaging on this phone and never leaves it.
  *
  * With a session already in place — pushed over the lock screen by "Use encryption phrase" — it
- * opens on the phrase step without animation and Back returns to the lock screen ([onBack]; L1:
- * the interim "Log Out" capsule is gone with the lock screen). For an account that never had a
+ * opens on the phrase step without animation and Back returns to the lock screen ([onBack], L1). For an account that never had a
  * phrase (the server answers `KEYS_REQUIRED`) the phrase step offers **"I never got a 12-word
- * phrase"**: a fresh phrase to write down and save (`:257-301, 756-824`; web-parity §14.2, P11b).
+ * phrase"**: a fresh phrase to write down and save (`:257-357, 756-830`; web-parity §14.2, P11b).
  *
  * [onUnlocked] runs once the phrase opened the chats (iOS `router.unlockMessages()`, `:750`).
- * [onLogOut] is unused since the lock screen exists; it stays for source compatibility until W3-INT.
+ * [onLogOut] backs the interim "Log Out" capsule (design `daz2w`), shown only when the screen opened
+ * signed in with nothing to go back to — a root without the lock screen underneath. Pushed over the
+ * lock screen ([onBack] given) it never shows; it goes with `daz2w` once every root has the lock
+ * screen (L1; the interim root is W3-SHELL's to delete).
  */
 @Composable
 fun LogInScreen(
     container: AppContainer,
     onBack: (() -> Unit)?,
     onSignUp: () -> Unit,
-    @Suppress("UNUSED_PARAMETER") onLogOut: () -> Unit = {},
+    onLogOut: () -> Unit = {},
     onUnlocked: () -> Unit = {},
 ) {
-    LogInContent(rememberOnboardingServices(container), onBack, onSignUp, onUnlocked)
+    LogInContent(rememberOnboardingServices(container), onBack, onSignUp, onUnlocked, onLogOut)
 }
 
 /** Sequential pair reveal (`EncryptionPhraseReveal.start`): one at a time, cancelled by the next or by [cancel]. */
@@ -164,6 +167,7 @@ internal fun LogInContent(
     onBack: (() -> Unit)?,
     onSignUp: () -> Unit,
     onUnlocked: () -> Unit = {},
+    onLogOut: () -> Unit = {},
 ) {
     val colors = ShroudTheme.colors
     val context = LocalContext.current
@@ -181,9 +185,10 @@ internal fun LogInContent(
     val words = remember { mutableStateListOf(*Array(Bip39.WORD_COUNT) { "" }) }
     var revealed by remember { mutableIntStateOf(Bip39.WORD_COUNT) }
     val reveal = remember { PhraseReveal(scope) }
+    val actions = remember(services) { LogInActions(services) }
     var submitting by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    // "I never got a 12-word phrase" (`:23-29`): offered once the server said KEYS_REQUIRED.
+    // "I never got a 12-word phrase" (`:22-29`): offered once the server said KEYS_REQUIRED.
     var accountHasNoPhrase by remember { mutableStateOf(false) }
     var creatingPhrase by remember { mutableStateOf(false) }
     var newPhrase by remember { mutableStateOf(emptyList<String>()) }
@@ -228,7 +233,7 @@ internal fun LogInContent(
         reveal.start { revealed = it }
     }
 
-    // One `GET keys/identity/{me}` each time the phrase step opens (`:126-130, 758-775`).
+    // One `GET keys/identity/{me}` each time the phrase step opens (`:126-130, 758-776`).
     LaunchedEffect(phase) {
         if (phase != Phase.Phrase) return@LaunchedEffect
         val session = services.session.value ?: return@LaunchedEffect
@@ -244,18 +249,17 @@ internal fun LogInContent(
         error = null
         scope.launch {
             try {
-                if (!localNetwork.ensure()) {
-                    error = LocalNetworkAccess.DENIED_MESSAGE
-                    return@launch
+                when (val outcome = actions.logIn(username, password, localNetwork::ensure)) {
+                    LogInActions.Outcome.Done -> {
+                        committed[0] = true
+                        autofill?.commit()
+                        // Signed in is not unlocked: stay here for the phrase (`:706-712`).
+                        focus.clearFocus()
+                        phase = Phase.Phrase
+                    }
+                    is LogInActions.Outcome.Failed -> error = outcome.message
+                    LogInActions.Outcome.SessionExpired, LogInActions.Outcome.SessionEnded -> Unit
                 }
-                services.login(username, password)
-                committed[0] = true
-                autofill?.commit()
-                // Signed in is not unlocked: stay here for the phrase.
-                focus.clearFocus()
-                phase = Phase.Phrase
-            } catch (e: Throwable) {
-                error = SessionController.userMessage(e)
             } finally {
                 submitting = false
             }
@@ -267,30 +271,22 @@ internal fun LogInContent(
             error = LogInRules.incompleteMessage(creatingPhrase)
             return
         }
-        val session = services.session.value
-        if (session == null) {
-            error = "Session expired. Log in again."
-            focus.clearFocus()
-            phase = Phase.Credentials
-            return
-        }
         focus.clearFocus()
         submitting = true
         error = null
         val chosen = LogInRules.wordsToSubmit(if (creatingPhrase) newPhrase else words)
         scope.launch {
             try {
-                if (!localNetwork.ensure()) {
-                    error = LocalNetworkAccess.DENIED_MESSAGE
-                    return@launch
-                }
-                services.unlockWithPhrase(chosen, session)
-                onUnlocked()
-            } catch (e: Throwable) {
-                // A revoked or removed session must not trap the user on this step: the session's
-                // auth listener already ended it, and the root goes back to Welcome with its message.
-                if (services.sessionAfterFailure() == SessionController.Validation.Offline) {
-                    error = CryptoController.userMessage(e)
+                when (val outcome = actions.unlock(chosen, localNetwork::ensure)) {
+                    LogInActions.Outcome.Done -> onUnlocked()
+                    is LogInActions.Outcome.Failed -> error = outcome.message
+                    // No session any more (`:725-734`): back to the credentials, which open a new one.
+                    LogInActions.Outcome.SessionExpired -> {
+                        error = LogInActions.SESSION_EXPIRED
+                        phase = Phase.Credentials
+                    }
+                    // The session's auth listener ended it; the root shows why (the wipe overlay, then Welcome).
+                    LogInActions.Outcome.SessionEnded -> Unit
                 }
             } finally {
                 submitting = false
@@ -329,7 +325,7 @@ internal fun LogInContent(
     val back: (() -> Unit)? = when {
         !isCredentials && !startedSignedIn -> {
             {
-                // The phrase step's error belongs to the phrase step (`:146-153`).
+                // The phrase step's error belongs to the phrase step (`:143-153`).
                 error = null
                 focus.clearFocus()
                 leaveNewPhrase()
@@ -351,7 +347,10 @@ internal fun LogInContent(
                 trailing = {
                     // Fades out once the phrase step is up, and leaves TalkBack with it (L3).
                     val alpha by animateFloatAsState(if (isCredentials) 1f else 0f, Motion.fade(), label = "signUpAlpha")
-                    if (isCredentials || alpha > 0f) {
+                    if (startedSignedIn && back == null) {
+                        // Interim only: a root without the lock screen under this step (design `daz2w`).
+                        GlassCapsuleButton("Log Out", onLogOut, Modifier.testTag("login.logOut"), enabled = !submitting)
+                    } else if (isCredentials || alpha > 0f) {
                         GlassCapsuleButton(
                             "Sign Up",
                             onSignUp,
@@ -517,7 +516,67 @@ internal fun LogInContent(
 /** "The clipboard doesn’t hold a valid 12-word phrase." (`:525`). */
 internal const val PASTE_FAILED = "The clipboard doesn’t hold a valid 12-word phrase."
 
-/** The pure rules of the Log In screen (`LogInFlowView.swift:47-74, 404-417, 720-742`), tested on the JVM. */
+/**
+ * Log In's two requests (`submitCredentials`, `submitPhraseUnlock`, `LogInFlowView.swift:699-754`),
+ * apart from drawing so they run on the JVM. Main-confined.
+ *
+ * - [logIn]: `POST /auth/login` (the name trimmed and lower-cased, the anchored device id). A
+ *   session alone never opens the chats: the screen moves on to the phrase.
+ * - [unlock]: the phrase opens the vault on this phone (`CryptoController.unlockWithPhrase`; it
+ *   never leaves the phone). No session any more → [Outcome.SessionExpired]. A failure that ended the
+ *   session (a 401 streak, `DEVICE_REMOVED`) is the session bridge's to announce — the wipe overlay
+ *   takes over — so it is [Outcome.SessionEnded] and the screen says nothing (addendum L2; settings-lock
+ *   §13); otherwise the crypto message (`CryptoController.userMessage`).
+ */
+internal class LogInActions(private val services: OnboardingServices) {
+    sealed interface Outcome {
+        data object Done : Outcome
+        data class Failed(val message: String) : Outcome
+        data object SessionExpired : Outcome
+        data object SessionEnded : Outcome
+    }
+
+    suspend fun logIn(username: String, password: String, ensureLocalNetwork: suspend () -> Boolean): Outcome = try {
+        if (!ensureLocalNetwork()) {
+            Outcome.Failed(LocalNetworkAccess.DENIED_MESSAGE)
+        } else {
+            services.login(username, password)
+            Outcome.Done
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Throwable) {
+        // "Invalid username or password.", the device limit, rate limits, transport text (`:713-715`).
+        Outcome.Failed(SessionController.userMessage(e))
+    }
+
+    suspend fun unlock(words: List<String>, ensureLocalNetwork: suspend () -> Boolean): Outcome {
+        val session = services.session.value ?: return Outcome.SessionExpired
+        return try {
+            if (!ensureLocalNetwork()) {
+                Outcome.Failed(LocalNetworkAccess.DENIED_MESSAGE)
+            } else {
+                services.unlockWithPhrase(words, session)
+                Outcome.Done
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            if (services.sessionAfterFailure() == SessionController.Validation.Offline) {
+                Outcome.Failed(CryptoController.userMessage(e))
+            } else {
+                Outcome.SessionEnded
+            }
+        }
+    }
+
+    companion object {
+        /** `:730`. */
+        const val SESSION_EXPIRED = "Session expired. Log in again."
+    }
+}
+
+/** The pure rules of the Log In screen (`LogInFlowView.swift:50-74, 404-408, 720-742`), tested on the JVM. */
 internal object LogInRules {
     /** `signedInUsername` (`:50-56`): the session's name, else the typed one, else "user". */
     fun signedInName(sessionUsername: String?, typed: String): String =
