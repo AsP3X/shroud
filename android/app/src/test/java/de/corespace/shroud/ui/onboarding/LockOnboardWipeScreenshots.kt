@@ -42,6 +42,8 @@ import kotlinx.coroutines.test.runCurrent
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -62,6 +64,13 @@ import java.io.File
 class LockOnboardWipeScreenshots {
     private val hosts = HarnessHosts()
     private val server = MutableStateFlow(ServerConfiguration.official)
+
+    @Before
+    fun onlyWhenAsked() {
+        // Renders, not checks: ~40 full-screen native-graphics frames would cost the one shared test
+        // JVM's heap in every gate run (GAPS #9), so they run when asked for.
+        assumeTrue("set C4_SCREENS=1 to render the C4 screens", System.getenv(SWITCH) == "1")
+    }
 
     @After
     fun tearDown() {
@@ -313,6 +322,9 @@ class LockOnboardWipeScreenshots {
 
     private companion object {
         val OUT = File("build/outputs/c4-screens")
+
+        /** `C4_SCREENS=1 gw :app:testDebugUnitTest --tests '*.LockOnboardWipeScreenshots'` renders them. */
+        const val SWITCH = "C4_SCREENS"
         const val ARRIVAL_WAIT_MS = 80L
 
         /** The share of sampled pixels a screen draws beyond its background (the bare gear is ≈ 1 %). */
