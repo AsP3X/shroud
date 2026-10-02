@@ -4,6 +4,11 @@ import de.corespace.shroud.core.net.ApiClient
 import de.corespace.shroud.core.net.ShroudApi
 import de.corespace.shroud.core.notifications.ControllerHarness
 import de.corespace.shroud.core.notifications.NotificationAuthorization
+import de.corespace.shroud.core.push.NoPushReason
+import de.corespace.shroud.core.push.PushCopy
+import de.corespace.shroud.core.push.PushDelivery
+import de.corespace.shroud.core.push.UnifiedPushState
+import de.corespace.shroud.ui.settings.push.DeliveryCopy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
@@ -134,6 +139,23 @@ class NotificationTestOutcomeCopyTest {
         assertEquals(reason, screen.tapTest())
         assertEquals(1, server.requestCount)
         assertEquals("/api/v1/notifications/settings", server.takeRequest().url.encodedPath)
+    }
+
+    /**
+     * Every no-delivery reason through core's own sentence (`PushCopy`, what `push.deliveryHooks`
+     * returns): the test row says what the Delivery section says (C15), and no test push goes out.
+     */
+    @Test
+    fun everyNoDeliveryReasonMatchesTheDeliverySection() = runTest {
+        val screen = screen()
+        for (reason in NoPushReason.entries) {
+            val delivery = PushDelivery(UnifiedPushState.Unavailable(reason), backgroundConnection = false, batteryUnrestricted = false)
+            screen.harness.pushHooks.reason = PushCopy.noDeliveryReason(delivery)
+            server.enqueue(MockResponse(code = 200, body = settingsBody))
+            assertEquals(reason.name, DeliveryCopy.reason(reason, "phone"), screen.tapTest())
+            assertEquals("/api/v1/notifications/settings", server.takeRequest().url.encodedPath)
+        }
+        assertEquals("only the settings saves reached the server", NoPushReason.entries.size, server.requestCount)
     }
 
     /** The phone decides first: blocked, not asked yet, or the Messages channel off (`:262-269`; N14). */

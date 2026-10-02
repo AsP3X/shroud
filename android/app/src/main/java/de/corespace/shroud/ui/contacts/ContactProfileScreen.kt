@@ -61,7 +61,6 @@ import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.core.model.MuteDuration
 import de.corespace.shroud.core.net.CallModality
 import de.corespace.shroud.core.net.ConversationDeleteScope
-import de.corespace.shroud.ui.LocalAppContainer
 import de.corespace.shroud.ui.components.ActionSheet
 import de.corespace.shroud.ui.components.ActionSheetItem
 import de.corespace.shroud.ui.components.AvatarPalette
@@ -91,7 +90,6 @@ import de.corespace.shroud.ui.theme.mono
 import de.corespace.shroud.ui.theme.rememberHaptics
 import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.launch
-import java.time.Instant
 import java.time.ZoneId
 import java.util.UUID
 
@@ -114,10 +112,14 @@ import java.util.UUID
  */
 @Composable
 fun ContactProfileScreen(peerId: UUID, username: String, onBack: () -> Unit, onChatDeleted: (() -> Unit)?) {
-    val container = LocalAppContainer.current
-    val contacts = container.contacts.controller
-    val identities = container.contacts.peerIdentities
-    val messaging = container.messaging.controller
+    ContactProfile(rememberContactsPorts(), peerId, username, onBack, onChatDeleted)
+}
+
+/** [ContactProfileScreen] on any [ContactsPorts] (tests, the PNG renders). */
+@Composable
+internal fun ContactProfile(ports: ContactsPorts, peerId: UUID, username: String, onBack: () -> Unit, onChatDeleted: (() -> Unit)?) {
+    val contacts = ports.contacts
+    val identities = ports.identities
     val scope = rememberCoroutineScope()
     val haptic = rememberHaptics()
     val toast = rememberToastState()
@@ -127,8 +129,8 @@ fun ContactProfileScreen(peerId: UUID, username: String, onBack: () -> Unit, onC
 
     val presence by contacts.presence.collectAsState()
     val blockedUsers by contacts.blocked.collectAsState()
-    val activities by messaging.peerActivities.collectAsState()
-    val conversations by messaging.conversations.collectAsState()
+    val activities by ports.peerActivities.collectAsState()
+    val conversations by ports.conversations.collectAsState()
     val changes by identities.identityChanges.collectAsState()
     val verifiedPeers by identities.verifiedPeers.collectAsState()
 
@@ -154,27 +156,27 @@ fun ContactProfileScreen(peerId: UUID, username: String, onBack: () -> Unit, onC
     val change = changes[peerId]
     val safetyNumber = remember(peerId, change, verifiedPeers, identityRevision) { identities.safetyNumber(peerId) }
     val verified = remember(peerId, change, verifiedPeers, identityRevision) { identities.isSafetyVerified(peerId) }
-    val now = Instant.now()
+    val now = ports.clock.now()
     val zone = ZoneId.systemDefault()
     val locale = currentLocale()
     val is24h = DateFormat.is24HourFormat(context)
-    val mute = remember(peerId, conversations, muteRevision) { messaging.mute(peerId) }
-    val canMute = remember(peerId, conversations) { messaging.canMute(peerId) }
-    val isMuted = mute != null
+    val mute = remember(peerId, conversations, muteRevision) { ports.mute(peerId) }
+    val isMuted = remember(peerId, conversations, muteRevision) { ports.isMuted(peerId) }
+    val canMute = remember(peerId, conversations) { ports.canMute(peerId) }
     val isBlocked = blockedUsers.any { it.userId == peerId }
 
     fun changeMute(duration: MuteDuration?) {
         // `changeMute(to:)` (`:291-307`).
         scope.launch {
-            val error = container.appScope.runDetached {
-                if (duration != null) messaging.muteChat(peerId, duration) else messaging.unmuteChat(peerId)
+            val error = ports.actionScope.runDetached {
+                if (duration != null) ports.muteChat(peerId, duration) else ports.unmuteChat(peerId)
             }
             muteRevision++
             if (error != null) {
                 toast.show(Toast.failure(error))
                 haptic(Haptic.Error)
             } else {
-                val label = MuteDuration.label(messaging.mute(peerId), Instant.now(), zone, locale, is24h)
+                val label = MuteDuration.label(ports.mute(peerId), ports.clock.now(), zone, locale, is24h)
                 toast.show(Toast.success(ContactsCopy.muteDone(unmuted = duration == null, label = label)))
                 haptic(Haptic.Light)
             }
@@ -193,9 +195,8 @@ fun ContactProfileScreen(peerId: UUID, username: String, onBack: () -> Unit, onC
     fun startCall(modality: CallModality) {
         // `:109-132`: place it, then show what went wrong, if anything.
         scope.launch {
-            val calls = container.calls.controller
-            container.appScope.runDetached { calls.startCall(peerId, username, modality) }
-            calls.lastError.value?.let { toast.show(Toast.failure(it)) }
+            ports.actionScope.runDetached { ports.startCall(peerId, username, modality) }
+            ports.callError.value?.let { toast.show(Toast.failure(it)) }
         }
     }
 
@@ -203,11 +204,12 @@ fun ContactProfileScreen(peerId: UUID, username: String, onBack: () -> Unit, onC
         // `performBlockChange(block:)` (`:522-537`).
         isBlocking = true
         scope.launch {
-            val error = container.appScope.runDetached {
+            val error = ports.actionScope.runDetached {
                 if (block) contacts.block(peerId, username) else contacts.unblock(peerId)
             }
             isBlocking = false
             if (error != null) {
+                // Core's sentence, as it is (R2).
                 toast.show(Toast.failure(error))
                 haptic(Haptic.Error)
             } else {
@@ -221,7 +223,7 @@ fun ContactProfileScreen(peerId: UUID, username: String, onBack: () -> Unit, onC
         // `performChatDelete(scope:)` (`:503-520`): no toast on success, the thread goes.
         isDeletingChat = true
         scope.launch {
-            val outcome = container.appScope.runDetached { messaging.deleteConversation(peerId, deleteScope) }
+            val outcome = ports.actionScope.runDetached { ports.deleteConversation(peerId, deleteScope) }
             isDeletingChat = false
             val failure = ContactsCopy.deleteFailure(outcome)
             if (failure != null) {

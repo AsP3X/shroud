@@ -46,7 +46,6 @@ import de.corespace.shroud.core.model.ChatPeerActivity
 import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.core.net.ContactItemDto
 import de.corespace.shroud.core.net.ContactRequestDto
-import de.corespace.shroud.ui.LocalAppContainer
 import de.corespace.shroud.ui.components.AvatarPalette
 import de.corespace.shroud.ui.components.ChatRow
 import de.corespace.shroud.ui.components.GlassBarButton
@@ -67,11 +66,11 @@ import de.corespace.shroud.ui.shell.LocalIsTabBarSearchActive
 import de.corespace.shroud.ui.shell.LocalShellNavigation
 import de.corespace.shroud.ui.shell.LocalTabBarClearance
 import de.corespace.shroud.ui.shell.MainTab
+import de.corespace.shroud.ui.shell.ShellNavigation
 import de.corespace.shroud.ui.theme.Motion
 import de.corespace.shroud.ui.theme.ShroudIcons
 import de.corespace.shroud.ui.theme.rememberHaptics
 import kotlinx.coroutines.launch
-import java.time.Instant
 import java.time.ZoneId
 import java.util.UUID
 
@@ -96,11 +95,21 @@ import java.util.UUID
  */
 @Composable
 fun ContactsScreen(query: String, onQueryChange: (String) -> Unit) {
-    val container = LocalAppContainer.current
-    val contacts = container.contacts.controller
-    val messaging = container.messaging.controller
-    val sessions = container.auth.sessionController
-    val navigation = LocalShellNavigation.current
+    ContactsTab(rememberContactsPorts(), query, onQueryChange)
+}
+
+/**
+ * [ContactsScreen] on any [ContactsPorts] (tests, the PNG renders). The sheets it opens read the
+ * same [ports] through [LocalContactsPorts].
+ */
+@Composable
+internal fun ContactsTab(
+    ports: ContactsPorts,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    navigation: ShellNavigation = LocalShellNavigation.current,
+) {
+    val contacts = ports.contacts
     val scope = rememberCoroutineScope()
     val haptic = rememberHaptics()
     val toast = rememberToastState()
@@ -110,11 +119,11 @@ fun ContactsScreen(query: String, onQueryChange: (String) -> Unit) {
     val requests by contacts.incomingRequests.collectAsState()
     val listStatus by contacts.listState.collectAsState()
     val presence by contacts.presence.collectAsState()
-    val activities by messaging.peerActivities.collectAsState()
-    val session by sessions.session.collectAsState()
-    val server by container.serverConfiguration.configuration.collectAsState()
+    val activities by ports.peerActivities.collectAsState()
+    val session by ports.session.collectAsState()
+    val server by ports.server.collectAsState()
     val pendingInvite by contacts.pendingInvite.collectAsState()
-    val phase by container.appPhase.phase.collectAsState()
+    val phase by ports.appPhase.collectAsState()
     val selectedTab by navigation.selection.collectAsState()
 
     // iOS `@State`: the order, the requests on the wire, the sheets (`ContactsView.swift:13-18`).
@@ -136,19 +145,20 @@ fun ContactsScreen(query: String, onQueryChange: (String) -> Unit) {
     val shareUrl = shareCode?.let { ContactInviteParser.shareUrl(it, server) }
 
     // `.task` (`:178-183`): the roster, then the share code for sessions made before it existed.
-    LaunchedEffect(Unit) {
+    LaunchedEffect(ports) {
         contacts.refresh()
-        if (sessions.session.value?.shareCode == null) sessions.validate()
+        if (ports.session.value?.shareCode == null) ports.validateSession()
     }
 
     // Looking at the requests answers their notifications (web `AppShell.tsx:813-816`).
     val onScreen = phase == AppPhase.Active && selectedTab == MainTab.Contacts
     val requestIds = requests.map { it.id }
     LaunchedEffect(onScreen, requestIds) {
-        if (onScreen) container.notifications.controller.clearContactRequestNotifications()
+        if (onScreen) ports.clearContactRequestNotifications()
     }
 
-    // An App Link's invite: Add Contact, pre-filled, waiting for the user's tap on Add.
+    // An App Link's invite (contacts §5.10): Add Contact, pre-filled, waiting for the user's tap on
+    // Add. Consumed here, so it opens the sheet once; nothing is sent until Add is tapped.
     LaunchedEffect(pendingInvite) {
         val invite = pendingInvite ?: return@LaunchedEffect
         contacts.pendingInvite.value = null
@@ -159,7 +169,7 @@ fun ContactsScreen(query: String, onQueryChange: (String) -> Unit) {
     }
 
     val is24h = DateFormat.is24HourFormat(context)
-    val now = Instant.now()
+    val now = ports.clock.now()
     val zone = ZoneId.systemDefault()
 
     // The floating tab bar covers the bottom of the list: the last row ends at its top edge.
@@ -169,7 +179,7 @@ fun ContactsScreen(query: String, onQueryChange: (String) -> Unit) {
 
     // `MainScrollScreen` and `ToastHost` pad by the system inset; the extra above is added here,
     // so they see no clearance (and add none twice if they learn to read it).
-    CompositionLocalProvider(LocalTabBarClearance provides 0.dp) {
+    CompositionLocalProvider(LocalTabBarClearance provides 0.dp, LocalContactsPorts provides ports) {
         Box(Modifier.fillMaxSize()) {
             ContactsList(
                 content = content,
@@ -191,11 +201,12 @@ fun ContactsScreen(query: String, onQueryChange: (String) -> Unit) {
                     // Accept or Reject once; both buttons wait for the answer (`:237-258`).
                     if (responding.add(request.id)) {
                         scope.launch {
-                            val error = container.appScope.runDetached {
+                            val error = ports.actionScope.runDetached {
                                 if (accept) contacts.accept(request) else contacts.reject(request)
                             }
                             responding.remove(request.id)
                             if (error != null) {
+                                // Core's sentence, as it is (R2).
                                 toast.show(Toast.failure(error))
                                 haptic(Haptic.Error)
                             } else if (accept) {
