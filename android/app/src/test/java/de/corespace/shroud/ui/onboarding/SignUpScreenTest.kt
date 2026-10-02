@@ -1,5 +1,6 @@
 package de.corespace.shroud.ui.onboarding
 
+import android.app.Application
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.ui.autofill.ContentType
@@ -26,7 +27,7 @@ import org.robolectric.annotation.Config
  * phrase copy.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+@Config(sdk = [35], application = Application::class)
 class SignUpScreenTest {
     private val services = FakeOnboardingServices()
     private val toast = ToastState()

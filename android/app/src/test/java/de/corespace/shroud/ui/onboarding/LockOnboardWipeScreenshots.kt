@@ -1,5 +1,6 @@
 package de.corespace.shroud.ui.onboarding
 
+import android.app.Application
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import androidx.compose.foundation.background
@@ -56,7 +57,7 @@ import java.io.File
  * artboard), 360 × 800 for the compact frame. Each render must hold a picture, not a blank window.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35], qualifiers = "w412dp-h915dp-xhdpi")
+@Config(sdk = [35], qualifiers = "w412dp-h915dp-xhdpi", application = Application::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class LockOnboardWipeScreenshots {
     private val hosts = HarnessHosts()

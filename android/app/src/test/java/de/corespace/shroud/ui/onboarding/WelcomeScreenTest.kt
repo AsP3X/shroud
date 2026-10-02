@@ -1,5 +1,6 @@
 package de.corespace.shroud.ui.onboarding
 
+import android.app.Application
 import androidx.compose.ui.semantics.SemanticsProperties
 import de.corespace.shroud.core.net.ServerConfiguration
 import org.junit.After
@@ -16,7 +17,7 @@ import org.robolectric.annotation.Config
  * feature tile, and the server it talks to.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+@Config(sdk = [35], application = Application::class)
 class WelcomeScreenTest {
     private val hosts = HarnessHosts()
     private val taps = mutableListOf<String>()

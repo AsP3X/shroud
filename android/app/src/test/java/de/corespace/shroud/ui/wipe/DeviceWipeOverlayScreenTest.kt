@@ -1,5 +1,6 @@
 package de.corespace.shroud.ui.wipe
 
+import android.app.Application
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -36,7 +37,7 @@ import org.robolectric.annotation.Config
  * The touch release itself is the device test `DeviceWipeOverlayTest` (androidTest).
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+@Config(sdk = [35], application = Application::class)
 class DeviceWipeOverlayScreenTest {
     private val hosts = HarnessHosts()
     private var state by mutableStateOf(WipeOverlayState(WipePhase.Running, handle = "@alice"))

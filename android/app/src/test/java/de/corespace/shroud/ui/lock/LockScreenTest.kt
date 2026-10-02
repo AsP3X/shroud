@@ -1,5 +1,6 @@
 package de.corespace.shroud.ui.lock
 
+import android.app.Application
 import de.corespace.shroud.core.keys.BiometricLabel
 import de.corespace.shroud.core.keys.VaultState
 import de.corespace.shroud.core.net.ServerConfiguration
@@ -35,7 +36,7 @@ import org.robolectric.annotation.Config
  * flow's timing is [LockScreenModelTest]'s; this checks what each mode draws and what its controls do.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+@Config(sdk = [35], application = Application::class)
 class LockScreenTest {
     private val ports = FakePorts()
     private val router = FakeRouter(ports)

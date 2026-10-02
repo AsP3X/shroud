@@ -1,5 +1,6 @@
 package de.corespace.shroud.ui.onboarding
 
+import android.app.Application
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -28,7 +29,7 @@ import org.robolectric.annotation.Config
  * iOS has no view tests: these are the addendum's Compose UI tests.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+@Config(sdk = [35], application = Application::class)
 class LogInScreenTest {
     private val services = FakeOnboardingServices()
     private val hosts = HarnessHosts()
