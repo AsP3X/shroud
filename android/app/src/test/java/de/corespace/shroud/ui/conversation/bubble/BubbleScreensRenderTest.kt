@@ -47,6 +47,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -76,7 +77,7 @@ import java.util.UUID
  * shared unit-test JVM is not loaded with full-sheet renders on every run.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35], qualifiers = "w412dp-h2600dp-port-xhdpi")
+@Config(sdk = [35], qualifiers = "w412dp-h1900dp-port-xhdpi")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class BubbleScreensRenderTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -117,7 +118,7 @@ class BubbleScreensRenderTest {
 
     private class Sheet(val services: RenderBubbleServices, val context: RecordingBubbleContext)
 
-    private fun sheet(name: String, dark: Boolean, setup: (Sheet) -> Unit = {}, rows: List<@Composable (Sheet) -> Unit>): ComposeHarness {
+    private fun sheet(name: String, dark: Boolean, setup: (Sheet) -> Unit = {}, rows: List<@Composable (Sheet) -> Unit>, save: Boolean = true): ComposeHarness {
         val sheet = Sheet(RenderBubbleServices(RuntimeEnvironment.getApplication(), scope), RecordingBubbleContext())
         setup(sheet)
         var contentHeight = 0
@@ -145,7 +146,7 @@ class BubbleScreensRenderTest {
         val cropped = Bitmap.createBitmap(full, 0, 0, full.width, height)
         assertTrue("$name drew nothing", height > 1)
         val dir = File("build/outputs/c10-screens").apply { mkdirs() }
-        File(dir, "$name-${if (dark) "dark" else "light"}.png").outputStream().use { cropped.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        if (save) File(dir, "$name-${if (dark) "dark" else "light"}.png").outputStream().use { cropped.compress(Bitmap.CompressFormat.PNG, 100, it) }
         return ui
     }
 
@@ -162,6 +163,24 @@ class BubbleScreensRenderTest {
     private fun bubble(model: MessageRowModel): @Composable (Sheet) -> Unit = { sheet -> MessageBubble(model, sheet.context) }
 
     private fun typing(activity: ChatPeerActivity): @Composable (Sheet) -> Unit = { _ -> TypingIndicatorBubble(activity) }
+
+    /**
+     * A downloaded photo: its bytes, decoded here once, one at a time, into [DecodedImageCache] — as a
+     * bubble scrolling back into view finds it. Robolectric's native decoder is not safe to run for
+     * several pictures at once (concurrent decodes come back as the thumbnail), which a phone's is.
+     */
+    private fun Sheet.photo(id: UUID, bytes: ByteArray) {
+        services.media[id] = bytes
+        val image = runBlocking { BubbleImages.decodeSampled(bytes, PREDECODE_EDGE_PX) } ?: error("fixture does not decode")
+        DecodedImageCache.store(id, image, DecodedImageCache.Source.Full, bytes.size)
+    }
+
+    /** A link preview's large picture, decoded into [LinkPreviewImageCache] the same way. */
+    private fun Sheet.linkImage(id: UUID, bytes: ByteArray) {
+        services.media[id] = bytes
+        val image = runBlocking { BubbleImages.decodeSampled(bytes, PREDECODE_EDGE_PX) } ?: error("fixture does not decode")
+        LinkPreviewImageCache.store(id, LinkPreviewImageCache.Variant.Full, bytes.size, image)
+    }
 
     private fun both(name: String, setup: (Sheet) -> Unit = {}, rows: () -> List<@Composable (Sheet) -> Unit>) {
         sheet(name, dark = false, setup = setup, rows = rows())
@@ -274,7 +293,7 @@ class BubbleScreensRenderTest {
         val large = LinkPreview(url = "https://www.youtube.com/watch?v=1", siteName = "YouTube", title = "Ridge walk at sunrise — 4K", imageWidth = 1200, imageHeight = 630)
         val largeVideo = LinkPreview(url = "https://www.youtube.com/watch?v=2", siteName = "YouTube", title = "Timelapse over the lake", imageWidth = 1200, imageHeight = 630, isVideo = true)
         val largeFull = message("https://www.youtube.com/watch?v=1", mine = false, time = at(14, 3), linkPreview = large, mediaObjectId = UUID.randomUUID(), imageWidth = 1200, imageHeight = 630, hasFullMedia = true, previewJpeg = linkPlaceholder)
-        both("04-links", setup = { it.services.media[largeFull.id] = linkLarge }) {
+        both("04-links", setup = { it.linkImage(largeFull.id, linkLarge) }) {
             listOf(
                 bubble(row(message("see example.com now", mine = false, time = at(14, 0)))),
                 bubble(row(message("example.com and mail me at jane@example.com", mine = true, time = at(14, 0)))),
@@ -300,21 +319,24 @@ class BubbleScreensRenderTest {
         val replied = message("Photo", mine = false, time = at(16, 4), kind = ChatMessageKind.Image, mediaObjectId = UUID.randomUUID(), imageWidth = 1200, imageHeight = 900, hasFullMedia = true, previewJpeg = thumbJpeg, replyTo = reference)
         val reacted = message("Sunset", mine = false, time = at(16, 5), kind = ChatMessageKind.Image, mediaObjectId = UUID.randomUUID(), imageWidth = 1200, imageHeight = 900, hasFullMedia = true, previewJpeg = thumbJpeg, reactions = listOf(reaction(ME, "❤️"), reaction(PEER, "🔥", seq = 2)))
         val reactedNoCaption = message("Photo", mine = true, time = at(16, 6), kind = ChatMessageKind.Image, mediaObjectId = UUID.randomUUID(), imageWidth = 1200, imageHeight = 900, hasFullMedia = true, previewJpeg = thumbJpeg, reactions = listOf(reaction(PEER, "😮")))
-        both(
-            "05-photos",
-            setup = { sheet ->
-                sheet.services.media[downloaded.id] = photoJpeg
-                sheet.services.media[captioned.id] = portraitJpeg
-                sheet.services.media[replied.id] = photoJpeg
-                sheet.services.media[reacted.id] = photoJpeg
-                sheet.services.media[reactedNoCaption.id] = photoJpeg
-            },
-        ) {
+        val setup: (Sheet) -> Unit = { sheet ->
+            sheet.photo(downloaded.id, photoJpeg)
+            sheet.photo(captioned.id, portraitJpeg)
+            sheet.photo(replied.id, photoJpeg)
+            sheet.photo(reacted.id, photoJpeg)
+            sheet.photo(reactedNoCaption.id, photoJpeg)
+        }
+        // Two sheets: a software-drawn layer taller than about 4,000 px is drawn downsampled.
+        both("05a-photos", setup) {
             listOf(
                 bubble(row(message("Photo", mine = false, time = at(16, 0), kind = ChatMessageKind.Image, mediaObjectId = UUID.randomUUID(), imageWidth = 1200, imageHeight = 900, previewJpeg = thumbJpeg, mediaByteCount = 812_000))),
                 bubble(row(message("Photo", mine = false, time = at(16, 1), kind = ChatMessageKind.Image, mediaObjectId = UUID.randomUUID(), imageWidth = 900, imageHeight = 1200, previewJpeg = portraitThumb, mediaByteCount = 2_400_000), transfer = MediaTransfer(MediaTransfer.Phase.Transferring, isUpload = false, fraction = 0.42, totalBytes = 2_400_000))),
                 bubble(row(downloaded)),
                 bubble(row(captioned)),
+            )
+        }
+        both("05b-photos", setup) {
+            listOf(
                 bubble(row(replied, quote = quote)),
                 bubble(row(message("Photo", mine = true, time = at(16, 7), kind = ChatMessageKind.Image, receipt = ReceiptStatus.Failed, imageWidth = 1200, imageHeight = 900, previewJpeg = thumbJpeg, sendError = "Couldn't upload the photo. Check your connection and try again."))),
                 bubble(row(message("Photo", mine = false, time = at(16, 8), kind = ChatMessageKind.Image, mediaObjectId = UUID.randomUUID(), imageWidth = 1200, imageHeight = 900))),
@@ -434,8 +456,8 @@ class BubbleScreensRenderTest {
                 },
                 rows = listOf(bubble(row(failedLoad)), bubble(row(working)), bubble(row(downloading)), bubble(row(silent))),
             )
-            // "→A" on the three loaded notes, the way TalkBack's "Transcribe" action does it.
-            for (label in listOf("Transcribe")) {
+            // "→A" on the three loaded notes, the way TalkBack's "Transcribe" / "Show transcript" actions do it.
+            for (label in listOf("Transcribe", "Show transcript")) {
                 ui.nodes()
                     .mapNotNull { node -> node.config.getOrNull(SemanticsActions.CustomActions)?.firstOrNull { it.label == label } }
                     .forEach { action -> ui.activity.runOnUiThread { action.action() } }
@@ -485,7 +507,7 @@ class BubbleScreensRenderTest {
                     ),
                 ),
             ),
-            bubble(row(message("ok", mine = false, time = at(20, 4), reactions = listOf(reaction(PEER, "🫠"))))),
+            bubble(row(message("ok", mine = false, time = at(20, 4), reactions = listOf(reaction(PEER, "🙏"))))),
         )
     }
 
@@ -506,6 +528,7 @@ class BubbleScreensRenderTest {
         const val RENDER_ENV = "SHROUD_RENDER_SCREENS"
         const val SETTLE_REAL_MS = 30L
         const val DECODE_REAL_MS = 120L
+        const val PREDECODE_EDGE_PX = 640
 
         /** A 412 dp phone's thread less 16 dp on each side (`ChatRowWidth.of`). */
         val ROW_WIDTH = 380.dp

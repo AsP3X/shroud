@@ -169,7 +169,7 @@ private fun TypingInk(animated: Boolean) {
     val rest = if (animated) lerp(colors.accent, colors.bubbleIncoming, 0.58f) else colors.accent
     val metaball = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
     Box(Modifier.fillMaxSize()) {
-        // The silhouette layer: black dots, blurred, thresholded and recoloured by the layer.
+        // The silhouette layer: dots, blurred, thresholded and recoloured by the layer.
         Canvas(
             Modifier
                 .fillMaxSize()
@@ -180,7 +180,10 @@ private fun TypingInk(animated: Boolean) {
             for (index in 0 until 3) {
                 val crest = t?.let { TypingWave.crest(it, index) }
                 val (r, y) = TypingInkMetrics.dot(crest)
-                drawCircle(if (metaball) Color.Black else rest, radius = r * unit, center = Offset(TypingInkMetrics.centers[index] * unit, y * unit))
+                // iOS fills the silhouette black; the threshold matrix repaints it in [rest] from the
+                // alpha alone, so filling it in [rest] already draws the same — and keeps the dots
+                // coloured wherever the layer's effect is not applied (a software-drawn capture).
+                drawCircle(rest, radius = r * unit, center = Offset(TypingInkMetrics.centers[index] * unit, y * unit))
             }
         }
         // The ink: each dot darkens toward the accent as it crests — after the threshold, since
