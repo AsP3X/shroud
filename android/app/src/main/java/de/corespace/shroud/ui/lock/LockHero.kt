@@ -9,6 +9,7 @@ import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.Transition
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.withInfiniteAnimationFrameNanos
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -101,6 +102,8 @@ internal fun LockHero(phase: Transition<UnlockPhase>, scale: Float, arrival: Flo
         when {
             badgeTarget.isVerified -> badge.animateTo(LockHeroMath.badgeScale(badgeTarget, 1f), lockPhaseSpec(UnlockPhase.Checking, UnlockPhase.Verified, reduce))
             badgeTarget == UnlockPhase.Checking && !reduce -> while (true) {
+                // Each breath starts on an infinite-animation frame, so the policy (tests) can hold the loop.
+                withInfiniteAnimationFrameNanos { }
                 badge.animateTo(1.12f, tween(LockHeroMath.BREATH_MS, easing = FastOutSlowInEasing))
                 badge.animateTo(1f, tween(LockHeroMath.BREATH_MS, easing = FastOutSlowInEasing))
             }

@@ -7,6 +7,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.withInfiniteAnimationFrameNanos
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -44,7 +45,6 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -330,8 +330,9 @@ private fun WipeSpinner(spinning: Boolean) {
     var turns by remember { mutableFloatStateOf(0f) }
     LaunchedEffect(reduce, spinning) {
         if (reduce || !spinning) return@LaunchedEffect
-        val start = withFrameNanos { it }
-        while (true) withFrameNanos { now -> turns = ((now - start) / 1e9f / SPINNER_TURN_S) % 1f }
+        // An infinite animation: tests and the system's animation policy may pause it.
+        val start = withInfiniteAnimationFrameNanos { it }
+        while (true) withInfiniteAnimationFrameNanos { now -> turns = ((now - start) / 1e9f / SPINNER_TURN_S) % 1f }
     }
     Canvas(Modifier.size(24.dp).padding(1.1.dp)) {
         val stroke = 2.2.dp.toPx()
@@ -368,6 +369,8 @@ private fun WipeEmblem(phase: WipePhase, progress: Float, noun: String, animatin
     LaunchedEffect(animating) {
         if (animating) {
             while (true) {
+                // Each breath starts on an infinite-animation frame, so the policy (tests) can hold the loop.
+                withInfiniteAnimationFrameNanos { }
                 breath.animateTo(1.06f, tween(BREATH_HALF_MS))
                 breath.animateTo(1f, tween(BREATH_HALF_MS))
             }
@@ -420,8 +423,8 @@ private fun WipePhase.emblemGlyph(noun: String): EmblemGlyph = when (this) {
 private fun WipeParticles(color: Color) {
     var seconds by remember { mutableFloatStateOf(0f) }
     LaunchedEffect(Unit) {
-        val start = withFrameNanos { it }
-        while (true) withFrameNanos { now -> seconds = (now - start) / 1e9f }
+        val start = withInfiniteAnimationFrameNanos { it }
+        while (true) withInfiniteAnimationFrameNanos { now -> seconds = (now - start) / 1e9f }
     }
     Canvas(Modifier.size(128.dp)) {
         val centre = Offset(size.width / 2, size.height / 2)
