@@ -43,6 +43,7 @@ import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -203,13 +204,17 @@ internal fun ChatComposer(
         }
         // The lock pill floats above the thumb — and above a reply strip, which stays up during a
         // take — centred over the 44 dp trailing slot, its bottom 14 dp above the top-most row (`:119-132`).
+        // Leaving, it keeps the finger's last progress, or shows the lock shut when the take locked.
+        var lastLockProgress by remember { mutableFloatStateOf(0f) }
+        if (phase is ComposerPhase.Recording) lastLockProgress = phase.lockProgress
+        val shownLockProgress = if (phase.isLocked) 1f else lastLockProgress
         AnimatedVisibility(
             visible = phase.isActive && !phase.isLocked,
             modifier = Modifier.align(Alignment.TopEnd).padding(end = 4.dp).offset(y = (-74).dp),
             enter = scaleIn(Motion.snappy(), initialScale = 0.6f, transformOrigin = TransformOrigin(0.5f, 1f)) + fadeIn(Motion.snappy()),
             exit = scaleOut(Motion.snappy(), targetScale = 0.6f, transformOrigin = TransformOrigin(0.5f, 1f)) + fadeOut(Motion.snappy()),
         ) {
-            VoiceLockIndicator(progress = phase.lockProgress)
+            VoiceLockIndicator(progress = shownLockProgress)
         }
     }
 }
