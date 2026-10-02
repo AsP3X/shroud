@@ -7,6 +7,7 @@ import de.corespace.shroud.core.keys.IdentityPresence
 import de.corespace.shroud.core.keys.SealedLocalState
 import de.corespace.shroud.core.keys.UnlockMethod
 import de.corespace.shroud.core.keys.VaultError
+import de.corespace.shroud.core.keys.VaultKeyStore
 import de.corespace.shroud.core.keys.VaultState
 import de.corespace.shroud.core.model.userUuid
 import de.corespace.shroud.core.net.ApiError
@@ -137,6 +138,13 @@ class CryptoController(
 
     /** The lock screen's mode before any tap (Android-only, crypto §10.3). */
     fun vaultState(userId: String): VaultState = vault.state(userId)
+
+    /**
+     * Where the history-key wrap key lives (`HistoryKeyVault.keySecurity`, crypto spec §10.2, P3c).
+     * Null when this phone has no vault. Read on [io]: the lock screen must not do that file read
+     * on the main thread. Never prompts.
+     */
+    suspend fun vaultKeySecurity(): VaultKeyStore.Security? = withContext(io) { vault.keySecurity() }
 
     /**
      * Re-opens the chats through the vault (`unlockHistoryIfPossible`, `:62-146`; crypto §12.2): one

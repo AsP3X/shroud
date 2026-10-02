@@ -5,7 +5,8 @@ Design: `design/Android-App.pen` — keep it in sync with every UI change (see `
 
 **One build, no Google.** There are no product flavors and no Firebase, Google Play services,
 ML Kit, Tink, Play Core or analytics code anywhere. Push is UnifiedPush through a distributor the
-user installs (e.g. ntfy) plus an opt-in "Background connection"; both arrive in later waves.
+user installs (for example ntfy) plus an opt-in background connection, off by default. See
+*Choosing a distributor*.
 
 ## Build and run
 
@@ -45,8 +46,10 @@ devices) access before it reaches a LAN or emulator-host server.
   packages ships, by its original name. R8 moves most renamed classes into the unnamed package, so
   this (not the dex package list) is what catches an obfuscated or vendored copy. All three run as
   part of `check`.
-- CI then lists the release APK's dex packages and manifest with `apkanalyzer` and fails on any
-  Google services package that kept its name, or any manifest entry.
+- CI then lists each release split's dex packages and manifest with `apkanalyzer` and fails on any
+  Google services package that kept its name, or any manifest entry. It also runs
+  `app/src/main/cpp/check-native.sh` on both splits (16 KB alignment of every `.so`, including
+  WebRTC).
 
 ## Layout
 
@@ -61,7 +64,7 @@ devices) access before it reaches a LAN or emulator-host server.
 | `app/src/main/java/.../core/crypto` | BIP39, phrase → identity keys, key bundle, `CryptoController`; the v1/v2/v3 envelopes, double ratchet, media crypto, sealed device names, safety numbers; `ByteOps`, `Primitives`, `LocalHistoryCrypto`, `PeerLocks` |
 | `app/src/main/java/.../core/keys` | Sealed key stores (identity, ratchets, sender tags, peer pins), the screen-lock-bound history-key vault, `LocalNames`, key-material wipe |
 | `app/src/main/java/.../core/auth` | Session (`SessionController` with the auth listener every authenticated request reports to, Keystore-sealed `SessionStore`), password strength, the `WipeHooks` seam |
-| `app/src/main/java/.../core/{messaging,contacts,media,links,notifications,calls}` | Wave 2 seams (`MessagingSeams`, `ContactsSeams`, `MediaTypes`, `MediaEdits`, `VideoTypes`, `LinkTypes`, `NotificationKind`, `MessageNotifier`, `CallSeams`); the engines that implement them arrive in wave 2 |
+| `app/src/main/java/.../core/{messaging,contacts,media,links,notifications,calls,push,transcription}` | Engines for those packages. `CallController.attach` is not wired; `CallActivity` still closes at once |
 | `app/src/main/java/.../core/storage` | `KeystoreSealer`, sealed files in no-backup storage, `StorageSeal` (blocks writes during a wipe) |
 | `app/src/main/java/.../ui/theme` | Colour tokens (light/dark), Inter, motion, the design's icons |
 | `app/src/main/java/.../ui/components` | The app's own chrome: buttons, glass, toggle, toast, onboarding parts; avatars, chat rows, glass bars, scroll screens, settings rows; the overlay host, menus, sheets, dialogs, pull to refresh |
@@ -69,9 +72,9 @@ devices) access before it reaches a LAN or emulator-host server.
 | `app/src/test/java/.../testing` | JVM test kit: `MainDispatcherRule`, `FakeSharedPreferences`, `XorSealer`, `FakeAppClock`, `TempDirRule`, `SealedTestKey` |
 | `e2e/` | Local stack and adb scripts (below) |
 
-Manifest components that later waves fill in exist as stubs today: `CallActivity`, `CallService`,
-`UnifiedPushReceiver`, `BackgroundConnectionService`, `BootCompletedReceiver`,
-`DecryptedMediaProvider`. The launcher entry points are two aliases of `MainActivity`
+`UnifiedPushReceiver`, `BackgroundConnectionService`, `BootCompletedReceiver` and
+`DecryptedMediaProvider` are implemented. `CallActivity` still finishes immediately. The signed-in
+UI root is still the interim `ShroudApp`. The launcher entry points are two aliases of `MainActivity`
 (`.LauncherDetailed`, enabled, and `.LauncherSimple`), switched by the logo setting.
 
 ## End-to-end (local stack)
@@ -79,7 +82,7 @@ Manifest components that later waves fill in exist as stubs today: `CallActivity
 Needs Docker, cargo and the Android SDK; nothing leaves the machine.
 
 ```bash
-e2e/stack-up.sh             # Postgres, Redis, ntfy (the push service) in Docker + the API from server/ on :8080
+e2e/stack-up.sh             # Postgres, Redis, ntfy (the push server) in Docker + the API from server/ on :8080
 e2e/emulator-setup.sh       # per emulator: PIN 1234, ACCESS_LOCAL_NETWORK (Android 17), adb reverse for ntfy
 e2e/unlock.sh               # after a cold boot: wake and enter the PIN if the lock screen shows
 e2e/launch.sh               # force-stop + cold start, prints the launch time
@@ -89,6 +92,11 @@ e2e/reset-limits.sh         # flush the rate-limit windows (auth 10 a minute for
 e2e/ntfy-check.sh           # the server sends a sealed high-urgency ring to the stack's ntfy (X1-SRV-UP's ignored test)
 e2e/stack-down.sh
 ```
+
+ntfy in that stack is only the push server. The distributor the emulator installs is
+`e2e/up-stub`, built from this repo (`./gradlew -p e2e/up-stub assembleDebug`). The scripts do
+not download an ntfy APK. `up-stub` subscribes to the local ntfy and forwards UnifiedPush
+`MESSAGE` intents. See `e2e/up-stub/README.md`.
 
 The wave 1 smoke test (`GET /config`, the socket's `auth.ok`, the vault round trip with real key
 routes) runs on an emulator prepared by `emulator-setup.sh`, against the stack; it skips itself
@@ -166,6 +174,82 @@ from the last measured figures recorded above.
 `SERIAL` picks a device when several are attached; ports, container names and the state folder
 (server log, media) are in `e2e/common.sh` and can be overridden from the environment. Use AOSP
 emulator images without Google APIs: the app must not need them.
+
+## Release
+
+One Google-free build. Release has R8 (`isMinifyEnabled`) and resource shrinking on. It ships two
+installable APKs and no universal APK:
+
+| APK | ABI | version code |
+| --- | --- | --- |
+| `app-arm64-v8a-release.apk` | phones and tablets | `2 * 1000 + versionCode` |
+| `app-x86_64-release.apk` | emulators and Chromebooks | `4 * 1000 + versionCode` |
+
+Unsigned CI builds use the same names with `-unsigned` before `.apk`. Debug stays one file,
+`app/build/outputs/apk/debug/app-debug.apk`, which the e2e scripts install. `ndk.abiFilters` is
+still those two ABIs. AGP rejects that together with ABI splits unless a universal APK is
+requested, so the universal flag stays on and the release universal output is disabled.
+
+The owner's release key is generated offline and is not in this repo, in CI, or in
+`e2e/repro-build.sh`. That script makes a throwaway PKCS12 keystore under `/tmp`, builds the
+signed release APKs twice with the same key, and compares zip entry payloads. It does not print
+the password. v1 signing is off, so a JAR signature timestamp is not in the APK. The v2/v3
+signing block is not a zip entry. If the payloads match and the file bytes differ, the script
+reports that and still passes.
+
+```bash
+e2e/repro-build.sh
+```
+
+16 KB: `app/src/main/cpp/check-native.sh` is POSIX sh. It checks ELF LOAD alignment of every `.so`
+in the APK (whisper, ggml, libc++ and WebRTC) and runs `zipalign -P 16`. A split APK must contain
+its own ABI; any other APK must contain both. CI installs `build-tools;36.0.0` for `zipalign` and
+uses `llvm-readelf` from NDK `30.0.16248370`.
+
+```bash
+app/src/main/cpp/check-native.sh \
+  app/build/outputs/apk/release/app-arm64-v8a-release-unsigned.apk \
+  app/build/outputs/apk/release/app-x86_64-release-unsigned.apk
+```
+
+Foreground services, as declared: the background connection is `specialUse`, with
+`PROPERTY_SPECIAL_USE_FGS_SUBTYPE` "Keeps the connection to the user's Shroud server open to
+receive messages and calls without a push service". The call service is
+`phoneCall|microphone|mediaProjection`. Incoming calls declare `USE_FULL_SCREEN_INTENT`. Play is
+not set up.
+
+Licence notices ship in `app/src/main/assets/licenses/` (Inter, JetBrains Mono, whisper.cpp, Haze,
+icons).
+
+F-Droid listing copy is `fastlane/metadata/android/en-US/` (`title.txt`, `short_description.txt`,
+`full_description.txt`). `fdroid build` is not run here. A builder needs JDK 21, NDK
+`30.0.16248370`, CMake `4.1.2`, and `:app:assembleRelease`. No anti-feature is declared in this
+repo. ntfy and the Shroud server are chosen by whoever runs them, and this build does not link
+Google services (`verifyNoGoogleServices`, `verifyNoGoogleClasses`).
+
+`e2e/repro-build.sh` was run once on this branch with the build cache off. The two signed splits
+were byte-identical, including the signing block. No zip entry had to be excluded.
+
+## Choosing a distributor
+
+Nothing arrives while Shroud is closed unless one of these is on. There is no FCM path.
+
+- **UnifiedPush.** The user installs a distributor. ntfy is one; it can point at a public server
+  or one they host. On sign-in, if exactly one distributor is installed and none was chosen, the
+  app registers that one (`PushRegistrar`). If several are installed, it does not guess
+  (`NoPushReason.NoneChosen`) until `chooseDistributor` is called. The server accepts the
+  subscription only for allowed distributor hosts, and never for Google's push hosts.
+- **Background connection.** Off unless turned on (`shroud.push`, default false). It starts a
+  `specialUse` foreground service, keeps the WebSocket open with `background: true`, and shows
+  "Connected to receive messages". Contacts are not shown this phone as online because of that
+  socket.
+
+With neither, `PushCopy` says the phone has no way to receive notifications while Shroud is
+closed. The Settings › Delivery screen that would list distributors is still an empty composable,
+so that choice is not drawn yet. The rules above are what the registration code does.
+
+The end-to-end scripts follow the same split. `e2e/stack-up.sh` runs ntfy in Docker as the push
+server. The distributor on the emulator is `e2e/up-stub`, not a downloaded ntfy APK.
 
 ## Conventions
 

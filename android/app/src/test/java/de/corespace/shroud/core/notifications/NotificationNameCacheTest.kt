@@ -1,5 +1,11 @@
 package de.corespace.shroud.core.notifications
 
+import de.corespace.shroud.core.net.ContactItemDto
+import de.corespace.shroud.core.net.ContactRequestDto
+import de.corespace.shroud.core.net.ContactRequestStatus
+import de.corespace.shroud.core.net.ConversationItemDto
+import de.corespace.shroud.core.net.ConversationPeerDto
+import de.corespace.shroud.core.net.UserCardDto
 import de.corespace.shroud.core.net.wire.Icu4jTextUnitsRule
 import de.corespace.shroud.core.storage.SealedFile
 import de.corespace.shroud.core.storage.Sealer
@@ -7,6 +13,9 @@ import de.corespace.shroud.core.storage.SealResult
 import de.corespace.shroud.core.storage.StorageSeal
 import de.corespace.shroud.testing.TempDirRule
 import de.corespace.shroud.testing.XorSealer
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -15,7 +24,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import java.io.File
+import java.time.Instant
 import java.util.UUID
+import java.util.concurrent.Executor
 
 /**
  * The AFU name cache of the background connection (00-plan §1.5, §1.7.10; `NotificationNameCacheTest`
@@ -127,6 +138,61 @@ class NotificationNameCacheTest {
         assertNull(cache.name(alice))
     }
 
+    /**
+     * Chats, then a request's card, then contacts on the same id. An empty map is not written, a
+     * repeat is skipped, and cancelling the job stops later names. No device.
+     */
+    @Test
+    fun followKeepsContactsAheadOfRequestsAndChatsUntilCancelled() = runTest {
+        var queued = 0
+        val writer = Executor {
+            queued++
+            it.run()
+        }
+        val cache = NotificationNameCache(
+            file = SealedFile(file, XorSealer()),
+            deleteKey = { keyDeletes++ },
+            seal = seal,
+            namesOn = { namesOn },
+            writer = writer,
+        )
+        val contacts = MutableStateFlow<List<ContactItemDto>>(emptyList())
+        val requests = MutableStateFlow<List<ContactRequestDto>>(emptyList())
+        val chats = MutableStateFlow<List<ConversationItemDto>>(emptyList())
+        val cara = UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+        val job = cache.follow(this, contacts, requests, chats)
+        advanceUntilIdle()
+        assertEquals(0, queued)
+        assertFalse(file.exists())
+
+        chats.value = listOf(chat(alice, "chat-alice"), chat(bob, "chat-bob"))
+        requests.value = listOf(request(bob, "request-bob"), request(cara, null))
+        contacts.value = listOf(ContactItemDto(alice, "contact-alice", Instant.EPOCH))
+        advanceUntilIdle()
+        cache.drain()
+        assertEquals("contact-alice", cache.name(alice))
+        assertEquals("request-bob", cache.name(bob))
+        assertNull(cache.name(cara))
+        val afterNames = queued
+        assertTrue(afterNames > 0)
+
+        // New chat rows, same usernames. combine emits; the name map does not, so the writer does not run.
+        // drain() itself is the one extra execution.
+        chats.value = listOf(chat(alice, "chat-alice"), chat(bob, "chat-bob"))
+        advanceUntilIdle()
+        cache.drain()
+        assertEquals(afterNames + 1, queued)
+
+        job.cancel()
+        job.join()
+        assertTrue(job.isCancelled)
+        contacts.value = listOf(ContactItemDto(bob, "later", Instant.EPOCH))
+        advanceUntilIdle()
+        cache.drain()
+        assertEquals(afterNames + 2, queued)
+        assertEquals("request-bob", cache.name(bob))
+    }
+
     /** A record that cannot be read now (phone locked, Keystore hiccup) is never overwritten. */
     @Test
     fun anUnreadableRecordIsKept() {
@@ -143,4 +209,19 @@ class NotificationNameCacheTest {
         assertArrayEquals(before, file.readBytes())
         assertEquals("alice", cache().name(alice))
     }
+
+    private fun chat(peer: UUID, username: String) = ConversationItemDto(
+        id = UUID.randomUUID(),
+        peer = ConversationPeerDto(peer, username),
+        createdAt = Instant.EPOCH,
+    )
+
+    private fun request(from: UUID, username: String?) = ContactRequestDto(
+        id = UUID.randomUUID(),
+        fromUserId = from,
+        toUserId = UUID.randomUUID(),
+        status = ContactRequestStatus.PENDING,
+        createdAt = Instant.EPOCH,
+        user = username?.let { UserCardDto(from, it) },
+    )
 }
