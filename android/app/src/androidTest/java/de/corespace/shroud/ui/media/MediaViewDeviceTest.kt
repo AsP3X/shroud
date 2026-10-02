@@ -29,6 +29,7 @@ import de.corespace.shroud.core.media.capture.CameraXSession
 import de.corespace.shroud.core.media.capture.ShroudCameraCapture
 import de.corespace.shroud.core.media.share.MemoryMediaSharing
 import de.corespace.shroud.core.media.share.SaveOutcome
+import de.corespace.shroud.core.media.share.ShareTarget
 import de.corespace.shroud.ui.camera.CameraCaptureContent
 import de.corespace.shroud.ui.camera.CameraServices
 import de.corespace.shroud.ui.media.viewer.MediaImageViewerContent
@@ -41,7 +42,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
-import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -176,18 +176,9 @@ class MediaViewDeviceTest {
             runCatching { rule.onNodeWithContentDescription("Take photo").assertIsEnabled() }.isSuccess
         }
         rule.onNodeWithText("VIDEO").performClick()
-        val videoBound = runCatching {
-            rule.waitUntil(15_000) {
-                runCatching { rule.onNodeWithContentDescription("Start recording").assertIsEnabled() }.isSuccess
-            }
-        }.isSuccess
-        // Core gap (C13 report): CameraXSession asks for FHD with lowerQualityOrHigherThan(HD), which
-        // leaves HD itself out, so a camera whose only video quality is HD (this API 30 image) cannot
-        // bind video and the screen honestly says "No camera available". Skipped, not failed, until
-        // core's QualitySelector includes HD; then this runs as a full check.
-        if (!videoBound) {
-            rule.onNodeWithText("No camera available").assertExists()
-            assumeTrue("video does not bind on an HD-only camera (core QualitySelector gap)", false)
+        // Recording falls back FHD → HD → SD (gap #13), so this API 30 image's HD-only camera binds video.
+        rule.waitUntil(40_000) {
+            runCatching { rule.onNodeWithContentDescription("Start recording").assertIsEnabled() }.isSuccess
         }
         rule.onNodeWithContentDescription("Start recording").performClick()
         rule.waitUntil(5_000) { runCatching { rule.onNodeWithContentDescription("Stop recording").assertExists() }.isSuccess }
@@ -234,6 +225,8 @@ class MediaViewDeviceTest {
         rule.waitUntil(10_000) { services.shared.isNotEmpty() }
         val uri = services.shared.single()
         assertEquals("${context.packageName}.media", uri.authority)
+        // The share sheet got the type K10 stored with the grant (gap #15).
+        assertEquals("image/jpeg", services.mimes.single())
         // The system share sheet is up over the viewer; the grant reads while the viewer stays.
         val read = resolver.openInputStream(uri)!!.use { it.readBytes() }
         assertArrayEquals(bytes, read)
@@ -285,6 +278,7 @@ class MediaViewDeviceTest {
     /** The viewer's port on the real in-memory sharing (K10); the bytes stand in for `mediaBytes`. */
     private class RealSharingServices(private val sharing: MemoryMediaSharing, private val bytes: ByteArray) : ViewerServices {
         val shared = ArrayList<Uri>()
+        val mimes = ArrayList<String>()
         val saves = ArrayList<SaveOutcome>()
 
         override suspend fun mediaBytes(messageId: UUID): ByteArray = bytes
@@ -294,7 +288,10 @@ class MediaViewDeviceTest {
             return android.graphics.BitmapFactory.decodeByteArray(data, 0, data.size)
         }
 
-        override suspend fun shareUri(messageId: UUID): Uri? = sharing.shareUri(messageId)?.also { shared += it }
+        override suspend fun shareTarget(messageId: UUID): ShareTarget? = sharing.shareTarget(messageId)?.also {
+            shared += it.uri
+            mimes += it.mime
+        }
 
         override fun revokeShares() = sharing.revokeAll()
 

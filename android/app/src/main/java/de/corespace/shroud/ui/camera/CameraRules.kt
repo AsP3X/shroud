@@ -1,6 +1,8 @@
 package de.corespace.shroud.ui.camera
 
+import de.corespace.shroud.core.media.capture.CameraBindState
 import de.corespace.shroud.core.media.video.ChatVideoPlayer
+import kotlin.math.abs
 
 /** What the shutter does (iOS lets the user switch the system camera between the two, `CameraPicker.swift:24-37`). */
 enum class CameraMode(val title: String) {
@@ -21,6 +23,18 @@ enum class CameraAccess {
     DeniedPermanently,
 }
 
+/** What the camera screen makes of K9's [CameraBindState] for the lens and mode on screen. */
+enum class CameraBind {
+    /** No answer yet (CameraX can take seconds to start): black, the shutter off, nothing said. */
+    Waiting,
+
+    /** A lens is up: the shutter works. */
+    Ready,
+
+    /** K9 says there is no camera: "No camera available". */
+    NoCamera,
+}
+
 /**
  * The in-app camera's rules (conversation-compose-media §8.3, P8, Q1; K9). Pure.
  *
@@ -29,39 +43,55 @@ enum class CameraAccess {
  */
 internal object CameraRules {
     /**
-     * The pinch's upper bound. K9 does not publish the lens's zoom range (contract gap); core
-     * clamps every [de.corespace.shroud.core.media.capture.CameraCapture.setZoom] to the real
-     * range, so this only stops a pinch from running far past it.
+     * The pinch's bounds while K9 has no [de.corespace.shroud.core.media.capture.CameraCapture.zoomRange]
+     * (before a bind finished). Core clamps every `setZoom` to the lens's real range as well.
      */
     const val MAX_ZOOM = 8f
     const val MIN_ZOOM = 1f
 
-    /** How long a bind may take before the screen says there is no camera (K9 binds asynchronously). */
-    const val BIND_GRACE_MS = 4_000L
-
-    /** How often the bind flags are re-read while waiting. */
-    const val BIND_POLL_MS = 100L
-
-    /** … and once the screen already says there is no camera (CameraX may still come up). */
-    const val BIND_SLOW_POLL_MS = 500L
-
-    /** A pinch's new zoom ratio. */
-    fun pinch(current: Float, zoomChange: Float): Float {
-        if (!zoomChange.isFinite() || zoomChange <= 0f) return current
-        return (current * zoomChange).coerceIn(MIN_ZOOM, MAX_ZOOM)
+    /**
+     * The screen's reading of a bind (K9 `bindState`, gap #14). [ownBind] is false until this
+     * screen has asked for the lens and mode it shows: a state left by an earlier bind (the other
+     * lens, the other mode, a camera screen that closed) is not this screen's answer. "No camera"
+     * comes only from K9 — a failed bind, or one that finished with no lens — never from a timer,
+     * so a slow CameraX start never flashes it.
+     */
+    fun bindView(state: CameraBindState, ownBind: Boolean): CameraBind = when {
+        !ownBind -> CameraBind.Waiting
+        state is CameraBindState.Bound -> if (state.hasFront || state.hasBack) CameraBind.Ready else CameraBind.NoCamera
+        state == CameraBindState.Failed -> CameraBind.NoCamera
+        else -> CameraBind.Waiting
     }
 
-    /** The "1×" chip that puts the zoom back shows once the picture is zoomed. */
-    fun showsZoomReset(ratio: Float): Boolean = ratio > MIN_ZOOM + 0.01f
+    /**
+     * The pinch's bounds: the bound lens's [range] (K9 `zoomRange`; below 1× on a phone with an
+     * ultra-wide), else [MIN_ZOOM]..[MAX_ZOOM]. A range that is not a usable interval counts as none.
+     */
+    fun zoomBounds(range: ClosedFloatingPointRange<Float>?): ClosedFloatingPointRange<Float> {
+        if (range == null) return MIN_ZOOM..MAX_ZOOM
+        val low = range.start
+        val high = range.endInclusive
+        if (!low.isFinite() || !high.isFinite() || low <= 0f || high < low) return MIN_ZOOM..MAX_ZOOM
+        return range
+    }
+
+    /** A pinch's new zoom ratio, inside the lens's [range] (K9 `zoomRange`, null before a bind). */
+    fun pinch(current: Float, zoomChange: Float, range: ClosedFloatingPointRange<Float>?): Float {
+        if (!zoomChange.isFinite() || zoomChange <= 0f) return current
+        return (current * zoomChange).coerceIn(zoomBounds(range))
+    }
+
+    /** The "1×" chip that puts the zoom back shows once the picture is zoomed in or out. */
+    fun showsZoomReset(ratio: Float): Boolean = abs(ratio - 1f) > 0.01f
 
     /** The record timer, "m:ss" like every other video time. */
     fun recordingLabel(elapsedMillis: Long): String = ChatVideoPlayer.timeLabel(elapsedMillis.coerceAtLeast(0L) / 1000.0)
 
     /**
-     * Front cameras have no torch to speak of: the control shows for the back lens only (K9 does
-     * not say whether a lens has a flash unit — contract gap).
+     * The torch control shows only for a bound lens with a flash unit (K9 `hasFlashUnit`); most
+     * front cameras have none, so it usually goes when the user flips.
      */
-    fun showsTorch(front: Boolean): Boolean = !front
+    fun showsTorch(ready: Boolean, hasFlashUnit: Boolean): Boolean = ready && hasFlashUnit
 
     /** The lens after a flip: the other one when it exists, else the same. */
     fun flipped(front: Boolean, hasFront: Boolean, hasBack: Boolean): Boolean = when {

@@ -13,6 +13,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import de.corespace.shroud.core.media.MediaImageSource
 import de.corespace.shroud.core.media.share.SaveOutcome
+import de.corespace.shroud.core.media.share.ShareTarget
 import de.corespace.shroud.ui.components.ComposeHarness
 import de.corespace.shroud.ui.media.HarnessRule
 import de.corespace.shroud.ui.media.ViewerItem
@@ -47,7 +48,7 @@ class MediaImageViewerStateTest {
 
     private class FakeServices : ViewerServices {
         val bytes = mutableMapOf<UUID, ByteArray>()
-        var share: Uri? = Uri.parse("content://de.corespace.shroud.media/0b6f")
+        var share: ShareTarget? = ShareTarget(Uri.parse("content://de.corespace.shroud.media/0b6f"), "image/heic")
         var save: SaveOutcome = SaveOutcome.Saved
         var revoked = 0
         val shared = mutableListOf<UUID>()
@@ -57,7 +58,7 @@ class MediaImageViewerStateTest {
 
         override suspend fun decodePreview(source: MediaImageSource, maxEdge: Int): Bitmap? = Bitmap.createBitmap(30, 40, Bitmap.Config.ARGB_8888)
 
-        override suspend fun shareUri(messageId: UUID): Uri? {
+        override suspend fun shareTarget(messageId: UUID): ShareTarget? {
             shared += messageId
             return share
         }
@@ -163,9 +164,11 @@ class MediaImageViewerStateTest {
         assertTrue(chooser.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
         val send = requireNotNull(chooser.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java))
         assertEquals(Intent.ACTION_SEND, send.action)
-        assertEquals(services.share, send.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java))
+        // The type K10 stored with the grant (gap #15), not a ContentResolver lookup.
+        assertEquals("image/heic", send.type)
+        assertEquals(services.share?.uri, send.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java))
         assertTrue(send.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
-        assertEquals(services.share, send.clipData?.getItemAt(0)?.uri)
+        assertEquals(services.share?.uri, send.clipData?.getItemAt(0)?.uri)
     }
 
     @Test
@@ -210,9 +213,25 @@ class MediaImageViewerStateTest {
         ui.idle()
         val clipboard = ui.activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val clip = requireNotNull(clipboard.primaryClip)
-        assertEquals(services.share, clip.getItemAt(0).uri)
+        assertEquals(services.share?.uri, clip.getItemAt(0).uri)
+        assertEquals(listOf("image/heic"), (0 until clip.description.mimeTypeCount).map { clip.description.getMimeType(it) })
         assertTrue(clip.description.extras?.getBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE) == true)
         // API 35 confirms the copy itself: no second "Copied".
         assertTrue(ui.nodesWithText("Copied").isEmpty())
+    }
+
+    @Test
+    fun aPhotoThatCannotBeCopiedSaysSo() {
+        val services = FakeServices().apply { share = null }
+        val ui = harness.compose {
+            MediaImageViewerContent(items, items[1].id, onClose = {}, onLoad = null, onDelete = null, services = services)
+        }
+        click(ui, "More")
+        ui.nodesWithText("Copy").single { SemanticsActions.OnClick in it.config }.config[SemanticsActions.OnClick].action!!.invoke()
+        ui.idle()
+        assertEquals(listOf(items[1].id), services.shared)
+        assertTrue(ui.describe(), ui.nodesWithText("Could not copy that photo.").isNotEmpty())
+        val clipboard = ui.activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        assertEquals(null, clipboard.primaryClip)
     }
 }

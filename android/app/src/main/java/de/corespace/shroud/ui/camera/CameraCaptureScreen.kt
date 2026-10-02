@@ -64,6 +64,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import de.corespace.shroud.AppContainer
 import de.corespace.shroud.core.media.ImageEncodeException
 import de.corespace.shroud.core.media.MediaImageSource
+import de.corespace.shroud.core.media.capture.CameraBindState
 import de.corespace.shroud.core.media.capture.CameraCapture
 import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.ui.LocalAppContainer
@@ -110,7 +111,9 @@ import kotlin.coroutines.cancellation.CancellationException
  * sound and the screen says so.
  *
  * Agent: binds `media.camera` (K9) to this composition's lifecycle with a viewfinder surface
- * provider and unbinds when it leaves (which also deletes an unfinished clip). [onPhoto] gets a
+ * provider and unbinds when it leaves (which also deletes an unfinished clip). The shutter, flip
+ * and "No camera available" follow K9's `bindState`; pinch stays inside `zoomRange` and the torch
+ * shows only with `hasFlashUnit` (gap #14). [onPhoto] gets a
  * [PickedPhoto] whose source is the capture's FileProvider URI (never MediaStore); [onVideo] a
  * [PickedMovie] owning the recorded file, which the host cleans up after send or cancel. A capture
  * that could not be read shows its failure toast here and the camera stays open.
@@ -192,10 +195,19 @@ private fun CameraBody(
     var front by remember { mutableStateOf(false) }
     var torch by remember { mutableStateOf(false) }
     var zoom by remember { mutableFloatStateOf(1f) }
-    var bound by remember { mutableStateOf(false) }
-    var noCamera by remember { mutableStateOf(false) }
-    var hasFront by remember { mutableStateOf(false) }
-    var hasBack by remember { mutableStateOf(false) }
+    // The lens and mode this screen last asked K9 for (see CameraRules.bindView).
+    var asked by remember { mutableStateOf<Pair<Boolean, CameraMode>?>(null) }
+    val bindState by camera.bindState.collectAsState()
+    val bind = CameraRules.bindView(bindState, ownBind = asked == (front to mode))
+    val bound = bind == CameraBind.Ready
+    val noCamera = bind == CameraBind.NoCamera
+    val lenses = bindState as? CameraBindState.Bound
+    val hasFront = bound && lenses?.hasFront == true
+    val hasBack = bound && lenses?.hasBack == true
+    // K9's flash flag is a plain property; it changes only with a bind, so it is re-read on each one.
+    // Keyed on `asked` too: a bind that finishes at once can publish a Bound equal to the last one,
+    // which the StateFlow does not emit again (the other lens of a two-camera phone).
+    val hasFlashUnit = remember(bindState, bound, asked) { bound && camera.hasFlashUnit }
     var capturing by remember { mutableStateOf(false) }
     var recordingSince by remember { mutableStateOf<Long?>(null) }
     var elapsed by remember { mutableLongStateOf(0L) }
@@ -206,29 +218,18 @@ private fun CameraBody(
     val provider = remember { Preview.SurfaceProvider { request -> requests.value = request } }
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    // Bind for the lens and mode on screen; K9 binds asynchronously, so its flags are read until
-    // they say a camera is up. Past a grace period the screen says there is no camera, but keeps
-    // reading: CameraX can take several seconds to start on a phone that misreports its cameras.
+    // Bind for the lens and mode on screen. K9 binds asynchronously and says how it went in
+    // `bindState` (Binding → Bound(hasFront, hasBack) or Failed); CameraX can take several seconds
+    // to start on a phone that misreports its cameras, and the screen just waits for the answer.
     LaunchedEffect(access, front, mode, lifecycleOwner) {
         if (access != CameraAccess.Granted) return@LaunchedEffect
-        bound = false
-        noCamera = false
         torch = false
         zoom = 1f
         camera.bind(lifecycleOwner, provider, front, video = mode == CameraMode.Video)
-        val started = SystemClock.uptimeMillis()
-        while (isActive) {
-            hasFront = camera.hasFrontCamera
-            hasBack = camera.hasBackCamera
-            if (hasFront || hasBack) {
-                bound = true
-                noCamera = false
-                break
-            }
-            if (!noCamera && SystemClock.uptimeMillis() - started > CameraRules.BIND_GRACE_MS) noCamera = true
-            delay(if (noCamera) CameraRules.BIND_SLOW_POLL_MS else CameraRules.BIND_POLL_MS)
-        }
-        // A phone with only a front camera opens on it.
+        asked = front to mode
+    }
+    // A phone with only a front camera opens on it.
+    LaunchedEffect(bound, hasFront, hasBack) {
         if (bound && !front && CameraRules.initialFront(hasFront, hasBack)) front = true
     }
     DisposableEffect(camera) {
@@ -335,7 +336,8 @@ private fun CameraBody(
                             .semantics { contentDescription = "Camera preview" }
                             .pointerInput(Unit) {
                                 detectTransformGestures { _, _, zoomChange, _ ->
-                                    val next = CameraRules.pinch(zoom, zoomChange)
+                                    // The bound lens's range (K9 `zoomRange`), read as the fingers move.
+                                    val next = CameraRules.pinch(zoom, zoomChange, camera.zoomRange)
                                     if (next != zoom) {
                                         zoom = next
                                         camera.setZoom(next)
@@ -356,7 +358,7 @@ private fun CameraBody(
                     elapsed = elapsed,
                     busy = capturing,
                     ready = bound,
-                    showsTorch = bound && CameraRules.showsTorch(front),
+                    showsTorch = CameraRules.showsTorch(bound, hasFlashUnit),
                     torch = torch,
                     canFlip = bound && CameraRules.canFlip(hasFront, hasBack, recording),
                     zoom = zoom,

@@ -251,13 +251,13 @@ private fun ViewerBody(
     fun share() {
         val item = currentItem ?: return
         scope.launch {
-            val uri = services.shareUri(item.id)
-            if (uri == null) {
+            val target = services.shareTarget(item.id)
+            if (target == null) {
                 haptic(Haptic.Error)
                 banner.flash(scope, SHARE_FAILED, BANNER_MS)
                 return@launch
             }
-            val send = MediaShareIntents.send(uri, context.contentResolver.getType(uri))
+            val send = MediaShareIntents.send(target)
             try {
                 context.startActivity(MediaShareIntents.chooser(send))
             } catch (_: ActivityNotFoundException) {
@@ -270,14 +270,14 @@ private fun ViewerBody(
     fun copy() {
         val item = currentItem ?: return
         scope.launch {
-            val uri = services.shareUri(item.id)
+            val target = services.shareTarget(item.id)
             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-            if (uri == null || clipboard == null) {
+            if (target == null || clipboard == null) {
                 haptic(Haptic.Error)
                 banner.flash(scope, COPY_FAILED, BANNER_MS)
                 return@launch
             }
-            clipboard.setPrimaryClip(MediaShareIntents.clip(context.contentResolver, uri))
+            clipboard.setPrimaryClip(MediaShareIntents.clip(target))
             haptic(Haptic.Success)
             if (MediaShareIntents.showsCopiedBanner()) banner.flash(scope, COPIED, BANNER_MS)
         }
