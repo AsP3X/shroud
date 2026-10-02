@@ -1,7 +1,6 @@
 package de.corespace.shroud.ui.conversation.bubble
 
 import android.content.Context
-import android.media.MediaMetadataRetriever
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.remember
@@ -19,10 +18,8 @@ import de.corespace.shroud.ui.components.Toast
 import de.corespace.shroud.ui.conversation.DecodedImageCache
 import de.corespace.shroud.ui.conversation.LinkPreviewImageCache
 import de.corespace.shroud.ui.conversation.links.MessageLinkText
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.util.UUID
 
 /**
@@ -134,26 +131,8 @@ private class ContainerBubbleServices(private val container: AppContainer) : Bub
     override suspend fun ensureLinkImageLoaded(message: ChatMessage) = messaging.ensureLinkImageLoaded(message)
     override suspend fun videoPoster(messageId: UUID): ByteArray? = container.video.pipeline.posterJpegFromLocal(messageId)
 
-    override suspend fun mediaDurationMs(messageId: UUID): Int? = withContext(Dispatchers.IO) {
-        // Read off the sealed cache through a MediaDataSource: no plaintext file (plan C7).
-        val source = container.media.metadataSource(messageId) ?: return@withContext null
-        val retriever = MediaMetadataRetriever()
-        try {
-            retriever.setDataSource(source)
-        } catch (_: Exception) {
-            // Never handed over: close it here (the retriever closes a source it took on release).
-            source.close()
-            retriever.release()
-            return@withContext null
-        }
-        try {
-            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.takeIf { it > 0 }?.toInt()
-        } catch (_: Exception) {
-            null
-        } finally {
-            retriever.release()
-        }
-    }
+    /** Core reads the duration off the sealed cache (`VideoPipeline.durationMs`, no plaintext file). */
+    override suspend fun mediaDurationMs(messageId: UUID): Int? = container.video.pipeline.durationMs(messageId)
 
     override val playback: VoicePlaybackCoordinator get() = container.voice.playback
     override val transcription: VoiceTranscription get() = container.transcription.voice

@@ -174,6 +174,9 @@ object DevicesCopy {
 
     fun removed(name: String): String = "$name removed"
 
+    /** `DevicesView.swift:499`: the device was gone before the DELETE arrived (a 404). */
+    fun alreadyRemoved(name: String): String = "$name was already removed"
+
     /** The toast after Remove All (`DevicesView.swift:540`). */
     fun removedCount(count: Int): String = if (count == 1) "1 device removed" else "$count devices removed"
 }
@@ -228,6 +231,8 @@ class DevicesViewModel(
                         haptic(Haptic.Success)
                         toast(Toast.success(DevicesCopy.removed(name)))
                     }
+                    // A 404: core already dropped the row; iOS says so without a haptic (`:497-499`).
+                    RemoveOutcome.AlreadyRemoved -> toast(Toast.info(DevicesCopy.alreadyRemoved(name)))
                     is RemoveOutcome.Partial, is RemoveOutcome.Failed -> haptic(Haptic.Error)
                 }
             } finally {
@@ -248,7 +253,8 @@ class DevicesViewModel(
         actionScope.launch {
             try {
                 when (devices.removeAllOthers()) {
-                    RemoveOutcome.Removed -> {
+                    // Core counts a 404 as removed here and never returns AlreadyRemoved; both read as done.
+                    RemoveOutcome.Removed, RemoveOutcome.AlreadyRemoved -> {
                         haptic(Haptic.Success)
                         toast(Toast.success(DevicesCopy.removedCount(count)))
                     }
