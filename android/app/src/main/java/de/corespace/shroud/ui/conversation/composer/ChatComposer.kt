@@ -31,7 +31,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -154,6 +153,13 @@ internal fun ChatComposer(
         if (runCatching { focusRequester.requestFocus() }.isSuccess) keyboard?.show()
     }
 
+    // The take swaps the field out, and the keyboard drops with it (`ChatComposerView.swift:305-307`):
+    // the bar slides down under the still finger, which the gesture reads in window space. Compose
+    // keeps the keyboard up when a focused field merely leaves composition, so it is told.
+    LaunchedEffect(phase.isActive) {
+        if (phase.isActive) keyboard?.hide()
+    }
+
     // Back during a take discards it and stays in the chat (thread D9 = compose Q10).
     BackHandler(enabled = phase.isActive) { gesture.finish(send = false) }
 
@@ -210,13 +216,24 @@ internal fun ChatComposer(
         val shownLockProgress = if (phase.isLocked) 1f else lastLockProgress[0]
         AnimatedVisibility(
             visible = phase.isActive && !phase.isLocked,
-            modifier = Modifier.align(Alignment.TopEnd).padding(end = 4.dp).offset(y = (-74).dp),
+            modifier = Modifier.align(Alignment.TopEnd).padding(end = 4.dp).overlayAbove(LOCK_PILL_RISE),
             enter = scaleIn(Motion.snappy(), initialScale = 0.6f, transformOrigin = TransformOrigin(0.5f, 1f)) + fadeIn(Motion.snappy()),
             exit = scaleOut(Motion.snappy(), targetScale = 0.6f, transformOrigin = TransformOrigin(0.5f, 1f)) + fadeOut(Motion.snappy()),
         ) {
             VoiceLockIndicator(progress = shownLockProgress)
         }
     }
+}
+
+/**
+ * Places this [rise] above its slot's top edge without taking any room (iOS `.overlay(alignment:
+ * .topTrailing) { … .offset(y: -74) }`, `ChatComposerView.swift:119-132`): it reports no height, so
+ * the 60 dp lock pill never grows the 44 dp composer row it floats over — the bar keeps its height
+ * when a take starts, and the reported height stays the row's.
+ */
+private fun Modifier.overlayAbove(rise: Dp): Modifier = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints.copy(minWidth = 0, minHeight = 0, maxHeight = Constraints.Infinity))
+    layout(placeable.width, 0) { placeable.place(0, -rise.roundToPx()) }
 }
 
 /** `.transition(.move(edge: .bottom).combined(with: .opacity))` animated with `Motion.standard` (`:113-116, 137`). */
@@ -428,10 +445,11 @@ private fun MicButton(phase: ComposerPhase, level: Float, gesture: ComposerGestu
     val active = phase.isActive
     val currentGesture by rememberUpdatedState(gesture)
     val coordinates = remember { WindowCoordinates() }
-    val grow by animateFloatAsState(if (active && !reduce) 1.25f else 1f, Motion.snappy(), label = "micGrow")
+    // The live mic is 1.25× under Reduce Motion too (a state, not a movement); only the spring goes.
+    val grow by animateFloatAsState(if (active) 1.25f else 1f, Motion.respecting(reduce, Motion.snappy()), label = "micGrow")
     val heard by animateFloatAsState(level, Motion.easeOut(LEVEL_EASE_MS), label = "micLevel")
-    val haloAlpha by animateFloatAsState(if (active) 1f else 0f, Motion.snappy(), label = "micHaloAlpha")
-    val haloBase by animateFloatAsState(if (active) 1.6f else 0.5f, Motion.snappy(), label = "micHaloBase")
+    val haloAlpha by animateFloatAsState(if (active) 1f else 0f, Motion.respecting(reduce, Motion.snappy()), label = "micHaloAlpha")
+    val haloBase by animateFloatAsState(if (active) 1.6f else 0.5f, Motion.respecting(reduce, Motion.snappy()), label = "micHaloBase")
     Box(
         Modifier
             .touchArea(ComposerMetrics.slotSize, ComposerMetrics.touchSize)
@@ -631,3 +649,6 @@ private const val LEVEL_EASE_MS = 120
 
 /** Send's drop as it swaps in (`ChatComposerView.swift:258`). */
 private val SEND_DROP = 6.dp
+
+/** The lock pill's top above the composer's top: its 60 dp end 14 dp above the row or strip (`ChatComposerView.swift:124-128`). */
+private val LOCK_PILL_RISE = 74.dp

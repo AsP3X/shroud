@@ -357,8 +357,9 @@ class ComposeController internal constructor(
 
     /** Throws the take away (slide to cancel, Discard, a release during the start) (CV:1439-1444). */
     internal fun cancelRecording() {
-        services.cancelRecording()
+        // Released before the recorder reports the stop, so that report does not signal a second "stopped".
         ownsTake = false
+        services.cancelRecording()
         updateRecording()
         if (!isNotes) services.setRecording(peer, false)
     }
@@ -370,12 +371,13 @@ class ComposeController internal constructor(
      */
     internal fun sendRecording() {
         services.sendScope.launch {
+            // Each outcome below signals "stopped" once itself; the recorder's own stop report must not add a second.
+            ownsTake = false
             val take = try {
                 services.finishRecording()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (e: Exception) {
-                ownsTake = false
                 updateRecording()
                 if (!isNotes) services.setRecording(peer, false)
                 if (!left) {
@@ -384,7 +386,6 @@ class ComposeController internal constructor(
                 }
                 return@launch
             }
-            ownsTake = false
             updateRecording()
             if (take == null) {
                 if (!isNotes) services.setRecording(peer, false)
