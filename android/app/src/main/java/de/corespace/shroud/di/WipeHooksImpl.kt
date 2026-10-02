@@ -31,6 +31,8 @@ class WipeHooksImpl(private val container: AppContainer) : WipeHooks {
         container.media.sharingIfBuilt?.revokeAll()
         container.auth.devicesIfBuilt?.clear()
         container.push.stopBackgroundSynchronously()
+        // Every cacheDir/shroud-* file. The lock path keeps the ten-minute age; a wipe does not.
+        container.keys.sensitiveTempFiles.sweep()
     }
 
     /**

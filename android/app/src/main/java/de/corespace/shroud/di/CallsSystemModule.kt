@@ -20,12 +20,14 @@ import java.util.UUID
 
 /**
  * Call system integration (00-plan §1.7.11). Telecom registration runs in [onProcessStart].
- * G9 attaches this [system] to the call controller; this module does not call `CallController.attach`.
+ * Production attaches this [system] once, from [de.corespace.shroud.AppContainer.onProcessStart]
+ * (`calls.controller.attach(callsMedia.engine, callsSystem.system)`). This module does not call
+ * `CallController.attach`.
  *
  * UnifiedPush and the background socket deliver a call through
  * [de.corespace.shroud.core.calls.CallController.handleCallPush] (`PushModule`). That reports an
- * incoming call only when a [CallSystem] is attached. Until G9 attaches [system], a push reaches
- * the controller and does not ring.
+ * incoming call when a [CallSystem] is attached. [onCallPush] is not a second production path:
+ * wiring it into the dispatcher as well would double-ring.
  */
 class CallsSystemModule(container: AppContainer) : AppModule(container) {
     private val systemLazy = lazy { create() }

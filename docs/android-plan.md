@@ -40,7 +40,13 @@ foundations, W2 engines, W3 screens and platform, W4 hardening and release). Wav
 - Voice notes are transcribed on device with whisper.cpp. Per-chat language stats are sealed at `language-stats.sealed` and do not leave the phone. The physical-phone RTF gate in [android/README.md](../android/README.md) is still owed.
 - Release: R8 and resource shrinking are on. The release build is one APK per ABI (`arm64-v8a`, `x86_64`) and no universal APK. Debug stays `app-debug.apk`. The owner's key is not in the repo. `android/e2e/repro-build.sh` compares two builds signed with a throwaway `/tmp` keystore. `check-native.sh` is POSIX sh and runs in CI on every `.so`, including WebRTC.
 
-The signed-in UI is still the interim root (`ShroudApp`). `CallActivity` still closes at once, and `CallController.attach` is not wired.
+The signed-in UI on this branch is still the interim root (`ShroudApp`). `CallActivity` still closes at once. The shell is not in this branch.
+
+**Status (2026-10-02, `grok/g9-prep`):** this branch prepares the non-UI half of G9. It is not merged. The owner merges it together with `claude/android-ui`.
+
+- Production attaches the call engine once, from `AppContainer.onProcessStart`, after the call controller and the call system have started: `calls.controller.attach(callsMedia.engine, callsSystem.system)`. `CallsSystemModule` does not attach, and `onCallPush` is not fed to the push dispatcher. `PushModule` already forwards a call push to `CallController.handleCallPush`.
+- A wipe deletes every `cacheDir/shroud-*` file (`WipeHooksImpl.haltWriters` calls `SensitiveTempFiles.sweep()` with no age). Chat lock still passes `SensitiveTempFiles.STALE_AGE_MS` (ten minutes).
+- `ShroudApplication` no longer locks chats from `ON_STOP`. `ShellModule.onProcessStart()` stays a no-op. On `claude/android-ui` the shell starts from `MainActivity` via `container.shell.startShell()` and owns auto-lock. That shell is not in this branch.
 
 Still open from wave 1:
 
