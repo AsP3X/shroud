@@ -62,60 +62,74 @@ import kotlin.math.max
 
 /**
  * A full-window media surface: its own root layer above the app (an [OverlayLayer], so TalkBack
- * only reaches it and its back handlers outrank the chat's), dark tokens inside only, the status
- * bar hidden while it is up (`.statusBarHidden(true)`).
+ * only reaches it and its back handlers outrank the chat's), dark tokens inside only, light system
+ * bar icons over the black, and — with [hideStatusBar] — no status bar while it is up
+ * (`.statusBarHidden(true)`; the compose screens keep theirs, drawn light, as iOS does).
  */
 @Composable
 internal fun MediaLayer(hideStatusBar: Boolean = true, content: @Composable BoxScope.() -> Unit) {
     OverlayLayer(active = true, modal = true) {
         ShroudTheme(dark = true) {
-            if (hideStatusBar) HideStatusBar()
+            DarkSystemBars(hideStatusBar)
             Box(Modifier.fillMaxSize(), content = content)
         }
     }
 }
 
 /**
- * Hides the status bar while composed (transient on a swipe), and shows it again when the last
- * surface that hid it leaves — the viewer and a player opened over it share one count.
+ * Light status and navigation bar icons while composed, and the status bar hidden (transient on a
+ * swipe) when [hideStatusBar]. Both go back when the last surface that asked leaves — a player
+ * opened over the viewer shares one count with it.
  */
 @Composable
-internal fun HideStatusBar() {
+internal fun DarkSystemBars(hideStatusBar: Boolean) {
     val view = LocalView.current
-    DisposableEffect(view) {
+    DisposableEffect(view, hideStatusBar) {
         val window = view.context.findActivity()?.window
         if (window == null) {
             onDispose { }
         } else {
             val controller = WindowCompat.getInsetsController(window, view)
-            StatusBarHiding.acquire(controller)
-            onDispose { StatusBarHiding.release(controller) }
+            MediaSystemBars.acquire(controller, hideStatusBar)
+            onDispose { MediaSystemBars.release(controller, hideStatusBar) }
         }
     }
 }
 
-/** Reference count of the surfaces hiding the status bar (main thread only). */
-internal object StatusBarHiding {
+/** Reference counts of the media surfaces holding the system bars (main thread only). */
+internal object MediaSystemBars {
     private var holders = 0
-    private var previousBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
+    private var hiders = 0
+    private var lightStatus = false
+    private var lightNavigation = false
+    private var behavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
 
-    fun acquire(controller: WindowInsetsControllerCompat) {
+    fun acquire(controller: WindowInsetsControllerCompat, hideStatusBar: Boolean) {
         if (holders++ == 0) {
-            previousBehavior = controller.systemBarsBehavior
+            lightStatus = controller.isAppearanceLightStatusBars
+            lightNavigation = controller.isAppearanceLightNavigationBars
+            controller.isAppearanceLightStatusBars = false
+            controller.isAppearanceLightNavigationBars = false
+        }
+        if (hideStatusBar && hiders++ == 0) {
+            behavior = controller.systemBarsBehavior
             controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             controller.hide(WindowInsetsCompat.Type.statusBars())
         }
     }
 
-    fun release(controller: WindowInsetsControllerCompat) {
-        if (holders == 0) return
-        if (--holders == 0) {
+    fun release(controller: WindowInsetsControllerCompat, hideStatusBar: Boolean) {
+        if (hideStatusBar && hiders > 0 && --hiders == 0) {
             controller.show(WindowInsetsCompat.Type.statusBars())
-            controller.systemBarsBehavior = previousBehavior
+            controller.systemBarsBehavior = behavior
+        }
+        if (holders > 0 && --holders == 0) {
+            controller.isAppearanceLightStatusBars = lightStatus
+            controller.isAppearanceLightNavigationBars = lightNavigation
         }
     }
 
-    val isHidden: Boolean get() = holders > 0
+    val isStatusBarHidden: Boolean get() = hiders > 0
 }
 
 /**

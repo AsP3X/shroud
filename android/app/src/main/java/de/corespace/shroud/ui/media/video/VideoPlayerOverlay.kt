@@ -64,9 +64,11 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
+import androidx.media3.common.Player
 import androidx.lifecycle.compose.LifecycleEventEffect
 import de.corespace.shroud.core.media.video.ChatVideoPlayer
 import de.corespace.shroud.core.media.video.VideoSource
@@ -149,6 +151,7 @@ private fun PlayerBody(source: VideoSource, title: String, subtitle: String, onC
     var drag by remember { mutableFloatStateOf(0f) } // dp
     var scrubTime by remember { mutableStateOf<Double?>(null) }
     var closing by remember { mutableStateOf(false) }
+    var muted by remember { mutableStateOf(false) }
 
     fun scheduleHide() {
         hideJob?.cancel()
@@ -293,10 +296,21 @@ private fun PlayerBody(source: VideoSource, title: String, subtitle: String, onC
                 .graphicsLayer { alpha = VideoPlayerRules.chromeOpacity(effectiveDrag) },
         ) {
             Column(Modifier.fillMaxSize().blockTouches(abs(effectiveDrag) >= 1f)) {
-                TopBar(title, subtitle, topInset) {
-                    haptic(Haptic.Light)
-                    close()
-                }
+                TopBar(
+                    title = title,
+                    subtitle = subtitle,
+                    topInset = topInset,
+                    muted = muted,
+                    onMute = {
+                        muted = !muted
+                        player.setMuted(muted)
+                        showChrome()
+                    },
+                    onClose = {
+                        haptic(Haptic.Light)
+                        close()
+                    },
+                )
                 Spacer(Modifier.weight(1f))
                 BottomBar(
                     shown = shown,
@@ -332,7 +346,7 @@ private fun PlayerBody(source: VideoSource, title: String, subtitle: String, onC
 
 /** The picture, a spinner until it can play, or the failure line (`stage`, `:120-175`). */
 @Composable
-private fun Stage(failed: Boolean, ready: Boolean, surface: androidx.media3.common.Player?) {
+private fun Stage(failed: Boolean, ready: Boolean, surface: Player?) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         if (failed) {
             // Failure first: the player exists before the clip is known to be playable (`:123-131`).
@@ -378,7 +392,7 @@ private fun CentreControl(visible: Boolean, playing: Boolean, onToggle: () -> Un
 }
 
 @Composable
-private fun TopBar(title: String, subtitle: String, topInset: androidx.compose.ui.unit.Dp, onClose: () -> Unit) {
+private fun TopBar(title: String, subtitle: String, topInset: Dp, muted: Boolean, onMute: () -> Unit, onClose: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -389,14 +403,22 @@ private fun TopBar(title: String, subtitle: String, topInset: androidx.compose.u
     ) {
         // 40 dp circle with a 44 dp target; the light haptic fires with the close (`:181-197`).
         MediaCircleButton(ShroudIcons.X, "Close video", onClose, iconSize = 15.dp, padding = 2.dp, haptic = Haptic.None)
-        if (title.isNotEmpty()) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            if (title.isNotEmpty()) {
                 ShroudText(title, inter(15f, FontWeight.SemiBold), Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (subtitle.isNotEmpty()) {
                     ShroudText(subtitle, inter(12f), Color.White.copy(alpha = 0.65f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
+        // Android addition (C13 asks for it): sound off / on for this clip; iOS's player has no mute control.
+        MediaCircleButton(
+            if (muted) ShroudIcons.SpeakerSlashFill else ShroudIcons.SpeakerHighFill,
+            if (muted) "Unmute" else "Mute",
+            onMute,
+            iconSize = 16.dp,
+            padding = 2.dp,
+        )
     }
 }
 
@@ -405,7 +427,7 @@ private fun BottomBar(
     shown: Double,
     duration: Double,
     scrubbing: Boolean,
-    bottomInset: androidx.compose.ui.unit.Dp,
+    bottomInset: Dp,
     onScrub: (Double) -> Unit,
     onScrubEnd: () -> Unit,
     onStep: (Double) -> Unit,

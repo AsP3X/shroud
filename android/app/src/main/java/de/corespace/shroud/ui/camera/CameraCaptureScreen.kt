@@ -230,7 +230,7 @@ private fun CameraBody(
             delay(CameraRules.BIND_POLL_MS)
         }
         // A phone with only a front camera opens on it.
-        if (bound && !front && !hasBack && hasFront) front = true
+        if (bound && !front && CameraRules.initialFront(hasFront, hasBack)) front = true
     }
     DisposableEffect(camera) {
         onDispose { camera.unbind() }

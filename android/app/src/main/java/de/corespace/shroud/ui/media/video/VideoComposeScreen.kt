@@ -154,7 +154,8 @@ internal fun VideoComposeContent(
     onClose: () -> Unit,
     services: VideoComposeServices,
 ) {
-    MediaLayer {
+    // iOS keeps the status bar on the compose screens (`VideoComposeOverlay.swift:166`), drawn light.
+    MediaLayer(hideStatusBar = false) {
         ComposeBody(draft, onSend, onAddMore, onRemove, onClose, services)
     }
 }

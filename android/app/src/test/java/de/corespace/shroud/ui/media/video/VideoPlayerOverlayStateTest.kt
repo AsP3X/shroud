@@ -55,6 +55,13 @@ class VideoPlayerOverlayStateTest {
         ui.node("Pause").config[SemanticsActions.OnClick].action!!.invoke()
         ui.idle()
         assertFalse(player.state.value.isPlaying)
+        // Sound off and on again.
+        ui.node("Mute").config[SemanticsActions.OnClick].action!!.invoke()
+        ui.idle()
+        assertEquals(0f, (engines.engines.single() as ScriptedEngine).lastVolume, 0f)
+        ui.node("Unmute").config[SemanticsActions.OnClick].action!!.invoke()
+        ui.idle()
+        assertEquals(1f, (engines.engines.single() as ScriptedEngine).lastVolume, 0f)
         ui.node("Close video").config[SemanticsActions.OnClick].action!!.invoke()
         ui.idle()
         assertEquals(1, closes)
