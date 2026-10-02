@@ -10,7 +10,6 @@ import androidx.emoji2.text.EmojiCompat
 import de.corespace.shroud.AppContainer
 import de.corespace.shroud.core.messaging.MessageArtifactSinks
 import de.corespace.shroud.core.model.ChatMessage
-import de.corespace.shroud.core.transcription.TranscribeException
 import de.corespace.shroud.core.transcription.VoiceTranscription
 import de.corespace.shroud.core.voice.VoicePlaybackCoordinator
 import de.corespace.shroud.ui.LocalAppContainer
@@ -18,9 +17,12 @@ import de.corespace.shroud.ui.components.Toast
 import de.corespace.shroud.ui.conversation.DecodedImageCache
 import de.corespace.shroud.ui.conversation.LinkPreviewImageCache
 import de.corespace.shroud.ui.conversation.links.MessageLinkText
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.launch
 import java.util.UUID
+import java.util.concurrent.Executor
 
 /**
  * What a bubble needs from the engines beyond its row and the screen's [de.corespace.shroud.ui.conversation.BubbleContext]:
@@ -78,7 +80,8 @@ interface BubbleServices {
      * [transcriptionHints], shares a non-empty result in the background ([shareTranscript]) and returns
      * it (blank: no speech). Runs in the process scope, so a bubble scrolled away mid-way does not
      * cancel the share. Throws [de.corespace.shroud.core.transcription.TranscribeException] with a
-     * user-facing message.
+     * user-facing message, or [TranscriptAudioMissing] when the audio is not on this phone (iOS returns
+     * nil without a word then, and the bubble folds back).
      */
     suspend fun transcribe(message: ChatMessage, peerName: String): String
 
@@ -89,8 +92,15 @@ interface BubbleServices {
     val context: Context
 
     companion object {
-        /** The services of the running app. */
-        fun forContainer(container: AppContainer): BubbleServices = ContainerBubbleServices(container)
+        private val byContainer = java.util.WeakHashMap<AppContainer, BubbleServices>()
+
+        /**
+         * The services of the running app: one instance per container, so every bubble of every chat
+         * shares it and [BubbleMemory] registers its sink with messaging once, not once per row.
+         */
+        @Synchronized
+        fun forContainer(container: AppContainer): BubbleServices =
+            byContainer.getOrPut(container) { ContainerBubbleServices(container) }
 
         /**
          * Names for [transcriptionHints]: [peerName] and [contacts], de-duplicated, sorted, at most 50
@@ -102,6 +112,12 @@ interface BubbleServices {
         const val MAX_HINTS = 50
     }
 }
+
+/**
+ * [BubbleServices.transcribe] found no decrypted audio to transcribe: iOS's `guard let data =
+ * message.voiceData else { return nil }` (`ConversationView.swift:1608`) — a quiet fold-back, no toast.
+ */
+class TranscriptAudioMissing : Exception("The voice message's audio is not on this phone.")
 
 /** Overrides the app's services (tests, previews). Null: read them from [LocalAppContainer]. */
 val LocalBubbleServices = staticCompositionLocalOf<BubbleServices?> { null }
@@ -146,7 +162,7 @@ private class ContainerBubbleServices(private val container: AppContainer) : Bub
 
     override suspend fun transcribe(message: ChatMessage, peerName: String): String =
         container.appScope.async {
-            val audio = messaging.mediaBytes(message.id) ?: throw TranscribeException(NOT_DOWNLOADED)
+            val audio = messaging.mediaBytes(message.id) ?: throw TranscriptAudioMissing()
             val text = container.transcription.voice.transcribe(
                 audio = audio,
                 // The decoder sniffs WAV itself; everything else goes through MediaExtractor.
@@ -164,7 +180,6 @@ private class ContainerBubbleServices(private val container: AppContainer) : Bub
 
     private companion object {
         const val VOICE_MIME = "audio/mp4"
-        const val NOT_DOWNLOADED = "This voice message isn’t on this phone yet."
     }
 }
 
@@ -231,11 +246,17 @@ object BubbleMemory {
  * reaction set (decision D3b, P16c). The manifest removes emoji2's startup initializer, which would ask
  * the Google downloadable-font provider; this installs [BundledEmojiCompatConfig] instead — a font in
  * the APK, no provider, no network. Compose text picks EmojiCompat up once it is configured.
- * Idempotent; W3-INT also calls it at process start (contract change request).
+ *
+ * The font's metadata loads on [loader] (the IO pool), never on the main thread; the constructor
+ * without an executor is deprecated. Idempotent; W3-INT also calls it at process start (contract
+ * change request).
  */
 object BubbleEmoji {
     @Volatile
     private var installed = false
+
+    /** Where the bundled font's metadata is read. */
+    private val loader: Executor = Dispatchers.IO.asExecutor()
 
     fun install(context: Context) {
         if (installed) return
@@ -243,7 +264,7 @@ object BubbleEmoji {
             if (installed) return
             installed = true
             if (EmojiCompat.isConfigured()) return
-            val config = BundledEmojiCompatConfig(context.applicationContext)
+            val config = BundledEmojiCompatConfig(context.applicationContext, loader)
                 // Only replace what the system font cannot draw: newer phones keep their own emoji.
                 .setReplaceAll(false)
             EmojiCompat.init(config)
