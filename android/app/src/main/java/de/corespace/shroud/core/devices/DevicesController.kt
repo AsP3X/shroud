@@ -47,9 +47,19 @@ data class DevicesState(
     val capacity: Int? = null,
 )
 
-/** What a removal did. A 404 counts as [Removed]. [Partial] is some devices removed and some not. */
+/**
+ * What a removal did.
+ *
+ * A single [DevicesController.remove] whose DELETE is 404 is [AlreadyRemoved]: the row is dropped,
+ * and the screen owns the info toast (`DevicesView.swift:497-499`). [DevicesController.removeAllOthers]
+ * still counts that 404 as removed — the device is gone (`:523-524`) — and never returns
+ * [AlreadyRemoved]. [Partial] is some devices removed and some not.
+ */
 sealed interface RemoveOutcome {
     data object Removed : RemoveOutcome
+
+    /** The DELETE was 404. The row is gone; the UI says "<name> was already removed". */
+    data object AlreadyRemoved : RemoveOutcome
 
     data class Partial(val removed: Int, val failed: Int) : RemoveOutcome
 
@@ -74,16 +84,27 @@ interface DevicesController {
     suspend fun refresh()
 
     /**
+     * Drops decrypted rows, the sealed-name cache, and any error or loading flag (`rows` empty,
+     * [DevicesState.hasLoaded] false). A [refresh] — or a removal's reload — that started before
+     * this call does not publish those rows when it finishes. Safe off the main thread: the wipe
+     * calls it synchronously.
+     */
+    fun clear()
+
+    /**
      * Seals [name] for [id], keeping the stored kind (this phone's kind is Android when the old
      * name cannot be opened; any other device falls back to "other"), and marks it as typed by a
      * person. Null once saved; otherwise the sentence to show.
      */
     suspend fun rename(id: UUID, name: String): String?
 
-    /** Removes [id]. A 404 counts as [RemoveOutcome.Removed]. This device is never removed here. */
+    /**
+     * Removes [id]. A 404 is [RemoveOutcome.AlreadyRemoved] (`DevicesView.swift:497-499`).
+     * This device is never removed here.
+     */
     suspend fun remove(id: UUID): RemoveOutcome
 
-    /** One DELETE per other device, carrying on past failures. A 404 counts as removed. */
+    /** One DELETE per other device, carrying on past failures. A 404 counts as removed (`DevicesView.swift:523-524`). */
     suspend fun removeAllOthers(): RemoveOutcome
 
     companion object {
@@ -115,15 +136,38 @@ class ShroudDevicesController(
     /** Sealed names from the last successful list, so a rename can keep the kind after an unlock. */
     private val sealedNames = HashMap<UUID, String?>()
 
-    /** The one [refresh] in flight. Set and cleared on [main], before any suspend after the set. */
+    /**
+     * Bumped by [clear]. Work that captured an older value must not write rows, names or errors:
+     * a refresh that started before the lock would otherwise put decrypted labels back.
+     * Guarded by [gate], together with [sealedNames] and [inFlight].
+     */
+    private var epoch = 0L
+
+    /** The one [refresh] in flight. Set and cleared under [gate], before any suspend after the set. */
     private var inFlight: CompletableDeferred<Unit>? = null
 
-    override suspend fun refresh() = refresh(force = false)
+    private val gate = Any()
+
+    override suspend fun refresh() = withContext(main) {
+        runRefresh(force = false, epoch = currentEpoch())
+    }
+
+    override fun clear() {
+        synchronized(gate) {
+            epoch++
+            sealedNames.clear()
+            mutableState.value = DevicesState()
+            // A refresh that starts after this must not join the discarded load.
+            inFlight = null
+        }
+    }
 
     override suspend fun rename(id: UUID, name: String): String? = withContext(main) {
+        val started = currentEpoch()
         val current = session() ?: return@withContext DevicesController.UNLOCK_TO_RENAME
         if (!chatsOpen(current)) return@withContext DevicesController.UNLOCK_TO_RENAME
-        val kind = openName(sealedNames[id], id)?.kind
+        val cached = synchronized(gate) { sealedNames[id] }
+        val kind = openName(cached, id)?.kind
             ?: if (isThisDevice(id, current)) DeviceNameSeal.Kind.Android else DeviceNameSeal.Kind.Other
         val label = DeviceNameSeal.Label(name, kind, custom = true)
         try {
@@ -136,38 +180,42 @@ class ShroudDevicesController(
         } catch (e: Exception) {
             return@withContext SessionController.userMessage(e)
         }
-        mutableState.update { state ->
-            state.copy(rows = state.rows.map { row ->
-                if (row.id == id) row.copy(label = label, kind = DeviceKind.of(label)) else row
-            })
+        onEpoch(started) {
+            mutableState.update { state ->
+                state.copy(rows = state.rows.map { row ->
+                    if (row.id == id) row.copy(label = label, kind = DeviceKind.of(label)) else row
+                })
+            }
         }
-        reloadAfterAction(null)
+        reloadAfterAction(started, null)
         null
     }
 
     override suspend fun remove(id: UUID): RemoveOutcome = withContext(main) {
-        val current = session() ?: return@withContext signedOut()
+        val started = currentEpoch()
+        val current = session() ?: return@withContext signedOut(started)
         if (isThisDevice(id, current)) return@withContext RemoveOutcome.Failed(currentDeviceNote())
         val outcome = try {
             revokeDevice(current.token, id)
-            drop(listOf(id))
+            onEpoch(started) { drop(listOf(id)) }
             RemoveOutcome.Removed
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             if (isAlreadyRemoved(e)) {
-                drop(listOf(id))
-                RemoveOutcome.Removed
+                onEpoch(started) { drop(listOf(id)) }
+                RemoveOutcome.AlreadyRemoved
             } else {
                 RemoveOutcome.Failed(SessionController.userMessage(e))
             }
         }
-        reloadAfterAction((outcome as? RemoveOutcome.Failed)?.message)
+        reloadAfterAction(started, (outcome as? RemoveOutcome.Failed)?.message)
         outcome
     }
 
     override suspend fun removeAllOthers(): RemoveOutcome = withContext(main) {
-        val current = session() ?: return@withContext signedOut()
+        val started = currentEpoch()
+        val current = session() ?: return@withContext signedOut(started)
         val targets = mutableState.value.rows.filterNot { it.isThisDevice }
         if (targets.isEmpty()) return@withContext RemoveOutcome.Removed
         var removed = 0
@@ -176,13 +224,13 @@ class ShroudDevicesController(
         for (row in targets) {
             try {
                 revokeDevice(current.token, row.id)
-                drop(listOf(row.id))
+                onEpoch(started) { drop(listOf(row.id)) }
                 removed++
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 if (isAlreadyRemoved(e)) {
-                    drop(listOf(row.id))
+                    onEpoch(started) { drop(listOf(row.id)) }
                     removed++
                 } else {
                     failed++
@@ -196,42 +244,56 @@ class ShroudDevicesController(
             removed == 0 -> RemoveOutcome.Failed(sentence!!)
             else -> RemoveOutcome.Partial(removed, failed)
         }
-        reloadAfterAction(sentence)
+        reloadAfterAction(started, sentence)
         outcome
     }
 
     /**
-     * Shares an in-flight load. [force] waits that one out and then loads again, so a caller that
-     * just wrote sees its own change and not a list fetched before the write.
+     * Shares an in-flight load started in the same [epoch]. [force] waits that one out and then
+     * loads again, so a caller that just wrote sees its own change and not a list fetched before
+     * the write. A [clear] since [epoch] was captured returns without publishing.
+     * Caller is on [main].
      */
-    private suspend fun refresh(force: Boolean): Unit = withContext(main) {
+    private suspend fun runRefresh(force: Boolean, epoch: Long) {
         while (true) {
-            val existing = inFlight ?: break
-            existing.await()
-            if (!force) return@withContext
-        }
-        val deferred = CompletableDeferred<Unit>()
-        inFlight = deferred
-        try {
-            performRefresh()
-            if (inFlight === deferred) inFlight = null
-            deferred.complete(Unit)
-        } catch (t: Throwable) {
-            if (inFlight === deferred) inFlight = null
-            deferred.completeExceptionally(t)
-            throw t
+            val deferred = CompletableDeferred<Unit>()
+            val existing = synchronized(gate) {
+                if (this.epoch != epoch) return
+                inFlight?.let { return@synchronized it }
+                inFlight = deferred
+                null
+            }
+            if (existing != null) {
+                existing.await()
+                if (currentEpoch() != epoch) return
+                if (!force) return
+                continue
+            }
+            try {
+                performRefresh(epoch)
+                synchronized(gate) { if (inFlight === deferred) inFlight = null }
+                deferred.complete(Unit)
+            } catch (t: Throwable) {
+                synchronized(gate) { if (inFlight === deferred) inFlight = null }
+                deferred.completeExceptionally(t)
+                throw t
+            }
+            return
         }
     }
 
-    private suspend fun performRefresh() {
+    private suspend fun performRefresh(epoch: Long) {
         val current = session()
         if (current == null) {
-            mutableState.update { it.copy(isLoading = false, error = DevicesController.SIGN_IN) }
+            onEpoch(epoch) { mutableState.update { it.copy(isLoading = false, error = DevicesController.SIGN_IN) } }
             return
         }
         val token = current.token
-        val showsLoading = !mutableState.value.hasLoaded
-        mutableState.update { it.copy(isLoading = showsLoading, error = null) }
+        val showsLoading = synchronized(gate) {
+            if (this.epoch != epoch) return
+            !mutableState.value.hasLoaded
+        }
+        onEpoch(epoch) { mutableState.update { it.copy(isLoading = showsLoading, error = null) } }
         try {
             val list = listDevices(token)
             val open = chatsOpen(current)
@@ -241,34 +303,48 @@ class ShroudDevicesController(
                 sealed[device.id] = device.sealedName
                 rows += toRow(device, current, open)
             }
-            sealedNames.clear()
-            sealedNames.putAll(sealed)
-            mutableState.value = DevicesState(
-                rows = sorted(rows),
-                isLoading = false,
-                hasLoaded = true,
-                error = null,
-                capacity = DEVICE_LIMIT,
-            )
+            onEpoch(epoch) {
+                sealedNames.clear()
+                sealedNames.putAll(sealed)
+                mutableState.value = DevicesState(
+                    rows = sorted(rows),
+                    isLoading = false,
+                    hasLoaded = true,
+                    error = null,
+                    capacity = DEVICE_LIMIT,
+                )
+            }
         } catch (e: CancellationException) {
-            mutableState.update { it.copy(isLoading = false) }
+            onEpoch(epoch) { mutableState.update { it.copy(isLoading = false) } }
             throw e
         } catch (e: Exception) {
-            mutableState.update { it.copy(isLoading = false, error = SessionController.userMessage(e)) }
+            onEpoch(epoch) { mutableState.update { it.copy(isLoading = false, error = SessionController.userMessage(e)) } }
         }
     }
 
     /** A successful reload clears [DevicesState.error]; a removal sentence is put back afterwards. */
-    private suspend fun reloadAfterAction(actionError: String?) {
-        refresh(force = true)
-        if (actionError != null && mutableState.value.error == null) {
-            mutableState.update { it.copy(error = actionError) }
+    private suspend fun reloadAfterAction(epoch: Long, actionError: String?) {
+        if (currentEpoch() != epoch) return
+        runRefresh(force = true, epoch = epoch)
+        onEpoch(epoch) {
+            if (actionError != null && mutableState.value.error == null) {
+                mutableState.update { it.copy(error = actionError) }
+            }
         }
     }
 
-    private fun signedOut(): RemoveOutcome {
-        mutableState.update { it.copy(isLoading = false, error = DevicesController.SIGN_IN) }
+    private fun signedOut(epoch: Long): RemoveOutcome {
+        onEpoch(epoch) { mutableState.update { it.copy(isLoading = false, error = DevicesController.SIGN_IN) } }
         return RemoveOutcome.Failed(DevicesController.SIGN_IN)
+    }
+
+    private fun currentEpoch(): Long = synchronized(gate) { epoch }
+
+    /** Runs [block] only if [clear] has not moved past [epoch]. [block] is on [gate] and must not re-enter it. */
+    private fun onEpoch(epoch: Long, block: () -> Unit): Boolean = synchronized(gate) {
+        if (this.epoch != epoch) return@synchronized false
+        block()
+        true
     }
 
     private fun chatsOpen(session: Session): Boolean = session.userId.equals(unlockedUserId(), ignoreCase = true)

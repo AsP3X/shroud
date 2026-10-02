@@ -25,6 +25,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -77,6 +78,20 @@ class HistoryKeyVaultLogicTest {
         assertEquals(VaultState.NoScreenLock, vault.state(user))
         assertFalse(vault.canProtectWrapKey)
         assertTrue(keys.aliases().isEmpty())
+    }
+
+    /** Public K1 probe: the record's `"security"`, with no prompt (`HistoryKeyVault.keySecurity`). */
+    @Test
+    fun keySecurityFollowsTheRecordAndDoesNotPrompt() = runTest {
+        val prompts = FakeVaultAuthenticator()
+        val vault = vault(prompts)
+        assertNull(vault.keySecurity())
+        keys.security = VaultKeyStore.Security.StrongBox
+        vault.store(historyKey, user)
+        assertEquals(VaultKeyStore.Security.StrongBox, vault.keySecurity())
+        assertTrue(prompts.prompts.isEmpty())
+        vault.clear()
+        assertNull(vault.keySecurity())
     }
 
     /** `testStoreMarksTheWrapKeyProtected` (`:34-37`). */

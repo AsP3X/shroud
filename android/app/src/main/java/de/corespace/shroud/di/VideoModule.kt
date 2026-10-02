@@ -18,8 +18,9 @@ import java.util.UUID
  *
  * - [media] — probe, poster and filmstrip for the compose screen, and the send path's
  *   [VideoPipeline] ([pipeline]): encode (Media3 Transformer through the metadata-clearing muxer)
- *   and posters of sealed local videos; [VideoException.isTooLarge] tells the send path's "too
- *   large" failure from the others;
+ *   and posters of sealed local videos, plus [VideoPipeline.durationMs] for a bubble that needs
+ *   the file's own length; [VideoException.isTooLarge] tells the send path's "too large" failure
+ *   from the others;
  * - [newPlayer] — one [ChatVideoPlayer] per overlay or compose screen (main thread);
  * - [VideoPlanner] is a pure object, called directly.
  *

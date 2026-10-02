@@ -2,13 +2,17 @@ package de.corespace.shroud.core.media.video
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.media.MediaDataSource
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import de.corespace.shroud.core.crypto.MediaCrypto
 import de.corespace.shroud.core.media.EncodedVideo
 import de.corespace.shroud.core.media.VideoPipeline
 import de.corespace.shroud.core.model.AppClock
 import de.corespace.shroud.core.storage.SensitiveTempFiles
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 /**
@@ -16,7 +20,7 @@ import java.util.UUID
  * media-voice-links §6, §14.2), built only by `VideoModule`:
  *
  * - the compose screen: [probe], [poster], [filmstrip] and [VideoPlanner.previewPlan];
- * - the send path ([VideoPipeline]): [encode] and [posterJpegFromLocal];
+ * - the send path ([VideoPipeline]): [encode], [posterJpegFromLocal] and [durationMs];
  * - playback is [ChatVideoPlayer] (`VideoModule.newPlayer()`).
  *
  * Nothing here writes decrypted media except the encoder's `cacheDir/shroud-export-*.mp4` output
@@ -51,6 +55,14 @@ class VideoMedia internal constructor(
         return inspector.posterJpeg(source, maxEdgePx)
     }
 
+    /**
+     * The container's duration, read off the sealed cache the way a bubble used to
+     * (`VoiceMessageBubble.swift:694-708`). Null when there is no source, the retriever cannot
+     * open it, or the duration is missing or not positive. Closes the source; [retrieverDurationMs]
+     * closes the retriever with [MediaMetadataRetriever.close].
+     */
+    override suspend fun durationMs(messageId: UUID): Int? = sealedClipDuration(sealedSources, messageId, ::retrieverDurationMs)
+
     /** What `PUT /media/{id}/content` accepts, ciphertext included (`VideoMedia.swift:120-121`). */
     override val maxSealedBytes: Long = MediaCrypto.MAX_SEALED_BYTES
 
@@ -68,4 +80,55 @@ class VideoMedia internal constructor(
             return VideoMedia(inspector, encoder, sealedSources)
         }
     }
+}
+
+/**
+ * [VideoPipeline.durationMs] without a retriever: [read] stands in for [retrieverDurationMs] in JVM
+ * tests. Null when [sources] has nothing, [read] returns null or a duration that is not positive,
+ * or [read] throws. Always closes the source.
+ */
+internal suspend fun sealedClipDuration(
+    sources: SealedVideoSources,
+    messageId: UUID,
+    read: (MediaDataSource) -> Int?,
+): Int? = withContext(Dispatchers.IO) {
+    val source = sources.retrieverDataSource(messageId) ?: return@withContext null
+    try {
+        read(source)?.takeIf { it > 0 }
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        null
+    } finally {
+        try {
+            source.close()
+        } catch (_: Exception) {
+            // The retriever already closed a source it took.
+        }
+    }
+}
+
+/**
+ * Positive milliseconds from [source], or null when it cannot be opened or the duration is missing
+ * or not positive. Closes the retriever with [MediaMetadataRetriever.close] (API 29), which also
+ * closes a source [MediaMetadataRetriever.setDataSource] accepted. Not the deprecated `release()`.
+ */
+internal fun retrieverDurationMs(source: MediaDataSource): Int? = try {
+    MediaMetadataRetriever().use { retriever ->
+        try {
+            retriever.setDataSource(source)
+        } catch (_: Exception) {
+            return@use null
+        }
+        try {
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull()
+                ?.takeIf { it > 0 }
+                ?.toInt()
+        } catch (_: Exception) {
+            null
+        }
+    }
+} catch (_: Exception) {
+    null
 }

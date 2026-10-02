@@ -115,9 +115,14 @@ class KeysModule(container: AppContainer) : AppModule(container) {
         SecurityPreferences(app.getSharedPreferences(PrefsFiles.PREFERENCES, Context.MODE_PRIVATE), container.storageSeal)
     }
 
-    /** Opaque UI booleans, prefs `shroud.ui` (K5). Wiped with the other non-kept prefs on Log Out. */
+    /**
+     * Opaque UI booleans, prefs `shroud.ui` (K5). Wiped with the other non-kept prefs on Log Out.
+     * [UiFlags.kept] is the same shape on `shroud.device`, which the wipe already keeps.
+     */
     val uiFlags: UiFlags by lazy {
-        PrefsUiFlags(app.getSharedPreferences(PrefsFiles.UI, Context.MODE_PRIVATE), container.storageSeal)
+        val seal = container.storageSeal
+        val kept = PrefsUiFlags(app.getSharedPreferences(PrefsFiles.DEVICE, Context.MODE_PRIVATE), seal)
+        PrefsUiFlags(app.getSharedPreferences(PrefsFiles.UI, Context.MODE_PRIVATE), seal, kept)
     }
 
     /** `cacheDir/shroud-*` plaintext that must exist as a file for a moment (crypto §15, C25). */
