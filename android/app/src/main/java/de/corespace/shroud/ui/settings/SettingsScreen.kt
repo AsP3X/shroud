@@ -106,9 +106,10 @@ fun SettingsScreen(onOpenCalls: (() -> Unit)?) {
     // Core's list (K3): Devices' loads and removals show here at once (iOS `DevicesView(onCount:)`,
     // `SettingsView.swift:209-210`), and a failed reload keeps the rows, so the count stays what was shown.
     val deviceCount = devicesState.rows.size.takeIf { devicesState.hasLoaded }
-    val token = session?.token
-    LaunchedEffect(token) {
-        if (token == null) return@LaunchedEffect
+    // Keyed on the signed-in account, never the token: UI reads no credentials (R3).
+    val signedInUser = session?.userId
+    LaunchedEffect(signedInUser) {
+        if (signedInUser == null) return@LaunchedEffect
         // `loadDeviceCount` (`SettingsView.swift:553-559`): best effort, once per appearance.
         devices.refresh()
     }
