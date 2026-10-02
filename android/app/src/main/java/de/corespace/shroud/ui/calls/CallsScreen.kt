@@ -106,10 +106,10 @@ import de.corespace.shroud.ui.theme.ShroudIcons
 import de.corespace.shroud.ui.theme.ShroudTheme
 import de.corespace.shroud.ui.theme.inter
 import de.corespace.shroud.ui.theme.perform
-import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
 import java.util.Locale
+import kotlinx.coroutines.launch
 
 /**
  * The Calls tab: the account's call history, newest first; calls in a row with the same person

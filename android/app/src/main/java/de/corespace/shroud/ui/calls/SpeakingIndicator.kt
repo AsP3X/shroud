@@ -28,11 +28,11 @@ import de.corespace.shroud.core.calls.SpeakingMeter
 import de.corespace.shroud.ui.components.ShroudIcon
 import de.corespace.shroud.ui.theme.ShroudIcons
 import de.corespace.shroud.ui.theme.ShroudTheme
-import kotlinx.coroutines.delay
 import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
+import kotlinx.coroutines.delay
 
 /**
  * The speaking meter's bars (iOS `SpeakingIndicatorView.Meter.step`, `SpeakingIndicatorView.swift:101-123`;

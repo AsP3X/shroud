@@ -66,8 +66,8 @@ import de.corespace.shroud.ui.theme.Motion
 import de.corespace.shroud.ui.theme.ShroudIcons
 import de.corespace.shroud.ui.theme.ShroudTheme
 import de.corespace.shroud.ui.theme.inter
-import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 
 /**
  * "Not verified" (`safetyBadge(for:number:)`, `InCallOverlay.swift:487-563`; calls §8.7): an amber

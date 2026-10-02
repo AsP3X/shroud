@@ -13,12 +13,12 @@ import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -64,13 +64,12 @@ import de.corespace.shroud.ui.theme.Motion
 import de.corespace.shroud.ui.theme.ShroudIcons
 import de.corespace.shroud.ui.theme.ShroudTheme
 import de.corespace.shroud.ui.theme.inter
+import java.util.UUID
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.time.Instant
-import java.util.UUID
 
 /**
  * The call screen over the app while a call runs (iOS `InCallOverlay` in `RootView`,
@@ -187,8 +186,8 @@ internal fun MinimizedCallPill(call: ActiveCall, onRestore: () -> Unit, modifier
     val reduceMotion = ShroudTheme.reduceMotion
     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val pulse = rememberInfiniteTransition(label = "pillDot")
-    val dot by pulse.animateFloat(1f, 0.35f, infiniteRepeatable(Motion.easeInOut(800), RepeatMode.Reverse), label = "pillDotAlpha")
-    val now by produceTick(call)
+    val dot by pulse.animateFloat(1f, 0.35f, infiniteRepeatable(tween(800, easing = Motion.IosEaseInOut), RepeatMode.Reverse), label = "pillDotAlpha")
+    val now by rememberCallClock(call)
     val status = CallScreenRules.status(call, now).text
     Row(
         modifier
@@ -229,17 +228,6 @@ private class LastCall {
 
 private const val PILL_HEIGHT = 32
 private const val FOCUS_DELAY_MS = 100L
-
-/** The clock of a running call, ticking on its seconds; still otherwise. */
-@Composable
-private fun produceTick(call: ActiveCall) = androidx.compose.runtime.produceState(Instant.now(), call.phase, call.startedAt) {
-    val start = call.startedAt
-    while (call.phase == CallPhase.Active && start != null) {
-        value = Instant.now()
-        delay(1000L - java.time.Duration.between(start, value).toMillis().mod(1000L))
-    }
-    value = Instant.now()
-}
 
 /**
  * Registers the controller's permission prompt for this window (`AndroidCallPermissions.prompt`,

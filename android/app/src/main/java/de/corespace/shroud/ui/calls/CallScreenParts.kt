@@ -7,6 +7,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -26,8 +27,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,10 +41,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.onClick
@@ -51,6 +54,8 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
+import de.corespace.shroud.core.calls.ActiveCall
+import de.corespace.shroud.core.calls.CallPhase
 import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.ui.components.INTERACTIVE_SWELL
 import de.corespace.shroud.ui.components.ShroudIcon
@@ -61,6 +66,9 @@ import de.corespace.shroud.ui.theme.ShroudIcons
 import de.corespace.shroud.ui.theme.ShroudTheme
 import de.corespace.shroud.ui.theme.inter
 import de.corespace.shroud.ui.theme.perform
+import java.time.Duration
+import java.time.Instant
+import kotlinx.coroutines.delay
 
 /**
  * The call screen's glass (iOS `.glassEffect(.regular[.tint(…)].interactive(), in: shape)`): the
@@ -190,7 +198,7 @@ internal fun SharingPill(starting: Boolean, onStop: () -> Unit, modifier: Modifi
     val dot by pulse.animateFloat(
         initialValue = 1f,
         targetValue = 0.35f,
-        animationSpec = infiniteRepeatable(Motion.easeInOut(800), RepeatMode.Reverse),
+        animationSpec = infiniteRepeatable(tween(800, easing = Motion.IosEaseInOut), RepeatMode.Reverse),
         label = "sharingDotAlpha",
     )
     val interaction = remember { MutableInteractionSource() }
@@ -280,4 +288,24 @@ internal fun CallAnnouncer(text: String?, modifier: Modifier = Modifier) {
                 liveRegion = LiveRegionMode.Polite
             },
     )
+}
+
+/**
+ * The clock of the call on screen: ticks on the call's own seconds while it runs (so "0:41"
+ * turns over when a second of the call is up, `TimelineView(.periodic(from: start, by: 1))`,
+ * :831), still otherwise.
+ */
+@Composable
+internal fun rememberCallClock(call: ActiveCall): State<Instant> {
+    val start = call.startedAt
+    val ticking = call.phase == CallPhase.Active && !call.reconnecting
+    return produceState(Instant.now(), ticking, start) {
+        value = Instant.now()
+        if (!ticking || start == null) return@produceState
+        while (true) {
+            val current = Instant.now()
+            value = current
+            delay(1000L - Duration.between(start, current).toMillis().mod(1000L))
+        }
+    }
 }

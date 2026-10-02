@@ -23,9 +23,9 @@ import de.corespace.shroud.core.calls.CallPhase
 import de.corespace.shroud.core.calls.system.CallIntents
 import de.corespace.shroud.ui.components.OverlayHost
 import de.corespace.shroud.ui.theme.ShroudTheme
+import java.util.UUID
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.util.UUID
 
 /**
  * The lock-screen host of the call screen (K8; calls §6.9): the full-screen intent of a ring and

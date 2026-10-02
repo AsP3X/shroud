@@ -31,13 +31,13 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.unit.IntSize
 import de.corespace.shroud.ui.theme.Motion
-import kotlinx.coroutines.launch
-import org.webrtc.EglBase
-import org.webrtc.VideoTrack
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
+import org.webrtc.EglBase
+import org.webrtc.VideoTrack
 
 /** The zoom rules of their shared screen (iOS `SharedScreenContainer`, `SharedScreenView.swift:46-164`; calls §8.9). Pure, px. */
 object SharedScreenZoom {

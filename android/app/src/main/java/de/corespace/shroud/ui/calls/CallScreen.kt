@@ -55,7 +55,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -85,7 +84,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -106,12 +104,10 @@ import de.corespace.shroud.ui.theme.Motion
 import de.corespace.shroud.ui.theme.ShroudIcons
 import de.corespace.shroud.ui.theme.ShroudTheme
 import de.corespace.shroud.ui.theme.inter
+import java.util.UUID
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
-import java.time.Duration
-import java.time.Instant
-import java.util.UUID
 
 /**
  * The call screen (iOS `InCallOverlay`, `ios/shroud/ShroudUI/Components/InCallOverlay.swift`;
@@ -504,7 +500,7 @@ private fun BreathingAvatar(call: ActiveCall) {
     val brush = AvatarPalette.brush(call.peerUsername)
     if (CallScreenRules.isRinging(call.phase) && !reduceMotion) {
         val breath = rememberInfiniteTransition(label = "breathing")
-        val big by breath.animateFloat(0f, 1f, infiniteRepeatable(Motion.easeInOut(1100), RepeatMode.Reverse), label = "breath")
+        val big by breath.animateFloat(0f, 1f, infiniteRepeatable(tween(1100, easing = Motion.IosEaseInOut), RepeatMode.Reverse), label = "breath")
         Avatar(
             initials = initials,
             size = CallScreenMetrics.FACE.dp,
@@ -625,17 +621,7 @@ private const val TIMER_KEY = "\u0000timer"
  */
 @Composable
 private fun StatusLine(call: ActiveCall, shadow: Shadow) {
-    val start = call.startedAt
-    val ticking = call.phase == CallPhase.Active && start != null && !call.reconnecting
-    val now by produceState(Instant.now(), ticking, start) {
-        while (ticking && start != null) {
-            val current = Instant.now()
-            value = current
-            val intoSecond = Duration.between(start, current).toMillis().mod(1000L)
-            delay(1000L - intoSecond)
-        }
-        value = Instant.now()
-    }
+    val now by rememberCallClock(call)
     val status = CallScreenRules.status(call, now)
     val style = inter(15f, tabularDigits = status.isTimer).copy(shadow = shadow)
     val color = Color.White.copy(alpha = 0.85f)

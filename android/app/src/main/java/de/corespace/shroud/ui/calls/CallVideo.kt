@@ -33,14 +33,14 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.viewinterop.AndroidView
 import de.corespace.shroud.ui.theme.ShroudTheme
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import org.webrtc.EglBase
 import org.webrtc.EglRenderer
 import org.webrtc.GlRectDrawer
 import org.webrtc.VideoFrame
 import org.webrtc.VideoSink
 import org.webrtc.VideoTrack
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 
 /**
  * One WebRTC video track on a [TextureView], drawn by `org.webrtc`'s [EglRenderer] with the
