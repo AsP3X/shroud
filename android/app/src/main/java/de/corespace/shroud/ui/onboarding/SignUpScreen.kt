@@ -22,25 +22,28 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.platform.LocalAutofillManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -52,10 +55,10 @@ import de.corespace.shroud.core.auth.SessionController
 import de.corespace.shroud.core.crypto.Bip39
 import de.corespace.shroud.core.crypto.CryptoController
 import de.corespace.shroud.core.crypto.CryptoException
+import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.core.net.ApiError
 import de.corespace.shroud.core.net.ErrorCodes
 import de.corespace.shroud.ui.components.BrandLogoMark
-import de.corespace.shroud.ui.components.CheckBoxMark
 import de.corespace.shroud.ui.components.CredentialRow
 import de.corespace.shroud.ui.components.EncryptionPhraseCard
 import de.corespace.shroud.ui.components.FlowStepper
@@ -64,39 +67,66 @@ import de.corespace.shroud.ui.components.GlassCapsuleButton
 import de.corespace.shroud.ui.components.GlassCircleButton
 import de.corespace.shroud.ui.components.GroupedScreen
 import de.corespace.shroud.ui.components.PasswordStrengthMeter
+import de.corespace.shroud.ui.components.PhraseWarningCard
 import de.corespace.shroud.ui.components.PillButton
 import de.corespace.shroud.ui.components.PrimaryButton
 import de.corespace.shroud.ui.components.ScreenInset
 import de.corespace.shroud.ui.components.SecretKeyboard
 import de.corespace.shroud.ui.components.SectionCaption
 import de.corespace.shroud.ui.components.Separator
-import de.corespace.shroud.ui.components.ShroudIcon
 import de.corespace.shroud.ui.components.ShroudText
 import de.corespace.shroud.ui.components.Toast
 import de.corespace.shroud.ui.components.ToastState
-import de.corespace.shroud.ui.components.pressable
+import de.corespace.shroud.ui.components.WroteDownRow
 import de.corespace.shroud.ui.theme.Motion
 import de.corespace.shroud.ui.theme.ShroudIcons
 import de.corespace.shroud.ui.theme.ShroudTheme
 import de.corespace.shroud.ui.theme.inter
+import de.corespace.shroud.ui.theme.rememberHaptics
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private enum class SignUpStep { Account, Phrase }
 
 /**
- * Sign Up in two steps (`Sign Up` and `Sign Up — Phrase` in the design): first the username and
- * password, then the encryption phrase generated on this phone. Only the username and password go
- * to the server, and only once the phrase step is confirmed — so an abandoned sign-up never leaves
- * an account without keys. The server's objections to the name or password send the user back to
- * the account step, where they belong.
+ * Sign Up in two steps (`SignUpView.swift`; settings-lock addendum *SignUpView.swift*; design
+ * `Sign Up` `KZKiT`, `Sign Up — Phrase` `xM2mP`): first the username and password, then the
+ * encryption phrase generated on this phone. Only the username and password go to the server, and
+ * only once the phrase step is confirmed — so an abandoned sign-up never leaves an account without
+ * keys. The server's objections to the name or password send the user back to the account step,
+ * where they belong.
+ *
+ * [onUnlocked] runs once the account and its keys exist (iOS `router.unlockMessages()`, `:334`):
+ * the shell's cue to reveal the chats. The screen grows out of Welcome's mark when the shell hosts
+ * the onboarding zoom ([onboardingHeroDestination]).
  */
 @Composable
-fun SignUpScreen(container: AppContainer, toast: ToastState, onBack: () -> Unit, onLogIn: () -> Unit) {
+fun SignUpScreen(
+    container: AppContainer,
+    toast: ToastState,
+    onBack: () -> Unit,
+    onLogIn: () -> Unit,
+    onUnlocked: () -> Unit = {},
+) {
+    SignUpContent(rememberOnboardingServices(container), toast, onBack, onLogIn, onUnlocked)
+}
+
+/** [SignUpScreen] on explicit services, for screen tests. */
+@Composable
+internal fun SignUpContent(
+    services: OnboardingServices,
+    toast: ToastState,
+    onBack: () -> Unit,
+    onLogIn: () -> Unit,
+    onUnlocked: () -> Unit = {},
+) {
     val colors = ShroudTheme.colors
     val reduce = ShroudTheme.reduceMotion
     val context = LocalContext.current
     val focus = LocalFocusManager.current
+    val autofill = LocalAutofillManager.current
+    val haptic = rememberHaptics()
     val scope = rememberCoroutineScope()
 
     var step by remember { mutableStateOf(SignUpStep.Account) }
@@ -105,21 +135,25 @@ fun SignUpScreen(container: AppContainer, toast: ToastState, onBack: () -> Unit,
     var passwordRevealed by remember { mutableStateOf(false) }
     var wroteDown by remember { mutableStateOf(false) }
     // One phrase per visit: going back to fix the name keeps the words already written down.
-    val words = remember { container.keys.bip39.generate() }
+    val words = remember { services.bip39.generate() }
     var revealed by remember { mutableIntStateOf(0) }
     var submitting by remember { mutableStateOf(false) }
     var accountError by remember { mutableStateOf<String?>(null) }
     var phraseError by remember { mutableStateOf<String?>(null) }
     val passwordFocus = remember { FocusRequester() }
-    // The account this screen created, with the name and password it was created with: a retry
-    // after the keys failed to publish reuses it. Never a session from anywhere else (that could
-    // be an existing account whose keys this screen must not replace).
-    var registered by remember { mutableStateOf<Pair<Session, String>?>(null) }
-    val localNetwork = rememberLocalNetworkAccess(container)
+    // Holds the account this screen created, so a retry after the keys failed to publish reuses it.
+    val submission = remember(services) { SignUpSubmission(services) }
+    val localNetwork = rememberLocalNetworkAccess(services::needsLocalNetworkPermission)
 
     val evaluation = PasswordStrength.evaluate(password)
     val canContinue = username.isNotBlank() && evaluation.meetsRequirements && !submitting
     val canCreate = wroteDown && revealed == Bip39.WORD_COUNT && !submitting
+
+    // Autofill (S3): the password manager is offered the new account once it exists; left without
+    // one, the screen's fields are dropped from the save prompt.
+    val committed = remember { booleanArrayOf(false) }
+    val currentAutofill by rememberUpdatedState(autofill)
+    DisposableEffect(Unit) { onDispose { if (!committed[0]) currentAutofill?.cancel() } }
 
     if (step == SignUpStep.Phrase) HidePhraseFromRecents()
     // Leaving mid-request would cancel it half-done (account created, keys not published).
@@ -143,7 +177,7 @@ fun SignUpScreen(container: AppContainer, toast: ToastState, onBack: () -> Unit,
         focus.clearFocus()
         accountError = SessionController.usernameProblem(username)
             // Checked before any phrase is shown: without a screen lock the keys cannot be protected.
-            ?: CryptoController.userMessage(CryptoException.NoScreenLock()).takeUnless { container.auth.onboarding.hasScreenLock() }
+            ?: CryptoController.userMessage(CryptoException.NoScreenLock()).takeUnless { services.hasScreenLock() }
         if (accountError == null) step = SignUpStep.Phrase
     }
 
@@ -153,24 +187,18 @@ fun SignUpScreen(container: AppContainer, toast: ToastState, onBack: () -> Unit,
         submitting = true
         scope.launch {
             try {
-                container.keys.bip39.validate(words)
-                if (!localNetwork.ensure()) {
-                    phraseError = LocalNetworkAccess.DENIED_MESSAGE
-                    return@launch
+                val outcome = submission.create(username, password, words, localNetwork::ensure) {
+                    // The account exists: the password manager may save it now (S3).
+                    committed[0] = true
+                    autofill?.commit()
                 }
-                val sessions = container.auth.sessionController
-                val name = SessionController.normalize(username)
-                val session = registered
-                    ?.takeIf { (s, pw) -> s.username == name && pw == password && sessions.session.value == s }
-                    ?.first
-                    ?: sessions.register(username, password).also { registered = it to password }
-                container.auth.onboarding.establishFromSignup(words, session)
-            } catch (e: Throwable) {
-                if (e is ApiError.Server && e.code in CREDENTIAL_ERRORS) {
-                    accountError = e.userMessage
-                    step = SignUpStep.Account
-                } else {
-                    phraseError = if (e is Bip39.PhraseException || e is CryptoException) CryptoController.userMessage(e) else SessionController.userMessage(e)
+                when (outcome) {
+                    SignUpSubmission.Outcome.Unlocked -> onUnlocked()
+                    is SignUpSubmission.Outcome.AccountError -> {
+                        accountError = outcome.message
+                        step = SignUpStep.Account
+                    }
+                    is SignUpSubmission.Outcome.PhraseError -> phraseError = outcome.message
                 }
             } finally {
                 submitting = false
@@ -178,7 +206,18 @@ fun SignUpScreen(container: AppContainer, toast: ToastState, onBack: () -> Unit,
         }
     }
 
-    GroupedScreen {
+    fun copyPhrase() {
+        // Success / error notification haptics with the toast (`:196-219`, S1).
+        if (PhraseClipboard.copy(context, words.joinToString(" "), services.appScope)) {
+            haptic(Haptic.Success)
+            toast.show(Toast("Encryption phrase copied"))
+        } else {
+            haptic(Haptic.Error)
+            toast.show(Toast.failure("Couldn’t copy phrase — try again"))
+        }
+    }
+
+    GroupedScreen(Modifier.onboardingHeroDestination()) {
         Column(Modifier.fillMaxSize()) {
             GlassBarRow(
                 leading = {
@@ -250,17 +289,7 @@ fun SignUpScreen(container: AppContainer, toast: ToastState, onBack: () -> Unit,
                                 onDone = ::continueToPhrase,
                             )
                         } else {
-                            PhraseStep(
-                                words = words,
-                                revealed = revealed,
-                                onCopy = {
-                                    if (PhraseClipboard.copy(context, words.joinToString(" "), container.appScope)) {
-                                        toast.show(Toast("Encryption phrase copied"))
-                                    } else {
-                                        toast.show(Toast.failure("Couldn’t copy phrase — try again"))
-                                    }
-                                },
-                            )
+                            PhraseStep(words = words, revealed = revealed, onCopy = ::copyPhrase)
                         }
                     }
                     Column(
@@ -283,23 +312,13 @@ fun SignUpScreen(container: AppContainer, toast: ToastState, onBack: () -> Unit,
                                 colors.textSecondary,
                                 Modifier.fillMaxWidth(),
                             )
-                            PrimaryButton("Continue", ::continueToPhrase, enabled = canContinue)
+                            PrimaryButton("Continue", ::continueToPhrase, Modifier.testTag("signUp.continue"), enabled = canContinue)
                         } else {
-                            Row(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .pressable(enabled = !submitting, scale = 0.97f, role = Role.Checkbox, onClick = { wroteDown = !wroteDown })
-                                    .padding(horizontal = 4.dp)
-                                    .semantics(mergeDescendants = true) { stateDescription = if (wroteDown) "Checked" else "Not checked" },
-                                horizontalArrangement = Arrangement.spacedBy(9.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                CheckBoxMark(wroteDown)
-                                ShroudText("I wrote down my encryption phrase", inter(13f, FontWeight.Medium), colors.textPrimary)
-                            }
+                            WroteDownRow(wroteDown, { wroteDown = !wroteDown }, enabled = !submitting)
                             PrimaryButton(
                                 title = if (submitting) "Creating…" else "Create Account",
                                 onClick = ::createAccount,
+                                modifier = Modifier.testTag("signUp.create"),
                                 isLoading = submitting,
                                 enabled = canCreate,
                             )
@@ -311,14 +330,92 @@ fun SignUpScreen(container: AppContainer, toast: ToastState, onBack: () -> Unit,
     }
 }
 
-/** Server errors that are about the name or password, shown back on the account step. */
-private val CREDENTIAL_ERRORS = setOf(
-    ErrorCodes.USERNAME_TAKEN,
-    ErrorCodes.USERNAME_RESERVED,
-    ErrorCodes.VALIDATION_ERROR,
-    ErrorCodes.PASSWORD_TOO_SHORT,
-    ErrorCodes.PASSWORD_TOO_COMMON,
-)
+/**
+ * Sign Up's **Create Account** (`SignUpView.swift:299-344`; settings-lock addendum S.6), apart from
+ * drawing so it runs on the JVM. Main-confined, like the screen that holds it.
+ *
+ * Order: the phrase is checked (12 BIP39 words), the screen lock is checked again (iOS checks
+ * `canProtectWrapKey` here, before any request — Android also checks at Continue, S.7), the
+ * local-network permission is asked (Android 17), then `POST /auth/register` and the keys
+ * (`establishFromSignup`: derive, store the vault, `PUT /keys/bundle`).
+ *
+ * The account this submission created is remembered with the name and password it was created
+ * with: when the keys fail to publish, a retry reuses it instead of registering again (which the
+ * server would refuse with "That username is already taken." — the iOS gap S.6 names). It is never
+ * a session from anywhere else: that could be an existing account whose keys this screen must not
+ * replace.
+ */
+internal class SignUpSubmission(private val services: OnboardingServices) {
+    /** What Create Account led to. */
+    sealed interface Outcome {
+        /** The account and its keys exist: reveal the chats (`router.unlockMessages()`, `:334`). */
+        data object Unlocked : Outcome
+
+        /** The server objected to the name or password: shown back on the account step (S.7). */
+        data class AccountError(val message: String) : Outcome
+
+        /** Anything else, shown on the phrase step. */
+        data class PhraseError(val message: String) : Outcome
+    }
+
+    private var registered: Pair<Session, String>? = null
+
+    /**
+     * Creates the account for [username] / [password] with [words]. [ensureLocalNetwork] asks for
+     * Android 17's local-network permission when the server needs it; [onRegistered] runs once the
+     * server created the account (the autofill save, S3).
+     */
+    suspend fun create(
+        username: String,
+        password: String,
+        words: List<String>,
+        ensureLocalNetwork: suspend () -> Boolean,
+        onRegistered: () -> Unit = {},
+    ): Outcome = try {
+        services.bip39.validate(words)
+        when {
+            // `!HistoryKeyVault.canProtectWrapKey` (`:313-316`): the lock can go between Continue and Create.
+            !services.hasScreenLock() -> Outcome.PhraseError(CryptoController.userMessage(CryptoException.NoScreenLock()))
+            !ensureLocalNetwork() -> Outcome.PhraseError(LocalNetworkAccess.DENIED_MESSAGE)
+            else -> {
+                services.establishFromSignup(words, accountFor(username, password, onRegistered))
+                Outcome.Unlocked
+            }
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Throwable) {
+        when {
+            e is ApiError.Server && e.code in CREDENTIAL_ERRORS -> Outcome.AccountError(e.userMessage)
+            // `BIP39Seed.SeedError | CryptoControllerError | HistoryKeyVault.VaultError` (`:338-341`).
+            e is Bip39.PhraseException || e is CryptoException -> Outcome.PhraseError(CryptoController.userMessage(e))
+            else -> Outcome.PhraseError(SessionController.userMessage(e))
+        }
+    }
+
+    /** The account this submission created for the same name and password while it is still the session, else a new one. */
+    private suspend fun accountFor(username: String, password: String, onRegistered: () -> Unit): Session {
+        val name = SessionController.normalize(username)
+        registered
+            ?.takeIf { (session, pw) -> session.username == name && pw == password && services.session.value == session }
+            ?.let { return it.first }
+        return services.register(username, password).also {
+            registered = it to password
+            onRegistered()
+        }
+    }
+
+    private companion object {
+        /** Server errors about the name or password (`server/.../error.rs`, `auth/username.rs`, `auth/password.rs`). */
+        val CREDENTIAL_ERRORS = setOf(
+            ErrorCodes.USERNAME_TAKEN,
+            ErrorCodes.USERNAME_RESERVED,
+            ErrorCodes.VALIDATION_ERROR,
+            ErrorCodes.PASSWORD_TOO_SHORT,
+            ErrorCodes.PASSWORD_TOO_COMMON,
+        )
+    }
+}
 
 @Composable
 private fun AccountStep(
@@ -343,6 +440,8 @@ private fun AccountStep(
             onValueChange = onUsername,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, autoCorrectEnabled = false, imeAction = ImeAction.Next),
             onImeAction = { passwordFocus.requestFocus() },
+            // iOS `.username` on the new account's name (`:276-283`); the save prompt pairs it with the new password.
+            contentType = ContentType.NewUsername,
         )
         Separator(startInset = 42.dp)
         CredentialRow(
@@ -357,6 +456,8 @@ private fun AccountStep(
             keyboardOptions = SecretKeyboard.copy(imeAction = ImeAction.Next),
             onImeAction = onDone,
             focusRequester = passwordFocus,
+            // iOS `.newPassword`: a strong password suggestion, saved once the account exists (S3).
+            contentType = ContentType.NewPassword,
         )
         Separator(startInset = 42.dp)
         PasswordStrengthMeter(evaluation)
@@ -374,22 +475,8 @@ private fun PhraseStep(words: List<String>, revealed: Int, onCopy: () -> Unit) {
     )
     Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         SectionCaption("ENCRYPTION PHRASE", Modifier.weight(1f))
-        PillButton("Copy", onCopy, enabled = revealed == Bip39.WORD_COUNT)
+        PillButton("Copy", onCopy, Modifier.testTag("signUp.copy"), enabled = revealed == Bip39.WORD_COUNT)
     }
     EncryptionPhraseCard(words, revealed)
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(colors.warningBackground)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(9.dp),
-    ) {
-        ShroudIcon(ShroudIcons.WarningFill, colors.warningIcon, size = 15.dp)
-        ShroudText(
-            "These 12 words are the only way to restore your messages. Shroud cannot recover them for you.",
-            inter(12f, lineSpacing = 3f),
-            colors.warningText,
-        )
-    }
+    PhraseWarningCard("These 12 words are the only way to restore your messages. Shroud cannot recover them for you.")
 }

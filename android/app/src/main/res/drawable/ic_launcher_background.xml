@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- design/icon/shroud-icon.svg: the indigo gradient behind the veil. -->
+<!--
+  design/icon/shroud-icon.svg, the detailed icon's backdrop: the indigo gradient and the soft glow
+  behind the veil (BrandLogoMark.swift:154-167). The icon's square is the visible 72 dp of the
+  108 dp adaptive canvas (units 170.67-853.33), so the gradient's ends are mapped into it.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
@@ -10,13 +14,26 @@
         <aapt:attr name="android:fillColor">
             <gradient
                 android:type="linear"
-                android:startX="153.6"
-                android:startY="0"
-                android:endX="870.4"
-                android:endY="1024">
+                android:startX="273.07"
+                android:startY="170.67"
+                android:endX="750.93"
+                android:endY="853.33">
                 <item android:offset="0" android:color="#FF7D7BFA" />
                 <item android:offset="0.55" android:color="#FF5E5CE6" />
                 <item android:offset="1" android:color="#FF3432B8" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- The glow: white 18 % → 0, centre (0.5, 0.3), radius 0.6 of the icon. -->
+    <path android:pathData="M0,0h1024v1024h-1024z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="512"
+                android:centerY="375.47"
+                android:gradientRadius="409.6">
+                <item android:offset="0" android:color="#2EFFFFFF" />
+                <item android:offset="1" android:color="#00FFFFFF" />
             </gradient>
         </aapt:attr>
     </path>

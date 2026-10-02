@@ -32,6 +32,9 @@ for (let i = 2; i < process.argv.length - 1; i += 2) args.set(process.argv[i].re
 const API = args.get("api") ?? "http://127.0.0.1:8080/api/v1";
 const PORT = Number(args.get("port") ?? "8099");
 const PHOTO = args.get("photo") ?? "";
+// `fake` (default) speaks the selftest SDP. `chrome` is a real RTCPeerConnection, for a device
+// WebRTC engine. The fake path stays the one engine-e2e.sh uses.
+const MEDIA = args.get("media") ?? "fake";
 
 class MemoryStorage {
   private items = new Map<string, string>();
@@ -75,6 +78,11 @@ const { openReaction, saveReaction } = await import("../../../web/src/reactions"
 const { openDeviceName } = await import("../../../web/src/crypto/deviceName");
 const { CallController } = await import("../../../web/src/calls/controller");
 const { FakePeer, FakeStream, FakeTrack } = await import("./fakeMedia");
+const { ChromeMedia, ChromePeer } = await import("./chromeMedia");
+const chrome =
+  MEDIA === "chrome"
+    ? new ChromeMedia(`http://127.0.0.1:${PORT}/health`, `${process.env.SHROUD_E2E_STATE ?? "/tmp"}/chrome-${PORT}`)
+    : null;
 
 type Material = ReturnType<typeof establish>;
 type Account = { token: string; userId: string; username: string; deviceId: string; shareCode: string; material: Material };
@@ -494,13 +502,33 @@ const callPhases: string[] = [];
 const calls = new CallController({
   unsupported: () => null,
   getUserMedia: async (constraints: MediaStreamConstraints) => {
+    if (chrome) return (await chrome.userMedia(constraints as unknown as Record<string, unknown>)) as unknown as MediaStream;
     const tracks = [new FakeTrack("audio")];
     if (constraints.video) tracks.push(new FakeTrack("video", "user"));
     return new FakeStream(tracks) as unknown as MediaStream;
   },
   cameras: async () => ["cam-front"],
-  createPeer: (config: RTCConfiguration) => new FakePeer("web", config) as unknown as RTCPeerConnection,
-  createStream: (tracks: MediaStreamTrack[]) => new FakeStream(tracks as unknown as InstanceType<typeof FakeTrack>[]) as unknown as MediaStream,
+  createPeer: (config: RTCConfiguration) =>
+    chrome
+      ? (chrome.createPeer(config as unknown as Record<string, unknown>) as unknown as RTCPeerConnection)
+      : (new FakePeer("web", config) as unknown as RTCPeerConnection),
+  createStream: (tracks: MediaStreamTrack[]) =>
+    chrome
+      ? ({
+          getTracks: () => tracks,
+          getAudioTracks: () => tracks.filter((track) => track.kind === "audio"),
+          getVideoTracks: () => tracks.filter((track) => track.kind === "video"),
+          addTrack: (track: MediaStreamTrack) => {
+            if (!tracks.includes(track)) tracks.push(track);
+          },
+        } as unknown as MediaStream)
+      : (new FakeStream(tracks as unknown as InstanceType<typeof FakeTrack>[]) as unknown as MediaStream),
+  ...(chrome
+    ? {
+        remoteFingerprint: async (pc: RTCPeerConnection) =>
+          pc instanceof ChromePeer ? chrome.fingerprint(pc) : null,
+      }
+    : {}),
   now: () => Date.now(),
   setTimeout: (run: () => void, ms: number) => setTimeout(run, ms) as unknown as number,
   clearTimeout: (id: number) => clearTimeout(id as unknown as NodeJS.Timeout),
@@ -559,6 +587,8 @@ function callState() {
     peer: view?.peer?.id?.toLowerCase() ?? null,
     connected: view?.connectedAt != null,
     remoteMic: view?.remoteMic ?? null,
+    canShare: Boolean((view as { canShare?: boolean } | null)?.canShare),
+    ice: chrome?.iceState ?? null,
     phases: [...callPhases],
   };
 }
@@ -646,7 +676,7 @@ const routes: Record<string, (b: Record<string, unknown>, url: URL) => Promise<u
     account = null;
     return { loggedOut: true };
   },
-  "GET /health": async () => ({ ok: true, hasAccount: account != null }),
+  "GET /health": async () => ({ ok: true, hasAccount: account != null, media: MEDIA }),
 };
 
 createServer(async (req, res) => {
@@ -663,4 +693,15 @@ createServer(async (req, res) => {
     console.log(`peer: ${req.method} ${url.pathname} failed (${status})`);
     reply(res, status, { error: message });
   }
-}).listen(PORT, "127.0.0.1", () => console.log(`peer: listening on 127.0.0.1:${PORT}, API ${API}`));
+}).listen(PORT, "127.0.0.1", () => {
+  console.log(`peer: listening on 127.0.0.1:${PORT}, API ${API}`);
+  if (chrome) {
+    void chrome.start().then(
+      () => console.log("peer: chrome ready"),
+      () => {
+        console.log("peer: chrome failed");
+        process.exit(1);
+      },
+    );
+  }
+});

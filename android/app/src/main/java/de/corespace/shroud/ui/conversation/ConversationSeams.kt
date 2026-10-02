@@ -1,8 +1,13 @@
 package de.corespace.shroud.ui.conversation
 
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.ProvidableCompositionLocal
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import de.corespace.shroud.core.model.ChatMessage
 import de.corespace.shroud.core.model.MediaTransfer
 import de.corespace.shroud.core.model.ReactionChip
@@ -44,7 +49,8 @@ data class MessageRowModel(
  * [allowsInnerTaps] first (*Hold release fires bubble controls*), and the row's own tap runs before
  * an inner control's, so inner controls report [claimTap] (*Row tap fires before inner controls*).
  *
- * **Seam (W2-INT), owner W3-THREAD-LIST in wave 3.**
+ * **Seam (W2-INT), owner W3-THREAD-LIST in wave 3.** W3-THREAD-LIST added [accessibilityActions]
+ * (defaulted, source-compatible): the row's actions, which only the bubble's merged node can carry.
  */
 @Stable
 interface BubbleContext {
@@ -68,6 +74,46 @@ interface BubbleContext {
     /** The bubble's bounds in the root, for the menu hero and reaction flights. */
     fun reportBubbleBounds(messageId: UUID, boundsInRoot: Rect)
 
-    /** A reaction chip's bounds in the root, for reaction flights. */
+    /**
+     * A reaction chip's bounds in the root, for reaction flights. While a flight is on its way to
+     * [messageId], the chip holding the flying emoji draws that emoji hidden and reports **the
+     * emoji's** frame here, as it lays out (iOS `ReactionFlightFrameKey`, `MessageReactionChips.swift:
+     * 96-103, 179-189`); the conversation lands the flight on it (`ReactionFlightState.land`).
+     */
     fun reportChipBounds(messageId: UUID, chipId: String, boundsInRoot: Rect)
+
+    /**
+     * The row's TalkBack actions for [message], in this order: "Reply" (the swipe), "Message options"
+     * (the long-press menu), "Copy", "Copy Link", "Delete" (`ConversationView.swift:880-883, 2243-2254`;
+     * `MessageLongPressGesture.swift:132-134`; `SwipeToReply.swift:236-240`; conversation-thread §17).
+     *
+     * The bubble draws one merged accessibility node (its own actions — reactions, playback, links —
+     * included), and a merged node keeps a single list of custom actions, so the bubble appends these
+     * to its own: `customActions = bubbleActions + context.accessibilityActions(message)`. Empty for
+     * the menu hero. Added by W3-THREAD-LIST (defaulted, so callers compile unchanged).
+     */
+    fun accessibilityActions(message: ChatMessage): List<CustomAccessibilityAction> = emptyList()
+}
+
+/**
+ * The width a message row offers its bubble: the thread's width less 16 dp on each side, measured by
+ * the screen and provided to the list **and** the long-press menu's hero, so both size a bubble
+ * identically (`chatRowWidth`, `ConversationView.swift:261-264`; conversation-thread §1.2). Bubbles
+ * size themselves from it (`maxBubbleWidth`, thread §4.1); outside a conversation it is
+ * [ChatRowWidth.Fallback] (288 dp, `MessageBubbleView.swift:123-133`).
+ *
+ * **Seam, owner W3-THREAD-LIST** (W3-THREAD-BUBBLES reads it).
+ */
+val LocalChatRowWidth: ProvidableCompositionLocal<Dp> = compositionLocalOf { ChatRowWidth.Fallback }
+
+/** The numbers behind [LocalChatRowWidth]. */
+object ChatRowWidth {
+    /** The row width when the thread has not been measured (`fallbackRowWidth`, MBV:123-133). */
+    val Fallback: Dp = 288.dp
+
+    /** Horizontal inset of the message list (`threadHorizontalInset`, CV:460-461). */
+    val ThreadInset: Dp = 16.dp
+
+    /** `max(0, threadWidth − 2·16)` (CV:264). */
+    fun of(threadWidth: Dp): Dp = (threadWidth - ThreadInset * 2).coerceAtLeast(0.dp)
 }
