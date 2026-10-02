@@ -22,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.dropShadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -93,7 +94,7 @@ fun MessageReactionPanel(
     onExpandedChange: (Boolean) -> Unit,
     progress: Float,
     selected: Set<String>,
-    bar: Rect,
+    bar: () -> Rect,
     container: Size,
     safeArea: MenuInsets,
     onBackdropTap: () -> Unit,
@@ -107,8 +108,12 @@ fun MessageReactionPanel(
     // Keyed on the wanted height and the state, not the frame: the bar rides the hero with no lag.
     val expansion by animateFloatAsState(if (expanded) 1f else 0f, spec, label = "reactionPanelExpansion")
     val height by animateFloatAsState(wanted, spec, label = "reactionPanelHeight")
-    val open = MessageReactionPanelLayout.frame(true, bar, container, safeArea, height)
-    val frame = MessageMenuLayout.lerp(bar, open, expansion)
+    // The size doesn't depend on where the bar is (only the place does), so the bar's position is read
+    // while placing: it rides the hero's flight and the stack's scroll without recomposing the panel.
+    val barSize = Size(MessageReactionBarMetrics.barWidth, MessageReactionBarMetrics.barHeight)
+    val atOrigin = Rect(Offset.Zero, barSize)
+    val openSize = MessageReactionPanelLayout.frame(true, atOrigin, container, safeArea, height).size
+    val size = MessageMenuLayout.lerp(atOrigin, Rect(Offset.Zero, openSize), expansion).size
     val collapsedRadius = MessageReactionBarMetrics.barHeight / 2
     val radius = collapsedRadius + (MessageReactionPanelLayout.EXPANDED_CORNER_RADIUS - collapsedRadius) * expansion
     val shape = RoundedCornerShape(radius.dp)
@@ -119,8 +124,12 @@ fun MessageReactionPanel(
     }
     Box(
         Modifier
-            .offset { IntOffset(frame.left.dp.roundToPx(), frame.top.dp.roundToPx()) }
-            .requiredSize(frame.width.dp, frame.height.dp)
+            .offset {
+                val current = bar()
+                val frame = MessageMenuLayout.lerp(current, MessageReactionPanelLayout.frame(true, current, container, safeArea, height), expansion)
+                IntOffset(frame.left.dp.roundToPx(), frame.top.dp.roundToPx())
+            }
+            .requiredSize(size.width.dp, size.height.dp)
             .graphicsLayer { alpha = progress.coerceIn(0f, 1f) }
             // Its own layer over the card: solid once grown, a shadow that deepens as it lifts (`:369-375`).
             .dropShadow(
@@ -160,7 +169,7 @@ fun MessageReactionPanel(
                         query = query,
                         onQueryChange = { query = it },
                         results = results,
-                        modifier = Modifier.requiredSize(open.width.dp, open.height.dp),
+                        modifier = Modifier.requiredSize(openSize.width.dp, openSize.height.dp),
                         emojiModifier = glide,
                     )
                 } else {

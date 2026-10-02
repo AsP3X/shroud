@@ -117,11 +117,18 @@ fun MessageMenuOverlay(
         )
         val plan = MessageMenuLayout.plan(source, container, safeArea, metrics)
         val scroll = rememberScrollState(initial = with(density) { plan.initialOffset.dp.roundToPx() })
-        // Scroll-content coordinates: while scrolled, the list slot sits `offset` further down (MAM:691-694).
-        val offset = if (plan.scrolls) with(density) { scroll.value.toDp().value } else 0f
-        val heroInContent = MessageMenuLayout.lerp(source.translate(0f, offset), plan.hero, progress)
-        val heroOnScreen = heroInContent.translate(0f, -offset)
-        val chrome = MessageMenuLayout.chrome(heroOnScreen, isMine, plan, metrics)
+        // Scroll-content coordinates: while scrolled, the list slot sits `offset` further down
+        // (MAM:691-694). Read only where things are placed, so scrolling the stack re-places the
+        // bubble, card and bar without recomposing the menu.
+        val offset: () -> Float = if (plan.scrolls) {
+            { scroll.value / density.density }
+        } else {
+            { 0f }
+        }
+        val heroInContent = { MessageMenuLayout.lerp(source.translate(0f, offset()), plan.hero, progress) }
+        val chrome = { MessageMenuLayout.chrome(heroInContent().translate(0f, -offset()), isMine, plan, metrics) }
+        // Sizes don't move with the scroll: the bubble's grows from its slot to its rest, the card's is fixed.
+        val heroSize = MessageMenuLayout.lerp(source, plan.hero, progress).size
         val interactive = progress > 0.5f
 
         MessageMenuBackdrop(onTap = onBackdropTap, progress = progress)
@@ -141,7 +148,9 @@ fun MessageMenuOverlay(
                 ) {
                     BubbleAndCard(
                         hero = heroInContent,
-                        card = chrome.card.translate(0f, offset),
+                        heroSize = heroSize,
+                        card = { chrome().card.translate(0f, offset()) },
+                        cardSize = metrics.cardSize,
                         isMine = isMine,
                         progress = progress,
                         dimmed = showsAllReactions,
@@ -154,8 +163,10 @@ fun MessageMenuOverlay(
             }
         } else {
             BubbleAndCard(
-                hero = heroOnScreen,
-                card = chrome.card,
+                hero = heroInContent,
+                heroSize = heroSize,
+                card = { chrome().card },
+                cardSize = metrics.cardSize,
                 isMine = isMine,
                 progress = progress,
                 dimmed = showsAllReactions,
@@ -175,7 +186,7 @@ fun MessageMenuOverlay(
                 onExpandedChange = { showsAllReactions = it },
                 progress = progress,
                 selected = selectedReactions,
-                bar = chrome.reactions,
+                bar = { chrome().reactions },
                 container = container,
                 safeArea = safeArea,
                 onBackdropTap = onBackdropTap,
@@ -184,11 +195,16 @@ fun MessageMenuOverlay(
     }
 }
 
-/** The lifted bubble and the card, placed in one coordinate space (MAM:753-774). Rects in dp. */
+/**
+ * The lifted bubble and the card, placed in one coordinate space (MAM:753-774). Rects and sizes in
+ * dp; [hero] and [card] are read while placing (they follow the stack's scroll).
+ */
 @Composable
 private fun BubbleAndCard(
-    hero: Rect,
-    card: Rect,
+    hero: () -> Rect,
+    heroSize: Size,
+    card: () -> Rect,
+    cardSize: Size,
     isMine: Boolean,
     progress: Float,
     dimmed: Boolean,
@@ -197,14 +213,17 @@ private fun BubbleAndCard(
     heroContent: @Composable () -> Unit,
     cardContent: @Composable () -> Unit,
 ) {
-    val slotWidth = MessageMenuLayout.heroSlotWidth(hero.width, rowWidth)
-    val slotLeft = if (isMine) hero.right - slotWidth else hero.left
+    val slotWidth = MessageMenuLayout.heroSlotWidth(heroSize.width, rowWidth)
     // Behind the grown panel the message and its actions step back into the dimmed thread.
     Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (dimmed) 0.35f else 1f }) {
         Box(
             Modifier
-                .offset { IntOffset(slotLeft.dp.roundToPx(), hero.top.dp.roundToPx()) }
-                .requiredSize(slotWidth.dp, hero.height.dp)
+                .offset {
+                    val frame = hero()
+                    val slotLeft = if (isMine) frame.right - slotWidth else frame.left
+                    IntOffset(slotLeft.dp.roundToPx(), frame.top.dp.roundToPx())
+                }
+                .requiredSize(slotWidth.dp, heroSize.height.dp)
                 // Same size as the list bubble, so progress 0 is a seamless hand-off; never pressed.
                 .tapsGoTo(onBackdropTap),
             contentAlignment = if (isMine) Alignment.TopEnd else Alignment.TopStart,
@@ -213,8 +232,11 @@ private fun BubbleAndCard(
         }
         Box(
             Modifier
-                .offset { IntOffset(card.left.dp.roundToPx(), card.top.dp.roundToPx()) }
-                .requiredSize(card.width.dp, card.height.dp)
+                .offset {
+                    val frame = card()
+                    IntOffset(frame.left.dp.roundToPx(), frame.top.dp.roundToPx())
+                }
+                .requiredSize(cardSize.width.dp, cardSize.height.dp)
                 .graphicsLayer { alpha = progress.coerceIn(0f, 1f) }
                 // Under the grown reaction panel, and while it fades, the actions are out of reach:
                 // a tap there is a tap outside the panel, which the backdrop turns into a dismiss.
