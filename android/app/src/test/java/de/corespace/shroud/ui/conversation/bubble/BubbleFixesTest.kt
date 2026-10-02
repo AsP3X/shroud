@@ -1,5 +1,6 @@
 package de.corespace.shroud.ui.conversation.bubble
 
+import android.app.Application
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.view.ViewGroup
@@ -26,7 +27,7 @@ import kotlin.math.abs
 
 /** What C10 changed against iOS, pinned (conversation-thread §11.7, §12.2; plan §1.7.13). */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35], qualifiers = "w412dp-h900dp-xhdpi")
+@Config(sdk = [35], application = Application::class, qualifiers = "w412dp-h900dp-xhdpi")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class BubbleFixesTest {
     private val hosts = ArrayList<ComposeHarness>()
@@ -38,6 +39,7 @@ class BubbleFixesTest {
             host.idle()
         }
         VoiceTranscriptDisclosure.reset()
+        BubbleRenderFixtures.flushSnapshotWrites()
     }
 
     // ---- "→A" that fails (`ConversationView.swift:1607-1632`) ----

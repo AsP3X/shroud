@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Shader
+import android.os.Looper
 import androidx.compose.ui.geometry.Rect
 import androidx.emoji2.text.EmojiCompat
 import de.corespace.shroud.core.messaging.MessageArtifactSinks
@@ -28,6 +29,7 @@ import de.corespace.shroud.ui.conversation.MessageRows
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
+import org.robolectric.Shadows
 import java.io.ByteArrayOutputStream
 import java.time.Instant
 import java.time.LocalDate
@@ -162,6 +164,16 @@ internal object BubbleRenderFixtures {
      * "font loaded" write lands between compositions, and Robolectric then never sends global
      * snapshot changes again: every later test's taps stop recomposing.
      */
+    /**
+     * Runs the main looper once more before a test ends. A snapshot-state write made outside a
+     * composition (the transcript folds, in a test's body or teardown) queues Compose's global
+     * "apply" on the main looper; if Robolectric resets the looper with it still queued, global
+     * changes are never sent again and every later test's taps stop recomposing.
+     */
+    fun flushSnapshotWrites() {
+        Shadows.shadowOf(Looper.getMainLooper()).idle()
+    }
+
     fun awaitEmojiFont(host: ComposeHarness) {
         if (!EmojiCompat.isConfigured()) return
         val deadline = System.nanoTime() + 10_000_000_000L

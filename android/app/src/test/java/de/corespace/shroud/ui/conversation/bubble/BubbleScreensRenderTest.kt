@@ -102,6 +102,7 @@ class BubbleScreensRenderTest {
         DecodedImageCache.clear()
         LinkPreviewImageCache.clear()
         VoiceTranscriptDisclosure.reset()
+        BubbleRenderFixtures.flushSnapshotWrites()
     }
 
     // ---- pictures ----

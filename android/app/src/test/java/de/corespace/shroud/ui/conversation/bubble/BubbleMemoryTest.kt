@@ -90,6 +90,7 @@ class BubbleMemoryTest {
         engineScopes.cancelAll()
         BubbleMemory.clearAll()
         VoiceTranscriptDisclosure.reset()
+        BubbleRenderFixtures.flushSnapshotWrites()
     }
 
     private fun services() = RenderBubbleServices(RuntimeEnvironment.getApplication(), scope)
