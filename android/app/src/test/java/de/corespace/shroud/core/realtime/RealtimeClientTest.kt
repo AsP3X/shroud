@@ -405,15 +405,22 @@ class RealtimeClientTest {
 
     // ---- Reconnect (RealtimeClient.swift:246-272; api-realtime §11.7) ----
 
-    /** After a failure is seen, the next attempt comes exactly [seconds] later (virtual time). */
+    /**
+     * After a failure is seen, the next attempt comes exactly [seconds] later (virtual time). The
+     * attempt is counted at the server: a quick 500 can come back inside the same `runCurrent()`,
+     * so the brief Connecting state is not something to wait for.
+     */
     private fun TestScope.assertReconnectAfter(client: RealtimeClient, seconds: Long) {
         await("the drop") { client.state.value is ConnectionState.Failed }
+        val attempts = server.requestCount
         advanceTimeBy(seconds * 1000 - 1)
         runCurrent()
+        settle(30)
         assertFailed(client)
+        assertEquals("no attempt before $seconds s", attempts, server.requestCount)
         advanceTimeBy(1)
         runCurrent()
-        assertEquals("reconnect after $seconds s", ConnectionState.Connecting, client.state.value)
+        await("reconnect after $seconds s") { server.requestCount == attempts + 1 }
     }
 
     @Test
@@ -470,13 +477,7 @@ class RealtimeClientTest {
         client.onNetworkAvailable()
         assertEquals(ConnectionState.Connecting, client.state.value)
         // The pending attempt (due at 1 000 ms) is gone; the new drop waits 1 s from 500 ms.
-        await("the second drop") { client.state.value is ConnectionState.Failed }
-        advanceTimeBy(999)
-        runCurrent()
-        assertFailed(client)
-        advanceTimeBy(1)
-        runCurrent()
-        assertEquals(ConnectionState.Connecting, client.state.value)
+        assertReconnectAfter(client, 1)
         await("the third drop") { client.state.value is ConnectionState.Failed }
         settle()
         assertEquals(3, server.requestCount)
