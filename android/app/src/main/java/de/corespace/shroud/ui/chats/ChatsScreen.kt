@@ -63,8 +63,12 @@ fun ChatsScreen(query: String, onQueryChange: (String) -> Unit) {
     ChatsTab(source, query, onQueryChange, actionScope = container.appScope, clock = container.clock)
 }
 
-/** The chat a long press lifted, and where its row was. */
-private data class ChatMenuTarget(val row: ChatRowModel, val anchor: Rect)
+/**
+ * The chat a long press lifted, and where its row was. [muteDurations]: TalkBack's "Mute" action
+ * on the row asked for it — the card opens on the five durations instead of the menu's first list,
+ * so the action is not asked for twice.
+ */
+private data class ChatMenuTarget(val row: ChatRowModel, val anchor: Rect, val muteDurations: Boolean = false)
 
 /**
  * [ChatsScreen] on any [ChatsSource] (tests, previews). [actionScope] runs the menu's and the
@@ -129,7 +133,7 @@ internal fun ChatsTab(
     val onMenuItem: (ChatRowModel, ChatRowMenuItem, Rect?) -> Unit = { row, item, anchor ->
         when (item) {
             ChatRowMenuItem.MarkAsRead -> actions.markRead(row.peerId)
-            ChatRowMenuItem.Mute -> anchor?.let { menu = ChatMenuTarget(row, it) }
+            ChatRowMenuItem.Mute -> anchor?.let { menu = ChatMenuTarget(row, it, muteDurations = true) }
             ChatRowMenuItem.Unmute -> actions.changeMute(row.peerId, null)
             ChatRowMenuItem.DeleteChat, ChatRowMenuItem.DeleteAllNotes -> askDelete(row)
         }
@@ -188,16 +192,20 @@ internal fun ChatsTab(
         ContextMenu(
             anchor = target.anchor,
             actions = remember(target) {
-                ChatRowMenu.actions(
-                    target.row,
-                    onMarkRead = { actions.markRead(peer) },
-                    onMute = { duration -> actions.changeMute(peer, duration) },
-                    onUnmute = { actions.changeMute(peer, null) },
-                    onDelete = { askDelete(target.row) },
-                )
+                if (target.muteDurations) {
+                    ChatRowMenu.muteActions { duration -> actions.changeMute(peer, duration) }
+                } else {
+                    ChatRowMenu.actions(
+                        target.row,
+                        onMarkRead = { actions.markRead(peer) },
+                        onMute = { duration -> actions.changeMute(peer, duration) },
+                        onUnmute = { actions.changeMute(peer, null) },
+                        onDelete = { askDelete(target.row) },
+                    )
+                }
             },
             onDismiss = { menu = null },
-            paneTitle = ChatRowMenu.OPTIONS_LABEL,
+            paneTitle = if (target.muteDurations) ChatRowMenuItem.Mute.title else ChatRowMenu.OPTIONS_LABEL,
             header = {
                 // The lifted row (design AqgbA): tapping it opens the chat, the menu goes with it.
                 ChatRowView(row, onClick = {
