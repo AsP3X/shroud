@@ -12,6 +12,7 @@ import androidx.camera.core.SurfaceRequest
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.lifecycle.awaitInstance
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.rememberTransition
 import androidx.compose.animation.fadeIn
