@@ -56,6 +56,8 @@ import java.util.UUID
  *
  * - the camera screen, on the emulator's camera, hands out a photo whose source is a
  *   `content://<app>.cache/…` URI of a `cacheDir/shroud-*` file, and MediaStore gains nothing;
+ * - in video mode it hands out a recorded clip in a `cacheDir/shroud-cam-*.mp4` file that MediaStore
+ *   never sees and that the movie's cleanup deletes;
  * - the photo viewer's Share hands out a grant that opens while the viewer is up and fails once it
  *   closes (`revokeAll`);
  * - the viewer's Save to Gallery adds exactly one MediaStore item and says "Saved to Gallery".
@@ -77,8 +79,11 @@ class MediaViewDeviceTest {
     private val inserted = ArrayList<Uri>()
 
     @Before
-    fun grantCamera() {
-        InstrumentationRegistry.getInstrumentation().uiAutomation.grantRuntimePermission(context.packageName, Manifest.permission.CAMERA)
+    fun grantCameraAndMicrophone() {
+        // Granted up front so no system dialog covers the screen (the microphone is asked on VIDEO, P8).
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        automation.grantRuntimePermission(context.packageName, Manifest.permission.CAMERA)
+        automation.grantRuntimePermission(context.packageName, Manifest.permission.RECORD_AUDIO)
     }
 
     @After
@@ -115,7 +120,10 @@ class MediaViewDeviceTest {
                 )
             }
         }
-        rule.waitUntil(15_000) {
+        // CameraX can take a while to come up: the API 30 image advertises a front camera it does not
+        // have, and CameraX re-validates its camera list for ~6 s before it binds the back one (15 s
+        // was too short on a freshly booted emulator).
+        rule.waitUntil(40_000) {
             runCatching { rule.onNodeWithContentDescription("Take photo").assertIsEnabled() }.isSuccess
         }
         rule.onNodeWithContentDescription("Take photo").performClick()
@@ -137,6 +145,57 @@ class MediaViewDeviceTest {
         assertEquals(before, ownImagesSince(startSeconds))
         assertEquals(0, filesNamed(name))
         file.delete()
+    }
+
+    @Test
+    fun aRecordedClipIsACacheFileTheHostCleansUpAndNeverReachesMediaStore() {
+        val startSeconds = System.currentTimeMillis() / 1000 - 1
+        val before = ownVideosSince(startSeconds)
+        val capture = productionCapture()
+        // The AVD runs with -no-audio, so the clip records without sound (the P8 path for a refused
+        // microphone); where it is stored does not depend on the audio track.
+        val silent = object : CameraCapture by capture {
+            override fun startRecording(withAudio: Boolean): Boolean = capture.startRecording(withAudio = false)
+        }
+        var movie: PickedMovie? = null
+        rule.setContent {
+            ShroudTheme(dark = true) {
+                CameraCaptureContent(
+                    onPhoto = {},
+                    onVideo = { movie = it },
+                    onClose = {},
+                    services = object : CameraServices {
+                        override val camera: CameraCapture = silent
+                        override suspend fun decodePreview(source: MediaImageSource, maxEdge: Int): Bitmap? = null
+                    },
+                )
+            }
+        }
+        rule.waitUntil(40_000) {
+            runCatching { rule.onNodeWithContentDescription("Take photo").assertIsEnabled() }.isSuccess
+        }
+        rule.onNodeWithText("VIDEO").performClick()
+        rule.waitUntil(40_000) {
+            runCatching { rule.onNodeWithContentDescription("Start recording").assertIsEnabled() }.isSuccess
+        }
+        rule.onNodeWithContentDescription("Start recording").performClick()
+        rule.waitUntil(5_000) { runCatching { rule.onNodeWithContentDescription("Stop recording").assertExists() }.isSuccess }
+        Thread.sleep(2_000)
+        rule.onNodeWithContentDescription("Stop recording").performClick()
+        rule.waitUntil(20_000) { movie != null }
+
+        val clip = requireNotNull(movie)
+        assertEquals(ContentResolver.SCHEME_FILE, clip.uri.scheme)
+        val file = File(requireNotNull(clip.uri.path))
+        assertEquals(context.cacheDir.canonicalPath, file.parentFile?.canonicalPath)
+        assertTrue(file.name, file.name.startsWith("shroud-cam-") && file.name.endsWith(".mp4"))
+        assertTrue("the clip was written", file.isFile && file.length() > 0)
+        // Nothing reached the gallery.
+        assertEquals(before, ownVideosSince(startSeconds))
+        assertEquals(0, filesNamed(file.name))
+        // The host's cleanup after send or cancel deletes the capture.
+        clip.cleanup()
+        assertTrue("cleanup deletes the capture", !file.exists())
     }
 
     @Test
@@ -252,6 +311,16 @@ class MediaViewDeviceTest {
     private fun ownImagesSince(sinceSeconds: Long): Int =
         resolver.query(
             MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
+            arrayOf(MediaStore.MediaColumns._ID),
+            "${MediaStore.MediaColumns.DATE_ADDED} >= ? AND ${MediaStore.MediaColumns.OWNER_PACKAGE_NAME} = ?",
+            arrayOf(sinceSeconds.toString(), context.packageName),
+            null,
+        )?.use { it.count } ?: 0
+
+    /** Videos this app owns that MediaStore added after [sinceSeconds]. */
+    private fun ownVideosSince(sinceSeconds: Long): Int =
+        resolver.query(
+            MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
             arrayOf(MediaStore.MediaColumns._ID),
             "${MediaStore.MediaColumns.DATE_ADDED} >= ? AND ${MediaStore.MediaColumns.OWNER_PACKAGE_NAME} = ?",
             arrayOf(sinceSeconds.toString(), context.packageName),

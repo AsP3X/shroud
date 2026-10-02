@@ -39,7 +39,6 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.ui.components.GlassStyle
-import de.corespace.shroud.ui.components.OverlayLayer
 import de.corespace.shroud.ui.components.ShroudIcon
 import de.corespace.shroud.ui.components.ShroudText
 import de.corespace.shroud.ui.components.glassSurface
@@ -61,18 +60,20 @@ import kotlin.math.max
  */
 
 /**
- * A full-window media surface: its own root layer above the app (an [OverlayLayer], so TalkBack
- * only reaches it and its back handlers outrank the chat's), dark tokens inside only, light system
- * bar icons over the black, and — with [hideStatusBar] — no status bar while it is up
- * (`.statusBarHidden(true)`; the compose screens keep theirs, drawn light, as iOS does).
+ * A full-window media surface: dark tokens inside only, light system bar icons over the black,
+ * and — with [hideStatusBar] — no status bar while it is up (`.statusBarHidden(true)`; the compose
+ * screens keep theirs, drawn light, as iOS does).
+ *
+ * Drawn in place: the host owns the layer. The conversation's `ComposeMediaLayers` composes every
+ * media screen inside its own `OverlayLayer` (z-order, the modal TalkBack cut, the enter and exit
+ * transitions), so a second root layer here would lift the screen out of the host's transition —
+ * it would pop in, and stay fully drawn through the exit until it vanished.
  */
 @Composable
 internal fun MediaLayer(hideStatusBar: Boolean = true, content: @Composable BoxScope.() -> Unit) {
-    OverlayLayer(active = true, modal = true) {
-        ShroudTheme(dark = true) {
-            DarkSystemBars(hideStatusBar)
-            Box(Modifier.fillMaxSize(), content = content)
-        }
+    ShroudTheme(dark = true) {
+        DarkSystemBars(hideStatusBar)
+        Box(Modifier.fillMaxSize(), content = content)
     }
 }
 

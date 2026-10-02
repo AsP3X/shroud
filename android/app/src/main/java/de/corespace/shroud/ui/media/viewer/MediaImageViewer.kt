@@ -118,8 +118,8 @@ import kotlin.math.roundToInt
  * back) to close. More offers Save to Gallery, Share and Copy. Share and Copy hand out an in-memory
  * grant (no decrypted file); closing the viewer revokes every grant (K10).
  *
- * Agent: draws on its own root layer ([MediaLayer]); the host keeps it composed while open and
- * drops it in [onClose]. When the item on screen leaves [items] the viewer calls [onClose] itself.
+ * Agent: draws in place, full size ([MediaLayer]); the host puts it in its overlay layer, keeps it
+ * composed while open and drops it in [onClose]. When the item on screen leaves [items] the viewer calls [onClose] itself.
  * Decoded pages are held by their page only (the shared [DecodedImageCache] is read, not filled:
  * a viewer-sized decode would crowd the bubbles' cache).
  */
