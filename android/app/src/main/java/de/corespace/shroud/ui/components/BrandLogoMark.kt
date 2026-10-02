@@ -83,9 +83,18 @@ private fun currentBrandLogoStyle(): BrandLogoStyle {
 
 /** The icon artwork in its 1024-unit space (`BrandIconArt`, `BrandLogoMark.swift:97-184`). Keep in sync with the SVGs in `design/icon/`. */
 private object BrandArt {
+    /**
+     * The veil's shadow is a Gaussian with standard deviation 22 in the veil's own space (the SVG's
+     * `feGaussianBlur stdDeviation="22"` inside `scale(0.9)`; iOS blurs by `22 · 0.9 · unit` points,
+     * `BrandLogoMark.swift:121-127`). The paint is drawn under the veil's transform and a blur mask
+     * filter follows the canvas matrix, so the radius is given in veil units; the platform turns a
+     * radius into σ = 0.57735 · r + 0.5, hence r for σ = 22.
+     */
+    private const val SHADOW_RADIUS = (22f - 0.5f) / 0.57735f
+
     val shadowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
         color = BrandColors.veilShadow.copy(alpha = 0.35f).toArgb()
-        maskFilter = BlurMaskFilter(22f * 0.9f, BlurMaskFilter.Blur.NORMAL)
+        maskFilter = BlurMaskFilter(SHADOW_RADIUS, BlurMaskFilter.Blur.NORMAL)
     }
     val veil: Path = PathParser().parsePathString(
         "M512 204C686 204 788 330 792 500C795 612 806 690 818 752C826 792 806 818 776 818C742 818 720 752 684 752C646 752 628 824 590 824C552 824 532 758 494 758C446 758 400 790 340 818C300 836 250 850 206 852C236 820 242 776 236 720C230 650 230 580 232 500C236 330 338 204 512 204Z",

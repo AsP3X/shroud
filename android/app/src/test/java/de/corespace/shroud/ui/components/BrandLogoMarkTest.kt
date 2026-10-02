@@ -19,6 +19,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import java.io.File
 
 /**
  * The two looks of the drawn brand mark (settings-lock §8.3; `BrandLogoMark.swift:114-152`) and
@@ -36,6 +37,12 @@ class BrandLogoMarkTest {
         return bitmap
     }
 
+    /** Leaves the render in build/ for a look by eye next to the launcher icons (not an assertion). */
+    private fun save(bitmap: Bitmap, name: String) {
+        val dir = File("build/reports/launcher-icons").apply { mkdirs() }
+        File(dir, name).outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
+
     private fun luminance(color: Int) = (Color.red(color) * 299 + Color.green(color) * 587 + Color.blue(color) * 114) / 1000
 
     /** A point of the 1024-unit icon in a [size]-px mark placed at [left]. */
@@ -51,6 +58,7 @@ class BrandLogoMarkTest {
             }
         }
         val bitmap = render(ui)
+        save(bitmap, "brand-marks.png")
         val density = ui.activity.resources.displayMetrics.density
         val size = (100 * density).toInt()
         val simpleLeft = (120 * density).toInt()
