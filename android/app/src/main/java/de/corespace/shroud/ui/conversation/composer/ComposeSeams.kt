@@ -130,8 +130,10 @@ fun ConversationComposeHost(controller: ComposeController, onComposerHeightChang
     Column(
         modifier
             .fillMaxWidth()
-            .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars).only(WindowInsetsSides.Bottom))
-            .onSizeChanged { size -> reportHeight(with(density) { size.height.toDp() }) },
+            // Measured outside the inset padding, so the height includes the keyboard or the
+            // navigation bar under the bar: the thread pads by it and the toasts subtract it.
+            .onSizeChanged { size -> reportHeight(with(density) { size.height.toDp() }) }
+            .composerInsets(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         if (controller.isNotes) NotesTodoBar(onTodo = controller::sendTodo)
@@ -174,6 +176,16 @@ fun ConversationComposeHost(controller: ComposeController, onComposerHeightChang
 
     ComposeMediaLayers(controller)
 }
+
+/**
+ * The bar rides the keyboard frame by frame (conversation-compose-media §3.9; design tBB5Y): the
+ * bottom inset is the keyboard while it is up, else the navigation bar. Compose animates
+ * `WindowInsets.ime` from `WindowInsetsAnimation` on every frame of the keyboard's own animation
+ * (API 30+, edge-to-edge with `adjustResize`), so nothing here springs or animates on its own —
+ * an extra animation would lag the keyboard (iOS: the composer is a `safeAreaBar`, `GlassBar.swift:272-275`).
+ */
+internal fun Modifier.composerInsets(): Modifier =
+    windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars).only(WindowInsetsSides.Bottom))
 
 /**
  * The conversation's `ToastHost(bottomInset = …)` (`toastBottomInset`, `ConversationView.swift:208-212`):

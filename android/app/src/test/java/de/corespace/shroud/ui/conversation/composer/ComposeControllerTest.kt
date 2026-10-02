@@ -1,5 +1,6 @@
 package de.corespace.shroud.ui.conversation.composer
 
+import android.app.Application
 import android.graphics.Bitmap
 import android.net.Uri
 import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
@@ -59,7 +60,9 @@ import java.util.UUID
  * Robolectric only for `Uri` and `Bitmap`; everything else runs against [FakeComposeServices].
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+// A plain Application: these tests run on fakes; ShroudApplication would start the whole
+// container for every test, which piles up in the one test JVM.
+@Config(sdk = [35], application = Application::class)
 @OptIn(ExperimentalCoroutinesApi::class)
 class ComposeControllerTest {
     @get:Rule

@@ -181,8 +181,13 @@ internal class FakeComposeServices(override val sendScope: CoroutineScope) : Com
     // ---- Links ----
     /** The previews the fake fetcher knows, by URL. */
     val previews = HashMap<String, LinkPreviewDraft>()
+    /** While set, every fetch waits on it (the strip stays "Loading preview…"). */
+    var previewGate: CompletableDeferred<Unit>? = null
     override fun newLinkComposer(scope: CoroutineScope): LinkPreviewComposer = LinkPreviewComposer(
-        fetcher = { url -> previews[url] ?: throw LinkPreviewException(LinkPreviewException.Reason.Empty) },
+        fetcher = { url ->
+            previewGate?.await()
+            previews[url] ?: throw LinkPreviewException(LinkPreviewException.Reason.Empty)
+        },
         scope = scope,
         debounceMs = 0,
     )
@@ -193,7 +198,11 @@ internal class FakeComposeServices(override val sendScope: CoroutineScope) : Com
     val mimeTypes = HashMap<Uri, String>()
     override fun mimeType(uri: Uri): String? = mimeTypes[uri]
     val undecodable = HashSet<Uri>()
+
+    /** While set, decoding waits on it (a Recents tile shows its spinner meanwhile). */
+    var decodeGate: CompletableDeferred<Unit>? = null
     override suspend fun decodePreview(source: MediaImageSource, maxEdge: Int): Bitmap? {
+        decodeGate?.await()
         val uri = (source as? MediaImageSource.ContentUri)?.uri
         if (uri != null && uri in undecodable) return null
         return Bitmap.createBitmap(4, 3, Bitmap.Config.ARGB_8888)
@@ -207,9 +216,22 @@ internal class FakeComposeServices(override val sendScope: CoroutineScope) : Com
     val library = ArrayList<LibraryItem>()
     val unthumbnailable = HashSet<Uri>()
     override fun photoLibraryAccess(): LibraryAccess = libraryAccess
-    override suspend fun recentPhotos(limit: Int): List<LibraryItem> = library.take(limit)
+    /** While set, the Recents strip waits on it (its shimmering tiles stay up). */
+    var recentsGate: CompletableDeferred<Unit>? = null
+
+    /** The colour a tile's thumbnail is filled with (renders); transparent when null. */
+    var thumbnailColor: ((Uri) -> Int)? = null
+    override suspend fun recentPhotos(limit: Int): List<LibraryItem> {
+        recentsGate?.await()
+        return library.take(limit)
+    }
+
     override suspend fun photoThumbnail(uri: Uri, maxEdge: Int): Bitmap? =
-        if (uri in unthumbnailable) null else Bitmap.createBitmap(maxEdge, maxEdge, Bitmap.Config.ARGB_8888)
+        if (uri in unthumbnailable) {
+            null
+        } else {
+            Bitmap.createBitmap(maxEdge, maxEdge, Bitmap.Config.ARGB_8888).also { bitmap -> thumbnailColor?.let { bitmap.eraseColor(it(uri)) } }
+        }
 
     var photoAccessAsked = false
     override fun photoAccessRequested(): Boolean = photoAccessAsked

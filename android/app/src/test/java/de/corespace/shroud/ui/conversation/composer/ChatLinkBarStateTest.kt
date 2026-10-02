@@ -42,6 +42,19 @@ class ChatLinkBarStateTest {
     }
 
     @Test
+    fun `the iOS composer test's page - title over the bare link (LinkPreviewComposerTests draft)`() {
+        // `LinkPreviewComposerTests.draft(large:)`: site "Example", title "A page", no description.
+        val state = ChatLinkBarState.from(LinkPreview(url = "https://example.com", siteName = "Example", title = "A page"))
+        assertEquals(ChatLinkBarState.Ready(title = "A page", snippet = "https://example.com", snippetIsLink = true), state)
+        assertEquals("Link preview: A page, https://example.com", state.accessibilityText)
+        // The same page without a title names its site; without either, its host.
+        assertEquals("Example", ChatLinkBarState.from(LinkPreview(url = "https://example.com", siteName = "Example")).stripTitle)
+        assertEquals("example.com", ChatLinkBarState.from(LinkPreview(url = "https://example.com")).stripTitle)
+        // `testHostCaseIsTheSameLinkButPathCaseIsNot`'s other page: the host is lower-cased, the path is not shown.
+        assertEquals("example.com", ChatLinkBarState.from(LinkPreview(url = "https://Example.com/Tour")).stripTitle)
+    }
+
+    @Test
     fun `loading shows the link under 'Loading preview…' (CLB 114-134)`() {
         val loading = ChatLinkBarState.Loading("komoot.com/tour/1398273")
         assertEquals("Loading preview…", loading.stripTitle)

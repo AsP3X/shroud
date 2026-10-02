@@ -154,6 +154,13 @@ internal fun ChatComposer(
         if (runCatching { focusRequester.requestFocus() }.isSuccess) keyboard?.show()
     }
 
+    // The take swaps the field out, and the keyboard drops with it (`ChatComposerView.swift:305-307`):
+    // the bar slides down under the still finger, which the gesture reads in window space. Compose
+    // keeps the keyboard up when a focused field merely leaves composition, so it is told.
+    LaunchedEffect(phase.isActive) {
+        if (phase.isActive) keyboard?.hide()
+    }
+
     // Back during a take discards it and stays in the chat (thread D9 = compose Q10).
     BackHandler(enabled = phase.isActive) { gesture.finish(send = false) }
 
@@ -428,10 +435,11 @@ private fun MicButton(phase: ComposerPhase, level: Float, gesture: ComposerGestu
     val active = phase.isActive
     val currentGesture by rememberUpdatedState(gesture)
     val coordinates = remember { WindowCoordinates() }
-    val grow by animateFloatAsState(if (active && !reduce) 1.25f else 1f, Motion.snappy(), label = "micGrow")
+    // The live mic is 1.25× under Reduce Motion too (a state, not a movement); only the spring goes.
+    val grow by animateFloatAsState(if (active) 1.25f else 1f, Motion.respecting(reduce, Motion.snappy()), label = "micGrow")
     val heard by animateFloatAsState(level, Motion.easeOut(LEVEL_EASE_MS), label = "micLevel")
-    val haloAlpha by animateFloatAsState(if (active) 1f else 0f, Motion.snappy(), label = "micHaloAlpha")
-    val haloBase by animateFloatAsState(if (active) 1.6f else 0.5f, Motion.snappy(), label = "micHaloBase")
+    val haloAlpha by animateFloatAsState(if (active) 1f else 0f, Motion.respecting(reduce, Motion.snappy()), label = "micHaloAlpha")
+    val haloBase by animateFloatAsState(if (active) 1.6f else 0.5f, Motion.respecting(reduce, Motion.snappy()), label = "micHaloBase")
     Box(
         Modifier
             .touchArea(ComposerMetrics.slotSize, ComposerMetrics.touchSize)

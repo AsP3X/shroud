@@ -1,6 +1,7 @@
 package de.corespace.shroud.ui.conversation.attach
 
 import android.Manifest
+import android.app.Application
 import android.graphics.Bitmap
 import android.net.Uri
 import de.corespace.shroud.core.media.library.LibraryAccess
@@ -21,7 +22,9 @@ import org.robolectric.annotation.Config
  * only, `READ_MEDIA_IMAGES` + `READ_MEDIA_VISUAL_USER_SELECTED`, `READ_EXTERNAL_STORAGE` up to 32).
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+// A plain Application: these tests run on fakes; ShroudApplication would start the whole
+// container for every test, which piles up in the one test JVM.
+@Config(sdk = [35], application = Application::class)
 class PhotoAccessRulesTest {
     private val images = Manifest.permission.READ_MEDIA_IMAGES
     private val selected = Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
