@@ -171,11 +171,13 @@ class AppShellController(
     /**
      * Signed in but the shell not shown: messaging's polls are stopped, so `/auth/me` is probed
      * every 4 s — three 401s force the sign-out within ~12 s, offline never counts (`:386-389`).
-     * Cancelled and restarted when the condition flips, like `.task(id:)`.
+     * Cancelled and restarted when the condition flips, like `.task(id:)`. Starts once the launch
+     * sequence is through, so an interrupted wipe is finished before anything reads the session
+     * (`:151-152`).
      */
     private fun runSessionProbe() {
         scope.launch {
-            combine(env.session, router.isUnlockedFlow) { session, unlocked -> session != null && !unlocked }
+            combine(env.session, router.isUnlockedFlow, launched) { session, unlocked, ready -> ready && session != null && !unlocked }
                 .distinctUntilChanged()
                 .collectLatest { active ->
                     if (!active) return@collectLatest
