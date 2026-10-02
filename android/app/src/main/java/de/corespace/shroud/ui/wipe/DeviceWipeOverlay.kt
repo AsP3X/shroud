@@ -443,8 +443,15 @@ private fun WipeParticles(color: Color) {
     }
 }
 
-/** TalkBack announcement. `View.announceForAccessibility` and `TYPE_ANNOUNCEMENT` are deprecated. */
+/**
+ * TalkBack announcement. `View.announceForAccessibility` and `TYPE_ANNOUNCEMENT` are deprecated.
+ * Nothing is sent while accessibility is off: on API 37 `ViewRootImpl.requestSendAccessibilityEvent`
+ * passes the event on unchecked and `AccessibilityManager.sendAccessibilityEvent` throws
+ * "Accessibility off", which killed the app in the middle of the Log Out wipe (C3 device check).
+ */
 private fun View.speak(text: CharSequence) {
+    val manager = context.getSystemService(AccessibilityManager::class.java) ?: return
+    if (!manager.isEnabled) return
     val event = AccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED).apply {
         contentChangeTypes = AccessibilityEvent.CONTENT_CHANGE_TYPE_CONTENT_DESCRIPTION
         this.text.add(text)
@@ -453,8 +460,7 @@ private fun View.speak(text: CharSequence) {
         packageName = context.packageName
     }
     if (parent?.requestSendAccessibilityEvent(this, event) == true) return
-    val manager = context.getSystemService(AccessibilityManager::class.java) ?: return
-    if (manager.isEnabled) manager.sendAccessibilityEvent(event)
+    manager.sendAccessibilityEvent(event)
 }
 
 /**
