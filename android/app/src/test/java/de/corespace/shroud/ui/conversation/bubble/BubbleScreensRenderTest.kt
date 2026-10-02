@@ -455,6 +455,7 @@ class BubbleScreensRenderTest {
                     sheet.services.install.value = TranscriptionInstallState(TranscriptionInstallState.Phase.Downloading, 0.42, isDeterminate = true, languageName = "German", messageId = downloading.id)
                 },
                 rows = listOf(bubble(row(failedLoad)), bubble(row(working)), bubble(row(downloading)), bubble(row(silent))),
+                save = false,
             )
             // "→A" on the three loaded notes, the way TalkBack's "Transcribe" / "Show transcript" actions do it.
             for (label in listOf("Transcribe", "Show transcript")) {
