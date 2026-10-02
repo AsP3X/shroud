@@ -2,10 +2,13 @@ package de.corespace.shroud.ui.shell
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import de.corespace.shroud.core.notifications.NotificationKind
 import de.corespace.shroud.core.notifications.NotificationOpenRequest
@@ -151,6 +154,32 @@ class MainShellLayoutTest {
         ui.idle()
         assertEquals(360f, ui.boundsDp(ui.node("root:Chats")).width, 0.5f)
         assertEquals(1, screens.rootBuilds[MainTab.Chats])
+    }
+
+    @Test
+    @Config(qualifiers = "w840dp-h915dp-mdpi")
+    fun aDisplaySizeChangeAcross600FollowsTheDensity() {
+        // C3 device check (API 37, `wm density`): a density change keeps the window's pixels, and the
+        // shell kept its old layout — compact at 720 dp, two panes at 411 dp.
+        var scale by mutableStateOf(1f)
+        val ui = ShellUiHarness {
+            val base = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(base.density * scale, base.fontScale)) {
+                MainShell(router(), isRevealed = true, screens = FakeShellScreens())
+            }
+        }
+        // 840 px at mdpi: two panes, a 360 dp list.
+        assertEquals(360f, ui.boundsDp(ui.node("root:Chats")).width, 0.5f)
+        // Twice the density, the same 840 px: 420 dp, one pane over the whole window.
+        scale = 2f
+        ui.idle()
+        assertEquals(ui.rootWidthDp(), ui.boundsDp(ui.node("root:Chats")).width, 0.5f)
+        assertFalse(ui.hasText(SELECT_CONVERSATION_TITLE))
+        // And back: two panes again.
+        scale = 1f
+        ui.idle()
+        assertEquals(360f, ui.boundsDp(ui.node("root:Chats")).width, 0.5f)
+        assertTrue(ui.hasText(SELECT_CONVERSATION_TITLE))
     }
 
     // ---- Opens (shell-chats §4.6; notifications-push §5.7.5) ----

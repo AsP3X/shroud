@@ -106,8 +106,12 @@ fun MainShell(router: AppRouter, isRevealed: Boolean, modifier: Modifier = Modif
         movableContentOf { rootModifier: Modifier -> TabRootWithBar(navigator, screens, { currentScale }, rootModifier) }
     }
 
+    // Read here, not through `maxWidth`: a density change (Settings › Display size, `wm density`)
+    // keeps the window's pixels, and BoxWithConstraints does not measure its content again for it
+    // (C3 device check: compact at 720 dp, two panes at 411 dp). The new density makes a new lambda.
+    val density = LocalDensity.current
     BoxWithConstraints(modifier.fillMaxSize().background(ShroudTheme.colors.background)) {
-        val layout = ShellLayoutMath.windowLayout(maxWidth.value)
+        val layout = ShellLayoutMath.windowLayout(with(density) { constraints.maxWidth.toDp() }.value)
         CompositionLocalProvider(LocalShellNavigation provides navigator, LocalWindowLayout provides layout) {
             when (layout) {
                 WindowLayout.Compact -> CompactShell(navigator, screens, tabRoot)
