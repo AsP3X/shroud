@@ -144,7 +144,8 @@ internal fun PhotoMessageBubble(parts: BubbleParts, context: BubbleContext, serv
     val actions = buildList {
         if (failed && handlers.interactive) add(CustomAccessibilityAction("Retry") { retry(); true })
         if (reply != null && quoteTap != null) add(CustomAccessibilityAction("Show replied message") { quoteTap(); true })
-        if (hasReactions) addAll(reactionAccessibilityActions(parts.chips, parts.onReaction))
+        // The chips come back as actions, and the quick reaction (`ImageMessageBubble.swift:137`).
+        addAll(reactionAccessibilityActions(if (hasReactions) parts.chips else emptyList(), parts.onReaction))
         addAll(rowActions)
     }
     val tapState by rememberUpdatedState(tap)
