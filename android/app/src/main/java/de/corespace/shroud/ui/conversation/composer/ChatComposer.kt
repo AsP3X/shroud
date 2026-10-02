@@ -158,7 +158,8 @@ internal fun ChatComposer(
     BackHandler(enabled = phase.isActive) { gesture.finish(send = false) }
 
     Box(modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 8.dp)) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // No spacing here: the strip carries its own 8 dp gap, so an absent strip leaves none (`VStack(spacing: 8)`, `:86`).
+        Column {
             ComposerStrip(
                 linkBar = linkBar.takeIf { !phase.isActive },
                 reply = reply,
@@ -336,8 +337,9 @@ private fun MessageField(draft: TextFieldState, focusRequester: FocusRequester, 
                     interactionSource = interaction,
                     decorator = { field ->
                         Box(contentAlignment = Alignment.CenterStart) {
+                            // Read by TalkBack as the empty field's hint ("Message", §3.10).
                             if (draft.text.isEmpty()) {
-                                ShroudText("Message", inter(15f), colors.textSecondary, Modifier.clearAndSetSemantics {}, maxLines = 1)
+                                ShroudText(MESSAGE_PLACEHOLDER, inter(15f), colors.textSecondary, maxLines = 1)
                             }
                             field()
                         }
@@ -381,7 +383,7 @@ private fun TrailingControl(showsSend: Boolean, phase: ComposerPhase, level: Flo
         AnimatedContent(
             targetState = showsSend,
             transitionSpec = {
-                if (reduce) {
+                val transform = if (reduce) {
                     fadeIn(Motion.reduced()) togetherWith fadeOut(Motion.reduced())
                 } else {
                     val swap = Motion.iconSwap(Motion.bouncy())
@@ -392,6 +394,9 @@ private fun TrailingControl(showsSend: Boolean, phase: ComposerPhase, level: Flo
                         swap.enter togetherWith (swap.exit + slideOutVertically(Motion.bouncy<IntOffset>()) { dropPx })
                     }
                 }
+                // Unclipped: the live mic grows to 1.25 and its level halo reaches far past the 44 dp slot,
+                // and the 48 dp touch target overhangs it (`:284-292`).
+                transform using SizeTransform(clip = false)
             },
             label = "trailing",
         ) { send ->
@@ -567,9 +572,19 @@ private fun ComposerStrip(
     AnimatedContent(
         targetState = kind,
         transitionSpec = {
-            val spec = Motion.respecting(reduce, Motion.snappy<Float>())
-            val enter: EnterTransition = if (targetState == null) EnterTransition.None else slideInVertically { it } + fadeIn(spec)
-            val exit: ExitTransition = if (initialState == null) ExitTransition.None else slideOutVertically { it } + fadeOut(spec)
+            // `.transition(.move(edge: .bottom).combined(with: .opacity))` sprung with `Motion.snappy` (`:98, 103, 139-140`).
+            val fade = Motion.respecting(reduce, Motion.snappy<Float>())
+            val slide = Motion.snappy<IntOffset>()
+            val enter: EnterTransition = when {
+                targetState == null -> EnterTransition.None
+                reduce -> fadeIn(fade)
+                else -> slideInVertically(slide) { it } + fadeIn(fade)
+            }
+            val exit: ExitTransition = when {
+                initialState == null -> ExitTransition.None
+                reduce -> fadeOut(fade)
+                else -> slideOutVertically(slide) { it } + fadeOut(fade)
+            }
             (enter togetherWith exit) using SizeTransform(clip = false) { _, _ -> Motion.respecting(reduce, Motion.snappy()) }
         },
         label = "composerStrip",
@@ -584,16 +599,27 @@ private fun ComposerStrip(
                     onToggleAboveText = onToggleLinkAboveText,
                     onToggleImageSize = onToggleLinkImageSize,
                     onRemove = onRemoveLinkPreview,
-                    modifier = Modifier.composerStripGlass(),
+                    modifier = Modifier.padding(bottom = STRIP_GAP).composerStripGlass(),
                 )
             }
             StripKind.Reply -> lastReply?.let { content ->
-                ChatReplyBar(content = content, onTapPreview = onTapReply, onCancel = onCancelReply, modifier = Modifier.composerStripGlass())
+                ChatReplyBar(
+                    content = content,
+                    onTapPreview = onTapReply,
+                    onCancel = onCancelReply,
+                    modifier = Modifier.padding(bottom = STRIP_GAP).composerStripGlass(),
+                )
             }
             null -> Box(Modifier.fillMaxWidth())
         }
     }
 }
+
+/** Between the strip and the row (`VStack(spacing: 8)`, `ChatComposerView.swift:86`). */
+private val STRIP_GAP = 8.dp
+
+/** The field's placeholder (`ChatComposerView.swift:206`). */
+internal const val MESSAGE_PLACEHOLDER = "Message"
 
 /** The halo follows the level with `easeOut(0.12)` (`ChatComposerView.swift:290`). */
 private const val LEVEL_EASE_MS = 120

@@ -933,6 +933,7 @@ class ComposeController internal constructor(
      */
     fun onLock() {
         dropTake()
+        services.stopPlayback()
         if (!isNotes) {
             services.setTyping(peer, false)
             services.setRecording(peer, false)

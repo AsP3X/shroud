@@ -72,10 +72,14 @@ interface ComposeHost {
  *
  * Place it at the bottom of the conversation's root `Box` (`modifier = Modifier.align(BottomCenter)`),
  * outside any inset padding: it rides the keyboard frame by frame itself
- * (`WindowInsets.ime ∪ navigationBars`, §3.9) and reports its measured height — inset included —
- * through [onComposerHeightChanged], which the thread uses as its bottom content padding and to lift
- * the jump-to-latest control and toasts `height + 8` (CV:337-338, 612-628). The full-screen layers
- * draw in the app's `OverlayHost` layer, wherever this is placed.
+ * (`WindowInsets.ime ∪ navigationBars`, §3.9) and reports its measured height — the bottom inset
+ * (keyboard or navigation bar) **included** — through [onComposerHeightChanged]. The thread uses it as
+ * its bottom content padding (+ 12) and to lift the jump-to-latest control `height + 8`
+ * (CV:337-338, 612-628). `ToastHost` adds the system bottom inset itself, so its `bottomInset` is this
+ * height minus that inset (`toastBottomInset`, CV:208-212; 0 while [ComposeController.coversComposer]).
+ * The full-screen layers (viewer, player, photo and video compose, camera) and the "Sending media…"
+ * card draw in the app's `OverlayHost` layer, wherever this is placed; toasts the composer raises
+ * while one of them is up are drawn on that layer.
  *
  * **Seam (W2-INT, plan §1.7.13), owner W3-COMPOSER.** [modifier] is an optional addition.
  */
@@ -104,13 +108,16 @@ fun ConversationComposeHost(controller: ComposeController, onComposerHeightChang
         if (granted) controller.presentCamera() else controller.showPermissionToast(CAMERA_OFF) { openAppSettings(context) }
     }
     val picker = rememberMediaPicker { uris -> controller.onPicked(uris) }
+    val currentAskMicrophone by rememberUpdatedState(askMicrophone)
+    val currentAskCamera by rememberUpdatedState(askCamera)
+    val currentPicker by rememberUpdatedState(picker)
 
     LaunchedEffect(controller) {
         controller.effects.collect { effect ->
             when (effect) {
-                is ComposeEffect.OpenPicker -> picker.open(effect.request)
-                ComposeEffect.RequestMicrophone -> askMicrophone()
-                ComposeEffect.RequestCamera -> askCamera()
+                is ComposeEffect.OpenPicker -> currentPicker.open(effect.request)
+                ComposeEffect.RequestMicrophone -> currentAskMicrophone()
+                ComposeEffect.RequestCamera -> currentAskCamera()
                 is ComposeEffect.PlayHaptic -> view.perform(effect.haptic)
             }
         }
@@ -165,6 +172,15 @@ fun ConversationComposeHost(controller: ComposeController, onComposerHeightChang
 
     ComposeMediaLayers(controller)
 }
+
+/**
+ * The conversation's `ToastHost(bottomInset = …)` (`toastBottomInset`, `ConversationView.swift:208-212`):
+ * the composer's reported height above the system bottom inset `ToastHost` adds itself, so a toast
+ * lands 20 dp above the composer; 0 while a full-screen layer covers the composer. Added by
+ * W3-COMPOSER for the conversation screen.
+ */
+fun composerToastInset(composerHeight: Dp, systemBottom: Dp, coversComposer: Boolean): Dp =
+    if (coversComposer) 0.dp else (composerHeight - systemBottom).coerceAtLeast(0.dp)
 
 /** The design's permission toasts (u3il8T; P14 Q12; conversation-compose-media §4.7, §8.3). */
 internal const val MICROPHONE_OFF = "Microphone access is off"

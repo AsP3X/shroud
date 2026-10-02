@@ -69,6 +69,7 @@ import de.corespace.shroud.ui.theme.ShroudTheme
 import de.corespace.shroud.ui.theme.inter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -169,7 +170,8 @@ private fun AttachSheetContent(
             } finally {
                 loadingUri = null
             }
-            // Cancelled meanwhile (Cancel, a swipe away, another option): the photo is dropped.
+            // Cancelled meanwhile (Cancel, a swipe away, another option): the photo is dropped (`:279-280`).
+            if (!isActive) return@launch
             jobs.pick = null
             currentOnPickImage(picked)
         }
