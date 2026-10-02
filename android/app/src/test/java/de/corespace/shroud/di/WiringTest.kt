@@ -8,6 +8,7 @@ import de.corespace.shroud.core.lifecycle.AppPhaseMonitor
 import de.corespace.shroud.core.push.PushRegistration
 import de.corespace.shroud.core.transcription.VoiceTranscription
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
@@ -56,8 +57,10 @@ class WiringTest {
     }
 
     @Test
-    fun wave3SeamsStartInert() {
-        assertSame(PushRegistration.Inactive, container.push.registration)
+    fun wave3SeamsAreReal() {
+        val registration = container.push.registration
+        assertFalse(registration is PushRegistration.Inactive)
+        assertSame(registration, container.push.registration)
         val voice = container.transcription.voice
         assertNotSame(VoiceTranscription.Unavailable, voice)
         assertSame(voice, container.transcription.voice)
