@@ -93,8 +93,11 @@ object PrivacyCopy {
     const val ENCRYPTED_BODY =
         "Chat history is sealed with a key from your encryption phrase. That key is not kept in plain storage — the Android Keystore wraps it and only unwraps it after you authenticate with biometrics, screen lock, or your 12-word phrase."
 
-    /** Android 15 (API 35) has a screen-recording callback; below it the switch also blocks screenshots (P5). */
+    /** Android 15 (API 35) has a screen-recording callback: the shell covers the chats with its logo (P5). */
     const val RECORDING_CALLBACK_API = 35
+
+    /** Android 13 (API 33) can keep a window out of Recents without `FLAG_SECURE` (P5). */
+    const val RECENTS_SCREENSHOT_API = 33
 
     /**
      * [A] The Auto-lock footnote (`PrivacySecurityView.swift:307-312`): names the strong biometric
@@ -106,13 +109,23 @@ object PrivacyCopy {
     }
 
     /**
-     * [A] The device-protection switch's subtitle (settings-lock §7.4, P5a): API 35+ covers the
-     * chats while recorded, cast or shared and still allows screenshots, as iOS; below API 35 the
-     * protection is `FLAG_SECURE`, which also blocks screenshots — so it says so.
+     * [A] The device-protection switch's subtitle per API level (settings-lock §7.4; P5, the shell's
+     * `WindowProtection` table), saying what the switch really does there (iOS
+     * `PrivacySecurityView.swift:323` says "recorded, mirrored or shared"):
+     *
+     * - API 35+: the recording callback lets the shell cover the chats with the logo; screenshots
+     *   stay allowed, as on iOS.
+     * - API 33–34: no recording signal, so the switch is `FLAG_SECURE`: captures show black and
+     *   screenshots are blocked too.
+     * - API 30–32: `FLAG_SECURE` is on whenever the chats are unlocked (the only way to keep them out
+     *   of Recents), so captures and screenshots are blocked whatever the switch says.
      */
-    fun hideCaptureDetail(sdk: Int = Build.VERSION.SDK_INT): String {
-        val first = "While the screen is recorded, cast or shared, Shroud shows only its logo."
-        return if (sdk < RECORDING_CALLBACK_API) "$first On this Android version, screenshots of your chats are blocked too." else first
+    fun hideCaptureDetail(sdk: Int = Build.VERSION.SDK_INT): String = when {
+        sdk >= RECORDING_CALLBACK_API -> "While the screen is recorded, cast or shared, Shroud shows only its logo."
+        sdk >= RECENTS_SCREENSHOT_API ->
+            "While the screen is recorded, cast or shared, your chats show black. On this Android version, screenshots of your chats are blocked too."
+        else ->
+            "Your chats show black while the screen is recorded, cast or shared, and screenshots of them are blocked. On this Android version, that stays on even with this switch off, to keep your chats out of the recent apps screen."
     }
 
     /** [A] (`PrivacySecurityView.swift:447-449`). */

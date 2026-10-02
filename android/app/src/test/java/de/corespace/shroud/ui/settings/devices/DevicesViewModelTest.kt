@@ -339,8 +339,8 @@ class DevicesViewModelTest {
         assertEquals("Remove Pixel 9a?", DevicesCopy.confirmTitle("Pixel 9a"))
         assertEquals("Remove this device?", DevicesCopy.confirmTitle(null))
         assertEquals("Remove 2", DevicesCopy.confirmAllButton(2))
-        assertEquals("Unnamed device", DevicesCopy.displayName(DeviceNameSeal.Label("   ", DeviceNameSeal.Kind.Other)))
-        assertEquals("Unnamed device", DevicesCopy.displayName(null as DeviceNameSeal.Label?))
+        assertEquals("Unnamed device", DevicesCopy.displayName(laptopRow.copy(label = DeviceNameSeal.Label("   ", DeviceNameSeal.Kind.Other), kind = DeviceKind.Unknown)))
+        assertEquals("Unnamed device", DevicesCopy.displayName(laptopRow.copy(label = null, kind = DeviceKind.Unknown)))
         val labels = { _: Instant -> "9:37" }
         assertEquals("Last active 9:37", DevicesCopy.lastActive(laptopRow, labels))
         assertEquals("Linked 9:37", DevicesCopy.lastActive(oldPhoneRow, labels))

@@ -46,7 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import de.corespace.shroud.core.contacts.ContactInviteParser
 import de.corespace.shroud.core.model.Haptic
-import de.corespace.shroud.ui.LocalAppContainer
+import de.corespace.shroud.ui.components.LocalGlassBackdrop
 import de.corespace.shroud.ui.components.ShroudIcon
 import de.corespace.shroud.ui.components.ShroudSheet
 import de.corespace.shroud.ui.components.ShroudText
@@ -80,17 +80,16 @@ import de.corespace.shroud.ui.theme.rememberHaptics
  */
 @Composable
 fun MyQrCodeSheet(visible: Boolean, onDismiss: () -> Unit) {
-    val container = LocalAppContainer.current
-    val sessions = container.auth.sessionController
-    val session by sessions.session.collectAsState()
-    val server by container.serverConfiguration.configuration.collectAsState()
+    val ports = rememberContactsPorts()
+    val session by ports.session.collectAsState()
+    val server by ports.server.collectAsState()
     val toast = rememberToastState()
     val context = LocalContext.current
     val haptic = rememberHaptics()
 
     LaunchedEffect(visible) {
         // For sessions created before the share code existed (`:95-100`).
-        if (visible && sessions.session.value?.shareCode == null) sessions.validate()
+        if (visible && ports.session.value?.shareCode == null) ports.validateSession()
     }
 
     val shareCode = session?.shareCode
@@ -104,7 +103,8 @@ fun MyQrCodeSheet(visible: Boolean, onDismiss: () -> Unit) {
         scrim = ShroudTheme.colors.sheetScrim,
     ) {
         // The sheet covers the tab bar: its toast sits on the sheet's own bottom edge (`:85-87`).
-        CompositionLocalProvider(LocalTabBarClearance provides 0.dp) {
+        // "Done" sits on the sheet's plain fill: flat glass, not a blur of the list behind it.
+        CompositionLocalProvider(LocalTabBarClearance provides 0.dp, LocalGlassBackdrop provides null) {
             MyQrCodeContent(
                 username = session?.username,
                 shareCode = shareCode,

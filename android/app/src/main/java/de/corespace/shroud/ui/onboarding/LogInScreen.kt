@@ -121,15 +121,17 @@ private enum class Phase { Credentials, Phrase }
  * open a server session; the phrase unlocks messaging on this phone and never leaves it.
  *
  * With a session already in place — pushed over the lock screen by "Use encryption phrase" — it
- * opens on the phrase step without animation and Back returns to the lock screen ([onBack], L1). For an account that never had a
- * phrase (the server answers `KEYS_REQUIRED`) the phrase step offers **"I never got a 12-word
- * phrase"**: a fresh phrase to write down and save (`:257-357, 756-830`; web-parity §14.2, P11b).
+ * opens on the phrase step without animation and Back returns to the lock screen ([onBack], L1;
+ * `LogInFlowView.swift:111-122, 143-146`). For an account that never had a phrase (the server answers
+ * `KEYS_REQUIRED`) the phrase step offers **"I never got a 12-word phrase"**: a fresh phrase to write
+ * down and save (`:257-357, 756-830`; web-parity §14.2, P11b).
  *
  * [onUnlocked] runs once the phrase opened the chats (iOS `router.unlockMessages()`, `:750`).
- * [onLogOut] backs the interim "Log Out" capsule (design `daz2w`), shown only when the screen opened
- * signed in with nothing to go back to — a root without the lock screen underneath. Pushed over the
- * lock screen ([onBack] given) it never shows; it goes with `daz2w` once every root has the lock
- * screen (L1; the interim root is W3-SHELL's to delete).
+ * [onLogOut] backs the Android-only "Log Out" capsule (design `daz2w`), shown in the bar's trailing
+ * slot only when the screen opened signed in **without the lock screen underneath** — the session's
+ * identity is not on this phone (a log-in left at its phrase step), so the shell's root is Welcome
+ * and "Sign Up" / a different account would need that session ended first. Over the lock screen it
+ * never shows: Back returns there, as on iOS (L1).
  */
 @Composable
 fun LogInScreen(
@@ -181,6 +183,9 @@ internal fun LogInContent(
     val toast = rememberToastState()
 
     val startedSignedIn = remember { services.session.value != null }
+    // Opened signed in: is the lock screen the root underneath (this phone holds the identity)?
+    // Null until read; the Log Out capsule waits for the answer rather than flash.
+    var overLockScreen by remember { mutableStateOf<Boolean?>(null) }
     var phase by remember { mutableStateOf(if (startedSignedIn) Phase.Phrase else Phase.Credentials) }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -235,6 +240,12 @@ internal fun LogInContent(
         wroteDownNewPhrase = false
         creatingPhrase = true
         reveal.start { revealed = it }
+    }
+
+    LaunchedEffect(Unit) {
+        if (!startedSignedIn) return@LaunchedEffect
+        val session = services.session.value ?: return@LaunchedEffect
+        overLockScreen = services.hasLocalIdentity(session.userId)
     }
 
     // One `GET keys/identity/{me}` each time the phrase step opens (`:126-130, 758-776`).
@@ -351,8 +362,8 @@ internal fun LogInContent(
                 trailing = {
                     // Fades out once the phrase step is up, and leaves TalkBack with it (L3).
                     val alpha by animateFloatAsState(if (isCredentials) 1f else 0f, Motion.fade(), label = "signUpAlpha")
-                    if (startedSignedIn && back == null) {
-                        // Interim only: a root without the lock screen under this step (design `daz2w`).
+                    if (LogInRules.showsLogOut(startedSignedIn, signedInSession != null, overLockScreen)) {
+                        // No lock screen under this step: the session is ended here (design `daz2w`).
                         GlassCapsuleButton("Log Out", onLogOut, Modifier.testTag("login.logOut"), enabled = !submitting)
                     } else if (isCredentials || alpha > 0f) {
                         GlassCapsuleButton(
@@ -598,6 +609,15 @@ internal object LogInRules {
     /** `signedInUsername` (`:50-56`): the session's name, else the typed one, else "user". */
     fun signedInName(sessionUsername: String?, typed: String): String =
         sessionUsername?.takeIf { it.isNotEmpty() } ?: typed.trim().ifEmpty { "user" }
+
+    /**
+     * The "Log Out" capsule (design `daz2w`): only for a screen opened signed in whose lock screen is
+     * not underneath ([overLockScreen] false — the identity is not on this phone), while that session
+     * lasts ([signedIn]). Over the lock screen Back returns there, as on iOS (L1); null (not read yet)
+     * shows nothing.
+     */
+    fun showsLogOut(startedSignedIn: Boolean, signedIn: Boolean, overLockScreen: Boolean?): Boolean =
+        startedSignedIn && signedIn && overLockScreen == false
 
     /**
      * `canUnlockWithPhrase` (`:64-74`): not while submitting; a new phrase needs all 12 words shown
