@@ -8,10 +8,14 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
 import android.provider.Settings
+import android.view.View
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.Preview
+import androidx.compose.ui.node.RootForTest
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getAllSemanticsNodes
 import androidx.lifecycle.LifecycleOwner
 import de.corespace.shroud.core.media.ImageEncodeException
 import de.corespace.shroud.core.media.MediaImageSource
@@ -41,8 +45,10 @@ import java.io.File
  * The camera screen on a scripted `CameraCapture` (K9; conversation-compose-media §8.3, P8): it
  * binds the back lens for photos, hands a capture out as a `PickedPhoto` on the FileProvider URI,
  * asks for the microphone only when switching to video and records silently without it, hands a
- * clip out as a `PickedMovie` owning its file, flips and lights the torch, says when there is no
- * camera, shows the designed denied state, and unbinds when it leaves.
+ * clip out as a `PickedMovie` owning its file, flips, lights the torch only on a lens with a flash
+ * unit, follows K9's `bindState` (waits through a slow bind, says "No camera available" only on a
+ * failed or lens-less bind, never on a state left by an earlier bind), opens a front-only phone on its
+ * front lens, shows the designed denied state, and unbinds when it leaves.
  */
 @RunWith(RobolectricTestRunner::class)
 // A plain Application: these screens run on fakes, and ShroudApplication would start the whole
@@ -53,14 +59,27 @@ class CameraCaptureStateTest {
     @get:Rule
     val harness = HarnessRule()
 
+    /**
+     * K9 as `ShroudCameraCapture` publishes it: [bind] moves [bindState] to Binding at once and on
+     * to [nextBind] (null: CameraX is still starting, the test answers later). The lens flags are
+     * not read by the screen any more (gap #14), so reading them fails the test.
+     */
     private class FakeCamera : CameraCapture {
         val binds = ArrayList<Pair<Boolean, Boolean>>()
         var unbinds = 0
-        override var hasFrontCamera = true
-        override var hasBackCamera = true
+        var nextBind: CameraBindState? = CameraBindState.Bound(hasFront = true, hasBack = true)
+
+        /** Runs as a bind starts, before [bindState] moves. */
+        var onBind: (() -> Unit)? = null
+
+        /** Which lens the last bind asked for; the fake's front lens has no flash. */
+        var boundFront = false
+        override val hasFrontCamera: Boolean get() = throw AssertionError("the screen reads bindState, not hasFrontCamera")
+        override val hasBackCamera: Boolean get() = throw AssertionError("the screen reads bindState, not hasBackCamera")
         override val bindState = MutableStateFlow<CameraBindState>(CameraBindState.Unbound)
-        override val zoomRange: ClosedFloatingPointRange<Float>? = 1f..8f
-        override val hasFlashUnit = true
+        override var zoomRange: ClosedFloatingPointRange<Float>? = 1f..8f
+        var flashOnBack = true
+        override val hasFlashUnit: Boolean get() = bindState.value is CameraBindState.Bound && flashOnBack && !boundFront
         var photo: MediaImageSource = MediaImageSource.ContentUri(Uri.parse("content://de.corespace.shroud.cache/cache/shroud-cam-1.jpg"))
         var photoError: Exception? = null
         var recordedWithAudio: Boolean? = null
@@ -69,11 +88,16 @@ class CameraCaptureStateTest {
         val zoom = ArrayList<Float>()
 
         override fun bind(owner: LifecycleOwner, preview: Preview.SurfaceProvider, front: Boolean, video: Boolean) {
+            onBind?.invoke()
             binds += front to video
+            boundFront = front
+            bindState.value = CameraBindState.Binding
+            nextBind?.let { bindState.value = it }
         }
 
         override fun unbind() {
             unbinds++
+            bindState.value = CameraBindState.Unbound
         }
 
         override suspend fun takePhoto(): MediaImageSource {
@@ -210,39 +234,113 @@ class CameraCaptureStateTest {
         assertNotNull(ui.described("Torch on"))
         ui.click("Switch camera")
         assertEquals(true to false, services.camera.binds.last())
-        // The front lens has no torch control.
+        // The fake's front lens has no flash unit: no torch control.
         assertTrue(ui.nodes().none { it.config.getOrElse(SemanticsProperties.ContentDescription) { emptyList() }.any { d -> d.startsWith("Torch") } })
         ui.click("Close camera")
         assertEquals(1, closes)
     }
 
     @Test
-    fun noCameraIsSaidOnlyAfterTheBindHadItsChance() {
+    fun torchShowsOnlyForALensWithAFlashUnit() {
         grantCamera()
-        val services = FakeServices().apply {
-            camera.hasBackCamera = false
-            camera.hasFrontCamera = false
-        }
+        val services = FakeServices().apply { camera.flashOnBack = false }
         val ui = harness.compose {
             CameraCaptureContent(onPhoto = {}, onVideo = {}, onClose = {}, services = services)
         }
         ui.idle()
-        assertTrue(ui.nodesWithText("No camera available").isEmpty())
-        // The bind wait is in real time (Compose's UI dispatcher has no virtual delay): let 4.5 s pass.
+        assertFalse(SemanticsProperties.Disabled in ui.described("Take photo").config)
+        assertTrue(ui.describe(), ui.nodes().none { it.config.getOrElse(SemanticsProperties.ContentDescription) { emptyList() }.any { d -> d.startsWith("Torch") } })
+    }
+
+    @Test
+    fun aSlowBindNeverSaysThereIsNoCamera() {
+        grantCamera()
+        val services = FakeServices().apply { camera.nextBind = null }
+        val ui = harness.compose {
+            CameraCaptureContent(onPhoto = {}, onVideo = {}, onClose = {}, services = services)
+        }
+        assertEquals(CameraBindState.Binding, services.camera.bindState.value)
+        // Past the old 4 s grace, in real time (Compose's UI dispatcher has no virtual delay): still waiting, nothing said.
         repeat(45) {
             Thread.sleep(100)
             ui.idle()
+            assertTrue(ui.describe(), ui.nodesWithText("No camera available").isEmpty())
+        }
+        assertTrue(SemanticsProperties.Disabled in ui.described("Take photo").config)
+        assertTrue(SemanticsProperties.Disabled in ui.described("Switch camera").config)
+        // CameraX comes up late (an emulator misreporting its front lens took ~6 s).
+        services.camera.bindState.value = CameraBindState.Bound(hasFront = true, hasBack = true)
+        ui.idle()
+        assertTrue(ui.describe(), ui.nodesWithText("No camera available").isEmpty())
+        assertFalse(SemanticsProperties.Disabled in ui.described("Take photo").config)
+        assertFalse(SemanticsProperties.Disabled in ui.described("Switch camera").config)
+    }
+
+    @Test
+    fun aFailedBindSaysNoCameraAtOnceAndAnotherModeCanRecover() {
+        grantCamera()
+        val services = FakeServices().apply { camera.nextBind = CameraBindState.Failed }
+        val ui = harness.compose {
+            CameraCaptureContent(onPhoto = {}, onVideo = {}, onClose = {}, services = services)
         }
         assertTrue(ui.describe(), ui.nodesWithText("No camera available").isNotEmpty())
         assertTrue(SemanticsProperties.Disabled in ui.described("Take photo").config)
-        // A CameraX that comes up late (an emulator misreporting its front lens took ~6 s) still wins.
-        services.camera.hasBackCamera = true
-        repeat(8) {
-            Thread.sleep(100)
-            ui.idle()
-        }
+        // VIDEO binds again; this time CameraX answers.
+        services.camera.nextBind = CameraBindState.Bound(hasFront = true, hasBack = true)
+        ui.clickText("VIDEO")
+        assertEquals(false to true, services.camera.binds.last())
         assertTrue(ui.describe(), ui.nodesWithText("No camera available").isEmpty())
+        assertFalse(SemanticsProperties.Disabled in ui.described("Start recording").config)
+    }
+
+    @Test
+    fun aBindWithNoLensSaysNoCamera() {
+        grantCamera()
+        val services = FakeServices().apply { camera.nextBind = CameraBindState.Bound(hasFront = false, hasBack = false) }
+        val ui = harness.compose {
+            CameraCaptureContent(onPhoto = {}, onVideo = {}, onClose = {}, services = services)
+        }
+        assertTrue(ui.describe(), ui.nodesWithText("No camera available").isNotEmpty())
+        assertTrue(SemanticsProperties.Disabled in ui.described("Take photo").config)
+        assertTrue(ui.nodes().none { it.config.getOrElse(SemanticsProperties.ContentDescription) { emptyList() }.any { d -> d.startsWith("Torch") } })
+    }
+
+    @Test
+    fun aFailureLeftByAnEarlierBindDoesNotFlashOnOpen() {
+        grantCamera()
+        // The last camera screen's bind failed; this one's is still starting.
+        val services = FakeServices().apply {
+            camera.bindState.value = CameraBindState.Failed
+            camera.nextBind = null
+        }
+        var view: View? = null
+        val shownAtBind = ArrayList<Boolean>()
+        services.camera.onBind = {
+            // The frame on screen when the screen asks for its bind: still the earlier Failed.
+            val owner = (requireNotNull(view) as RootForTest).semanticsOwner
+            shownAtBind += owner.getAllSemanticsNodes(mergingEnabled = true).any { node ->
+                node.config.getOrElse(SemanticsProperties.Text) { emptyList() }.any { it.text == "No camera available" }
+            }
+        }
+        val ui = harness.compose {
+            view = LocalView.current
+            CameraCaptureContent(onPhoto = {}, onVideo = {}, onClose = {}, services = services)
+        }
+        assertEquals(listOf(false), shownAtBind)
+        assertTrue(ui.describe(), ui.nodesWithText("No camera available").isEmpty())
+    }
+
+    @Test
+    fun aPhoneWithOnlyAFrontCameraOpensOnIt() {
+        grantCamera()
+        val services = FakeServices().apply { camera.nextBind = CameraBindState.Bound(hasFront = true, hasBack = false) }
+        val ui = harness.compose {
+            CameraCaptureContent(onPhoto = {}, onVideo = {}, onClose = {}, services = services)
+        }
+        ui.idle()
+        assertEquals(listOf(false to false, true to false), services.camera.binds)
         assertFalse(SemanticsProperties.Disabled in ui.described("Take photo").config)
+        assertTrue(SemanticsProperties.Disabled in ui.described("Switch camera").config)
     }
 
     @Test

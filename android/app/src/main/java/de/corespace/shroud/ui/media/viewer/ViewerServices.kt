@@ -3,15 +3,14 @@ package de.corespace.shroud.ui.media.viewer
 import android.annotation.SuppressLint
 import android.content.ClipData
 import android.content.ClipDescription
-import android.content.ContentResolver
 import android.content.Intent
 import android.graphics.Bitmap
-import android.net.Uri
 import android.os.Build
 import android.os.PersistableBundle
 import de.corespace.shroud.AppContainer
 import de.corespace.shroud.core.media.MediaImageSource
 import de.corespace.shroud.core.media.share.SaveOutcome
+import de.corespace.shroud.core.media.share.ShareTarget
 import java.util.UUID
 
 /**
@@ -25,8 +24,11 @@ internal interface ViewerServices {
     /** A screen-sized decode, orientation applied; null when it does not decode (`images.mediaImages`, K1). */
     suspend fun decodePreview(source: MediaImageSource, maxEdge: Int): Bitmap?
 
-    /** An in-memory `content://` grant over the photo, or null when it is not loaded (`media.sharing`, K10). */
-    suspend fun shareUri(messageId: UUID): Uri?
+    /**
+     * An in-memory `content://` grant over the photo and the MIME type stored with it, or null when
+     * it is not loaded (`media.sharing.shareTarget`, K10, gap #15).
+     */
+    suspend fun shareTarget(messageId: UUID): ShareTarget?
 
     /** Drops every share grant (`media.sharing.revokeAll`, K10); a no-op when nothing was shared yet. */
     fun revokeShares()
@@ -42,7 +44,7 @@ internal class ContainerViewerServices(private val container: AppContainer) : Vi
     override suspend fun decodePreview(source: MediaImageSource, maxEdge: Int): Bitmap? =
         container.images.mediaImages.decodePreview(source, maxEdge)
 
-    override suspend fun shareUri(messageId: UUID): Uri? = container.media.sharing.shareUri(messageId)
+    override suspend fun shareTarget(messageId: UUID): ShareTarget? = container.media.sharing.shareTarget(messageId)
 
     // `sharingIfBuilt`: closing a viewer that never shared must not build the sharing module just to revoke.
     override fun revokeShares() {
@@ -53,21 +55,19 @@ internal class ContainerViewerServices(private val container: AppContainer) : Vi
 }
 
 /**
- * The share sheet and the clipboard for a [ViewerServices.shareUri] grant (conversation-compose-media
- * §18.5; K10 leaves the `Intent` to the UI).
+ * The share sheet and the clipboard for a [ViewerServices.shareTarget] grant (conversation-compose-media
+ * §18.5; K10 leaves the `Intent` to the UI). The MIME type is the one K10 stored with the grant, so
+ * nothing here asks a `ContentResolver`.
  */
 internal object MediaShareIntents {
-    /** Used when the provider does not report a type. */
-    const val FALLBACK_MIME = "image/*"
-
     /**
-     * `ACTION_SEND` of [uri] with a read grant: the grant rides on the stream extra and on the
+     * `ACTION_SEND` of [target] with a read grant: the grant rides on the stream extra and on the
      * clip data, which is what carries it through the chooser to the target.
      */
-    fun send(uri: Uri, mime: String?): Intent = Intent(Intent.ACTION_SEND).apply {
-        type = mime ?: FALLBACK_MIME
-        putExtra(Intent.EXTRA_STREAM, uri)
-        clipData = ClipData.newRawUri(null, uri)
+    fun send(target: ShareTarget): Intent = Intent(Intent.ACTION_SEND).apply {
+        type = target.mime
+        putExtra(Intent.EXTRA_STREAM, target.uri)
+        clipData = ClipData.newRawUri(null, target.uri)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
 
@@ -75,12 +75,13 @@ internal object MediaShareIntents {
     fun chooser(send: Intent): Intent = Intent.createChooser(send, null).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
 
     /**
-     * The clipboard entry for a copied photo: a content URI (Android copies images only that way),
-     * marked sensitive on Android 13+ so the system's clipboard preview does not show it.
+     * The clipboard entry for a copied photo: a content URI of [ShareTarget.mime] (Android copies
+     * images only that way), marked sensitive on Android 13+ so the system's clipboard preview does
+     * not show it.
      */
     @SuppressLint("InlinedApi") // A string constant, only put on API 33+ (guarded by sdk).
-    fun clip(resolver: ContentResolver, uri: Uri, sdk: Int = Build.VERSION.SDK_INT): ClipData =
-        ClipData.newUri(resolver, CLIP_LABEL, uri).also { clip ->
+    fun clip(target: ShareTarget, sdk: Int = Build.VERSION.SDK_INT): ClipData =
+        ClipData(CLIP_LABEL, arrayOf(target.mime), ClipData.Item(target.uri)).also { clip ->
             if (sdk >= Build.VERSION_CODES.TIRAMISU) {
                 clip.description.extras = PersistableBundle().apply { putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true) }
             }
