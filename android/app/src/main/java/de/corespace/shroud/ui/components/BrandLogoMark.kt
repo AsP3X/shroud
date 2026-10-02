@@ -2,9 +2,13 @@ package de.corespace.shroud.ui.components
 
 import android.graphics.BlurMaskFilter
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
@@ -13,32 +17,48 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.graphics.drawscope.clipPath
-import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.vector.PathParser
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import de.corespace.shroud.ShroudApplication
+import de.corespace.shroud.core.appearance.BrandLogoStyle
 import de.corespace.shroud.ui.theme.BrandColors
+import kotlinx.coroutines.flow.StateFlow
 
 /**
- * The veil on the brand gradient (`BrandLogoMark.swift`, `Brand Mark` in the design): corners
- * 28 % of the size. Sizes in the app: Welcome 80, Lock 100, Log In 64, Sign Up 48.
+ * The app icon itself, drawn (`BrandLogoMark`, `ios/shroud/ShroudUI/Components/BrandLogoMark.swift:62-86`;
+ * settings-lock §8.3; design `Brand Mark`): the veil on the brand gradient, in [style] —
+ * [BrandLogoStyle.Detailed] with glow, drop shadow, gradient cloth and folds, or
+ * [BrandLogoStyle.Simple], one flat white veil on the gradient without the glow
+ * (`BrandLogoMark.swift:114-152`, `design/icon/shroud-icon(-simple).svg`).
+ *
+ * Without a [style] it draws the one the launcher shows ([BrandLogoPreference][de.corespace.shroud.core.appearance.BrandLogoPreference],
+ * iOS `BrandLogoPreference.shared.style`), so the in-app marks never disagree with the home
+ * screen; Settings › Appearance pins a style for its picker rows. Corners 28 % of the size (the
+ * design's mask; iOS 22.37 %, settings-lock §8.3). Sizes in the app: Welcome 80, Lock 100, Log In
+ * 64, Sign Up 48, Appearance 44. Decorative: the screen around it says what it is.
  */
 @Composable
-fun BrandLogoMark(size: Dp, modifier: Modifier = Modifier) {
+fun BrandLogoMark(size: Dp, modifier: Modifier = Modifier, style: BrandLogoStyle? = null) {
+    val shown = style ?: currentBrandLogoStyle()
     Canvas(
         modifier
             .size(size)
             .clip(brandTileShape(size)),
     ) {
-        drawBrandBackdrop(glow = true)
-        drawVeil()
+        drawBrandIcon(shown)
     }
 }
 
-/** The gradient tile alone (the Log In key tile). */
+/** The gradient tile alone, with the glow (the Log In key tile; `BrandTileBackground`, `BrandLogoMark.swift:88-95`). */
 @Composable
 fun BrandTileBackground(size: Dp, modifier: Modifier = Modifier) {
     Canvas(modifier.size(size).clip(brandTileShape(size))) { drawBrandBackdrop(glow = true) }
@@ -46,6 +66,22 @@ fun BrandTileBackground(size: Dp, modifier: Modifier = Modifier) {
 
 fun brandTileShape(size: Dp) = RoundedCornerShape(size * 0.28f)
 
+/**
+ * The style the launcher shows, live. Read through the process's container (iOS reads its
+ * `BrandLogoPreference.shared`); Detailed where there is none — previews, and a process that has
+ * not passed the first unlock (the container is never built then).
+ */
+@Composable
+private fun currentBrandLogoStyle(): BrandLogoStyle {
+    if (LocalInspectionMode.current) return BrandLogoStyle.Detailed
+    val app = LocalContext.current.applicationContext
+    val flow: StateFlow<BrandLogoStyle>? = remember(app) {
+        (app as? ShroudApplication)?.let { runCatching { it.container.auth.brandLogo.style }.getOrNull() }
+    }
+    return flow?.collectAsState()?.value ?: BrandLogoStyle.Detailed
+}
+
+/** The icon artwork in its 1024-unit space (`BrandIconArt`, `BrandLogoMark.swift:97-184`). Keep in sync with the SVGs in `design/icon/`. */
 private object BrandArt {
     val shadowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
         color = BrandColors.veilShadow.copy(alpha = 0.35f).toArgb()
@@ -60,6 +96,16 @@ private object BrandArt {
     )
 }
 
+/** `BrandIconArt.draw(_:in:side:)` (`BrandLogoMark.swift:114-152`). */
+private fun DrawScope.drawBrandIcon(style: BrandLogoStyle) {
+    drawBrandBackdrop(glow = style == BrandLogoStyle.Detailed)
+    when (style) {
+        BrandLogoStyle.Detailed -> drawDetailedVeil()
+        BrandLogoStyle.Simple -> placeVeil { drawPath(BrandArt.veil, Color.White) }
+    }
+}
+
+/** `drawBackdrop(in:side:glow:)` (`BrandLogoMark.swift:154-167`). */
 private fun DrawScope.drawBrandBackdrop(glow: Boolean) {
     val unit = size.minDimension / 1024f
     drawRect(
@@ -82,39 +128,52 @@ private fun DrawScope.drawBrandBackdrop(glow: Boolean) {
     }
 }
 
-private fun DrawScope.drawVeil() {
+/** `translate(512 518) scale(0.9) translate(-512 -528)` from the SVG, in the mark's pixels (`placeVeil`, `:169-175`). */
+private inline fun DrawScope.placeVeil(crossinline block: DrawScope.() -> Unit) {
     val unit = size.minDimension / 1024f
     withTransform({
         scale(unit, unit, pivot = Offset.Zero)
         translate(512f, 518f)
         scale(0.9f, 0.9f, pivot = Offset.Zero)
         translate(-512f, -528f)
-    }) {
-        // The veil's soft drop shadow: 22 × 0.9 blur, 35 % ink, 26 units down.
-        withTransform({ translate(0f, 26f) }) {
-            drawIntoCanvas { canvas ->
-                canvas.nativeCanvas.drawPath(BrandArt.veil.asAndroidPath(), BrandArt.shadowPaint)
-            }
+    }) { block() }
+}
+
+/** The detailed veil: soft drop shadow, gradient cloth, side shading and the two folds (`BrandLogoMark.swift:118-146`). */
+private fun DrawScope.drawDetailedVeil() = placeVeil {
+    // The veil's soft drop shadow: 22 × 0.9 blur, 35 % ink, 26 units down.
+    withTransform({ translate(0f, 26f) }) {
+        drawIntoCanvas { canvas ->
+            canvas.nativeCanvas.drawPath(BrandArt.veil.asAndroidPath(), BrandArt.shadowPaint)
         }
-        drawPath(
-            BrandArt.veil,
-            Brush.linearGradient(listOf(Color.White, BrandColors.clothBottom), start = Offset(512f, 204f), end = Offset(512f, 852f)),
+    }
+    drawPath(
+        BrandArt.veil,
+        Brush.linearGradient(listOf(Color.White, BrandColors.clothBottom), start = Offset(512f, 204f), end = Offset(512f, 852f)),
+    )
+    clipPath(BrandArt.veil) {
+        drawRect(
+            Brush.horizontalGradient(
+                0.7f to BrandColors.fold.copy(alpha = 0f),
+                1f to BrandColors.fold.copy(alpha = 0.12f),
+                startX = 200f,
+                endX = 820f,
+            ),
+            topLeft = Offset(200f, 200f),
+            size = androidx.compose.ui.geometry.Size(620f, 660f),
         )
-        clipPath(BrandArt.veil) {
-            drawRect(
-                Brush.horizontalGradient(
-                    0.7f to BrandColors.fold.copy(alpha = 0f),
-                    1f to BrandColors.fold.copy(alpha = 0.12f),
-                    startX = 200f,
-                    endX = 820f,
-                ),
-                topLeft = Offset(200f, 200f),
-                size = androidx.compose.ui.geometry.Size(620f, 660f),
-            )
-            for ((path, top, bottom) in BrandArt.folds) {
-                drawPath(path, Brush.verticalGradient(listOf(BrandColors.fold.copy(alpha = 0f), BrandColors.fold.copy(alpha = 0.24f)), startY = top, endY = bottom))
-            }
+        for ((path, top, bottom) in BrandArt.folds) {
+            drawPath(path, Brush.verticalGradient(listOf(BrandColors.fold.copy(alpha = 0f), BrandColors.fold.copy(alpha = 0.24f)), startY = top, endY = bottom))
         }
     }
 }
 
+@Preview(name = "Brand marks")
+@Composable
+private fun BrandLogoMarkPreview() {
+    Row(Modifier.padding(20.dp)) {
+        BrandLogoMark(100.dp, style = BrandLogoStyle.Detailed)
+        BrandLogoMark(100.dp, Modifier.padding(start = 20.dp), style = BrandLogoStyle.Simple)
+        BrandLogoMark(40.dp, Modifier.padding(start = 20.dp), style = BrandLogoStyle.Detailed)
+    }
+}
