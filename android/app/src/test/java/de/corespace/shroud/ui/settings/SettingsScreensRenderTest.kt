@@ -389,11 +389,12 @@ class SettingsScreensRenderTest {
             ServerSettingsPage(local, local, signedIn = true, save = {}, onSignOut = {}, onBack = {}, pause = { beats[beat++].await() })
         }
         ui.clickLabel("Save")
-        assertTrue(ui.describe(), ui.nodesWithText("Saving…").isNotEmpty())
+        // The bottom button speaks its phase as its label.
+        assertTrue(ui.describe(), ui.nodes().any { it.config.getOrNull(SemanticsProperties.ContentDescription) == listOf("Saving…") })
         render(ui, "21-server-saving")
         beats[0].complete(Unit)
         ui.settle()
-        assertTrue(ui.describe(), ui.nodesWithText("Saved").isNotEmpty())
+        assertTrue(ui.describe(), ui.nodes().any { it.config.getOrNull(SemanticsProperties.ContentDescription) == listOf("Saved") })
         render(ui, "22-server-saved")
         beats[1].complete(Unit)
     }
