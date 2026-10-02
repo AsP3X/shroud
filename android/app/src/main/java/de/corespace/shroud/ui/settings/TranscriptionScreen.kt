@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -25,6 +26,7 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import de.corespace.shroud.core.transcription.TranscriptionInstallState
 import de.corespace.shroud.ui.LocalAppContainer
@@ -80,6 +82,9 @@ object TranscriptionPicker {
             "the first time you transcribe, then works for every language."
     const val AUTOMATIC = "Automatic"
     const val AUTOMATIC_SUBTITLE = "Detects the spoken language. Remembers it per chat when Whisper is unsure."
+
+    /** A row's minimum height, its touch target (iOS draws 41 dp one-line rows). */
+    val ROW_MIN_HEIGHT: Dp = 48.dp
 
     /**
      * `pickerOrder` (`TranscriptionLanguageView.swift:46-59`): the leading run of [all] whose
@@ -216,6 +221,11 @@ private fun DownloadCard(install: TranscriptionInstallState) {
 /**
  * A language row (`TranscriptionLanguageView.swift:140-178`): title (and subtitle), the check on
  * the selected one, padding h 14 v 11. TalkBack: the title, then the subtitle (iOS's hint).
+ *
+ * At least [TranscriptionPicker.ROW_MIN_HEIGHT] tall: a one-line row is 41 dp on iOS and in the
+ * design (`uG2Sv`), but the rows touch each other, so Compose cannot widen their hit areas the
+ * way it does for a lone small control; 48 dp keeps every language a full touch target (00-plan
+ * §2.0 rule 8, as `MenuPicker` does with its 44 dp iOS rows). The text stays centred.
  */
 @Composable
 private fun LanguageRow(title: String, subtitle: String?, selected: Boolean, onClick: () -> Unit) {
@@ -223,6 +233,7 @@ private fun LanguageRow(title: String, subtitle: String?, selected: Boolean, onC
     Row(
         Modifier
             .fillMaxWidth()
+            .heightIn(min = TranscriptionPicker.ROW_MIN_HEIGHT)
             .highlightRow(onClick = onClick)
             .semantics { this.selected = selected }
             .padding(horizontal = 14.dp, vertical = 11.dp),

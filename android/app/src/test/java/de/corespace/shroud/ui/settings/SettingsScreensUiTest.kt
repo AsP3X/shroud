@@ -181,6 +181,8 @@ class SettingsScreensUiTest {
         assertTrue(ui.nodesWithText("Downloading Whisper… 42%").isNotEmpty())
         val german = Locale.forLanguageTag("de").getDisplayName(Locale.getDefault())
         assertTrue("a region-tagged override selects its language", ui.row(german).isSelected())
+        val density = ui.activity.resources.displayMetrics.density
+        assertTrue("a one-line language row is a full 48 dp touch target", ui.row(german).boundsInRoot.height >= 48 * density - 0.5f)
         assertFalse(ui.row("Automatic").isSelected())
         assertEquals(listOf("Automatic", TranscriptionPicker.AUTOMATIC_SUBTITLE), ui.row("Automatic").texts())
         ui.row("Automatic").click()
