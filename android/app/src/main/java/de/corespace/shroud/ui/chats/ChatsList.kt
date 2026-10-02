@@ -37,6 +37,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import de.corespace.shroud.core.messaging.local.LocalMessageStore
 import de.corespace.shroud.ui.components.ChatRow
@@ -140,7 +141,7 @@ internal class RowAnchor {
  * opens the row menu ([onMenu] with the row's bounds) and the 1 dp `separator` line inset 80
  * (16 + 52 + 12) under it when [separator] (CV:146-148, 364-369). Reordering animates with
  * `Motion.standard` (CV:170-171). TalkBack gets the menu's items as custom actions ([onMenuItem];
- * "Mute" opens the menu at its durations' row).
+ * "Mute" opens the row menu, whose Mute row holds the five durations).
  */
 @Composable
 internal fun LazyItemScope.ChatListRow(
@@ -204,7 +205,7 @@ internal fun ChatRowView(row: ChatRowModel, onClick: () -> Unit, onLongPress: ((
 
 /** 1 dp `separator`, inset 80 (`listSeparator`, CV:364-369). */
 @Composable
-internal fun ListSeparator(inset: androidx.compose.ui.unit.Dp = 80.dp) {
+internal fun ListSeparator(inset: Dp = 80.dp) {
     Box(
         Modifier
             .padding(start = inset)

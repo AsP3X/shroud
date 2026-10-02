@@ -1,5 +1,7 @@
 package de.corespace.shroud.ui.chats
 
+import android.view.ViewGroup
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -54,22 +56,48 @@ class ChatsScreenTest {
     private val navigation = RecordingNavigation()
     private val loaded = ListStatus(hasLoadedChats = true, hasLoadedServerChats = true)
 
-    @After
-    fun tearDown() = actionScope.cancel()
+    /** Every host this test built, disposed in [tearDown]. */
+    private val hosts = ArrayList<ComposeHarness>()
 
     /**
-     * Read by the hosted content: bumping it forces a frame. Compose's main-thread dispatcher
-     * outlives a Robolectric test, and a trampolined dispatch the previous test's looper reset
-     * dropped leaves effects waiting for the next frame — so every step here ends with one.
+     * Leaves Compose's sandbox-wide main-thread dispatcher idle for the next test.
+     *
+     * `AndroidUiDispatcher` is no `Delay`: a `delay` in an effect (the rows' staggered entrance,
+     * the toast's timer, the list's midnight re-read) waits on kotlinx's real-time
+     * `DefaultExecutor` and resumes with a post to the main looper. A post landing after this
+     * test's last idle is dropped by Robolectric's looper reset while the dispatcher still counts
+     * it as scheduled, and every later Compose test of the sandbox then waits forever for its
+     * effects and frames (seen as this class and ListKitSemanticsTest failing in the full run).
+     * Removing the views disposes the compositions — for good: a disposed composition of a view
+     * still attached is built again on the next layout, effects and all — which cancels those
+     * delays; the idles run what they already posted.
+     */
+    @After
+    fun tearDown() {
+        actionScope.cancel()
+        hosts.forEach { host ->
+            host.activity.findViewById<ViewGroup>(android.R.id.content).removeAllViews()
+            host.idle()
+        }
+        // A delay that ended just as its composition went away has posted by now; run it here.
+        Thread.sleep(SETTLE_REAL_MS)
+        hosts.firstOrNull()?.idle()
+    }
+
+    /**
+     * Read by the hosted content: bumping it forces a frame, so every step here ends with one
+     * (effects of a step land before its assertions).
      */
     private val frame = mutableIntStateOf(0)
+
+    private fun host(content: @Composable () -> Unit) = ComposeHarness(content = content).also { hosts += it }
 
     private fun screen(
         source: FakeChatsSource,
         query: String = "",
         layout: WindowLayout = WindowLayout.Compact,
         searchActive: Boolean = false,
-    ) = ComposeHarness {
+    ) = host {
         frame.intValue
         OverlayHost {
             CompositionLocalProvider(LocalIsTabBarSearchActive provides searchActive) {
@@ -348,10 +376,15 @@ class ChatsScreenTest {
     fun theEmptyStatesNewChatButtonOpensNewChat() {
         // Unreachable in the app (Notes shows without a query) but ported for parity: render it alone.
         var opened by mutableStateOf(false)
-        val ui = ComposeHarness { ChatsEmptyState(isSearching = false, onNewChat = { opened = true }) }
+        val ui = host { ChatsEmptyState(isSearching = false, onNewChat = { opened = true }) }
         ui.nodesWithText("No chats yet").single()
         ui.nodesWithText("Message a contact to start a conversation.").single()
         ui.clickText("New Chat")
         assertTrue(opened)
+    }
+
+    private companion object {
+        /** Real time a just-finished `delay` needs to post its resumption (see [tearDown]). */
+        const val SETTLE_REAL_MS = 30L
     }
 }

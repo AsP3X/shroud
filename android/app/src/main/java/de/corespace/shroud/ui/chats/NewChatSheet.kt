@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.ui.layout.layout
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
@@ -35,6 +34,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -50,6 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import de.corespace.shroud.core.messaging.ChatListFormatting
@@ -190,7 +192,7 @@ private fun NewChatBody(source: ChatsSource, clock: AppClock, onDismiss: () -> U
 @Composable
 private fun NewChatContentView(
     content: NewChatContent,
-    bottomPadding: androidx.compose.ui.unit.Dp,
+    bottomPadding: Dp,
     onRetry: suspend () -> Unit,
     onSelect: (NewChatRow) -> Unit,
 ) {
@@ -224,7 +226,7 @@ private fun NewChatContentView(
 }
 
 @Composable
-private fun ContactRows(rows: List<NewChatRow>, bottomPadding: androidx.compose.ui.unit.Dp, onSelect: (NewChatRow) -> Unit) {
+private fun ContactRows(rows: List<NewChatRow>, bottomPadding: Dp, onSelect: (NewChatRow) -> Unit) {
     val reduceMotion = ShroudTheme.reduceMotion
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = bottomPadding)) {
         itemsIndexed(rows, key = { _, row -> row.userId.toString() }) { index, row ->
@@ -276,7 +278,7 @@ private fun ContactRow(row: NewChatRow, onClick: () -> Unit) {
  * the description 15 sp `textSecondary`, centred in the space above the search field.
  */
 @Composable
-private fun UnavailableView(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, message: String, bottomPadding: androidx.compose.ui.unit.Dp) {
+private fun UnavailableView(icon: ImageVector, title: String, message: String, bottomPadding: Dp) {
     val colors = ShroudTheme.colors
     Box(Modifier.fillMaxSize().padding(bottom = bottomPadding), contentAlignment = Alignment.Center) {
         Column(
