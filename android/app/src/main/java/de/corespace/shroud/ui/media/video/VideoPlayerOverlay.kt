@@ -66,6 +66,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.media3.common.Player
@@ -515,7 +516,7 @@ private fun Scrubber(
         Box(Modifier.size(width * fraction, 3.dp).clip(CircleShape).background(Color.White))
         Box(
             Modifier
-                .offset(x = width * fraction - knob / 2)
+                .offset { IntOffset((width * fraction - knob / 2).roundToPx(), 0) }
                 .size(knob)
                 .dropShadow(CircleShape, Shadow(radius = 2.dp, color = Color.Black.copy(alpha = 0.3f), offset = DpOffset(0.dp, 1.dp)))
                 .clip(CircleShape)
