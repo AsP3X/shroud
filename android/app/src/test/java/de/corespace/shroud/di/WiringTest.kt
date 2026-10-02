@@ -9,6 +9,7 @@ import de.corespace.shroud.core.push.PushRegistration
 import de.corespace.shroud.core.transcription.VoiceTranscription
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Before
@@ -57,7 +58,9 @@ class WiringTest {
     @Test
     fun wave3SeamsStartInert() {
         assertSame(PushRegistration.Inactive, container.push.registration)
-        assertSame(VoiceTranscription.Unavailable, container.transcription.voice)
+        val voice = container.transcription.voice
+        assertNotSame(VoiceTranscription.Unavailable, voice)
+        assertSame(voice, container.transcription.voice)
     }
 
     /** K2–K5: the four accessors exist, and a second read is the same instance. */

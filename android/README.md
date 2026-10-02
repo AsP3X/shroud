@@ -159,7 +159,9 @@ host; worst RTF over four clips: English 11 s and 60 s, German 13 s and 60 s):
 
 The worst RTF is always a short clip: language detection (3–4 s with base on the emulators) runs
 before the transcription and weighs most on 11–13 s of audio. Language detection and the
-transcripts were right on every run (English 0.95–1.00, German 1.00).
+transcripts were right on every run (English 0.95–1.00, German 1.00). The emulator benchmark
+numbers in the table were not re-measured for on-device voice-note transcription and are unchanged
+from the last measured figures recorded above.
 
 `SERIAL` picks a device when several are attached; ports, container names and the state folder
 (server log, media) are in `e2e/common.sh` and can be overridden from the environment. Use AOSP
