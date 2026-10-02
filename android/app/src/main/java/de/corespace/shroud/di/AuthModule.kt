@@ -11,17 +11,24 @@ import de.corespace.shroud.core.auth.AndroidSystemWipe
 import de.corespace.shroud.core.auth.DeviceDataWipe
 import de.corespace.shroud.core.auth.DeviceNameSync
 import de.corespace.shroud.core.auth.DeviceWipeController
+import de.corespace.shroud.core.auth.OnboardingService
 import de.corespace.shroud.core.auth.RemovalWake
 import de.corespace.shroud.core.auth.SessionController
 import de.corespace.shroud.core.auth.SessionStore
+import de.corespace.shroud.core.auth.ShroudOnboardingService
 import de.corespace.shroud.core.auth.WipeKeepList
 import de.corespace.shroud.core.auth.WipeLocations
+import de.corespace.shroud.core.crypto.CryptoController
+import de.corespace.shroud.core.crypto.DeviceNameSeal
 import de.corespace.shroud.core.devices.DeviceNoun
+import de.corespace.shroud.core.devices.DevicesController
+import de.corespace.shroud.core.devices.ShroudDevicesController
 import de.corespace.shroud.core.keys.KeyMaterialWipe
 import de.corespace.shroud.core.storage.KeystoreSealer
 import de.corespace.shroud.core.storage.PrefsFiles
 import de.corespace.shroud.core.storage.SealedFile
 import java.io.File
+import java.util.UUID
 
 /**
  * Session, Log Out / removal wipe, device names, appearance (00-plan §1.7.6; settings-lock §5, §8,
@@ -61,6 +68,33 @@ class AuthModule(container: AppContainer) : AppModule(container) {
             wipeMarker = { deviceDataWipe.markPending() },
             isWipePresented = { deviceWipe.isPresented.value },
             // The deprecated immediate Log Out still drops the keys (until the shell runs the wipe).
+        )
+    }
+
+    /** Sign-up, log-in and the local-network check (K2). The [AppContainer] shims forward here. */
+    val onboarding: OnboardingService by lazy {
+        ShroudOnboardingService(
+            sessions = sessionController,
+            crypto = container.keys.cryptoController,
+            deviceSecurity = container.keys.deviceSecurity,
+            api = container.net.api,
+            context = app,
+            configuration = { container.serverConfiguration.configuration.value },
+        )
+    }
+
+    /** Settings › Devices (K3): `GET /devices`, revoke, and a sealed rename. */
+    val devices: DevicesController by lazy {
+        val crypto = container.keys.cryptoController
+        ShroudDevicesController(
+            listDevices = { token -> container.net.api.devices(token) },
+            revokeDevice = { token, id -> container.net.api.revokeDevice(token, id) },
+            putDeviceName = { token, id, sealedName -> container.net.api.putDeviceName(token, id, sealedName) },
+            session = { sessionController.session.value },
+            unlockedUserId = { crypto.unlockedUserId.value },
+            openName = { sealed, id -> openDeviceName(crypto, sealed, id) },
+            sealName = { label, id -> sealDeviceName(crypto, label, id) },
+            deviceNoun = { DeviceNoun.current(app) },
         )
     }
 
@@ -137,6 +171,33 @@ class AuthModule(container: AppContainer) : AppModule(container) {
         }
     }
 
+    /**
+     * Opens a sealed device name with this session's history key. Null while the chats are locked,
+     * or when the unlocked account is not the session's — another account's key must not be tried.
+     */
+    private fun openDeviceName(crypto: CryptoController, sealed: String?, id: UUID): DeviceNameSeal.Label? {
+        val user = sessionController.session.value?.userId ?: return null
+        if (!user.equals(crypto.unlockedUserId.value, ignoreCase = true)) return null
+        val key = crypto.withMaterial { it.historyKey.copyOf() } ?: return null
+        try {
+            return DeviceNameSeal.open(sealed, id, key)
+        } finally {
+            key.fill(0)
+        }
+    }
+
+    /** Seals [label] for [id]. Null while locked or for another account. [DeviceNameSeal.SealError.EmptyName] propagates. */
+    private fun sealDeviceName(crypto: CryptoController, label: DeviceNameSeal.Label, id: UUID): String? {
+        val user = sessionController.session.value?.userId ?: return null
+        if (!user.equals(crypto.unlockedUserId.value, ignoreCase = true)) return null
+        val key = crypto.withMaterial { it.historyKey.copyOf() } ?: return null
+        try {
+            return DeviceNameSeal.seal(label, id, key)
+        } finally {
+            key.fill(0)
+        }
+    }
+
     /** Android "Remove animations" (the animator duration scale is 0), as `ui/theme` reads it. */
     private fun reduceMotion(): Boolean =
         runCatching { Settings.Global.getFloat(app.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }.getOrDefault(false)
@@ -147,9 +208,9 @@ class AuthModule(container: AppContainer) : AppModule(container) {
         const val ANCHOR_FILE = "device-anchor.sealed"
 
         /** Every prefs file the app writes (00-plan §1.5), also before `apply()` reached the disk. */
-        private val KNOWN_PREFS = listOf(
+        internal val KNOWN_PREFS = listOf(
             PrefsFiles.SERVER, PrefsFiles.DEVICE, PrefsFiles.WIPE, PrefsFiles.PREFERENCES, PrefsFiles.APPEARANCE,
-            PrefsFiles.NOTIFICATIONS, PrefsFiles.MESSAGING, PrefsFiles.VOICE, PrefsFiles.PUSH,
+            PrefsFiles.NOTIFICATIONS, PrefsFiles.MESSAGING, PrefsFiles.VOICE, PrefsFiles.PUSH, PrefsFiles.UI,
         )
     }
 }

@@ -19,10 +19,12 @@ import de.corespace.shroud.core.keys.SenderTagStore
 import de.corespace.shroud.core.keys.SystemBiometricAuthenticator
 import de.corespace.shroud.core.storage.KeystoreSealer
 import de.corespace.shroud.core.storage.PrefsFiles
+import de.corespace.shroud.core.storage.PrefsUiFlags
 import de.corespace.shroud.core.storage.SealedDirectoryStore
 import de.corespace.shroud.core.storage.SealedFile
 import de.corespace.shroud.core.storage.SecurityPreferences
 import de.corespace.shroud.core.storage.SensitiveTempFiles
+import de.corespace.shroud.core.storage.UiFlags
 import java.io.File
 
 /**
@@ -111,6 +113,11 @@ class KeysModule(container: AppContainer) : AppModule(container) {
     /** Auto-lock delay and the privacy switches, prefs `shroud.preferences` (crypto §17.4, C11). */
     val securityPreferences: SecurityPreferences by lazy {
         SecurityPreferences(app.getSharedPreferences(PrefsFiles.PREFERENCES, Context.MODE_PRIVATE), container.storageSeal)
+    }
+
+    /** Opaque UI booleans, prefs `shroud.ui` (K5). Wiped with the other non-kept prefs on Log Out. */
+    val uiFlags: UiFlags by lazy {
+        PrefsUiFlags(app.getSharedPreferences(PrefsFiles.UI, Context.MODE_PRIVATE), container.storageSeal)
     }
 
     /** `cacheDir/shroud-*` plaintext that must exist as a file for a moment (crypto §15, C25). */

@@ -37,4 +37,7 @@ object PrefsFiles {
 
     /** `push.backgroundConnection`, `push.batteryPromptShown`, `push.distributorChoice` (W3-PUSH). Wiped. */
     const val PUSH = "shroud.push"
+
+    /** Opaque UI flags ([UiFlags]). No content, names or keys. Wiped on Log Out. */
+    const val UI = "shroud.ui"
 }

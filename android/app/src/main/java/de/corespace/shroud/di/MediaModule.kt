@@ -9,6 +9,8 @@ import de.corespace.shroud.core.media.MediaTransferService
 import de.corespace.shroud.core.media.MediaTransfers
 import de.corespace.shroud.core.media.SealedMediaDataSource
 import de.corespace.shroud.core.media.SealedMediaDataSourceMdr
+import de.corespace.shroud.core.media.library.MediaStorePhotoLibrary
+import de.corespace.shroud.core.media.library.PhotoLibrary
 import java.io.File
 import java.util.UUID
 
@@ -39,6 +41,9 @@ class MediaModule(container: AppContainer) : AppModule(container) {
     val transfers: MediaTransferService by lazy {
         MediaTransferService(container.net.api, localMedia, container.keys.sensitiveTempFiles)
     }
+
+    /** The phone's photos for the recents strip (K4). Images only; empty when access is none. */
+    val photoLibrary: PhotoLibrary by lazy { MediaStorePhotoLibrary(container.appContext) }
 
     /** ExoPlayer source factory for [messageId]'s sealed media (pair it with `SealedMediaDataSource.mediaItem()`). */
     fun dataSourceFactory(messageId: UUID): SealedMediaDataSource.Factory = SealedMediaDataSource.Factory(localMedia, messageId)
