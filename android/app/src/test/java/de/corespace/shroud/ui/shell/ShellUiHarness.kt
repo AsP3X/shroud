@@ -1,5 +1,6 @@
 package de.corespace.shroud.ui.shell
 
+import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.view.View
@@ -18,6 +19,7 @@ import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.node.RootForTest
+import androidx.compose.ui.platform.AndroidUiDispatcher
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.contentDescription
@@ -33,6 +35,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.shadows.ShadowChoreographer
 import java.time.Duration
 import java.util.UUID
+import kotlin.coroutines.ContinuationInterceptor
 
 /**
  * Fake [ShellScreens] for the shell's Compose tests: each tab root and pushed screen is one
@@ -108,12 +111,15 @@ class ShellUiHarness(reduceMotion: Boolean = true, content: @Composable () -> Un
     val activity: ComponentActivity
 
     init {
-        ShadowChoreographer.setFrameDelay(Duration.ofMillis(16))
+        healMainDispatcher()
+        // Frames only as the test's clock moves: an unpaused Choreographer advances the clock itself
+        // and runs a whole animation inside one idle, so nothing could be observed mid-push.
+        ShadowChoreographer.setPaused(true)
+        ShadowChoreographer.setFrameDelay(Duration.ofMillis(FRAME_MS))
         val resolver = RuntimeEnvironment.getApplication().contentResolver
         Settings.Global.putFloat(resolver, Settings.Global.ANIMATOR_DURATION_SCALE, if (reduceMotion) 0f else 1f)
         activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
         live += this
-        println("DEBUG dispatcher at start: ${dispatcherFlags()}")
         activity.setContent { ShroudTheme(dark = false, content = content) }
         idle()
     }
@@ -121,46 +127,82 @@ class ShellUiHarness(reduceMotion: Boolean = true, content: @Composable () -> Un
     companion object {
         private val live = ArrayList<ShellUiHarness>()
 
-        /**
-         * Disposes every composition this test built (call it from `@After`). Compose's main-thread
-         * dispatcher is sandbox-wide and no `Delay`: an effect's `delay` (the toast timer, the stack's
-         * commit wait) resumes with a post to the main looper, and a post landing after the test's
-         * last idle is dropped by Robolectric's looper reset while the dispatcher still counts it —
-         * every later Compose test of the sandbox then waits forever for its frames (the reason
-         * `ChatsScreenTest.tearDown` does the same).
-         */
+        /** Disposes every composition this test built, then [settleMainThread] (call it from `@After`). */
         fun disposeAll() {
-            live.forEach { host ->
-                host.activity.findViewById<ViewGroup>(android.R.id.content).removeAllViews()
-                host.idle()
-            }
-            Thread.sleep(30)
-            live.firstOrNull()?.idle()
+            live.forEach { host -> host.activity.findViewById<ViewGroup>(android.R.id.content).removeAllViews() }
             live.clear()
-            println("DEBUG dispatcher after dispose: ${dispatcherFlags()}")
+            settleMainThread()
         }
 
-        fun dispatcherFlags(): String {
-            val main = androidx.compose.ui.platform.AndroidUiDispatcher.Main[kotlin.coroutines.ContinuationInterceptor]!!
-            return main.javaClass.declaredFields.filter { it.type == Boolean::class.javaPrimitiveType || it.name.startsWith("toRun") }.joinToString { f ->
-                f.isAccessible = true
-                val v = f.get(main)
-                "${f.name}=${if (v is Collection<*>) v.size else v}"
+        /**
+         * Leaves Compose's main-thread dispatcher idle for the next test. Call it from the `@After` of
+         * every Robolectric test that writes snapshot state, composed or not (a [BackGate], the
+         * navigator, the router).
+         *
+         * `AndroidUiDispatcher.Main` and `GlobalSnapshotManager` live once per Robolectric sandbox,
+         * which every test class of the same SDK shares. A snapshot write outside a composition
+         * resumes the manager's coroutine with a post to the main looper; an effect's `delay` (the
+         * toast timer, the stack's commit wait) resumes on kotlinx's real-time executor the same way.
+         * A post still queued when the test ends is dropped by Robolectric's looper reset while the
+         * dispatcher keeps counting it as scheduled, and no later Compose test of the sandbox gets a
+         * coroutine or a recomposition again. So: apply, run the frames, give a just-finished real
+         * delay time to post, and run the main looper again (`ChatsScreenTest.tearDown` does the same).
+         */
+        fun settleMainThread() {
+            val looper = shadowOf(Looper.getMainLooper())
+            repeat(2) {
+                Snapshot.sendApplyNotifications()
+                looper.idleFor(Duration.ofMillis(500))
+                Thread.sleep(SETTLE_REAL_MS)
             }
+            Snapshot.sendApplyNotifications()
+            looper.idle()
         }
+
+        /**
+         * Undoes what [settleMainThread] prevents, when a test of another package left a post behind:
+         * the dispatcher's own callback is posted again, which runs the stranded continuations and
+         * clears its "scheduled" marks (a no-op on a healthy dispatcher). Test-only reflection on
+         * `AndroidUiDispatcher`'s private `handler` and `dispatchCallback`; skipped if they are renamed.
+         */
+        private fun healMainDispatcher() {
+            val dispatcher = AndroidUiDispatcher.Main[ContinuationInterceptor] ?: return
+            runCatching {
+                fun field(name: String): Any? = dispatcher.javaClass.getDeclaredField(name).apply { isAccessible = true }.get(dispatcher)
+                (field("handler") as Handler).post(field("dispatchCallback") as Runnable)
+            }
+            shadowOf(Looper.getMainLooper()).idle()
+        }
+
+        /** One frame at Robolectric's frame delay (set in `init`). */
+        private const val FRAME_MS = 16L
+
+        /** Real time a just-finished `delay` needs to post its resumption. */
+        private const val SETTLE_REAL_MS = 30L
     }
 
     val density: Float get() = activity.resources.displayMetrics.density
 
     /**
-     * Recompositions, effects and [millis] of frames. State the test wrote outside a composition is
-     * applied first, as the Compose test rule's `waitForIdle` does: the global snapshot observer of an
-     * earlier test's sandbox may no longer be the one draining them.
+     * Recompositions, effects and [millis] of frames, with a measure and layout pass after each frame
+     * as a drawing window gets (the Compose test rule's `waitForIdle` does the same). Robolectric
+     * never draws this window, and Compose lays out a change that cannot resize the root only from
+     * `dispatchDraw`: without the pass, content an `AnimatedContent` or a pushed screen brings in is
+     * composed but never placed. State the test wrote outside a composition is applied first.
      */
     fun idle(millis: Long = 500) {
-        Snapshot.sendApplyNotifications()
-        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(millis))
+        val looper = shadowOf(Looper.getMainLooper())
+        var left = millis
+        do {
+            Snapshot.sendApplyNotifications()
+            val step = minOf(left, FRAME_MS)
+            looper.idleFor(Duration.ofMillis(step))
+            composeRoot()?.measureAndLayoutForTest()
+            left -= step
+        } while (left > 0)
     }
+
+    private fun composeRoot(): RootForTest? = findRoot(activity.window.decorView) as RootForTest?
 
     /**
      * The merged nodes TalkBack can reach: placed ones only, as the platform's accessibility tree

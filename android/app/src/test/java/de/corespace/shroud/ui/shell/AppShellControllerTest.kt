@@ -223,6 +223,31 @@ class AppShellControllerTest {
         assertTrue(shell.router.isUnlocked)
     }
 
+    /** Each departure starts its own delay (`leftForBackgroundAt`, `RootView.swift:49-50, 268-272`). */
+    @Test
+    fun aReturnBeforeTheDelayRestartsItOnTheNextDeparture() = runTest(UnconfinedTestDispatcher()) {
+        val env = FakeShellEnvironment()
+        env.autoLockDelay.value = AutoLockDelay.OneMinute
+        val shell = unlockedShell(env)
+        fun away(millis: Long) {
+            advanceTimeBy(millis)
+            env.clock.advanceBy(millis)
+            runCurrent()
+        }
+        env.phase.value = AppPhase.Background
+        away(40_000)
+        env.phase.value = AppPhase.Inactive
+        env.phase.value = AppPhase.Active
+        env.phase.value = AppPhase.Background
+        // 80 s since the first departure, 40 s since this one: not due.
+        away(40_000)
+        assertFalse("lockChatsInMemory" in env.log)
+        assertTrue(shell.router.isUnlocked)
+        away(20_000)
+        assertTrue("lockChatsInMemory" in env.log)
+        assertFalse(shell.router.isUnlocked)
+    }
+
     @Test
     fun aWallClockChangeNeitherLocksNorUnlocks() = runTest(UnconfinedTestDispatcher()) {
         val env = FakeShellEnvironment()

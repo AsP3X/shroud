@@ -9,6 +9,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -35,6 +36,9 @@ import org.robolectric.annotation.Config
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 class RecentsAndCaptureCoverTest {
+    @After
+    fun tearDown() = ShellUiHarness.settleMainThread()
+
     /** The real window, plus a record of the Recents switch (Robolectric keeps no state for it). */
     private class Window(val activity: ComponentActivity) : WindowControls {
         private val real = WindowControls.of(activity)

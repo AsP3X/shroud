@@ -12,8 +12,8 @@ import de.corespace.shroud.ui.components.Toast
 import de.corespace.shroud.ui.components.ToastHost
 import de.corespace.shroud.ui.components.ToastState
 import de.corespace.shroud.ui.components.toastBottomPadding
-import org.junit.Assert.assertEquals
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
