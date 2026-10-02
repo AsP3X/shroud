@@ -1,9 +1,11 @@
 package de.corespace.shroud.e2e
 
+import android.os.Build
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import de.corespace.shroud.LOCAL_NETWORK_PERMISSION
 import de.corespace.shroud.MainActivity
 import de.corespace.shroud.ShroudApplication
 import de.corespace.shroud.core.auth.Session
@@ -61,6 +63,11 @@ class W1SmokeTest {
 
     @Before
     fun setUp() {
+        // Android 17: the stack is on the host's loopback (10.0.2.2), a local-network address. The
+        // test run reinstalls the app, which drops emulator-setup.sh's grant (as in EngineE2eTest).
+        if (Build.VERSION.SDK_INT >= 37) {
+            InstrumentationRegistry.getInstrumentation().uiAutomation.grantRuntimePermission(app.packageName, LOCAL_NETWORK_PERMISSION)
+        }
         val live = runCatching {
             http.newCall(Request.Builder().url("$baseUrl/health/live").build()).execute().use { it.isSuccessful }
         }.getOrDefault(false)
@@ -207,6 +214,10 @@ class W1SmokeTest {
                 storageSeal = container.storageSeal,
             )
             runBlocking { signUpController.establishFromSignup(keys.bip39.generate(), session) }
+            // A real sign-up stores its session next to the keys. Without it the relaunch below is a
+            // signed-out phone with leftovers, which the launch check wipes before the vault prompt
+            // (W2-AUTH-WIPE, `DeviceWipeController.finishInterruptedWipeIfNeeded`), as in VaultFlowTest.
+            container.auth.sessionStore.save(session)
             signUpController.lock()
             val status = runBlocking { api.keyStatus(session.token) }
             assertTrue("the bundle reached the server", status.hasIdentity)
@@ -222,6 +233,7 @@ class W1SmokeTest {
                 assertEquals(session.userId, crypto.unlockedUserId.value)
             }
         } finally {
+            container.auth.sessionStore.clear()
             runBlocking { withContext(Dispatchers.Main) { keys.cryptoController.lock(wipeStore = true) } }
             keys.keyMaterialWipe.wipeAll()
         }
