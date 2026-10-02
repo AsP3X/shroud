@@ -208,7 +208,8 @@ private val ServerConfigurationSaver = listSaver<ServerConfiguration, Any>(
 /**
  * The Server page's drawing and its save flow ([ServerSettingsScreen] wires it to the store, the
  * session and the shell). [save] stores a configuration; [onSignOut] runs the Log Out that
- * switches to the draft; [onBack] pops (also after a plain save).
+ * switches to the draft; [onBack] pops (also after a plain save). [pause] waits out the Saving and
+ * Saved beats (tests skip them).
  */
 @Composable
 fun ServerSettingsPage(
@@ -219,6 +220,7 @@ fun ServerSettingsPage(
     onSignOut: (ServerConfiguration) -> Unit,
     onBack: () -> Unit,
     scrollState: ScrollState = rememberScrollState(),
+    pause: suspend (Long) -> Unit = { delay(it) },
 ) {
     val colors = ShroudTheme.colors
     val reduceMotion = ShroudTheme.reduceMotion
@@ -243,7 +245,7 @@ fun ServerSettingsPage(
             savePhase = ServerSavePhase.Saving
             haptic(Haptic.Soft)
             // Let the spinner register even though the write is synchronous (`:503-504`).
-            delay(ServerSettingsLogic.SAVING_MS)
+            pause(ServerSettingsLogic.SAVING_MS)
             if (!signOutAfter) {
                 // Signing out, the Log Out stores it once the wipe is over (`:506-510`).
                 val failure = runCatching { save(target) }.exceptionOrNull()
@@ -258,7 +260,7 @@ fun ServerSettingsPage(
             }
             savePhase = ServerSavePhase.Success
             haptic(Haptic.Success)
-            delay(ServerSettingsLogic.SAVED_HOLD_MS)
+            pause(ServerSettingsLogic.SAVED_HOLD_MS)
             if (signOutAfter) onSignOut(target) else onBack()
         }
     }
