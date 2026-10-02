@@ -299,7 +299,8 @@ internal fun AddContactContent(
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
                 .background(colors.background)
-                .semantics { liveRegion = LiveRegionMode.Polite }
+                // One node holding the text, so the live region reads it out.
+                .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }
                 .padding(horizontal = 16.dp, vertical = 12.dp),
         ) {
             ShroudText(error, inter(14f), colors.danger)

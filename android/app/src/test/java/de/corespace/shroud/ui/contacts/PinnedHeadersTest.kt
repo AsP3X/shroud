@@ -54,8 +54,9 @@ class PinnedHeadersTest {
 
     @Test
     fun aHeaderInsideTheBarZoneIsPushedByTheNextOne() {
+        // 9 belongs right above 15 (at 5 - h = -17, under the bar's lower edge): moved from -50 by 33.
         val headers = listOf(Placed(2, -pad, h), Placed(9, -50, h), Placed(15, 5, h))
-        assertEquals(-50 + 50 + (5 - h), PinnedHeaders.translation(9, headers))
+        assertEquals((5 - h) - (-50), PinnedHeaders.translation(9, headers))
     }
 
     @Test
