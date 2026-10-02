@@ -53,6 +53,24 @@ class ContactsCopyTest {
     }
 
     @Test
+    fun presenceLinesFollowTheSpecVectorsInTwelveHourEnglish() {
+        // contacts §4.4 (`ChatListFormatting.swift:45-66`): UTC, en_US, 12-hour, now 2026-09-30 15:00.
+        val now = Instant.parse("2026-09-30T15:00:00Z")
+        val zone: ZoneId = ZoneOffset.UTC
+        // JDK/ICU English puts a narrow no-break space before "AM"; the words are what is pinned.
+        fun plain(text: String) = text.replace(' ', ' ').replace(' ', ' ')
+        fun row(presence: PresenceDto?) = plain(ContactStatus.row(presence, now, zone, Locale.US, is24h = false))
+        fun profile(presence: PresenceDto?) = plain(ContactStatus.profile(presence, now, zone, Locale.US, is24h = false))
+        assertEquals("contact", row(null))
+        assertEquals("Shroud contact", profile(null))
+        assertEquals("online", row(PresenceDto(requester, online = true)))
+        assertEquals("offline", profile(PresenceDto(requester, online = false)))
+        assertEquals("last seen 9:41 AM", row(PresenceDto(requester, online = false, lastSeenAt = Instant.parse("2026-09-30T09:41:00Z"))))
+        assertEquals("last seen yesterday", profile(PresenceDto(requester, online = false, lastSeenAt = Instant.parse("2026-09-29T23:59:00Z"))))
+        assertEquals("last seen Sep 27, 2026", row(PresenceDto(requester, online = false, lastSeenAt = Instant.parse("2026-09-27T12:00:00Z"))))
+    }
+
+    @Test
     fun blockAndUnblockSayWhatHappens() {
         // `ContactProfileView.swift:417, 432-447, 533`.
         assertEquals("Block jane", ContactsCopy.blockRowTitle(isBlocked = false, name = "jane"))
