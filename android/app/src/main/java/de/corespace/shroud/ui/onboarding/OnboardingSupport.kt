@@ -35,7 +35,7 @@ fun rememberLocalNetworkAccess(container: AppContainer): LocalNetworkAccess {
     }
     return remember(launcher) {
         LocalNetworkAccess {
-            if (!container.needsLocalNetworkPermission()) return@LocalNetworkAccess true
+            if (!container.auth.onboarding.needsLocalNetworkPermission()) return@LocalNetworkAccess true
             val result = CompletableDeferred<Boolean>()
             pending[0] = result
             launcher.launch(LOCAL_NETWORK_PERMISSION)

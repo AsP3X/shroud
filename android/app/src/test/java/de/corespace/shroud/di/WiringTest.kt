@@ -7,7 +7,6 @@ import de.corespace.shroud.AppContainer
 import de.corespace.shroud.core.lifecycle.AppPhaseMonitor
 import de.corespace.shroud.core.push.PushRegistration
 import de.corespace.shroud.core.transcription.VoiceTranscription
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotSame
@@ -68,7 +67,6 @@ class WiringTest {
 
     /** K2–K5: the four accessors exist, and a second read is the same instance. */
     @Test
-    @Suppress("DEPRECATION")
     fun uiSupportContractsAreStable() {
         val onboarding = container.auth.onboarding
         val devices = container.auth.devices
@@ -82,8 +80,6 @@ class WiringTest {
         assertSame(devices, container.auth.devices)
         assertSame(photos, container.media.photoLibrary)
         assertSame(flags, container.keys.uiFlags)
-        assertEquals(onboarding.hasScreenLock(), container.hasScreenLock())
-        assertEquals(onboarding.needsLocalNetworkPermission(), container.needsLocalNetworkPermission())
     }
 
     @Test

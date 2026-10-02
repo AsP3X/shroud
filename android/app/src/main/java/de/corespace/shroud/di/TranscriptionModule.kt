@@ -3,10 +3,10 @@ package de.corespace.shroud.di
 import android.annotation.SuppressLint
 import android.content.ComponentCallbacks2
 import android.content.Context
-import android.content.res.Configuration
 import android.os.storage.StorageManager
 import de.corespace.shroud.AppContainer
 import de.corespace.shroud.AppModule
+import de.corespace.shroud.ShroudApplication
 import de.corespace.shroud.core.storage.PrefsFiles
 import de.corespace.shroud.core.transcription.TranscriptionBenchmark
 import de.corespace.shroud.core.transcription.TranscriptionLanguage
@@ -77,17 +77,9 @@ class TranscriptionModule(container: AppContainer) : AppModule(container) {
      */
     private val whisperEngine: WhisperCppEngine by lazy {
         val engine = WhisperCppEngine(models = whisperModels, state = container.keys.sealedLocalState)
-        container.appContext.registerComponentCallbacks(object : ComponentCallbacks2 {
-            override fun onConfigurationChanged(newConfig: Configuration) = Unit
-
-            @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
-            override fun onLowMemory() = engine.release()
-
-            @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
-            override fun onTrimMemory(level: Int) {
-                if (level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND) engine.release()
-            }
-        })
+        (container.appContext as? ShroudApplication)?.addOnTrimMemoryListener { level ->
+            if (level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND) engine.release()
+        }
         engine
     }
 

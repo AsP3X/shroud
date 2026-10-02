@@ -217,6 +217,17 @@
             android:exported="false"
             android:grantUriPermissions="true" />
 
+        <!-- In-app content URIs for private cache files. Replaces file:// URIs. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.cache"
+            android:exported="false"
+            android:grantUriPermissions="false">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/cache_paths" />
+        </provider>
+
         <!--
           androidx.startup: emoji2 would query the GMS downloadable-font provider at start; the
           bundled font is installed by hand instead (P16c). WorkManager initialises on demand

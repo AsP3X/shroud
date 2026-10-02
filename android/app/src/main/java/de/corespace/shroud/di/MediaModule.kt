@@ -3,6 +3,7 @@ package de.corespace.shroud.di
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import de.corespace.shroud.AppContainer
 import de.corespace.shroud.AppModule
 import de.corespace.shroud.core.media.EnvelopePreview
@@ -85,6 +86,13 @@ class MediaModule(container: AppContainer) : AppModule(container) {
             temps = container.keys.sensitiveTempFiles,
             unlocked = { container.keys.cryptoController.isUnlocked },
             session = CameraXSession(container.appContext),
+            uriFor = { file ->
+                FileProvider.getUriForFile(
+                    container.appContext,
+                    container.appContext.packageName + ".cache",
+                    file,
+                )
+            },
             audioGranted = {
                 ContextCompat.checkSelfPermission(container.appContext, Manifest.permission.RECORD_AUDIO) ==
                     PackageManager.PERMISSION_GRANTED

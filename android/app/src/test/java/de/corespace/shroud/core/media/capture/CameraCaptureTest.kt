@@ -134,6 +134,7 @@ class CameraCaptureTest {
         unlocked = { unlocked },
         session = session,
         audioGranted = { audio },
+        uriFor = { Uri.parse(it.toURI().toString()) },
     )
 
     private class FakeSession : CameraSession {

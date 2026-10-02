@@ -1,5 +1,8 @@
 package de.corespace.shroud.ui.wipe
 
+import android.view.View
+import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -70,8 +73,7 @@ fun DeviceWipeOverlay() {
     // TalkBack hears each step and the end; the end plays its haptic (`DeviceWipeController.feedback`).
     LaunchedEffect(wipe, view) {
         wipe.feedback.collect { feedback ->
-            @Suppress("DEPRECATION")
-            view.announceForAccessibility(feedback.announcement)
+            view.speak(feedback.announcement)
             view.perform(feedback.haptic)
         }
     }
@@ -124,6 +126,20 @@ fun DeviceWipeOverlay() {
             )
         }
     }
+}
+
+/** TalkBack announcement. `View.announceForAccessibility` and `TYPE_ANNOUNCEMENT` are deprecated. */
+private fun View.speak(text: CharSequence) {
+    val event = AccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED).apply {
+        contentChangeTypes = AccessibilityEvent.CONTENT_CHANGE_TYPE_CONTENT_DESCRIPTION
+        this.text.add(text)
+        contentDescription = text
+        className = this@speak.javaClass.name
+        packageName = context.packageName
+    }
+    if (parent?.requestSendAccessibilityEvent(this, event) == true) return
+    val manager = context.getSystemService(AccessibilityManager::class.java) ?: return
+    if (manager.isEnabled) manager.sendAccessibilityEvent(event)
 }
 
 /**

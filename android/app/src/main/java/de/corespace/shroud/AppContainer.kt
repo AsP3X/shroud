@@ -1,16 +1,12 @@
 package de.corespace.shroud
 
 import android.content.Context
-import de.corespace.shroud.core.auth.SessionController
 import de.corespace.shroud.core.auth.WipeHooks
-import de.corespace.shroud.core.crypto.Bip39
-import de.corespace.shroud.core.crypto.CryptoController
 import de.corespace.shroud.core.lifecycle.AppPhaseMonitor
 import de.corespace.shroud.core.model.AppClock
 import de.corespace.shroud.core.model.SystemAppClock
 import de.corespace.shroud.core.net.AuthOutcomeListener
 import de.corespace.shroud.core.net.ServerConfigurationStore
-import de.corespace.shroud.core.net.ShroudApi
 import de.corespace.shroud.core.storage.SensitiveTempFiles
 import de.corespace.shroud.core.storage.StorageSeal
 import de.corespace.shroud.di.AuthModule
@@ -161,29 +157,6 @@ class AppContainer(
         media.sharingIfBuilt?.revokeAll()
         withContext(Dispatchers.IO) { keys.sensitiveTempFiles.sweep(SensitiveTempFiles.STALE_AGE_MS) }
     }
-
-    // Source-compatibility shims for the onboarding code (removed by W3-INT, 00-plan §1.3).
-    // The two checks forward to [de.corespace.shroud.di.AuthModule.onboarding]; the getters stay.
-
-    @Deprecated("W3-INT removes these shims; use auth.onboarding", level = DeprecationLevel.WARNING)
-    val api: ShroudApi get() = net.api
-
-    @Deprecated("W3-INT removes these shims; use auth.onboarding", level = DeprecationLevel.WARNING)
-    val sessionController: SessionController get() = auth.sessionController
-
-    @Deprecated("W3-INT removes these shims; use auth.onboarding", level = DeprecationLevel.WARNING)
-    val cryptoController: CryptoController get() = keys.cryptoController
-
-    @Deprecated("W3-INT removes these shims; use auth.onboarding", level = DeprecationLevel.WARNING)
-    val bip39: Bip39 get() = keys.bip39
-
-    /** Android 17 local-network permission for a self-hosted LAN server. Forwards to [de.corespace.shroud.di.AuthModule.onboarding]. */
-    @Deprecated("W3-INT removes these shims; use auth.onboarding", level = DeprecationLevel.WARNING)
-    fun needsLocalNetworkPermission(): Boolean = auth.onboarding.needsLocalNetworkPermission()
-
-    /** A screen lock (PIN, pattern, password) is what the history-key vault is gated on (plan §1.3). */
-    @Deprecated("W3-INT removes these shims; use auth.onboarding", level = DeprecationLevel.WARNING)
-    fun hasScreenLock(): Boolean = auth.onboarding.hasScreenLock()
 }
 
 /**

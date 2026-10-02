@@ -24,7 +24,7 @@ interface CameraCapture {
     val hasFrontCamera: Boolean
     val hasBackCamera: Boolean
 
-    /** JPEG in a private temp file, as a `file://` [MediaImageSource.ContentUri]. */
+    /** JPEG in a private temp file, as a content [MediaImageSource.ContentUri]. Never MediaStore. */
     suspend fun takePhoto(): MediaImageSource
 
     /** False when [withAudio] is set and `RECORD_AUDIO` is missing, or the camera cannot record. */
@@ -58,6 +58,7 @@ internal class ShroudCameraCapture(
     private val unlocked: () -> Boolean,
     private val session: CameraSession,
     private val audioGranted: () -> Boolean,
+    private val uriFor: (File) -> Uri,
 ) : CameraCapture {
     private var failed = false
     private var clip: File? = null
@@ -116,8 +117,7 @@ internal class ShroudCameraCapture(
         } finally {
             recycle(bitmap)
         }
-        @Suppress("DEPRECATION")
-        return MediaImageSource.ContentUri(Uri.fromFile(file))
+        return MediaImageSource.ContentUri(uriFor(file))
     }
 
     override fun startRecording(withAudio: Boolean): Boolean {

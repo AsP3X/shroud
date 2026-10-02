@@ -72,8 +72,8 @@ interface OnboardingService {
 }
 
 /**
- * [OnboardingService] on the process's session, crypto and device security. The permission check
- * moved here from `AppContainer`; the deprecated shim calls this.
+ * [OnboardingService] on the process's session, crypto and device security. Callers use
+ * `auth.onboarding`.
  */
 class ShroudOnboardingService internal constructor(
     private val registerAccount: suspend (String, String) -> Session,

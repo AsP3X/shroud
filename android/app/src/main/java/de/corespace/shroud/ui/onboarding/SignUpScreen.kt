@@ -105,7 +105,7 @@ fun SignUpScreen(container: AppContainer, toast: ToastState, onBack: () -> Unit,
     var passwordRevealed by remember { mutableStateOf(false) }
     var wroteDown by remember { mutableStateOf(false) }
     // One phrase per visit: going back to fix the name keeps the words already written down.
-    val words = remember { container.bip39.generate() }
+    val words = remember { container.keys.bip39.generate() }
     var revealed by remember { mutableIntStateOf(0) }
     var submitting by remember { mutableStateOf(false) }
     var accountError by remember { mutableStateOf<String?>(null) }
@@ -143,7 +143,7 @@ fun SignUpScreen(container: AppContainer, toast: ToastState, onBack: () -> Unit,
         focus.clearFocus()
         accountError = SessionController.usernameProblem(username)
             // Checked before any phrase is shown: without a screen lock the keys cannot be protected.
-            ?: CryptoController.userMessage(CryptoException.NoScreenLock()).takeUnless { container.hasScreenLock() }
+            ?: CryptoController.userMessage(CryptoException.NoScreenLock()).takeUnless { container.auth.onboarding.hasScreenLock() }
         if (accountError == null) step = SignUpStep.Phrase
     }
 
@@ -153,18 +153,18 @@ fun SignUpScreen(container: AppContainer, toast: ToastState, onBack: () -> Unit,
         submitting = true
         scope.launch {
             try {
-                container.bip39.validate(words)
+                container.keys.bip39.validate(words)
                 if (!localNetwork.ensure()) {
                     phraseError = LocalNetworkAccess.DENIED_MESSAGE
                     return@launch
                 }
-                val sessions = container.sessionController
+                val sessions = container.auth.sessionController
                 val name = SessionController.normalize(username)
                 val session = registered
                     ?.takeIf { (s, pw) -> s.username == name && pw == password && sessions.session.value == s }
                     ?.first
                     ?: sessions.register(username, password).also { registered = it to password }
-                container.cryptoController.establishFromSignup(words, session)
+                container.auth.onboarding.establishFromSignup(words, session)
             } catch (e: Throwable) {
                 if (e is ApiError.Server && e.code in CREDENTIAL_ERRORS) {
                     accountError = e.userMessage

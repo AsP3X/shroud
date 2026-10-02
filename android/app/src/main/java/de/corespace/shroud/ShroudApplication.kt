@@ -14,6 +14,7 @@ import androidx.work.Configuration
 import de.corespace.shroud.core.lifecycle.AppPhase
 import de.corespace.shroud.core.lifecycle.AppPhaseMonitor
 import de.corespace.shroud.ui.calls.CallActivity
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -44,6 +45,13 @@ class ShroudApplication : Application(), Configuration.Provider {
     /** The phase of *our* activities (`MainActivity`, `CallActivity`), never another app's. */
     val appPhase = AppPhaseMonitor(tracks = { it is MainActivity || it is CallActivity })
 
+    private val trimListeners = CopyOnWriteArrayList<(Int) -> Unit>()
+
+    /** [Application.onTrimMemory] is the supported memory callback. [level] is a `TRIM_MEMORY_*` value. */
+    fun addOnTrimMemoryListener(listener: (Int) -> Unit) {
+        trimListeners.add(listener)
+    }
+
     /**
      * The process's one [AppContainer]. Touching it before the first unlock is a programming
      * error (every caller runs in a component that cannot start before it) and throws.
@@ -57,6 +65,11 @@ class ShroudApplication : Application(), Configuration.Provider {
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().build()
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        for (listener in trimListeners) listener(level)
+    }
 
     override fun onCreate() {
         super.onCreate()

@@ -110,7 +110,7 @@ fun LogInScreen(
     val context = LocalContext.current
     val focus = LocalFocusManager.current
     val scope = rememberCoroutineScope()
-    val sessions = container.sessionController
+    val sessions = container.auth.sessionController
 
     val startedSignedIn = remember { sessions.session.value != null }
     var phase by remember { mutableStateOf(if (startedSignedIn) Phase.Phrase else Phase.Credentials) }
@@ -183,7 +183,7 @@ fun LogInScreen(
                     error = LocalNetworkAccess.DENIED_MESSAGE
                     return@launch
                 }
-                container.cryptoController.unlockWithPhrase(words.map { it.trim().lowercase() }, session)
+                container.auth.onboarding.unlockWithPhrase(words.map { it.trim().lowercase() }, session)
             } catch (e: Throwable) {
                 // A revoked or removed session must not trap the user on this step: the session's
                 // auth listener already ended it, and the root goes back to Welcome with its message.
@@ -197,7 +197,7 @@ fun LogInScreen(
     }
 
     fun paste() {
-        val parsed = PhraseClipboard.read(context)?.let(container.bip39::parse)
+        val parsed = PhraseClipboard.read(context)?.let(container.keys.bip39::parse)
         if (parsed == null) {
             error = "The clipboard doesn’t hold a valid 12-word phrase."
             return
