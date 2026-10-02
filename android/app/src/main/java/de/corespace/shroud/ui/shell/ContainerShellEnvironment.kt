@@ -50,8 +50,6 @@ class ContainerShellEnvironment(private val container: AppContainer) : ShellEnvi
     override val unlockedUserId: StateFlow<String?> get() = crypto.unlockedUserId
     override val vaultPromptInFlight: StateFlow<Boolean> get() = crypto.vaultPromptInFlight
 
-    override fun hasLocalIdentity(userId: String): Boolean = crypto.hasLocalIdentity(userId)
-
     override fun identityPresence(userId: String): IdentityPresence = crypto.identityPresence(userId)
 
     override fun lockCrypto(wipeStore: Boolean) = crypto.lock(wipeStore = wipeStore)

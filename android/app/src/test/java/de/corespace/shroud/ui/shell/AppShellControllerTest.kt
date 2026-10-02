@@ -162,6 +162,43 @@ class AppShellControllerTest {
         assertEquals(before, env.validations)
     }
 
+    @Test
+    fun aLockWhileThePhoneIsLockedKeepsTheLockScreen() = runTest(UnconfinedTestDispatcher()) {
+        // C3 device check: the screen went off, the chats locked while the identity record was
+        // unreadable (the phone's own lock), and the notification tap then landed on Welcome.
+        val env = FakeShellEnvironment()
+        val shell = unlockedShell(env)
+        assertEquals(true, shell.needsChatUnlock.value)
+        env.identity = IdentityPresence.Unavailable
+        env.phase.value = AppPhase.Inactive
+        env.phase.value = AppPhase.Background
+        assertTrue("lockChatsInMemory" in env.log)
+        assertEquals(true, shell.needsChatUnlock.value)
+        // Back in front (the phone is unlocked again): the record is read once more.
+        env.identity = IdentityPresence.Present
+        env.phase.value = AppPhase.Inactive
+        env.phase.value = AppPhase.Active
+        assertEquals(true, shell.needsChatUnlock.value)
+        // A record that is really gone (another account's, or cleared) is Welcome, read on return.
+        env.phase.value = AppPhase.Background
+        env.identity = IdentityPresence.Absent
+        env.phase.value = AppPhase.Active
+        assertEquals(false, shell.needsChatUnlock.value)
+    }
+
+    @Test
+    fun anUnreadableRecordAtFirstReadDrawsNeitherScreenUntilTheAppIsInFront() = runTest(UnconfinedTestDispatcher()) {
+        val env = FakeShellEnvironment()
+        env.identity = IdentityPresence.Unavailable
+        env.signIn()
+        val shell = shell(env)
+        assertNull(shell.needsChatUnlock.value)
+        env.identity = IdentityPresence.Present
+        env.phase.value = AppPhase.Inactive
+        env.phase.value = AppPhase.Active
+        assertEquals(true, shell.needsChatUnlock.value)
+    }
+
     // ---- Auto-lock (RootView.swift:257-276, 315-330; shell-chats §3.7, D12) ----
 
     @Test

@@ -2,6 +2,7 @@ package de.corespace.shroud.ui.shell
 
 import android.os.Build
 import de.corespace.shroud.core.auth.WipeReason
+import de.corespace.shroud.core.keys.IdentityPresence
 import de.corespace.shroud.core.lifecycle.AppPhase
 import de.corespace.shroud.core.net.ServerConfiguration
 import de.corespace.shroud.core.storage.AutoLockDelay
@@ -409,16 +410,31 @@ class AppShellController(
     // ---- Routing helpers ----
 
     /**
-     * Recomputes [needsChatUnlock] whenever the session, the keys or the wipe change: sign-up and
-     * log-in store the identity just before they unlock, a wipe deletes it.
+     * Recomputes [needsChatUnlock] whenever the session, the keys or the wipe change — sign-up and
+     * log-in store the identity just before they unlock, a wipe deletes it — and when the app comes
+     * back to the front.
+     *
+     * Android locks the chats while the phone itself is locked (the screen went off; a delayed
+     * auto-lock firing in the background), and the identity record is unreadable then
+     * ([IdentityPresence.Unavailable]). That answer keeps the last one instead of turning the lock
+     * screen into Welcome, and the return to the front, which needs an unlocked phone, reads the
+     * record again (C3 device check: a notification tapped on the lock screen landed on Welcome).
      */
     private fun observeIdentity() {
         scope.launch {
-            combine(env.session, env.unlockedUserId, env.wipePresented) { session, _, _ -> session }
+            val inFront = env.phase.map { it == AppPhase.Active }.distinctUntilChanged()
+            combine(env.session, env.unlockedUserId, env.wipePresented, inFront) { session, _, _, _ -> session }
                 .collectLatest { session ->
-                    needsUnlock.value = if (session == null) false else withContext(io) { env.hasLocalIdentity(session.userId) }
+                    needsUnlock.value = if (session == null) false else withContext(io) { needsUnlockFor(session.userId, needsUnlock.value) }
                 }
         }
+    }
+
+    /** `hasLocalIdentity(for:)` (`RootView.swift:391-399`), with [previous] kept while the record cannot be read. */
+    private fun needsUnlockFor(userId: String, previous: Boolean?): Boolean? = when (env.identityPresence(userId)) {
+        IdentityPresence.Present -> true
+        IdentityPresence.Absent -> false
+        IdentityPresence.Unavailable -> previous
     }
 
     /**

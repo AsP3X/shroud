@@ -49,10 +49,10 @@ interface ShellEnvironment {
     /** The vault's system prompt is up: a stop under it is not a departure (crypto §10.7). */
     val vaultPromptInFlight: StateFlow<Boolean>
 
-    /** This account's identity is stored here (`hasLocalIdentity(for:)`); reads the sealed record — call off main. */
-    fun hasLocalIdentity(userId: String): Boolean
-
-    /** Present / Absent / Unavailable (`identityPresence(for:)`); reads the sealed record — call off main. */
+    /**
+     * Present / Absent / Unavailable (`identityPresence(for:)`; Present is `hasLocalIdentity(for:)`);
+     * Unavailable while the phone itself is locked. Reads the sealed record — call off main.
+     */
     fun identityPresence(userId: String): IdentityPresence
 
     /** `cryptoController.lock(wipeStore:)`. */
