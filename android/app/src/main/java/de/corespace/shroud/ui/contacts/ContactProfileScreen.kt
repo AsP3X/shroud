@@ -93,7 +93,6 @@ import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
-import java.util.Locale
 import java.util.UUID
 
 /**
@@ -157,7 +156,7 @@ fun ContactProfileScreen(peerId: UUID, username: String, onBack: () -> Unit, onC
     val verified = remember(peerId, change, verifiedPeers, identityRevision) { identities.isSafetyVerified(peerId) }
     val now = Instant.now()
     val zone = ZoneId.systemDefault()
-    val locale = Locale.getDefault()
+    val locale = currentLocale()
     val is24h = DateFormat.is24HourFormat(context)
     val mute = remember(peerId, conversations, muteRevision) { messaging.mute(peerId) }
     val canMute = remember(peerId, conversations) { messaging.canMute(peerId) }

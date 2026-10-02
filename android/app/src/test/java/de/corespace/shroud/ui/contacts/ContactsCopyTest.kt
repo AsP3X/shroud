@@ -88,6 +88,22 @@ class ContactsCopyTest {
     }
 
     @Test
+    fun theProfileConfirmationsCarryIosTitlesAndMessages() {
+        // The three `confirmationDialog`s of `ContactProfileView.swift:393-405, 431-448, 481-500` as action sheets (P13c).
+        assertEquals("Trust the new key?", ProfileConfirm.TrustNewKey.title("jane"))
+        assertEquals(
+            "Only do this if you confirmed this contact's safety number through another channel.",
+            ProfileConfirm.TrustNewKey.message("jane"),
+        )
+        assertEquals("Block jane?", ProfileConfirm.Block(blocked = false).title("jane"))
+        assertEquals(ContactsCopy.BLOCK_MESSAGE, ProfileConfirm.Block(blocked = false).message("jane"))
+        assertEquals("Unblock jane?", ProfileConfirm.Block(blocked = true).title("jane"))
+        assertEquals(ContactsCopy.UNBLOCK_MESSAGE, ProfileConfirm.Block(blocked = true).message("jane"))
+        assertEquals("Delete chat with jane?", ProfileConfirm.DeleteChat.title("jane"))
+        assertEquals(ContactsCopy.deleteConfirmMessage("jane"), ProfileConfirm.DeleteChat.message("jane"))
+    }
+
+    @Test
     fun theMuteToastFollowsTheChatList() {
         // `ContactProfileView.swift:303`.
         assertEquals("Notifications on", ContactsCopy.muteDone(unmuted = true, label = null))

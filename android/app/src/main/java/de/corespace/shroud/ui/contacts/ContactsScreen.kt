@@ -73,7 +73,6 @@ import de.corespace.shroud.ui.theme.rememberHaptics
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
-import java.util.Locale
 import java.util.UUID
 
 /**
@@ -127,7 +126,9 @@ fun ContactsScreen(query: String, onQueryChange: (String) -> Unit) {
     // Every opening is a fresh sheet, as iOS builds a new `AddContactSheet` each time.
     var addSession by remember { mutableIntStateOf(0) }
 
-    val order = remember { ContactsSorting.collator() }
+    // The section order follows the screen's language (iOS `localizedCaseInsensitiveCompare`).
+    val locale = currentLocale()
+    val order = remember(locale) { ContactsSorting.collator(locale) }
     val content = remember(roster, requests, listStatus, query, ascending, order) {
         ContactsSorting.listContent(roster, requests, listStatus, query, ascending, order)
     }
@@ -160,7 +161,6 @@ fun ContactsScreen(query: String, onQueryChange: (String) -> Unit) {
     val is24h = DateFormat.is24HourFormat(context)
     val now = Instant.now()
     val zone = ZoneId.systemDefault()
-    val locale = Locale.getDefault()
 
     // The floating tab bar covers the bottom of the list: the last row ends at its top edge.
     val clearance = LocalTabBarClearance.current

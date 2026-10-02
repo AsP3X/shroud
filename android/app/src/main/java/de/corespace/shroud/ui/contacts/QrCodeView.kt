@@ -35,7 +35,7 @@ import de.corespace.shroud.ui.theme.inter
  * `backgroundGrouped` saying "Could not create QR". TalkBack: "QR code".
  */
 @Composable
-fun QrCodeView(payload: String, size: Dp = 220.dp, modifier: Modifier = Modifier) {
+fun QrCodeView(payload: String, modifier: Modifier = Modifier, size: Dp = 220.dp) {
     val image = remember(payload) { qrImage(payload) }
     val shape = RoundedCornerShape(16.dp)
     val described = Modifier.clearAndSetSemantics { contentDescription = ContactsCopy.QR_CODE }

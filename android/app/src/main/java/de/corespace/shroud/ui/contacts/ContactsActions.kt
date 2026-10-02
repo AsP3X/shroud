@@ -5,6 +5,9 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.ui.platform.LocalConfiguration
 import de.corespace.shroud.core.messaging.ChatListFormatting
 import de.corespace.shroud.core.net.PresenceDto
 import de.corespace.shroud.ui.permissions.findActivity
@@ -42,6 +45,15 @@ internal fun shareInvite(context: Context, url: String) {
         // No app takes text: nothing to share to.
     }
 }
+
+/**
+ * The locale the screen is drawn in, read so a language change recomposes the dates and the sort
+ * (iOS formats with the current locale); `Locale.ROOT` only for an empty list, which Android never
+ * hands out.
+ */
+@Composable
+@ReadOnlyComposable
+internal fun currentLocale(): Locale = LocalConfiguration.current.locales.get(0) ?: Locale.ROOT
 
 /** Presence wording shared by the Contacts rows and the profile (`ChatListFormatting.presenceLabel`). */
 internal object ContactStatus {

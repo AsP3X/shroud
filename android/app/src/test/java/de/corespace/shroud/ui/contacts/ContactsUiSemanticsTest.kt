@@ -2,6 +2,7 @@ package de.corespace.shroud.ui.contacts
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.semantics.SemanticsActions
@@ -151,7 +152,7 @@ class ContactsUiSemanticsTest {
         val form = AddContactForm(prefill = null)
         var submits = 0
         val ui = ComposeHarness {
-            Column { AddContactContent(form, FocusRequester(), onCancel = {}, onSubmit = { submits++ }, onScan = {}) }
+            Column { AddContactContent(form, remember { FocusRequester() }, onCancel = {}, onSubmit = { submits++ }, onScan = {}) }
         }
         assertTrue(SemanticsProperties.Disabled in textNode(ui, "Add").config)
         textNode(ui, "Cancel")
@@ -179,7 +180,7 @@ class ContactsUiSemanticsTest {
     @Test
     fun aPendingKeyChangeHidesVerificationAndOffersToTrustTheNewKey() {
         var trusted = 0
-        val ui = ComposeHarness { profile(hasIdentityChange = true, isVerified = false, onVerifiedInPerson = { trusted++ }) }
+        val ui = ComposeHarness { Profile(hasIdentityChange = true, isVerified = false, onVerifiedInPerson = { trusted++ }) }
         assertTrue(ui.nodesWithText("Encryption key changed").isNotEmpty())
         assertTrue(ui.nodesWithText("Mark as Verified").isEmpty())
         assertTrue(ui.nodesWithText("Verified").isEmpty())
@@ -193,12 +194,12 @@ class ContactsUiSemanticsTest {
     @Test
     fun withoutAChangeTheNumberCanBeMarkedVerifiedOnce() {
         var marked = 0
-        val ui = ComposeHarness { profile(hasIdentityChange = false, isVerified = false, onMarkVerified = { marked++ }) }
+        val ui = ComposeHarness { Profile(hasIdentityChange = false, isVerified = false, onMarkVerified = { marked++ }) }
         assertTrue(ui.nodesWithText("Encryption key changed").isEmpty())
         textNode(ui, "Mark as Verified").config[SemanticsActions.OnClick].action!!.invoke()
         assertEquals(1, marked)
 
-        val verified = ComposeHarness { profile(hasIdentityChange = false, isVerified = true) }
+        val verified = ComposeHarness { Profile(hasIdentityChange = false, isVerified = true) }
         assertTrue(verified.nodesWithText("Mark as Verified").isEmpty())
         assertTrue(verified.nodesWithText("Verified").isNotEmpty())
     }
@@ -206,7 +207,7 @@ class ContactsUiSemanticsTest {
     @Test
     fun theProfileNamesItsActionsAndTheBlockState() {
         var mutes = 0
-        val ui = ComposeHarness { profile(isMuted = true, isBlocked = true, onMute = { mutes++ }) }
+        val ui = ComposeHarness { Profile(isMuted = true, isBlocked = true, onMute = { mutes++ }) }
         ui.node("Call")
         ui.node("Video")
         ui.node("Search")
@@ -218,7 +219,7 @@ class ContactsUiSemanticsTest {
         assertTrue(ui.nodesWithText("@jane").isNotEmpty())
         assertTrue(ui.nodesWithText("End-to-end encrypted").isNotEmpty())
 
-        val unmuted = ComposeHarness { profile(isMuted = false, isBlocked = false) }
+        val unmuted = ComposeHarness { Profile(isMuted = false, isBlocked = false) }
         unmuted.node("Mute")
         assertTrue(unmuted.nodesWithText("Block jane").isNotEmpty())
         assertTrue(unmuted.nodesWithText("Delete Chat").isNotEmpty())
@@ -285,7 +286,7 @@ class ContactsUiSemanticsTest {
     }
 
     @androidx.compose.runtime.Composable
-    private fun profile(
+    private fun Profile(
         hasIdentityChange: Boolean = false,
         isVerified: Boolean = false,
         isMuted: Boolean = false,

@@ -233,7 +233,11 @@ internal fun AddContactContent(
             Modifier
                 .fillMaxWidth()
                 // Before the fill, so the whole capsule presses, not only its label.
-                .pressable(scale = 0.98f, onClick = onScan)
+                .pressable(scale = 0.98f) {
+                    // The camera covers the sheet: the keyboard goes with it, not over it.
+                    keyboard?.hide()
+                    onScan()
+                }
                 .heightIn(min = 48.dp)
                 .clip(CircleShape)
                 .background(colors.textPrimary.copy(alpha = 0.06f))
