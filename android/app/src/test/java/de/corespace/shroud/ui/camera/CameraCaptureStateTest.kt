@@ -227,6 +227,14 @@ class CameraCaptureStateTest {
         }
         assertTrue(ui.describe(), ui.nodesWithText("No camera available").isNotEmpty())
         assertTrue(SemanticsProperties.Disabled in ui.described("Take photo").config)
+        // A CameraX that comes up late (an emulator misreporting its front lens took ~6 s) still wins.
+        services.camera.hasBackCamera = true
+        repeat(8) {
+            Thread.sleep(100)
+            ui.idle()
+        }
+        assertTrue(ui.describe(), ui.nodesWithText("No camera available").isEmpty())
+        assertFalse(SemanticsProperties.Disabled in ui.described("Take photo").config)
     }
 
     @Test

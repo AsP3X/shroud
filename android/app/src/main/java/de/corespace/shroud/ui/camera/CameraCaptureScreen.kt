@@ -207,7 +207,8 @@ private fun CameraBody(
     val lifecycleOwner = LocalLifecycleOwner.current
 
     // Bind for the lens and mode on screen; K9 binds asynchronously, so its flags are read until
-    // they say a camera is up, and only after a grace period does the screen call it missing.
+    // they say a camera is up. Past a grace period the screen says there is no camera, but keeps
+    // reading: CameraX can take several seconds to start on a phone that misreports its cameras.
     LaunchedEffect(access, front, mode, lifecycleOwner) {
         if (access != CameraAccess.Granted) return@LaunchedEffect
         bound = false
@@ -221,13 +222,11 @@ private fun CameraBody(
             hasBack = camera.hasBackCamera
             if (hasFront || hasBack) {
                 bound = true
+                noCamera = false
                 break
             }
-            if (SystemClock.uptimeMillis() - started > CameraRules.BIND_GRACE_MS) {
-                noCamera = true
-                break
-            }
-            delay(CameraRules.BIND_POLL_MS)
+            if (!noCamera && SystemClock.uptimeMillis() - started > CameraRules.BIND_GRACE_MS) noCamera = true
+            delay(if (noCamera) CameraRules.BIND_SLOW_POLL_MS else CameraRules.BIND_POLL_MS)
         }
         // A phone with only a front camera opens on it.
         if (bound && !front && CameraRules.initialFront(hasFront, hasBack)) front = true

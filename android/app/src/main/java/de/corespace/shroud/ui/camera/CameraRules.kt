@@ -42,6 +42,9 @@ internal object CameraRules {
     /** How often the bind flags are re-read while waiting. */
     const val BIND_POLL_MS = 100L
 
+    /** … and once the screen already says there is no camera (CameraX may still come up). */
+    const val BIND_SLOW_POLL_MS = 500L
+
     /** A pinch's new zoom ratio. */
     fun pinch(current: Float, zoomChange: Float): Float {
         if (!zoomChange.isFinite() || zoomChange <= 0f) return current
