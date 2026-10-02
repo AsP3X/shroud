@@ -27,16 +27,16 @@ import org.robolectric.shadows.ShadowChoreographer
  * Reduce Motion, the app theme, semantics as TalkBack reads them) inside an [OverlayHost], plus a
  * [close] that destroys the activity.
  *
- * Human: Closing matters. An activity left alive keeps its window recomposer running, and Compose
- * keeps every running recomposer in a static list, so each screen a test leaves behind stays in
- * memory for the rest of the JVM; the full unit-test run then ran out of heap. Closing also lets
- * the cursor blink, banner timers and debounced renders end before Robolectric resets the main
- * looper (a post dropped by that reset stalls Compose's shared main-thread dispatcher for every
- * later test).
+ * Closing matters. An activity left alive keeps its window recomposer running, and Compose keeps
+ * every running recomposer in a static list, so each screen a test leaves behind stays in memory
+ * for the rest of the JVM; the full unit-test run then ran out of heap. Closing also lets the
+ * cursor blink, banner timers and debounced renders end before Robolectric resets the main looper
+ * (a post dropped by that reset stalls Compose's shared main-thread dispatcher for every later
+ * test).
  *
- * Agent: Use one per test and [close] it in `@After`. [settle] is compose-ui-test's idling: it
- * hands state written outside composition (semantics actions) to the recomposer, then runs half
- * a second of frames.
+ * Use one per test and [close] it in `@After`. [settle] is compose-ui-test's idling: it hands
+ * state written outside composition (semantics actions) to the recomposer, then runs half a
+ * second of frames.
  */
 internal class MediaHarness(content: @Composable () -> Unit) : AutoCloseable {
     private val controller = run {
