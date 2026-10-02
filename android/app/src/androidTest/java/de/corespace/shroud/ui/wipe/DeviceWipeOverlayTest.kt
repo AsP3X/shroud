@@ -11,8 +11,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -48,6 +50,7 @@ class DeviceWipeOverlayTest {
     private var state by mutableStateOf(WipeOverlayState(WipePhase.Running, handle = "@alice"))
     private var presented by mutableStateOf(true)
     private var shown by mutableStateOf(true)
+    private var announcement by mutableStateOf<String?>(null)
 
     private fun show(reduceMotion: Boolean = true) {
         rule.setContent {
@@ -60,7 +63,14 @@ class DeviceWipeOverlayTest {
                             Box(Modifier.fillMaxSize().testTag("behind").clickable { behindTaps++ })
                             // The shell keeps the overlay composed through its exit fade (presented false).
                             if (shown) {
-                                DeviceWipeOverlayContent(state, presented, "phone", onRetry = { retries++ }, onContinue = { continues++ })
+                                DeviceWipeOverlayContent(
+                                    state,
+                                    presented,
+                                    "phone",
+                                    onRetry = { retries++ },
+                                    onContinue = { continues++ },
+                                    announcement = announcement,
+                                )
                             }
                         }
                     }
@@ -124,6 +134,21 @@ class DeviceWipeOverlayTest {
         rule.waitForIdle()
         rule.onNodeWithTag("behind").performClick()
         assertEquals(2, behindTaps)
+    }
+
+    @Test
+    fun theControllersFeedbackIsAPoliteLiveRegion() {
+        // `DeviceWipeController.feedback` is spoken through a live region: its changes are the
+        // AccessibilityEvent TalkBack reads (announceForAccessibility is deprecated).
+        show()
+        rule.onNodeWithTag(ANNOUNCER_TAG).assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite))
+        rule.runOnUiThread { announcement = "Signing out: Session ended" }
+        rule.waitForIdle()
+        rule.onNodeWithTag(ANNOUNCER_TAG).assert(SemanticsMatcher.expectValue(SemanticsProperties.ContentDescription, listOf("Signing out: Session ended")))
+        // Gone with the overlay's presentation: a leaving overlay says nothing more.
+        rule.runOnUiThread { presented = false }
+        rule.waitForIdle()
+        rule.onNodeWithTag(ANNOUNCER_TAG).assertDoesNotExist()
     }
 
     @Test

@@ -69,17 +69,23 @@ class LockOnboardWipeScreenshots {
     }
 
     private fun ComposeHarness.save(name: String) {
-        idle()
+        // The arrivals wait 50 ms of real time (`delay` runs on kotlinx's real clock here), then settle on frames.
+        repeat(3) {
+            idle()
+            Thread.sleep(ARRIVAL_WAIT_MS)
+        }
         idle()
         val view = root
         val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
         view.draw(Canvas(bitmap))
         OUT.mkdirs()
         File(OUT, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        // A real picture: many colours, not one background fill.
-        val colours = HashSet<Int>()
-        for (y in 0 until bitmap.height step 7) for (x in 0 until bitmap.width step 7) colours += bitmap.getPixel(x, y)
-        assertTrue("$name looks blank (${colours.size} colours)", colours.size > 12)
+        // A real picture, not a background with a lone button: enough of it differs from the most common colour.
+        val samples = ArrayList<Int>()
+        for (y in 0 until bitmap.height step 7) for (x in 0 until bitmap.width step 7) samples += bitmap.getPixel(x, y)
+        val background = samples.groupingBy { it }.eachCount().maxBy { it.value }.key
+        val drawn = samples.count { it != background }.toFloat() / samples.size
+        assertTrue("$name looks blank (${"%.1f".format(drawn * 100)} % drawn)", drawn > MIN_DRAWN)
     }
 
     // ---- Lock screen ----
@@ -306,5 +312,9 @@ class LockOnboardWipeScreenshots {
 
     private companion object {
         val OUT = File("build/outputs/c4-screens")
+        const val ARRIVAL_WAIT_MS = 80L
+
+        /** The share of sampled pixels a screen draws beyond its background (the bare gear is ≈ 1 %). */
+        const val MIN_DRAWN = 0.04f
     }
 }
