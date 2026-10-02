@@ -1,5 +1,7 @@
 package de.corespace.shroud.ui.media.compose
 
+import android.os.Looper
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.geometry.Rect
 import de.corespace.shroud.core.media.MediaComposeQuality
 import de.corespace.shroud.core.media.edit.FilterRecipe
@@ -13,9 +15,11 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
@@ -27,6 +31,18 @@ import org.robolectric.annotation.GraphicsMode
 @Config(sdk = [35])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class MediaComposeStateTest {
+    /**
+     * These tests write snapshot state outside any composition; Compose's global write observer
+     * then posts its apply notification to the main looper. Run it before Robolectric resets the
+     * looper, or the dropped post strands Compose's shared main-thread dispatcher and every later
+     * Compose test in this JVM stops recomposing.
+     */
+    @After
+    fun drainMainLooper() {
+        Snapshot.sendApplyNotifications()
+        shadowOf(Looper.getMainLooper()).idle()
+    }
+
     @Test
     fun untouchedPhotosSendTheEmptyEditsInOrder() {
         val photos = List(3) { pickedPhoto() }
