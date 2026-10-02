@@ -94,6 +94,12 @@ class ShellWiringTest {
         // handed over before the shell starts, so the launch sequence sees it and clears it.
         val tap = NotificationTap.intent(app, NotificationKind.Message, peer)
         val activity = Robolectric.buildActivity(MainActivity::class.java, tap).setup()
+        // The interrupted-wipe check reads its marker off the main thread.
+        val deadline = System.currentTimeMillis() + 10_000
+        while (!app.container.shell.controller.launchCompleted.value && System.currentTimeMillis() < deadline) {
+            shadowOf(Looper.getMainLooper()).idle()
+            Thread.sleep(10)
+        }
         shadowOf(Looper.getMainLooper()).idle()
         try {
             assertTrue(app.container.shell.isStarted)

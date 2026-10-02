@@ -13,6 +13,7 @@ import de.corespace.shroud.core.notifications.NotificationKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -29,6 +30,9 @@ import java.util.UUID
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], qualifiers = "w412dp-h915dp")
 class InAppNotificationHostTest {
+    @After
+    fun tearDown() = ShellUiHarness.disposeAll()
+
     private val jane = InAppNotification(
         kind = NotificationKind.Message,
         peerUserId = UUID.fromString("3f2c8a9e-5b1d-4c7a-9e2f-8d6b4a1c0e7f"),

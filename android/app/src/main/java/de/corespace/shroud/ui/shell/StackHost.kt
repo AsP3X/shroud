@@ -18,6 +18,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
@@ -33,7 +34,6 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import de.corespace.shroud.ui.theme.Motion
 import de.corespace.shroud.ui.theme.ShroudTheme
-import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
@@ -121,8 +121,11 @@ internal class StackMotionState<R : Any>(initial: List<R>) {
     /** Screens composed above the root: the stack, plus a popped screen while it animates out. */
     var displayed by mutableStateOf(layersOf(initial))
 
-    /** The routes the stack last settled on. */
-    var target: List<R> = initial
+    /**
+     * The routes the stack last settled on. Snapshot state: a committed back gesture waits for it
+     * to change (the pop reached the stack) instead of sitting out its timeout.
+     */
+    var target: List<R> by mutableStateOf(initial)
 
     var kind by mutableStateOf(StackMotionKind.Idle)
     var edgeSign by mutableFloatStateOf(1f)

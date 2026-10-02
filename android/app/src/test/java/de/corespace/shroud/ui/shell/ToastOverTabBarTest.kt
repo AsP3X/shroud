@@ -13,6 +13,7 @@ import de.corespace.shroud.ui.components.ToastHost
 import de.corespace.shroud.ui.components.ToastState
 import de.corespace.shroud.ui.components.toastBottomPadding
 import org.junit.Assert.assertEquals
+import org.junit.After
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -26,6 +27,9 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], qualifiers = "w412dp-h915dp")
 class ToastOverTabBarTest {
+    @After
+    fun tearDown() = ShellUiHarness.disposeAll()
+
     @Test
     fun thePaddingRule() {
         assertEquals(104.dp, toastBottomPadding(tabBarClearance = 84.dp, systemBottom = 24.dp, bottomInset = 0.dp))

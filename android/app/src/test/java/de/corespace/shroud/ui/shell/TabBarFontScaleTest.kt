@@ -18,6 +18,7 @@ import de.corespace.shroud.ui.theme.inter
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -34,6 +35,9 @@ import org.robolectric.annotation.GraphicsMode
 @Config(sdk = [35], qualifiers = "w360dp-h800dp")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class TabBarFontScaleTest {
+    @After
+    fun tearDown() = ShellUiHarness.disposeAll()
+
     @Test
     fun theBarsTextNeverGrowsPast1Point3() {
         val large = FloatingTabBarMetrics.clamp(Density(2.625f, 2f))

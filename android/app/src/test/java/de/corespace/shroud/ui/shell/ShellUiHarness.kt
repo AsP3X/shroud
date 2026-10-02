@@ -14,6 +14,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.node.RootForTest
@@ -111,18 +112,63 @@ class ShellUiHarness(reduceMotion: Boolean = true, content: @Composable () -> Un
         val resolver = RuntimeEnvironment.getApplication().contentResolver
         Settings.Global.putFloat(resolver, Settings.Global.ANIMATOR_DURATION_SCALE, if (reduceMotion) 0f else 1f)
         activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
+        live += this
+        println("DEBUG dispatcher at start: ${dispatcherFlags()}")
         activity.setContent { ShroudTheme(dark = false, content = content) }
         idle()
     }
 
+    companion object {
+        private val live = ArrayList<ShellUiHarness>()
+
+        /**
+         * Disposes every composition this test built (call it from `@After`). Compose's main-thread
+         * dispatcher is sandbox-wide and no `Delay`: an effect's `delay` (the toast timer, the stack's
+         * commit wait) resumes with a post to the main looper, and a post landing after the test's
+         * last idle is dropped by Robolectric's looper reset while the dispatcher still counts it —
+         * every later Compose test of the sandbox then waits forever for its frames (the reason
+         * `ChatsScreenTest.tearDown` does the same).
+         */
+        fun disposeAll() {
+            live.forEach { host ->
+                host.activity.findViewById<ViewGroup>(android.R.id.content).removeAllViews()
+                host.idle()
+            }
+            Thread.sleep(30)
+            live.firstOrNull()?.idle()
+            live.clear()
+            println("DEBUG dispatcher after dispose: ${dispatcherFlags()}")
+        }
+
+        fun dispatcherFlags(): String {
+            val main = androidx.compose.ui.platform.AndroidUiDispatcher.Main[kotlin.coroutines.ContinuationInterceptor]!!
+            return main.javaClass.declaredFields.filter { it.type == Boolean::class.javaPrimitiveType || it.name.startsWith("toRun") }.joinToString { f ->
+                f.isAccessible = true
+                val v = f.get(main)
+                "${f.name}=${if (v is Collection<*>) v.size else v}"
+            }
+        }
+    }
+
     val density: Float get() = activity.resources.displayMetrics.density
 
-    /** Recompositions, effects and [millis] of frames. */
+    /**
+     * Recompositions, effects and [millis] of frames. State the test wrote outside a composition is
+     * applied first, as the Compose test rule's `waitForIdle` does: the global snapshot observer of an
+     * earlier test's sandbox may no longer be the one draining them.
+     */
     fun idle(millis: Long = 500) {
+        Snapshot.sendApplyNotifications()
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(millis))
     }
 
-    fun nodes(): List<SemanticsNode> = ((findRoot(activity.window.decorView) as RootForTest).semanticsOwner).getAllSemanticsNodes(mergingEnabled = true)
+    /**
+     * The merged nodes TalkBack can reach: placed ones only, as the platform's accessibility tree
+     * skips what is composed but not placed (a stack's covered screens, a hidden tab root).
+     */
+    fun nodes(): List<SemanticsNode> =
+        ((findRoot(activity.window.decorView) as RootForTest).semanticsOwner).getAllSemanticsNodes(mergingEnabled = true)
+            .filter { it.layoutInfo.isPlaced }
 
     /** Nodes whose content description is exactly [description]. */
     fun described(description: String): List<SemanticsNode> =

@@ -40,7 +40,10 @@ class MainShellLayoutTest {
     private val alice = UUID.fromString("3f2c8a9e-5b1d-4c7a-9e2f-8d6b4a1c0e7f")
 
     @After
-    fun tearDown() = scope.cancel()
+    fun tearDown() {
+        ShellUiHarness.disposeAll()
+        scope.cancel()
+    }
 
     private fun router() = AppRouter(FakeShellEnvironment(), scope)
 
