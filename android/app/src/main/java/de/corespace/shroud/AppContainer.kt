@@ -135,12 +135,13 @@ class AppContainer(
         voice.bindCallMediaStarting(calls.controller.callMediaStarting)   // a call's media stops voice playback and takes (W2-VOICE)
         push.onProcessStart()            // UnifiedPush restore + background connection (W3-PUSH)
         callsSystem.onProcessStart()     // Telecom registration (W3-CALLS-SYSTEM)
+        calls.controller.attach(callsMedia.engine, callsSystem.system) // the one production attach (G9)
         realtime.onProcessStart()        // AppForegroundCoordinator on appPhase (W1-RT)
         // A returning network reconnects the socket at once (api-realtime §11.14). Collected before
         // the monitor starts: the flow has no replay. Main-confined, like the client.
         appScope.launch { net.connectivity.networkAvailable.collect { realtime.client.onNetworkAvailable() } }
         net.onProcessStart()             // ConnectivityMonitor.start() (W1-NET)
-        shell.onProcessStart()           // AppShellController (W3-SHELL; replaces the interim ON_STOP lock)
+        shell.onProcessStart()           // this call stays; the shell starts from MainActivity via container.shell.startShell()
     }
 
     /**
@@ -148,9 +149,9 @@ class AppContainer(
      * queued writes reach disk and decrypted threads leave memory, the keys go, then plaintext
      * `cacheDir/shroud-*` files nobody wrote to for ten minutes are swept (plan §1.1 rule 7, §1.5).
      * Android does not end the process at lock, so without the sweep a leaked temp file would live
-     * until the next cold start. The interim ON_STOP lock calls this; W3-SHELL's auto-lock
-     * (AppShellController) must keep calling it when it replaces that lock. Decrypted device
-     * labels are dropped too, without building the device list if nothing has read it yet.
+     * until the next cold start. The shell's auto-lock must keep calling this. A wipe deletes every
+     * `shroud-*` file instead, with no age. Decrypted device labels are dropped too, without
+     * building the device list if nothing has read it yet.
      */
     suspend fun lockChatsInMemory() {
         messaging.controllerIfBuilt?.lockSensitiveMemory()
