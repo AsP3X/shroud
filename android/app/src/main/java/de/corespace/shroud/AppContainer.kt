@@ -133,6 +133,7 @@ class AppContainer(
      */
     fun onProcessStart() {
         keys.onProcessStart()            // SensitiveTempFiles.prepareAtLaunch() (W1-KEYS)
+        images.onProcessStart()          // MediaEditRenderer bakes later sends (G7)
         notifications.onProcessStart()   // channels ensure (W2-NOTIF)
         calls.onProcessStart()           // the call controller hears socket rings; call secrets follow the unlock (W2-CALLS-CORE)
         voice.bindCallMediaStarting(calls.controller.callMediaStarting)   // a call's media stops voice playback and takes (W2-VOICE)
@@ -157,6 +158,7 @@ class AppContainer(
     suspend fun lockChatsInMemory() {
         messaging.controllerIfBuilt?.lockSensitiveMemory()
         keys.cryptoController.lock()
+        media.sharingIfBuilt?.revokeAll()
         withContext(Dispatchers.IO) { keys.sensitiveTempFiles.sweep(SensitiveTempFiles.STALE_AGE_MS) }
     }
 

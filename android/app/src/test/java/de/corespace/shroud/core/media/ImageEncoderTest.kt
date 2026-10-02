@@ -168,6 +168,27 @@ class ImageEncoderTest {
         assertEquals(listOf(100), codec.qualities)
     }
 
+    /** Identity edits skip the baker, on the passthrough path and on a re-encode (`edits.isIdentity`). */
+    @Test
+    fun identityEditsDoNotCallTheBaker() = runBlocking {
+        var calls = 0
+        val baker = MediaEditBaker { _, _ ->
+            calls += 1
+            throw AssertionError("render")
+        }
+        val encoder = ImageEncoder(images, editBaker = { baker }, cpu = Dispatchers.Unconfined, io = Dispatchers.Unconfined)
+        val original = fixture("tagged.jpg")
+        val passed = encoder.encode(MediaImageSource.FileBytes(original), MediaComposeQuality.Original, MediaEdits.Identity)
+        assertEquals(0, calls)
+        assertArrayEquals(scans(original), scans(bytes(passed)))
+
+        val bitmap = Bitmap.createBitmap(12, 8, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.RED) }
+        val encoded = encoder.encode(MediaImageSource.Decoded(bitmap), MediaComposeQuality.Original, MediaEdits.Identity)
+        assertEquals(0, calls)
+        assertEquals(12 to 8, encoded.width to encoded.height)
+        assertFalse(bitmap.isRecycled)
+    }
+
     @Test
     fun runningOutOfMemoryRetriesAtHalfTheEdge() = runBlocking {
         val codec = FakeCodec(oomAbove = 2048)

@@ -28,6 +28,7 @@ class WipeHooksImpl(private val container: AppContainer) : WipeHooks {
         container.messaging.controllerIfBuilt?.haltForDeviceWipe()
         container.calls.controllerIfBuilt?.clearLocalState()
         container.voice.haltForWipe()
+        container.media.sharingIfBuilt?.revokeAll()
     }
 
     /**
