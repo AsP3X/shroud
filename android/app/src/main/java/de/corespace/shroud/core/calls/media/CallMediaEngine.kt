@@ -53,8 +53,14 @@ import de.corespace.shroud.core.calls.CallMediaEngine as Engine
  */
 class CallMediaEngine(context: Context) : Engine {
     private val appContext = context.applicationContext
-    private val runtime = WebRtcRuntime.acquire(appContext)
-    private val factory: PeerConnectionFactory = runtime.factory
+
+    /**
+     * Loaded on the first [start] or [eglContext] read. Construction and [de.corespace.shroud.core.calls.CallController.attach]
+     * must not touch it: a push, boot, or [de.corespace.shroud.ui.calls.CallActivity] would otherwise
+     * load `jingle_peerconnection_so` in a process that is not in a call, and Robolectric has no such library.
+     */
+    private val runtime by lazy { WebRtcRuntime.acquire(appContext) }
+    private val factory: PeerConnectionFactory get() = runtime.factory
 
     @Volatile private var callbacks: CallMediaCallbacks? = null
     @Volatile private var peer: PeerConnection? = null

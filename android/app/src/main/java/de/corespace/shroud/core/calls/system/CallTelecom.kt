@@ -7,6 +7,8 @@ import androidx.core.telecom.CallAttributesCompat
 import androidx.core.telecom.CallControlScope
 import androidx.core.telecom.CallEndpointCompat
 import androidx.core.telecom.CallsManager
+import de.corespace.shroud.core.calls.CallAudioRoute
+import de.corespace.shroud.core.calls.CallAudioRouteType
 import de.corespace.shroud.core.calls.CallEndCause
 import de.corespace.shroud.core.model.Ids
 import kotlinx.coroutines.CancellationException
@@ -96,12 +98,14 @@ internal class CoreCallTelecom(
                             if (endpoint.type != CallEndpointCompat.TYPE_SPEAKER) remembered = endpoint
                             listener.onEarpiece(callId, endpoint.type == CallEndpointCompat.TYPE_EARPIECE)
                             applySpeaker()
+                            publishRoutes(callId)
                         }
                     }
                     launch {
                         availableEndpoints.collect { list ->
                             endpoints.set(list)
                             applySpeaker()
+                            publishRoutes(callId)
                         }
                     }
                     launch {
@@ -138,6 +142,21 @@ internal class CoreCallTelecom(
         wantedSpeaker = on
         val ctrl = control.get() ?: return
         scope.launch { quietly { ctrl.applySpeaker() } }
+    }
+
+    override fun selectRoute(route: CallAudioRoute) {
+        val all = endpoints.get()
+        val match = all.firstOrNull { it.identifier.toString() == route.id }
+            ?: all.firstOrNull { it.toRoute() == route }
+            ?: return
+        wantedSpeaker = match.type == CallEndpointCompat.TYPE_SPEAKER
+        if (match.type != CallEndpointCompat.TYPE_SPEAKER) remembered = match
+        val ctrl = control.get() ?: return
+        scope.launch {
+            quietly {
+                ctrl.requestEndpointChange(match)
+            }
+        }
     }
 
     override fun disconnect(cause: CallEndCause) {
@@ -181,6 +200,13 @@ internal class CoreCallTelecom(
         }
     }
 
+    private fun publishRoutes(id: UUID) {
+        val all = endpoints.get()
+        val routes = all.map { it.toRoute() }
+        val current = all.firstOrNull { it.type == currentType }?.toRoute()
+        listener.onAudioRoutes(id, routes, current)
+    }
+
     private fun pick(speaker: Boolean): CallEndpointCompat? {
         val all = endpoints.get()
         if (speaker) return all.firstOrNull { it.type == CallEndpointCompat.TYPE_SPEAKER }
@@ -188,6 +214,17 @@ internal class CoreCallTelecom(
         return all.firstOrNull { it.type == CallEndpointCompat.TYPE_BLUETOOTH }
             ?: all.firstOrNull { it.type == CallEndpointCompat.TYPE_WIRED_HEADSET }
             ?: all.firstOrNull { it.type == CallEndpointCompat.TYPE_EARPIECE }
+    }
+
+    private fun CallEndpointCompat.toRoute(): CallAudioRoute {
+        val kind = when (type) {
+            CallEndpointCompat.TYPE_EARPIECE -> CallAudioRouteType.Earpiece
+            CallEndpointCompat.TYPE_SPEAKER -> CallAudioRouteType.Speaker
+            CallEndpointCompat.TYPE_BLUETOOTH -> CallAudioRouteType.Bluetooth
+            CallEndpointCompat.TYPE_WIRED_HEADSET -> CallAudioRouteType.Wired
+            else -> CallAudioRouteType.Unknown
+        }
+        return CallAudioRoute(kind, name.toString(), identifier.toString())
     }
 
     private fun CallEndCause.toDisconnect(): Int = when (this) {

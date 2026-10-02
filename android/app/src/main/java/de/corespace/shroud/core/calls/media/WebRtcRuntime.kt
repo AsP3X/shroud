@@ -12,9 +12,10 @@ import org.webrtc.audio.JavaAudioDeviceModule
  * One peer-connection factory and one [EglBase] for the process (calls §5). Created on the first
  * engine, shared by a loopback pair, and kept after [de.corespace.shroud.core.calls.CallMediaEngine.close].
  *
- * The call UI is handed [EglBase.getEglBaseContext] once, when the engine is attached. Releasing
- * that context at the end of a call would leave the next call drawing with a dead context, so
- * close drops the peer connection and the capturers only. iOS keeps its factory the same way.
+ * The call UI is handed [EglBase.getEglBaseContext] when media starts, not when the engine is
+ * constructed. Releasing that context at the end of a call would leave the next call drawing with
+ * a dead context, so close drops the peer connection and the capturers only. iOS keeps its factory
+ * the same way. After the first call the factory stays for the process.
  */
 internal object WebRtcRuntime {
     private var egl: EglBase? = null

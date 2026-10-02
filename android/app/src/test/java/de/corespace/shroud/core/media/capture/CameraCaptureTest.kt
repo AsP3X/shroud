@@ -19,6 +19,9 @@ import de.corespace.shroud.core.media.ImageEncodeException
 import de.corespace.shroud.core.media.MediaImageSource
 import de.corespace.shroud.core.storage.SensitiveTempFiles
 import java.io.File
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -90,6 +93,9 @@ class CameraCaptureTest {
         assertFalse(capture.hasFrontCamera)
         assertFalse(capture.hasBackCamera)
         assertFalse(session.bound)
+        assertEquals(CameraBindState.Failed, capture.bindState.value)
+        assertNull(capture.zoomRange)
+        assertFalse(capture.hasFlashUnit)
     }
 
     @Test
@@ -99,6 +105,11 @@ class CameraCaptureTest {
         capture.bind(owner, preview, front = false, video = false)
         assertFalse(capture.hasFrontCamera)
         assertTrue(capture.hasBackCamera)
+        assertEquals(CameraBindState.Bound(hasFront = false, hasBack = true), capture.bindState.value)
+        assertEquals(1f..4f, capture.zoomRange)
+        assertTrue(capture.hasFlashUnit)
+        capture.unbind()
+        assertEquals(CameraBindState.Unbound, capture.bindState.value)
     }
 
     @Test
@@ -145,18 +156,37 @@ class CameraCaptureTest {
         var captures = 0
         var recordFile: File? = null
         var recordedAudio: Boolean? = null
+        private val states = MutableStateFlow<CameraBindState>(CameraBindState.Unbound)
+        private var listener: ((CameraBindState) -> Unit)? = null
 
         override val isBound: Boolean get() = bound
+        override val bindState: StateFlow<CameraBindState> = states.asStateFlow()
         override val hasFrontCamera: Boolean get() = front
         override val hasBackCamera: Boolean get() = back
+        override val zoomRange: ClosedFloatingPointRange<Float>? get() = if (bound) 1f..4f else null
+        override val hasFlashUnit: Boolean get() = bound
+
+        override fun setBindListener(listener: (CameraBindState) -> Unit) {
+            this.listener = listener
+        }
 
         override fun bind(owner: LifecycleOwner, preview: Preview.SurfaceProvider, front: Boolean, video: Boolean) {
-            if (failBind) throw IllegalStateException("no camera")
+            if (failBind) {
+                publish(CameraBindState.Failed)
+                throw IllegalStateException("no camera")
+            }
             bound = true
+            publish(CameraBindState.Bound(hasFront = front, hasBack = back))
         }
 
         override fun unbind() {
             bound = false
+            publish(CameraBindState.Unbound)
+        }
+
+        private fun publish(state: CameraBindState) {
+            states.value = state
+            listener?.invoke(state)
         }
 
         override suspend fun captureStill(): Bitmap {

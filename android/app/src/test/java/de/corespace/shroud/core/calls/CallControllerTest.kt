@@ -61,6 +61,23 @@ class CallControllerTest {
         world.settle()
     }
 
+    @Test
+    fun attachDoesNotReadTheEngineContext() = world { world ->
+        val alice = world.device("alice", world.aliceId)
+        assertEquals(0, alice.engine.eglReads)
+        assertNull(alice.controller.ui.value.eglContext)
+    }
+
+    @Test
+    fun placingACallReadsTheEngineContext() = world { world ->
+        val alice = world.device("alice", world.aliceId)
+        val bob = world.device("bob", world.bobId)
+        assertEquals(0, alice.engine.eglReads)
+        linked(world, alice, bob)
+        place(world, alice, bob)
+        assertTrue(alice.engine.eglReads > 0)
+    }
+
     /** Ring → accept → offer/answer → ICE → connected, on two devices. */
     private fun TestScope.connect(world: CallWorld, modality: CallModality = CallModality.Voice): Pair<CallWorld.Device, CallWorld.Device> {
         val alice = world.device("alice", world.aliceId)
