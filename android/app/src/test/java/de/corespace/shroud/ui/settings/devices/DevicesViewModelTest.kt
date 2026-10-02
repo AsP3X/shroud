@@ -86,7 +86,9 @@ class DevicesViewModelTest {
 
         override suspend fun remove(id: UUID): RemoveOutcome {
             removed += id
-            if (removeOutcome == RemoveOutcome.Removed) next = next.filterNot { it.id == id }
+            if (removeOutcome == RemoveOutcome.Removed || removeOutcome == RemoveOutcome.AlreadyRemoved) {
+                next = next.filterNot { it.id == id }
+            }
             (removeOutcome as? RemoveOutcome.Failed)?.let { nextError = it.message }
             refresh()
             return removeOutcome
@@ -95,6 +97,10 @@ class DevicesViewModelTest {
         override suspend fun removeAllOthers(): RemoveOutcome {
             removeAllCalls++
             return removeAllOutcome
+        }
+
+        override fun clear() {
+            mutable.value = DevicesState()
         }
     }
 
@@ -184,6 +190,25 @@ class DevicesViewModelTest {
         vm.revoke(phoneRow)
         advanceUntilIdle()
         assertEquals(listOf(laptop), devices.removed)
+    }
+
+    /** A 404: the row goes, and the toast is iOS's info line without a haptic (`DevicesView.swift:497-499`). */
+    @Test
+    fun aDeviceThatWasAlreadyGoneGetsTheInfoToast() = runTest {
+        val devices = FakeDevices().apply {
+            next = listOf(phoneRow, laptopRow)
+            removeOutcome = RemoveOutcome.AlreadyRemoved
+        }
+        val recorder = Recorder()
+        val vm = model(devices, recorder)
+        vm.refresh()
+        vm.revoke(laptopRow)
+        advanceUntilIdle()
+        assertEquals(listOf(thisPhone), vm.state.rows?.map { it.id })
+        assertTrue(recorder.haptics.isEmpty())
+        assertEquals("Chrome on Mac was already removed", recorder.toasts.single().message)
+        assertEquals(Toast.Style.Info, recorder.toasts.single().style)
+        assertFalse(vm.state.isRevoking(laptopRow))
     }
 
     @Test

@@ -184,5 +184,14 @@ interface VideoPipeline {
      */
     suspend fun encode(plan: VideoSendPlan, onProgress: ((Double) -> Unit)?): EncodedVideo
     suspend fun posterJpegFromLocal(messageId: UUID, maxEdgePx: Int = 720): ByteArray?
+
+    /**
+     * Length of the sealed local media for [messageId], in milliseconds. Null when there is no
+     * local source, it cannot be opened, or the container's duration is missing or not positive
+     * (`VoiceMessageBubble.swift:694-708`: a payload duration under 300 ms is replaced by the
+     * file's own length). The source and the retriever are closed.
+     */
+    suspend fun durationMs(messageId: UUID): Int?
+
     val maxSealedBytes: Long
 }

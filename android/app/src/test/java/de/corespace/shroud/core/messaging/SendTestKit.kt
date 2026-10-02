@@ -553,6 +553,8 @@ class SendFakeVideo(private val dir: File) : VideoPipeline {
         return posterFromLocal
     }
 
+    override suspend fun durationMs(messageId: UUID): Int? = null
+
     override val maxSealedBytes: Long = MediaCrypto.MAX_SEALED_BYTES
 }
 

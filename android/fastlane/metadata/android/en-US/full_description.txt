@@ -1,0 +1,11 @@
+Shroud is a messenger for private chats and calls. It talks to a Shroud server, which you can run yourself.
+
+Message text is sealed on the devices that can open it. The server stores ciphertext.
+
+This build does not include Firebase, Google Play services, or Firebase Cloud Messaging.
+
+Notifications while Shroud is closed use UnifiedPush. You install a distributor, such as ntfy, and you choose which server that distributor uses, including one you host. If that distributor is the only one on the phone, Shroud registers it. An optional background connection keeps a link to your Shroud server instead and shows a notification while it is on. It is off unless you turn it on. With neither, the phone does not receive messages while Shroud is closed.
+
+Voice notes can be transcribed on the phone with whisper.cpp. What the phone learns about the language of a chat stays on the device, sealed.
+
+Phones and tablets use the arm64 build. The x86_64 build is for emulators and Chromebooks.

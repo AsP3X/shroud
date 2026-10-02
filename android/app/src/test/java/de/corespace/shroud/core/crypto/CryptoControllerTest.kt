@@ -11,6 +11,7 @@ import de.corespace.shroud.core.keys.SoftwareVaultKeyStore
 import de.corespace.shroud.core.keys.UnlockMethod
 import de.corespace.shroud.core.keys.VaultAuthenticator
 import de.corespace.shroud.core.keys.VaultError
+import de.corespace.shroud.core.keys.VaultKeyStore
 import de.corespace.shroud.core.keys.VaultState
 import de.corespace.shroud.core.net.ApiClient
 import de.corespace.shroud.core.net.ApiError
@@ -19,10 +20,13 @@ import de.corespace.shroud.core.storage.ScriptedSealer
 import de.corespace.shroud.core.storage.SealedFile
 import de.corespace.shroud.core.storage.StorageSeal
 import de.corespace.shroud.testing.TempDirRule
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import java.util.concurrent.Executors
+import kotlin.coroutines.CoroutineContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.int
@@ -549,6 +553,39 @@ class CryptoControllerTest {
         assertEquals(api.userMessage, CryptoController.userMessage(api))
     }
 
+    /** [CryptoController.vaultKeySecurity] reads the vault the controller holds, on its IO dispatcher, and does not prompt. */
+    @Test
+    fun vaultKeySecurityReadsTheRecordOnIoAndDoesNotPrompt() = runBlocking {
+        val io = RecordingDispatcher()
+        val history = vault
+        val controller = CryptoController(
+            ShroudApi(ApiClient({ server.url("/api/v1").toString() }, json)),
+            bip39,
+            identityStore,
+            history,
+            SealedLocalState(),
+            storageSeal,
+            io = io,
+        )
+        try {
+            assertNull(controller.vaultKeySecurity())
+            assertEquals(1, io.dispatched)
+            assertTrue(auth.prompts.isEmpty())
+            vaultKeys.security = VaultKeyStore.Security.StrongBox
+            val historyKey = ByteArray(32) { 7 }
+            try {
+                history.store(historyKey, USER_ID)
+            } finally {
+                historyKey.fill(0)
+            }
+            assertEquals(VaultKeyStore.Security.StrongBox, controller.vaultKeySecurity())
+            assertEquals(2, io.dispatched)
+            assertTrue(auth.prompts.isEmpty())
+        } finally {
+            io.close()
+        }
+    }
+
     @Test
     fun phraseErrorsNeverQuoteTheWords() {
         val error = runCatching { bip39.validate(List(11) { "abandon" } + "secretword") }.exceptionOrNull()!!
@@ -559,5 +596,22 @@ class CryptoControllerTest {
         const val USER_ID = "8f14e45f-ceea-467a-9575-3a6b7a1e6c0e"
         const val OTHER_USER_ID = "11111111-2222-4333-8444-555555555555"
         const val DEVICE_ID = "2e6f9b0c-1d3a-4e5b-8c7d-9f0a1b2c3d4e"
+    }
+}
+
+/** Counts hops onto the controller's IO dispatcher and actually runs them. */
+private class RecordingDispatcher : CoroutineDispatcher(), AutoCloseable {
+    var dispatched = 0
+        private set
+
+    private val pool = Executors.newSingleThreadExecutor()
+
+    override fun dispatch(context: CoroutineContext, block: Runnable) {
+        dispatched++
+        pool.execute(block)
+    }
+
+    override fun close() {
+        pool.shutdown()
     }
 }
