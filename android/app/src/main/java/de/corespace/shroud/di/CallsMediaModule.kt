@@ -2,12 +2,17 @@ package de.corespace.shroud.di
 
 import de.corespace.shroud.AppContainer
 import de.corespace.shroud.AppModule
+import de.corespace.shroud.core.calls.CallMediaEngine
+import de.corespace.shroud.core.calls.media.CallMediaEngine as WebRtcCallMediaEngine
 
 /**
- * Call media (00-plan §1.7.11). Owner: W3-CALLS-MEDIA — the WebRTC `CallMediaEngine` (peer
- * connection factory, camera, screen capture).
+ * Call media (00-plan §1.7.11). The WebRTC [CallMediaEngine]: peer connection, camera and screen
+ * capture. Built with no session, so a ring can be answered before chats unlock. Not attached to
+ * the call controller here — that wiring is a later step.
  *
- * Created empty by W0-A; only the owner fills it (00-plan §2.0 rule 3, §2.6). Nobody else
- * constructs this package's classes: other packages reach them through this module.
+ * Nobody else constructs this package's classes: other packages reach them through this module.
  */
-class CallsMediaModule(container: AppContainer) : AppModule(container)
+class CallsMediaModule(container: AppContainer) : AppModule(container) {
+    /** The process's call engine. `container.callsMedia.engine`. */
+    val engine: CallMediaEngine by lazy { WebRtcCallMediaEngine(container.appContext) }
+}
