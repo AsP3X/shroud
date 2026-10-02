@@ -10,7 +10,6 @@ import androidx.emoji2.text.EmojiCompat
 import de.corespace.shroud.AppContainer
 import de.corespace.shroud.core.messaging.MessageArtifactSinks
 import de.corespace.shroud.core.model.ChatMessage
-import de.corespace.shroud.core.transcription.TranscribeException
 import de.corespace.shroud.core.transcription.VoiceTranscription
 import de.corespace.shroud.core.voice.VoicePlaybackCoordinator
 import de.corespace.shroud.ui.LocalAppContainer
@@ -81,7 +80,8 @@ interface BubbleServices {
      * [transcriptionHints], shares a non-empty result in the background ([shareTranscript]) and returns
      * it (blank: no speech). Runs in the process scope, so a bubble scrolled away mid-way does not
      * cancel the share. Throws [de.corespace.shroud.core.transcription.TranscribeException] with a
-     * user-facing message.
+     * user-facing message, or [TranscriptAudioMissing] when the audio is not on this phone (iOS returns
+     * nil without a word then, and the bubble folds back).
      */
     suspend fun transcribe(message: ChatMessage, peerName: String): String
 
@@ -112,6 +112,12 @@ interface BubbleServices {
         const val MAX_HINTS = 50
     }
 }
+
+/**
+ * [BubbleServices.transcribe] found no decrypted audio to transcribe: iOS's `guard let data =
+ * message.voiceData else { return nil }` (`ConversationView.swift:1608`) — a quiet fold-back, no toast.
+ */
+class TranscriptAudioMissing : Exception("The voice message's audio is not on this phone.")
 
 /** Overrides the app's services (tests, previews). Null: read them from [LocalAppContainer]. */
 val LocalBubbleServices = staticCompositionLocalOf<BubbleServices?> { null }
@@ -156,7 +162,7 @@ private class ContainerBubbleServices(private val container: AppContainer) : Bub
 
     override suspend fun transcribe(message: ChatMessage, peerName: String): String =
         container.appScope.async {
-            val audio = messaging.mediaBytes(message.id) ?: throw TranscribeException(NOT_DOWNLOADED)
+            val audio = messaging.mediaBytes(message.id) ?: throw TranscriptAudioMissing()
             val text = container.transcription.voice.transcribe(
                 audio = audio,
                 // The decoder sniffs WAV itself; everything else goes through MediaExtractor.
@@ -174,7 +180,6 @@ private class ContainerBubbleServices(private val container: AppContainer) : Bub
 
     private companion object {
         const val VOICE_MIME = "audio/mp4"
-        const val NOT_DOWNLOADED = "This voice message isn’t on this phone yet."
     }
 }
 

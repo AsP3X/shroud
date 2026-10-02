@@ -179,6 +179,18 @@ object VoiceBubbleMath {
         else -> "Show transcript"
     }
 
+    /**
+     * What a failed "→A" says (`ConversationView.swift:1607-1632`): the error's own sentence as a failure
+     * toast — or nothing when the audio was not on this phone to transcribe, where iOS returns nil
+     * without a word. Either way the bubble folds back to a plain "→A".
+     */
+    fun transcriptFailureToast(error: Exception): String? = when (error) {
+        is TranscriptAudioMissing -> null
+        else -> error.message?.takeIf { it.isNotBlank() } ?: TRANSCRIPT_FAILED
+    }
+
+    const val TRANSCRIPT_FAILED = "Could not transcribe that voice message."
+
     /** Fresh off the network or the recorder: younger than the arrival window (`:558-566`). */
     fun isFresh(createdAt: Instant, now: Instant): Boolean =
         Duration.between(createdAt, now).toMillis() < VoiceTranscriptDisclosure.ARRIVAL_WINDOW_MS
@@ -388,9 +400,10 @@ internal fun VoiceMessageBubble(parts: BubbleParts, context: BubbleContext, serv
                 services.transcribe(message, parts.row.peerName)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                // The failure is the user's to read (`ConversationView.swift:1625-1629`).
-                toaster(Toast.failure(e.message ?: "Could not transcribe that voice message."))
-                handlers.haptic(Haptic.Error)
+                VoiceBubbleMath.transcriptFailureToast(e)?.let { text ->
+                    toaster(Toast.failure(text))
+                    handlers.haptic(Haptic.Error)
+                }
                 null
             }
             isTranscribing = false
