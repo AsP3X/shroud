@@ -27,8 +27,13 @@ import java.io.File
  * Device acceptance of the launcher icon switch (W3-SETTINGS-A; settings-lock §8.4, S12): on the
  * emulator's Pixel launcher, choosing a logo leaves exactly one Shroud entry, the chosen alias,
  * with that style's icon — the list launchers build their grids from ([LauncherApps]) — and the
- * app drawer still shows Shroud once. Screenshots of the drawer go to the app's cache for the
+ * app drawer still shows Shroud. Screenshots of the drawer go to the app's cache for the
  * acceptance record: `adb exec-out run-as de.corespace.shroud cat cache/acceptance/launcher-<style>.png`.
+ *
+ * Run it without the uninstall `connectedDebugAndroidTest` does at the end (it would wipe a
+ * signed-in test account on a shared emulator): install both APKs with `adb install -r`, then
+ * `adb shell am instrument -w -e class de.corespace.shroud.ui.settings.LauncherIconDeviceTest
+ * de.corespace.shroud.test/androidx.test.runner.AndroidJUnitRunner`.
  *
  * Samsung One UI is checked by hand (no device here): some launchers drop a home-screen shortcut
  * whose alias is disabled. The icon assertions need the manifest change CR-1 (`.LauncherSimple`
@@ -56,7 +61,7 @@ class LauncherIconDeviceTest {
             val info = context.packageManager.getActivityInfo(entries.single(), 0)
             val expectedIcon = if (style == BrandLogoStyle.Simple) R.mipmap.ic_launcher_simple else R.mipmap.ic_launcher
             assertEquals(style.name, expectedIcon, info.iconResource)
-            assertDrawerShowsShroudOnce(style)
+            assertDrawerShowsShroud(style)
         }
     }
 
@@ -73,15 +78,18 @@ class LauncherIconDeviceTest {
         return entries
     }
 
-    /** Opens the all-apps drawer of the default launcher and finds the one "Shroud" label. */
-    private fun assertDrawerShowsShroudOnce(style: BrandLogoStyle) {
+    /**
+     * Opens the all-apps drawer of the default launcher and finds Shroud in it. That there is one
+     * entry, not two, is [launcherEntries]' job: the Pixel drawer may also list Shroud in its row
+     * of predicted apps, so counting labels here would not tell a stale alias apart.
+     */
+    private fun assertDrawerShowsShroud(style: BrandLogoStyle) {
         device.pressHome()
         device.waitForIdle()
         // Swipe up from the bottom third: the Pixel launcher's all-apps gesture.
         device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5, device.displayWidth / 2, device.displayHeight / 5, 20)
         val found = device.wait(Until.hasObject(By.text("Shroud")), 5_000)
         assertTrue("Shroud missing from the drawer after switching to ${style.name}", found)
-        assertEquals(1, device.findObjects(By.text("Shroud")).size)
         val dir = File(context.cacheDir, "acceptance").apply { mkdirs() }
         device.takeScreenshot(File(dir, "launcher-${style.name.lowercase()}.png"))
         assertTrue(context.packageManager.getComponentEnabledSetting(ComponentName(context.packageName, PackageManagerLauncherAliases.aliasName(style))) == PackageManager.COMPONENT_ENABLED_STATE_ENABLED)
