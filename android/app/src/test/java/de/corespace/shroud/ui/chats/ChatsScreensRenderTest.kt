@@ -14,12 +14,12 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.dp
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -86,9 +86,9 @@ import java.util.UUID
  *
  * The renders run only when asked — `SHROUD_RENDER_SCREENS=1` in the environment of the Gradle
  * call (`SHROUD_RENDER_SCREENS=1 gw :app:testDebugUnitTest --tests '*ChatsScreensRenderTest'`) —
- * so the shared unit-test JVM is not loaded with two dozen full-screen renders on every run (it
- * has the default heap, GAPS #9). [ALWAYS] runs every time: the toast's place over the tab bar is
- * behaviour the suite guards.
+ * so the shared unit-test JVM (one worker, 2 GB heap) is not loaded with two dozen full-screen
+ * renders on every run. [ALWAYS] runs every time: the toast's place over the tab bar is behaviour
+ * the suite guards.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], qualifiers = "w412dp-h915dp-port-xhdpi")
