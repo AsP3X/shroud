@@ -18,6 +18,7 @@ import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.android.controller.ActivityController
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.time.Duration
@@ -44,10 +45,20 @@ class CallActivityTest {
         InCallPresentation.restore()
     }
 
+    private val started = mutableListOf<ActivityController<CallActivity>>()
+
     @After
     fun tearDown() {
+        // Disposes each screen's composition so nothing stays queued on Compose's dispatcher.
+        for (controller in started) {
+            if (!controller.get().isDestroyed) controller.pause().stop().destroy()
+        }
+        idle()
         CallActivity.portsOverride = null
     }
+
+    private fun start(intent: Intent): ActivityController<CallActivity> =
+        Robolectric.buildActivity(CallActivity::class.java, intent).setup().also { started += it }
 
     private fun use(ports: FakeCallPorts) {
         CallActivity.portsOverride = {
@@ -70,18 +81,17 @@ class CallActivityTest {
         CallActivity.portsOverride = { error("the bare start must not reach the call controller or the container") }
         val app = ApplicationProvider.getApplicationContext<Application>()
         assertFalse("the container is out of reach in this test", app is ShroudApplication)
-        val controller = Robolectric.buildActivity(CallActivity::class.java, intent(null, null)).setup()
+        val controller = start(intent(null, null))
         idle()
         assertTrue(controller.get().isFinishing)
-        controller.pause().stop().destroy()
     }
 
     @Test
     fun aMalformedIntentFinishesQuietly() {
         CallActivity.portsOverride = { error("not for a malformed intent") }
-        val controller = Robolectric.buildActivity(CallActivity::class.java, intent(CallFixtures.callId, "dial")).setup()
+        val controller = start(intent(CallFixtures.callId, "dial"))
         assertTrue(controller.get().isFinishing)
-        val noId = Robolectric.buildActivity(CallActivity::class.java, intent(null, "answer")).setup()
+        val noId = start(intent(null, "answer"))
         assertTrue(noId.get().isFinishing)
     }
 
@@ -89,7 +99,7 @@ class CallActivityTest {
     fun aRingThatIsOverFinishes() {
         val ports = FakeCallPorts(active = null)
         use(ports)
-        val controller = Robolectric.buildActivity(CallActivity::class.java, intent(CallFixtures.callId, "show")).setup()
+        val controller = start(intent(CallFixtures.callId, "show"))
         idle()
         assertTrue(controller.get().isFinishing)
         assertTrue(ports.calls.toString(), ports.calls.none { it.startsWith("shown") || it == "acceptIncoming" })
@@ -99,7 +109,7 @@ class CallActivityTest {
     fun answerAcceptsTheRingingCallOnce() {
         val ports = FakeCallPorts(CallFixtures.call(CallPhase.IncomingRinging))
         use(ports)
-        val controller = Robolectric.buildActivity(CallActivity::class.java, intent(CallFixtures.callId, "answer")).setup()
+        val controller = start(intent(CallFixtures.callId, "answer"))
         idle()
         assertFalse(controller.get().isFinishing)
         assertEquals(ports.calls.toString(), 1, ports.calls.count { it == "acceptIncoming" })
@@ -110,7 +120,7 @@ class CallActivityTest {
     fun answerForAnotherCallDoesNotAccept() {
         val ports = FakeCallPorts(CallFixtures.call(CallPhase.IncomingRinging))
         use(ports)
-        Robolectric.buildActivity(CallActivity::class.java, intent(UUID.randomUUID(), "answer")).setup()
+        start(intent(UUID.randomUUID(), "answer"))
         idle()
         assertFalse(ports.calls.toString(), "acceptIncoming" in ports.calls)
     }
@@ -119,7 +129,7 @@ class CallActivityTest {
     fun showOnlyShows() {
         val ports = FakeCallPorts(CallFixtures.call(CallPhase.IncomingRinging))
         use(ports)
-        val controller = Robolectric.buildActivity(CallActivity::class.java, intent(CallFixtures.callId, "show")).setup()
+        val controller = start(intent(CallFixtures.callId, "show"))
         idle()
         assertFalse(controller.get().isFinishing)
         assertFalse(ports.calls.toString(), "acceptIncoming" in ports.calls)
@@ -129,7 +139,7 @@ class CallActivityTest {
     fun answerArrivingWhileTheScreenShowsAccepts() {
         val ports = FakeCallPorts(CallFixtures.call(CallPhase.IncomingRinging))
         use(ports)
-        val controller = Robolectric.buildActivity(CallActivity::class.java, intent(CallFixtures.callId, "show")).setup()
+        val controller = start(intent(CallFixtures.callId, "show"))
         idle()
         controller.newIntent(intent(CallFixtures.callId, "answer"))
         idle()
@@ -140,7 +150,7 @@ class CallActivityTest {
     fun theScreenHooksFollowResumeAndPause() {
         val ports = FakeCallPorts(CallFixtures.call(CallPhase.Active))
         use(ports)
-        val controller = Robolectric.buildActivity(CallActivity::class.java, intent(CallFixtures.callId, "show")).setup()
+        val controller = start(intent(CallFixtures.callId, "show"))
         idle()
         assertEquals(listOf("shown:${CallFixtures.callId}"), ports.calls.filter { it.startsWith("shown") || it == "hidden" })
         controller.pause()
@@ -153,7 +163,7 @@ class CallActivityTest {
     fun itFinishesOnceTheCallIsGone() {
         val ports = FakeCallPorts(CallFixtures.call(CallPhase.Active))
         use(ports)
-        val controller = Robolectric.buildActivity(CallActivity::class.java, intent(CallFixtures.callId, "show")).setup()
+        val controller = start(intent(CallFixtures.callId, "show"))
         idle()
         assertFalse(controller.get().isFinishing)
         ports.ui.value = ports.ui.value.copy(active = CallFixtures.call(CallPhase.Ending))
@@ -168,7 +178,7 @@ class CallActivityTest {
     fun itRegistersThePermissionPromptForAnsweringOverTheKeyguard() {
         val ports = FakeCallPorts(CallFixtures.call(CallPhase.IncomingRinging))
         use(ports)
-        Robolectric.buildActivity(CallActivity::class.java, intent(CallFixtures.callId, "show")).setup()
+        start(intent(CallFixtures.callId, "show"))
         idle()
         assertTrue(ports.permissionPrompt != null)
     }
@@ -177,7 +187,7 @@ class CallActivityTest {
     fun itShowsOverTheLockScreen() {
         val ports = FakeCallPorts(CallFixtures.call(CallPhase.IncomingRinging))
         use(ports)
-        val activity = Robolectric.buildActivity(CallActivity::class.java, intent(CallFixtures.callId, "show")).setup().get()
+        val activity = start(intent(CallFixtures.callId, "show")).get()
         val shadow = shadowOf(activity)
         assertTrue(shadow.showWhenLocked)
         assertTrue(shadow.turnScreenOn)

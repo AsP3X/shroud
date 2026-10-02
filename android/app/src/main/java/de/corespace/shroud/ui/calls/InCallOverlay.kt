@@ -40,6 +40,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -139,7 +140,8 @@ fun InCallOverlay(modifier: Modifier = Modifier) {
     LaunchedEffect(call?.id) {
         val id = call?.id ?: return@LaunchedEffect
         InCallPresentation.onCall(id)
-        delay(FOCUS_DELAY_MS)
+        // Once the screen is laid out (a frame), so the focus target is attached.
+        withFrameNanos { }
         runCatching { focus.requestFocus() }
     }
     LightStatusBarWhileShown(full)
@@ -227,7 +229,6 @@ private class LastCall {
 }
 
 private const val PILL_HEIGHT = 32
-private const val FOCUS_DELAY_MS = 100L
 
 /**
  * Registers the controller's permission prompt for this window (`AndroidCallPermissions.prompt`,

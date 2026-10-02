@@ -113,7 +113,7 @@ internal fun SafetyBadge(name: String, closed: Boolean, onOpen: () -> Unit, modi
             .clearAndSetSemantics {
                 contentDescription = "Not verified"
                 role = Role.Button
-                onClick(label = CallScreenRules.safetyHint(name).removeSuffix(".").replaceFirstChar { it.lowercaseChar() }) {
+                onClick(label = CallScreenRules.safetyAction(name)) {
                     onOpen()
                     true
                 }

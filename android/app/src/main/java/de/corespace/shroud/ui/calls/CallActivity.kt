@@ -15,6 +15,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.lifecycle.lifecycleScope
@@ -140,7 +141,8 @@ private fun CallActivityContent(ports: CallPorts, onGone: () -> Unit, onBack: ()
                 }
                 LaunchedEffect(call?.id) {
                     if (call == null) return@LaunchedEffect
-                    delay(FOCUS_DELAY_MS)
+                    // Once the screen is laid out (a frame), so the focus target is attached.
+                    withFrameNanos { }
                     runCatching { focus.requestFocus() }
                 }
                 BackHandler(onBack = onBack)
@@ -153,4 +155,3 @@ private fun CallActivityContent(ports: CallPorts, onGone: () -> Unit, onBack: ()
     }
 }
 
-private const val FOCUS_DELAY_MS = 100L

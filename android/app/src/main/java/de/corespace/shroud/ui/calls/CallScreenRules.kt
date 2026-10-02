@@ -146,7 +146,8 @@ object CallScreenRules {
     fun safetyCompareText(name: String): String =
         "Compare it with $name: read it out on this call, or check it in person. If it matches, nobody else can listen in."
 
-    fun safetyHint(name: String): String = "Shows the safety number to compare with $name."
+    /** iOS's hint "Shows the safety number to compare with <name>.", as TalkBack's "Double-tap to …" (:530). */
+    fun safetyAction(name: String): String = "show the safety number to compare with $name"
 
     /** The controls step aside over their screen after [CHROME_LINGER_MS]; never with TalkBack, never with the number open (:399-412). */
     fun chromeShouldLinger(showsRemoteScreen: Boolean, chromeHidden: Boolean, safetyOpen: Boolean, touchExploration: Boolean): Boolean =

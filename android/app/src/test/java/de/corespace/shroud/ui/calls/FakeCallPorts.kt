@@ -1,5 +1,6 @@
 package de.corespace.shroud.ui.calls
 
+import androidx.activity.compose.setContent
 import de.corespace.shroud.core.calls.ActiveCall
 import de.corespace.shroud.core.calls.CallHistoryState
 import de.corespace.shroud.core.calls.CallPermissionPrompt
@@ -11,6 +12,7 @@ import de.corespace.shroud.core.calls.ScreenShareQuality
 import de.corespace.shroud.core.calls.ShareAction
 import de.corespace.shroud.core.net.CallModality
 import kotlinx.coroutines.flow.MutableStateFlow
+import de.corespace.shroud.ui.components.ComposeHarness
 import org.webrtc.EglBase
 import java.time.Duration
 import java.time.Instant
@@ -131,4 +133,15 @@ internal object CallFixtures {
         duration = seconds?.let(Duration::ofSeconds),
         at = now.minus(Duration.ofMinutes(minutesAgo)),
     )
+}
+
+/**
+ * Disposes the harness's composition and lets the main looper drain. Compose's UI dispatcher is
+ * process-wide: a test that ends with work queued on it (a poll's or a clock's `delay` resuming)
+ * would leave it waiting on a looper Robolectric resets, and the next test's recompositions and
+ * launched coroutines would never run.
+ */
+internal fun ComposeHarness.close() {
+    activity.setContent { }
+    idle()
 }

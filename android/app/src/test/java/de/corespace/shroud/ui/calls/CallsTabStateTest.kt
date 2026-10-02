@@ -79,7 +79,7 @@ class CallsTabStateTest {
     fun runTimesNameTheDayAndTheTime() {
         val zone = ZoneOffset.UTC
         val now = Instant.parse("2026-09-30T18:00:00Z")
-        fun label(at: String) = CallsTabRules.runTimeLabel(Instant.parse(at), now, zone, Locale.UK, is24h = true, dayMonthPattern = "d MMM")
+        fun label(at: String) = CallsTabRules.runTimeLabel(Instant.parse(at), now, zone, Locale.ENGLISH, is24h = true, dayMonthPattern = "d MMM")
         assertEquals("14:02", label("2026-09-30T14:02:00Z"))
         assertEquals("Yesterday, 14:02", label("2026-09-29T14:02:00Z"))
         assertEquals("28 Sep, 14:02", label("2026-09-28T14:02:00Z"))

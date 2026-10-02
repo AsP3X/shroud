@@ -10,6 +10,7 @@ import de.corespace.shroud.ui.components.ComposeHarness
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -21,9 +22,16 @@ import org.robolectric.annotation.GraphicsMode
 @Config(sdk = [35], application = Application::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class CallsScreenTest {
+    private var harness: ComposeHarness? = null
+
+    @After
+    fun close() {
+        harness?.close()
+    }
+
     private fun tab(ports: FakeCallPorts): ComposeHarness = ComposeHarness {
         CompositionLocalProvider(LocalCallPorts provides ports) { CallsScreen() }
-    }
+    }.also { harness = it }
 
     private fun ComposeHarness.labels(): List<String> =
         nodes().mapNotNull { it.config.getOrNull(SemanticsProperties.ContentDescription)?.joinToString() }
@@ -38,7 +46,8 @@ class CallsScreenTest {
         val ports = FakeCallPorts()
         val ui = tab(ports)
         assertTrue(ui.describe(), "Loading" in ui.labels())
-        assertEquals(1, ui.nodesWithText("Calls").size)
+        // The bar's title, a heading.
+        assertTrue(ui.describe(), "Calls" in ui.labels())
         assertTrue(ports.calls.toString(), "refreshHistory" in ports.calls)
     }
 
