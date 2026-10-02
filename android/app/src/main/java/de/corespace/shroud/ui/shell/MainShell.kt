@@ -32,10 +32,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -46,16 +47,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import de.corespace.shroud.ui.LocalAppContainer
-import de.corespace.shroud.ui.calls.CallsScreen
-import de.corespace.shroud.ui.chats.ChatsScreen
 import de.corespace.shroud.ui.components.LocalGlassBackdrop
 import de.corespace.shroud.ui.components.rememberGlassBackdrop
-import de.corespace.shroud.ui.contacts.ContactProfileScreen
-import de.corespace.shroud.ui.contacts.ContactsScreen
-import de.corespace.shroud.ui.conversation.ConversationScreen
-import de.corespace.shroud.ui.settings.SettingsDestination
-import de.corespace.shroud.ui.settings.SettingsScreen
 import de.corespace.shroud.ui.theme.Motion
 import de.corespace.shroud.ui.theme.ShroudTheme
 import dev.chrisbanes.haze.HazeState
@@ -67,20 +60,28 @@ import kotlin.math.roundToInt
  * tabs, each with its own stack ([ShellNavigator]), the floating glass tab bar with its search mode,
  * notification and invite opens, the unlock reveal, and the window sizes of P12a.
  *
- * - **Compact** (< 600 dp): one [StackHost] over the selected tab. Its root is the tab content
- *   (switched with [tabTransition]) with the floating bar on top, so a pushed screen covers the bar
- *   and the predictive back preview reveals the list *with* its bar (design I3RNnl).
+ * - **Compact** (< 600 dp; design `Chats · 360` zMjzp at the narrowest): one [StackHost] over the
+ *   selected tab. Its root is the tab content (switched with [tabTransition]) with the floating bar
+ *   on top, so a pushed screen covers the bar and the predictive back preview reveals the list
+ *   *with* its bar (design I3RNnl).
  * - **Two-pane** (≥ 600 dp, every tab, P12a / D5): the tab root and its bar in a 360 dp list pane,
  *   the tab's stack in the detail pane (cross-fade), a placeholder when nothing is open.
+ *
+ * The tab root with its bar is movable content: a fold, an unfold or a split-screen resize across
+ * 600 dp moves it between the two layouts instead of building it again, so the list keeps its
+ * scroll position and the search its field (shell-chats §4.9, "no state is lost"). The stacks are
+ * the navigator's lists in both layouts.
  *
  * Unlock reveal: the tab content rises from 0.96 once revealed (`:105-108`); the bar never scales.
  * Back: the stack pops first (predictive), then an open bar search closes, then the system takes it
  * (P12b: at a tab root back leaves the app, as iOS has no back there).
  *
  * The shell mounts itself on [AppRouter.mainShellMounted] (the lock screen's prewarm waits for it).
+ *
+ * @param screens the tab roots, pushed screens, badges and opens ([AppShellScreens] in the app).
  */
 @Composable
-fun MainShell(router: AppRouter, isRevealed: Boolean, modifier: Modifier = Modifier) {
+fun MainShell(router: AppRouter, isRevealed: Boolean, modifier: Modifier = Modifier, screens: ShellScreens = AppShellScreens) {
     val navigator = remember { ShellNavigator() }
     val reduce = ShroudTheme.reduceMotion
     DisposableEffect(router) {
@@ -94,17 +95,27 @@ fun MainShell(router: AppRouter, isRevealed: Boolean, modifier: Modifier = Modif
         animationSpec = Motion.respecting(reduce, Motion.gentle()),
         label = "shellReveal",
     )
+    // Read in the content's layer only, so the reveal's frames redraw it without recomposing.
+    val currentScale by rememberUpdatedState(revealScale)
 
-    PendingOpens(navigator)
+    screens.Opens(navigator)
     // Lower priority than the stacks' handlers (registered first): a pushed screen pops before the search closes.
     BackHandler(enabled = navigator.isSearching) { navigator.setSearching(false) }
 
+    val tabRoot = remember(navigator, screens) {
+        movableContentOf { rootModifier: Modifier -> TabRootWithBar(navigator, screens, { currentScale }, rootModifier) }
+    }
+
+    // Read here, not through `maxWidth`: a density change (Settings › Display size, `wm density`)
+    // keeps the window's pixels, and BoxWithConstraints does not measure its content again for it
+    // (C3 device check: compact at 720 dp, two panes at 411 dp). The new density makes a new lambda.
+    val density = LocalDensity.current
     BoxWithConstraints(modifier.fillMaxSize().background(ShroudTheme.colors.background)) {
-        val layout = ShellLayoutMath.windowLayout(maxWidth.value)
+        val layout = ShellLayoutMath.windowLayout(with(density) { constraints.maxWidth.toDp() }.value)
         CompositionLocalProvider(LocalShellNavigation provides navigator, LocalWindowLayout provides layout) {
             when (layout) {
-                WindowLayout.Compact -> CompactShell(navigator, revealScale)
-                WindowLayout.TwoPane -> TwoPaneShell(navigator, revealScale)
+                WindowLayout.Compact -> CompactShell(navigator, screens, tabRoot)
+                WindowLayout.TwoPane -> TwoPaneShell(navigator, screens, tabRoot)
             }
         }
     }
@@ -112,13 +123,13 @@ fun MainShell(router: AppRouter, isRevealed: Boolean, modifier: Modifier = Modif
 
 /** One stack over the whole window; its root is the tab content with the bar. */
 @Composable
-private fun CompactShell(navigator: ShellNavigator, revealScale: Float) {
+private fun CompactShell(navigator: ShellNavigator, screens: ShellScreens, tabRoot: @Composable (Modifier) -> Unit) {
     StackHost(
         routes = navigator.selectedStack(),
         onPop = { navigator.pop() },
         takeChatOpenPush = navigator::takeChatOpenPush,
-        root = { TabRootWithBar(navigator, revealScale, Modifier.fillMaxSize()) },
-        entry = { route -> RouteScreen(route, navigator) },
+        root = { tabRoot(Modifier.fillMaxSize()) },
+        entry = { route -> screens.Route(route, navigator) },
     )
 }
 
@@ -127,14 +138,10 @@ private fun CompactShell(navigator: ShellNavigator, revealScale: Float) {
  * bar, a 1 dp separator, the detail pane on `backgroundChat` hosting the selected tab's stack.
  */
 @Composable
-private fun TwoPaneShell(navigator: ShellNavigator, revealScale: Float) {
+private fun TwoPaneShell(navigator: ShellNavigator, screens: ShellScreens, tabRoot: @Composable (Modifier) -> Unit) {
     val colors = ShroudTheme.colors
     Row(Modifier.fillMaxSize()) {
-        TabRootWithBar(
-            navigator,
-            revealScale,
-            Modifier.width(ShellLayoutMath.listPaneWidth).fillMaxHeight().background(colors.background),
-        )
+        tabRoot(Modifier.width(ShellLayoutMath.listPaneWidth).fillMaxHeight().background(colors.background))
         Box(Modifier.width(1.dp).fillMaxHeight().background(colors.separator))
         StackHost(
             routes = navigator.selectedStack(),
@@ -142,7 +149,7 @@ private fun TwoPaneShell(navigator: ShellNavigator, revealScale: Float) {
             modifier = Modifier.weight(1f).fillMaxHeight().background(colors.backgroundChat),
             style = StackStyle.Fade,
             root = { DetailPlaceholder(showsCopy = navigator.tab.isSearchable) },
-            entry = { route -> RouteScreen(route, navigator) },
+            entry = { route -> screens.Route(route, navigator) },
         )
     }
 }
@@ -154,8 +161,7 @@ private fun TwoPaneShell(navigator: ShellNavigator, revealScale: Float) {
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TabRootWithBar(navigator: ShellNavigator, revealScale: Float, modifier: Modifier) {
-    val container = LocalAppContainer.current
+private fun TabRootWithBar(navigator: ShellNavigator, screens: ShellScreens, revealScale: () -> Float, modifier: Modifier) {
     val density = LocalDensity.current
     val focusManager = LocalFocusManager.current
     val reduce = ShroudTheme.reduceMotion
@@ -203,7 +209,7 @@ private fun TabRootWithBar(navigator: ShellNavigator, revealScale: Float, modifi
             LocalIsTabBarSearchActive provides navigator.isSearching,
             LocalGlassBackdrop provides backdrop,
         ) {
-            TabContent(navigator, revealScale, Modifier.fillMaxSize().tabBarBackdropSource(backdrop))
+            TabContent(navigator, screens, revealScale, Modifier.fillMaxSize().tabBarBackdropSource(backdrop))
         }
         CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
             FloatingTabBar(
@@ -214,7 +220,7 @@ private fun TabRootWithBar(navigator: ShellNavigator, revealScale: Float, modifi
                 query = navigator.searchQuery,
                 onQueryChange = { navigator.searchQuery = it },
                 searchFocus = searchFocus,
-                badges = rememberTabBadges(),
+                badges = screens.badges(),
                 onSearchFocusChanged = { searchFieldFocused = it },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -237,88 +243,23 @@ private fun TabRootWithBar(navigator: ShellNavigator, revealScale: Float, modifi
  * the reveal's rise. Only tab switches animate here — pushes and the bar never do (`:6-9, 143`).
  */
 @Composable
-private fun TabContent(navigator: ShellNavigator, revealScale: Float, modifier: Modifier) {
+private fun TabContent(navigator: ShellNavigator, screens: ShellScreens, revealScale: () -> Float, modifier: Modifier) {
     val reduce = ShroudTheme.reduceMotion
     val density = LocalDensity.current
     AnimatedContent(
         targetState = navigator.tab,
         transitionSpec = { tabTransition(navigator.movesForward, reduce, density.density) },
         modifier = modifier.graphicsLayer {
-            scaleX = revealScale
-            scaleY = revealScale
+            val scale = revealScale()
+            scaleX = scale
+            scaleY = scale
         },
         label = "tabContent",
     ) { tab ->
         Box(Modifier.fillMaxSize()) {
-            when (tab) {
-                MainTab.Chats -> ChatsScreen(query = navigator.searchQuery, onQueryChange = { navigator.searchQuery = it })
-                MainTab.Contacts -> ContactsScreen(query = navigator.searchQuery, onQueryChange = { navigator.searchQuery = it })
-                MainTab.Calls -> CallsScreen()
-                MainTab.Settings -> SettingsScreen(onOpenCalls = { navigator.select(MainTab.Calls) })
-            }
+            screens.TabRoot(tab, navigator)
         }
     }
-}
-
-/** A pushed screen of any tab (iOS `navigationDestination`s of each tab's stack). */
-@Composable
-private fun RouteScreen(route: Any, navigator: ShellNavigator) {
-    when (route) {
-        is ChatRoute.Conversation -> ConversationScreen(route.peerId, route.username, onBack = { navigator.pop() })
-        // The chat is gone: leave the thread, which takes the profile with it (`ConversationView.swift:444-455`).
-        is ChatRoute.ContactProfile -> ContactProfileScreen(
-            route.peerId,
-            route.username,
-            onBack = { navigator.pop() },
-            onChatDeleted = { navigator.leaveDeletedChat(route.peerId) },
-        )
-        is SettingsRoute -> SettingsDestination(route, onBack = { navigator.pop() })
-    }
-}
-
-/**
- * Opens what a notification, a banner or an invite link is about once the shell is on screen —
- * after the unlock when it was tapped on a locked phone (`openPendingNotification`, `:184-225`;
- * shell-chats §4.6; contacts §5.10). Runs on appear, when the request changes and when the server's
- * first chat list arrives.
- */
-@Composable
-private fun PendingOpens(navigator: ShellNavigator) {
-    val container = LocalAppContainer.current
-    val notifications = container.notifications.controller
-    val messaging = container.messaging.controller
-    val contacts = container.contacts.controller
-    val pending by notifications.pendingOpen.collectAsState()
-    val status by messaging.listStatus.collectAsState()
-    val invite by contacts.pendingInvite.collectAsState()
-    LaunchedEffect(pending, status.hasLoadedServerChats) {
-        val request = pending ?: return@LaunchedEffect
-        val handled = navigator.openPending(
-            request = request,
-            knownUsername = { peer ->
-                messaging.conversations.value.firstOrNull { it.peer.id == peer }?.peer?.username
-                    ?: contacts.contacts.value.firstOrNull { it.userId == peer }?.username
-            },
-            hasLoadedServerChats = status.hasLoadedServerChats,
-        )
-        if (handled) notifications.pendingOpen.compareAndSet(request, null)
-    }
-    // The Contacts tab opens Add Contact pre-filled and consumes the link itself (W3-CONTACTS-UI).
-    LaunchedEffect(invite) {
-        if (invite != null) navigator.openInvite()
-    }
-}
-
-/** The Chats badge: unread chats, muted ones only when the badge setting counts them (`:93-96`). */
-@Composable
-private fun rememberTabBadges(): Map<MainTab, Int> {
-    val container = LocalAppContainer.current
-    val messaging = container.messaging.controller
-    val unread by messaging.unreadCounts.collectAsState()
-    val conversations by messaging.conversations.collectAsState()
-    val preferences by container.notifications.controller.preferences.state.collectAsState()
-    val includeMuted = preferences.badgeIncludesMuted
-    return remember(unread, conversations, includeMuted) { mapOf(MainTab.Chats to messaging.unreadTotal(includeMuted)) }
 }
 
 /**

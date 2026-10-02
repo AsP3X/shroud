@@ -2,6 +2,7 @@ package de.corespace.shroud.ui.shell
 
 import android.os.Build
 import de.corespace.shroud.core.auth.WipeReason
+import de.corespace.shroud.core.keys.IdentityPresence
 import de.corespace.shroud.core.lifecycle.AppPhase
 import de.corespace.shroud.core.net.ServerConfiguration
 import de.corespace.shroud.core.storage.AutoLockDelay
@@ -409,14 +410,38 @@ class AppShellController(
     // ---- Routing helpers ----
 
     /**
-     * Recomputes [needsChatUnlock] whenever the session, the keys or the wipe change: sign-up and
-     * log-in store the identity just before they unlock, a wipe deletes it.
+     * Recomputes [needsChatUnlock] whenever the session, the keys or the wipe change — sign-up and
+     * log-in store the identity just before they unlock, a wipe deletes it — and when the app comes
+     * back to the front.
+     *
+     * Android locks the chats while the phone itself is locked (the screen went off; a delayed
+     * auto-lock firing in the background), and the identity record is unreadable then
+     * ([IdentityPresence.Unavailable]). That answer keeps the last one instead of turning the lock
+     * screen into Welcome, and the return to the front, which needs an unlocked phone, reads the
+     * record again — every [IDENTITY_RETRY_MS] while it stays unreadable in front (C3 device check:
+     * a notification tapped on the lock screen landed on Welcome).
      */
     private fun observeIdentity() {
         scope.launch {
-            combine(env.session, env.unlockedUserId, env.wipePresented) { session, _, _ -> session }
+            val inFront = env.phase.map { it == AppPhase.Active }.distinctUntilChanged()
+            combine(env.session, env.unlockedUserId, env.wipePresented, inFront) { session, _, _, _ -> session }
                 .collectLatest { session ->
-                    needsUnlock.value = if (session == null) false else withContext(io) { env.hasLocalIdentity(session.userId) }
+                    if (session == null) {
+                        needsUnlock.value = false
+                        return@collectLatest
+                    }
+                    while (true) {
+                        val presence = withContext(io) { env.identityPresence(session.userId) }
+                        needsUnlock.value = when (presence) {
+                            IdentityPresence.Present -> true
+                            IdentityPresence.Absent -> false
+                            IdentityPresence.Unavailable -> needsUnlock.value
+                        }
+                        // In front the phone is unlocked: an unreadable record is a passing failure
+                        // (a slow first Keystore read after an update), so it is read again.
+                        if (presence != IdentityPresence.Unavailable || env.phase.value != AppPhase.Active) return@collectLatest
+                        delay(IDENTITY_RETRY_MS)
+                    }
                 }
         }
     }
@@ -472,6 +497,9 @@ class AppShellController(
 
         /** After the vault prompt ends, how long the activity gets to come back before a background lock proceeds. */
         const val PROMPT_RETURN_GRACE_MS = 1_000L
+
+        /** In front, an unreadable identity record is read again after this (Android only). */
+        const val IDENTITY_RETRY_MS = 1_000L
 
         /** `RootView.swift:154` ("this \(UIDevice.current.model)"; Platform Notes: "this phone"). */
         fun interruptedWipeToast(noun: String): String = "Signed out · this $noun was cleared"

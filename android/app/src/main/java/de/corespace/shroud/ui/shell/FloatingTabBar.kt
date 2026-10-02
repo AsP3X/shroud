@@ -93,7 +93,6 @@ import de.corespace.shroud.ui.theme.ShroudTheme
 import de.corespace.shroud.ui.theme.inter
 import de.corespace.shroud.ui.theme.perform
 import kotlinx.coroutines.launch
-import kotlin.math.min
 import kotlin.math.roundToInt
 
 /** The tab bar's fixed sizes, exposed for placement (`FloatingTabBar.height`, `.searchHeight`). */
@@ -103,6 +102,14 @@ object FloatingTabBarMetrics {
 
     /** The bar's text never grows past 1.3× (shell-chats §4.9, D9 / P12c): iOS uses fixed sizes here. */
     const val MAX_FONT_SCALE = 1.3f
+
+    /**
+     * [density] with its font scale clamped to [MAX_FONT_SCALE] (P12c decided: clamp, rows scale
+     * fully). iOS sets the labels in a fixed 10 pt that ignores Dynamic Type (`FloatingTabBar.swift:331`);
+     * at Android's 200 % the bar keeps its 64 dp and "Contacts" still fits a 60 dp item at 360 dp.
+     */
+    fun clamp(density: Density): Density =
+        if (density.fontScale <= MAX_FONT_SCALE) density else Density(density.density, MAX_FONT_SCALE)
 }
 
 /**
@@ -135,7 +142,7 @@ fun FloatingTabBar(
     onSearchFocusChanged: (Boolean) -> Unit = {},
 ) {
     val density = LocalDensity.current
-    val clamped = remember(density) { Density(density.density, min(density.fontScale, FloatingTabBarMetrics.MAX_FONT_SCALE)) }
+    val clamped = remember(density) { FloatingTabBarMetrics.clamp(density) }
     val reduce = ShroudTheme.reduceMotion
     val morph by animateFloatAsState(if (isSearching) 1f else 0f, Motion.respecting(reduce, Motion.gentle()), label = "tabBarSearch")
     CompositionLocalProvider(LocalDensity provides clamped) {

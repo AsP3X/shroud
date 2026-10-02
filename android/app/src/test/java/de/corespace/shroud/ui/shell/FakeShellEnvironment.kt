@@ -65,8 +65,6 @@ class FakeShellEnvironment(override val clock: FakeAppClock = FakeAppClock()) : 
         session.value = null
     }
 
-    override fun hasLocalIdentity(userId: String): Boolean = identity == IdentityPresence.Present
-
     override fun identityPresence(userId: String): IdentityPresence = identity
 
     override fun lockCrypto(wipeStore: Boolean) {

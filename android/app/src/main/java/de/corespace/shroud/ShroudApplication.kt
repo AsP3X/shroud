@@ -7,17 +7,10 @@ import android.content.Intent
 import android.content.IntentFilter
 import androidx.core.content.ContextCompat
 import androidx.core.os.UserManagerCompat
-import androidx.lifecycle.DefaultLifecycleObserver
-import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.work.Configuration
-import de.corespace.shroud.core.lifecycle.AppPhase
 import de.corespace.shroud.core.lifecycle.AppPhaseMonitor
 import de.corespace.shroud.ui.calls.CallActivity
 import java.util.concurrent.CopyOnWriteArrayList
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
 
 /**
  * The process entry point, iOS `ShroudApp` + the launch half of `AppDelegate`
@@ -91,41 +84,13 @@ class ShroudApplication : Application(), Configuration.Provider {
         }
     }
 
-    /** Once per process, after the first unlock. */
+    /**
+     * Once per process, after the first unlock. Auto-lock is not installed here: the shell starts
+     * from `MainActivity` via `container.shell.startShell()`.
+     */
     private fun startProcess() {
         if (started) return
         started = true
         container.onProcessStart()
-        // Invariant 5 (interim until W3-SHELL's auto-lock, shell-chats §3.7): going to the
-        // background drops decrypted chats and the messaging keys from memory.
-        ProcessLifecycleOwner.get().lifecycle.addObserver(
-            object : DefaultLifecycleObserver {
-                override fun onStop(owner: LifecycleOwner) {
-                    lockWhenBackgrounded()
-                }
-            },
-        )
     }
-
-    /**
-     * Locks the chats ([AppContainer.lockChatsInMemory], `RootView.swift:315-320`: memory, keys, the
-     * stale temp-file sweep) — unless the vault's own
-     * system prompt is up: on some skins (Samsung One UI) the biometric prompt stops our activity,
-     * and locking under it would undo the unlock the user is in the middle of (crypto §10.7,
-     * settings-lock §11.5). The lock then waits for the prompt to end and still happens if the app
-     * is in the background by then.
-     */
-    private fun lockWhenBackgrounded() {
-        val keys = container.keys.cryptoController
-        pendingPromptLock?.cancel()
-        pendingPromptLock = container.appScope.launch {
-            if (keys.vaultPromptInFlight.value) {
-                keys.vaultPromptInFlight.first { !it }
-                if (appPhase.phase.value != AppPhase.Background) return@launch
-            }
-            container.lockChatsInMemory()
-        }
-    }
-
-    private var pendingPromptLock: Job? = null
 }
