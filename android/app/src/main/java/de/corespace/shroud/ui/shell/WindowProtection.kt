@@ -3,7 +3,11 @@ package de.corespace.shroud.ui.shell
 import android.app.Activity
 import android.os.Build
 import android.view.WindowManager
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.ProvidableCompositionLocal
+import androidx.compose.runtime.staticCompositionLocalOf
 
 /**
  * What the window does to keep unlocked chats out of the Recents thumbnail and out of screen
@@ -24,6 +28,13 @@ import androidx.compose.runtime.Immutable
 data class WindowProtection(val flagSecure: Boolean, val hideFromRecents: Boolean) {
     companion object {
         val None = WindowProtection(flagSecure = false, hideFromRecents = false)
+
+        /**
+         * What a phrase screen needs on [sdk] (`HidePhraseFromRecents`, `OnboardingSupport.kt`): out
+         * of Recents, and `FLAG_SECURE` where Recents cannot skip the thumbnail (API 30–32).
+         */
+        fun phrase(sdk: Int = Build.VERSION.SDK_INT): WindowProtection =
+            WindowProtection(flagSecure = sdk < Build.VERSION_CODES.TIRAMISU, hideFromRecents = true)
 
         /** The protection for [sdk] (P5 table above). */
         fun decide(sdk: Int, unlocked: Boolean, hidesDuringScreenCapture: Boolean): WindowProtection {
@@ -100,5 +111,28 @@ interface WindowControls {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) activity.setRecentsScreenshotEnabled(enabled)
             }
         }
+    }
+}
+
+/**
+ * The activity's [WindowProtectionGuard] (`MainActivity` provides it); null outside an activity
+ * (previews, screen tests).
+ */
+val LocalWindowProtectionGuard: ProvidableCompositionLocal<WindowProtectionGuard?> = staticCompositionLocalOf { null }
+
+/**
+ * Holds [protection] on the window for as long as the caller is composed, under [reason] — the
+ * reference-counted way for a screen to keep itself out of Recents (shell-chats §3.8: "reference-count
+ * requests (phrase screens + unlocked shell) so one release does not undo the other"). The phrase
+ * screens' `HidePhraseFromRecents` (W3-LOCK-ONBOARD) should become
+ * `HoldWindowProtection("phrase", WindowProtection.phrase())` (contract change request); until then
+ * the root re-applies the guard once the onboarding stack has left (`RootScreen`).
+ */
+@Composable
+fun HoldWindowProtection(reason: String, protection: WindowProtection) {
+    val guard = LocalWindowProtectionGuard.current ?: return
+    DisposableEffect(guard, reason, protection) {
+        guard.hold(reason, protection)
+        onDispose { guard.hold(reason, WindowProtection.None) }
     }
 }

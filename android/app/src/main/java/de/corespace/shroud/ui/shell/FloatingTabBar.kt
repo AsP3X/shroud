@@ -42,8 +42,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.Color
@@ -132,6 +132,7 @@ fun FloatingTabBar(
     searchFocus: FocusRequester,
     badges: Map<MainTab, Int>,
     modifier: Modifier = Modifier,
+    onSearchFocusChanged: (Boolean) -> Unit = {},
 ) {
     val density = LocalDensity.current
     val clamped = remember(density) { Density(density.density, min(density.fontScale, FloatingTabBarMetrics.MAX_FONT_SCALE)) }
@@ -162,6 +163,7 @@ fun FloatingTabBar(
                         query = query,
                         onQueryChange = onQueryChange,
                         searchFocus = searchFocus,
+                        onFocusChanged = onSearchFocusChanged,
                     )
                     CloseSearchButton(
                         onClose = { onSearchingChange(false) },
@@ -440,7 +442,7 @@ private fun BadgeRow(itemWidth: Dp, badges: Map<MainTab, Int>) {
                     var last by remember { mutableStateOf(text ?: "") }
                     if (text != null) last = text
                     val transition = Motion.iconSwap(Motion.bouncy())
-                    AnimatedVisibility(visible = text != null, enter = transition.enter, exit = transition.exit) {
+                    androidx.compose.animation.AnimatedVisibility(visible = text != null, enter = transition.enter, exit = transition.exit) {
                         Box(
                             Modifier
                                 .heightIn(min = 18.dp)
@@ -472,9 +474,11 @@ private fun SearchGlass(
     query: String,
     onQueryChange: (String) -> Unit,
     searchFocus: FocusRequester,
+    onFocusChanged: (Boolean) -> Unit,
 ) {
     val colors = ShroudTheme.colors
     val keyboard = LocalSoftwareKeyboardController.current
+    val currentOnFocusChanged by rememberUpdatedState(onFocusChanged)
     Box(
         Modifier
             .fillMaxSize()
@@ -519,7 +523,10 @@ private fun SearchGlass(
                             cursorBrush = SolidColor(colors.accent),
                             keyboardOptions = SearchKeyboard.options,
                             keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
-                            modifier = Modifier.fillMaxWidth().focusRequester(searchFocus),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(searchFocus)
+                                .onFocusChanged { currentOnFocusChanged(it.isFocused) },
                             decorationBox = { field ->
                                 Box(contentAlignment = Alignment.CenterStart) {
                                     if (query.isEmpty()) ShroudText("Search", inter(17f), colors.textSecondary, maxLines = 1)
@@ -579,6 +586,3 @@ private val MainTab.iconSize: Dp
         MainTab.Calls -> 22.dp
         MainTab.Settings -> 24.dp
     }
-
-@Suppress("unused")
-private val unusedOffset = Offset.Zero

@@ -66,11 +66,13 @@ class StackGates<K : Any> {
 /** One screen's [BackGate]; snapshot state, so the stack's handler follows it. */
 @Stable
 class EntryGate : BackGate {
-    var enabled by mutableStateOf(true)
-        private set
+    private var open by mutableStateOf(true)
+
+    /** The screen lets the stack take a back gesture. */
+    val allowsBack: Boolean get() = open
 
     override fun setEnabled(enabled: Boolean) {
-        this.enabled = enabled
+        open = enabled
     }
 }
 
@@ -188,7 +190,7 @@ fun <R : Any> StackHost(
     val density = LocalDensity.current.density
 
     val topKey: Any? = routes.lastIndex.takeIf { it >= 0 }?.let { entryKey(it, routes[it]) }
-    val topGateEnabled = topKey?.let { gates.gate(it).enabled } ?: true
+    val topGateEnabled = topKey?.let { gates.gate(it).allowsBack } ?: true
 
     // Registered before the screens below: their own handlers are added later and win.
     PredictiveBackHandler(enabled = backEnabled && StackBackRules.canPop(routes.size, state.transitionRunning, topGateEnabled)) { events ->

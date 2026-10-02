@@ -116,6 +116,33 @@ object ShellLayoutMath {
     fun tabBarClearance(barVisible: Boolean, barBottom: Dp, isSearching: Boolean): Dp =
         if (!barVisible) 0.dp else barBottom + (if (isSearching) searchHeight else barHeight)
 
+    /**
+     * `keyboardServesSearch` (`MainTabView.swift:31-33, 250`; shell-chats §4.4): set when the keyboard
+     * heads up while the bar's search is open, kept until the keyboard is fully down — so closing the
+     * search rides the keyboard down instead of blinking the bar out and back.
+     *
+     * @param imeBottom the keyboard's current height, @param imeTarget where its animation ends.
+     */
+    fun keyboardServesSearch(current: Boolean, isSearching: Boolean, imeBottom: Dp, imeTarget: Dp): Boolean = when {
+        imeTarget > 0.dp && isSearching -> true
+        imeBottom == 0.dp && imeTarget == 0.dp -> false
+        else -> current
+    }
+
+    // ---- Tab switch (MainTabView.swift:283-294) ----
+
+    /** The incoming tab slides 14 dp from the side it comes from. */
+    fun tabInsertOffset(movesForward: Boolean): Dp = if (movesForward) 14.dp else (-14).dp
+
+    /** The outgoing tab drifts 10 dp the other way. */
+    fun tabRemoveOffset(movesForward: Boolean): Dp = if (movesForward) (-10).dp else 10.dp
+
+    /** The incoming tab grows from this scale. */
+    const val TAB_INSERT_SCALE = 0.985f
+
+    /** The outgoing tab grows to this scale. */
+    const val TAB_REMOVE_SCALE = 1.01f
+
     /** Compact below 600 dp, two panes from 600 dp (shell-chats §4.9). */
     fun windowLayout(widthDp: Float): WindowLayout = if (widthDp >= twoPaneMinWidth.value) WindowLayout.TwoPane else WindowLayout.Compact
 

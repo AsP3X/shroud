@@ -18,7 +18,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
@@ -67,7 +66,6 @@ class AppRouter(
 
     private val unlockedMessaging = MutableStateFlow(false)
     private val prewarms = MutableStateFlow(false)
-    private val toast = MutableStateFlow<String?>(null)
 
     /**
      * Server session ≠ messaging unlock: true only after [unlockMessages] or a cold-start restore
@@ -82,15 +80,12 @@ class AppRouter(
     /** Set by the main shell itself once it is in the composition (`mainShellMounted`, `:56-57`). */
     val mainShellMounted = MutableStateFlow(false)
 
-    /** One-shot toast for the next onboarding screen ("Signed out · …", `postAuthToast`, `:34-35`). */
-    override var postAuthToast: String?
-        get() = toast.value
-        set(value) {
-            toast.value = value
-        }
-
-    /** [postAuthToast] as a flow for the screens that show it. */
-    val postAuthToastFlow: StateFlow<String?> = toast.asStateFlow()
+    /**
+     * One-shot toast for the next onboarding screen ("Signed out · …", `postAuthToast`, `:34-35`).
+     * Snapshot state: Welcome (the root) and the lock screen (W3-LOCK-ONBOARD, `snapshotFlow`) watch
+     * it and clear it once shown.
+     */
+    override var postAuthToast: String? by mutableStateOf(null)
 
     /** A server picked while signed in, saved once its Log Out is over (`:37-40`). */
     var pendingServerConfiguration: ServerConfiguration? = null
@@ -221,10 +216,10 @@ class AppRouter(
         env.startWipe(WipeReason.Logout)
     }
 
-    /** Log Out for a server change while signed in; [configuration] is saved once the wipe is over (`:179-183`). */
-    fun logOut(switchingTo configuration: ServerConfiguration) {
+    /** Log Out for a server change while signed in; [switchingTo] is saved once the wipe is over (`:179-183`). */
+    fun logOut(switchingTo: ServerConfiguration) {
         if (isLoggingOut) return
-        pendingServerConfiguration = configuration
+        pendingServerConfiguration = switchingTo
         logOut()
     }
 

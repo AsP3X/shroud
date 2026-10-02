@@ -48,9 +48,10 @@ class ShellNavigator : ShellNavigation {
     var movesForward by mutableStateOf(true)
         private set
 
-    /** The bar's own search field is open (`isSearching`, `:24-25`). */
-    var isSearching by mutableStateOf(false)
-        private set
+    private var searchOpen by mutableStateOf(false)
+
+    /** The bar's own search field is open (`isSearching`, `:24-25`); [setSearching] changes it. */
+    val isSearching: Boolean get() = searchOpen
 
     /** What Chats / Contacts filter by, shared by both fields (`searchQuery`, `:26-27`). */
     var searchQuery by mutableStateOf("")
@@ -105,8 +106,8 @@ class ShellNavigator : ShellNavigation {
      * keep focus through its exit) and clears the query.
      */
     fun setSearching(on: Boolean) {
-        if (on == isSearching) return
-        isSearching = on
+        if (on == searchOpen) return
+        searchOpen = on
         if (on) {
             if (!tabState.isSearchable) select(MainTab.Chats)
             searchFocusRequests++
@@ -149,7 +150,7 @@ class ShellNavigator : ShellNavigation {
 
     /** Pops the selected tab's top screen; false at its root (and always on Calls). */
     override fun pop(): Boolean {
-        val stack = selectedStack() ?: return false
+        val stack = selectedStackList() ?: return false
         if (stack.isEmpty()) return false
         stack.removeAt(stack.lastIndex)
         return true
@@ -160,7 +161,7 @@ class ShellNavigator : ShellNavigation {
      * `FloatingTabBarVisibility.swift` is legacy and not ported).
      */
     override fun popToRoot() {
-        selectedStack()?.clear()
+        selectedStackList()?.clear()
     }
 
     /**
@@ -178,13 +179,25 @@ class ShellNavigator : ShellNavigation {
     }
 
     /**
-     * Removes [count] screens from the top of the selected tab's stack — the profile pushed from a
-     * chat leaves together with that chat once the chat is deleted (`ConversationView.swift:444-455`).
+     * The chat with [peerId] was deleted from its profile: leave the thread, which takes the profile
+     * with it (`onChatDeleted`, `ConversationView.swift:444-455`) — the selected stack drops back to
+     * what was under that peer's conversation. A profile opened without its chat under it just closes.
      */
-    fun popScreens(count: Int) {
-        val stack = selectedStack() ?: return
-        repeat(count.coerceAtMost(stack.size)) { stack.removeAt(stack.lastIndex) }
+    fun leaveDeletedChat(peerId: UUID) {
+        val stack = selectedStackList() ?: return
+        val chat = stack.indexOfLast { it is ChatRoute.Conversation && it.peerId == peerId }
+        if (chat < 0) {
+            if (stack.isNotEmpty()) stack.removeAt(stack.lastIndex)
+            return
+        }
+        while (stack.size > chat) stack.removeAt(stack.lastIndex)
     }
+
+    /** The selected tab's pushed screens, for its stack host (Calls has none). */
+    fun selectedStack(): List<Any> = selectedStackList()?.toList() ?: emptyList()
+
+    /** Whether the next push is New Chat's open (read once by the stack host, then reset). */
+    fun takeChatOpenPush(): Boolean = nextPushIsChatOpen.also { nextPushIsChatOpen = false }
 
     /**
      * A notification or banner tap waiting to be opened (`openPendingNotification`,
@@ -234,7 +247,7 @@ class ShellNavigator : ShellNavigation {
         select(MainTab.Contacts)
     }
 
-    private fun selectedStack(): SnapshotStateList<out Any>? = when (tabState) {
+    private fun selectedStackList(): SnapshotStateList<out Any>? = when (tabState) {
         MainTab.Chats -> chatsStack
         MainTab.Contacts -> contactsStack
         MainTab.Calls -> null

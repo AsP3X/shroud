@@ -144,7 +144,7 @@ class AppShellController(
      * wiring. The rest, in iOS's order.
      */
     private suspend fun runLaunchSequence() {
-        if (env.finishInterruptedWipeIfNeeded()) router.postAuthToast = "Signed out · this ${env.deviceNoun()} was cleared"
+        if (env.finishInterruptedWipeIfNeeded()) router.postAuthToast = interruptedWipeToast(env.deviceNoun())
         if (env.session.value != null) env.validateSession()
         if (env.session.value != null) {
             if (!router.reconcileOrphanedSessionIfNeeded()) router.restoreUnlockedSessionIfNeeded()
@@ -161,6 +161,7 @@ class AppShellController(
         if (router.isUnlocked) {
             env.startMessaging()
             env.syncDeviceName()
+            env.feedNotificationNames(true)
         }
         launched.value = true
     }
@@ -382,15 +383,16 @@ class AppShellController(
     }
 
     /**
-     * Settings › Privacy and Security › Lock chats now (`PrivacySecurityView.swift:627-634`; settings-lock
-     * §7.10): the memory lock, then the lock screen, which shows "Chats locked" (the screen that asked
-     * goes away with the shell). Messaging stops through the unlock reaction.
+     * Settings › Privacy and Security › Lock chats now (`lockChatsNow`, `PrivacySecurityView.swift:627-634`;
+     * settings-lock §7.10): messaging's memory and the keys go (plus the stale temp-file sweep of
+     * [lockChatsInMemory]), then the lock screen takes over. Messaging stops with `wipeDisk = false`
+     * through the unlock reaction, as iOS's `messaging.stop(wipeDisk: false)`. The haptic and the
+     * "Chats locked" toast are the Privacy screen's (W3-SETTINGS-B), as on iOS.
      */
     fun lockChatsNow() {
         scope.launch {
             lockChatsInMemory()
             router.hasUnlockedMessaging = false
-            router.postAuthToast = CHATS_LOCKED_TOAST
         }
     }
 
@@ -454,7 +456,7 @@ class AppShellController(
         /** After the vault prompt ends, how long the activity gets to come back before a background lock proceeds. */
         const val PROMPT_RETURN_GRACE_MS = 1_000L
 
-        /** `PrivacySecurityView.swift:633`. */
-        const val CHATS_LOCKED_TOAST = "Chats locked"
+        /** `RootView.swift:154` ("this \(UIDevice.current.model)"; Platform Notes: "this phone"). */
+        fun interruptedWipeToast(noun: String): String = "Signed out · this $noun was cleared"
     }
 }
