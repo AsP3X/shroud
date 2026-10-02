@@ -405,6 +405,13 @@ class ChatsScreensRenderTest {
     }
 
     @Test
+    fun offlineWhileTheTabBarSearches() {
+        use24Hour()
+        // The banner stands alone: no 8 dp gap under it without the header field (CV:66).
+        render(screen(FakeChatsSource(designList.copy(isOffline = true)), query = "Ja", searching = true), "25-chats-offline-search")
+    }
+
+    @Test
     fun noMatches() {
         use24Hour()
         render(screen(FakeChatsSource(designList), query = "zz"), "17-chats-no-matches")
