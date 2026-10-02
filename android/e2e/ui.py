@@ -4,7 +4,10 @@
   ui.py dump                 visible nodes with text or content description
   ui.py tap <text> [n]       taps the n-th node whose text or description equals <text> (waits WAIT s, default 10)
   ui.py wait <text> [secs]   waits until a node's text or description contains <text> (default 15 s)
-  ui.py type <text>          types text (spaces and shell characters such as ! survive)
+  ui.py type <text>          types text in short chunks into the focused field, reading each chunk back
+                             (TYPE_CHUNK, default 6): the software-rendered API 30 emulator drops
+                             characters from long `input text` runs, so a short chunk that did not
+                             land whole is deleted and typed again (spaces and ! survive)
   ui.py key <KEYCODE …>      sends key events
   ui.py del <n>              moves to the end of the field and deletes n characters
   ui.py shot <file.png>      screenshot (0 bytes while a FLAG_SECURE screen is showing)
@@ -48,20 +51,97 @@ def adb(*args):
     return subprocess.run(adb_args(*args), capture_output=True, text=True).stdout
 
 
-def nodes():
+def raw_nodes():
     adb("shell", "uiautomator", "dump", "/sdcard/ui.xml")
     xml = adb("exec-out", "cat", "/sdcard/ui.xml")
     out = []
     for match in re.finditer(r"<node [^>]*>", xml):
         node = match.group(0)
 
-        def attr(name):
-            found = re.search(name + r'="([^"]*)"', node)
+        def attr(name, node=node):
+            found = re.search(" " + name + r'="([^"]*)"', node)
             return found.group(1) if found else ""
 
+        out.append(attr)
+    return out
+
+
+def nodes():
+    out = []
+    for attr in raw_nodes():
         bounds = [int(x) for x in re.findall(r"\d+", attr("bounds"))]
         out.append((attr("text"), attr("content-desc"), attr("clickable"), attr("enabled"), attr("focused"), bounds))
     return out
+
+
+def unescape(text):
+    return (text.replace("&quot;", '"').replace("&apos;", "'").replace("&lt;", "<")
+            .replace("&gt;", ">").replace("&amp;", "&"))
+
+
+def focused_field():
+    """The focused text field's (text, password) — the hint reads as empty — or None."""
+    for attr in raw_nodes():
+        if attr("focused") != "true":
+            continue
+        if "EditText" not in attr("class") and attr("password") != "true":
+            continue
+        text = unescape(attr("text"))
+        if text and text == unescape(attr("hint")):
+            text = ""
+        return text, attr("password") == "true"
+    return None
+
+
+def send_text(chunk):
+    # `input text` drops `!` and what follows unless the shell sees it quoted; %s is a space.
+    adb("shell", "input text " + shlex.quote(chunk.replace(" ", "%s")))
+
+
+def delete_chars(count):
+    if count > 0:
+        adb("shell", "input", "keyevent", "KEYCODE_MOVE_END", *(["KEYCODE_DEL"] * count))
+
+
+def type_text(text):
+    """Types [text] at the end of the focused field in chunks, each read back and retyped if it did not land whole."""
+    size = max(1, int(os.environ.get("TYPE_CHUNK", "6")))
+    chunks = [text[i:i + size] for i in range(0, len(text), size)]
+    field = focused_field()
+    if field is None:
+        # Nothing to read back (no focused field in the dump): short chunks are still more reliable.
+        for chunk in chunks:
+            send_text(chunk)
+            time.sleep(0.2)
+        return
+    base, _ = field
+    typed = ""
+    for chunk in chunks:
+        for attempt in range(5):
+            send_text(chunk)
+            want = typed + chunk
+            got = None
+            landed = False
+            for _ in range(6):
+                time.sleep(0.15)
+                current = focused_field()
+                if current is None:
+                    continue
+                got, masked = current
+                # Older dumps carry no `hint`: a placeholder ("Search…") read as the start text is gone
+                # once anything was typed.
+                if not typed and base and not masked and not got.startswith(base):
+                    base = ""
+                landed = len(got) == len(base) + len(want) if masked else got == base + want
+                if landed:
+                    break
+            if landed:
+                break
+            # Delete what this chunk left (whole or in part) and type it again.
+            delete_chars(len(got or "") - len(base) - len(typed))
+        else:
+            sys.exit(f"typing failed: the field kept dropping characters of chunk {chunk!r}")
+        typed = want
 
 
 def main(argv):
@@ -96,8 +176,7 @@ def main(argv):
             time.sleep(0.5)
         sys.exit(f"timeout waiting for {argv[2]}")
     elif cmd == "type":
-        # `input text` drops `!` and what follows unless the shell sees it quoted; %s is a space.
-        adb("shell", "input text " + shlex.quote(argv[2].replace(" ", "%s")))
+        type_text(argv[2])
     elif cmd == "key":
         adb("shell", "input", "keyevent", *argv[2:])
     elif cmd == "del":
