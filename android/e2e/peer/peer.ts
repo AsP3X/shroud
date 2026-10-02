@@ -1,11 +1,18 @@
 /*
  * The scripted web peer of the Android engine e2e (00-plan §2.3 W2-INT, §6.3).
  *
- * One web account, run by the web client's own crypto and API modules (web/src/crypto/*,
- * web/src/api/client.ts, reply.ts, reactions.ts) with in-memory stores instead of the browser's:
- * what this peer seals and opens is byte for byte what the real web client seals and opens.
- * EngineE2eTest (androidTest, on the emulator) drives it over a small HTTP control API on the
- * host's loopback (the emulator reaches it as http://10.0.2.2:<port>).
+ * One web account per process, run by the web client's own crypto, API and call modules
+ * (web/src/crypto/*, web/src/api/client.ts, reply.ts, reactions.ts, calls/controller.ts) with
+ * in-memory stores instead of the browser's: what this peer seals and opens is byte for byte what
+ * the real web client seals and opens. EngineE2eTest (androidTest, on the emulator) drives it over a
+ * small HTTP control API on the host's loopback (the emulator reaches it as http://10.0.2.2:<port>).
+ *
+ * The account is either a new one (POST /account) or a second device of an existing account
+ * (POST /login with that account's test password and phrase: the e2e's "other device" of the
+ * Android account). A WebSocket (POST /socket) carries what the web client's socket carries: typing
+ * both ways, presence (a connected, focused socket is online), and the `call.*` events that drive
+ * the web CallController, which runs on fake media (fakeMedia.ts, from the web selftest). engine-e2e.sh
+ * starts several peers, one account each (the web vault is one per page, so one per process).
  *
  * Run through android/e2e/engine-e2e.sh, which bundles this file with the web's esbuild (so the
  * web's extension-less TypeScript imports resolve) and starts it:
@@ -65,9 +72,12 @@ const { b64ToBytes, bytesToB64, randomBytes, utf8, utf8decode } = await import("
 const { textWire, parseTextPayload } = await import("../../../web/src/reply");
 const { parseMediaPayload } = await import("../../../web/src/crypto/mediaPayload");
 const { openReaction, saveReaction } = await import("../../../web/src/reactions");
+const { openDeviceName } = await import("../../../web/src/crypto/deviceName");
+const { CallController } = await import("../../../web/src/calls/controller");
+const { FakePeer, FakeStream, FakeTrack } = await import("./fakeMedia");
 
 type Material = ReturnType<typeof establish>;
-type Account = { token: string; userId: string; username: string; material: Material };
+type Account = { token: string; userId: string; username: string; deviceId: string; shareCode: string; material: Material };
 let account: Account | null = null;
 
 function need(): Account {
@@ -92,9 +102,22 @@ async function createAccount(): Promise<Account> {
   const words = generateMnemonic();
   const material = establish(words, session.user.id);
   await api.putBundle(session.token, putBundleRequest(material));
-  // The vault opens with any PIN wrap; the peer never locks it.
+  openVault(session.user.id, material);
+  account = {
+    token: session.token,
+    userId: session.user.id.toLowerCase(),
+    username: session.user.username,
+    deviceId: session.device.id.toLowerCase(),
+    shareCode: session.user.share_code,
+    material,
+  };
+  return account;
+}
+
+/** The vault opens with any PIN wrap; the peer never locks it. */
+function openVault(userId: string, material: Material) {
   createVault(
-    session.user.id,
+    userId,
     {
       secrets: { authKey: randomBytes(32), material: randomBytes(32), salt: randomBytes(16), iter: 1, length: 6 },
       pepper: randomBytes(32),
@@ -102,8 +125,44 @@ async function createAccount(): Promise<Account> {
     },
     material.historyKey,
   );
-  account = { token: session.token, userId: session.user.id.toLowerCase(), username: session.user.username, material };
+}
+
+/**
+ * A second device of an existing account (the e2e's "other device" of the Android account): logs in
+ * with its test password and derives the same identity from its test phrase. Publishes no bundle:
+ * the account's identity is already on the server.
+ */
+async function login(body: { username: string; password: string; words: string[] }): Promise<Account> {
+  const session = await api.login(body.username, body.password);
+  const material = establish(body.words, session.user.id);
+  openVault(session.user.id, material);
+  account = {
+    token: session.token,
+    userId: session.user.id.toLowerCase(),
+    username: session.user.username,
+    deviceId: session.device.id.toLowerCase(),
+    shareCode: session.user.share_code,
+    material,
+  };
   return account;
+}
+
+/**
+ * A new identity for this account (a phrase reset): new keys on the server, a fresh vault and no
+ * ratchet sessions or cached plaintext. The Android side must notice the change and ask to trust it.
+ */
+async function rekey() {
+  const me = need();
+  socketOff();
+  const words = generateMnemonic();
+  const material = establish(words, me.userId);
+  await api.putBundle(me.token, putBundleRequest(material));
+  (globalThis as Record<string, unknown>).localStorage = new MemoryStorage();
+  (globalThis as Record<string, unknown>).sessionStorage = new MemoryStorage();
+  opened.clear();
+  openVault(me.userId, material);
+  me.material = material;
+  return { rekeyed: true };
 }
 
 /* ---- Sending ----------------------------------------------------------------------------------- */
@@ -244,6 +303,8 @@ async function readMessages(peer: string) {
       sender: dto.sender_user_id.toLowerCase(),
       contentType: dto.content_type,
       deleted: dto.deleted_for_everyone,
+      delivered: Boolean((dto as { delivered?: boolean }).delivered),
+      read: Boolean((dto as { read?: boolean }).read),
     };
     if (!dto.deleted_for_everyone && dto.ciphertext) {
       try {
@@ -296,6 +357,212 @@ async function readMessages(peer: string) {
   return { messages: out };
 }
 
+/* ---- Socket: typing, presence, call events ------------------------------------------------------- */
+
+type SeenEvent = { seq: number; type: string; raw: Record<string, unknown> };
+const events: SeenEvent[] = [];
+let eventSeq = 0;
+let socket: WebSocket | null = null;
+let socketReady = false;
+
+/** `ws(s)://…/api/v1/ws`, as the web's `wsUrl()` builds it from the API base. */
+function wsUrl(): string {
+  return `${API.replace(/^http/, "ws").replace(/\/$/, "")}/ws`;
+}
+
+/**
+ * Connects this account's socket as the web client does (`realtime.ts`): auth, then `focus: true`
+ * — a visible tab — so the server shows us online. Every event is kept for GET /events, and the
+ * `call.*` events (and `auth.ok`, a reconnect may have missed some) go to the call controller.
+ */
+async function socketOn() {
+  const me = need();
+  if (socket) return { connected: socketReady };
+  const ws = new WebSocket(wsUrl());
+  socket = ws;
+  socketReady = false;
+  const ready = new Promise<boolean>((resolve) => {
+    ws.onopen = () => ws.send(JSON.stringify({ type: "auth", token: me.token }));
+    ws.onmessage = (ev) => {
+      if (typeof ev.data !== "string") return;
+      let raw: Record<string, unknown>;
+      try {
+        raw = JSON.parse(ev.data) as Record<string, unknown>;
+      } catch {
+        return;
+      }
+      const type = typeof raw.type === "string" ? raw.type : "";
+      if (!type) return;
+      if (type === "auth.ok") {
+        socketReady = true;
+        ws.send(JSON.stringify({ type: "focus", focused: true }));
+        resolve(true);
+      }
+      if (type === "auth.error") resolve(false);
+      events.push({ seq: ++eventSeq, type, raw });
+      if (events.length > 2_000) events.splice(0, events.length - 2_000);
+      if (type === "auth.ok" || type.startsWith("call.")) calls.handle({ type, raw });
+    };
+    ws.onclose = () => {
+      if (socket === ws) {
+        socket = null;
+        socketReady = false;
+      }
+      resolve(false);
+    };
+    ws.onerror = () => ws.close();
+  });
+  const connected = await Promise.race([ready, new Promise<boolean>((r) => setTimeout(() => r(false), 10_000))]);
+  if (!connected) throw new HttpError(502, "the socket did not authenticate");
+  return { connected };
+}
+
+function socketOff() {
+  const ws = socket;
+  socket = null;
+  socketReady = false;
+  ws?.close();
+  return { connected: false };
+}
+
+function sendFrame(frame: Record<string, unknown>) {
+  if (!socket || !socketReady) throw new HttpError(409, "no socket: POST /socket first");
+  socket.send(JSON.stringify(frame));
+}
+
+/** What the socket brought since `since`, optionally of one type. */
+function seenEvents(since: number, type: string | null) {
+  return { last: eventSeq, events: events.filter((e) => e.seq > since && (!type || e.type === type)) };
+}
+
+/* ---- Reads, receipts, privacy, mutes, devices ------------------------------------------------- */
+
+async function markRead(body: { peer: string }) {
+  return api.markChatRead(need().token, body.peer.toLowerCase());
+}
+
+async function markDelivered(body: { messageId: string }) {
+  await api.markDelivered(need().token, body.messageId.toLowerCase());
+  return { delivered: true };
+}
+
+async function setPrivacy(body: Record<string, unknown>) {
+  return api.updatePrivacySettings(need().token, body);
+}
+
+async function conversations() {
+  const list = await api.conversations(need().token);
+  return {
+    conversations: (Array.isArray(list) ? list : (list as { conversations: unknown[] }).conversations).map((c) => {
+      const conversation = c as { id: string; peer: { id: string; username: string }; unread_count?: number; mute?: { until: string | null } | null };
+      return {
+        id: conversation.id.toLowerCase(),
+        peer: conversation.peer.id.toLowerCase(),
+        username: conversation.peer.username,
+        unread: conversation.unread_count ?? 0,
+        muted: conversation.mute != null,
+        mutedUntil: conversation.mute?.until ?? null,
+      };
+    }),
+  };
+}
+
+/** This account's devices, their sealed names opened with the account's history key (the web's Devices list). */
+async function devices() {
+  const me = need();
+  const { devices: list } = await api.devices(me.token);
+  return {
+    devices: list.map((d) => {
+      const label = openDeviceName(me.material.historyKey, d.id.toLowerCase(), d.sealed_name);
+      return { id: d.id.toLowerCase(), current: d.is_current, name: label?.name ?? null, kind: label?.kind ?? null };
+    }),
+  };
+}
+
+async function revoke(body: { deviceId: string }) {
+  await api.revokeDevice(need().token, body.deviceId.toLowerCase());
+  return { revoked: true };
+}
+
+/* ---- Calls: the web CallController on fake media ---------------------------------------------- */
+
+type View = { phase: string; callId: string | null; role: string; modality: string; peer: { id: string }; connectedAt: number | null; micOn: boolean; remoteMic: boolean };
+let callView: View | null = null;
+/** Every phase the call screen went through, in order (one entry per change). */
+const callPhases: string[] = [];
+
+const calls = new CallController({
+  unsupported: () => null,
+  getUserMedia: async (constraints: MediaStreamConstraints) => {
+    const tracks = [new FakeTrack("audio")];
+    if (constraints.video) tracks.push(new FakeTrack("video", "user"));
+    return new FakeStream(tracks) as unknown as MediaStream;
+  },
+  cameras: async () => ["cam-front"],
+  createPeer: (config: RTCConfiguration) => new FakePeer("web", config) as unknown as RTCPeerConnection,
+  createStream: (tracks: MediaStreamTrack[]) => new FakeStream(tracks as unknown as InstanceType<typeof FakeTrack>[]) as unknown as MediaStream,
+  now: () => Date.now(),
+  setTimeout: (run: () => void, ms: number) => setTimeout(run, ms) as unknown as number,
+  clearTimeout: (id: number) => clearTimeout(id as unknown as NodeJS.Timeout),
+  setInterval: (run: () => void, ms: number) => setInterval(run, ms) as unknown as number,
+  clearInterval: (id: number) => clearInterval(id as unknown as NodeJS.Timeout),
+  publish: (view: unknown) => {
+    callView = (view as View | null) ?? null;
+    const phase = callView ? callView.phase : "idle";
+    if (callPhases[callPhases.length - 1] !== phase) callPhases.push(phase);
+  },
+  tone: () => undefined,
+  playAudio: async () => true,
+  keepAwake: () => undefined,
+  holdAutoLock: () => () => undefined,
+  interruptVoice: () => undefined,
+  notifyRing: () => undefined,
+  tellTabs: () => undefined,
+});
+
+/** The account calls with its own identity and API, as `calls/service.ts` configures it. */
+function configureCalls(me: Account) {
+  const { token } = me;
+  calls.configure({
+    userId: me.userId,
+    deviceId: me.deviceId,
+    identity: () => ({ privateKey: me.material.agreementPrivate.slice(), publicKey: me.material.agreementPublic.slice() }),
+    peerKey: (userId: string) => peerIdentityPublic(token, userId),
+    peerName: () => null,
+    api: {
+      iceServers: async () => (await api.iceServers(token)).ice_servers ?? [],
+      createCall: (peerUserId, modality) => api.createCall(token, peerUserId, modality),
+      getCall: (callId) => api.getCall(token, callId),
+      acceptCall: (callId) => api.acceptCall(token, callId),
+      rejectCall: (callId) => api.rejectCall(token, callId),
+      hangupCall: (callId, keepalive) => api.hangupCall(token, callId, { keepalive }),
+      sendSignal: (callId, signalType, payload) => api.sendCallSignal(token, callId, signalType, payload),
+      heartbeat: (callId) => api.callHeartbeat(token, callId),
+    },
+  });
+}
+
+/** A new account starts with no call on screen and no phase history. */
+function resetCalls() {
+  calls.release();
+  callView = null;
+  callPhases.length = 0;
+}
+
+function callState() {
+  const view = callView;
+  return {
+    phase: view ? view.phase : "idle",
+    callId: view?.callId?.toLowerCase() ?? null,
+    role: view?.role ?? null,
+    modality: view?.modality ?? null,
+    peer: view?.peer?.id?.toLowerCase() ?? null,
+    connected: view?.connectedAt != null,
+    remoteMic: view?.remoteMic ?? null,
+    phases: [...callPhases],
+  };
+}
+
 /* ---- Control server ---------------------------------------------------------------------------- */
 
 async function body(req: IncomingMessage): Promise<Record<string, unknown>> {
@@ -312,17 +579,59 @@ function reply(res: ServerResponse, status: number, value: unknown) {
 
 const routes: Record<string, (b: Record<string, unknown>, url: URL) => Promise<unknown>> = {
   "POST /account": async () => {
+    resetCalls();
     const created = await createAccount();
-    return { userId: created.userId, username: created.username };
+    configureCalls(created);
+    return { userId: created.userId, username: created.username, shareCode: created.shareCode, deviceId: created.deviceId };
   },
+  "POST /login": async (b) => {
+    resetCalls();
+    const signedIn = await login(b as Parameters<typeof login>[0]);
+    configureCalls(signedIn);
+    return { userId: signedIn.userId, username: signedIn.username, deviceId: signedIn.deviceId };
+  },
+  "POST /rekey": () => rekey(),
   "POST /contacts/accept": () => acceptRequests(),
   "POST /contacts/request": (b) => requestContact(b as { userId: string }),
   "POST /text": (b) => sendText(b as Parameters<typeof sendText>[0]),
   "POST /photo": (b) => sendPhoto(b as Parameters<typeof sendPhoto>[0]),
   "POST /react": (b) => react(b as Parameters<typeof react>[0]),
   "POST /delete": (b) => deleteForEveryone(b as Parameters<typeof deleteForEveryone>[0]),
+  "POST /read": (b) => markRead(b as { peer: string }),
+  "POST /delivered": (b) => markDelivered(b as { messageId: string }),
+  "POST /privacy": (b) => setPrivacy(b),
+  "GET /conversations": () => conversations(),
   "GET /messages": (_, url) => readMessages(url.searchParams.get("peer") ?? ""),
+  "GET /devices": () => devices(),
+  "POST /revoke": (b) => revoke(b as { deviceId: string }),
+  "POST /socket": async (b) => ((b as { on?: boolean }).on === false ? socketOff() : socketOn()),
+  "POST /typing": async (b) => {
+    const body = b as { peer: string; typing: boolean };
+    sendFrame({ type: "typing", peer_user_id: body.peer.toLowerCase(), is_typing: body.typing });
+    return { sent: true };
+  },
+  "GET /events": async (_, url) => seenEvents(Number(url.searchParams.get("since") ?? "0"), url.searchParams.get("type")),
+  "POST /call/start": async (b) => {
+    const body = b as { peer: string; username?: string; modality?: "voice" | "video" };
+    calls.start({ id: body.peer.toLowerCase(), username: body.username ?? "android" }, body.modality ?? "voice");
+    return callState();
+  },
+  "POST /call/accept": async () => {
+    calls.accept();
+    return callState();
+  },
+  "POST /call/decline": async () => {
+    calls.decline();
+    return callState();
+  },
+  "POST /call/hangup": async () => {
+    calls.hangup();
+    return callState();
+  },
+  "GET /call": async () => callState(),
   "POST /logout": async () => {
+    calls.release();
+    socketOff();
     if (account) await api.logout(account.token).catch(() => undefined);
     account = null;
     return { loggedOut: true };

@@ -1,5 +1,6 @@
 package de.corespace.shroud.e2e
 
+import android.Manifest
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.net.Uri
@@ -11,16 +12,27 @@ import de.corespace.shroud.LOCAL_NETWORK_PERMISSION
 import de.corespace.shroud.ShroudApplication
 import de.corespace.shroud.core.auth.WipePhase
 import de.corespace.shroud.core.auth.WipeReason
+import de.corespace.shroud.core.calls.CallController
+import de.corespace.shroud.core.calls.CallPhase
 import de.corespace.shroud.core.keys.DeviceLock
 import de.corespace.shroud.core.links.LinkPreviewAttachment
+import de.corespace.shroud.core.media.MediaComposeQuality
 import de.corespace.shroud.core.media.MediaImageSource
 import de.corespace.shroud.core.media.video.VideoSendPlan
 import de.corespace.shroud.core.media.video.VideoUploadQuality
 import de.corespace.shroud.core.messaging.MessagingController
 import de.corespace.shroud.core.model.AddContactOutcome
+import de.corespace.shroud.core.model.Bytes
+import de.corespace.shroud.core.model.ChatDeleteOutcome
 import de.corespace.shroud.core.model.ChatMessage
 import de.corespace.shroud.core.model.ChatMessageKind
+import de.corespace.shroud.core.model.ChatPeerActivity
 import de.corespace.shroud.core.model.Ids
+import de.corespace.shroud.core.model.MuteDuration
+import de.corespace.shroud.core.model.NOTES_PEER_ID
+import de.corespace.shroud.core.model.ReceiptStatus
+import de.corespace.shroud.core.net.CallModality
+import de.corespace.shroud.core.net.ConversationDeleteScope
 import de.corespace.shroud.core.net.MessageDeleteScope
 import de.corespace.shroud.core.net.ServerConfiguration
 import de.corespace.shroud.core.net.wire.LinkPreview
@@ -35,7 +47,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -46,6 +57,8 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -61,18 +74,29 @@ import kotlin.math.PI
 import kotlin.math.sin
 
 /**
- * The wave 2 exit gate (00-plan §0, §2.3 W2-INT, §6.3): this phone's engines — the real
- * `AppContainer` with every W2 package wired — exchange every kind with the scripted web peer
- * (`android/e2e/peer`, the web client's own crypto and API modules) through the local server:
- * text, a reply, link previews both ways, a photo both ways, a video, a voice note, reactions both
- * ways and deletes for everyone both ways. The peer opens what this phone sealed and the other way
- * round, byte for byte where there are bytes (media SHA-256). At the end the Log Out wipe runs and
- * must leave nothing behind.
+ * The wave 2 exit gate (00-plan §0, §2.3 W2-INT, §6.3) and the engine acceptance of every W2 card:
+ * this phone's engines — the real `AppContainer` with every W2 package wired — against scripted web
+ * peers (`android/e2e/peer`, the web client's own crypto, API and call modules) through the local
+ * server. Each peer is one web account in its own process; one of them logs in as a second device of
+ * this phone's account.
  *
- * Run by `android/e2e/engine-e2e.sh` (stack, peer, instrumentation). Skipped when the API or the peer
+ * - [theEnginesExchangeEveryKindWithTheWebPeer] (W2-MSG-CORE, W2-MSG-SEND): text, a reply, link
+ *   previews small and large, photos both ways (passthrough and HD), a video, a voice note, receipts,
+ *   typing both ways, reactions both ways, deletes for everyone both ways; then the Log Out wipe.
+ * - [aSecondDeviceSharesReadsMutesNotesAndDeletesConflictsAReactionAndRevokesThisPhone] (W2-MSG-CORE,
+ *   W2-MSG-SEND, W2-AUTH-WIPE): the other device opens this phone's sealed name as "Android app",
+ *   unread/read sync both ways, mutes, Notes, delete for me, a reaction 409 from the other device,
+ *   and its revoke wipes this phone.
+ * - [chatDeletesFollowThePeersConsent] (W2-MSG-CORE): a chat deleted for both, without and with the
+ *   peer's consent.
+ * - [contactsComeByShareCodeLinkAndNameWithPresenceBlocksAndKeyChanges] (W2-CONTACTS).
+ * - [callsRingConnectAndHangUpBothWays] (W2-CALLS-CORE): call signalling with a fake media engine.
+ *
+ * Run by `android/e2e/engine-e2e.sh` (stack, peers, instrumentation). Skipped when the API or a peer
  * cannot be reached, or the device has no screen lock (the vault needs one: `emulator-setup.sh`).
- * Instrumentation arguments: `shroudApi` (default `http://10.0.2.2:8080/api/v1`), `shroudPeer`
- * (default `http://10.0.2.2:8099`), `shroudRequired` (`true`: fail instead of skip).
+ * Instrumentation arguments: `shroudApi` (default `http://10.0.2.2:8080/api/v1`), `shroudPeer` (the
+ * first peer, default `http://10.0.2.2:8099`; the others on the following ports), `shroudPeerCount`
+ * (default 4), `shroudRequired` (`true`: fail instead of skip). Each test signs up its own account and leaves nothing of it on the phone.
  */
 @RunWith(AndroidJUnit4::class)
 class EngineE2eTest {
@@ -81,25 +105,68 @@ class EngineE2eTest {
     private val container: AppContainer get() = app.container
     private val arguments = InstrumentationRegistry.getArguments()
     private val baseUrl: String = arguments.getString("shroudApi") ?: "http://10.0.2.2:8080/api/v1"
-    private val peerUrl: String = arguments.getString("shroudPeer") ?: "http://10.0.2.2:8099"
+    private val peerUrls: List<String> = run {
+        // The first peer's URL and how many there are: the rest listen on the following ports.
+        val first = (arguments.getString("shroudPeer") ?: "http://10.0.2.2:8099").toHttpUrl()
+        val count = arguments.getString("shroudPeerCount")?.toIntOrNull() ?: 4
+        (0 until count).map { first.newBuilder().port(first.port + it).build().toString().trimEnd('/') }
+    }
     private val http = OkHttpClient.Builder().connectTimeout(3, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
     private var previousServer: ServerConfiguration? = null
     private var signedUp = false
 
+    /** This phone's test account: its password and phrase go to the peer that plays its other device. */
+    private var myName = ""
+    private var myPassword = ""
+    private var myWords: List<String> = emptyList()
+
     private val messaging: MessagingController get() = container.messaging.controller
+    private val me: UUID get() = UUID.fromString(container.auth.sessionController.session.value!!.userId)
 
     /** `engine-e2e.sh` passes `shroudRequired=true`: there a missing stack fails instead of skipping. */
     private val required = arguments.getString("shroudRequired") == "true"
 
     private fun require(message: String, condition: Boolean) = if (required) assertTrue(message, condition) else assumeTrue(message, condition)
 
+    /** A web peer: index into [peerUrls]; [id] and [name] once its account exists. */
+    private inner class Peer(val index: Int) {
+        lateinit var id: UUID
+        lateinit var name: String
+        var shareCode = ""
+
+        fun call(method: String, path: String, body: JsonObject? = null): JsonObject = peerCall(peerUrls[index], method, path, body)
+
+        fun create(): Peer = apply {
+            val account = call("POST", "/account")
+            id = UUID.fromString(account.str("userId"))
+            name = account.str("username")
+            shareCode = account.str("shareCode")
+        }
+
+        fun messages(with: UUID = me): List<JsonObject> = call("GET", "/messages?peer=${Ids.wire(with)}").arr("messages").map { it.jsonObject }
+
+        fun sees(what: String, with: UUID = me, timeoutMs: Long = 30_000, match: (JsonObject) -> Boolean): JsonObject =
+            eventuallyBlocking(what, timeoutMs) { messages(with).firstOrNull(match) }
+
+        fun sendText(text: String, to: UUID = me): UUID =
+            UUID.fromString(call("POST", "/text", buildJsonObject { put("peer", Ids.wire(to)); put("text", text) }).str("id"))
+
+        fun socket(on: Boolean) {
+            call("POST", "/socket", buildJsonObject { put("on", on) })
+        }
+    }
+
+    private val usedPeers = ArrayList<Peer>()
+
+    private fun peer(index: Int): Peer = Peer(index).also { usedPeers += it }
+
     @Before
     fun setUp() {
-        // Android 17: the server and the peer are on the host's loopback (10.0.2.2), a local-network
+        // Android 17: the server and the peers are on the host's loopback (10.0.2.2), a local-network
         // address. The test run reinstalls the app, which drops emulator-setup.sh's grant.
         if (Build.VERSION.SDK_INT >= 37) instrumentation.uiAutomation.grantRuntimePermission(app.packageName, LOCAL_NETWORK_PERMISSION)
         require("the local stack is not reachable at $baseUrl (android/e2e/stack-up.sh)", reachable("$baseUrl/health/live"))
-        require("the web peer is not reachable at $peerUrl (android/e2e/engine-e2e.sh)", reachable("$peerUrl/health"))
+        for (url in peerUrls) require("the web peer is not reachable at $url (android/e2e/engine-e2e.sh)", reachable("$url/health"))
         DeviceLock.ensureUnlocked()
         require("needs a screen lock: android/e2e/emulator-setup.sh", DeviceLock.isSecure)
         val server = container.serverConfiguration
@@ -112,7 +179,7 @@ class EngineE2eTest {
 
     @After
     fun tearDown() {
-        runCatching { peer("POST", "/logout") }
+        for (peer in usedPeers) runCatching { peer.call("POST", "/logout") }
         if (signedUp && container.auth.sessionController.session.value != null) {
             // A failed run still leaves nothing of its account on the phone.
             runCatching { logOutThroughTheWipe() }
@@ -120,47 +187,61 @@ class EngineE2eTest {
         previousServer?.let { container.serverConfiguration.save(it) }
     }
 
+    // ---- 1. Every kind, both ways ------------------------------------------------------------------
+
     @Test
     fun theEnginesExchangeEveryKindWithTheWebPeer() {
-        // ---- Accounts and contact --------------------------------------------------------------
-        val peerAccount = peer("POST", "/account")
-        val peerId = UUID.fromString(peerAccount.str("userId"))
-        val peerName = peerAccount.str("username")
+        val peer = peer(0).create()
         signUp()
-        val me = UUID.fromString(container.auth.sessionController.session.value!!.userId)
-        onMain { messaging.start() }
-        val added = onMain { container.contacts.controller.add(peerName) }
-        assertTrue("add contact: $added", added is AddContactOutcome.Requested || added is AddContactOutcome.Added)
-        assertEquals(1, peer("POST", "/contacts/accept").int("accepted"))
-        eventually("the peer becomes a contact") {
-            container.contacts.controller.refresh(force = true)
-            container.contacts.controller.contacts.value.firstOrNull { it.userId == peerId }
-        }
-        onMain { messaging.loadThread(peerId) }
+        startAndBefriend(peer)
+        peer.socket(on = true)
+        val peerId = peer.id
 
         // ---- Text, both ways, with a reply and link previews -----------------------------------
         onMain { messaging.sendText("Hello from Android", peerId) }
-        val hello = mine("Hello from Android", peerId)
-        peerSees("the text") { it.str("id") == Ids.wire(hello.id) && it.optStr("text") == "Hello from Android" }
+        val hello = mine("Hello from Android", peerId, peer)
+        peer.sees("the text") { it.str("id") == Ids.wire(hello.id) && it.optStr("text") == "Hello from Android" }
 
-        val peerReply = peer(
-            "POST",
-            "/text",
-            buildJsonObject {
-                put("peer", Ids.wire(me))
-                put("text", "Hi from the web")
-                put("replyTo", buildJsonObject {
-                    put("id", Ids.wire(hello.id))
-                    put("senderUserId", Ids.wire(me))
-                    put("kind", "text")
-                    put("snippet", "Hello from Android")
-                })
-                put("linkPreview", buildJsonObject {
-                    put("url", "https://example.com/web")
-                    put("title", "From the web")
-                })
-            },
-        ).str("id").let(UUID::fromString)
+        // Receipts (W2-MSG-CORE): delivered, then read, reach the sender's bubble.
+        peer.call("POST", "/delivered", buildJsonObject { put("messageId", Ids.wire(hello.id)) })
+        eventually("the delivery receipt") { bubble(peerId, hello.id)?.takeIf { it.receipt.rank >= ReceiptStatus.Delivered.rank } }
+        peer.call("POST", "/read", buildJsonObject { put("peer", Ids.wire(me)) })
+        eventually("the read receipt") { bubble(peerId, hello.id)?.takeIf { it.receipt == ReceiptStatus.Read } }
+
+        // Typing both ways, seen by the peer's socket and by this phone's engine.
+        val since = peer.call("GET", "/events?since=0").int("last")
+        onMain { messaging.setTyping(peerId, true) }
+        eventuallyBlocking("the peer sees us typing", 15_000) {
+            peer.call("GET", "/events?since=$since&type=typing").arr("events").firstOrNull { e ->
+                e.jsonObject.obj("raw")?.optStr("is_typing") == "true"
+            }
+        }
+        onMain { messaging.setTyping(peerId, false) }
+        peer.call("POST", "/typing", buildJsonObject { put("peer", Ids.wire(me)); put("typing", true) })
+        eventually("we see the peer typing") { messaging.peerActivity(peerId)?.takeIf { it == ChatPeerActivity.Typing } }
+        peer.call("POST", "/typing", buildJsonObject { put("peer", Ids.wire(me)); put("typing", false) })
+        eventually("the peer stopped typing") { if (messaging.peerActivity(peerId) == null) Unit else null }
+
+        val peerReply = UUID.fromString(
+            peer.call(
+                "POST",
+                "/text",
+                buildJsonObject {
+                    put("peer", Ids.wire(me))
+                    put("text", "Hi from the web")
+                    put("replyTo", buildJsonObject {
+                        put("id", Ids.wire(hello.id))
+                        put("senderUserId", Ids.wire(me))
+                        put("kind", "text")
+                        put("snippet", "Hello from Android")
+                    })
+                    put("linkPreview", buildJsonObject {
+                        put("url", "https://example.com/web")
+                        put("title", "From the web")
+                    })
+                },
+            ).str("id"),
+        )
         val received = incoming(peerId, "the peer's reply") { it.id == peerReply }
         assertEquals("Hi from the web", received.text)
         assertEquals(hello.id, received.replyTo?.messageId)
@@ -170,27 +251,42 @@ class EngineE2eTest {
         val preview = LinkPreviewAttachment(LinkPreview("https://example.org/android", title = "From Android"), null, null, null)
         val replyRef = MessageReplyReference(peerReply, peerId, MessageReplyReference.Kind.Text, "Hi from the web")
         onMain { messaging.sendText("Answer with a link https://example.org/android", peerId, replyTo = replyRef, linkPreview = preview) }
-        val answer = mine("Answer with a link https://example.org/android", peerId)
-        peerSees("the reply with its link preview") {
+        val answer = mine("Answer with a link https://example.org/android", peerId, peer)
+        peer.sees("the reply with its link preview") {
             it.str("id") == Ids.wire(answer.id) &&
                 it.obj("replyTo")?.optStr("id") == Ids.wire(peerReply) &&
                 it.obj("linkPreview")?.optStr("title") == "From Android"
         }
 
-        // ---- Photos, both ways -----------------------------------------------------------------
-        val photo = jpeg()
-        val photoError = onMain { messaging.sendImage(MediaImageSource.FileBytes(photo), peerId, caption = "A photo") }
-        assertNull(photoError)
-        val sentPhoto = eventually("the photo is sent") {
-            messaging.threads.value[peerId]?.lastOrNull { it.isMine && it.kind == ChatMessageKind.Image && !it.pendingSync && it.sendError == null && it.mediaObjectId != null }
+        // A large link image goes as a link media message (W2-MSG-SEND).
+        val linkImage = jpeg(1200, 630)
+        val large = LinkPreviewAttachment(LinkPreview("https://example.org/large", title = "Large picture"), Bytes.of(linkImage), 1200, 630)
+        onMain { messaging.sendText("A large preview https://example.org/large", peerId, linkPreview = large) }
+        peer.sees("the large link image") {
+            val media = it.obj("media")
+            media?.optStr("t") == "link" && (media["bytes"]?.jsonPrimitive?.content?.toInt() ?: 0) == linkImage.size
         }
-        peerSees("the photo") {
+
+        // ---- Photos, both ways: passthrough and HD ----------------------------------------------
+        val photo = jpeg(320, 240)
+        assertNull(onMain { messaging.sendImage(MediaImageSource.FileBytes(photo), peerId, caption = "A photo") })
+        val sentPhoto = eventually("the photo is sent") { sentMedia(peerId, ChatMessageKind.Image, "A photo") }
+        peer.sees("the photo") {
             val media = it.obj("media")
             it.str("id") == Ids.wire(sentPhoto.id) && media?.optStr("t") == "image" && media.optStr("caption") == "A photo" &&
                 (media["bytes"]?.jsonPrimitive?.content?.toInt() ?: 0) > 0
         }
 
-        val peerPhoto = peer("POST", "/photo", buildJsonObject { put("peer", Ids.wire(me)); put("caption", "From the web") })
+        val big = jpeg(3200, 2400)
+        assertNull(onMain { messaging.sendImage(MediaImageSource.FileBytes(big), peerId, caption = "In HD", quality = MediaComposeQuality.HD) })
+        val sentHd = eventually("the HD photo is sent") { sentMedia(peerId, ChatMessageKind.Image, "In HD") }
+        val hd = peer.sees("the HD photo") { it.str("id") == Ids.wire(sentHd.id) && it.obj("media")?.optStr("t") == "image" }.obj("media")!!
+        // HD re-encodes to at most 2560 px on the long edge.
+        assertEquals(2560, hd.int("w"))
+        assertEquals(1920, hd.int("h"))
+        assertTrue(hd.int("bytes") < big.size)
+
+        val peerPhoto = peer.call("POST", "/photo", buildJsonObject { put("peer", Ids.wire(me)); put("caption", "From the web") })
         val peerPhotoId = UUID.fromString(peerPhoto.str("id"))
         val incomingPhoto = incoming(peerId, "the peer's photo") { it.id == peerPhotoId && it.kind == ChatMessageKind.Image }
         assertEquals("From the web", incomingPhoto.text)
@@ -204,39 +300,36 @@ class EngineE2eTest {
             messaging.sendVideo(VideoSendPlan(Uri.fromFile(clip), caption = "A clip", quality = VideoUploadQuality.Original), peerId)
         }
         assertNull(videoError)
-        peerSees("the video", timeoutMs = 120_000) {
+        peer.sees("the video", timeoutMs = 120_000) {
             val media = it.obj("media")
             media?.optStr("t") == "video" && media.optStr("mime") == "video/mp4" && (media["bytes"]?.jsonPrimitive?.content?.toInt() ?: 0) > 0
         }
 
         val voice = voiceNote()
-        val voiceError = onMain { messaging.sendVoice(voice, 1_000, peerId) }
-        assertNull(voiceError)
-        peerSees("the voice note") {
+        assertNull(onMain { messaging.sendVoice(voice, 1_000, peerId) })
+        peer.sees("the voice note") {
             val media = it.obj("media")
             media?.optStr("t") == "voice" && media.optStr("mime") == "audio/mp4" && (media["bytes"]?.jsonPrimitive?.content?.toInt() ?: 0) == voice.size
         }
 
         // ---- Reactions, both ways --------------------------------------------------------------
         onMain { messaging.toggleReaction("👍", peerReply, peerId) }
-        peerSees("our reaction") { message ->
-            message.str("id") == Ids.wire(peerReply) &&
-                message.arr("reactions").any { it.jsonObject.str("userId") == Ids.wire(me) && it.jsonObject.arr("emojis").map { e -> e.jsonPrimitive.content } == listOf("👍") }
+        peer.sees("our reaction") { message ->
+            message.str("id") == Ids.wire(peerReply) && emojisOf(message, me) == listOf("👍")
         }
-        peer("POST", "/react", buildJsonObject {
+        peer.call("POST", "/react", buildJsonObject {
             put("peer", Ids.wire(me))
             put("messageId", Ids.wire(hello.id))
             put("emojis", buildJsonArray { add(JsonPrimitive("❤️")) })
         })
         eventually("the peer's reaction arrives") {
-            messaging.threads.value[peerId]?.firstOrNull { it.id == hello.id }?.reactions?.firstOrNull { it.userId == peerId && it.emojis == listOf("❤️") }
+            bubble(peerId, hello.id)?.reactions?.firstOrNull { it.userId == peerId && it.emojis == listOf("❤️") }
         }
 
         // ---- Deletes for everyone, both ways ---------------------------------------------------
-        val deleteError = onMain { messaging.deleteMessage(messaging.threads.value[peerId]!!.first { it.id == hello.id }, MessageDeleteScope.Everyone) }
-        assertNull(deleteError)
-        peerSees("our delete") { it.str("id") == Ids.wire(hello.id) && it.bool("deleted") }
-        peer("POST", "/delete", buildJsonObject { put("messageId", Ids.wire(peerPhotoId)) })
+        assertNull(onMain { messaging.deleteMessage(bubble(peerId, hello.id)!!, MessageDeleteScope.Everyone) })
+        peer.sees("our delete") { it.str("id") == Ids.wire(hello.id) && it.bool("deleted") }
+        peer.call("POST", "/delete", buildJsonObject { put("messageId", Ids.wire(peerPhotoId)) })
         eventually("the peer's delete arrives") { messaging.threads.value[peerId]?.firstOrNull { it.id == peerPhotoId && it.deleted } }
         // The tombstone purged the photo from the sealed cache.
         eventually("the deleted photo's media is gone") { if (container.media.localMedia.has(peerPhotoId)) null else Unit }
@@ -245,21 +338,336 @@ class EngineE2eTest {
         logOutThroughTheWipe()
     }
 
+    // ---- 2. Our other device ---------------------------------------------------------------------
+
+    @Test
+    fun aSecondDeviceSharesReadsMutesNotesAndDeletesConflictsAReactionAndRevokesThisPhone() {
+        val peer = peer(0).create()
+        signUp()
+        startAndBefriend(peer)
+        val peerId = peer.id
+        // The unlock syncs the sealed device name (InterimSession.unlocked); the test has no root.
+        onMain { container.auth.syncDeviceName() }
+        val other = peer(3)
+        other.call("POST", "/login", buildJsonObject {
+            put("username", myName)
+            put("password", myPassword)
+            put("words", buildJsonArray { myWords.forEach { add(JsonPrimitive(it)) } })
+        })
+        val myDevice = container.auth.sessionController.session.value!!.deviceId.lowercase()
+
+        // The account's other device opens this phone's sealed name as kind 4: the web's "Android app".
+        val listed = eventuallyBlocking("the other device reads our device name", 20_000) {
+            other.call("GET", "/devices").arr("devices").map { it.jsonObject }.firstOrNull { it.str("id") == myDevice && it.optStr("kind") != null }
+        }
+        assertEquals("android", listed.optStr("kind"))
+        assertFalse(listed.optStr("name").isNullOrBlank())
+
+        // ---- Unread / read sync -------------------------------------------------------------------
+        // The chat exists first: opening it before it had a message left a read marker to send with
+        // the next list (ReadStateEngine.chatReadRetries), which would mark the first arrival read.
+        onMain { messaging.sendText("Hello there", peerId) }
+        mine("Hello there", peerId, peer)
+        onMain { messaging.refreshConversations(force = true) }
+        Thread.sleep(1_000)
+        onMain { messaging.setActivePeer(null) }
+        val first = peer.sendText("Unread one")
+        val second = peer.sendText("Unread two")
+        incoming(peerId, "both unread texts") { it.id == second }
+        eventually("two unread") { if (messaging.unreadCount(peerId) == 2) Unit else null }
+        // Read on the other device: the count clears here too, and the peer gets read receipts.
+        other.call("POST", "/read", buildJsonObject { put("peer", Ids.wire(peerId)) })
+        eventually("the other device's read reaches this phone") { if (messaging.unreadCount(peerId) == 0) Unit else null }
+        peer.sees("read receipts for both") { it.str("id") == Ids.wire(first) && it.bool("read") }
+        // Read here: the other device's list shows the chat read.
+        val third = peer.sendText("Unread three")
+        incoming(peerId, "the third text") { it.id == third }
+        eventually("one unread") { if (messaging.unreadCount(peerId) == 1) Unit else null }
+        onMain { messaging.setActivePeer(peerId) }
+        eventuallyBlocking("the other device sees the chat read", 20_000) {
+            other.call("GET", "/conversations").arr("conversations").map { it.jsonObject }.firstOrNull { it.str("peer") == Ids.wire(peerId) && it.int("unread") == 0 }
+        }
+        peer.sees("the read receipt") { it.str("id") == Ids.wire(third) && it.bool("read") }
+
+        // ---- Mutes ----------------------------------------------------------------------------------
+        assertNull(onMain { messaging.muteChat(peerId, MuteDuration.Hour) })
+        assertTrue(onMain { messaging.isMuted(peerId) })
+        eventuallyBlocking("the other device sees the mute", 20_000) {
+            other.call("GET", "/conversations").arr("conversations").map { it.jsonObject }.firstOrNull { it.str("peer") == Ids.wire(peerId) && it.bool("muted") }
+        }
+        assertNull(onMain { messaging.unmuteChat(peerId) })
+        assertFalse(onMain { messaging.isMuted(peerId) })
+        eventuallyBlocking("the other device sees the unmute", 20_000) {
+            other.call("GET", "/conversations").arr("conversations").map { it.jsonObject }.firstOrNull { it.str("peer") == Ids.wire(peerId) && !it.bool("muted") }
+        }
+
+        // ---- Notes: synced to Saved Messages, re-keyed, readable on the other device ----------------
+        onMain { messaging.sendText("Note from Android", NOTES_PEER_ID) }
+        val note = eventuallyBlocking("the note is synced", 30_000) {
+            onMain { messaging.threads.value[NOTES_PEER_ID]?.lastOrNull { it.text == "Note from Android" && !it.pendingSync } }
+                ?.takeIf { n -> other.messages(me).any { it.str("id") == Ids.wire(n.id) } }
+        }
+        val synced = other.messages(me).first { it.str("id") == Ids.wire(note.id) }
+        assertEquals("Note from Android", synced.optStr("text"))
+
+        // ---- Delete for me: gone here and on the other device, the peer keeps it ------------------
+        onMain { messaging.sendText("Forget this for me", peerId) }
+        val forget = mine("Forget this for me", peerId, peer)
+        assertNull(onMain { messaging.deleteMessage(bubble(peerId, forget.id)!!, MessageDeleteScope.Me) })
+        eventually("gone here") { if (bubble(peerId, forget.id) == null) Unit else null }
+        eventuallyBlocking("gone on the other device", 20_000) {
+            if (other.messages(peerId).none { it.str("id") == Ids.wire(forget.id) }) Unit else null
+        }
+        assertFalse(peer.messages().first { it.str("id") == Ids.wire(forget.id) }.bool("deleted"))
+
+        // ---- A reaction 409: our other device wrote first ------------------------------------------
+        val target = peer.sendText("React to me")
+        incoming(peerId, "the message to react to") { it.id == target }
+        onMain { messaging.toggleReaction("👍", target, peerId) }
+        peer.sees("our first reaction") { it.str("id") == Ids.wire(target) && emojisOf(it, me) == listOf("👍") }
+        // Off the socket, this phone cannot hear the other device's write: its base goes stale.
+        onMain { messaging.leaveForeground(keepSocket = false) }
+        other.call("POST", "/react", buildJsonObject {
+            put("peer", Ids.wire(peerId))
+            put("messageId", Ids.wire(target))
+            put("emojis", buildJsonArray { add(JsonPrimitive("👍")); add(JsonPrimitive("🎉")) })
+        })
+        peer.sees("the other device's reaction") { it.str("id") == Ids.wire(target) && emojisOf(it, me).toSet() == setOf("👍", "🎉") }
+        onMain { messaging.toggleReaction("❤️", target, peerId) }
+        // The server answers 409 with the other device's record; ours goes on top of it (MC:5188-5218).
+        peer.sees("the merged reaction") { it.str("id") == Ids.wire(target) && emojisOf(it, me).toSet() == setOf("👍", "🎉", "❤️") }
+        onMain { messaging.handleAppBecameActive() }
+        eventually("this phone shows the merged set") {
+            bubble(peerId, target)?.reactions?.firstOrNull { it.userId == me && it.emojis.toSet() == setOf("👍", "🎉", "❤️") && !it.pending }
+        }
+
+        // ---- The other device removes this phone: the running app wipes ---------------------------
+        other.call("POST", "/revoke", buildJsonObject { put("deviceId", myDevice) })
+        val auth = container.auth
+        eventually("this phone learns it was removed") {
+            runCatching { messaging.refreshConversations(force = true) }
+            if (auth.sessionController.pendingFullLocalWipe.value || auth.deviceWipe.isPresented.value) Unit else null
+        }
+        // What the root does with it (InterimSession, `RootView.swift:187-194`).
+        onMain { auth.deviceWipe.startIfSessionEnded() }
+        awaitWipe(expectReason = WipeReason.Removed)
+    }
+
+    // ---- 3. Chat deletes ---------------------------------------------------------------------------
+
+    @Test
+    fun chatDeletesFollowThePeersConsent() {
+        val peer = peer(0).create()
+        signUp()
+        startAndBefriend(peer)
+        val peerId = peer.id
+
+        // Without consent: our messages are unsent on their side, theirs stay with them.
+        peer.call("POST", "/privacy", buildJsonObject { put("allow_peer_chat_delete", false) })
+        val theirs = peer.sendText("Theirs, kept")
+        incoming(peerId, "their text") { it.id == theirs }
+        onMain { messaging.sendText("Mine, unsent", peerId) }
+        val mine = mine("Mine, unsent", peerId, peer)
+        assertEquals(ChatDeleteOutcome.UnsentForPeer, onMain { messaging.deleteConversation(peerId, ConversationDeleteScope.Everyone) })
+        eventually("the chat is empty here") { if (messaging.threads.value[peerId].isNullOrEmpty()) Unit else null }
+        eventuallyBlocking("ours is unsent on their side", 20_000) {
+            peer.messages().firstOrNull { it.str("id") == Ids.wire(mine.id) }.let { if (it == null || it.bool("deleted")) Unit else null }
+        }
+        assertEquals("Theirs, kept", peer.messages().first { it.str("id") == Ids.wire(theirs) }.optStr("text"))
+
+        // With consent: the chat is cleared for both.
+        peer.call("POST", "/privacy", buildJsonObject { put("allow_peer_chat_delete", true) })
+        eventually("this phone sees the consent") {
+            runCatching { messaging.refreshConversations(force = true) }
+            Unit
+        }
+        val theirsAgain = peer.sendText("Theirs, cleared")
+        incoming(peerId, "their second text") { it.id == theirsAgain }
+        onMain { messaging.sendText("Mine, cleared", peerId) }
+        val mineAgain = mine("Mine, cleared", peerId, peer)
+        assertEquals(ChatDeleteOutcome.ClearedForBoth, onMain { messaging.deleteConversation(peerId, ConversationDeleteScope.Everyone) })
+        eventuallyBlocking("the chat is cleared on their side", 20_000) {
+            val left = peer.messages().filter { !it.bool("deleted") }.map { it.str("id") }
+            if (Ids.wire(theirsAgain) !in left && Ids.wire(mineAgain.id) !in left) Unit else null
+        }
+        eventually("and here") { if (messaging.threads.value[peerId].isNullOrEmpty()) Unit else null }
+
+        logOutThroughTheWipe()
+    }
+
+    // ---- 4. Contacts -------------------------------------------------------------------------------
+
+    @Test
+    fun contactsComeByShareCodeLinkAndNameWithPresenceBlocksAndKeyChanges() {
+        val byCode = peer(1).create()
+        val byLink = peer(2).create()
+        val byName = peer(0).create()
+        signUp()
+        onMain { messaging.start() }
+        val contacts = container.contacts.controller
+
+        // Share code, link and username (contacts §4.2; the invite parser and its lookup).
+        addContact(byCode, byCode.shareCode)
+        addContact(byLink, "https://shroud.corespace.de/u/${byLink.shareCode}")
+        addContact(byName, byName.name)
+
+        // Presence: a connected, focused socket is online; a closed one is not.
+        byName.socket(on = true)
+        eventually("the peer is online") {
+            contacts.refreshPresence(listOf(byName.id))
+            contacts.presence.value[byName.id]?.takeIf { it.online }
+        }
+        byName.socket(on = false)
+        eventually("the peer is offline") {
+            contacts.refreshPresence(listOf(byName.id))
+            contacts.presence.value[byName.id]?.takeIf { !it.online }
+        }
+
+        // Block: the contact goes, their messages are refused; unblock and add again.
+        assertNull(onMain { contacts.block(byCode.id, byCode.name) })
+        eventually("blocked") {
+            contacts.refreshBlocks()
+            contacts.blocked.value.firstOrNull { it.userId == byCode.id }
+        }
+        eventually("no longer a contact") {
+            contacts.refresh(force = true)
+            if (contacts.contacts.value.none { it.userId == byCode.id }) Unit else null
+        }
+        // The server hides our keys from them ("No pre-key bundle…") and refuses their messages ("…while blocked.").
+        val refused = runCatching { byCode.sendText("Are you there?") }.exceptionOrNull()?.message.orEmpty()
+        assertTrue("a blocked peer could send: $refused", "blocked" in refused || "pre-key bundle" in refused)
+        assertNull(onMain { contacts.unblock(byCode.id) })
+        eventually("unblocked") {
+            contacts.refreshBlocks()
+            if (contacts.blocked.value.none { it.userId == byCode.id }) Unit else null
+        }
+        addContact(byCode, byCode.shareCode)
+        val again = byCode.sendText("Back again")
+        incoming(byCode.id, "the unblocked peer's text") { it.id == again && it.text == "Back again" }
+
+        // Key change: detected before a send, trusted, then both ways work again.
+        onMain { messaging.loadThread(byName.id) }
+        onMain { messaging.sendText("Before the key change", byName.id) }
+        mine("Before the key change", byName.id, byName)
+        byName.call("POST", "/rekey")
+        byName.socket(on = true)
+        onMain { messaging.sendText("After the key change", byName.id) }
+        val identities = container.contacts.peerIdentities
+        eventually("the key change is detected") { identities.identityChange(byName.id) }
+        val queued = eventually("the message waits for the user") {
+            messaging.threads.value[byName.id]?.lastOrNull { it.text == "After the key change" }?.takeIf { it.pendingSync }
+        }
+        assertTrue(byName.messages().none { it.optStr("text") == "After the key change" })
+        onMain { identities.acceptNewIdentity(byName.id) }
+        assertNull(identities.identityChange(byName.id))
+        onMain { messaging.handleAppBecameActive() }
+        byName.sees("the queued message under the new key") { it.optStr("text") == "After the key change" }
+        assertNotNull(queued)
+        val fresh = byName.sendText("New key, same friend")
+        val decoded = incoming(byName.id, "their message under the new key") { it.id == fresh }
+        assertEquals("New key, same friend", decoded.text)
+
+        logOutThroughTheWipe()
+    }
+
+    // ---- 5. Calls ----------------------------------------------------------------------------------
+
+    @Test
+    fun callsRingConnectAndHangUpBothWays() {
+        instrumentation.uiAutomation.grantRuntimePermission(app.packageName, Manifest.permission.RECORD_AUDIO)
+        val peer = peer(0).create()
+        signUp()
+        startAndBefriend(peer)
+        peer.socket(on = true)
+        val peerId = peer.id
+        // A message first: both sides pin each other's key, which the call secret is derived from.
+        onMain { messaging.sendText("Call me", peerId) }
+        mine("Call me", peerId, peer)
+        val secrets = container.calls.secrets
+        eventuallyBlocking("the call secret exists", 20_000) {
+            onMain { secrets.refreshAll() }
+            runBlocking(Dispatchers.IO) { secrets.secret(peerId) }
+        }
+
+        val calls: CallController = container.calls.controller
+        val engine = E2eCallEngine()
+        val system = E2eCallSystem()
+        onMain { calls.attach(engine, system) }
+
+        // Android calls the web: ring, accept, sealed offer / answer / candidates, connected, hang up.
+        onMain { calls.startCall(peerId, peer.name, CallModality.Voice) }
+        eventuallyBlocking("the web rings", 20_000) { peer.call("GET", "/call").takeIf { it.str("phase") == "incoming" } }
+        peer.call("POST", "/call/accept")
+        eventually("connected here", 30_000) { calls.ui.value.active?.takeIf { it.phase == CallPhase.Active && it.isOutgoing } }
+        eventuallyBlocking("connected on the web", 30_000) { peer.call("GET", "/call").takeIf { it.str("phase") == "active" && it.bool("connected") } }
+        assertTrue("the web's answer reached the engine", engine.receivedAnswers.isNotEmpty())
+        assertTrue(engine.isConnected)
+        onMain { calls.hangup() }
+        eventuallyBlocking("the web hears the hangup", 20_000) { peer.call("GET", "/call").takeIf { it.str("phase") == "ended" || it.str("phase") == "idle" } }
+        eventually("ended here", 20_000) { if (calls.ui.value.active.let { it == null || it.phase == CallPhase.Ending }) Unit else null }
+
+        // The web calls Android: the ring arrives over the socket, we accept, the web offers.
+        eventually("idle again", 20_000) { if (calls.ui.value.active == null) Unit else null }
+        peer.call("POST", "/call/start", buildJsonObject { put("peer", Ids.wire(me)); put("username", myName) })
+        eventually("Android rings", 20_000) { calls.ui.value.active?.takeIf { it.phase == CallPhase.IncomingRinging && !it.isOutgoing } }
+        onMain { calls.acceptIncoming() }
+        eventually("connected here again", 30_000) { calls.ui.value.active?.takeIf { it.phase == CallPhase.Active } }
+        eventuallyBlocking("connected on the web again", 30_000) { peer.call("GET", "/call").takeIf { it.str("phase") == "active" && it.bool("connected") } }
+        assertTrue("the web's offer reached the engine", engine.receivedOffers.isNotEmpty())
+        peer.call("POST", "/call/hangup")
+        eventually("the web's hangup ends the call here", 20_000) { if (calls.ui.value.active.let { it == null || it.phase == CallPhase.Ending }) Unit else null }
+        assertTrue("the engine was closed", engine.closes >= 2)
+
+        // Both calls are in the history.
+        eventually("the history lists both calls") {
+            calls.refreshHistory()
+            calls.history.value.recent.takeIf { it.size >= 2 }
+        }
+
+        logOutThroughTheWipe()
+    }
+
     // ---- Android account ---------------------------------------------------------------------------
 
     private fun signUp() {
         val auth = container.auth.sessionController
-        val name = "e2e_" + UUID.randomUUID().toString().replace("-", "").take(12)
-        val session = onMain { auth.register(name, "Engine e2e passphrase " + UUID.randomUUID()) }
+        myName = "e2e_" + UUID.randomUUID().toString().replace("-", "").take(12)
+        myPassword = "Engine e2e passphrase " + UUID.randomUUID()
+        val session = onMain { auth.register(myName, myPassword) }
         signedUp = true
         val keys = container.keys
-        onMain { keys.cryptoController.establishFromSignup(keys.bip39.generate(), session) }
+        myWords = keys.bip39.generate()
+        onMain { keys.cryptoController.establishFromSignup(myWords, session) }
         assertEquals(session.userId, keys.cryptoController.unlockedUserId.value)
     }
 
+    /** Messaging on, [peer] added by username and accepted, its chat open. */
+    private fun startAndBefriend(peer: Peer) {
+        onMain { messaging.start() }
+        addContact(peer, peer.name)
+        onMain { messaging.loadThread(peer.id) }
+    }
+
+    private fun addContact(peer: Peer, invite: String) {
+        val contacts = container.contacts.controller
+        val added = onMain { contacts.add(invite) }
+        assertTrue("add contact by '$invite': $added", added is AddContactOutcome.Requested || added is AddContactOutcome.Added)
+        assertEquals(1, peer.call("POST", "/contacts/accept").int("accepted"))
+        eventually("${peer.name} becomes a contact") {
+            contacts.refresh(force = true)
+            contacts.contacts.value.firstOrNull { it.userId == peer.id }
+        }
+    }
+
     private fun logOutThroughTheWipe() {
+        onMain { container.auth.deviceWipe.start(WipeReason.Logout) }
+        awaitWipe(expectReason = WipeReason.Logout)
+    }
+
+    private fun awaitWipe(expectReason: WipeReason) {
         val wipe = container.auth.deviceWipe
-        onMain { wipe.start(WipeReason.Logout) }
+        eventually("the wipe runs") { if (wipe.isPresented.value || wipe.phase.value != WipePhase.Idle) Unit else null }
+        assertEquals(expectReason, wipe.reason.value)
         eventually("the wipe finishes", timeoutMs = 60_000) { if (wipe.phase.value == WipePhase.Idle && !wipe.isPresented.value) Unit else null }
         assertTrue("leftovers: ${wipe.leftovers.value}", wipe.leftovers.value.isEmpty())
         assertNull(container.auth.sessionController.session.value)
@@ -270,21 +678,16 @@ class EngineE2eTest {
 
     // ---- Thread helpers ----------------------------------------------------------------------------
 
+    private fun bubble(peer: UUID, id: UUID): ChatMessage? = messaging.threads.value[peer]?.firstOrNull { it.id == id }
+
     /** Our sent text bubble, once the server re-keyed it (`ThreadState.rekey`). */
-    private fun mine(text: String, peer: UUID): ChatMessage = eventuallyBlocking("\"$text\" is sent", 30_000) {
+    private fun mine(text: String, peer: UUID, web: Peer): ChatMessage = eventuallyBlocking("\"$text\" is sent", 30_000) {
         onMain { messaging.threads.value[peer]?.lastOrNull { it.isMine && it.text == text && !it.pendingSync && it.sendError == null } }
-            ?.takeIf { serverKnows(it.id) }
+            ?.takeIf { sent -> web.messages().any { it.str("id") == Ids.wire(sent.id) } }
     }
 
-    private val serverIds = HashSet<UUID>()
-
-    /** The peer's list holds [id]: the bubble carries the server's id (re-keyed). */
-    private fun serverKnows(id: UUID): Boolean {
-        if (id in serverIds) return true
-        val known = peerMessages().any { it.str("id") == Ids.wire(id) }
-        if (known) serverIds += id
-        return known
-    }
+    private fun sentMedia(peer: UUID, kind: ChatMessageKind, text: String): ChatMessage? =
+        messaging.threads.value[peer]?.lastOrNull { it.isMine && it.kind == kind && it.text == text && !it.pendingSync && it.sendError == null && it.mediaObjectId != null }
 
     private fun incoming(peer: UUID, what: String, match: (ChatMessage) -> Boolean): ChatMessage {
         var polls = 0
@@ -295,19 +698,15 @@ class EngineE2eTest {
         }
     }
 
+    /** The emojis [user] reacted with on a peer-side message, as the web opened them. */
+    private fun emojisOf(message: JsonObject, user: UUID): List<String> =
+        message.arr("reactions").map { it.jsonObject }.firstOrNull { it.str("userId") == Ids.wire(user) }
+            ?.arr("emojis")?.map { it.jsonPrimitive.content }.orEmpty()
+
     // ---- Peer --------------------------------------------------------------------------------------
 
-    private fun peerMessages(): List<JsonObject> {
-        val me = container.auth.sessionController.session.value?.userId ?: return emptyList()
-        return peer("GET", "/messages?peer=$me").arr("messages").map { it.jsonObject }
-    }
-
-    private fun peerSees(what: String, timeoutMs: Long = 30_000, match: (JsonObject) -> Boolean) {
-        eventuallyBlocking(what, timeoutMs) { peerMessages().firstOrNull(match) }
-    }
-
-    private fun peer(method: String, path: String, body: JsonObject? = null): JsonObject {
-        val request = Request.Builder().url(peerUrl + path).apply {
+    private fun peerCall(base: String, method: String, path: String, body: JsonObject? = null): JsonObject {
+        val request = Request.Builder().url(base + path).apply {
             if (method == "POST") post((body ?: JsonObject(emptyMap())).toString().toRequestBody(JSON))
         }.build()
         http.newCall(request).execute().use { response ->
@@ -319,10 +718,11 @@ class EngineE2eTest {
 
     // ---- Media -------------------------------------------------------------------------------------
 
-    private fun jpeg(): ByteArray {
-        val bitmap = Bitmap.createBitmap(320, 240, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.rgb(47, 168, 91)) }
+    private fun jpeg(width: Int, height: Int): ByteArray {
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.rgb(47, 168, 91)) }
         return ByteArrayOutputStream().use { out ->
             bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+            bitmap.recycle()
             out.toByteArray()
         }
     }
