@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -46,6 +47,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -401,5 +403,50 @@ private fun PhraseCell(number: Int, word: String, isRevealed: Boolean, modifier:
                 ShimmerPlaceholder(92.dp, 14.dp)
             }
         }
+    }
+}
+
+/**
+ * "I wrote down my encryption phrase" (`confirmRow`, `SignUpView.swift:237-270`; the same row on Log
+ * In's new phrase, `LogInFlowView.swift:359-393`): the box and the line toggle together; the row is
+ * at least 48 dp tall without moving its neighbours (iOS reaches ≈ 44 pt with a −11 hit inset;
+ * addendum SignUp S4); press 0.97. TalkBack: a check box, "Checked" / "Not checked".
+ */
+@Composable
+fun WroteDownRow(checked: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+    val colors = ShroudTheme.colors
+    Row(
+        modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .pressable(enabled = enabled, scale = 0.97f, role = Role.Checkbox, onClick = onToggle)
+            .padding(horizontal = 4.dp)
+            .semantics(mergeDescendants = true) { stateDescription = if (checked) "Checked" else "Not checked" },
+        horizontalArrangement = Arrangement.spacedBy(9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CheckBoxMark(checked)
+        ShroudText("I wrote down my encryption phrase", inter(13f, FontWeight.Medium), colors.textPrimary)
+    }
+}
+
+/**
+ * The amber warning under a phrase (`warningCard`, `SignUpView.swift:221-235`): triangle 15
+ * `warningIcon` + 12 sp `warningText`, line spacing 3, padding 12 / 10, r12, one TalkBack stop.
+ */
+@Composable
+fun PhraseWarningCard(text: String, modifier: Modifier = Modifier) {
+    val colors = ShroudTheme.colors
+    Row(
+        modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(colors.warningBackground)
+            .padding(horizontal = 12.dp, vertical = 10.dp)
+            .semantics(mergeDescendants = true) {},
+        horizontalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        ShroudIcon(ShroudIcons.WarningFill, colors.warningIcon, size = 15.dp)
+        ShroudText(text, inter(12f, lineSpacing = 3f), colors.warningText)
     }
 }

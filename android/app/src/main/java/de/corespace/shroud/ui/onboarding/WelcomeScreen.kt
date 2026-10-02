@@ -1,6 +1,5 @@
 package de.corespace.shroud.ui.onboarding
 
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -18,15 +17,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.dropShadow
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -34,6 +34,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import de.corespace.shroud.core.net.ServerConfiguration
 import de.corespace.shroud.core.net.ServerConnectionMode
@@ -41,19 +42,29 @@ import de.corespace.shroud.ui.components.BrandLogoMark
 import de.corespace.shroud.ui.components.GlassBarRow
 import de.corespace.shroud.ui.components.GlassCircleButton
 import de.corespace.shroud.ui.components.GroupedScreen
+import de.corespace.shroud.ui.components.ListEntranceHost
 import de.corespace.shroud.ui.components.PrimaryButton
 import de.corespace.shroud.ui.components.ScreenInset
 import de.corespace.shroud.ui.components.SecondaryButton
 import de.corespace.shroud.ui.components.ShroudIcon
 import de.corespace.shroud.ui.components.ShroudText
 import de.corespace.shroud.ui.components.brandTileShape
+import de.corespace.shroud.ui.components.entranceRow
 import de.corespace.shroud.ui.theme.Motion
 import de.corespace.shroud.ui.theme.ShroudIcons
 import de.corespace.shroud.ui.theme.ShroudTheme
 import de.corespace.shroud.ui.theme.inter
 import kotlinx.coroutines.delay
 
-/** Welcome (`WelcomeView.swift`, `Welcome` in the design). */
+/**
+ * Welcome (`WelcomeView.swift`; settings-lock addendum *WelcomeView.swift*; design `Welcome` `oOR2X`).
+ *
+ * The arrival (logo, copy, CTAs) plays once per Welcome: `arrived` is saveable, so a Welcome the
+ * shell keeps under Sign Up / Log In (with a saveable-state holder per route) does not replay it on
+ * return (W1). The feature tiles use the shared list entrance (W2); the connection hint is static
+ * (W3). The post-auth toast and the orphan reconcile belong to the shell's root (W4, W5). The logo
+ * is the zoom source of Sign Up and Log In when the shell hosts the onboarding zoom (W8).
+ */
 @Composable
 fun WelcomeScreen(
     server: ServerConfiguration,
@@ -63,9 +74,10 @@ fun WelcomeScreen(
 ) {
     val colors = ShroudTheme.colors
     val reduce = ShroudTheme.reduceMotion
-    // The app's first frame: logo, copy and tiles settle in reading order, then the CTAs arrive.
+    // The app's first frame: logo and copy settle (`Motion.gentle`, 50 ms in, `:41-53`), then the CTAs arrive.
     var arrived by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(Unit) {
+        if (arrived) return@LaunchedEffect
         delay(50)
         arrived = true
     }
@@ -95,7 +107,10 @@ fun WelcomeScreen(
                                 scaleY = s
                                 alpha = arrival
                             }
-                            .shadow(24.dp, brandTileShape(80.dp), ambientColor = colors.accent.copy(alpha = 0.22f), spotColor = colors.accent.copy(alpha = 0.22f)),
+                            // Accent 22 %, blur 16, y 10 (`:98`, W7): a drop shadow, not an elevation.
+                            .dropShadow(brandTileShape(80.dp), Shadow(radius = 16.dp, color = colors.accent, offset = DpOffset(0.dp, 10.dp), alpha = 0.22f))
+                            // The zoom source of Sign Up and Log In (`:97`, W8).
+                            .onboardingHeroSource(80.dp),
                     )
                     Column(
                         Modifier.graphicsLayer {
@@ -120,12 +135,16 @@ fun WelcomeScreen(
                         )
                     }
                 }
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    FeatureTile(ShroudIcons.LockFill, "End-to-end encrypted", "Messages decrypt only on your devices", 2, arrived)
-                    FeatureTile(ShroudIcons.AudioLines, "Voice messages", "Encrypted audio with on-device transcription", 3, arrived)
-                    FeatureTile(ShroudIcons.PhoneFill, "Secure calls", "Voice and video with WebRTC encryption", 4, arrived)
+                // The shared list entrance, rows 2-4, timed from the screen's appearance (`:121-131`, W2).
+                ListEntranceHost(key = Unit) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        FeatureTile(ShroudIcons.LockFill, "End-to-end encrypted", "Messages decrypt only on your devices", Modifier.entranceRow(2))
+                        FeatureTile(ShroudIcons.AudioLines, "Voice messages", "Encrypted audio with on-device transcription", Modifier.entranceRow(3))
+                        FeatureTile(ShroudIcons.PhoneFill, "Secure calls", "Voice and video with WebRTC encryption", Modifier.entranceRow(4))
+                    }
                 }
-                ConnectionHint(server, Modifier.graphicsLayer { alpha = arrival })
+                // Static: on screen from the first frame (W3).
+                ConnectionHint(server)
             }
             Column(
                 Modifier
@@ -136,31 +155,21 @@ fun WelcomeScreen(
                     },
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                PrimaryButton("Start Messaging", onStartMessaging)
-                SecondaryButton("Log In", onLogIn)
+                // iOS accessibility identifiers `welcome.startMessaging`, `welcome.logIn` (W6).
+                PrimaryButton("Start Messaging", onStartMessaging, Modifier.testTag("welcome.startMessaging"))
+                SecondaryButton("Log In", onLogIn, Modifier.testTag("welcome.logIn"))
             }
         }
     }
 }
 
-/** One row of the entrance stagger: 30 ms per row, 10 dp lift (`entranceRow`). */
+/** A feature tile (`featureTile`, `:161-187`): 40 dp glyph square, title and subtitle, one TalkBack stop. */
 @Composable
-private fun FeatureTile(icon: ImageVector, title: String, subtitle: String, index: Int, arrived: Boolean) {
+private fun FeatureTile(icon: ImageVector, title: String, subtitle: String, modifier: Modifier = Modifier) {
     val colors = ShroudTheme.colors
-    val reduce = ShroudTheme.reduceMotion
-    val progress = remember { Animatable(0f) }
-    LaunchedEffect(arrived) {
-        if (!arrived) return@LaunchedEffect
-        delay(30L * index)
-        progress.animateTo(1f, Motion.respecting(reduce, Motion.gentle()))
-    }
     Row(
-        Modifier
+        modifier
             .fillMaxWidth()
-            .graphicsLayer {
-                alpha = progress.value
-                translationY = if (reduce) 0f else 10.dp.toPx() * (1f - progress.value)
-            }
             .clip(RoundedCornerShape(14.dp))
             .background(colors.background)
             .padding(14.dp)
@@ -178,6 +187,7 @@ private fun FeatureTile(icon: ImageVector, title: String, subtitle: String, inde
     }
 }
 
+/** The server this phone talks to (`connectionHint`, `:133-159`): one TalkBack element "Current server …". */
 @Composable
 private fun ConnectionHint(server: ServerConfiguration, modifier: Modifier = Modifier) {
     val colors = ShroudTheme.colors
