@@ -7,6 +7,7 @@ import de.corespace.shroud.testing.TempDirRule
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -49,5 +50,31 @@ class UiFlagsTest {
         assertFalse(flags.get("ui.a"))
         assertFalse(fixture.prefs.open(PrefsFiles.UI).contains("ui.a"))
         assertFalse(fixture.prefs.open(PrefsFiles.UI).contains("ui.b"))
+    }
+
+    /** `shroud.ui` is wiped; a flag written through [UiFlags.kept] lives in [PrefsFiles.DEVICE] and stays. */
+    @Test
+    fun logOutRemovesUiFlagsAndLeavesTheKeptOnes() = runTest {
+        val fixture = WipeFixture(temp.root)
+        val seal = StorageSeal()
+        val kept = PrefsUiFlags(fixture.prefs.open(PrefsFiles.DEVICE), seal)
+        val flags = PrefsUiFlags(fixture.prefs.open(PrefsFiles.UI), seal, kept)
+        assertSame(kept, flags.kept)
+        assertSame(kept, kept.kept)
+        flags.set("ui.a", true)
+        flags.kept.set("ui.photoAsked", true)
+        assertTrue(fixture.keepList.keepsPrefsKey(PrefsFiles.DEVICE, "ui.photoAsked"))
+        assertFalse(fixture.keepList.keepsPrefsKey(PrefsFiles.UI, "ui.a"))
+        seal.seal()
+        flags.kept.set("ui.photoAsked", false)
+        flags.kept.set("ui.other", true)
+        seal.unseal()
+        assertTrue(flags.kept.get("ui.photoAsked"))
+        assertFalse(fixture.prefs.open(PrefsFiles.DEVICE).contains("ui.other"))
+        fixture.wipe.wipeSettings()
+        assertFalse(flags.get("ui.a"))
+        assertFalse(fixture.prefs.open(PrefsFiles.UI).contains("ui.a"))
+        assertTrue(flags.kept.get("ui.photoAsked"))
+        assertTrue(fixture.prefs.open(PrefsFiles.DEVICE).contains("ui.photoAsked"))
     }
 }
