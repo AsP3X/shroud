@@ -54,7 +54,11 @@ import kotlinx.coroutines.cancel
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
+import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TestName
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
@@ -79,6 +83,12 @@ import java.util.UUID
  * published, as `MainShell` does. 2× density, so a PNG is the frame at 824 × 1830 px. Motion is
  * reduced so every animation has settled (no shimmer sweep, the typing dots full and still).
  * Software rendering draws no backdrop blur: glass shows its translucent fill only.
+ *
+ * The renders run only when asked — `SHROUD_RENDER_SCREENS=1` in the environment of the Gradle
+ * call (`SHROUD_RENDER_SCREENS=1 gw :app:testDebugUnitTest --tests '*ChatsScreensRenderTest'`) —
+ * so the shared unit-test JVM is not loaded with two dozen full-screen renders on every run (it
+ * has the default heap, GAPS #9). [ALWAYS] runs every time: the toast's place over the tab bar is
+ * behaviour the suite guards.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], qualifiers = "w412dp-h915dp-port-xhdpi")
@@ -93,6 +103,16 @@ class ChatsScreensRenderTest {
     private val navigation = RecordingNavigation()
     private val hosts = ArrayList<ComposeHarness>()
     private val frame = mutableIntStateOf(0)
+
+    @get:Rule
+    val testName = TestName()
+
+    private val rendersWanted: Boolean = System.getenv(RENDER_ENV) == "1"
+
+    @Before
+    fun onlyWhenAsked() {
+        assumeTrue("set $RENDER_ENV=1 to render the Chats states", rendersWanted || testName.methodName in ALWAYS)
+    }
 
     @After
     fun tearDown() {
@@ -242,8 +262,10 @@ class ChatsScreensRenderTest {
         val root = ui.root
         val bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
         root.draw(Canvas(bitmap))
-        val dir = File("build/outputs/c5-screens").apply { mkdirs() }
-        File(dir, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        if (rendersWanted) {
+            val dir = File("build/outputs/c5-screens").apply { mkdirs() }
+            File(dir, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        }
         return bitmap
     }
 
@@ -484,6 +506,10 @@ class ChatsScreensRenderTest {
     private companion object {
         const val SETTLE_REAL_MS = 30L
         const val ENTRANCE_REAL_MS = 400L
+        const val RENDER_ENV = "SHROUD_RENDER_SCREENS"
+
+        /** Run on every unit-test run, renders wanted or not. */
+        val ALWAYS = setOf("deletedToast")
         val STATUS_BAR = 52.dp
         val NAV_BAR = 24.dp
     }
