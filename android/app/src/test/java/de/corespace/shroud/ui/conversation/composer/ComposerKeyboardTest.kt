@@ -148,6 +148,8 @@ class ComposerKeyboardTest {
         assertEquals(ComposerPhase.Idle, controller.gesture.phase.value)
         assertEquals(1, services.voices.size)
         assertEquals(0, services.cancels)
+        // The peer hears "recording" once and "stopped" once, though the recorder also reports its stop.
+        assertEquals(listOf(true, false), services.recordingSignals)
     }
 
     @Test
