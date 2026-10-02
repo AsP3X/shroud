@@ -82,8 +82,12 @@ sealed interface ThreadItem {
         override val contentType: String = "bottom"
     }
 
-    /** The peer's typing or recording bubble after the newest message (CV:949-952). */
-    data class Typing(val activity: ChatPeerActivity) : ThreadItem {
+    /**
+     * The peer's typing or recording bubble after the newest message (CV:949-952). Always in the
+     * list, empty (zero height) while [activity] is null, so the bubble can shrink away in place
+     * instead of vanishing with its row.
+     */
+    data class Typing(val activity: ChatPeerActivity?) : ThreadItem {
         override val key: String = "typing-indicator"
         override val contentType: String = "typing"
     }
@@ -161,8 +165,8 @@ object Timeline {
 
     /**
      * The lazy list's rows, newest first (conversation-thread §3.1): the bottom spacer, the typing
-     * bubble while the peer types or records, the timeline reversed, the header last (topmost).
-     * [row] builds a message's row model.
+     * slot (holding the bubble while the peer types or records), the timeline reversed, the header
+     * last (topmost). [row] builds a message's row model.
      */
     fun threadItems(
         timeline: List<TimelineItem>,
@@ -172,7 +176,7 @@ object Timeline {
     ): List<ThreadItem> {
         val items = ArrayList<ThreadItem>(timeline.size + 3)
         items += ThreadItem.Bottom
-        if (activity != null) items += ThreadItem.Typing(activity)
+        items += ThreadItem.Typing(activity)
         for (index in timeline.indices.reversed()) {
             items += when (val item = timeline[index]) {
                 is TimelineItem.Day -> ThreadItem.Day(item.label, item.key)

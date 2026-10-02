@@ -25,8 +25,6 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
-import org.robolectric.shadows.ShadowChoreographer
-import java.time.Duration
 
 /**
  * Row height at large text (shell-chats §18: "iOS Dynamic Type does not scale these fixed sizes;
@@ -79,11 +77,12 @@ class ChatRowFontScaleTest {
     private fun measureHeightDp(fontScale: Float, content: @Composable () -> Unit): Float {
         var heightPx = -1
         var density = 1f
-        // Reduce motion and 60 Hz frames, as ComposeHarness does: the typing row's endless loop
-        // otherwise draws frames for minutes under idle() (406 s for one test, run alone) and its
-        // garbage ran the shared test JVM out of heap in the full suite.
-        ShadowChoreographer.setFrameDelay(Duration.ofMillis(16))
-        Settings.Global.putFloat(RuntimeEnvironment.getApplication().contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 0f)
+        // Reduce motion, as ComposeHarness does. With motion on, the typing label asks for every
+        // frame (`TypingLabel.frameSeconds`) and Robolectric delivers each vsync at once, so the
+        // idle() below ran frames for minutes; Robolectric's trace log kept two strings per frame
+        // and the full unit-test run ran out of heap. Motion changes no height measured here.
+        val resolver = RuntimeEnvironment.getApplication().contentResolver
+        Settings.Global.putFloat(resolver, Settings.Global.ANIMATOR_DURATION_SCALE, 0f)
         val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
         activity.setContent {
             val base = LocalDensity.current

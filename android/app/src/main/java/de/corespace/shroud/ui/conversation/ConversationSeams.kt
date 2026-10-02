@@ -8,6 +8,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import de.corespace.shroud.core.messaging.reactions.ReactionMerge
 import de.corespace.shroud.core.model.ChatMessage
 import de.corespace.shroud.core.model.MediaTransfer
 import de.corespace.shroud.core.model.ReactionChip
@@ -96,13 +97,66 @@ interface BubbleContext {
 }
 
 /**
+ * Builds the thread's [MessageRowModel]s (iOS `rowKey(for:quoted:)`, `replyContent(for:quoted:)` and
+ * `reactionChips(for:)`, `ConversationView.swift:1254-1263, 2091-2113, 2179-2191`;
+ * conversation-thread §3.7). Pure: everything a bubble is drawn from comes in as a value, so a row
+ * model changes — and its bubble redraws — only when its own message, quote, transfer, chips,
+ * transcript tail or highlight changed.
+ */
+object MessageRows {
+    /**
+     * The row of [message]. [quoted] holds every quoted message still in the thread
+     * ([Timeline.quotedMessages]); [transcriptTail] the voice notes whose transcripts unfold unasked
+     * ([Timeline.transcriptTail]); [highlightedId] the row a jump landed on.
+     */
+    fun model(
+        message: ChatMessage,
+        isNotes: Boolean,
+        peerName: String,
+        myUserId: UUID?,
+        quoted: Map<UUID, ChatMessage>,
+        transfers: Map<UUID, MediaTransfer>,
+        transcriptTail: Collection<UUID>,
+        highlightedId: UUID?,
+    ): MessageRowModel = MessageRowModel(
+        message = message,
+        isNotes = isNotes,
+        peerName = peerName,
+        replyQuote = replyQuote(message, quoted, peerName, myUserId),
+        transfer = transfers[message.id],
+        reactionChips = chips(message, myUserId),
+        showsTranscriptTail = message.id in transcriptTail,
+        highlighted = message.id == highlightedId,
+    )
+
+    /**
+     * The header of a bubble that quotes something; null for an ordinary message
+     * (`replyContent(for:quoted:)`, CV:1254-1265): the original when it is still here, else what
+     * the sender sealed with the reply.
+     */
+    fun replyQuote(message: ChatMessage, quoted: Map<UUID, ChatMessage>, peerName: String, myUserId: UUID?): ReplyQuoteContent? {
+        val reference = message.replyTo ?: return null
+        return ReplyQuoteContent.make(reference, quoted[reference.messageId], peerName, myUserId)
+    }
+
+    /** One chip per person (`ReactionMerge.chips`); none on a tombstone (`reactionChips(for:)`, CV:2095-2096). */
+    fun chips(message: ChatMessage, myUserId: UUID?): List<ReactionChip> =
+        if (message.deleted || message.reactions.isEmpty()) emptyList() else ReactionMerge.chips(message.reactions, myUserId)
+
+    /** The long-press menu's copy of [row]: the same bubble, inert, its chips no landing place (CV:2063-2072). */
+    fun hero(row: MessageRowModel): MessageRowModel = row.copy(isMenuHero = true, highlighted = false)
+}
+
+/**
  * The width a message row offers its bubble: the thread's width less 16 dp on each side, measured by
  * the screen and provided to the list **and** the long-press menu's hero, so both size a bubble
  * identically (`chatRowWidth`, `ConversationView.swift:261-264`; conversation-thread §1.2). Bubbles
  * size themselves from it (`maxBubbleWidth`, thread §4.1); outside a conversation it is
  * [ChatRowWidth.Fallback] (288 dp, `MessageBubbleView.swift:123-133`).
  *
- * **Seam, owner W3-THREAD-LIST** (W3-THREAD-BUBBLES reads it).
+ * **Seam, owner W3-THREAD-LIST.** The bubbles (W3-THREAD-BUBBLES) read their own
+ * `bubble.LocalChatRowWidth` (unspecified outside a thread, so a bubble then measures its row); the
+ * conversation screen provides the same measured width through both.
  */
 val LocalChatRowWidth: ProvidableCompositionLocal<Dp> = compositionLocalOf { ChatRowWidth.Fallback }
 
