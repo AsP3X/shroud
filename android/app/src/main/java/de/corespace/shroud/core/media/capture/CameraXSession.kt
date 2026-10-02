@@ -16,7 +16,6 @@ import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.video.FallbackStrategy
 import androidx.camera.video.FileOutputOptions
 import androidx.camera.video.Quality
 import androidx.camera.video.QualitySelector
@@ -34,7 +33,20 @@ import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
+
+/** FHD, then HD, then SD. The first one the camera supports is the recording. */
+internal val recordingQualityOrder: List<Quality> = listOf(Quality.FHD, Quality.HD, Quality.SD)
+
+/**
+ * The recording quality for [supported]. HD-only cameras record HD.
+ * `FallbackStrategy.lowerQualityOrHigherThan(HD)` left HD itself out, so that camera bound nothing.
+ */
+internal fun selectRecordingQuality(supported: Collection<Quality>): Quality? =
+    recordingQualityOrder.firstOrNull { it in supported }
 
 /**
  * CameraX binding for [ShroudCameraCapture]. Clips use [FileOutputOptions] only — never
@@ -59,28 +71,53 @@ internal class CameraXSession(context: Context) : CameraSession {
 
     @Volatile
     private var bindFailed = false
+    private val bindStateFlow = MutableStateFlow<CameraBindState>(CameraBindState.Unbound)
+    private var bindListener: ((CameraBindState) -> Unit)? = null
 
     override val isBound: Boolean get() = imageCapture != null
+    override val bindState: StateFlow<CameraBindState> = bindStateFlow.asStateFlow()
     override val hasFrontCamera: Boolean get() = !bindFailed && hasLens(CameraCharacteristics.LENS_FACING_FRONT)
     override val hasBackCamera: Boolean get() = !bindFailed && hasLens(CameraCharacteristics.LENS_FACING_BACK)
+    override val zoomRange: ClosedFloatingPointRange<Float>?
+        get() {
+            val state = camera?.cameraInfo?.zoomState?.value ?: return null
+            return state.minZoomRatio..state.maxZoomRatio
+        }
+    override val hasFlashUnit: Boolean get() = camera?.cameraInfo?.hasFlashUnit() == true
+
+    override fun setBindListener(listener: (CameraBindState) -> Unit) {
+        bindListener = listener
+    }
 
     override fun bind(owner: LifecycleOwner, preview: Preview.SurfaceProvider, front: Boolean, video: Boolean) {
         val next = ++generation
         bindFailed = true
+        publishBind(CameraBindState.Binding)
         val future = ProcessCameraProvider.getInstance(app)
         val work = Runnable {
             if (next != generation) return@Runnable
             try {
                 bindReady(future.get(), owner, preview, front, video)
+                if (next != generation) return@Runnable
                 bindFailed = false
+                publishBind(
+                    CameraBindState.Bound(
+                        hasLens(CameraCharacteristics.LENS_FACING_FRONT),
+                        hasLens(CameraCharacteristics.LENS_FACING_BACK),
+                    ),
+                )
             } catch (e: InterruptedException) {
                 Thread.currentThread().interrupt()
+                if (next != generation) throw e
                 bindFailed = true
                 releaseUseCases()
+                publishBind(CameraBindState.Failed)
                 throw e
             } catch (e: Exception) {
+                if (next != generation) throw e
                 bindFailed = true
                 releaseUseCases()
+                publishBind(CameraBindState.Failed)
                 throw e
             }
         }
@@ -147,9 +184,7 @@ internal class CameraXSession(context: Context) : CameraSession {
             .build()
         val bound = if (video) {
             val recorder = Recorder.Builder()
-                .setQualitySelector(
-                    QualitySelector.from(Quality.FHD, FallbackStrategy.lowerQualityOrHigherThan(Quality.HD)),
-                )
+                .setQualitySelector(QualitySelector.fromOrderedList(recordingQualityOrder))
                 .build()
             val videoUse = VideoCapture.withOutput(recorder)
             videoCapture = videoUse
@@ -165,6 +200,12 @@ internal class CameraXSession(context: Context) : CameraSession {
     override fun unbind() {
         generation++
         releaseUseCases()
+        publishBind(CameraBindState.Unbound)
+    }
+
+    private fun publishBind(state: CameraBindState) {
+        bindStateFlow.value = state
+        bindListener?.invoke(state)
     }
 
     override suspend fun captureStill(): Bitmap {

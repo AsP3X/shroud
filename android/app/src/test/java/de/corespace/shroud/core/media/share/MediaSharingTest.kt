@@ -50,6 +50,9 @@ class MediaSharingTest {
         assertEquals("${app.packageName}.media", uri.authority)
         assertNotEquals(messageId.toString(), uri.lastPathSegment)
         assertEquals("image/jpeg", provider.getType(uri))
+        val target = requireNotNull(sharing.shareTarget(messageId))
+        assertEquals("image/jpeg", target.mime)
+        assertEquals(provider.getType(target.uri), target.mime)
         assertArrayEquals(payload, read(provider.openFile(uri, "r")))
 
         sharing.revokeAll()

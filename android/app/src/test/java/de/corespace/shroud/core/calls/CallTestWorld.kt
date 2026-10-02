@@ -109,7 +109,12 @@ internal class FakeEngine(private val name: String) : CallMediaEngine {
     override val localVideoTrack: VideoTrack? = null
     override val remoteVideoTrack: VideoTrack? = null
     override val remoteScreenTrack: VideoTrack? = null
-    override val eglContext: EglBase.Context? = null
+    var eglReads = 0
+    override val eglContext: EglBase.Context?
+        get() {
+            eglReads++
+            return null
+        }
 
     override fun setCallbacks(callbacks: CallMediaCallbacks?) {
         listener = callbacks
@@ -237,6 +242,10 @@ internal class FakeSystem : CallSystem {
     val missed = ArrayList<UUID>()
     var speakerOn = false
     override val isOnEarpiece = MutableStateFlow(true)
+    private val phoneEarpiece = CallAudioRoute(CallAudioRouteType.Earpiece, "Earpiece", "earpiece")
+    private val phoneSpeaker = CallAudioRoute(CallAudioRouteType.Speaker, "Speaker", "speaker")
+    override val audioRoutes = MutableStateFlow(listOf(phoneEarpiece, phoneSpeaker))
+    override val currentRoute = MutableStateFlow<CallAudioRoute?>(phoneEarpiece)
 
     override fun reportIncoming(callId: UUID, peerName: String, video: Boolean) {
         log += "incoming"
@@ -277,6 +286,13 @@ internal class FakeSystem : CallSystem {
     override fun setSpeaker(on: Boolean) {
         speakerOn = on
         isOnEarpiece.value = !on
+        currentRoute.value = if (on) phoneSpeaker else phoneEarpiece
+    }
+
+    override fun selectRoute(route: CallAudioRoute) {
+        currentRoute.value = route
+        speakerOn = route.type == CallAudioRouteType.Speaker
+        isOnEarpiece.value = route.type == CallAudioRouteType.Earpiece
     }
 
     override fun postMissedCall(callId: UUID, peerUserId: UUID?, peerName: String?, video: Boolean) {
