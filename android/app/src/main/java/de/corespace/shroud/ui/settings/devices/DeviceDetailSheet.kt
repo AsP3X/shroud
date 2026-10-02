@@ -21,7 +21,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import de.corespace.shroud.core.crypto.DeviceNameSeal
 import de.corespace.shroud.core.devices.DeviceRow
 import de.corespace.shroud.core.model.Ids
 import de.corespace.shroud.ui.components.AlertButton
@@ -50,7 +49,6 @@ private data class DeviceDetail(
     val device: DeviceRow,
     val isRevoking: Boolean,
 ) {
-    val label: DeviceNameSeal.Label? get() = device.label
     val isCurrent: Boolean get() = device.isThisDevice
 }
 
@@ -123,7 +121,7 @@ internal fun DeviceDetailSheet(
             isSavingName = isSavingName,
             renameError = renameError,
             onStartRename = {
-                draft = detail.label?.name ?: ""
+                draft = detail.device.label?.name ?: ""
                 isRenaming = true
             },
             onCopyId = {

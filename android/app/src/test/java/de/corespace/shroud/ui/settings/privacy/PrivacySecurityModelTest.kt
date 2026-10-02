@@ -11,6 +11,7 @@ import de.corespace.shroud.core.storage.SecurityPreferences
 import de.corespace.shroud.core.storage.StorageSeal
 import de.corespace.shroud.testing.FakeSharedPreferences
 import de.corespace.shroud.ui.components.Toast
+import de.corespace.shroud.ui.shell.WindowProtection
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -347,16 +348,29 @@ class PrivacySecurityModelTest {
         assertEquals("$lead Re-open with your screen lock or your encryption phrase.", PrivacyCopy.autoLockFootnote(null))
     }
 
-    /** P5a: API 35+ covers recordings and still allows screenshots; below it `FLAG_SECURE` blocks both. */
+    /**
+     * P5: the subtitle says what the switch does on this API level, as the shell's `WindowProtection`
+     * applies it — the logo cover on 35+, `FLAG_SECURE` with the switch on 33–34, and `FLAG_SECURE`
+     * whatever the switch says on 30–32.
+     */
     @Test
     fun deviceProtectionSubtitleByApiLevel() {
         val cover = "While the screen is recorded, cast or shared, Shroud shows only its logo."
-        val blocked = "$cover On this Android version, screenshots of your chats are blocked too."
-        assertEquals(blocked, PrivacyCopy.hideCaptureDetail(30))
-        assertEquals(blocked, PrivacyCopy.hideCaptureDetail(33))
-        assertEquals(blocked, PrivacyCopy.hideCaptureDetail(34))
+        val secureWithSwitch =
+            "While the screen is recorded, cast or shared, your chats show black. On this Android version, screenshots of your chats are blocked too."
+        val alwaysSecure =
+            "Your chats show black while the screen is recorded, cast or shared, and screenshots of them are blocked. On this Android version, that stays on even with this switch off, to keep your chats out of the recent apps screen."
+        assertEquals(alwaysSecure, PrivacyCopy.hideCaptureDetail(30))
+        assertEquals(alwaysSecure, PrivacyCopy.hideCaptureDetail(32))
+        assertEquals(secureWithSwitch, PrivacyCopy.hideCaptureDetail(33))
+        assertEquals(secureWithSwitch, PrivacyCopy.hideCaptureDetail(34))
         assertEquals(cover, PrivacyCopy.hideCaptureDetail(35))
         assertEquals(cover, PrivacyCopy.hideCaptureDetail(37))
+        // The same boundaries as the shell's window protection.
+        for (sdk in 30..37) {
+            val protection = WindowProtection.decide(sdk, unlocked = true, hidesDuringScreenCapture = false)
+            assertEquals("API $sdk: FLAG_SECURE with the switch off", sdk < 33, protection.flagSecure)
+        }
     }
 
     /** [A] "this phone" / "this tablet" where iOS says `UIDevice.current.model` (`:447-449`, `:564-566`). */

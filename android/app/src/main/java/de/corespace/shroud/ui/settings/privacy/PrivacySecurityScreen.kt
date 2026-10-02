@@ -75,8 +75,7 @@ import de.corespace.shroud.ui.theme.ShroudIcons
 import de.corespace.shroud.ui.theme.ShroudTheme
 import de.corespace.shroud.ui.theme.inter
 import de.corespace.shroud.ui.theme.perform
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
 
 /**
  * Settings › Privacy and Security (iOS `PrivacySecurityView`,
@@ -92,7 +91,7 @@ import kotlinx.coroutines.withContext
  * Agent: server switches through `ContactsModule.privacy` (`PUT /privacy/settings`, one field each),
  * blocks through `ContactsModule.controller`, local switches in `SecurityPreferences`, the lock
  * through `AppActions.lockChatsNow` (W3-SHELL). The biometric word is re-read on every resume; the
- * software-Keystore notice (P3c) reads the vault record off the main thread.
+ * software-Keystore notice (P3c) asks core where the vault's wrap key lives (core reads it off main).
  */
 @Composable
 fun PrivacySecurityScreen(onBack: () -> Unit) {
@@ -137,9 +136,14 @@ fun PrivacySecurityScreen(onBack: () -> Unit) {
     val biometric = remember(resumes) {
         runCatching { if (deviceSecurity.strongBiometricAvailable()) deviceSecurity.biometricLabel() else null }.getOrNull()
     }
+    // P3c: core reads the vault record on its own IO dispatcher (`CryptoController.vaultKeySecurity`).
     val softwareKeystore by produceState(false, container) {
-        value = withContext(Dispatchers.IO) {
-            runCatching { container.keys.historyVault.keySecurity() == VaultKeyStore.Security.Software }.getOrDefault(false)
+        value = try {
+            container.keys.cryptoController.vaultKeySecurity() == VaultKeyStore.Security.Software
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            false
         }
     }
     var confirmingShareCodeReset by remember { mutableStateOf(false) }

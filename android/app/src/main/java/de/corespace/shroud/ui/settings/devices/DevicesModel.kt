@@ -1,6 +1,5 @@
 package de.corespace.shroud.ui.settings.devices
 
-import de.corespace.shroud.core.crypto.DeviceNameSeal
 import de.corespace.shroud.core.devices.DeviceKind
 import de.corespace.shroud.core.devices.DeviceRow
 import de.corespace.shroud.core.devices.DevicesController
@@ -109,11 +108,8 @@ object DevicesCopy {
     const val REMOVE_DEVICE = "Remove Device"
     const val REMOVING = "Removing…"
 
-    /** A label's trimmed name, or "Unnamed device" (`DevicesView.swift:450-453`). */
-    fun displayName(label: DeviceNameSeal.Label?): String = label?.name?.trim()?.ifEmpty { null } ?: UNNAMED
-
     /**
-     * A row's name: its label's, else — the chats locked or the name unreadable, so core's
+     * A row's name (`DevicesView.swift:450-453`): its label's trimmed name, else — the chats locked or the name unreadable, so core's
      * [DeviceRow.label] is null — the kind noun core still knows ("Android app"), else "Unnamed device".
      */
     fun displayName(row: DeviceRow): String =
