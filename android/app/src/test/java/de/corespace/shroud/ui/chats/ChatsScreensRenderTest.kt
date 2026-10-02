@@ -217,6 +217,10 @@ class ChatsScreensRenderTest {
         frame.intValue++
         idle()
         idle()
+        // Robolectric runs no view traversal here: a draw makes the Compose view measure and lay
+        // out, so positions a step reads (a long-pressed row's bounds) are the current ones.
+        root.draw(Canvas(Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)))
+        idle()
     }
 
     /** The design's status bar (52 dp) and gesture bar (24 dp), dispatched to the Compose view. */
@@ -230,6 +234,10 @@ class ChatsScreensRenderTest {
     }
 
     private fun render(ui: ComposeHarness, name: String): Bitmap {
+        ui.settle()
+        // The staggered entrance waits in real time (kotlinx's `delay` off the main looper); let
+        // the last row's 240 ms pass, then run what it posted.
+        Thread.sleep(ENTRANCE_REAL_MS)
         ui.settle()
         val root = ui.root
         val bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
@@ -464,6 +472,7 @@ class ChatsScreensRenderTest {
 
     private companion object {
         const val SETTLE_REAL_MS = 30L
+        const val ENTRANCE_REAL_MS = 400L
         val STATUS_BAR = 52.dp
         val NAV_BAR = 24.dp
     }
