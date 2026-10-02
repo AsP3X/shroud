@@ -1,5 +1,8 @@
 package de.corespace.shroud.di
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import de.corespace.shroud.AppContainer
 import de.corespace.shroud.AppModule
 import de.corespace.shroud.core.media.EnvelopePreview
@@ -9,6 +12,11 @@ import de.corespace.shroud.core.media.MediaTransferService
 import de.corespace.shroud.core.media.MediaTransfers
 import de.corespace.shroud.core.media.SealedMediaDataSource
 import de.corespace.shroud.core.media.SealedMediaDataSourceMdr
+import de.corespace.shroud.core.media.capture.CameraCapture
+import de.corespace.shroud.core.media.capture.CameraXSession
+import de.corespace.shroud.core.media.capture.ShroudCameraCapture
+import de.corespace.shroud.core.media.share.MediaSharing
+import de.corespace.shroud.core.media.share.MemoryMediaSharing
 import java.io.File
 import java.util.UUID
 
@@ -22,6 +30,9 @@ import java.util.UUID
  *   the downloaded ciphertext passing through `KeysModule.sensitiveTempFiles`.
  * - [dataSourceFactory] / [metadataSource] — players and retrievers read media without
  *   decrypted files (`SealedMediaDataSource`, `SealedMediaDataSourceMdr`).
+ * - [sharing] — in-memory share grants and MediaStore saves. [sharingIfBuilt] is null until the
+ *   first read, so a wipe or a lock does not build it just to revoke.
+ * - [camera] — CameraX capture into `cacheDir/shroud-*` (never MediaStore).
  * - `EnvelopePreview.chatPreviewJpeg`, `ByteCountLabel.format` and `MediaEnvelopeBudget` are
  *   stateless objects; [chatPreviewJpeg] is here for packages that take it as a function.
  *
@@ -48,6 +59,33 @@ class MediaModule(container: AppContainer) : AppModule(container) {
 
     /** `th` for encoded image bytes (`EnvelopePreview.chatPreviewJpeg`); blocking, call it on `Dispatchers.Default`. */
     fun chatPreviewJpeg(image: ByteArray): ByteArray? = EnvelopePreview.chatPreviewJpeg(image)
+
+    private val sharingLazy = lazy {
+        MemoryMediaSharing(
+            context = container.appContext,
+            load = { id -> localMedia.readAll(id) },
+            clock = container.clock,
+        )
+    }
+
+    /** Decrypted bytes for the share sheet, and Save to Gallery. */
+    val sharing: MediaSharing by sharingLazy
+
+    /** [sharing] when something already built it. A lock or a wipe must not construct it just to revoke. */
+    val sharingIfBuilt: MediaSharing? get() = if (sharingLazy.isInitialized()) sharing else null
+
+    /** Photo and video capture into [de.corespace.shroud.core.storage.SensitiveTempFiles]. */
+    val camera: CameraCapture by lazy {
+        ShroudCameraCapture(
+            temps = container.keys.sensitiveTempFiles,
+            unlocked = { container.keys.cryptoController.isUnlocked },
+            session = CameraXSession(container.appContext),
+            audioGranted = {
+                ContextCompat.checkSelfPermission(container.appContext, Manifest.permission.RECORD_AUDIO) ==
+                    PackageManager.PERMISSION_GRANTED
+            },
+        )
+    }
 
     companion object {
         /** Under `noBackupFilesDir` (plan §1.5). */

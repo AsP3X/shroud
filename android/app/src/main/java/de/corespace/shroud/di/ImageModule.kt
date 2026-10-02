@@ -6,6 +6,8 @@ import de.corespace.shroud.core.media.ImageEncoder
 import de.corespace.shroud.core.media.ImagePipeline
 import de.corespace.shroud.core.media.MediaEditBaker
 import de.corespace.shroud.core.media.MediaImages
+import de.corespace.shroud.core.media.edit.BitmapMediaEditRenderer
+import de.corespace.shroud.core.media.edit.MediaEditRenderer
 
 /**
  * Image encoding and metadata scrubbing (00-plan §1.7.9). Owner: W2-MEDIA-IMAGE — [ImageEncoder],
@@ -16,8 +18,8 @@ import de.corespace.shroud.core.media.MediaImages
  * - messaging's photo send ([ImagePipeline], W2-MSG-SEND) through [pipeline];
  * - the compose screen and the viewer (`decodePreview`, W3) through [mediaImages].
  *
- * Edits are baked through the [MediaEditBaker] registered with [registerEditBaker] — the identity
- * until W3-MEDIA-EDIT's `MediaEditRenderer` is registered (W3-INT wires it).
+ * Edits are baked through the [MediaEditBaker] registered with [registerEditBaker].
+ * [onProcessStart] registers [editRenderer]; identity edits still skip the baker inside [ImageEncoder].
  */
 class ImageModule(container: AppContainer) : AppModule(container) {
     @Volatile
@@ -32,8 +34,15 @@ class ImageModule(container: AppContainer) : AppModule(container) {
     /** The seam messaging sends photos through (00-plan §1.7.9). */
     val pipeline: ImagePipeline get() = imageEncoder
 
-    /** Makes [baker] bake every later send's edits (W3-MEDIA-EDIT's renderer). */
+    /** Full-resolution bake and the same recipes scaled for previews. */
+    val editRenderer: MediaEditRenderer by lazy { BitmapMediaEditRenderer() }
+
+    /** Makes [baker] bake every later send's edits. [ImageEncoder] reads this at encode time. */
     fun registerEditBaker(baker: MediaEditBaker) {
         editBaker = baker
+    }
+
+    override fun onProcessStart() {
+        registerEditBaker(editRenderer)
     }
 }
