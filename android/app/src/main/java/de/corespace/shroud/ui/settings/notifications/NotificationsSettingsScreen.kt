@@ -379,8 +379,8 @@ private fun NoticeCard(notice: SystemNotice, onAction: (SystemNotice) -> Unit) {
         SystemNotice.AllowNotifications -> NoticeLook(ShroudIcons.BellRingingFill, colors.accent, NotificationsCopy.ALLOW_TITLE, NotificationsCopy.ALLOW_BODY, NotificationsCopy.ALLOW_BUTTON)
         SystemNotice.AppBlocked -> NoticeLook(ShroudIcons.BellSlashFill, colors.danger, NotificationsCopy.BLOCKED_TITLE, NotificationsCopy.BLOCKED_BODY, NotificationsCopy.OPEN_SETTINGS)
         SystemNotice.MessagesChannelOff -> NoticeLook(ShroudIcons.BellSlashFill, colors.danger, NotificationsCopy.CHANNEL_OFF_TITLE, NotificationsCopy.CHANNEL_OFF_BODY, NotificationsCopy.OPEN_SETTINGS)
-        // Phosphor `battery-warning-fill` is not in the kit yet (change request); the warning glyph stands in.
-        SystemNotice.BackgroundRestricted -> NoticeLook(ShroudIcons.WarningFill, colors.textPrimary, NotificationsCopy.RESTRICTED_TITLE, NotificationsCopy.RESTRICTED_BODY, NotificationsCopy.OPEN_SETTINGS)
+        // notifications-push §5.14.2: Phosphor `battery-warning-fill`.
+        SystemNotice.BackgroundRestricted -> NoticeLook(ShroudIcons.BatteryWarningFill, colors.textPrimary, NotificationsCopy.RESTRICTED_TITLE, NotificationsCopy.RESTRICTED_BODY, NotificationsCopy.OPEN_SETTINGS)
     }
     SettingsCard {
         Column(

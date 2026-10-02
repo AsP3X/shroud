@@ -1,5 +1,7 @@
 package de.corespace.shroud.ui.contacts
 
+import android.Manifest
+import android.content.pm.PackageManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,6 +17,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -31,6 +34,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
@@ -43,8 +47,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import de.corespace.shroud.core.model.AddContactOutcome
 import de.corespace.shroud.core.model.Haptic
-import de.corespace.shroud.ui.LocalAppContainer
 import de.corespace.shroud.ui.components.GlassStyle
+import de.corespace.shroud.ui.components.LocalGlassBackdrop
 import de.corespace.shroud.ui.components.NoLearningTextInput
 import de.corespace.shroud.ui.components.SheetStyle
 import de.corespace.shroud.ui.components.ShroudIcon
@@ -52,6 +56,8 @@ import de.corespace.shroud.ui.components.ShroudSheet
 import de.corespace.shroud.ui.components.ShroudText
 import de.corespace.shroud.ui.components.glassSurface
 import de.corespace.shroud.ui.components.pressable
+import de.corespace.shroud.ui.permissions.rememberPermissionGranted
+import de.corespace.shroud.ui.permissions.rememberPermissionRequest
 import de.corespace.shroud.ui.theme.ShroudIcons
 import de.corespace.shroud.ui.theme.ShroudTheme
 import de.corespace.shroud.ui.theme.inter
@@ -77,21 +83,27 @@ import kotlinx.coroutines.launch
  */
 @Composable
 fun AddContactSheet(visible: Boolean, prefill: String?, onDismiss: () -> Unit, onAdded: (String) -> Unit) {
-    val container = LocalAppContainer.current
-    val contacts = container.contacts.controller
+    val ports = rememberContactsPorts()
+    val contacts = ports.contacts
     val scope = rememberCoroutineScope()
     val haptic = rememberHaptics()
     val form = remember { AddContactForm(prefill) }
     val currentOnAdded by rememberUpdatedState(onAdded)
     val currentOnDismiss by rememberUpdatedState(onDismiss)
-    var scanning by remember { mutableStateOf(false) }
+    // The scanner's phase while it is up; null while the sheet shows alone.
+    var scanner by remember { mutableStateOf<ScannerPhase?>(null) }
     val focus = remember { FocusRequester() }
     var focusRequests by remember { mutableIntStateOf(0) }
+    val context = LocalContext.current
+    val hasCamera = remember(context) { context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY) }
+    val cameraGranted by rememberPermissionGranted(Manifest.permission.CAMERA)
+    // The system dialog over the sheet (design w6957); its answer opens the scanner live or denied.
+    val askCamera = rememberPermissionRequest(Manifest.permission.CAMERA) { granted, _ -> scanner = ScannerPhases.afterRequest(granted) }
 
     fun submit(raw: String) {
         scope.launch {
             // `submit(_:)` (`:82-103`).
-            when (val result = form.submit(raw) { invite -> container.appScope.runDetached { contacts.add(invite) } }) {
+            when (val result = form.submit(raw) { invite -> ports.actionScope.runDetached { contacts.add(invite) } }) {
                 is AddContactForm.Submission.Failed -> haptic(Haptic.Error)
                 is AddContactForm.Submission.Done -> {
                     haptic(Haptic.Success)
@@ -104,25 +116,35 @@ fun AddContactSheet(visible: Boolean, prefill: String?, onDismiss: () -> Unit, o
     }
 
     ShroudSheet(visible = visible, onDismiss = onDismiss, style = SheetStyle.Inset, paneTitle = ContactsCopy.ADD_CONTACT_TITLE) {
-        AddContactContent(
-            form = form,
-            focusRequester = focus,
-            onCancel = onDismiss,
-            onSubmit = { submit(form.text) },
-            onScan = { scanning = true },
-        )
+        // The capsules sit on the sheet's plain fill: flat glass, not a blur of the list behind it.
+        CompositionLocalProvider(LocalGlassBackdrop provides null) {
+            AddContactContent(
+                form = form,
+                focusRequester = focus,
+                onCancel = onDismiss,
+                onSubmit = { submit(form.text) },
+                onScan = {
+                    when (val start = ScannerPhases.onScanTapped(hasCamera, cameraGranted)) {
+                        ScannerPhases.Start.AskFirst -> askCamera()
+                        is ScannerPhases.Start.Open -> scanner = start.phase
+                    }
+                },
+            )
+        }
     }
 
-    // The full-screen scanner over the sheet (iOS `.fullScreenCover`, `:62-77`).
+    // The full-screen scanner over the sheet (iOS `.fullScreenCover`, `:62-77`). A read code is
+    // the user's own action, so it is sent at once (unlike an App Link's [prefill]).
     QrScannerOverlay(
-        visible = visible && scanning,
+        phase = scanner?.takeIf { visible },
+        onPhaseChange = { scanner = it },
         onCode = { value ->
-            scanning = false
+            scanner = null
             form.text = value
             submit(value)
         },
         onCancel = { focusField ->
-            scanning = false
+            scanner = null
             if (focusField) focusRequests++
         },
     )

@@ -50,12 +50,12 @@ LUCIDE = [
 ]
 PHOSPHOR = [
     # fill
-    "arrow-bend-up-left-fill", "bell-fill", "bell-ringing-fill", "bell-slash-fill",
+    "arrow-bend-up-left-fill", "battery-warning-fill", "bell-fill", "bell-ringing-fill", "bell-slash-fill",
     "bookmark-simple-fill", "camera-fill", "camera-rotate-fill", "chats-circle-fill",
     "chats-teardrop-fill", "check-circle-fill", "circle-half-fill",
-    "device-mobile-fill", "device-tablet-fill", "file-fill", "folder-simple-fill",
+    "desktop-fill", "device-mobile-fill", "device-tablet-fill", "file-fill", "folder-simple-fill",
     "gear-six-fill", "gift-fill", "hard-drive-fill", "hard-drives-fill", "heart-fill",
-    "image-fill", "info-fill", "key-fill", "lock-fill", "lock-simple-fill",
+    "image-fill", "info-fill", "key-fill", "laptop-fill", "lock-fill", "lock-simple-fill",
     "lock-simple-open-fill", "map-pin-fill", "microphone-fill", "microphone-slash-fill",
     "moon-fill", "music-note-fill", "palette-fill", "paper-plane-tilt-fill", "pause-fill",
     "phone-disconnect-fill", "phone-fill", "play-fill", "seal-check-fill", "shield-check-fill",
