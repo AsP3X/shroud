@@ -98,17 +98,36 @@ when the API is not reachable:
 ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=de.corespace.shroud.e2e.W1SmokeTest
 ```
 
-The wave 2 engine e2e runs the real `AppContainer` with every engine wired against a scripted web
-peer (`e2e/peer/peer.ts`: one web account run by the web client's own crypto and API modules with
-in-memory stores, driven over a loopback control API on port 8099). Text, a reply, link previews
-and photos go both ways, then a video, a voice note, reactions and deletes for everyone both
-ways, and the Log Out wipe must leave nothing. The script bundles the peer with the web's esbuild
-(`npm ci` in `web/` first), starts it, runs `EngineE2eTest` on one device and fails instead of
+The wave 2 engine e2e (`EngineE2eTest`) runs the real `AppContainer` with every engine wired
+against scripted web peers (`e2e/peer/peer.ts`: each one web account run by the web client's own
+crypto, API and call modules with in-memory stores, driven over a loopback control API; the calls
+run the web `CallController` on the web selftest's fake media, `e2e/peer/fakeMedia.ts`). Four
+peers listen on ports 8099–8102: the chat partner, one added by share code, one added by link, and
+one that logs in as this phone's other device. Five tests, each with its own account, cover the W2
+cards:
+
+- every kind both ways — text, a reply, link previews small and large, photos (passthrough and
+  HD), a video, a voice note, receipts, typing, reactions, deletes for everyone — then Log Out;
+- the other device — it reads this phone's sealed name as "Android app", unread and read sync both
+  ways, mutes, Notes, delete for me, a reaction 409 it causes, and its revoke wipes this phone;
+- chat deletes for both, without and with the peer's consent;
+- contacts by share code, link and name, presence, block and unblock, a key change detected and
+  trusted;
+- calls both ways (ring, accept, sealed offer, answer and candidates, connected, hangup) with a
+  fake media engine (`E2eCallEngine`).
+
+Every wipe must leave nothing (`leftovers()` empty). The script bundles the peer with the web's
+esbuild (`npm ci` in `web/` first), starts the peers, clears the stack's rate-limit windows before
+each test (auth allows 10 requests a minute for every local client together) and fails instead of
 skipping when something is missing:
 
 ```bash
-e2e/engine-e2e.sh emulator-5556      # the serial is required when several devices are attached
+e2e/engine-e2e.sh emulator-5556                                     # all five tests
+e2e/engine-e2e.sh emulator-5556 callsRingConnectAndHangUpBothWays   # one of them
 ```
+
+`e2e/ui.py type` types in short chunks into the focused field and reads each one back (the
+software-rendered API 30 emulator drops characters from long `input text` runs).
 
 Video tests need software decoders on the emulator: start the AVDs with
 `-feature -HardwareDecoder` (the default `c2.goldfish.h264.decoder` fails every decode with
@@ -119,6 +138,27 @@ first run and keeps it in the app's `no_backup/whisper/`:
 adb shell am instrument -w -e class de.corespace.shroud.core.transcription.TranscriptionBenchmarkDeviceTest \
   [-e models base,small] de.corespace.shroud.test/androidx.test.runner.AndroidJUnitRunner
 ```
+
+### Transcription benchmark (P7)
+
+The P7 gate asks for a worst real-time factor (transcription time ÷ audio length) of at most 0.3
+with `ggml-base-q5_1` on three physical phones. **Only emulator numbers exist so far**, and the
+emulators fail the gate; the phone measurement is still owed. Emulator runs (whisper.cpp 1.9.4,
+4 threads, CPU backend `libggml-cpu-android_armv8.2_2.so`, arm64 AOSP images on an Apple-silicon
+host; worst RTF over four clips: English 11 s and 60 s, German 13 s and 60 s):
+
+| Device (emulator) | Model | Load | Peak RSS | Worst RTF | RTF of the 60 s clips | Gate (≤ 0.3) |
+| --- | --- | --- | --- | --- | --- | --- |
+| `shroud_api37` (API 37, 4 cores, 3.9 GB) | base q5_1 | 309 ms | 518 MB | 0.77 | 0.32 / 0.36 | fail |
+| `shroud_api37` | small q5_1 | 1 572 ms | 712 MB | 3.39 | 1.12 / 1.17 | fail |
+| `shroud_api30` (API 30, 4 cores, 2 GB), run 1 | base q5_1 | 483 ms | 483 MB | 0.65 | 0.29 / 0.32 | fail |
+| `shroud_api30`, run 1 | small q5_1 | 671 ms | 601 MB | 1.61 | 0.70 / 0.71 | fail |
+| `shroud_api30`, run 2 | base q5_1 | 188 ms | 479 MB | 0.62 | 0.28 / 0.34 | fail |
+| `shroud_api30`, run 2 | small q5_1 | 1 055 ms | 665 MB | 2.52 | 1.01 / 1.03 | fail |
+
+The worst RTF is always a short clip: language detection (3–4 s with base on the emulators) runs
+before the transcription and weighs most on 11–13 s of audio. Language detection and the
+transcripts were right on every run (English 0.95–1.00, German 1.00).
 
 `SERIAL` picks a device when several are attached; ports, container names and the state folder
 (server log, media) are in `e2e/common.sh` and can be overridden from the environment. Use AOSP
