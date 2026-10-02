@@ -121,7 +121,7 @@ class ComposerDeviceTest {
                 }
             }
         }
-        rule.waitForIdle()
+        rule.waitUntil("the bar was drawn", GESTURE_TIMEOUT_MS) { frames.isNotEmpty() }
     }
 
     /** The conversation's bottom as `ConversationContent` lays it out: the bar at the bottom, outside any inset padding. */
