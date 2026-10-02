@@ -1,6 +1,7 @@
 package de.corespace.shroud.ui.components
 
 import android.os.Looper
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
@@ -20,9 +21,12 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import org.robolectric.shadows.ShadowChoreographer
+import java.time.Duration
 
 /**
  * Row height at large text (shell-chats §18: "iOS Dynamic Type does not scale these fixed sizes;
@@ -75,6 +79,11 @@ class ChatRowFontScaleTest {
     private fun measureHeightDp(fontScale: Float, content: @Composable () -> Unit): Float {
         var heightPx = -1
         var density = 1f
+        // Reduce motion and 60 Hz frames, as ComposeHarness does: the typing row's endless loop
+        // otherwise draws frames for minutes under idle() (406 s for one test, run alone) and its
+        // garbage ran the shared test JVM out of heap in the full suite.
+        ShadowChoreographer.setFrameDelay(Duration.ofMillis(16))
+        Settings.Global.putFloat(RuntimeEnvironment.getApplication().contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 0f)
         val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
         activity.setContent {
             val base = LocalDensity.current
