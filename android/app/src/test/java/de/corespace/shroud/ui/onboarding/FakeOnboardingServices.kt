@@ -31,6 +31,9 @@ internal class FakeOnboardingServices(override val bip39: Bip39 = TestWordlist.b
     var registered = 0
     var lastWords: List<String>? = null
 
+    /** This phone holds the signed-in account's identity: the lock screen is the root (`needsChatUnlock`). */
+    var identityHere = true
+
     override fun hasScreenLock(): Boolean = screenLock
 
     override fun needsLocalNetworkPermission(): Boolean = localNetworkNeeded
@@ -67,6 +70,8 @@ internal class FakeOnboardingServices(override val bip39: Bip39 = TestWordlist.b
         hasNoKeyError?.let { throw it }
         return hasNoKey
     }
+
+    override suspend fun hasLocalIdentity(userId: String): Boolean = identityHere
 
     private fun signIn(username: String, deviceId: String): Session =
         Session("token-$deviceId", USER, SessionController.normalize(username), null, deviceId).also { session.value = it }

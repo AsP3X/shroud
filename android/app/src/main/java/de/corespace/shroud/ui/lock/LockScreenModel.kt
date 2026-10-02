@@ -87,14 +87,14 @@ internal class ContainerLockScreenPorts(private val container: AppContainer) : L
     override fun isChatsUnlocked(): Boolean = isOwn(session.value, crypto.unlockedUserId.value) && crypto.isUnlocked
 
     override suspend fun probe(userId: String?): LockProbe = withContext(Dispatchers.IO) {
-        val vault = container.keys.historyVault
         LockProbe(
             isDeviceSecure = security.isDeviceSecure,
             strongBiometric = security.strongBiometricAvailable(),
             biometricLabel = security.biometricLabel(),
             vaultState = if (userId != null) crypto.vaultState(userId) else VaultState.NotFound,
             hasIdentity = userId != null && crypto.hasLocalIdentity(userId),
-            softwareKeystore = vault.keySecurity() == VaultKeyStore.Security.Software,
+            // `CryptoController.vaultKeySecurity()`: the IO-safe read that never prompts (timer handover §3.2).
+            softwareKeystore = crypto.vaultKeySecurity() == VaultKeyStore.Security.Software,
         )
     }
 
