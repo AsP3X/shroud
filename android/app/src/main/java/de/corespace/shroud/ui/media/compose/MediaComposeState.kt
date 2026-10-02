@@ -44,10 +44,18 @@ internal class MediaComposeState(draft: ComposeDraft) {
     var showFilters by mutableStateOf(false)
     var confirmClearEdits by mutableStateOf(false)
 
-    /** The host's photos changed (Add, Remove): drop what belonged to photos that left (`syncEdits`, `:776-782`). */
+    /** The ids [photos] was last set from; compared without reading state, so a sync in composition costs nothing. */
+    private var syncedIds: List<UUID> = photos.map { it.id }
+
+    /**
+     * The host's photos changed (Add, Remove): drop what belonged to photos that left (`syncEdits`,
+     * `:776-782`). Called on every composition of the screen; writes only when the list changed.
+     */
     fun syncPhotos(next: List<PickedPhoto>) {
         val capped = next.take(MAX_PHOTOS_PER_SEND)
-        if (capped.map { it.id } == photos.map { it.id }) return
+        val ids = capped.map { it.id }
+        if (ids == syncedIds) return
+        syncedIds = ids
         photos = capped
         val live = capped.mapTo(HashSet()) { it.id }
         edits.keys.retainAll(live)

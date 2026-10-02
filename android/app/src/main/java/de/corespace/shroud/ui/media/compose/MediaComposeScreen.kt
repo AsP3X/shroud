@@ -203,8 +203,8 @@ internal fun MediaComposeContent(
     val openEditor: (ComposeEditor) -> Unit = open@{ editor ->
         state.showFilters = false
         val photo = state.current
-        editorSession++
         if (editor == ComposeEditor.Crop || photo == null) {
+            editorSession++
             state.editorBase = null
             state.activeEditor = editor
             return@open
@@ -215,6 +215,7 @@ internal fun MediaComposeContent(
             val image = renderer.preview(photo.preview, base, photo.preview.longEdge())
             // A second tap, or a switch to another photo, may have landed meanwhile.
             if (state.activeEditor != null || state.current?.id != photo.id) return@launch
+            editorSession++
             state.editorBase = image
             state.activeEditor = editor
         }

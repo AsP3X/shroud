@@ -1,6 +1,7 @@
 package de.corespace.shroud.ui.media.edit
 
 import android.graphics.Bitmap
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -135,6 +136,8 @@ internal fun TextEditorScreen(image: Bitmap, state: TextEditorState, onCancel: (
     val haptic = rememberHaptics()
     val reduce = ShroudTheme.reduceMotion
     val geometry = remember { StickerGeometry() }
+    // Back while typing ends the typing (the keyboard closes first, by itself), not the editor.
+    BackHandler(enabled = state.isEditing) { state.finishEditing() }
 
     BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black)) {
         val widthPx = constraints.maxWidth.toFloat()
@@ -416,26 +419,21 @@ private fun StickerTextEntry(state: TextEditorState) {
                     },
                 )
             }
+            // 34 dp to the eye; Compose widens a small control's touch area to 48 dp by itself
+            // (iOS: 44 pt, `MediaTextEditor.swift:278-279`).
             Box(
                 Modifier
                     .size(34.dp)
-                    .layout { measurable, constraints ->
-                        // 44 dp to the finger, 34 dp to the eye (`MediaTextEditor.swift:278-279`).
-                        val touch = 44.dp.roundToPx()
-                        val placeable = measurable.measure(Constraints.fixed(touch, touch))
-                        val visible = 34.dp.roundToPx()
-                        layout(visible, visible) { placeable.place((visible - touch) / 2, (visible - touch) / 2) }
-                    }
-                    .pressable(scale = 0.85f, dimming = 0f, haptic = Haptic.None, onClickLabel = null) {
+                    .clip(CircleShape)
+                    .background(Color.White)
+                    .pressable(scale = 0.85f, dimming = 0f, haptic = Haptic.None) {
                         haptic(Haptic.Light)
                         state.finishEditing()
                     }
                     .semantics { contentDescription = "Done" },
                 contentAlignment = Alignment.Center,
             ) {
-                Box(Modifier.size(34.dp).clip(CircleShape).background(Color.White), contentAlignment = Alignment.Center) {
-                    ShroudIcon(ShroudIcons.Check, tint = Color.Black, size = 15.dp)
-                }
+                ShroudIcon(ShroudIcons.Check, tint = Color.Black, size = 15.dp)
             }
         }
     }
