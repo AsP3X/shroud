@@ -7,6 +7,8 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.view.MotionEvent
 import android.view.View
+import android.view.WindowInsets
+import android.view.WindowInsetsAnimation
 import android.view.ViewGroup
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -56,10 +58,15 @@ internal class ComposerTestHost(dark: Boolean = false, content: @Composable () -
         settle()
     }
 
-    /** Hands state written outside composition to the recomposer, then runs half a second of frames. */
+    /**
+     * Hands state written outside composition to the recomposer, runs half a second of frames, then
+     * lays the window out: a change that only remeasures (an inset, a moved bar) asks the view for a
+     * draw, which Robolectric never performs, so it is laid out here as compose-ui-test does.
+     */
     fun settle() {
         Snapshot.sendApplyNotifications()
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(500))
+        (root as RootForTest).measureAndLayoutForTest()
     }
 
     /** The Compose root view. */
@@ -68,19 +75,50 @@ internal class ComposerTestHost(dark: Boolean = false, content: @Composable () -
     /** dp → px at the activity's density. */
     fun px(dp: Float): Float = dp * activity.resources.displayMetrics.density
 
-    /**
-     * Dispatches window insets the way the system does to an edge-to-edge window: the keyboard
-     * ([imeDp], measured from the window's bottom, so it covers the navigation bar), the
-     * navigation bar ([navigationDp]) and the status bar ([statusDp]).
-     */
-    fun insets(imeDp: Float = 0f, navigationDp: Float = 0f, statusDp: Float = 0f) {
-        val insets = WindowInsetsCompat.Builder()
+    /** The insets of an edge-to-edge window: the keyboard ([imeDp], from the window's bottom), the navigation and status bars. */
+    fun windowInsets(imeDp: Float = 0f, navigationDp: Float = 0f, statusDp: Float = 0f): WindowInsetsCompat =
+        WindowInsetsCompat.Builder()
             .setInsets(WindowInsetsCompat.Type.ime(), Insets.of(0, 0, 0, px(imeDp).toInt()))
             .setVisible(WindowInsetsCompat.Type.ime(), imeDp > 0f)
             .setInsets(WindowInsetsCompat.Type.navigationBars(), Insets.of(0, 0, 0, px(navigationDp).toInt()))
+            .setVisible(WindowInsetsCompat.Type.navigationBars(), true)
             .setInsets(WindowInsetsCompat.Type.statusBars(), Insets.of(0, px(statusDp).toInt(), 0, 0))
+            .setVisible(WindowInsetsCompat.Type.statusBars(), true)
             .build()
-        ViewCompat.dispatchApplyWindowInsets(root, insets)
+
+    /**
+     * Applies window insets at rest, the way the system does after a change. Compose ignores a
+     * plain apply while it believes an inset animation runs, and Robolectric never ends the one it
+     * starts as the window attaches, so that one is ended first.
+     */
+    fun insets(imeDp: Float = 0f, navigationDp: Float = 0f, statusDp: Float = 0f) {
+        root.dispatchWindowInsetsAnimationEnd(WindowInsetsAnimation(WindowInsets.Type.ime(), null, 0))
+        ViewCompat.dispatchApplyWindowInsets(root, windowInsets(imeDp, navigationDp, statusDp))
+        settle()
+    }
+
+    /**
+     * The keyboard animating as the system drives it on API 30+: prepare, the target applied (which
+     * Compose holds back while prepared), start, then one progress per frame with that frame's
+     * keyboard height from [framesDp], each followed by one 16 ms frame and [onFrame], then the end.
+     */
+    fun imeAnimation(framesDp: List<Float>, navigationDp: Float, onFrame: (imeDp: Float) -> Unit) {
+        val view = root
+        val animation = WindowInsetsAnimation(WindowInsets.Type.ime(), null, IME_ANIMATION_MS)
+        val target = framesDp.last()
+        view.dispatchWindowInsetsAnimationPrepare(animation)
+        ViewCompat.dispatchApplyWindowInsets(view, windowInsets(target, navigationDp))
+        view.dispatchWindowInsetsAnimationStart(
+            animation,
+            WindowInsetsAnimation.Bounds(android.graphics.Insets.NONE, android.graphics.Insets.of(0, 0, 0, px(maxOf(target, framesDp.first())).toInt())),
+        )
+        for (frame in framesDp) {
+            view.dispatchWindowInsetsAnimationProgress(windowInsets(frame, navigationDp).toWindowInsets()!!, listOf(animation))
+            Snapshot.sendApplyNotifications()
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(FRAME_MS))
+            onFrame(frame)
+        }
+        view.dispatchWindowInsetsAnimationEnd(animation)
         settle()
     }
 
@@ -150,10 +188,25 @@ internal class ComposerTestHost(dark: Boolean = false, content: @Composable () -
 
     /** Ends the composition and destroys the activity, so nothing of this test outlives it. */
     override fun close() {
+        diag("before-close")
         activity.setContent {}
         settle()
         controller.pause().stop().destroy()
         settle()
+        diag("after-close")
+    }
+
+    fun diag(where: String) {
+        val d: Any = androidx.compose.ui.platform.AndroidUiDispatcher.Main[kotlin.coroutines.ContinuationInterceptor]!!
+        val ch = d.javaClass.getDeclaredField("choreographer").apply { isAccessible = true }.get(d)
+        val fs = android.view.Choreographer::class.java.getDeclaredField("mFrameScheduled").apply { isAccessible = true }.get(ch)
+        val same = ch === android.view.Choreographer.getInstance()
+        System.err.println("DIAG $where frameScheduled=$fs sameChoreographer=$same idle=${shadowOf(Looper.getMainLooper()).isIdle}")
+    }
+
+    private companion object {
+        const val FRAME_MS = 16L
+        const val IME_ANIMATION_MS = 250L
     }
 
     private fun findRoot(view: View): View? {
