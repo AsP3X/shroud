@@ -205,7 +205,9 @@ private fun CameraBody(
     val hasFront = bound && lenses?.hasFront == true
     val hasBack = bound && lenses?.hasBack == true
     // K9's flash flag is a plain property; it changes only with a bind, so it is re-read on each one.
-    val hasFlashUnit = remember(bindState, bound) { bound && camera.hasFlashUnit }
+    // Keyed on `asked` too: a bind that finishes at once can publish a Bound equal to the last one,
+    // which the StateFlow does not emit again (the other lens of a two-camera phone).
+    val hasFlashUnit = remember(bindState, bound, asked) { bound && camera.hasFlashUnit }
     var capturing by remember { mutableStateOf(false) }
     var recordingSince by remember { mutableStateOf<Long?>(null) }
     var elapsed by remember { mutableLongStateOf(0L) }
