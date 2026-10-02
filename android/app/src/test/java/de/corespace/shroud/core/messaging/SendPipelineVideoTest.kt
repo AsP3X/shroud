@@ -214,6 +214,7 @@ class SendPipelineVideoTest {
         override suspend fun encode(plan: VideoSendPlan, onProgress: ((Double) -> Unit)?) =
             de.corespace.shroud.core.media.EncodedVideo(file, 1280, 720, 1_000, "video/mp4", null, file.length())
         override suspend fun posterJpegFromLocal(messageId: java.util.UUID, maxEdgePx: Int): ByteArray? = null
+        override suspend fun durationMs(messageId: java.util.UUID): Int? = null
         override val maxSealedBytes: Long = Long.MAX_VALUE
     }
 }

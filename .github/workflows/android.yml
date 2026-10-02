@@ -58,9 +58,11 @@ jobs:
 
       # whisper.cpp (app/src/main/cpp) builds with the NDK and CMake pinned in app/build.gradle.kts
       # (region native); externalNativeBuild fails without exactly these versions.
-      - name: Install the pinned NDK and CMake
+      # build-tools supplies zipalign -P 16 for app/src/main/cpp/check-native.sh. llvm-readelf
+      # comes from the NDK above. The script is POSIX sh.
+      - name: Install the pinned NDK, CMake and build-tools
         run: |
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;30.0.16248370" "cmake;4.1.2" > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;30.0.16248370" "cmake;4.1.2" "build-tools;36.0.0" > /dev/null
 
       - name: Reaction tables are up to date
         working-directory: .
@@ -78,21 +80,37 @@ jobs:
 
       # verifyNoGoogleClasses above checks R8's mapping by original class name: R8 moves most
       # renamed classes into the unnamed package, so this dex listing only sees kept names. The
-      # prefixes are bannedGoogleGroups in app/build.gradle.kts.
-      - name: No Google packages or GMS entries in the release APK
+      # prefixes are bannedGoogleGroups in app/build.gradle.kts. Release is two ABI splits and
+      # no universal APK; each split is checked. check-native.sh then checks 16 KB alignment of
+      # every .so, including WebRTC.
+      - name: No Google packages or GMS entries in the release APKs
         run: |
-          apk=app/build/outputs/apk/release/app-release-unsigned.apk
+          rel=app/build/outputs/apk/release
           analyzer="$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
-          "$analyzer" dex packages "$apk" > "$RUNNER_TEMP/dex-packages.txt"
-          if grep -E '[[:space:]](com\.google\.(firebase|android\.gms|gms|mlkit|crypto\.tink|android\.play|android\.datatransport)|com\.android\.installreferrer)([.[:space:]]|$)' "$RUNNER_TEMP/dex-packages.txt"; then
-            echo "::error::the release APK contains Google services classes"
+          if [ -e "$rel/app-universal-release.apk" ] || [ -e "$rel/app-universal-release-unsigned.apk" ]; then
+            echo "::error::release must not ship a universal APK"
             exit 1
           fi
-          "$analyzer" manifest print "$apk" > "$RUNNER_TEMP/manifest.xml"
-          if grep -E 'com\.google\.android\.gms|com\.google\.android\.c2dm|com\.google\.firebase' "$RUNNER_TEMP/manifest.xml"; then
-            echo "::error::the release manifest mentions Google services"
-            exit 1
-          fi
+          for abi in arm64-v8a x86_64; do
+            apk="$rel/app-${abi}-release-unsigned.apk"
+            if [ ! -f "$apk" ]; then
+              echo "::error::missing $apk"
+              exit 1
+            fi
+            "$analyzer" dex packages "$apk" > "$RUNNER_TEMP/dex-packages.txt"
+            if grep -E '[[:space:]](com\.google\.(firebase|android\.gms|gms|mlkit|crypto\.tink|android\.play|android\.datatransport)|com\.android\.installreferrer)([.[:space:]]|$)' "$RUNNER_TEMP/dex-packages.txt"; then
+              echo "::error::the release APK contains Google services classes ($abi)"
+              exit 1
+            fi
+            "$analyzer" manifest print "$apk" > "$RUNNER_TEMP/manifest.xml"
+            if grep -E 'com\.google\.android\.gms|com\.google\.android\.c2dm|com\.google\.firebase' "$RUNNER_TEMP/manifest.xml"; then
+              echo "::error::the release manifest mentions Google services ($abi)"
+              exit 1
+            fi
+          done
+          sh app/src/main/cpp/check-native.sh \
+            "$rel/app-arm64-v8a-release-unsigned.apk" \
+            "$rel/app-x86_64-release-unsigned.apk"
 
       - name: Upload reports
         if: failure()

@@ -1,6 +1,9 @@
 package de.corespace.shroud.ui.settings
 
 import androidx.compose.runtime.Composable
+import de.corespace.shroud.core.model.NOTES_DISPLAY_NAME
+import de.corespace.shroud.core.model.NOTES_PEER_ID
+import de.corespace.shroud.ui.conversation.ConversationScreen
 import de.corespace.shroud.ui.settings.devices.DevicesScreen
 import de.corespace.shroud.ui.settings.notifications.NotificationSoundScreen
 import de.corespace.shroud.ui.settings.notifications.NotificationsSettingsScreen
@@ -11,22 +14,30 @@ import de.corespace.shroud.ui.shell.SettingsRoute
 
 /**
  * The screen for one pushed Settings [route] (iOS `SettingsView.navigationDestination`,
- * settings-lock §2; plan §1.7.13).
+ * `ios/shroud/Features/Main/SettingsView.swift:196-219`; settings-lock §3.1; plan §1.7.13). The
+ * shell keeps the stack and calls this for its top entry; [onBack] pops it.
  *
- * **Entry-point stub (W2-INT seam), owner W3-SETTINGS-A**, which adds its own screens (Server,
- * Transcription, Appearance, Saved Messages). The routes to W3-SETTINGS-B's and W3-PUSH's screens are
- * already in place, so those packages only fill their screen files.
+ * - Server → [ServerSettingsScreen], opened on the saved server (`:198-200`).
+ * - Transcription → [TranscriptionScreen]; Appearance → [AppearanceScreen].
+ * - Notifications → W3-SETTINGS-B's screen, which pushes the Sound picker; Privacy and Security,
+ *   Devices → W3-SETTINGS-B's screens; Delivery → W3-PUSH's screen (Android only).
+ * - Saved Messages → the Notes conversation, "Notes to me" (`:213-217`).
+ *
+ * The root's device count follows core's device list (`auth.devices`, K3), which Devices updates, as
+ * iOS updates it through `DevicesView(onCount:)` (`:209-210`).
  */
 @Composable
 fun SettingsDestination(route: SettingsRoute, onBack: () -> Unit) {
     val navigation = LocalShellNavigation.current
     when (route) {
+        SettingsRoute.Server -> ServerSettingsScreen(onBack)
+        SettingsRoute.Transcription -> TranscriptionScreen(onBack)
+        SettingsRoute.Appearance -> AppearanceScreen(onBack)
+        SettingsRoute.SavedMessages -> ConversationScreen(NOTES_PEER_ID, NOTES_DISPLAY_NAME, onBack)
         SettingsRoute.Devices -> DevicesScreen(onBack)
         SettingsRoute.Notifications -> NotificationsSettingsScreen(onBack, onOpenSound = { navigation.push(SettingsRoute.NotificationSound) })
         SettingsRoute.NotificationSound -> NotificationSoundScreen(onBack)
         SettingsRoute.PrivacySecurity -> PrivacySecurityScreen(onBack)
         SettingsRoute.PushDelivery -> PushDeliveryScreen(onBack)
-        // W3-SETTINGS-A's own screens.
-        SettingsRoute.Server, SettingsRoute.Transcription, SettingsRoute.Appearance, SettingsRoute.SavedMessages -> Unit
     }
 }

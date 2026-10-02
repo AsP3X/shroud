@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  design/icon/shroud-icon-simple.svg, the Simple icon's backdrop: the indigo gradient without the
+  glow (BrandLogoMark.swift:115, 147-151), mapped into the visible 72 dp like ic_launcher_background.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+    <path android:pathData="M0,0h1024v1024h-1024z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="273.07"
+                android:startY="170.67"
+                android:endX="750.93"
+                android:endY="853.33">
+                <item android:offset="0" android:color="#FF7D7BFA" />
+                <item android:offset="0.55" android:color="#FF5E5CE6" />
+                <item android:offset="1" android:color="#FF3432B8" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>

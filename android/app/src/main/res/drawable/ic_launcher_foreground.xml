@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- design/icon/shroud-icon.svg: the veil, scaled into the adaptive icon's 72 dp safe zone. -->
+<!--
+  design/icon/shroud-icon.svg, the detailed veil (BrandLogoMark.swift:118-146): drop shadow,
+  gradient cloth, side shading and the two folds, in the adaptive icon's visible 72 dp.
+  Vector drawables cannot blur, so the shadow (#0A0930 at 35 %, 26 units down, Gaussian 22) is
+  ten copies of the veil scaled about its centre (edges every 8 units from 28 inside to 44
+  outside) whose alphas stack to the same falloff within about 3 %.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
@@ -11,7 +17,109 @@
         android:pivotY="528"
         android:scaleX="0.6"
         android:scaleY="0.6"
-        android:translateY="-10">
+        android:translateY="-12">
+        <group android:translateY="26">
+            <group
+                android:pivotX="512"
+                android:pivotY="528"
+                android:scaleX="0.9067"
+                android:scaleY="0.9067">
+                <path
+                    android:fillAlpha="0.055"
+                    android:fillColor="#FF0A0930"
+                    android:pathData="M512 204C686 204 788 330 792 500C795 612 806 690 818 752C826 792 806 818 776 818C742 818 720 752 684 752C646 752 628 824 590 824C552 824 532 758 494 758C446 758 400 790 340 818C300 836 250 850 206 852C236 820 242 776 236 720C230 650 230 580 232 500C236 330 338 204 512 204Z" />
+            </group>
+            <group
+                android:pivotX="512"
+                android:pivotY="528"
+                android:scaleX="0.9333"
+                android:scaleY="0.9333">
+                <path
+                    android:fillAlpha="0.055"
+                    android:fillColor="#FF0A0930"
+                    android:pathData="M512 204C686 204 788 330 792 500C795 612 806 690 818 752C826 792 806 818 776 818C742 818 720 752 684 752C646 752 628 824 590 824C552 824 532 758 494 758C446 758 400 790 340 818C300 836 250 850 206 852C236 820 242 776 236 720C230 650 230 580 232 500C236 330 338 204 512 204Z" />
+            </group>
+            <group
+                android:pivotX="512"
+                android:pivotY="528"
+                android:scaleX="0.96"
+                android:scaleY="0.96">
+                <path
+                    android:fillAlpha="0.055"
+                    android:fillColor="#FF0A0930"
+                    android:pathData="M512 204C686 204 788 330 792 500C795 612 806 690 818 752C826 792 806 818 776 818C742 818 720 752 684 752C646 752 628 824 590 824C552 824 532 758 494 758C446 758 400 790 340 818C300 836 250 850 206 852C236 820 242 776 236 720C230 650 230 580 232 500C236 330 338 204 512 204Z" />
+            </group>
+            <group
+                android:pivotX="512"
+                android:pivotY="528"
+                android:scaleX="0.9867"
+                android:scaleY="0.9867">
+                <path
+                    android:fillAlpha="0.055"
+                    android:fillColor="#FF0A0930"
+                    android:pathData="M512 204C686 204 788 330 792 500C795 612 806 690 818 752C826 792 806 818 776 818C742 818 720 752 684 752C646 752 628 824 590 824C552 824 532 758 494 758C446 758 400 790 340 818C300 836 250 850 206 852C236 820 242 776 236 720C230 650 230 580 232 500C236 330 338 204 512 204Z" />
+            </group>
+            <group
+                android:pivotX="512"
+                android:pivotY="528"
+                android:scaleX="1.0133"
+                android:scaleY="1.0133">
+                <path
+                    android:fillAlpha="0.055"
+                    android:fillColor="#FF0A0930"
+                    android:pathData="M512 204C686 204 788 330 792 500C795 612 806 690 818 752C826 792 806 818 776 818C742 818 720 752 684 752C646 752 628 824 590 824C552 824 532 758 494 758C446 758 400 790 340 818C300 836 250 850 206 852C236 820 242 776 236 720C230 650 230 580 232 500C236 330 338 204 512 204Z" />
+            </group>
+            <group
+                android:pivotX="512"
+                android:pivotY="528"
+                android:scaleX="1.04"
+                android:scaleY="1.04">
+                <path
+                    android:fillAlpha="0.055"
+                    android:fillColor="#FF0A0930"
+                    android:pathData="M512 204C686 204 788 330 792 500C795 612 806 690 818 752C826 792 806 818 776 818C742 818 720 752 684 752C646 752 628 824 590 824C552 824 532 758 494 758C446 758 400 790 340 818C300 836 250 850 206 852C236 820 242 776 236 720C230 650 230 580 232 500C236 330 338 204 512 204Z" />
+            </group>
+            <group
+                android:pivotX="512"
+                android:pivotY="528"
+                android:scaleX="1.0667"
+                android:scaleY="1.0667">
+                <path
+                    android:fillAlpha="0.055"
+                    android:fillColor="#FF0A0930"
+                    android:pathData="M512 204C686 204 788 330 792 500C795 612 806 690 818 752C826 792 806 818 776 818C742 818 720 752 684 752C646 752 628 824 590 824C552 824 532 758 494 758C446 758 400 790 340 818C300 836 250 850 206 852C236 820 242 776 236 720C230 650 230 580 232 500C236 330 338 204 512 204Z" />
+            </group>
+            <group
+                android:pivotX="512"
+                android:pivotY="528"
+                android:scaleX="1.0933"
+                android:scaleY="1.0933">
+                <path
+                    android:fillAlpha="0.03"
+                    android:fillColor="#FF0A0930"
+                    android:pathData="M512 204C686 204 788 330 792 500C795 612 806 690 818 752C826 792 806 818 776 818C742 818 720 752 684 752C646 752 628 824 590 824C552 824 532 758 494 758C446 758 400 790 340 818C300 836 250 850 206 852C236 820 242 776 236 720C230 650 230 580 232 500C236 330 338 204 512 204Z" />
+            </group>
+            <group
+                android:pivotX="512"
+                android:pivotY="528"
+                android:scaleX="1.12"
+                android:scaleY="1.12">
+                <path
+                    android:fillAlpha="0.015"
+                    android:fillColor="#FF0A0930"
+                    android:pathData="M512 204C686 204 788 330 792 500C795 612 806 690 818 752C826 792 806 818 776 818C742 818 720 752 684 752C646 752 628 824 590 824C552 824 532 758 494 758C446 758 400 790 340 818C300 836 250 850 206 852C236 820 242 776 236 720C230 650 230 580 232 500C236 330 338 204 512 204Z" />
+            </group>
+            <group
+                android:pivotX="512"
+                android:pivotY="528"
+                android:scaleX="1.1467"
+                android:scaleY="1.1467">
+                <path
+                    android:fillAlpha="0.008"
+                    android:fillColor="#FF0A0930"
+                    android:pathData="M512 204C686 204 788 330 792 500C795 612 806 690 818 752C826 792 806 818 776 818C742 818 720 752 684 752C646 752 628 824 590 824C552 824 532 758 494 758C446 758 400 790 340 818C300 836 250 850 206 852C236 820 242 776 236 720C230 650 230 580 232 500C236 330 338 204 512 204Z" />
+            </group>
+        </group>
         <path android:pathData="M512 204C686 204 788 330 792 500C795 612 806 690 818 752C826 792 806 818 776 818C742 818 720 752 684 752C646 752 628 824 590 824C552 824 532 758 494 758C446 758 400 790 340 818C300 836 250 850 206 852C236 820 242 776 236 720C230 650 230 580 232 500C236 330 338 204 512 204Z">
             <aapt:attr name="android:fillColor">
                 <gradient
@@ -25,5 +133,48 @@
                 </gradient>
             </aapt:attr>
         </path>
+        <group>
+            <clip-path android:pathData="M512 204C686 204 788 330 792 500C795 612 806 690 818 752C826 792 806 818 776 818C742 818 720 752 684 752C646 752 628 824 590 824C552 824 532 758 494 758C446 758 400 790 340 818C300 836 250 850 206 852C236 820 242 776 236 720C230 650 230 580 232 500C236 330 338 204 512 204Z" />
+            <path android:pathData="M200,200h620v660h-620z">
+                <aapt:attr name="android:fillColor">
+                    <gradient
+                        android:type="linear"
+                        android:startX="200"
+                        android:startY="0"
+                        android:endX="820"
+                        android:endY="0">
+                        <item android:offset="0" android:color="#004B49D8" />
+                        <item android:offset="0.7" android:color="#004B49D8" />
+                        <item android:offset="1" android:color="#1F4B49D8" />
+                    </gradient>
+                </aapt:attr>
+            </path>
+            <path android:pathData="M596 430C640 530 676 640 684 752C704 790 730 812 760 830C748 690 690 530 596 430Z">
+                <aapt:attr name="android:fillColor">
+                    <gradient
+                        android:type="linear"
+                        android:startX="0"
+                        android:startY="430"
+                        android:endX="0"
+                        android:endY="830">
+                        <item android:offset="0" android:color="#004B49D8" />
+                        <item android:offset="1" android:color="#3D4B49D8" />
+                    </gradient>
+                </aapt:attr>
+            </path>
+            <path android:pathData="M424 440C468 540 490 650 494 758C512 790 540 816 572 836C562 690 510 540 424 440Z">
+                <aapt:attr name="android:fillColor">
+                    <gradient
+                        android:type="linear"
+                        android:startX="0"
+                        android:startY="440"
+                        android:endX="0"
+                        android:endY="836">
+                        <item android:offset="0" android:color="#004B49D8" />
+                        <item android:offset="1" android:color="#3D4B49D8" />
+                    </gradient>
+                </aapt:attr>
+            </path>
+        </group>
     </group>
 </vector>

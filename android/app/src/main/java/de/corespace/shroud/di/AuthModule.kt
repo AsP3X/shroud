@@ -83,8 +83,7 @@ class AuthModule(container: AppContainer) : AppModule(container) {
         )
     }
 
-    /** Settings › Devices (K3): `GET /devices`, revoke, and a sealed rename. */
-    val devices: DevicesController by lazy {
+    private val devicesLazy = lazy {
         val crypto = container.keys.cryptoController
         ShroudDevicesController(
             listDevices = { token -> container.net.api.devices(token) },
@@ -97,6 +96,12 @@ class AuthModule(container: AppContainer) : AppModule(container) {
             deviceNoun = { DeviceNoun.current(app) },
         )
     }
+
+    /** Settings › Devices (K3): `GET /devices`, revoke, and a sealed rename. */
+    val devices: DevicesController by devicesLazy
+
+    /** [devices] when something already built it. The wipe and the chat lock never build it just to clear it. */
+    val devicesIfBuilt: DevicesController? get() = if (devicesLazy.isInitialized()) devices else null
 
     /** What survives the wipe; packages that keep more register here (settings-lock §14.3.2). */
     val wipeKeepList: WipeKeepList by lazy { WipeKeepList.forApp(locations) }

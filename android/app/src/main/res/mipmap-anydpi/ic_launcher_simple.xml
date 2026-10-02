@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Simple launcher icon (Settings › Appearance › Logo; BrandLogoPreference, settings-lock §8.4):
+  the flat veil on the gradient without the glow. The .LauncherSimple activity-alias shows it.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background_simple" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground_simple" />
+    <monochrome android:drawable="@drawable/ic_launcher_monochrome" />
+</adaptive-icon>
