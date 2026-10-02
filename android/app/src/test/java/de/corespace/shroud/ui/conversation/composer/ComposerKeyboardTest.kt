@@ -114,6 +114,26 @@ class ComposerKeyboardTest {
     }
 
     @Test
+    fun theBarFollowsTheKeyboardsOwnAnimationOnEveryFrame() {
+        val heights = ArrayList<Dp>()
+        val ui = stage(onHeight = { heights += it })
+        ui.insets(navigationDp = NAV)
+        val content = heights.last().value - NAV
+        // Gboard's rise as WindowInsetsAnimation reports it, one inset per 16 ms frame (eased, not linear).
+        val rising = listOf(6f, 30f, 72f, 128f, 186f, 238f, 280f, 310f, 328f, KEYBOARD)
+        ui.imeAnimation(rising, navigationDp = NAV) { ime ->
+            // The frame that carried this inset already measured the bar with it: no lag, no spring of its own.
+            assertEquals("reported height in the frame with a $ime dp keyboard", content + max(ime, NAV), heights.last().value, 0.5f)
+        }
+        assertEquals(content + KEYBOARD, heights.last().value, 0.5f)
+        val falling = rising.reversed().drop(1) + 0f
+        ui.imeAnimation(falling, navigationDp = NAV) { ime ->
+            assertEquals("reported height in the frame with a $ime dp keyboard", content + max(ime, NAV), heights.last().value, 0.5f)
+        }
+        assertEquals(content + NAV, heights.last().value, 0.5f)
+    }
+
+    @Test
     fun aTakeDropsTheKeyboardWithTheField() {
         val keyboard = RecordingKeyboard()
         val ui = stage(keyboard = keyboard)

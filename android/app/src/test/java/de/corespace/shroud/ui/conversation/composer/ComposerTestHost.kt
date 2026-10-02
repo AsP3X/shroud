@@ -111,7 +111,8 @@ internal class ComposerTestHost(dark: Boolean = false, content: @Composable () -
     /**
      * The keyboard animating as the system drives it on API 30+: prepare, the target applied (which
      * Compose holds back while prepared), start, then one progress per frame with that frame's
-     * keyboard height from [framesDp], each followed by one 16 ms frame and [onFrame], then the end.
+     * keyboard height from [framesDp], each followed by one 16 ms frame — laid out, as the frame's
+     * traversal would — and [onFrame], then the end.
      */
     fun imeAnimation(framesDp: List<Float>, navigationDp: Float, onFrame: (imeDp: Float) -> Unit) {
         val view = root
@@ -127,6 +128,7 @@ internal class ComposerTestHost(dark: Boolean = false, content: @Composable () -
             view.dispatchWindowInsetsAnimationProgress(windowInsets(frame, navigationDp).toWindowInsets()!!, listOf(animation))
             Snapshot.sendApplyNotifications()
             shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(FRAME_MS))
+            (view as RootForTest).measureAndLayoutForTest()
             onFrame(frame)
         }
         view.dispatchWindowInsetsAnimationEnd(animation)
