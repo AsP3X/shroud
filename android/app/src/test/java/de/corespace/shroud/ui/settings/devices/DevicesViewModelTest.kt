@@ -98,6 +98,10 @@ class DevicesViewModelTest {
             removeAllCalls++
             return removeAllOutcome
         }
+
+        override fun clear() {
+            mutable.value = DevicesState()
+        }
     }
 
     private class Recorder {
