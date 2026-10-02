@@ -9,6 +9,7 @@ import de.corespace.shroud.core.net.ServerConfiguration
 import de.corespace.shroud.core.net.ServerConnectionMode
 import de.corespace.shroud.core.storage.AutoLockDelay
 import de.corespace.shroud.testing.FakeAppClock
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 
 /**
@@ -33,6 +34,9 @@ class FakeShellEnvironment(override val clock: FakeAppClock = FakeAppClock()) : 
     override var isInCall = false
     var identity = IdentityPresence.Present
     var interruptedWipe = false
+
+    /** Holds the launch's interrupted-wipe check until completed (a slow revoke). */
+    var wipeCheckGate: CompletableDeferred<Unit>? = null
     var userUnlocked = true
     var notificationsUnlocked: Boolean? = null
     var notificationsSignedIn: Boolean? = null
@@ -77,6 +81,7 @@ class FakeShellEnvironment(override val clock: FakeAppClock = FakeAppClock()) : 
 
     override suspend fun finishInterruptedWipeIfNeeded(): Boolean {
         log += "finishInterruptedWipe"
+        wipeCheckGate?.await()
         return interruptedWipe
     }
 

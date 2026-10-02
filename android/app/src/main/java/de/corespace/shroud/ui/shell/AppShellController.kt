@@ -35,8 +35,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  * auto-lock, and the cover state the root draws. It replaces W2's interim `InterimSession` and
  * `ShroudApplication`'s unconditional `ON_STOP` lock (shell-chats §3.7).
  *
- * One per process (`di/ShellModule`), started from `AppContainer.onProcessStart`; collects on the
- * app scope (main), so it keeps working while the activity is stopped. The scene-phase socket work
+ * One per process (`di/ShellModule`), started by the process's first `MainActivity`
+ * (`ShellModule.startShell`; never by a push-, boot- or `CallActivity`-started process); collects on
+ * the app scope (main), so it keeps working while the activity is stopped. The scene-phase socket work
  * (`handleAppBecameActive`, `stepAway`) is `AppForegroundCoordinator`'s (W1-RT) on the same
  * [AppPhase], so it is not repeated here.
  *
@@ -247,6 +248,13 @@ class AppShellController(
     private suspend fun onUnlockChanged(unlocked: Boolean) {
         env.setNotificationsUnlocked(unlocked)
         if (unlocked) {
+            if (!launched.value) {
+                // Unlocked during the launch checks: an interrupted wipe finishes before anything reads
+                // the session (`RootView.swift:151-152`; W2's interim root waited the same way), and the
+                // launch sequence then starts what the open chats need itself.
+                launched.first { it }
+                return
+            }
             if (env.wipePresented.value) return
             router.showWelcome()
             env.startMessaging()
@@ -427,10 +435,17 @@ class AppShellController(
         }
     }
 
-    /** The root's composition is alive: the wipe resets the router through it (`deviceWipe.router`, `RootView.swift:143`). */
+    /**
+     * The root's composition is alive: the wipe resets the router through it (`deviceWipe.router`,
+     * `RootView.swift:143`). Counted, so a composition leaving after a new one arrived (an activity
+     * recreated) does not detach the router the new one still needs.
+     */
     fun attachUi(attached: Boolean) {
-        env.attachWipeRouter(if (attached) router else null)
+        uiAttachments = (uiAttachments + if (attached) 1 else -1).coerceAtLeast(0)
+        env.attachWipeRouter(if (uiAttachments > 0) router else null)
     }
+
+    private var uiAttachments = 0
 
     /** [ScreenCaptureMonitor.captured]. */
     fun setScreenCaptured(captured: Boolean) {

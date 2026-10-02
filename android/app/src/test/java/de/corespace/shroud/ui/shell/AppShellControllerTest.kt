@@ -4,6 +4,7 @@ import de.corespace.shroud.core.auth.WipeReason
 import de.corespace.shroud.core.keys.IdentityPresence
 import de.corespace.shroud.core.lifecycle.AppPhase
 import de.corespace.shroud.core.storage.AutoLockDelay
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -13,6 +14,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -410,6 +412,73 @@ class AppShellControllerTest {
         assertFalse(shell.router.isUnlocked)
         shell.router.unlockMessages()
         assertTrue(shell.router.isUnlocked)
+    }
+
+    /** W2's interim root waited for the launch checks before it started messaging (`RootView.swift:151-152`). */
+    @Test
+    fun anUnlockDuringTheLaunchChecksWaitsForThemAndStartsMessagingOnce() = runTest(UnconfinedTestDispatcher()) {
+        val env = FakeShellEnvironment()
+        env.signIn()
+        val gate = CompletableDeferred<Unit>()
+        env.wipeCheckGate = gate
+        val shell = shell(env)
+        assertFalse(shell.launchCompleted.value)
+        env.unlockKeys()
+        shell.router.unlockMessages()
+        assertFalse("startMessaging" in env.log)
+        assertFalse("validate" in env.log)
+        gate.complete(Unit)
+        assertTrue(shell.launchCompleted.value)
+        assertEquals(1, env.log.count { it == "startMessaging" })
+        assertEquals(1, env.log.count { it == "syncDeviceName" })
+        assertEquals(true, env.notificationsUnlocked)
+    }
+
+    /** `NotificationsController.isSignedIn` follows the session, never the lock (Grok report §2.7: false swallows the shade). */
+    @Test
+    fun notificationsStaySignedInWhileTheSessionLives() = runTest(UnconfinedTestDispatcher()) {
+        val env = FakeShellEnvironment()
+        val shell = unlockedShell(env)
+        assertEquals(true, env.notificationsUnlocked)
+        env.phase.value = AppPhase.Background
+        assertFalse(shell.router.isUnlocked)
+        assertEquals(false, env.notificationsUnlocked)
+        assertEquals(true, env.notificationsSignedIn)
+        env.phase.value = AppPhase.Inactive
+        env.phase.value = AppPhase.Active
+        assertEquals(true, env.notificationsSignedIn)
+        env.session.value = null
+        assertEquals(false, env.notificationsSignedIn)
+    }
+
+    /** `deviceWipe.router` (`RootView.swift:143`) stays while any root composition lives (an activity recreated). */
+    @Test
+    fun theWipeRouterStaysAttachedWhileAnyRootLives() = runTest(UnconfinedTestDispatcher()) {
+        val env = FakeShellEnvironment()
+        val shell = shell(env)
+        assertNull(env.attachedRouter)
+        shell.attachUi(true)
+        assertSame(shell.router, env.attachedRouter)
+        shell.attachUi(true)
+        shell.attachUi(false)
+        assertSame(shell.router, env.attachedRouter)
+        shell.attachUi(false)
+        assertNull(env.attachedRouter)
+        // The Log Out wipe ends the session through it: Welcome under the overlay.
+        shell.router.showLogIn()
+        shell.router.onLocalSessionEnded()
+        assertTrue(shell.router.path.isEmpty())
+    }
+
+    /** Log Out is the device wipe (`DeviceWipeController.start(.logout)`, settings-lock §14), once. */
+    @Test
+    fun logOutRunsTheWipeOnce() = runTest(UnconfinedTestDispatcher()) {
+        val env = FakeShellEnvironment()
+        val shell = unlockedShell(env)
+        shell.actions.logOut()
+        shell.actions.logOut()
+        assertEquals(listOf("startWipe(${WipeReason.Logout})"), env.log.filter { it.startsWith("startWipe") })
+        assertTrue(shell.actions.isLoggingOut.value)
     }
 
     // ---- Covers (RootView.swift:347-376; shell-chats §3.8-3.9) ----

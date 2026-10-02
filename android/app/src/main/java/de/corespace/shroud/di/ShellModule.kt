@@ -13,11 +13,17 @@ import kotlinx.coroutines.launch
  *
  * - [controller] — `AppShellController`: launch sequence, session probe while locked, the reactions
  *   iOS `RootView` runs on session / unlock / wipe / call changes, the app lifecycle with the
- *   auto-lock, and the cover state the root draws. Built and started in [onProcessStart], so the
- *   lifecycle and the auto-lock work from the first activity on, also while no activity exists.
- *   It replaces `ShroudApplication`'s interim `ON_STOP` crypto lock (shell-chats §3.7; that
- *   observer's removal is W3-INT's, see the package report).
+ *   auto-lock, and the cover state the root draws. It replaces W2's interim `InterimSession`.
  * - [screenCapture] — recording / mirroring detection, fed into the controller.
+ *
+ * The shell starts with the first `MainActivity` of the process ([startShell]), as W2's interim
+ * root did and as iOS's `RootView.task` runs with the window, and then keeps running on the app
+ * scope while the activity is stopped or gone. It deliberately does not start in [onProcessStart]:
+ * a process a push, the boot receiver or `CallActivity` started must not run the launch sequence —
+ * `finishInterruptedWipeIfNeeded` there would end the session of a phone that is only being woken,
+ * and the system e2e starts `CallActivity` on purpose to clear the package's stopped flag without
+ * it (docs/android-handover-from-grok.md §3 G8, §4 C14). Before any `MainActivity` the chats are
+ * locked, so there is nothing for the auto-lock to do.
  *
  * Nobody else constructs these classes (00-plan §2.0 rule 3).
  */
@@ -31,10 +37,18 @@ class ShellModule(container: AppContainer) : AppModule(container) {
     /** Screen recording (API 35+, attached by `MainActivity`) and presentation displays (all APIs). */
     val screenCapture: ScreenCaptureMonitor by lazy { ScreenCaptureMonitor() }
 
-    override fun onProcessStart() {
+    /** [startShell] ran in this process. */
+    var isStarted = false
+        private set
+
+    /** Starts the shell once per process (main thread, `MainActivity.onCreate`) and returns it. */
+    fun startShell(): AppShellController {
         val shell = controller
+        if (isStarted) return shell
+        isStarted = true
         shell.start()
         screenCapture.startDisplays(container.appContext)
         container.appScope.launch { screenCapture.captured.collect(shell::setScreenCaptured) }
+        return shell
     }
 }

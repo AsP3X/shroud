@@ -2,7 +2,6 @@ package de.corespace.shroud
 
 import android.content.Intent
 import android.graphics.Color
-import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -17,6 +16,7 @@ import androidx.lifecycle.lifecycleScope
 import de.corespace.shroud.core.appearance.ColorTheme
 import de.corespace.shroud.core.notifications.NotificationTap
 import de.corespace.shroud.ui.LocalAppContainer
+import de.corespace.shroud.ui.shell.LaunchIntent
 import de.corespace.shroud.ui.shell.LocalWindowProtectionGuard
 import de.corespace.shroud.ui.shell.RootScreen
 import de.corespace.shroud.ui.shell.WindowControls
@@ -33,8 +33,10 @@ import kotlinx.coroutines.launch
  * SwiftUI never recreates `RootView`.
  *
  * Controllers live in the process-wide [AppContainer], never here: the shell's
- * `AppShellController` (W3-SHELL) runs from process start, so an activity recreation (or none at
- * all) changes nothing about the lock, the session or the pushes. This activity only:
+ * `AppShellController` (W3-SHELL) is started by the first `MainActivity` of the process
+ * (`ShellModule.startShell`, the launch iOS's `RootView` runs) and then runs process-wide, so an
+ * activity recreation changes nothing about the lock, the session or the pushes. A process a push,
+ * the boot receiver or `CallActivity` started never runs it. This activity only:
  *
  * - hosts [RootScreen] under the theme picked in Settings › Appearance, and keeps the system bar
  *   icons on the effective theme rather than the system's (`WindowColorTheme`, `RootView.swift:118-119`;
@@ -58,7 +60,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         val container = container
-        val shell = container.shell.controller
+        // The shell starts with the first MainActivity, not with the process (`ShellModule.startShell`).
+        val shell = container.shell.startShell()
         protection = WindowProtectionGuard(WindowControls.of(this))
         lifecycleScope.launch {
             shell.windowProtection.collect { protection.hold(WindowProtectionGuard.SHELL, it) }
@@ -116,24 +119,17 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    /** A notification tap (only through the `.NotificationTapEntry` alias) or an invite link ([LaunchIntent]). */
     private fun handleIntent(intent: Intent?) {
-        val tap = NotificationTap.from(intent)
-        val invite = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.data?.takeIf(::isInviteLink)
-        when {
-            tap != null -> container.notifications.controller.handleTap(tap)
-            invite != null -> container.contacts.controller.pendingInvite.value = invite.toString()
-            else -> return
+        when (val launch = LaunchIntent.of(intent)) {
+            is LaunchIntent.Tap -> container.notifications.controller.handleTap(launch.tap)
+            is LaunchIntent.Invite -> container.contacts.controller.pendingInvite.value = launch.url
+            null -> return
         }
         setIntent(Intent())
     }
 
-    /** The App Links filter of the manifest: `https://shroud.corespace.de/u/…` (contacts §5.10). */
-    private fun isInviteLink(uri: Uri): Boolean =
-        uri.scheme == "https" && uri.host == INVITE_HOST && uri.path?.startsWith("/u/") == true
-
     private companion object {
-        const val INVITE_HOST = "shroud.corespace.de"
-
         /** `enableEdgeToEdge`'s own scrims for three-button navigation (androidx.activity `EdgeToEdge.kt`). */
         val LIGHT_NAVIGATION_SCRIM = Color.argb(0xe6, 0xFF, 0xFF, 0xFF)
         val DARK_NAVIGATION_SCRIM = Color.argb(0x80, 0x1b, 0x1b, 0x1b)
