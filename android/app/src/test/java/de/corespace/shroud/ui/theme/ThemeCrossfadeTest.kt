@@ -96,11 +96,15 @@ class ThemeCrossfadeTest {
         dark = true
         frame(0)
         frame(100)
-        centre(ui)
+        assertTrue("a third through: ${hex(centre(ui))}", red(centre(ui)) in 0x98..0xB8)
         dark = false
-        frame(1000)
-        // The second switch pictures the content as it was (dark, without the first picture) and fades that.
+        // The running fade is dropped; the second switch pictures the content as it is now (dark,
+        // without the first picture) and waits for its first frame.
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(16))
         assertEquals("the dark frame now lies over the light content", 0x000000, centre(ui))
+        frame(1000)
+        frame(1150)
+        assertTrue("half way back: ${hex(centre(ui))}", red(centre(ui)) in 0x70..0x90)
         frame(1300)
         assertEquals(0xFFFFFF, centre(ui))
     }

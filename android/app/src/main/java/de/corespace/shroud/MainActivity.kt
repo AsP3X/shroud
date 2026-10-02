@@ -1,14 +1,9 @@
 package de.corespace.shroud
 
 import android.content.Intent
-import android.content.res.Configuration
-import android.content.res.Resources
-import android.graphics.Color
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.CompositionLocalProvider
@@ -27,6 +22,7 @@ import de.corespace.shroud.ui.shell.WindowControls
 import de.corespace.shroud.ui.shell.WindowProtectionGuard
 import de.corespace.shroud.ui.theme.ShroudTheme
 import de.corespace.shroud.ui.theme.ThemeCrossfade
+import de.corespace.shroud.ui.theme.ThemedSystemBars
 import kotlinx.coroutines.launch
 
 /**
@@ -61,17 +57,14 @@ class MainActivity : ComponentActivity() {
     private var screenRecording: AutoCloseable? = null
 
     /**
-     * The bars' styles, built once. androidx.activity (1.13) keeps the **first** `enableEdgeToEdge`
-     * call's styles in a hidden decor child and re-applies them on every configuration change
-     * (rotation, font size, the phone's dark mode): fixed `{ dark }` styles or the default
-     * system-following ones would hand a Dark choice on a light phone dark icons again at the next
-     * rotation. These read the chosen theme each time they are applied.
+     * Status and navigation bar icons follow the theme the app shows, not the system's (shell-chats
+     * §3.12): a Dark choice on a light phone needs light icons, also after a rotation. The bars stay
+     * edge to edge.
      */
-    private val statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT) { showsDark(it) }
-    private val navigationBarStyle = SystemBarStyle.auto(LIGHT_NAVIGATION_SCRIM, DARK_NAVIGATION_SCRIM) { showsDark(it) }
+    private val systemBars = ThemedSystemBars { container.auth.colorTheme.theme.value }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        enableEdgeToEdge(statusBarStyle, navigationBarStyle)
+        systemBars.apply(this)
         super.onCreate(savedInstanceState)
         val container = container
         // The shell starts with the first MainActivity, not with the process (`ShellModule.startShell`).
@@ -89,7 +82,7 @@ class MainActivity : ComponentActivity() {
                 ColorTheme.Dark -> true
                 ColorTheme.System -> isSystemInDarkTheme()
             }
-            LaunchedEffect(dark) { applySystemBars() }
+            LaunchedEffect(dark) { systemBars.apply(this@MainActivity) }
             CompositionLocalProvider(
                 LocalAppContainer provides container,
                 LocalWindowProtectionGuard provides protection,
@@ -123,21 +116,6 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
     }
 
-    /**
-     * Status and navigation bar icons follow the theme the app shows, not the system's (shell-chats
-     * §3.12): a Dark choice on a light phone needs light icons. The bars stay edge to edge.
-     */
-    private fun applySystemBars() {
-        enableEdgeToEdge(statusBarStyle, navigationBarStyle)
-    }
-
-    /** The theme the window shows: Settings › Appearance's choice, or the phone's for System (`RootView.swift:118-119`). */
-    private fun showsDark(resources: Resources): Boolean = when (container.auth.colorTheme.theme.value) {
-        ColorTheme.Light -> false
-        ColorTheme.Dark -> true
-        ColorTheme.System -> (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-    }
-
     /** A notification tap (only through the `.NotificationTapEntry` alias) or an invite link ([LaunchIntent]). */
     private fun handleIntent(intent: Intent?) {
         when (val launch = LaunchIntent.of(intent)) {
@@ -146,11 +124,5 @@ class MainActivity : ComponentActivity() {
             null -> return
         }
         setIntent(Intent())
-    }
-
-    private companion object {
-        /** `enableEdgeToEdge`'s own scrims for three-button navigation (androidx.activity `EdgeToEdge.kt`). */
-        val LIGHT_NAVIGATION_SCRIM = Color.argb(0xe6, 0xFF, 0xFF, 0xFF)
-        val DARK_NAVIGATION_SCRIM = Color.argb(0x80, 0x1b, 0x1b, 0x1b)
     }
 }
