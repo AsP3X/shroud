@@ -51,8 +51,9 @@ class ComposerKeyboardTest {
 
     @After
     fun tearDown() {
-        hosts.forEach { it.close() }
+        // The scope first: work it ends (a send's `finally`) writes state the hosts' close must still drain.
         scope.cancel()
+        hosts.forEach { it.close() }
     }
 
     private class RecordingKeyboard : SoftwareKeyboardController {

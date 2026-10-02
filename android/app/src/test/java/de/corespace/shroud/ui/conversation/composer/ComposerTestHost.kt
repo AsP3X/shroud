@@ -186,22 +186,18 @@ internal class ComposerTestHost(dark: Boolean = false, content: @Composable () -
         return bitmap
     }
 
-    /** Ends the composition and destroys the activity, so nothing of this test outlives it. */
+    /**
+     * Ends the composition and destroys the activity, so nothing of this test outlives it, and
+     * drains what that leaves for Compose's UI dispatcher. Cancel the test's own scope **before**
+     * this: a state write after the last drain (a send's `finally`) posts a dispatch that the reset
+     * between Robolectric tests drops, and the dispatcher then believes one is still scheduled —
+     * every later composition in this test JVM silently stops recomposing (`HarnessRule`).
+     */
     override fun close() {
-        diag("before-close")
         activity.setContent {}
         settle()
         controller.pause().stop().destroy()
         settle()
-        diag("after-close")
-    }
-
-    fun diag(where: String) {
-        val d: Any = androidx.compose.ui.platform.AndroidUiDispatcher.Main[kotlin.coroutines.ContinuationInterceptor]!!
-        val ch = d.javaClass.getDeclaredField("choreographer").apply { isAccessible = true }.get(d)
-        val fs = android.view.Choreographer::class.java.getDeclaredField("mFrameScheduled").apply { isAccessible = true }.get(ch)
-        val same = ch === android.view.Choreographer.getInstance()
-        System.err.println("DIAG $where frameScheduled=$fs sameChoreographer=$same idle=${shadowOf(Looper.getMainLooper()).isIdle}")
     }
 
     private companion object {

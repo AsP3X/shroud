@@ -69,8 +69,9 @@ class ComposerScreensRenderTest {
 
     @After
     fun tearDown() {
-        hosts.forEach { it.close() }
+        // The scope first: work it ends (a send's `finally`) writes state the hosts' close must still drain.
         scope.cancel()
+        hosts.forEach { it.close() }
     }
 
     /** A chat with Jane Cooper (or Notes), set up by [configure] before the stage is drawn. */
