@@ -2,6 +2,7 @@ package de.corespace.shroud.ui.shell
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
 import de.corespace.shroud.MainActivity
 import de.corespace.shroud.ShroudApplication
@@ -9,13 +10,17 @@ import de.corespace.shroud.core.notifications.NotificationKind
 import de.corespace.shroud.core.notifications.NotificationTap
 import de.corespace.shroud.core.storage.SensitiveTempFiles
 import kotlinx.coroutines.runBlocking
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import java.util.UUID
 
@@ -35,6 +40,9 @@ import java.util.UUID
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class ShellWiringTest {
+    @After
+    fun tearDown() = ShellUiHarness.settleMainThread()
+
     private val app = ApplicationProvider.getApplicationContext<ShroudApplication>()
     private val peer = UUID.fromString("6f9619ff-8b86-d011-b42d-00c04fc964ff")
 
@@ -53,6 +61,18 @@ class ShellWiringTest {
             stale.delete()
             fresh.delete()
         }
+    }
+
+    /**
+     * The auto-lock reads Settings › Privacy and Security's choice, `keys.securityPreferences.autoLockDelay`
+     * (shell-chats §3.7), and the capture cover its "Hide chats during screen recording" switch: the
+     * container's environment forwards both 1:1 (R4).
+     */
+    @Test
+    fun theAutoLockFollowsThePrivacyChoice() {
+        val env = ContainerShellEnvironment(app.container)
+        assertSame(app.container.keys.securityPreferences.autoLockDelay, env.autoLockDelay)
+        assertSame(app.container.keys.securityPreferences.hidesDuringScreenCapture, env.hidesDuringScreenCapture)
     }
 
     @Test
@@ -83,5 +103,29 @@ class ShellWiringTest {
         // Robolectric made the app; no MainActivity exists here.
         assertFalse("a process without MainActivity started the shell", app.container.shell.isStarted)
         assertFalse(app.container.shell.controller.launchCompleted.value)
+    }
+
+    @Test
+    fun theFirstMainActivityStartsTheShellAndDropsATapThatColdStartedASignedOutApp() {
+        // `RootView.swift:169-170`: a tap that launched a signed-out app belongs to no one. The tap is
+        // handed over before the shell starts, so the launch sequence sees it and clears it.
+        val tap = NotificationTap.intent(app, NotificationKind.Message, peer)
+        val activity = Robolectric.buildActivity(MainActivity::class.java, tap).setup()
+        // The interrupted-wipe check reads its marker off the main thread.
+        val deadline = System.currentTimeMillis() + 10_000
+        while (!app.container.shell.controller.launchCompleted.value && System.currentTimeMillis() < deadline) {
+            shadowOf(Looper.getMainLooper()).idle()
+            Thread.sleep(10)
+        }
+        shadowOf(Looper.getMainLooper()).idle()
+        try {
+            assertTrue(app.container.shell.isStarted)
+            assertTrue(app.container.shell.controller.launchCompleted.value)
+            assertNull(app.container.auth.sessionController.session.value)
+            assertNull(app.container.notifications.controller.pendingOpen.value)
+            assertFalse("signed out: no shade swallowing", app.container.notifications.controller.isSignedIn)
+        } finally {
+            activity.pause().stop().destroy()
+        }
     }
 }

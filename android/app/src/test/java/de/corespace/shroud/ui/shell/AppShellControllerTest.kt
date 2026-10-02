@@ -162,6 +162,64 @@ class AppShellControllerTest {
         assertEquals(before, env.validations)
     }
 
+    @Test
+    fun aLockWhileThePhoneIsLockedKeepsTheLockScreen() = runTest(UnconfinedTestDispatcher()) {
+        // C3 device check: the screen went off, the chats locked while the identity record was
+        // unreadable (the phone's own lock), and the notification tap then landed on Welcome.
+        val env = FakeShellEnvironment()
+        val shell = unlockedShell(env)
+        assertEquals(true, shell.needsChatUnlock.value)
+        env.identity = IdentityPresence.Unavailable
+        env.phase.value = AppPhase.Inactive
+        env.phase.value = AppPhase.Background
+        assertTrue("lockChatsInMemory" in env.log)
+        assertEquals(true, shell.needsChatUnlock.value)
+        // Back in front (the phone is unlocked again): the record is read once more.
+        env.identity = IdentityPresence.Present
+        env.phase.value = AppPhase.Inactive
+        env.phase.value = AppPhase.Active
+        assertEquals(true, shell.needsChatUnlock.value)
+        // A record that is really gone (another account's, or cleared) is Welcome, read on return.
+        env.phase.value = AppPhase.Background
+        env.identity = IdentityPresence.Absent
+        env.phase.value = AppPhase.Active
+        assertEquals(false, shell.needsChatUnlock.value)
+    }
+
+    @Test
+    fun anUnreadableRecordAtFirstReadDrawsNeitherScreenUntilTheAppIsInFront() = runTest(UnconfinedTestDispatcher()) {
+        val env = FakeShellEnvironment()
+        env.identity = IdentityPresence.Unavailable
+        env.signIn()
+        val shell = shell(env)
+        assertNull(shell.needsChatUnlock.value)
+        env.identity = IdentityPresence.Present
+        env.phase.value = AppPhase.Inactive
+        env.phase.value = AppPhase.Active
+        assertEquals(true, shell.needsChatUnlock.value)
+    }
+
+    @Test
+    fun inFrontAnUnreadableRecordIsReadAgainEverySecond() = runTest(UnconfinedTestDispatcher()) {
+        // A slow first Keystore read after an update must neither show Welcome nor leave the root blank.
+        val env = FakeShellEnvironment()
+        env.signIn()
+        env.phase.value = AppPhase.Inactive
+        env.phase.value = AppPhase.Active
+        env.identity = IdentityPresence.Unavailable
+        val shell = shell(env)
+        assertNull(shell.needsChatUnlock.value)
+        advanceTimeBy(AppShellController.IDENTITY_RETRY_MS * 3 + 1)
+        assertNull(shell.needsChatUnlock.value)
+        env.identity = IdentityPresence.Present
+        advanceTimeBy(AppShellController.IDENTITY_RETRY_MS + 1)
+        assertEquals(true, shell.needsChatUnlock.value)
+        // Readable now: no more reads until something changes.
+        env.identity = IdentityPresence.Absent
+        advanceTimeBy(AppShellController.IDENTITY_RETRY_MS * 5)
+        assertEquals(true, shell.needsChatUnlock.value)
+    }
+
     // ---- Auto-lock (RootView.swift:257-276, 315-330; shell-chats §3.7, D12) ----
 
     @Test
@@ -221,6 +279,31 @@ class AppShellControllerTest {
         runCurrent()
         assertFalse("lockChatsInMemory" in env.log)
         assertTrue(shell.router.isUnlocked)
+    }
+
+    /** Each departure starts its own delay (`leftForBackgroundAt`, `RootView.swift:49-50, 268-272`). */
+    @Test
+    fun aReturnBeforeTheDelayRestartsItOnTheNextDeparture() = runTest(UnconfinedTestDispatcher()) {
+        val env = FakeShellEnvironment()
+        env.autoLockDelay.value = AutoLockDelay.OneMinute
+        val shell = unlockedShell(env)
+        fun away(millis: Long) {
+            advanceTimeBy(millis)
+            env.clock.advanceBy(millis)
+            runCurrent()
+        }
+        env.phase.value = AppPhase.Background
+        away(40_000)
+        env.phase.value = AppPhase.Inactive
+        env.phase.value = AppPhase.Active
+        env.phase.value = AppPhase.Background
+        // 80 s since the first departure, 40 s since this one: not due.
+        away(40_000)
+        assertFalse("lockChatsInMemory" in env.log)
+        assertTrue(shell.router.isUnlocked)
+        away(20_000)
+        assertTrue("lockChatsInMemory" in env.log)
+        assertFalse(shell.router.isUnlocked)
     }
 
     @Test
