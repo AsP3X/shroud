@@ -17,12 +17,14 @@ import de.corespace.shroud.core.media.MediaImageSource
 import de.corespace.shroud.core.media.capture.CameraCapture
 import de.corespace.shroud.core.media.capture.PickedMovieFile
 import de.corespace.shroud.ui.components.ComposeHarness
+import de.corespace.shroud.ui.media.HarnessRule
 import de.corespace.shroud.ui.media.PickedMovie
 import de.corespace.shroud.ui.media.PickedPhoto
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -43,6 +45,9 @@ import java.io.File
 @Config(sdk = [35])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class CameraCaptureStateTest {
+    @get:Rule
+    val harness = HarnessRule()
+
     private class FakeCamera : CameraCapture {
         val binds = ArrayList<Pair<Boolean, Boolean>>()
         var unbinds = 0
@@ -115,7 +120,7 @@ class CameraCaptureStateTest {
         grantCamera()
         val services = FakeServices()
         val photos = ArrayList<PickedPhoto>()
-        val ui = ComposeHarness(dark = true) {
+        val ui = harness.compose {
             CameraCaptureContent(onPhoto = { photos += it }, onVideo = {}, onClose = {}, services = services)
         }
         ui.idle()
@@ -132,7 +137,7 @@ class CameraCaptureStateTest {
         grantCamera()
         val services = FakeServices().apply { camera.photoError = ImageEncodeException("Could not load that photo.") }
         var photos = 0
-        val ui = ComposeHarness(dark = true) {
+        val ui = harness.compose {
             CameraCaptureContent(onPhoto = { photos++ }, onVideo = {}, onClose = {}, services = services)
         }
         ui.idle()
@@ -147,7 +152,7 @@ class CameraCaptureStateTest {
         grantCamera()
         val services = FakeServices()
         val clips = ArrayList<PickedMovie>()
-        val ui = ComposeHarness(dark = true) {
+        val ui = harness.compose {
             CameraCaptureContent(onPhoto = {}, onVideo = { clips += it }, onClose = {}, services = services)
         }
         ui.idle()
@@ -171,7 +176,7 @@ class CameraCaptureStateTest {
         grantCamera()
         shadowOf(RuntimeEnvironment.getApplication()).grantPermissions(Manifest.permission.RECORD_AUDIO)
         val services = FakeServices().apply { camera.clip = null }
-        val ui = ComposeHarness(dark = true) {
+        val ui = harness.compose {
             CameraCaptureContent(onPhoto = {}, onVideo = {}, onClose = {}, services = services)
         }
         ui.idle()
@@ -188,7 +193,7 @@ class CameraCaptureStateTest {
         grantCamera()
         val services = FakeServices()
         var closes = 0
-        val ui = ComposeHarness(dark = true) {
+        val ui = harness.compose {
             CameraCaptureContent(onPhoto = {}, onVideo = {}, onClose = { closes++ }, services = services)
         }
         ui.idle()
@@ -210,12 +215,16 @@ class CameraCaptureStateTest {
             camera.hasBackCamera = false
             camera.hasFrontCamera = false
         }
-        val ui = ComposeHarness(dark = true) {
+        val ui = harness.compose {
             CameraCaptureContent(onPhoto = {}, onVideo = {}, onClose = {}, services = services)
         }
         ui.idle()
         assertTrue(ui.nodesWithText("No camera available").isEmpty())
-        repeat(9) { ui.idle() }
+        // The bind wait is in real time (Compose's UI dispatcher has no virtual delay): let 4.5 s pass.
+        repeat(45) {
+            Thread.sleep(100)
+            ui.idle()
+        }
         assertTrue(ui.describe(), ui.nodesWithText("No camera available").isNotEmpty())
         assertTrue(SemanticsProperties.Disabled in ui.described("Take photo").config)
     }
@@ -223,7 +232,7 @@ class CameraCaptureStateTest {
     @Test
     fun aRefusedCameraShowsTheDeniedStateWithSettings() {
         val services = FakeServices()
-        val ui = ComposeHarness(dark = true) {
+        val ui = harness.compose {
             CameraCaptureContent(onPhoto = {}, onVideo = {}, onClose = {}, services = services)
         }
         ui.idle()

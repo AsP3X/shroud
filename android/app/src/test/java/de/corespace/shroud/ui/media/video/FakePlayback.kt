@@ -16,7 +16,7 @@ internal class ScriptedEngine(override var durationSeconds: Double = 10.0, ready
     override var positionSeconds = 0.0
     override var isPlaying = false
     override var onEnded: (() -> Unit)? = null
-    var volume = 1f
+    var lastVolume = 1f
     var released = false
 
     override fun play() {
@@ -32,7 +32,7 @@ internal class ScriptedEngine(override var durationSeconds: Double = 10.0, ready
     }
 
     override fun setVolume(volume: Float) {
-        this.volume = volume
+        lastVolume = volume
     }
 
     override fun release() {

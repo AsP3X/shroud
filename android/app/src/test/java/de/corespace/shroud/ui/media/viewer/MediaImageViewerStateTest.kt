@@ -13,10 +13,12 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import de.corespace.shroud.core.media.MediaImageSource
 import de.corespace.shroud.core.media.share.SaveOutcome
 import de.corespace.shroud.ui.components.ComposeHarness
+import de.corespace.shroud.ui.media.HarnessRule
 import de.corespace.shroud.ui.media.ViewerItem
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -37,6 +39,9 @@ import java.util.UUID
 @Config(sdk = [35])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class MediaImageViewerStateTest {
+    @get:Rule
+    val harness = HarnessRule()
+
     private class FakeServices : ViewerServices {
         val bytes = mutableMapOf<UUID, ByteArray>()
         var share: Uri? = Uri.parse("content://de.corespace.shroud.media/0b6f")
@@ -78,7 +83,7 @@ class MediaImageViewerStateTest {
     @Test
     fun headerCaptionAndPagerPositionFollowThePageOnScreen() {
         val services = FakeServices().apply { items.forEach { bytes[it.id] = byteArrayOf(1) } }
-        val ui = ComposeHarness(dark = true) {
+        val ui = harness.compose {
             MediaImageViewerContent(items, items[1].id, onClose = {}, onLoad = null, onDelete = null, services = services)
         }
         assertTrue(ui.describe(), ui.nodesWithText("ann").isNotEmpty())
@@ -95,7 +100,7 @@ class MediaImageViewerStateTest {
     @Test
     fun aPageWithoutBytesAsksTheHostToLoadIt() {
         val loads = mutableListOf<UUID>()
-        val ui = ComposeHarness(dark = true) {
+        val ui = harness.compose {
             MediaImageViewerContent(items, items[2].id, onClose = {}, onLoad = { loads += it }, onDelete = null, services = FakeServices())
         }
         ui.idle()
@@ -106,13 +111,13 @@ class MediaImageViewerStateTest {
     @Test
     fun deleteGoesToTheHostOrSaysItIsComingSoon() {
         val deleted = mutableListOf<UUID>()
-        val withHandler = ComposeHarness(dark = true) {
+        val withHandler = harness.compose {
             MediaImageViewerContent(items, items[0].id, onClose = {}, onLoad = null, onDelete = { deleted += it }, services = FakeServices())
         }
         click(withHandler, "Delete")
         assertEquals(listOf(items[0].id), deleted)
 
-        val without = ComposeHarness(dark = true) {
+        val without = harness.compose {
             MediaImageViewerContent(items, items[0].id, onClose = {}, onLoad = null, onDelete = null, services = FakeServices())
         }
         click(without, "Delete")
@@ -127,7 +132,7 @@ class MediaImageViewerStateTest {
         var open by mutableStateOf(true)
         var closes = 0
         val services = FakeServices()
-        val ui = ComposeHarness(dark = true) {
+        val ui = harness.compose {
             if (open) MediaImageViewerContent(shown, items[1].id, onClose = { closes++ }, onLoad = null, onDelete = null, services = services)
         }
         shown = items.filter { it.id != items[0].id } // another photo leaves: stays open
@@ -145,7 +150,7 @@ class MediaImageViewerStateTest {
     @Test
     fun shareOpensTheSystemSheetWithAReadGrant() {
         val services = FakeServices()
-        val ui = ComposeHarness(dark = true) {
+        val ui = harness.compose {
             MediaImageViewerContent(items, items[1].id, onClose = {}, onLoad = null, onDelete = null, services = services)
         }
         click(ui, "Share")
@@ -163,7 +168,7 @@ class MediaImageViewerStateTest {
     @Test
     fun aPhotoThatCannotBeSharedSaysSo() {
         val services = FakeServices().apply { share = null }
-        val ui = ComposeHarness(dark = true) {
+        val ui = harness.compose {
             MediaImageViewerContent(items, items[1].id, onClose = {}, onLoad = null, onDelete = null, services = services)
         }
         click(ui, "Share")
@@ -173,7 +178,7 @@ class MediaImageViewerStateTest {
     @Test
     fun moreMenuSavesToTheGalleryAndShowsTheOutcome() {
         val services = FakeServices().apply { save = SaveOutcome.Failed("Could not save that photo.") }
-        val ui = ComposeHarness(dark = true) {
+        val ui = harness.compose {
             MediaImageViewerContent(items, items[1].id, onClose = {}, onLoad = null, onDelete = null, services = services)
         }
         click(ui, "More")
@@ -194,7 +199,7 @@ class MediaImageViewerStateTest {
     @Test
     fun copyPutsTheGrantOnTheClipboard() {
         val services = FakeServices()
-        val ui = ComposeHarness(dark = true) {
+        val ui = harness.compose {
             MediaImageViewerContent(items, items[1].id, onClose = {}, onLoad = null, onDelete = null, services = services)
         }
         click(ui, "More")

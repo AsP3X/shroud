@@ -6,10 +6,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import de.corespace.shroud.core.media.video.VideoSource
-import de.corespace.shroud.ui.components.ComposeHarness
+import de.corespace.shroud.ui.media.HarnessRule
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -28,6 +29,9 @@ import java.util.UUID
 @Config(sdk = [35])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class VideoPlayerOverlayStateTest {
+    @get:Rule
+    val harness = HarnessRule()
+
     private val message = VideoSource.Message(UUID.fromString("6f9619ff-8b86-d011-b42d-00cf4fc964ff"))
 
     @Test
@@ -35,7 +39,7 @@ class VideoPlayerOverlayStateTest {
         val engines = ScriptedEngines { ScriptedEngine(durationSeconds = 10.0) }
         val player = engines.player()
         var closes = 0
-        val ui = ComposeHarness(dark = true) {
+        val ui = harness.compose {
             VideoPlayerOverlayContent(message, "ann", "01.10.26", onClose = { closes++ }, player = player)
         }
         ui.idle()
@@ -59,7 +63,7 @@ class VideoPlayerOverlayStateTest {
     @Test
     fun aClipThatCannotBeOpenedSaysSo() {
         val engines = ScriptedEngines { null }
-        val ui = ComposeHarness(dark = true) {
+        val ui = harness.compose {
             VideoPlayerOverlayContent(message, "You", "", onClose = {}, player = engines.player())
         }
         ui.idle()
@@ -73,7 +77,7 @@ class VideoPlayerOverlayStateTest {
         val engines = ScriptedEngines { ScriptedEngine() }
         val player = engines.player()
         var open by mutableStateOf(true)
-        val ui = ComposeHarness(dark = true) {
+        val ui = harness.compose {
             if (open) VideoPlayerOverlayContent(message, "ann", "01.10.26", onClose = {}, player = player)
         }
         ui.idle()

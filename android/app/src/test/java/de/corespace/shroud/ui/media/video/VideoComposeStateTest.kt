@@ -11,6 +11,7 @@ import de.corespace.shroud.core.media.video.VideoSource
 import de.corespace.shroud.core.media.video.VideoTrim
 import de.corespace.shroud.core.media.video.VideoUploadQuality
 import de.corespace.shroud.ui.components.ComposeHarness
+import de.corespace.shroud.ui.media.HarnessRule
 import de.corespace.shroud.ui.media.PickedMovie
 import de.corespace.shroud.ui.media.PickedVideo
 import de.corespace.shroud.ui.media.VideoComposeDraft
@@ -20,6 +21,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -37,6 +39,9 @@ import org.robolectric.annotation.GraphicsMode
 @Config(sdk = [35])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class VideoComposeStateTest {
+    @get:Rule
+    val harness = HarnessRule()
+
     private class FakeServices : VideoComposeServices {
         val engines = ScriptedEngines { ScriptedEngine(durationSeconds = 8.0) }
         var strips = 0
@@ -78,7 +83,7 @@ class VideoComposeStateTest {
     @Test
     fun previewPlaysTheClipAndTheLineSaysWhatWillBeSent() {
         val services = FakeServices()
-        val ui = ComposeHarness(dark = true) {
+        val ui = harness.compose {
             VideoComposeContent(VideoComposeDraft(listOf(short)), onSend = {}, onAddMore = {}, onRemove = {}, onClose = {}, services = services)
         }
         ui.idle()
@@ -98,14 +103,16 @@ class VideoComposeStateTest {
     fun muteFlashesItsBannerAndTheSendCarriesIt() {
         val services = FakeServices()
         val sent = ArrayList<List<VideoSendPlan>>()
-        val ui = ComposeHarness(dark = true) {
+        val ui = harness.compose {
             VideoComposeContent(VideoComposeDraft(listOf(short), caption = "  hi "), onSend = { sent += it }, onAddMore = {}, onRemove = {}, onClose = {}, services = services)
         }
         ui.idle()
         ui.click("Sound on")
         assertTrue(ui.describe(), ui.nodesWithText("Sound will be removed").isNotEmpty())
-        assertTrue(ui.nodesWithText("MUTED").isNotEmpty())
-        assertEquals(0f, (services.engines.engines.last() as ScriptedEngine).volume, 0f)
+        // The preview is one TalkBack node; the MUTED label is part of its value.
+        assertEquals("Playing, sound off", ui.described("Video preview").config[SemanticsProperties.StateDescription])
+        assertTrue(ui.nodes().any { it.config.getOrElse(SemanticsProperties.ContentDescription) { emptyList() }.contains("Sound off") })
+        assertEquals(0f, (services.engines.engines.last() as ScriptedEngine).lastVolume, 0f)
         ui.click("Send video")
         val plans = sent.single()
         assertEquals(1, plans.size)
@@ -122,7 +129,7 @@ class VideoComposeStateTest {
     fun aClipThatCannotFitHoldsSendBackAndTheMenuSaysTooLong() {
         val services = FakeServices()
         val sent = ArrayList<List<VideoSendPlan>>()
-        val ui = ComposeHarness(dark = true) {
+        val ui = harness.compose {
             VideoComposeContent(VideoComposeDraft(listOf(short, long4k)), onSend = { sent += it }, onAddMore = {}, onRemove = {}, onClose = {}, services = services)
         }
         ui.idle()
@@ -152,7 +159,7 @@ class VideoComposeStateTest {
     fun addIsDisabledOnceTenAreStagedAndRemoveGoesThroughTheHost() {
         val removed = ArrayList<Int>()
         val ten = List(10) { video("v$it", probe(3.0, 640, 480, 500_000)) }
-        val ui = ComposeHarness(dark = true) {
+        val ui = harness.compose {
             VideoComposeContent(VideoComposeDraft(ten), onSend = {}, onAddMore = {}, onRemove = { removed += it }, onClose = {}, services = FakeServices())
         }
         ui.idle()
@@ -167,7 +174,7 @@ class VideoComposeStateTest {
     @Test
     fun backCloses() {
         var closes = 0
-        val ui = ComposeHarness(dark = true) {
+        val ui = harness.compose {
             VideoComposeContent(VideoComposeDraft(listOf(short)), onSend = {}, onAddMore = {}, onRemove = {}, onClose = { closes++ }, services = FakeServices())
         }
         ui.click("Back")

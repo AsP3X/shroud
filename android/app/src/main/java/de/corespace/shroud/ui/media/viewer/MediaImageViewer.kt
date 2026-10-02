@@ -31,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -178,18 +179,25 @@ private fun ViewerBody(
 
     val currentItem = items.firstOrNull { it.id == currentId } ?: items.firstOrNull()
 
-    // The page the pager settles on is the one on screen; a list change keeps the same photo.
+    // The page the pager is on is the photo on screen.
+    val latestItems by rememberUpdatedState(items)
     LaunchedEffect(pager) {
-        snapshotFlow { pager.currentPage }.collect { page -> items.getOrNull(page)?.let { currentId = it.id } }
+        snapshotFlow { pager.currentPage }.collect { page -> latestItems.getOrNull(page)?.let { currentId = it.id } }
     }
+    // The photo on screen left the list (deleted for everyone, say): the viewer leaves with it
+    // (`:155-161`), decided in the composition that lost it — before the pager can settle on a neighbour.
+    val listed = items.any { it.id == currentId }
+    val closedForMissing = remember { BooleanArray(1) }
+    SideEffect {
+        if (!listed && !closedForMissing[0]) {
+            closedForMissing[0] = true
+            currentOnClose()
+        }
+    }
+    // Another photo leaving keeps this one on screen.
     LaunchedEffect(items) {
         val index = items.indexOfFirst { it.id == currentId }
-        if (index < 0) {
-            // The photo on screen left the list (deleted for everyone, say): leave with it (`:155-161`).
-            currentOnClose()
-        } else if (index != pager.currentPage) {
-            pager.scrollToPage(index)
-        }
+        if (index >= 0 && index != pager.currentPage) pager.scrollToPage(index)
     }
     // Every grant this viewer handed out dies with it (K10; iOS deletes its temp file, `:625-627`).
     DisposableEffect(services) {
