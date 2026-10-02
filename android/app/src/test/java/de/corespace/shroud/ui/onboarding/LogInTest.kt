@@ -156,6 +156,22 @@ class LogInTest {
     }
 
     @Test
+    fun onlyTheServersNoKeyAnswerOffersANewPhrase() = runTest {
+        // `LogInFlowView.swift:758-781`: K2's accountHasNoKey is true only for KEYS_REQUIRED / 404 and
+        // rethrows any other answer, which Log In reads as "has a key".
+        val session = services.login("alice", "pw")
+        services.hasNoKey = true
+        assertTrue(actions.accountHasNoKey(session))
+        services.hasNoKey = false
+        assertFalse(actions.accountHasNoKey(session))
+        services.hasNoKeyError = ApiError.Transport("offline")
+        assertFalse(actions.accountHasNoKey(session))
+        services.hasNoKeyError = ApiError.Server("INTERNAL", "Something went wrong.", 500)
+        assertFalse(actions.accountHasNoKey(session))
+        assertEquals(List(4) { "identity" }, services.calls.filter { it == "identity" })
+    }
+
+    @Test
     fun pasteFailureCopy() {
         assertEquals("The clipboard doesn’t hold a valid 12-word phrase.", PASTE_FAILED)
     }

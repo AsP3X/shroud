@@ -3,7 +3,6 @@ package de.corespace.shroud.ui.onboarding
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
-import android.content.pm.PackageManager
 import android.os.Build
 import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -18,24 +17,19 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.platform.LocalContext
 import de.corespace.shroud.AppContainer
 import de.corespace.shroud.LOCAL_NETWORK_PERMISSION
+import de.corespace.shroud.core.auth.OnboardingService
 import de.corespace.shroud.core.auth.Session
 import de.corespace.shroud.core.auth.SessionController
 import de.corespace.shroud.core.crypto.Bip39
-import de.corespace.shroud.core.model.userUuid
-import de.corespace.shroud.core.net.ApiError
-import de.corespace.shroud.core.net.ErrorCodes
-import de.corespace.shroud.core.net.ServerConfiguration
-import de.corespace.shroud.core.net.ServerConnectionMode
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.StateFlow
 
 /**
  * What Sign Up and Log In need from the rest of the app — the session, the phrase helpers, the
- * crypto unlock, the screen lock, the local-network rule. The screens reach the process's
- * controllers through their modules ([ContainerOnboardingServices]) instead of the `AppContainer`
- * source-compatibility shims (00-plan §1.3; removed by W3-INT); screen tests pass a fake.
+ * crypto unlock, the screen lock, the local-network rule. Production is [ContainerOnboardingServices],
+ * a 1:1 forward to core's `auth.onboarding` ([OnboardingService], K2) plus the session, the word list
+ * and the app scope; screen tests pass a fake.
  */
 interface OnboardingServices {
     /** The signed-in session, if any (`sessionController.session`). */
@@ -47,69 +41,63 @@ interface OnboardingServices {
     /** Work that outlives the screen: the clipboard expiry (`PhraseClipboard`). */
     val appScope: CoroutineScope
 
-    /** A PIN, pattern or password is set: the vault needs one (`HistoryKeyVault.canProtectWrapKey`). */
+    /** A PIN, pattern or password is set: the vault needs one ([OnboardingService.hasScreenLock]). */
     fun hasScreenLock(): Boolean
 
-    /** Android 17's local-network permission is missing for the configured server ([localNetworkPermissionNeeded]). */
+    /** Android 17's local-network permission is missing for the configured server ([OnboardingService.needsLocalNetworkPermission]). */
     fun needsLocalNetworkPermission(): Boolean
 
-    /** `POST /auth/register` (`SessionController.register`). */
+    /** `POST /auth/register` ([OnboardingService.register]). */
     suspend fun register(username: String, password: String): Session
 
-    /** `POST /auth/login` (`SessionController.login`). */
+    /** `POST /auth/login` ([OnboardingService.login]). */
     suspend fun login(username: String, password: String): Session
 
-    /** What became of the session after a failed authenticated request (`SessionController.sessionAfterFailure`). */
+    /** What became of the session after a failed authenticated request ([OnboardingService.sessionAfterFailure]). */
     fun sessionAfterFailure(): SessionController.Validation
 
-    /** Sign Up's keys: derive, store, publish (`CryptoController.establishFromSignup`). */
+    /** Sign Up's keys: derive, store, publish ([OnboardingService.establishFromSignup]). */
     suspend fun establishFromSignup(words: List<String>, session: Session)
 
-    /** Log In's phrase step (`CryptoController.unlockWithPhrase`). */
+    /** Log In's phrase step ([OnboardingService.unlockWithPhrase]). */
     suspend fun unlockWithPhrase(words: List<String>, session: Session)
 
     /**
-     * True only when the server says this account has no identity key at all (`GET
-     * keys/identity/{me}` → `KEYS_REQUIRED`): it never had a phrase (`LogInFlowView.swift:758-781`;
-     * web-parity §14.2, P11b). A key, offline or any other answer is false.
+     * True only when the account has no identity key at all (`KEYS_REQUIRED` or a 404 from `GET
+     * keys/identity/{me}`): it never had a phrase (`LogInFlowView.swift:758-781`; web-parity §14.2,
+     * P11b). Throws the [de.corespace.shroud.core.net.ApiError] of any other answer
+     * ([OnboardingService.accountHasNoKey]); Log In reads that as "has a key" ([LogInActions.accountHasNoKey]).
      */
     suspend fun accountHasNoKey(session: Session): Boolean
 }
 
-/** The production [OnboardingServices] on the process's modules. */
-class ContainerOnboardingServices(private val container: AppContainer) : OnboardingServices {
-    private val sessions get() = container.auth.sessionController
-    private val crypto get() = container.keys.cryptoController
+/**
+ * The production [OnboardingServices]: forwards 1:1 to [onboarding] (core `auth.onboarding`, K2),
+ * with the session from `auth.sessionController`, the word list from `keys.bip39` and the app scope
+ * (rule R4: no logic here).
+ */
+class ContainerOnboardingServices(
+    private val onboarding: OnboardingService,
+    override val session: StateFlow<Session?>,
+    override val bip39: Bip39,
+    override val appScope: CoroutineScope,
+) : OnboardingServices {
+    constructor(container: AppContainer) : this(
+        onboarding = container.auth.onboarding,
+        session = container.auth.sessionController.session,
+        bip39 = container.keys.bip39,
+        appScope = container.appScope,
+    )
 
-    override val session: StateFlow<Session?> get() = sessions.session
-    override val bip39: Bip39 get() = container.keys.bip39
-    override val appScope: CoroutineScope get() = container.appScope
-
-    override fun hasScreenLock(): Boolean = container.keys.deviceSecurity.isDeviceSecure
-
-    override fun needsLocalNetworkPermission(): Boolean =
-        localNetworkPermissionNeeded(container.serverConfiguration.configuration.value) {
-            container.appContext.checkSelfPermission(LOCAL_NETWORK_PERMISSION) == PackageManager.PERMISSION_GRANTED
-        }
-
-    override suspend fun register(username: String, password: String): Session = sessions.register(username, password)
-    override suspend fun login(username: String, password: String): Session = sessions.login(username, password)
-    override fun sessionAfterFailure(): SessionController.Validation = sessions.sessionAfterFailure()
-    override suspend fun establishFromSignup(words: List<String>, session: Session) = crypto.establishFromSignup(words, session)
-    override suspend fun unlockWithPhrase(words: List<String>, session: Session) = crypto.unlockWithPhrase(words, session)
-
-    override suspend fun accountHasNoKey(session: Session): Boolean = try {
-        container.net.api.identityKey(session.token, session.userUuid)
-        false
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: Exception) {
-        isKeysRequired(e)
-    }
+    override fun hasScreenLock(): Boolean = onboarding.hasScreenLock()
+    override fun needsLocalNetworkPermission(): Boolean = onboarding.needsLocalNetworkPermission()
+    override suspend fun register(username: String, password: String): Session = onboarding.register(username, password)
+    override suspend fun login(username: String, password: String): Session = onboarding.login(username, password)
+    override fun sessionAfterFailure(): SessionController.Validation = onboarding.sessionAfterFailure()
+    override suspend fun establishFromSignup(words: List<String>, session: Session) = onboarding.establishFromSignup(words, session)
+    override suspend fun unlockWithPhrase(words: List<String>, session: Session) = onboarding.unlockWithPhrase(words, session)
+    override suspend fun accountHasNoKey(session: Session): Boolean = onboarding.accountHasNoKey(session)
 }
-
-/** The server's "this account has no keys" answer (`LogInFlowView.isKeysRequired`, `:777-781`). */
-fun isKeysRequired(error: Throwable): Boolean = error is ApiError.Server && error.code == ErrorCodes.KEYS_REQUIRED
 
 /** Screen tests provide their fake here; the app leaves it null and the screens use [ContainerOnboardingServices]. */
 val LocalOnboardingServices: ProvidableCompositionLocal<OnboardingServices?> = staticCompositionLocalOf { null }
@@ -118,20 +106,6 @@ val LocalOnboardingServices: ProvidableCompositionLocal<OnboardingServices?> = s
 @Composable
 fun rememberOnboardingServices(container: AppContainer): OnboardingServices =
     LocalOnboardingServices.current ?: remember(container) { ContainerOnboardingServices(container) }
-
-/**
- * Android 17 makes reaching the local network a runtime permission (`ACCESS_LOCAL_NETWORK`) for apps
- * targeting it: needed when the server is a LAN or emulator-host address; the phone's own loopback
- * is exempt. [granted] reads the permission (moved here from the `AppContainer` shim, 00-plan §1.3).
- */
-fun localNetworkPermissionNeeded(config: ServerConfiguration, sdk: Int = Build.VERSION.SDK_INT, granted: () -> Boolean): Boolean {
-    if (sdk < 37) return false
-    if (config.mode != ServerConnectionMode.SelfHosted) return false
-    val host = config.host.trim().trim('[', ']').lowercase()
-    if (host == "localhost" || host == "::1" || host.startsWith("127.")) return false
-    if (!ServerConfiguration.isLocalNetworkHost(host)) return false
-    return !granted()
-}
 
 /** Asks for local-network access right before a request needs it (Android 17+). */
 fun interface LocalNetworkAccess {

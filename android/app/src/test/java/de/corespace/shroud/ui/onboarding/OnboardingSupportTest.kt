@@ -1,47 +1,110 @@
 package de.corespace.shroud.ui.onboarding
 
+import de.corespace.shroud.core.auth.OnboardingService
+import de.corespace.shroud.core.auth.Session
+import de.corespace.shroud.core.auth.SessionController
+import de.corespace.shroud.core.crypto.TestWordlist
 import de.corespace.shroud.core.net.ApiError
 import de.corespace.shroud.core.net.ServerConfiguration
 import de.corespace.shroud.core.net.ServerConnectionMode
 import de.corespace.shroud.ui.components.badgePulses
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The onboarding's small rules: Android 17's local-network permission, the `KEYS_REQUIRED` check
- * (P11b), the server sheet's endpoint change (`ServerSettingsSheet.swift:53-56`), the zoom's corner
- * radius (addendum Hero H.2), the phrase clipboard's trim (crypto §17.1) and the word badge's pulse
- * (addendum EncryptionPhraseCard E1).
+ * The onboarding's small rules: the 1:1 forward to core's K2 `auth.onboarding` (which owns the
+ * local-network rule and the `KEYS_REQUIRED` check, P11b), the server sheet's endpoint change
+ * (`ServerSettingsSheet.swift:53-56`), the zoom's corner radius (addendum Hero H.2), the phrase
+ * clipboard's trim (crypto §17.1) and the word badge's pulse (addendum EncryptionPhraseCard E1).
  */
 class OnboardingSupportTest {
     private fun selfHosted(host: String, port: String = "8080", https: Boolean = false) =
         ServerConfiguration(ServerConnectionMode.SelfHosted, host, port, "/api/v1", https)
 
     @Test
-    fun theLocalNetworkPermissionIsNeededForLanServersOnAndroid17() {
-        assertTrue(localNetworkPermissionNeeded(selfHosted("10.0.2.2"), sdk = 37) { false })
-        assertTrue(localNetworkPermissionNeeded(selfHosted("192.168.1.20"), sdk = 37) { false })
-        assertTrue(localNetworkPermissionNeeded(selfHosted("nas.local"), sdk = 37) { false })
-        // Granted, older Android, the managed service, the phone's own loopback, a public host: not asked.
-        assertFalse(localNetworkPermissionNeeded(selfHosted("10.0.2.2"), sdk = 37) { true })
-        assertFalse(localNetworkPermissionNeeded(selfHosted("10.0.2.2"), sdk = 36) { false })
-        assertFalse(localNetworkPermissionNeeded(ServerConfiguration.official, sdk = 37) { false })
-        for (loopback in listOf("localhost", "127.0.0.1", "::1", "[::1]", " LOCALHOST ")) {
-            assertFalse(loopback, localNetworkPermissionNeeded(selfHosted(loopback), sdk = 37) { false })
-        }
-        assertFalse(localNetworkPermissionNeeded(selfHosted("chat.example.com", "443", true), sdk = 37) { false })
+    fun theScreensReachCoreOnboardingOneToOne() = runTest {
+        // R4/C2: the adapter forwards every call to `auth.onboarding` (K2) and decides nothing itself;
+        // the local-network rule and the KEYS_REQUIRED check are core's (`OnboardingService`).
+        val core = FakeOnboardingService()
+        val sessions = MutableStateFlow<Session?>(null)
+        val scope = CoroutineScope(Job())
+        val services = ContainerOnboardingServices(core, sessions, TestWordlist.bip39, scope)
+        assertSame(sessions, services.session)
+        assertSame(TestWordlist.bip39, services.bip39)
+        assertSame(scope, services.appScope)
+
+        core.screenLock = false
+        assertFalse(services.hasScreenLock())
+        core.screenLock = true
+        assertTrue(services.hasScreenLock())
+        core.localNetwork = true
+        assertTrue(services.needsLocalNetworkPermission())
+        core.localNetwork = false
+        assertFalse(services.needsLocalNetworkPermission())
+
+        val session = services.register("Alice", "pw-1")
+        assertEquals(core.session, session)
+        assertEquals(core.session, services.login("alice", "pw-2"))
+        core.validation = SessionController.Validation.DeviceRemoved
+        assertEquals(SessionController.Validation.DeviceRemoved, services.sessionAfterFailure())
+        services.establishFromSignup(listOf("a", "b"), session)
+        services.unlockWithPhrase(listOf("c"), session)
+        core.noKey = true
+        assertTrue(services.accountHasNoKey(session))
+        core.keyError = ApiError.Transport("offline")
+        assertTrue(runCatching { services.accountHasNoKey(session) }.exceptionOrNull() is ApiError.Transport)
+        assertEquals(
+            listOf("register:Alice:pw-1", "login:alice:pw-2", "establish:a b", "unlock:c", "identity", "identity"),
+            core.calls,
+        )
     }
 
-    @Test
-    fun onlyKeysRequiredMeansTheAccountNeverHadAPhrase() {
-        // `LogInFlowView.isKeysRequired` (`:777-781`); the server's 404 envelope (`error.rs:148-154`).
-        assertTrue(isKeysRequired(ApiError.Server("KEYS_REQUIRED", "No pre-key bundle is available for this user.", 404)))
-        assertFalse(isKeysRequired(ApiError.Server("NOT_FOUND", "Not found.", 404)))
-        assertFalse(isKeysRequired(ApiError.Transport("offline")))
-        assertFalse(isKeysRequired(IllegalStateException("KEYS_REQUIRED")))
+    /** A fake of core's K2 [OnboardingService]. */
+    private class FakeOnboardingService : OnboardingService {
+        val calls = mutableListOf<String>()
+        val session = Session("token", FakeOnboardingServices.USER, "alice", null, "device")
+        var screenLock = true
+        var localNetwork = false
+        var validation = SessionController.Validation.Offline
+        var noKey = false
+        var keyError: Throwable? = null
+
+        override fun hasScreenLock(): Boolean = screenLock
+        override fun needsLocalNetworkPermission(): Boolean = localNetwork
+
+        override suspend fun register(username: String, password: String): Session {
+            calls += "register:$username:$password"
+            return session
+        }
+
+        override suspend fun login(username: String, password: String): Session {
+            calls += "login:$username:$password"
+            return session
+        }
+
+        override fun sessionAfterFailure(): SessionController.Validation = validation
+
+        override suspend fun establishFromSignup(words: List<String>, session: Session) {
+            calls += "establish:${words.joinToString(" ")}"
+        }
+
+        override suspend fun unlockWithPhrase(words: List<String>, session: Session) {
+            calls += "unlock:${words.joinToString(" ")}"
+        }
+
+        override suspend fun accountHasNoKey(session: Session): Boolean {
+            calls += "identity"
+            keyError?.let { throw it }
+            return noKey
+        }
     }
 
     @Test

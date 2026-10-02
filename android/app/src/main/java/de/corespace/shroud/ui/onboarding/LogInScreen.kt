@@ -67,10 +67,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import de.corespace.shroud.AppContainer
+import de.corespace.shroud.core.auth.Session
 import de.corespace.shroud.core.auth.SessionController
 import de.corespace.shroud.core.crypto.Bip39
 import de.corespace.shroud.core.crypto.CryptoController
 import de.corespace.shroud.core.model.Haptic
+import de.corespace.shroud.core.net.ApiError
 import de.corespace.shroud.ui.components.Appear
 import de.corespace.shroud.ui.components.BrandLogoMark
 import de.corespace.shroud.ui.components.BrandTileBackground
@@ -237,7 +239,7 @@ internal fun LogInContent(
     LaunchedEffect(phase) {
         if (phase != Phase.Phrase) return@LaunchedEffect
         val session = services.session.value ?: return@LaunchedEffect
-        val hasNone = services.accountHasNoKey(session)
+        val hasNone = actions.accountHasNoKey(session)
         if (phase != Phase.Phrase) return@LaunchedEffect
         accountHasNoPhrase = hasNone
         if (!hasNone) leaveNewPhrase()
@@ -568,6 +570,19 @@ internal class LogInActions(private val services: OnboardingServices) {
                 Outcome.SessionEnded
             }
         }
+    }
+
+    /**
+     * "I never got a 12-word phrase" is offered only when the server says the account has no key
+     * (`LogInFlowView.swift:758-781`). Core rethrows any other [ApiError] (offline, a 5xx): that
+     * reads as "has a key", so the screen shows the plain phrase entry and nothing else.
+     */
+    suspend fun accountHasNoKey(session: Session): Boolean = try {
+        services.accountHasNoKey(session)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: ApiError) {
+        false
     }
 
     companion object {

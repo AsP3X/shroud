@@ -25,6 +25,9 @@ internal class FakeOnboardingServices(override val bip39: Bip39 = TestWordlist.b
     var unlockError: Throwable? = null
     var afterFailure = SessionController.Validation.Offline
     var hasNoKey = false
+
+    /** Thrown by [accountHasNoKey]: core rethrows every answer that is not "no key" (K2). */
+    var hasNoKeyError: Throwable? = null
     var registered = 0
     var lastWords: List<String>? = null
 
@@ -61,6 +64,7 @@ internal class FakeOnboardingServices(override val bip39: Bip39 = TestWordlist.b
 
     override suspend fun accountHasNoKey(session: Session): Boolean {
         calls += "identity"
+        hasNoKeyError?.let { throw it }
         return hasNoKey
     }
 
