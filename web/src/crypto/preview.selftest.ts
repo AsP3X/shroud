@@ -31,9 +31,10 @@ createVault(
 );
 const peer = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const messageId = "CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC";
+const sender = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 
-savePlaintext(messageId, "secret words");
-if (loadPlaintext(messageId) !== "secret words") throw new Error("plaintext should round-trip");
+savePlaintext(messageId, sender, "secret words");
+if (loadPlaintext(messageId, sender) !== "secret words") throw new Error("plaintext should round-trip");
 
 savePreview(me, peer, {
   id: messageId,
@@ -43,9 +44,9 @@ savePreview(me, peer, {
 });
 
 forgetPlaintext(messageId);
-if (loadPlaintext(messageId) !== null) throw new Error("forgotten plaintext must not be readable");
-savePlaintext(messageId, "secret words");
-if (loadPlaintext(messageId) !== null) throw new Error("a withdrawn message must not be cached again");
+if (loadPlaintext(messageId, sender) !== null) throw new Error("forgotten plaintext must not be readable");
+savePlaintext(messageId, sender, "secret words");
+if (loadPlaintext(messageId, sender) !== null) throw new Error("a withdrawn message must not be cached again");
 
 savePreview(me, peer, {
   id: messageId,

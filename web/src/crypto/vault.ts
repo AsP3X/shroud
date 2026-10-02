@@ -305,17 +305,21 @@ export function isVaultName(prefix: string, name: string): boolean {
   return name.startsWith(prefix) && /^[0-9a-f]{64}$/.test(name.slice(prefix.length));
 }
 
-/** Seals a string for `localStorage` under this storage name. Null while locked. */
-export function sealForStorage(name: string, value: string): string | null {
+/**
+ * Seals a string for `localStorage`. `aad` defaults to the storage name, which is what every
+ * caller but the plaintext cache uses. The cache binds the sender into the AAD as well.
+ * Null while locked.
+ */
+export function sealForStorage(name: string, value: string, aad?: string): string | null {
   if (!open) return null;
-  return SEALED_TAG + bytesToB64(seal(open.storageKey, utf8(value), name));
+  return SEALED_TAG + bytesToB64(seal(open.storageKey, utf8(value), aad ?? name));
 }
 
 /** Opens what `sealForStorage` wrote. Null while locked, for plaintext, or for a value that fails. */
-export function openFromStorage(name: string, stored: string | null): string | null {
+export function openFromStorage(name: string, stored: string | null, aad?: string): string | null {
   if (!open || !stored || !stored.startsWith(SEALED_TAG)) return null;
   try {
-    return utf8decode(unseal(open.storageKey, b64ToBytes(stored.slice(SEALED_TAG.length)), name));
+    return utf8decode(unseal(open.storageKey, b64ToBytes(stored.slice(SEALED_TAG.length)), aad ?? name));
   } catch {
     return null;
   }

@@ -117,7 +117,7 @@ const mine = wire("A1A1A1A1-0000-4000-8000-000000000003", ME);
 const tombstone = wire("A1A1A1A1-0000-4000-8000-000000000004", PEER, { deleted_for_everyone: true });
 const annotation = wire("A1A1A1A1-0000-4000-8000-000000000005", PEER, { content_type: "annotation" });
 const newest = wire("A1A1A1A1-0000-4000-8000-000000000006", PEER, { content_type: "media" });
-savePlaintext(cached.id, "seen before");
+savePlaintext(cached.id, PEER, "seen before");
 page = [newest, annotation, tombstone, mine, cached, oldNew];
 
 // Acks wait for a slow server; the page must not.

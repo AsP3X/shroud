@@ -1,6 +1,6 @@
 import { storageSealed } from "../storageSeal";
 import { clearMediaBlobs } from "./mediaCache";
-import { vaultGet, vaultName, vaultSet } from "./vault";
+import { openFromStorage, sealForStorage, vaultGet, vaultName, vaultSet } from "./vault";
 
 /*
  * Decrypted message bodies (voice transcripts included) and chat-list previews. Both are
@@ -35,6 +35,11 @@ function previewKey(me: string, peer: string): string | null {
 
 function plaintextKey(messageId: string): string | null {
   return vaultName(prefix, messageId);
+}
+
+/** One localStorage name per message id; the sender is bound in the vault AAD, not the name. */
+function senderAAD(name: string, senderUserId: string): string {
+  return `${name}#sender:${senderUserId.toLowerCase()}`;
 }
 
 function readPreview(name: string): StoredPreview | null {
@@ -80,18 +85,46 @@ export function savePreview(me: string, peer: string, preview: ChatPreview): voi
   writePreview(me, peer, preview);
 }
 
-export function loadPlaintext(messageId: string): string | null {
+/**
+ * Plaintext saved for `senderUserId`. A message id the server re-serves for someone else
+ * does not open: the vault AAD includes the sender, and there is no fallback to an older
+ * record that was sealed under the name alone.
+ */
+export function loadPlaintext(messageId: string, senderUserId: string): string | null {
+  const key = messageId.toLowerCase();
+  if (withdrawn.has(key)) return null;
+  const name = plaintextKey(key);
+  if (!name) return null;
+  try {
+    return openFromStorage(name, localStorage.getItem(name), senderAAD(name, senderUserId));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A body sealed before the sender was part of the AAD (vault migration of `shroud.pt.<id>`).
+ * Decode does not call this: a record with no sender is not trusted as anyone's plaintext.
+ */
+export function loadUnboundPlaintext(messageId: string): string | null {
   const key = messageId.toLowerCase();
   if (withdrawn.has(key)) return null;
   const name = plaintextKey(key);
   return name ? vaultGet(name) : null;
 }
 
-export function savePlaintext(messageId: string, text: string): void {
+export function savePlaintext(messageId: string, senderUserId: string, text: string): void {
   const key = messageId.toLowerCase();
   if (withdrawn.has(key) || storageSealed()) return;
   const name = plaintextKey(key);
-  if (name) vaultSet(name, text);
+  if (!name) return;
+  const sealed = sealForStorage(name, text, senderAAD(name, senderUserId));
+  if (sealed === null) return;
+  try {
+    localStorage.setItem(name, sealed);
+  } catch {
+    /* storage unavailable */
+  }
 }
 
 /** Whether this tab already forgot the message (`forgetPlaintext`), so nothing of it may be stored again. */

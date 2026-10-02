@@ -191,7 +191,7 @@ function deliveryAckDue(dto: WireMessage, me: string, peerUserId: string): boole
   if (dto.sender_user_id.toLowerCase() === me.toLowerCase()) return false;
   if (dto.deleted_for_everyone) return false;
   if (acknowledgedDeliveries.has(dto.id.toLowerCase())) return false;
-  return loadPlaintext(dto.id) == null;
+  return loadPlaintext(dto.id, dto.sender_user_id) == null;
 }
 
 /** Queues one ack per id not acked yet in this tab; returns at once. */
@@ -446,7 +446,7 @@ export async function decodeIncoming(
     rememberPreview(me, peerUserId, msg);
     return msg;
   }
-  const cached = loadPlaintext(dto.id);
+  const cached = loadPlaintext(dto.id, dto.sender_user_id);
   if (isAnnotation && cached != null) return annotationFrom(cached);
   if (cached != null && cached !== "[media]") {
     if (isMedia) {
@@ -495,11 +495,11 @@ export async function decodeIncoming(
     });
     const decoded = utf8decode(plain);
     if (isAnnotation) {
-      savePlaintext(dto.id, decoded);
+      savePlaintext(dto.id, dto.sender_user_id, decoded);
       return annotationFrom(decoded);
     }
     if (isMedia) {
-      savePlaintext(dto.id, decoded);
+      savePlaintext(dto.id, dto.sender_user_id, decoded);
       const payload = parseMediaPayload(decoded);
       const msg = payload
         ? messageFromMediaPayload(base, payload, dto.media_object_id)
@@ -507,7 +507,7 @@ export async function decodeIncoming(
       rememberPreview(me, peerUserId, msg);
       return msg;
     }
-    savePlaintext(dto.id, decoded);
+    savePlaintext(dto.id, dto.sender_user_id, decoded);
     const parsed = parseTextPayload(decoded);
     const msg: ChatMessage = {
       ...base,
@@ -632,14 +632,14 @@ export async function hydratePreviews(
       const dto = res.messages.find((m) => m.content_type !== "annotation");
       if (!dto) continue;
       const mine = dto.sender_user_id.toLowerCase() === me.toLowerCase();
-      const cached = loadPlaintext(dto.id);
+      const cached = loadPlaintext(dto.id, dto.sender_user_id);
       if (cached && cached !== "[media]") {
         const payload = dto.content_type === "media" ? parseMediaPayload(cached) : null;
         let transcript = payload?.t === "voice" ? payload.c?.trim() || null : null;
         if (payload?.t === "voice" && !transcript) {
           for (const other of res.messages) {
             if (other.content_type !== "annotation") continue;
-            const raw = loadPlaintext(other.id);
+            const raw = loadPlaintext(other.id, other.sender_user_id);
             const shared = raw ? parseAnnotation(raw) : null;
             if (shared?.r === dto.id.toLowerCase()) {
               transcript = shared.c;
@@ -785,7 +785,7 @@ export async function sendText(opts: {
       ciphertext: envelopeToWireB64(envelope),
     });
     // Cache what was sealed (quote included) so a reload rebuilds the same bubble.
-    savePlaintext(dto.id, wire);
+    savePlaintext(dto.id, dto.sender_user_id, wire);
     const msg: ChatMessage = {
       id: dto.id,
       senderUserId: dto.sender_user_id,
@@ -925,27 +925,30 @@ export async function sendVoice(opts: {
       ciphertext: envelopeToWireB64(envelope),
       media_object_id: upload.media_object_id,
     });
-    savePlaintext(dto.id, JSON.stringify(payload));
+    const kept = await keptMediaSend({
+      dto,
+      uploadedMediaObjectId: upload.media_object_id,
+      thisAttemptJson: JSON.stringify(payload),
+      openKept: (ciphertext) => openOwnEnvelope(ciphertext, peer, me, opts.material, dto.created_at),
+    });
+    if (kept.payloadJson != null) savePlaintext(dto.id, dto.sender_user_id, kept.payloadJson);
     await saveMediaBlob(dto.id, opts.take.data);
-    const msg: ChatMessage = {
-      id: dto.id,
-      senderUserId: dto.sender_user_id,
-      text: transcript || VOICE_LABEL,
-      createdAt: dto.created_at,
-      isMine: true,
-      deleted: false,
-      failed: false,
-      kind: "voice",
-      mediaObjectId: upload.media_object_id,
-      voiceDurationMs: opts.take.durationMs,
-      voiceWaveform: opts.take.waveform,
-      mediaKey: payload.k,
-      mime: payload.mime,
-      transcript,
-      replyTo: opts.replyTo ?? null,
-      delivered: dto.delivered ?? false,
-      read: dto.read ?? false,
-    };
+    const shown = kept.payloadJson ? parseMediaPayload(kept.payloadJson) : null;
+    const msg = messageFromMediaPayload(
+      {
+        id: dto.id,
+        senderUserId: dto.sender_user_id,
+        createdAt: dto.created_at,
+        isMine: true,
+        deleted: false,
+        failed: false,
+        delivered: dto.delivered ?? false,
+        read: dto.read ?? false,
+      },
+      shown ?? payload,
+      kept.mediaObjectId,
+    );
+    if (!shown) msg.mediaKey = null;
     rememberPreview(me, peer, msg);
     return msg;
   });
@@ -1044,6 +1047,57 @@ export async function sendVideo(opts: {
   });
 }
 
+
+/**
+ * The row an idempotent media send should remember.
+ *
+ * A retried `client_message_id` comes back as the first attempt's message. That row's blob
+ * and file key are not this upload, which the server leaves unlinked and deletes after an
+ * hour. Caching this attempt's key would pair the server's blob with the wrong key.
+ * `payloadJson` is null when the kept envelope cannot be opened: cache nothing then.
+ */
+export async function keptMediaSend(opts: {
+  dto: WireMessage;
+  uploadedMediaObjectId: string;
+  thisAttemptJson: string;
+  openKept: (ciphertext: string) => Promise<string>;
+}): Promise<{ mediaObjectId: string; payloadJson: string | null }> {
+  const stored = opts.dto.media_object_id ?? opts.uploadedMediaObjectId;
+  if (stored.toLowerCase() === opts.uploadedMediaObjectId.toLowerCase()) {
+    return { mediaObjectId: stored, payloadJson: opts.thisAttemptJson };
+  }
+  if (!opts.dto.ciphertext) return { mediaObjectId: stored, payloadJson: null };
+  try {
+    const opened = await opts.openKept(opts.dto.ciphertext);
+    if (!parseMediaPayload(opened)) return { mediaObjectId: stored, payloadJson: null };
+    return { mediaObjectId: stored, payloadJson: opened };
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") throw err;
+    return { mediaObjectId: stored, payloadJson: null };
+  }
+}
+
+/** Opens our own media envelope (the self box) so a replay can cache the row the server kept. */
+async function openOwnEnvelope(
+  ciphertext: string,
+  peer: string,
+  me: string,
+  material: IdentityMaterial,
+  createdAt: string,
+): Promise<string> {
+  const plain = await openMessage({
+    envelopeData: wireB64ToEnvelope(ciphertext),
+    peerUserId: peer,
+    ourUserId: me,
+    ourPrivate: material.agreementPrivate,
+    ourIdentityPublic: material.agreementPublic,
+    senderIdentityPublic: material.agreementPublic,
+    asSender: true,
+    sentAt: Date.parse(createdAt),
+  });
+  return utf8decode(plain);
+}
+
 /** Seals a media payload for the peer and sends it; `keep` stores the sent file under the server's id. */
 async function sendMediaEnvelope(
   opts: {
@@ -1088,8 +1142,15 @@ async function sendMediaEnvelope(
       ciphertext: envelopeToWireB64(envelope),
       media_object_id: mediaObjectId,
     });
-    savePlaintext(dto.id, JSON.stringify(payload));
+    const kept = await keptMediaSend({
+      dto,
+      uploadedMediaObjectId: mediaObjectId,
+      thisAttemptJson: JSON.stringify(payload),
+      openKept: (ciphertext) => openOwnEnvelope(ciphertext, peer, me, opts.material, dto.created_at),
+    });
+    if (kept.payloadJson != null) savePlaintext(dto.id, dto.sender_user_id, kept.payloadJson);
     keep(dto.id);
+    const shown = kept.payloadJson ? parseMediaPayload(kept.payloadJson) : null;
     const msg = messageFromMediaPayload(
       {
         id: dto.id,
@@ -1101,9 +1162,10 @@ async function sendMediaEnvelope(
         delivered: dto.delivered ?? false,
         read: dto.read ?? false,
       },
-      payload,
-      mediaObjectId,
+      shown ?? payload,
+      kept.mediaObjectId,
     );
+    if (!shown) msg.mediaKey = null;
     rememberPreview(me, peer, msg);
     return msg;
   });
@@ -1146,7 +1208,7 @@ export async function shareTranscript(opts: {
       content_type: "annotation",
       ciphertext: envelopeToWireB64(envelope),
     });
-    savePlaintext(dto.id, JSON.stringify(annotation));
+    savePlaintext(dto.id, dto.sender_user_id, JSON.stringify(annotation));
   });
 }
 
