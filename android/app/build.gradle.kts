@@ -107,6 +107,10 @@ android {
         unitTests.isReturnDefaultValues = true
         // Robolectric (only where a Bitmap or NotificationManager is unavoidable, 00-plan §5.1).
         unitTests.isIncludeAndroidResources = true
+        // The UI suite runs thousands of tests in one worker. Gradle's 512 MB default has OOM'd.
+        unitTests.all { test ->
+            test.maxHeapSize = "2g"
+        }
     }
 
     // region native — whisper.cpp (00-plan §5.2): pinned ndkVersion, CMake 3.31.x,

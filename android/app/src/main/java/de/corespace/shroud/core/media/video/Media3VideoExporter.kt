@@ -1,6 +1,8 @@
 package de.corespace.shroud.core.media.video
 
 import android.content.Context
+import android.media.MediaExtractor
+import android.media.MediaFormat
 import androidx.annotation.OptIn
 import androidx.media3.common.Effect
 import androidx.media3.common.MediaItem
@@ -122,9 +124,39 @@ internal class Media3VideoExporter(
      * phones cannot decode. SDR sources are unaffected; a remux decodes nothing.
      */
     private fun composition(request: VideoExportRequest): Composition {
-        val builder = Composition.Builder(EditedMediaItemSequence.Builder(editedItem(request)).build())
+        val item = editedItem(request)
+        val sequence = if (videoOnly(request)) {
+            EditedMediaItemSequence.withVideoFrom(listOf(item))
+        } else {
+            EditedMediaItemSequence.withAudioAndVideoFrom(listOf(item))
+        }
+        val builder = Composition.Builder(sequence)
         if (!request.plan.passthrough) builder.setHdrMode(Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL)
         return builder.build()
+    }
+
+    /**
+     * A re-encode with no audio plan is video only. A passthrough keeps the source's audio track
+     * when it has one; [EditedMediaItemSequence.withAudioAndVideoFrom] would invent a silent track
+     * for a video-only file, and that cannot be remuxed.
+     */
+    private fun videoOnly(request: VideoExportRequest): Boolean {
+        if (request.plan.passthrough) return !sourceHasAudio(request.source)
+        return request.removeAudio || request.plan.audioBitrate == 0
+    }
+
+    private fun sourceHasAudio(uri: android.net.Uri): Boolean {
+        val extractor = MediaExtractor()
+        return try {
+            extractor.setDataSource(context, uri, emptyMap<String, String>())
+            (0 until extractor.trackCount).any { index ->
+                extractor.getTrackFormat(index).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
+            }
+        } catch (_: Exception) {
+            true
+        } finally {
+            extractor.release()
+        }
     }
 
     private fun editedItem(request: VideoExportRequest): EditedMediaItem {

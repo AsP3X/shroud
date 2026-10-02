@@ -18,6 +18,9 @@ sealed interface SaveOutcome {
     data class Failed(val message: String) : SaveOutcome
 }
 
+/** A share grant and the MIME type of the bytes behind it. */
+data class ShareTarget(val uri: Uri, val mime: String)
+
 /**
  * Share and save of media that is already decrypted (conversation-compose-media §18.5).
  * [shareUri] is a `content://` grant over bytes kept in memory — no plaintext file. The share
@@ -28,6 +31,9 @@ sealed interface SaveOutcome {
 interface MediaSharing {
     /** Null when that message's bytes are not loaded. The path segment is random, not the message id. */
     suspend fun shareUri(messageId: UUID): Uri?
+
+    /** [shareUri] plus the MIME type already stored for that grant. Null in the same cases. */
+    suspend fun shareTarget(messageId: UUID): ShareTarget?
 
     fun revokeAll()
 
@@ -41,7 +47,9 @@ internal class MemoryMediaSharing(
     private val clock: AppClock,
     private val authority: String = "${context.packageName}.media",
 ) : MediaSharing {
-    override suspend fun shareUri(messageId: UUID): Uri? {
+    override suspend fun shareUri(messageId: UUID): Uri? = shareTarget(messageId)?.uri
+
+    override suspend fun shareTarget(messageId: UUID): ShareTarget? {
         val bytes = try {
             load(messageId)
         } catch (e: CancellationException) {
@@ -53,7 +61,8 @@ internal class MemoryMediaSharing(
         val id = UUID.randomUUID().toString()
         val kind = MediaKind.of(bytes)
         SharedMediaRegistry.put(id, bytes, kind.mime)
-        return Uri.Builder().scheme("content").authority(authority).appendPath(id).build()
+        val uri = Uri.Builder().scheme("content").authority(authority).appendPath(id).build()
+        return ShareTarget(uri, kind.mime)
     }
 
     override fun revokeAll() {

@@ -2,6 +2,7 @@ package de.corespace.shroud.core.calls.system
 
 import android.app.Notification
 import android.content.Intent
+import de.corespace.shroud.core.calls.CallAudioRoute
 import de.corespace.shroud.core.calls.CallEndCause
 import java.util.UUID
 
@@ -48,6 +49,9 @@ internal interface CallTelecomListener {
 
     /** `addCall` failed before the call existed. The in-app call continues. */
     fun onUnavailable(callId: UUID) {}
+
+    /** Telecom's current outputs. Empty until the first endpoint list arrives. */
+    fun onAudioRoutes(callId: UUID, routes: List<CallAudioRoute>, current: CallAudioRoute?) {}
 }
 
 /**
@@ -62,6 +66,7 @@ internal interface CallTelecom {
     fun answer(video: Boolean)
     fun setActive()
     fun setSpeaker(on: Boolean)
+    fun selectRoute(route: CallAudioRoute)
     fun disconnect(cause: CallEndCause)
     fun clear()
 }
