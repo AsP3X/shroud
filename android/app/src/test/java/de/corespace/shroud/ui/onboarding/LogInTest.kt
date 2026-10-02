@@ -87,6 +87,17 @@ class LogInTest {
     }
 
     @Test
+    fun aRunCopiedWithUnicodeSeparatorsStillSpreads() {
+        // `.whitespacesAndNewlines` (crypto §17.1): no-break space, line separator, NEL, ideographic space.
+        val words = MutableList(12) { "" }
+        LogInRules.applyWordInput(words, 0, "abandon ability able\u0085about　above")
+        assertEquals(listOf("abandon", "ability", "able", "about", "above"), words.subList(0, 5))
+        LogInRules.applyWordInput(words, 6, " zoo ")
+        assertEquals("zoo", words[6])
+        assertEquals("", words[7])
+    }
+
+    @Test
     fun logInOpensASessionAndMovesOn() = runTest {
         assertEquals(LogInActions.Outcome.Done, actions.logIn(" Alice ", "pw") { true })
         assertEquals(listOf("login:alice"), services.calls)

@@ -609,16 +609,36 @@ internal object LogInRules {
 
     /**
      * A word cell's input: a pasted-in run of words (a keyboard clipboard chip) fills the next
-     * cells; a single word drops whitespace (Android improvement, addendum LogIn L8).
+     * cells; a single word drops whitespace (Android improvement, addendum LogIn L8). Words split on
+     * any Unicode whitespace or line break, as `EncryptionPhraseParser` does (`.whitespacesAndNewlines`,
+     * crypto §17.1): a phrase copied with no-break spaces or line separators still spreads.
      */
     fun applyWordInput(words: MutableList<String>, index: Int, input: String) {
-        val parts = input.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+        val parts = splitWords(input)
         if (parts.size > 1) {
             parts.take(Bip39.WORD_COUNT - index).forEachIndexed { k, w -> words[index + k] = w.lowercase() }
         } else {
-            words[index] = input.filterNot(Char::isWhitespace)
+            words[index] = input.filterNot(::isWordBreak)
         }
     }
+
+    /** [input]'s words: runs between Unicode whitespace, line breaks and NEL (U+0085). */
+    private fun splitWords(input: String): List<String> {
+        val out = ArrayList<String>()
+        val word = StringBuilder()
+        for (c in input) {
+            if (isWordBreak(c)) {
+                if (word.isNotEmpty()) out += word.toString()
+                word.setLength(0)
+            } else {
+                word.append(c)
+            }
+        }
+        if (word.isNotEmpty()) out += word.toString()
+        return out
+    }
+
+    private fun isWordBreak(c: Char): Boolean = c.isWhitespace() || c == '\u0085'
 }
 
 /**

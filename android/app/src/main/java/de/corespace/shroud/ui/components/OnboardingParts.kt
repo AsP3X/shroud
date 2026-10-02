@@ -45,6 +45,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.Role
@@ -217,12 +218,23 @@ fun PasswordStrengthMeter(evaluation: PasswordStrength, modifier: Modifier = Mod
         BoxWithConstraints(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(colors.strengthTrack)) {
             val minWidth = if (level == PasswordStrengthLevel.Empty) 0.dp else 8.dp
             val fill = maxOf(maxWidth * score, minWidth)
+            // The solid fills ease with the width (`PasswordStrengthMeter.swift:134-154` under the
+            // meter's snappy animation, addendum M2); strong and good draw the green gradient at
+            // once, and the solid colour waits on its darker end so leaving it eases from green.
+            val solid by animateColorAsState(
+                when (level) {
+                    PasswordStrengthLevel.Strong, PasswordStrengthLevel.Good -> BrandColors.strengthStrongBottom
+                    PasswordStrengthLevel.Fair -> colors.warningIcon
+                    PasswordStrengthLevel.Weak -> colors.danger
+                    PasswordStrengthLevel.Empty -> colors.separator.copy(alpha = 0.6f)
+                },
+                Motion.respecting(reduce, Motion.snappy()),
+                label = "strengthFill",
+            )
             val brush = when (level) {
                 PasswordStrengthLevel.Strong, PasswordStrengthLevel.Good ->
                     Brush.verticalGradient(listOf(BrandColors.strengthStrongTop, BrandColors.strengthStrongBottom))
-                PasswordStrengthLevel.Fair -> Brush.linearGradient(listOf(colors.warningIcon, colors.warningIcon))
-                PasswordStrengthLevel.Weak -> Brush.linearGradient(listOf(colors.danger, colors.danger))
-                PasswordStrengthLevel.Empty -> Brush.linearGradient(listOf(colors.separator.copy(alpha = 0.6f), colors.separator.copy(alpha = 0.6f)))
+                else -> SolidColor(solid)
             }
             Box(Modifier.width(fill).fillMaxHeight().clip(RoundedCornerShape(3.dp)).background(brush))
         }
