@@ -15,12 +15,14 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.lifecycle.LifecycleOwner
 import de.corespace.shroud.core.media.ImageEncodeException
 import de.corespace.shroud.core.media.MediaImageSource
+import de.corespace.shroud.core.media.capture.CameraBindState
 import de.corespace.shroud.core.media.capture.CameraCapture
 import de.corespace.shroud.core.media.capture.PickedMovieFile
 import de.corespace.shroud.ui.components.ComposeHarness
 import de.corespace.shroud.ui.media.HarnessRule
 import de.corespace.shroud.ui.media.PickedMovie
 import de.corespace.shroud.ui.media.PickedPhoto
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -56,6 +58,9 @@ class CameraCaptureStateTest {
         var unbinds = 0
         override var hasFrontCamera = true
         override var hasBackCamera = true
+        override val bindState = MutableStateFlow<CameraBindState>(CameraBindState.Unbound)
+        override val zoomRange: ClosedFloatingPointRange<Float>? = 1f..8f
+        override val hasFlashUnit = true
         var photo: MediaImageSource = MediaImageSource.ContentUri(Uri.parse("content://de.corespace.shroud.cache/cache/shroud-cam-1.jpg"))
         var photoError: Exception? = null
         var recordedWithAudio: Boolean? = null
