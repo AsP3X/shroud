@@ -54,24 +54,24 @@ final class MessagingLocalRepository {
 
     // MARK: - Decrypt cache (one-shot DR payloads)
 
-    func sealedPlaintext(for messageID: UUID) -> Data? {
+    func sealedPlaintext(for messageID: UUID, senderUserID: UUID) -> Data? {
         guard let key = historyKey else { return nil }
-        return plaintextCache.data(for: messageID, historyKey: key)
+        return plaintextCache.data(for: messageID, senderUserID: senderUserID, historyKey: key)
     }
 
-    func sealedPlaintextText(for messageID: UUID) -> String? {
+    func sealedPlaintextText(for messageID: UUID, senderUserID: UUID) -> String? {
         guard let key = historyKey else { return nil }
-        return plaintextCache.text(for: messageID, historyKey: key)
+        return plaintextCache.text(for: messageID, senderUserID: senderUserID, historyKey: key)
     }
 
-    func saveSealedPlaintext(messageID: UUID, data: Data) {
+    func saveSealedPlaintext(messageID: UUID, senderUserID: UUID, data: Data) {
         guard let key = historyKey else { return }
-        plaintextCache.save(messageID: messageID, data: data, historyKey: key)
+        plaintextCache.save(messageID: messageID, senderUserID: senderUserID, data: data, historyKey: key)
     }
 
-    func saveSealedPlaintext(messageID: UUID, text: String) {
+    func saveSealedPlaintext(messageID: UUID, senderUserID: UUID, text: String) {
         guard let key = historyKey else { return }
-        plaintextCache.save(messageID: messageID, text: text, historyKey: key)
+        plaintextCache.save(messageID: messageID, senderUserID: senderUserID, text: text, historyKey: key)
     }
 
     func sealedMedia(for messageID: UUID) -> Data? {
@@ -87,7 +87,7 @@ final class MessagingLocalRepository {
     /// Fills `previewData` / `mediaByteCount` from the sealed media payload when present.
     func attachEnvelopePreview(to message: inout MessagingController.ChatMessage) {
         guard message.kind == .image || message.kind == .video || message.hasLargeLinkImage else { return }
-        guard let plain = sealedPlaintext(for: message.id),
+        guard let plain = sealedPlaintext(for: message.id, senderUserID: message.senderUserID),
               let payload = MediaMessagePayload.parse(plain)
         else { return }
         if message.previewData == nil {
@@ -139,6 +139,11 @@ final class MessagingLocalRepository {
             let scrubbedBefore = scrubbed.count
             let messages = stored.map { row -> MessagingController.ChatMessage in
                 var message = row.toChatMessage(media: mediaCache, historyKey: key)
+                // Bind a pre-sender cache file to the sender this device stored, before any
+                // server refresh can ask for the same id under someone else's name.
+                if !message.deleted {
+                    plaintextCache.bindLegacy(messageID: message.id, senderUserID: message.senderUserID, historyKey: key)
+                }
                 // Offline open: restore envelope preview/size without downloading full media.
                 attachEnvelopePreview(to: &message)
                 // Older builds merged a missed delete in with the old content still attached.
@@ -284,6 +289,10 @@ final class MessagingLocalRepository {
     /// Each save is an atomic write plus a read-back, so an entry that already holds these
     /// bytes is left alone.
     private func recachePlaintext(of messages: [MessagingController.ChatMessage]) {
+        guard let key = historyKey else { return }
+        for message in messages where !message.deleted {
+            plaintextCache.bindLegacy(messageID: message.id, senderUserID: message.senderUserID, historyKey: key)
+        }
         for message in messages
             where !message.deleted && message.kind == .text && message.mediaObjectId == nil
         {
@@ -293,8 +302,8 @@ final class MessagingLocalRepository {
                 replyTo: message.replyTo,
                 linkPreview: message.linkPreview
             )
-            if sealedPlaintextText(for: message.id) != wire {
-                saveSealedPlaintext(messageID: message.id, text: wire)
+            if sealedPlaintextText(for: message.id, senderUserID: message.senderUserID) != wire {
+                saveSealedPlaintext(messageID: message.id, senderUserID: message.senderUserID, text: wire)
             }
         }
     }

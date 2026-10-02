@@ -12,7 +12,13 @@ final class LocalPlaintextCache: @unchecked Sendable {
     private let legacyPrefix = "msg_plain_v2."
     private let lock = NSLock()
     /// Session L1 — survives loadThread reloads even if disk I/O glitches.
-    private var memory: [UUID: Data] = [:]
+    /// The sender is part of the record: a message id the server reuses for someone else must not hit.
+    private var memory: [UUID: Entry] = [:]
+
+    private struct Entry {
+        var sender: UUID
+        var data: Data
+    }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -24,11 +30,13 @@ final class LocalPlaintextCache: @unchecked Sendable {
         LocalDataProtection.prepareDirectory(directory)
     }
 
-    func data(for messageID: UUID, historyKey: SymmetricKey) -> Data? {
+    /// Plaintext saved for `senderUserID`. Nil when the record belongs to someone else, so a
+    /// re-served message id is opened for real instead of returning the first sender's body.
+    func data(for messageID: UUID, senderUserID: UUID, historyKey: SymmetricKey) -> Data? {
         lock.lock()
         if let hit = memory[messageID] {
             lock.unlock()
-            return hit
+            return hit.sender == senderUserID ? hit.data : nil
         }
         lock.unlock()
 
@@ -37,43 +45,37 @@ final class LocalPlaintextCache: @unchecked Sendable {
             if let plain = try? LocalHistoryCrypto.open(
                 blob,
                 masterKey: historyKey,
-                context: .plaintextPayload
+                context: .plaintextPayload,
+                authenticating: Self.senderAAD(senderUserID)
             ) {
                 lock.lock()
-                memory[messageID] = plain
+                memory[messageID] = Entry(sender: senderUserID, data: plain)
                 lock.unlock()
                 return plain
             }
-            // Sealed file present but wrong key / corrupt — do not fall through to legacy.
+            // Sealed for another sender, or an unbound legacy file. Do not return it.
             if LocalHistoryCrypto.isSealedBlob(blob) {
                 return nil
             }
         }
-
-        // Legacy UserDefaults (plaintext) — migrate into sealed store, then wipe that key.
-        let legacyKey = legacyDefaultsKey(messageID)
-        if let plain = defaults.data(forKey: legacyKey) {
-            save(messageID: messageID, data: plain, historyKey: historyKey)
-            defaults.removeObject(forKey: legacyKey)
-            return plain
-        }
         return nil
     }
 
-    func text(for messageID: UUID, historyKey: SymmetricKey) -> String? {
-        guard let data = data(for: messageID, historyKey: historyKey) else { return nil }
+    func text(for messageID: UUID, senderUserID: UUID, historyKey: SymmetricKey) -> String? {
+        guard let data = data(for: messageID, senderUserID: senderUserID, historyKey: historyKey) else { return nil }
         return String(data: data, encoding: .utf8)
     }
 
-    func save(messageID: UUID, data: Data, historyKey: SymmetricKey) {
+    func save(messageID: UUID, senderUserID: UUID, data: Data, historyKey: SymmetricKey) {
         lock.lock()
-        memory[messageID] = data
+        memory[messageID] = Entry(sender: senderUserID, data: data)
         lock.unlock()
 
         guard let sealed = try? LocalHistoryCrypto.seal(
             data,
             masterKey: historyKey,
-            context: .plaintextPayload
+            context: .plaintextPayload,
+            authenticating: Self.senderAAD(senderUserID)
         ) else { return }
 
         let url = fileURL(messageID)
@@ -87,7 +89,8 @@ final class LocalPlaintextCache: @unchecked Sendable {
                let opened = try? LocalHistoryCrypto.open(
                    written,
                    masterKey: historyKey,
-                   context: .plaintextPayload
+                   context: .plaintextPayload,
+                   authenticating: Self.senderAAD(senderUserID)
                ),
                opened == data
             {
@@ -99,8 +102,32 @@ final class LocalPlaintextCache: @unchecked Sendable {
         defaults.removeObject(forKey: legacyDefaultsKey(messageID))
     }
 
-    func save(messageID: UUID, text: String, historyKey: SymmetricKey) {
-        save(messageID: messageID, data: Data(text.utf8), historyKey: historyKey)
+    func save(messageID: UUID, senderUserID: UUID, text: String, historyKey: SymmetricKey) {
+        save(messageID: messageID, senderUserID: senderUserID, data: Data(text.utf8), historyKey: historyKey)
+    }
+
+    /// Re-seals a pre-sender file (no sender AAD) for the sender stored with the local message.
+    /// A file that already opens for `senderUserID`, or for someone else, is left alone.
+    func bindLegacy(messageID: UUID, senderUserID: UUID, historyKey: SymmetricKey) {
+        if data(for: messageID, senderUserID: senderUserID, historyKey: historyKey) != nil { return }
+        lock.lock()
+        let occupied = memory[messageID].map { $0.sender != senderUserID } ?? false
+        lock.unlock()
+        if occupied { return }
+
+        let url = fileURL(messageID)
+        if let blob = try? Data(contentsOf: url),
+           LocalHistoryCrypto.isSealedBlob(blob),
+           let plain = try? LocalHistoryCrypto.open(blob, masterKey: historyKey, context: .plaintextPayload)
+        {
+            save(messageID: messageID, senderUserID: senderUserID, data: plain, historyKey: historyKey)
+            return
+        }
+        let legacyKey = legacyDefaultsKey(messageID)
+        if let plain = defaults.data(forKey: legacyKey) {
+            save(messageID: messageID, senderUserID: senderUserID, data: plain, historyKey: historyKey)
+            defaults.removeObject(forKey: legacyKey)
+        }
     }
 
     /// Drops in-RAM plaintext only (history lock / background). Disk seals remain.
@@ -145,7 +172,7 @@ final class LocalPlaintextCache: @unchecked Sendable {
                 defaults.removeObject(forKey: key)
                 continue
             }
-            save(messageID: id, data: plain, historyKey: historyKey)
+            writeUnbound(messageID: id, data: plain, historyKey: historyKey)
             defaults.removeObject(forKey: key)
         }
     }
@@ -156,6 +183,22 @@ final class LocalPlaintextCache: @unchecked Sendable {
         for key in keys {
             defaults.removeObject(forKey: key)
         }
+    }
+
+    /// UserDefaults leftovers have no sender yet. Seal them unbound; hydrate binds each one
+    /// to the sender stored on the local message. A decode must not read them before that.
+    private func writeUnbound(messageID: UUID, data: Data, historyKey: SymmetricKey) {
+        guard !FileManager.default.fileExists(atPath: fileURL(messageID).path),
+              let sealed = try? LocalHistoryCrypto.seal(data, masterKey: historyKey, context: .plaintextPayload)
+        else { return }
+        LocalDataProtection.prepareDirectory(directory)
+        let url = fileURL(messageID)
+        try? sealed.write(to: url, options: .atomic)
+        LocalDataProtection.lockDown(url: url)
+    }
+
+    private static func senderAAD(_ senderUserID: UUID) -> Data {
+        Data(("#sender:" + senderUserID.uuidString.lowercased()).utf8)
     }
 
     private func fileURL(_ messageID: UUID) -> URL {

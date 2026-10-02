@@ -74,7 +74,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 
 const { establish, historyKeyFromMnemonic, serializeIdentity } = await import("./identity");
 const { loadIdentity } = await import("./store");
-const { loadPlaintext, loadPreview, savePlaintext } = await import("./plaintextCache");
+const { loadPlaintext, loadPreview, loadUnboundPlaintext, savePlaintext } = await import("./plaintextCache");
 const { closeVault, derivePinSecrets, isVaultOpen, openVaultWithPhrase, openVaultWithPin, vaultPinGuard } =
   await import("./vault");
 const { clearPin, hasPin, needsPhrase, setPin, unlockWithPin } = await import("./vaultAccess");
@@ -132,18 +132,19 @@ function assertNothingReadable(): void {
 assertNothingReadable();
 
 check(loadSession()?.token === token, "unlocked: the token reads back from the vault");
-check(JSON.parse(loadPlaintext(messageId) ?? "{}").c === secret, "the body opens after migration");
+check(JSON.parse(loadUnboundPlaintext(messageId) ?? "{}").c === secret, "the body opens after migration");
+check(loadPlaintext(messageId, peer) === null, "an unbound body is not readable as a sender's");
 check(loadPreview(me, peer)?.text === secret, "the preview opens after migration");
 check(loadIdentity(me)?.userId === me, "the identity opens after migration");
 check(expectedLanguage(peer) === "de", "language statistics survive migration");
 
 /* Locked: nothing reads, nothing writes. */
 closeVault();
-check(loadPlaintext(messageId) === null, "locked: body unreadable");
+check(loadUnboundPlaintext(messageId) === null, "locked: body unreadable");
 check(loadPreview(me, peer) === null, "locked: preview unreadable");
 check(loadIdentity(me) === null, "locked: identity unreadable");
 const before = memory.size;
-savePlaintext("dddddddd-dddd-4ddd-8ddd-dddddddddddd", "written while locked");
+savePlaintext("dddddddd-dddd-4ddd-8ddd-dddddddddddd", peer, "written while locked");
 check(memory.size === before, "locked: nothing is written");
 check(![...memory.values()].some((v) => v.includes("written while locked")), "locked: no plaintext");
 
@@ -163,13 +164,13 @@ const wrong = await unlockWithPin(me, "000000");
 check(!wrong.ok && wrong.kind === "wrong" && wrong.message.includes("9"), "wrong PIN: counted by the server");
 check(!isVaultOpen(me), "wrong PIN leaves it closed");
 check((await unlockWithPin(me, "123456")).ok, "right PIN opens the vault");
-check(loadPlaintext(messageId) !== null, "unlocked: body readable again");
+check(loadUnboundPlaintext(messageId) !== null, "unlocked: body readable again");
 
 /* Sealed values are bound to their names: swapping two does not open either. */
 const [nameA, nameB] = [...memory.keys()].filter((n) => n.startsWith("shroud.pt.") || n.startsWith("shroud.preview."));
 const valueA = memory.get(nameA)!;
 memory.set(nameA, memory.get(nameB)!);
-check(loadPlaintext(messageId) === null || loadPreview(me, peer) === null, "a swapped value must not open");
+check(loadUnboundPlaintext(messageId) === null || loadPreview(me, peer) === null, "a swapped value must not open");
 memory.set(nameA, valueA);
 
 /* Ten wrong PINs in a row: the server deletes its pepper; only the phrase is left. */
@@ -193,7 +194,7 @@ await setPin(me, "246810");
 closeVault();
 check(!(await unlockWithPin(me, "123456")).ok, "the old PIN no longer opens it");
 check((await unlockWithPin(me, "246810")).ok, "the new PIN opens it");
-check(JSON.parse(loadPlaintext(messageId) ?? "{}").c === secret, "the history survives Forgot PIN");
+check(JSON.parse(loadUnboundPlaintext(messageId) ?? "{}").c === secret, "the history survives Forgot PIN");
 assertNothingReadable();
 
 console.log("vault selftest ok");

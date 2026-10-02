@@ -36,13 +36,22 @@ nonisolated enum LocalHistoryCrypto {
     private static let magic = Data("SHRD1".utf8) // 5 bytes
 
     /// Seals `plaintext` under a context-specific subkey of `masterKey`.
+    ///
+    /// `authenticating` is extra AAD. The plaintext cache passes the sender id so a record
+    /// sealed for one sender does not open for another. Nil keeps the previous blob format.
     static func seal(
         _ plaintext: Data,
         masterKey: SymmetricKey,
-        context: Context
+        context: Context,
+        authenticating: Data? = nil
     ) throws -> Data {
         let key = subkey(masterKey: masterKey, context: context)
-        let sealed = try AES.GCM.seal(plaintext, using: key)
+        let sealed: AES.GCM.SealedBox
+        if let authenticating {
+            sealed = try AES.GCM.seal(plaintext, using: key, authenticating: authenticating)
+        } else {
+            sealed = try AES.GCM.seal(plaintext, using: key)
+        }
         guard let combined = sealed.combined else { throw Error.sealFailed }
         // magic ‖ combined
         var out = Data()
@@ -56,7 +65,8 @@ nonisolated enum LocalHistoryCrypto {
     static func open(
         _ blob: Data,
         masterKey: SymmetricKey,
-        context: Context
+        context: Context,
+        authenticating: Data? = nil
     ) throws -> Data {
         guard blob.count > magic.count + 12 + 16,
               blob.prefix(magic.count) == magic
@@ -65,6 +75,9 @@ nonisolated enum LocalHistoryCrypto {
         let key = subkey(masterKey: masterKey, context: context)
         do {
             let box = try AES.GCM.SealedBox(combined: Data(combined))
+            if let authenticating {
+                return try AES.GCM.open(box, using: key, authenticating: authenticating)
+            }
             return try AES.GCM.open(box, using: key)
         } catch {
             throw Error.openFailed

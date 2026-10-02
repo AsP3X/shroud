@@ -80,11 +80,11 @@ final class MessagingLocalPersistTests: XCTestCase {
         var link = message(peer: peerA, text: "https://example.com")
         link.mediaObjectId = UUID()
         let payload = Data(#"{"t":"link","k":"blob-key"}"#.utf8)
-        repository.saveSealedPlaintext(messageID: link.id, data: payload)
+        repository.saveSealedPlaintext(messageID: link.id, senderUserID: peerA, data: payload)
 
         persistThread(repository, peer: peerA, messages: [link])
 
-        XCTAssertEqual(repository.sealedPlaintext(for: link.id), payload)
+        XCTAssertEqual(repository.sealedPlaintext(for: link.id, senderUserID: peerA), payload)
     }
 
     /// A reply's cache holds its quote, as the full save writes it.
@@ -97,7 +97,7 @@ final class MessagingLocalPersistTests: XCTestCase {
 
         persistThread(repository, peer: peerA, messages: [reply])
 
-        XCTAssertEqual(repository.sealedPlaintextText(for: reply.id), wire)
+        XCTAssertEqual(repository.sealedPlaintextText(for: reply.id, senderUserID: peerA), wire)
     }
 
     /// Older builds merged a missed delete in with the message's content still on the tombstone,
@@ -109,7 +109,11 @@ final class MessagingLocalPersistTests: XCTestCase {
         tombstone.transcript = "the secret"
         tombstone.replyTo = MessageReplyReference(messageID: UUID(), senderUserID: peerA, kind: .text, snippet: "?")
         let live = message(peer: peerA, text: "still here")
-        repository.saveSealedPlaintext(messageID: tombstone.id, text: #"{"t":"voice","c":"the secret"}"#)
+        repository.saveSealedPlaintext(
+            messageID: tombstone.id,
+            senderUserID: peerA,
+            text: #"{"t":"voice","c":"the secret"}"#
+        )
         repository.saveSealedMedia(messageID: tombstone.id, data: Data("m4a".utf8))
         persistThread(repository, peer: peerA, messages: [tombstone, live])
 
@@ -124,7 +128,7 @@ final class MessagingLocalPersistTests: XCTestCase {
         XCTAssertNil(thread[0].voiceData)
         XCTAssertEqual(thread[1].text, "still here")
         let fresh = unlockedRepository()
-        XCTAssertNil(fresh.sealedPlaintext(for: tombstone.id))
+        XCTAssertNil(fresh.sealedPlaintext(for: tombstone.id, senderUserID: peerA))
         XCTAssertNil(fresh.sealedMedia(for: tombstone.id))
         let rows = try XCTUnwrap(LocalMessageStore().loadThread(peerID: peerA, userID: userID, historyKey: key))
         XCTAssertNil(rows[0].transcript)
