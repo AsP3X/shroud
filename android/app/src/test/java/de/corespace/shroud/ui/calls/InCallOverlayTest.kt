@@ -203,6 +203,38 @@ class InCallOverlayTest {
     }
 
     @Test
+    fun aCallEndingUnderThePillLeavesNothingMinimised() {
+        val ports = FakeCallPorts(CallFixtures.call(CallPhase.Active))
+        val ui = overlay(ports)
+        ui.activity.onBackPressedDispatcher.onBackPressed()
+        ui.idle()
+        assertEquals(CallFixtures.callId, InCallPresentation.minimizedCall.value)
+        ports.ui.value = ports.ui.value.copy(active = null)
+        ui.idle()
+        assertNull(InCallPresentation.minimizedCall.value)
+        assertTrue(ui.describe(), ui.labels().isEmpty())
+    }
+
+    /** The shell hides itself from TalkBack only while the full screen covers it, never under the pill. */
+    @Test
+    fun theAppIsCoveredOnlyWhileTheFullCallScreenShows() {
+        val ports = FakeCallPorts(CallFixtures.call(CallPhase.Active))
+        var covered: Boolean? = null
+        val ui = ComposeHarness {
+            CompositionLocalProvider(LocalCallPorts provides ports) {
+                OverlayHost { InCallOverlay() }
+                covered = callCoversApp(callActive = true)
+            }
+        }.also { harness = it }
+        assertEquals(true, covered)
+        ui.activity.onBackPressedDispatcher.onBackPressed()
+        ui.idle()
+        assertEquals(false, covered)
+        ui.click("Return to call with anna")
+        assertEquals(true, covered)
+    }
+
+    @Test
     fun theCallGoingAwayClearsTheScreen() {
         val ports = FakeCallPorts(CallFixtures.call(CallPhase.OutgoingRinging))
         val ui = overlay(ports)

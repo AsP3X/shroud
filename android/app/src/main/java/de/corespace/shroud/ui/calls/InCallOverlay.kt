@@ -138,9 +138,10 @@ fun InCallOverlay(modifier: Modifier = Modifier) {
             }
         }
     }
-    // Another call shows in full.
+    // Another call shows in full; a call that is over leaves nothing minimised behind.
     LaunchedEffect(call?.id) {
-        call?.id?.let(InCallPresentation::onCall)
+        val id = call?.id
+        if (id == null) InCallPresentation.onNoCall() else InCallPresentation.onCall(id)
     }
     // TalkBack moves onto a call that appears (`RootView.swift:240-245`: from none, not when an
     // outgoing call's id becomes the server's), once the screen is laid out (a frame).
@@ -154,8 +155,9 @@ fun InCallOverlay(modifier: Modifier = Modifier) {
 
 /**
  * Whether the call screen is minimised to its pill, process-wide (one call controller, one call).
- * The shell reads [coversApp] to keep its content out of TalkBack's reach only while the full call
- * screen covers it (merge note: `RootScreen` hides the shell for `callActive`).
+ * The shell keeps its content out of TalkBack's reach only while the full call screen covers it:
+ * [callCoversApp] in composition, [coversApp] outside it (merge note: `RootScreen` hides the shell
+ * for `callActive`, which stays true under the pill).
  */
 object InCallPresentation {
     private val minimized = MutableStateFlow<UUID?>(null)
@@ -178,8 +180,24 @@ object InCallPresentation {
         if (minimized.value != null && minimized.value != callId) minimized.value = null
     }
 
+    /** No call any more: nothing stays minimised, so the next call shows in full. */
+    fun onNoCall() {
+        minimized.value = null
+    }
+
     /** The full call screen covers the app: [active] runs and is not minimised. */
     fun coversApp(active: ActiveCall?): Boolean = active != null && minimized.value != active.id
+}
+
+/**
+ * The full call screen covers the app, observed: the shell's `callActive` unless the call is
+ * minimised to its pill. The shell hides its content (and the lock screen) from TalkBack with
+ * this rather than `callActive` alone, so the app stays reachable while the pill shows.
+ */
+@Composable
+fun callCoversApp(callActive: Boolean): Boolean {
+    val minimized by InCallPresentation.minimizedCall.collectAsState()
+    return callActive && minimized == null
 }
 
 /**
