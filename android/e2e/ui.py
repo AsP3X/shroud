@@ -115,6 +115,8 @@ def type_text(text):
             time.sleep(0.2)
         return
     base, _ = field
+    # Typing appends: a tap may have left the cursor anywhere in the field.
+    adb("shell", "input", "keyevent", "KEYCODE_MOVE_END")
     typed = ""
     for chunk in chunks:
         for attempt in range(5):
