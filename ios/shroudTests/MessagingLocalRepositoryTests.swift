@@ -31,15 +31,15 @@ final class MessagingLocalRepositoryTests: XCTestCase {
 
     func testHydrateRefreshesAPlaintextEntryThatDiffers() throws {
         let repository = try seededRepository()
-        repository.saveSealedPlaintext(messageID: messageID, text: "stale")
+        repository.saveSealedPlaintext(messageID: messageID, senderUserID: userID, text: "stale")
 
         _ = repository.hydrate(userID: userID)
 
-        XCTAssertEqual(repository.sealedPlaintextText(for: messageID), "hello")
+        XCTAssertEqual(repository.sealedPlaintextText(for: messageID, senderUserID: userID), "hello")
         // A fresh repository reads the disk copy, not the in-memory one.
         let reopened = MessagingLocalRepository()
         reopened.setHistoryKey(key)
-        XCTAssertEqual(reopened.sealedPlaintextText(for: messageID), "hello")
+        XCTAssertEqual(reopened.sealedPlaintextText(for: messageID, senderUserID: userID), "hello")
     }
 
     private var plaintextURL: URL {

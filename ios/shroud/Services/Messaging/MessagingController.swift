@@ -1759,8 +1759,14 @@ final class MessagingController {
         if dto.id != messageID {
             local.removeCaches(messageIDs: [messageID])
         }
-        // The payload holds the blob key — keep it, not just the text, so reloads can decode.
-        local.saveSealedPlaintext(messageID: dto.id, data: payloadData)
+        // The payload holds the blob key. A replay keeps the server row's key, not this upload's.
+        let storedBlob = try cacheSentPayload(
+            dto: dto,
+            uploadedMediaObjectId: upload.mediaObjectId,
+            payload: payloadData,
+            peerUserID: peerUserID,
+            material: material
+        )
 
         let sent = ChatMessage(
             id: dto.id,
@@ -1772,7 +1778,7 @@ final class MessagingController {
             isMine: true,
             deleted: false,
             receipt: receiptStatus(from: dto),
-            mediaObjectId: upload.mediaObjectId,
+            mediaObjectId: storedBlob,
             imageWidth: width,
             imageHeight: height,
             imageData: image,
@@ -2893,7 +2899,13 @@ final class MessagingController {
         if dto.id != optimisticID {
             local.removeCaches(messageIDs: [optimisticID])
         }
-        local.saveSealedPlaintext(messageID: dto.id, data: payloadData)
+        let storedBlob = try cacheSentPayload(
+            dto: dto,
+            uploadedMediaObjectId: upload.mediaObjectId,
+            payload: payloadData,
+            peerUserID: peerUserID,
+            material: material
+        )
 
         let sent = ChatMessage(
             id: dto.id,
@@ -2906,7 +2918,7 @@ final class MessagingController {
             deleted: false,
             receipt: receiptStatus(from: dto),
             kind: .video,
-            mediaObjectId: upload.mediaObjectId,
+            mediaObjectId: storedBlob,
             imageWidth: encoded.width,
             imageHeight: encoded.height,
             imageData: usedPreview,
@@ -3250,8 +3262,14 @@ final class MessagingController {
         if dto.id != optimisticID {
             local.removeCaches(messageIDs: [optimisticID])
         }
-        // Cache sealed media payload (file key), not just the caption — needed for reload.
-        local.saveSealedPlaintext(messageID: dto.id, data: payloadData)
+        // Cache the file key of the row the server kept, not this upload when it was a replay.
+        let storedBlob = try cacheSentPayload(
+            dto: dto,
+            uploadedMediaObjectId: upload.mediaObjectId,
+            payload: payloadData,
+            peerUserID: peerUserID,
+            material: material
+        )
 
         let sent = ChatMessage(
             id: dto.id,
@@ -3264,7 +3282,7 @@ final class MessagingController {
             deleted: false,
             receipt: receiptStatus(from: dto),
             kind: .image,
-            mediaObjectId: upload.mediaObjectId,
+            mediaObjectId: storedBlob,
             imageWidth: encoded.width,
             imageHeight: encoded.height,
             imageData: encoded.data,
@@ -3653,7 +3671,7 @@ final class MessagingController {
                 token: token
             )
             // DR is one-shot: our own history decode reads this instead of re-opening.
-            local.saveSealedPlaintext(messageID: dto.id, data: plaintext)
+            local.saveSealedPlaintext(messageID: dto.id, senderUserID: dto.senderUserId, data: plaintext)
         } catch {
             // Kept locally either way; see the Human note on `shareTranscript`.
         }
@@ -3743,7 +3761,13 @@ final class MessagingController {
         if dto.id != optimisticID {
             local.removeCaches(messageIDs: [optimisticID])
         }
-        local.saveSealedPlaintext(messageID: dto.id, data: payloadData)
+        let storedBlob = try cacheSentPayload(
+            dto: dto,
+            uploadedMediaObjectId: upload.mediaObjectId,
+            payload: payloadData,
+            peerUserID: peerUserID,
+            material: material
+        )
 
         let sent = ChatMessage(
             id: dto.id,
@@ -3756,7 +3780,7 @@ final class MessagingController {
             deleted: false,
             receipt: receiptStatus(from: dto),
             kind: .voice,
-            mediaObjectId: upload.mediaObjectId,
+            mediaObjectId: storedBlob,
             voiceData: audioData,
             voiceDurationMs: durationMs,
             voiceWaveform: waveform,
@@ -4008,6 +4032,39 @@ final class MessagingController {
         }
     }
 
+    /// Caches the payload of the row the server kept and returns that row's blob id.
+    ///
+    /// A retried `client_message_id` is an idempotent replay: the response is the first
+    /// attempt's message, whose blob and file key are not this attempt's upload.
+    private func cacheSentPayload(
+        dto: MessageDTO,
+        uploadedMediaObjectId: UUID,
+        payload: Data,
+        peerUserID: UUID,
+        material: IdentityKeyMaterial
+    ) throws -> UUID {
+        let decision = try SentMediaReplay.decide(
+            serverMediaObjectId: dto.mediaObjectId,
+            uploadedMediaObjectId: uploadedMediaObjectId,
+            thisAttemptPayload: payload,
+            serverCiphertextBase64: dto.ciphertext
+        ) { envelope in
+            try MessageCrypto.open(
+                envelopeData: envelope,
+                peerUserID: peerUserID,
+                with: material.agreementPrivateKey,
+                ourIdentityPublicKey: material.identityPublicKeyData,
+                senderIdentityPublicKey: material.identityPublicKeyData,
+                as: .sender,
+                sentAt: dto.createdAt
+            )
+        }
+        if let kept = decision.payload {
+            local.saveSealedPlaintext(messageID: dto.id, senderUserID: dto.senderUserId, data: kept)
+        }
+        return decision.mediaObjectId
+    }
+
     /// Resolves the sealed media payload JSON (contains AES file key). Never re-opens as recipient
     /// (that would desync Double Ratchet). Inbound must have been cached on first decrypt.
     private func mediaPayloadData(
@@ -4015,7 +4072,9 @@ final class MessagingController {
         token: String,
         material: IdentityKeyMaterial
     ) async throws -> Data? {
-        if let cached = local.sealedPlaintext(for: message.id), MessageDecoder.isMediaPayloadData(cached) {
+        if let cached = local.sealedPlaintext(for: message.id, senderUserID: message.senderUserID),
+           MessageDecoder.isMediaPayloadData(cached)
+        {
             return cached
         }
         // Cached text might be the display label if something wrote the wrong blob — ignore it.
@@ -4039,7 +4098,7 @@ final class MessagingController {
                 sentAt: dto.createdAt
             )
             if MessageDecoder.isMediaPayloadData(payloadData) {
-                local.saveSealedPlaintext(messageID: message.id, data: payloadData)
+                local.saveSealedPlaintext(messageID: message.id, senderUserID: message.senderUserID, data: payloadData)
                 return payloadData
             }
             return nil
@@ -4058,7 +4117,9 @@ final class MessagingController {
         else { return nil }
 
         // Prefer already-cached open from a concurrent decode of the same message.
-        if let cached = local.sealedPlaintext(for: message.id), MessageDecoder.isMediaPayloadData(cached) {
+        if let cached = local.sealedPlaintext(for: message.id, senderUserID: message.senderUserID),
+           MessageDecoder.isMediaPayloadData(cached)
+        {
             return cached
         }
 
@@ -4068,7 +4129,7 @@ final class MessagingController {
         )
         // Only open if we have no sealed plaintext at all — otherwise a bad non-JSON blob
         // would burn a second open. Skip if *any* sealed bytes exist.
-        if local.sealedPlaintext(for: message.id) != nil {
+        if local.sealedPlaintext(for: message.id, senderUserID: message.senderUserID) != nil {
             return nil
         }
         let payloadData = try MessageCrypto.open(
@@ -4081,7 +4142,7 @@ final class MessagingController {
             sentAt: dto.createdAt
         )
         guard MessageDecoder.isMediaPayloadData(payloadData) else { return nil }
-        local.saveSealedPlaintext(messageID: message.id, data: payloadData)
+        local.saveSealedPlaintext(messageID: message.id, senderUserID: message.senderUserID, data: payloadData)
         return payloadData
     }
 
@@ -4750,7 +4811,7 @@ final class MessagingController {
         let wireText = kind == .todo
             ? NotesLocal.syncedTodoPlaintext(text: text, done: todoDone ?? false)
             : noteWire
-        local.saveSealedPlaintext(messageID: message.id, text: wireText)
+        local.saveSealedPlaintext(messageID: message.id, senderUserID: me, text: wireText)
         persistThread(peerUserID)
 
         // Multi-device: dual-seal to self when online.
@@ -4849,7 +4910,7 @@ final class MessagingController {
             token: token
         )
         // Cache what was sealed (quote included) so a later decode rebuilds the same bubble.
-        local.saveSealedPlaintext(messageID: dto.id, text: wireText)
+        local.saveSealedPlaintext(messageID: dto.id, senderUserID: dto.senderUserId, text: wireText)
         let sent = ChatMessage(
             id: dto.id,
             peerUserID: peerUserID,

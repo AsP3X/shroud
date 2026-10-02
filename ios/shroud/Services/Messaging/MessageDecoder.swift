@@ -57,8 +57,16 @@ enum MessageDecoder {
             )
         }
 
-        let existing = context.threads[peerUserID]?.first(where: { $0.id == dto.id })
+        // A held copy skips the envelope. Message ids are chosen by the server, so reuse one
+        // only for the same sender — and, for a peer's message, only from that peer's chat.
+        let candidate = context.threads[peerUserID]?.first(where: { $0.id == dto.id })
             ?? context.threads.values.lazy.flatMap({ $0 }).first(where: { $0.id == dto.id })
+        let existing: MessagingController.ChatMessage? = {
+            guard let candidate else { return nil }
+            guard candidate.senderUserID == dto.senderUserId else { return nil }
+            guard isMine || candidate.peerUserID == dto.senderUserId else { return nil }
+            return candidate
+        }()
         if let existing {
             var merged = existing
             if isMine {
@@ -72,11 +80,12 @@ enum MessageDecoder {
             if !existing.deleted,
                !ThreadMessageMerge.isFailedDecryptText(existing.text)
             {
-                if !isMedia, local.sealedPlaintext(for: dto.id) == nil {
+                if !isMedia, local.sealedPlaintext(for: dto.id, senderUserID: dto.senderUserId) == nil {
                     // Re-seal what the bubble actually carries, quote included, so a later
                     // decode from this cache rebuilds the same reply header.
                     local.saveSealedPlaintext(
                         messageID: dto.id,
+                        senderUserID: dto.senderUserId,
                         text: MessageTextPayload.wire(
                             body: existing.text,
                             replyTo: existing.replyTo,
@@ -118,7 +127,7 @@ enum MessageDecoder {
                 // note as a photo. Re-read `t` from the sealed JSON so a voice/video
                 // bubble is restored without wiping the thread.
                 if isMedia, existing.kind == .image,
-                   let plain = local.sealedPlaintext(for: dto.id),
+                   let plain = local.sealedPlaintext(for: dto.id, senderUserID: dto.senderUserId),
                    let payload = MediaMessagePayload.parse(plain),
                    payload.isVoice || payload.isVideo || payload.isLink
                 {
@@ -135,7 +144,7 @@ enum MessageDecoder {
             }
         }
 
-        if let cachedData = local.sealedPlaintext(for: dto.id),
+        if let cachedData = local.sealedPlaintext(for: dto.id, senderUserID: dto.senderUserId),
            isMediaPayloadData(cachedData) || !isMedia
         {
             if isMedia {
@@ -213,7 +222,7 @@ enum MessageDecoder {
                 )
             }
 
-            local.saveSealedPlaintext(messageID: dto.id, data: plain)
+            local.saveSealedPlaintext(messageID: dto.id, senderUserID: dto.senderUserId, data: plain)
 
             if isMedia {
                 return await decodeMedia(
@@ -244,7 +253,7 @@ enum MessageDecoder {
                 linkPreview: parsed.linkPreview
             )
         } catch {
-            if let cached = local.sealedPlaintextText(for: dto.id), !isMedia {
+            if let cached = local.sealedPlaintextText(for: dto.id, senderUserID: dto.senderUserId), !isMedia {
                 let parsed = MessageTextPayload.parse(cached)
                 return MessagingController.ChatMessage(
                     id: dto.id,
@@ -260,7 +269,7 @@ enum MessageDecoder {
                     linkPreview: parsed.linkPreview
                 )
             }
-            if isMedia, let cachedData = local.sealedPlaintext(for: dto.id) {
+            if isMedia, let cachedData = local.sealedPlaintext(for: dto.id, senderUserID: dto.senderUserId) {
                 return await decodeMedia(
                     dto: dto,
                     plain: cachedData,
