@@ -1,6 +1,8 @@
 package de.corespace.shroud.ui.media.edit
 
 import android.graphics.Canvas
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
@@ -9,6 +11,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Matrix
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
@@ -16,9 +19,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.core.graphics.withScale
 import androidx.ink.authoring.compose.InProgressStrokes
 import androidx.ink.brush.Brush
 import androidx.ink.brush.BrushFamily
@@ -56,10 +57,9 @@ internal class InkDrawing(
         // total stroke-to-pixel scale for anti-aliasing (`CanvasStrokeRenderer.draw`).
         val transform = android.graphics.Matrix().apply { setScale(sx, sy) }
         val renderer = CanvasStrokeRenderer.create()
-        canvas.save()
-        canvas.scale(sx, sy)
-        for (stroke in strokes) renderer.draw(canvas, stroke, transform)
-        canvas.restore()
+        canvas.withScale(sx, sy) {
+            for (stroke in strokes) renderer.draw(this, stroke, transform)
+        }
     }
 
     override fun toString(): String = "InkDrawing(strokes=${strokes.size})"
@@ -104,11 +104,9 @@ internal fun InkDrawCanvas(
             val sy = size.height / world.height
             val transform = android.graphics.Matrix().apply { setScale(sx, sy) }
             drawIntoCanvas { canvas ->
-                val native = canvas.nativeCanvas
-                native.save()
-                native.scale(sx, sy)
-                for (stroke in currentStrokes) renderer.draw(native, stroke, transform)
-                native.restore()
+                canvas.nativeCanvas.withScale(sx, sy) {
+                    for (stroke in currentStrokes) renderer.draw(this, stroke, transform)
+                }
             }
         },
     ) {

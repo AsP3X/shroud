@@ -2,6 +2,7 @@ package de.corespace.shroud.ui.media.edit
 
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -52,8 +53,8 @@ internal enum class DrawBrush(val label: String) {
 @Stable
 internal class DrawToolState {
     var brush by mutableStateOf(DrawBrush.Pen)
-    var colorIndex by mutableStateOf(DrawPalette.RED_INDEX)
-    var widthIndex by mutableStateOf(DrawPalette.DEFAULT_WIDTH_INDEX)
+    var colorIndex by mutableIntStateOf(DrawPalette.RED_INDEX)
+    var widthIndex by mutableIntStateOf(DrawPalette.DEFAULT_WIDTH_INDEX)
 
     /** The palette is open (iOS: the tool picker shows; "Tools" reads as selected). */
     var paletteOpen by mutableStateOf(false)

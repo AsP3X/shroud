@@ -32,6 +32,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -84,7 +85,7 @@ internal class CropEditorState(edits: MediaEdits) {
     /** Live crop in photo fractions of the rotated photo. */
     var crop by mutableStateOf(CropMath.of(edits.cropRect))
         private set
-    var quarters by mutableStateOf(edits.rotationQuarters)
+    var quarters by mutableIntStateOf(edits.rotationQuarters)
         private set
     var mirrored by mutableStateOf(edits.mirrored)
         private set

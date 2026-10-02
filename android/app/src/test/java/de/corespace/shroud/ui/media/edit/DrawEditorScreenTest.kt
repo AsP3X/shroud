@@ -15,10 +15,10 @@ import androidx.compose.ui.semantics.semantics
 import de.corespace.shroud.ui.components.ComposeHarness
 import de.corespace.shroud.ui.components.OverlayHost
 import de.corespace.shroud.ui.media.solidBitmap
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.After
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner

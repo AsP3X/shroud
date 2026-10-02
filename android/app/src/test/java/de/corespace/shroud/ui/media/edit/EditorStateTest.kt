@@ -9,6 +9,7 @@ import de.corespace.shroud.core.media.edit.DrawingData
 import de.corespace.shroud.core.media.edit.MediaEdits
 import de.corespace.shroud.core.media.edit.MediaFilter
 import de.corespace.shroud.core.media.edit.TextOverlay
+import kotlin.math.PI
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -16,7 +17,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import kotlin.math.PI
 
 /**
  * The editors' state rules (conversation-compose-media §11–§13; `MediaCropEditor.swift`,

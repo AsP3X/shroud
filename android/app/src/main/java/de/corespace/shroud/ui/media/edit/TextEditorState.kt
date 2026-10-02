@@ -2,6 +2,7 @@ package de.corespace.shroud.ui.media.edit
 
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -35,11 +36,11 @@ internal class TextEditorState(initial: List<TextOverlay>) {
         private set
 
     /** Live pinch of the selected sticker. */
-    var pinchScale by mutableStateOf(1f)
+    var pinchScale by mutableFloatStateOf(1f)
         private set
 
     /** Live rotation of the selected sticker, radians. */
-    var spinAngle by mutableStateOf(0f)
+    var spinAngle by mutableFloatStateOf(0f)
         private set
 
     val selected: TextOverlay? get() = overlays.firstOrNull { it.id == selectedId }

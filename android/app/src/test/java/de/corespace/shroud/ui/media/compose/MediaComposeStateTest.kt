@@ -10,12 +10,12 @@ import de.corespace.shroud.core.media.edit.MediaFilter
 import de.corespace.shroud.core.media.edit.TextOverlay
 import de.corespace.shroud.ui.media.ComposeDraft
 import de.corespace.shroud.ui.media.pickedPhoto
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
-import org.junit.After
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
