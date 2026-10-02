@@ -33,6 +33,15 @@ foundations, W2 engines, W3 screens and platform, W4 hardening and release). Wav
 - **Server, iOS, web (wave 1):** the server sends UnifiedPush to Android subscriptions and knows
   background sockets; iOS and web read the Android device kind (4); the web sends delivery acks.
 
+**Status (2026-10-02, phase A system work):** the engines are in the tree. Checked against the code:
+
+- This phone seals its device name with kind byte 4 (`DeviceNameSync`). A custom name an older client saved as kind 0 is re-sealed with kind 4.
+- Notifications while the app is closed are UnifiedPush (no FCM) plus the opt-in background connection, default off. One installed distributor is registered; several wait until one is chosen. The Settings › Delivery composable is still empty.
+- Voice notes are transcribed on device with whisper.cpp. Per-chat language stats are sealed at `language-stats.sealed` and do not leave the phone. The physical-phone RTF gate in [android/README.md](../android/README.md) is still owed.
+- Release: R8 and resource shrinking are on. The release build is one APK per ABI (`arm64-v8a`, `x86_64`) and no universal APK. Debug stays `app-debug.apk`. The owner's key is not in the repo. `android/e2e/repro-build.sh` compares two builds signed with a throwaway `/tmp` keystore. `check-native.sh` is POSIX sh and runs in CI on every `.so`, including WebRTC.
+
+The signed-in UI is still the interim root (`ShroudApp`). `CallActivity` still closes at once, and `CallController.attach` is not wired.
+
 Still open from wave 1:
 
 - **Design (W1-DESIGN and the design parts of X1-IOS / X1-WEB): not done.** The kit frames
@@ -167,10 +176,11 @@ Order is roughly dependency order. iOS sources are the reference implementation.
       designed as *Glass — Without Blur*.
 - [x] Theme tokens from the design variables (light + dark), Inter bundled, motion constants
       from `ios/shroud/ShroudUI/Theme/Motion.swift`.
-- [ ] Reproducible release builds from day one (pinned toolchain, no build timestamps); our own
-      release key (decided), so F-Droid can ship our signature. Done so
-      far: Gradle wrapper pinned by checksum, versions in `gradle/libs.versions.toml`, no
-      dependency metadata in the APK. Not yet checked by building twice and comparing.
+- [x] Reproducible release builds from day one (pinned toolchain, no build timestamps); our own
+      release key (decided), so F-Droid can ship our signature. Gradle wrapper pinned by checksum,
+      versions in `gradle/libs.versions.toml`, no dependency metadata in the APK. The owner's key
+      stays offline. `android/e2e/repro-build.sh` builds twice with one throwaway `/tmp` keystore
+      and compares zip entry payloads (v1 signing is off). See the result note in android/README.md.
 - [x] `android:allowBackup="false"` and `dataExtractionRules` excluding everything
       (invariant 4: files excluded from backups).
 
@@ -196,9 +206,10 @@ Order is roughly dependency order. iOS sources are the reference implementation.
 
 ### D. Notifications
 
-- [ ] Transport per decision 2: UnifiedPush registration (distributor choice, subscription keys
-      made on the phone) and the opt-in background connection.
-- [ ] The receiver decrypts the RFC 8291 message and posts the notification; a process started
+- [x] Transport per decision 2: UnifiedPush registration (distributor choice, subscription keys
+      made on the phone) and the opt-in background connection. The Delivery screen composable is
+      still empty; registration itself is in `PushRegistrar`.
+- [x] The receiver decrypts the RFC 8291 message and posts the notification; a process started
       before the first unlock does nothing until the user unlocks (distributors deliver queued
       pushes then).
 - [ ] Channels: Messages, Calls, Contact requests. Per-device settings from the server still
@@ -230,8 +241,10 @@ Order is roughly dependency order. iOS sources are the reference implementation.
 - [ ] Video: trim, transcode, thumbnails (Media3 Transformer); match the iOS output limits.
 - [ ] Link previews fetched on device, user agent rule from iOS (`WhatsApp/2…`), sealed into
       the message.
-- [ ] Voice messages: record, waveform, playback. Transcription: whisper.cpp (decided), still
-      gated by a benchmark on a mid-range phone; the Transcription screen's copy depends on it.
+- [ ] Voice messages: record, waveform, playback. Transcription: whisper.cpp on device, with
+      sealed per-chat language memory (`TranscriptionLanguageMemory`); still gated by a benchmark
+      on a mid-range phone ([android/README.md](../android/README.md)); the Transcription screen's
+      copy depends on it.
 
 ### G. Device protections (privacy-options Phase 5 equivalents)
 
@@ -260,7 +273,8 @@ Order is roughly dependency order. iOS sources are the reference implementation.
 - [x] Call pushes for Android: `call` / `video_call` / `call_ended` as high-urgency Web Push with
       TTL = ring time, sent regardless of foreground (wave 1).
 - [x] Device list: kind byte 4 "Android app" in the sealed device name; iOS and web read it
-      (wave 1); Android writes it from its first release.
+      (wave 1); Android writes it (`DeviceNameSync`, kind 4, including a custom name an older
+      client saved as kind 0).
 - [ ] Share links (`/u/<code>`): Android App Links need `/.well-known/assetlinks.json` with our
       release-key fingerprint.
 
@@ -281,7 +295,13 @@ Order is roughly dependency order. iOS sources are the reference implementation.
   is an optional later channel shipping the same Google-free APK; it would add the data-safety
   form and the foreground-service and full-screen-intent declarations (`phoneCall`,
   `mediaProjection`, `microphone`, `specialUse` for the background connection). Never `camera`:
-  the call service is `phoneCall|microphone|mediaProjection` (calls D3).
+  the call service is `phoneCall|microphone|mediaProjection` (calls D3). The release APKs are
+  per-ABI (`arm64-v8a`, `x86_64`) with no universal APK. R8 and resource shrinking are on. The
+  key stays offline; `android/e2e/repro-build.sh` is the two-build compare. 16 KB alignment is
+  `android/app/src/main/cpp/check-native.sh` (POSIX sh, CI). Listing copy is
+  `android/fastlane/metadata/android/en-US/`. `fdroid build` is not run from this repo. The
+  build recipe, the foreground-service notes and choosing a distributor are in
+  [android/README.md](../android/README.md).
 
 ## Design reference
 
