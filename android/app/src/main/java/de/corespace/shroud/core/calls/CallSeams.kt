@@ -111,6 +111,15 @@ interface CallMediaEngine {
 /** Why a call ended, as Telecom and the history need it. */
 enum class CallEndCause { Local, Remote, Rejected, Missed, AnsweredElsewhere, Error }
 
+/** A speaker, earpiece, wired headset, or Bluetooth device the call can play through. */
+enum class CallAudioRouteType { Earpiece, Speaker, Wired, Bluetooth, Unknown }
+
+/**
+ * One audio output. [id] distinguishes two devices that share a [name]; pass the same value back to
+ * [CallSystem.selectRoute]. Phone-only routes use `earpiece` and `speaker`.
+ */
+data class CallAudioRoute(val type: CallAudioRouteType, val name: String, val id: String)
+
 /** Telecom, the foreground service, CallStyle notifications, ringer, audio routes, proximity (calls §6); W3-CALLS-SYSTEM. */
 interface CallSystem {
     fun reportIncoming(callId: UUID, peerName: String, video: Boolean)
@@ -123,6 +132,16 @@ interface CallSystem {
     fun screenShareStarted()
     fun screenShareStopped()
     fun setSpeaker(on: Boolean)
+
+    /** Earpiece and speaker when Telecom is not tracking the call; Telecom's endpoints when it is. */
+    val audioRoutes: StateFlow<List<CallAudioRoute>>
+
+    /** The route that is playing, or null before any route is known. */
+    val currentRoute: StateFlow<CallAudioRoute?>
+
+    /** Switches to [route]. Unknown routes are ignored. [setSpeaker] stays for the shade toggle. */
+    fun selectRoute(route: CallAudioRoute)
+
     val isOnEarpiece: StateFlow<Boolean>
     fun postMissedCall(callId: UUID, peerUserId: UUID?, peerName: String?, video: Boolean)
     fun clear()
