@@ -1,6 +1,9 @@
 package de.corespace.shroud.core.media.capture
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.hardware.camera2.CameraCharacteristics
@@ -188,9 +191,18 @@ internal class CameraXSession(context: Context) : CameraSession {
         }
     }
 
+    // RECORD_AUDIO is checked here. ShroudCameraCapture also refuses before it asks for audio.
+    @SuppressLint("MissingPermission")
     override fun startRecording(file: File, withAudio: Boolean) {
         val capture = videoCapture ?: throw IllegalStateException("video is not bound")
         check(active == null) { "already recording" }
+        if (
+            withAudio &&
+            ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            throw SecurityException("RECORD_AUDIO not granted")
+        }
         val waiter = CompletableDeferred<Long>()
         var pending = capture.output.prepareRecording(app, FileOutputOptions.Builder(file).build())
         if (withAudio) pending = pending.withAudioEnabled()

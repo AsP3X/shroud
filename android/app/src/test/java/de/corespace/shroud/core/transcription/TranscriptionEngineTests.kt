@@ -2,6 +2,7 @@ package de.corespace.shroud.core.transcription
 
 import de.corespace.shroud.core.auth.WipeFixture
 import de.corespace.shroud.core.storage.PrefsFiles
+import de.corespace.shroud.core.storage.StorageSeal
 import de.corespace.shroud.testing.FakeSharedPreferences
 import de.corespace.shroud.testing.TempDirRule
 import kotlinx.coroutines.Dispatchers
@@ -30,7 +31,7 @@ class TranscriptionEngineTests {
     fun sessionUsesTheInjectedEngine() = runTest {
         val fake = FakeEngine()
         fake.output = TranscriptionOutput("See you at eight", "en", 0.9)
-        val session = TranscriptionSession(fake, FakeSharedPreferences())
+        val session = TranscriptionSession(fake, FakeSharedPreferences(), StorageSeal())
 
         session.prepare(TranscriptionModelId.Small)
         session.prepare(TranscriptionModelId.Small)
@@ -47,7 +48,7 @@ class TranscriptionEngineTests {
     @Test
     fun concurrentPreparesShareOneDownload() = runTest {
         val engine = SlowEngine()
-        val session = TranscriptionSession(engine, FakeSharedPreferences())
+        val session = TranscriptionSession(engine, FakeSharedPreferences(), StorageSeal())
         listOf(
             async { session.prepare(TranscriptionModelId.Small) },
             async { session.prepare(TranscriptionModelId.Small) },
@@ -59,7 +60,7 @@ class TranscriptionEngineTests {
     @Test
     fun aFailedPrepareCanBeRetried() = runTest {
         val engine = SlowEngine(failingPrepares = 1)
-        val session = TranscriptionSession(engine, FakeSharedPreferences())
+        val session = TranscriptionSession(engine, FakeSharedPreferences(), StorageSeal())
         try {
             session.prepare(TranscriptionModelId.Small)
             error("the first prepare should fail")
@@ -73,7 +74,7 @@ class TranscriptionEngineTests {
     @Test
     fun transcriptionsRunOneAtATime() = runTest {
         val engine = SlowEngine()
-        val session = TranscriptionSession(engine, FakeSharedPreferences())
+        val session = TranscriptionSession(engine, FakeSharedPreferences(), StorageSeal())
         val results = listOf(
             async { session.transcribe(floatArrayOf(0f), TranscriptionRequest.voiceNote()) },
             async { session.transcribe(floatArrayOf(0f), TranscriptionRequest.voiceNote()) },
@@ -87,9 +88,9 @@ class TranscriptionEngineTests {
     @Test
     fun aFakeEngineNeverMarksWhisperInstalled() = runTest {
         val prefs = FakeSharedPreferences()
-        val whisper = TranscriptionSession(IdEngine(WhisperCppEngine.ENGINE_ID), prefs)
+        val whisper = TranscriptionSession(IdEngine(WhisperCppEngine.ENGINE_ID), prefs, StorageSeal())
         val before = whisper.isPrepared
-        val fake = TranscriptionSession(SlowEngine(), prefs)
+        val fake = TranscriptionSession(SlowEngine(), prefs, StorageSeal())
         fake.prepare(whisper.selectedModel)
         assertTrue(fake.isPrepared)
         assertEquals(before, whisper.isPrepared)

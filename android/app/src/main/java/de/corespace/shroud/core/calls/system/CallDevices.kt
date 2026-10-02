@@ -18,6 +18,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.app.ForegroundServiceStartNotAllowedException
+import androidx.annotation.RequiresApi
 
 /**
  * Platform pieces behind [AndroidCallSystem]. Each one swallows a missing device so a call
@@ -85,7 +86,9 @@ internal object ForegroundStart {
             false
         }
 
+    @RequiresApi(31)
     private object Api31 {
+        @RequiresApi(31)
         fun start(starter: CallForegroundStarter, intent: Intent): Boolean =
             try {
                 starter.start(intent)
@@ -177,12 +180,16 @@ internal class PlatformCallRinger(private val context: Context) : CallRinger {
             null
         }
 
+    @RequiresApi(31)
     private object Api31 {
+        @RequiresApi(31)
         fun vibrator(context: Context): Vibrator? =
             context.getSystemService(VibratorManager::class.java)?.defaultVibrator
     }
 
+    @RequiresApi(33)
     private object Api33 {
+        @RequiresApi(33)
         fun vibrate(vibrator: Vibrator, effect: VibrationEffect) {
             vibrator.vibrate(
                 effect,
@@ -247,7 +254,9 @@ internal class PlatformCallAudio(context: Context) : CallAudio {
         return !headset
     }
 
+    @RequiresApi(31)
     private object Api31 {
+        @RequiresApi(31)
         fun route(audio: AudioManager, speaker: Boolean): Boolean {
             val devices = audio.availableCommunicationDevices
             val target = if (speaker) {
@@ -265,6 +274,7 @@ internal class PlatformCallAudio(context: Context) : CallAudio {
             return audio.communicationDevice?.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
         }
 
+        @RequiresApi(31)
         fun clear(audio: AudioManager) {
             audio.clearCommunicationDevice()
         }

@@ -22,7 +22,7 @@ import kotlin.coroutines.coroutineContext
 class TranscriptionSession(
     engine: TranscriptionEngine,
     private val prefs: SharedPreferences,
-    private val seal: StorageSeal = StorageSeal(),
+    private val seal: StorageSeal,
 ) {
     private val gate = Mutex()
     private val queue = Mutex()
