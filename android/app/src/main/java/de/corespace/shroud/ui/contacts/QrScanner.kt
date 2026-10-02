@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -62,6 +63,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import de.corespace.shroud.ui.components.GlassStyle
+import de.corespace.shroud.ui.components.LocalGlassBackdrop
 import de.corespace.shroud.ui.components.OverlayLayer
 import de.corespace.shroud.ui.components.ShroudIcon
 import de.corespace.shroud.ui.components.ShroudText
@@ -168,15 +170,19 @@ internal fun QrScannerOverlay(
             exit = if (reduceMotion) fadeOut(Motion.reduced()) else slideOutVertically(Motion.standard()) { it },
         ) {
             // Always dark, like the other full-screen camera surfaces (`AddContactSheet.swift:74-76`).
+            // The ✕ floats over the camera, which no backdrop can sample: flat glass, never a blur
+            // of the sheet and list underneath.
             ShroudTheme(dark = true) {
-                LightSystemBars()
-                QrScannerContent(
-                    phase = shown,
-                    active = visible,
-                    onPhaseChange = { currentOnPhaseChange(it) },
-                    onCode = { currentOnCode(it) },
-                    onCancel = { currentOnCancel(it) },
-                )
+                CompositionLocalProvider(LocalGlassBackdrop provides null) {
+                    LightSystemBars()
+                    QrScannerContent(
+                        phase = shown,
+                        active = visible,
+                        onPhaseChange = { currentOnPhaseChange(it) },
+                        onCode = { currentOnCode(it) },
+                        onCancel = { currentOnCancel(it) },
+                    )
+                }
             }
         }
     }
@@ -241,7 +247,7 @@ private fun QrScannerContent(
  * sides. The hint is a polite live region, so its change to the no-camera text is read out (`:199`).
  */
 @Composable
-private fun ScannerChrome(hint: String, onClose: () -> Unit) {
+internal fun ScannerChrome(hint: String, onClose: () -> Unit) {
     Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
         Box(
             Modifier

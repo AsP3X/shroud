@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import de.corespace.shroud.core.contacts.ContactInviteParser
 import de.corespace.shroud.core.model.Haptic
+import de.corespace.shroud.ui.components.LocalGlassBackdrop
 import de.corespace.shroud.ui.components.ShroudIcon
 import de.corespace.shroud.ui.components.ShroudSheet
 import de.corespace.shroud.ui.components.ShroudText
@@ -102,7 +103,8 @@ fun MyQrCodeSheet(visible: Boolean, onDismiss: () -> Unit) {
         scrim = ShroudTheme.colors.sheetScrim,
     ) {
         // The sheet covers the tab bar: its toast sits on the sheet's own bottom edge (`:85-87`).
-        CompositionLocalProvider(LocalTabBarClearance provides 0.dp) {
+        // "Done" sits on the sheet's plain fill: flat glass, not a blur of the list behind it.
+        CompositionLocalProvider(LocalTabBarClearance provides 0.dp, LocalGlassBackdrop provides null) {
             MyQrCodeContent(
                 username = session?.username,
                 shareCode = shareCode,

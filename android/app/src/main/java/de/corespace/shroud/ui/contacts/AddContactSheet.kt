@@ -17,6 +17,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -47,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import de.corespace.shroud.core.model.AddContactOutcome
 import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.ui.components.GlassStyle
+import de.corespace.shroud.ui.components.LocalGlassBackdrop
 import de.corespace.shroud.ui.components.NoLearningTextInput
 import de.corespace.shroud.ui.components.SheetStyle
 import de.corespace.shroud.ui.components.ShroudIcon
@@ -114,18 +116,21 @@ fun AddContactSheet(visible: Boolean, prefill: String?, onDismiss: () -> Unit, o
     }
 
     ShroudSheet(visible = visible, onDismiss = onDismiss, style = SheetStyle.Inset, paneTitle = ContactsCopy.ADD_CONTACT_TITLE) {
-        AddContactContent(
-            form = form,
-            focusRequester = focus,
-            onCancel = onDismiss,
-            onSubmit = { submit(form.text) },
-            onScan = {
-                when (val start = ScannerPhases.onScanTapped(hasCamera, cameraGranted)) {
-                    ScannerPhases.Start.AskFirst -> askCamera()
-                    is ScannerPhases.Start.Open -> scanner = start.phase
-                }
-            },
-        )
+        // The capsules sit on the sheet's plain fill: flat glass, not a blur of the list behind it.
+        CompositionLocalProvider(LocalGlassBackdrop provides null) {
+            AddContactContent(
+                form = form,
+                focusRequester = focus,
+                onCancel = onDismiss,
+                onSubmit = { submit(form.text) },
+                onScan = {
+                    when (val start = ScannerPhases.onScanTapped(hasCamera, cameraGranted)) {
+                        ScannerPhases.Start.AskFirst -> askCamera()
+                        is ScannerPhases.Start.Open -> scanner = start.phase
+                    }
+                },
+            )
+        }
     }
 
     // The full-screen scanner over the sheet (iOS `.fullScreenCover`, `:62-77`). A read code is
