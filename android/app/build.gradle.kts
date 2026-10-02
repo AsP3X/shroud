@@ -1,4 +1,6 @@
 import com.android.build.api.artifact.SingleArtifact
+import com.android.build.api.variant.FilterConfiguration
+import com.android.build.api.variant.VariantOutputConfiguration
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
 import org.gradle.api.artifacts.result.ResolvedComponentResult
 import org.gradle.api.artifacts.result.ResolvedDependencyResult
@@ -8,6 +10,16 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
 }
+
+// Release signing is optional and never stored in the repo. The owner's key stays offline.
+// e2e/repro-build.sh points these at a throwaway keystore under /tmp. CI leaves them unset.
+val shroudReleaseStore = providers.environmentVariable("SHROUD_RELEASE_STORE")
+val shroudReleaseStorePassword = providers.environmentVariable("SHROUD_RELEASE_STORE_PASSWORD")
+val shroudReleaseKeyAlias = providers.environmentVariable("SHROUD_RELEASE_KEY_ALIAS")
+val shroudReleaseKeyPassword = providers.environmentVariable("SHROUD_RELEASE_KEY_PASSWORD")
+
+// Play's ABI offsets, so each release split can be installed and updated on its own.
+val abiSplitVersionOffset = mapOf("arm64-v8a" to 2, "x86_64" to 4)
 
 // One build: no product flavors, no Firebase/FCM BuildConfig fields, no google-services plugin
 // (decision record 2026-10-01, 00-plan §5.2). Shared file — one owner per wave (00-plan §2.6).
@@ -31,11 +43,43 @@ android {
         buildConfigField("int", "DEFAULT_SELF_HOSTED_PORT", "8080")
     }
 
+    signingConfigs {
+        if (shroudReleaseStore.orNull != null) {
+            create("release") {
+                storeFile = file(shroudReleaseStore.get())
+                storePassword = shroudReleaseStorePassword.get()
+                keyAlias = shroudReleaseKeyAlias.get()
+                keyPassword = shroudReleaseKeyPassword.get()
+                // v1 JAR signatures embed timestamps. v2 and v3 sign the APK bytes and are deterministic.
+                enableV1Signing = false
+                enableV2Signing = true
+                enableV3Signing = true
+                enableV4Signing = false
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (shroudReleaseStore.orNull != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
+    }
+
+    // Release: one installable APK per ABI, no universal file (W4-RELEASE). Debug stays one APK at
+    // outputs/apk/debug/app-debug.apk for the e2e scripts. isUniversalApk stays true because AGP
+    // rejects ndk.abiFilters (region native, the same two ABIs) together with ABI splits unless a
+    // universal APK is requested. androidComponents turns the release universal output off.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "x86_64")
+            isUniversalApk = true
         }
     }
 
@@ -355,6 +399,38 @@ val verifyNoGoogleClasses = tasks.register<VerifyNoGoogleClassesTask>("verifyNoG
 
 // The variants' runtime classpaths only exist once AGP created them.
 androidComponents {
+    onVariants { variant ->
+        val baseVersionCode = android.defaultConfig.versionCode
+            ?: throw GradleException("versionCode is unset")
+        when (variant.name) {
+            "debug" -> variant.outputs.forEach { output ->
+                when (output.outputType) {
+                    VariantOutputConfiguration.OutputType.UNIVERSAL ->
+                        output.outputFileName.set("app-debug.apk")
+                    VariantOutputConfiguration.OutputType.ONE_OF_MANY ->
+                        output.enabled.set(false)
+                    VariantOutputConfiguration.OutputType.SINGLE -> Unit
+                }
+            }
+            "release" -> variant.outputs.forEach { output ->
+                when (output.outputType) {
+                    VariantOutputConfiguration.OutputType.UNIVERSAL ->
+                        output.enabled.set(false)
+                    VariantOutputConfiguration.OutputType.ONE_OF_MANY -> {
+                        val abi = output.filters
+                            .find { it.filterType == FilterConfiguration.FilterType.ABI }
+                            ?.identifier
+                        val offset = abiSplitVersionOffset[abi]
+                            ?: throw GradleException("release split has no ABI version code: $abi")
+                        output.versionCode.set(offset * 1000 + baseVersionCode)
+                    }
+                    VariantOutputConfiguration.OutputType.SINGLE ->
+                        throw GradleException("release produced one APK; ABI splits did not apply")
+                }
+            }
+        }
+    }
+
     onVariants { variant ->
         val graph = variant.runtimeConfiguration.incoming.resolutionResult.rootComponent
         when (variant.buildType) {

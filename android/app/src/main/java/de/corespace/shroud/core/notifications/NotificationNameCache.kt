@@ -1,10 +1,19 @@
 package de.corespace.shroud.core.notifications
 
 import de.corespace.shroud.core.model.Ids
+import de.corespace.shroud.core.net.ContactItemDto
+import de.corespace.shroud.core.net.ContactRequestDto
+import de.corespace.shroud.core.net.ConversationItemDto
 import de.corespace.shroud.core.net.wire.LenientJson
 import de.corespace.shroud.core.storage.RecordRead
 import de.corespace.shroud.core.storage.SealedFile
 import de.corespace.shroud.core.storage.StorageSeal
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import java.util.UUID
@@ -52,6 +61,30 @@ class NotificationNameCache(
 
     /** Remembers [username] for [peer] (trimmed and cut like a push's name, [PushContents.clampName]). */
     fun remember(peer: UUID, username: String) = rememberAll(mapOf(peer to username))
+
+    /**
+     * Keeps this cache in step with the open chats, incoming requests and contacts (the interim
+     * root's `feedNotificationNames`, and the shell's same map): chats first, then a request's
+     * `user.username` when the card is present, then contacts win on the same id. An empty map is
+     * not written. Repeats are skipped. Cancelling the [Job] stops the collection; nothing here
+     * starts it — the shell calls it.
+     */
+    fun follow(
+        scope: CoroutineScope,
+        contacts: Flow<List<ContactItemDto>>,
+        incomingRequests: Flow<List<ContactRequestDto>>,
+        conversations: Flow<List<ConversationItemDto>>,
+    ): Job = scope.launch {
+        combine(contacts, incomingRequests, conversations) { roster, requests, chats ->
+            buildMap {
+                chats.forEach { put(it.peer.id, it.peer.username) }
+                requests.forEach { request -> request.user?.let { put(request.fromUserId, it.username) } }
+                roster.forEach { put(it.userId, it.username) }
+            }
+        }.distinctUntilChanged().collect { names ->
+            if (names.isNotEmpty()) rememberAll(names)
+        }
+    }
 
     /**
      * Remembers every pair of [usernames] — the contacts and chats as they load (W2-INT wires
