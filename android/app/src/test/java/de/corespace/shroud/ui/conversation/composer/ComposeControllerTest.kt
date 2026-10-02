@@ -773,6 +773,24 @@ class ComposeControllerTest {
     }
 
     @Test
+    fun `a capture's preview is at most 2048 px on the long edge, rounded (MCO 14-35)`() {
+        assertEquals(2048 to 1536, PickedPhoto.previewSize(4000, 3000))
+        assertEquals(1536 to 2048, PickedPhoto.previewSize(3000, 4000))
+        assertEquals(2048 to 1536, PickedPhoto.previewSize(4033, 3025))
+        assertEquals(2048 to 1, PickedPhoto.previewSize(5000, 1))
+        assertEquals(2048 to 100, PickedPhoto.previewSize(2048, 100))
+        val small = Bitmap.createBitmap(640, 480, Bitmap.Config.ARGB_8888)
+        val keptAsIs = PickedPhoto.fromImage(small)
+        assertSame(small, keptAsIs.preview)
+        val big = Bitmap.createBitmap(4000, 3000, Bitmap.Config.ARGB_8888)
+        val shot = PickedPhoto.fromImage(big)
+        assertEquals(2048, shot.preview.width)
+        assertEquals(1536, shot.preview.height)
+        assertSame(big, (shot.source as MediaImageSource.Decoded).bitmap)
+        assertFalse(shot.toString().contains("content://"))
+    }
+
+    @Test
     fun `the peer name comes from messaging when the screen has none`() = runTest(main.dispatcher) {
         val env = env(peerName = "") { usernames[PEER] = "otto" }
         assertEquals("otto", env.controller.peerName)

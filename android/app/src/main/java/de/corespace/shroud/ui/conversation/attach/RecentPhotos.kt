@@ -45,14 +45,23 @@ object RecentPhotos {
         putInt(ContentResolver.QUERY_ARG_LIMIT, limit)
     }
 
-    /** The newest images with their thumbnails; one that cannot be thumbnailed is skipped. Off the main thread. */
+    /**
+     * The newest images with their thumbnails; one that cannot be thumbnailed is skipped, and a
+     * library that cannot be read (access revoked meanwhile) reads as empty. Off the main thread.
+     */
     suspend fun load(resolver: ContentResolver, limit: Int = LIMIT): List<RecentPhoto> = withContext(Dispatchers.IO) {
         val uris = ArrayList<Uri>(limit)
-        resolver.query(collection, arrayOf(MediaStore.Images.Media._ID), queryArgs(limit), null)?.use { cursor ->
-            val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-            while (cursor.moveToNext() && uris.size < limit) {
-                uris += ContentUris.withAppendedId(collection, cursor.getLong(idColumn))
+        try {
+            resolver.query(collection, arrayOf(MediaStore.Images.Media._ID), queryArgs(limit), null)?.use { cursor ->
+                val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+                while (cursor.moveToNext() && uris.size < limit) {
+                    uris += ContentUris.withAppendedId(collection, cursor.getLong(idColumn))
+                }
             }
+        } catch (_: SecurityException) {
+            return@withContext emptyList()
+        } catch (_: IllegalArgumentException) {
+            return@withContext emptyList()
         }
         val photos = ArrayList<RecentPhoto>(uris.size)
         for (uri in uris) {
