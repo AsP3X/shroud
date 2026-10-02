@@ -131,7 +131,8 @@ software-rendered API 30 emulator drops characters from long `input text` runs).
 
 Video tests need software decoders on the emulator: start the AVDs with
 `-feature -HardwareDecoder` (the default `c2.goldfish.h264.decoder` fails every decode with
-`-no-window`). The transcription benchmark downloads the public model from huggingface.co on its
+`-no-window`). Add `-gpu host` too: headless, the emulator may pick the `swangle` software GLES,
+and then every Media3 Transformer encode fails with `eglChooseConfig failed`. The transcription benchmark downloads the public model from huggingface.co on its
 first run and keeps it in the app's `no_backup/whisper/`:
 
 ```bash
