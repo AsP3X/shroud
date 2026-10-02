@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.os.Build
+import android.os.SystemClock
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -45,7 +46,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -142,7 +142,7 @@ private class ContainerConversationBackend(
     override val loadingOlderPeerIds get() = messaging.loadingOlderPeerIds
     override val reactionRevisions get() = messaging.reactionRevisions
     override val reactionFailures: Flow<ReactionFailure> get() = messaging.reactionFailures
-    override val callMediaStarting: Flow<Unit> get() = container.calls.controllerIfBuilt?.callMediaStarting ?: emptyFlow()
+    override val callMediaStarting: Flow<Unit> get() = container.calls.controller.callMediaStarting
 
     override suspend fun loadThread(peer: UUID, reconcile: Boolean) = messaging.loadThread(peer, activate = true, reconcile = reconcile)
     override suspend fun loadOlderMessages(peer: UUID) = messaging.loadOlderMessages(peer)
@@ -248,6 +248,7 @@ data class JumpTarget(val messageId: UUID, val nonce: Int)
  * @param username the peer's name (the chat's title).
  * @param haptic plays a haptic on the screen's view.
  * @param onBack leaves the chat (after "Delete all notes").
+ * @param now the uptime clock (ms) of the tap claims and the menu's backdrop grace; injectable for tests.
  */
 @Stable
 class ConversationViewModel(
@@ -257,7 +258,8 @@ class ConversationViewModel(
     private val scope: CoroutineScope,
     private val haptic: (Haptic) -> Unit = {},
     private val onBack: () -> Unit = {},
-    val tapClaim: TapClaim = TapClaim(),
+    now: () -> Long = { SystemClock.uptimeMillis() },
+    val tapClaim: TapClaim = TapClaim(now),
 ) : BubbleContext {
     /** Notes to me: no presence, receipts, typing or calls (CV:154-156). */
     val isNotes: Boolean = backend.isNotesChat(peer)
@@ -267,7 +269,7 @@ class ConversationViewModel(
 
     /** The screen's toast (CV:26, 255). */
     val toasts = ToastState()
-    val menu = MessageMenuState()
+    val menu = MessageMenuState(now)
     val flights = ReactionFlightState(scope)
 
     // ---- Thread state (CV:104-133, 158-175) ----------------------------------------------------------
