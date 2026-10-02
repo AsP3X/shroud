@@ -133,6 +133,7 @@ class BubbleMemoryTest {
         }
         hosts += host
         assertEquals("one registration for every bubble", listOf(BubbleMemory.artifactSink), services.sinks)
+        BubbleRenderFixtures.awaitEmojiFont(host)
     }
 
     @Test

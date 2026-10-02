@@ -138,6 +138,7 @@ class BubbleScreensRenderTest {
             }
         }
         hosts += ui
+        BubbleRenderFixtures.awaitEmojiFont(ui)
         settle(ui)
         val root = ui.root
         val full = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)

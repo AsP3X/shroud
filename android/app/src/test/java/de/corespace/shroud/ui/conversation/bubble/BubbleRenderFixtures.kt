@@ -7,6 +7,7 @@ import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Shader
 import androidx.compose.ui.geometry.Rect
+import androidx.emoji2.text.EmojiCompat
 import de.corespace.shroud.core.messaging.MessageArtifactSinks
 import de.corespace.shroud.core.model.Bytes
 import de.corespace.shroud.core.model.ChatMessage
@@ -20,6 +21,7 @@ import de.corespace.shroud.core.transcription.TranscriptionInstallState
 import de.corespace.shroud.core.transcription.VoiceTranscription
 import de.corespace.shroud.core.voice.VoicePlaybackCoordinator
 import de.corespace.shroud.core.voice.VoicePlayer
+import de.corespace.shroud.ui.components.ComposeHarness
 import de.corespace.shroud.ui.conversation.BubbleContext
 import de.corespace.shroud.ui.conversation.MessageRowModel
 import de.corespace.shroud.ui.conversation.MessageRows
@@ -153,6 +155,22 @@ internal object BubbleRenderFixtures {
     )
 
     fun reaction(user: UUID, vararg emojis: String, seq: Long = 1) = MessageReaction(user, emojis.toList(), seq)
+
+    /**
+     * Waits for the bundled emoji font a bubble started loading ([BubbleEmoji]) and lets its callbacks
+     * run while [host]'s composition is still up. Left to finish during a later test, Compose's
+     * "font loaded" write lands between compositions, and Robolectric then never sends global
+     * snapshot changes again: every later test's taps stop recomposing.
+     */
+    fun awaitEmojiFont(host: ComposeHarness) {
+        if (!EmojiCompat.isConfigured()) return
+        val deadline = System.nanoTime() + 10_000_000_000L
+        while (EmojiCompat.get().loadState == EmojiCompat.LOAD_STATE_LOADING && System.nanoTime() < deadline) {
+            Thread.sleep(20)
+            host.idle()
+        }
+        host.idle()
+    }
 }
 
 /** A screen around the bubbles that only records what they asked for. */
