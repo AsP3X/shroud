@@ -7,6 +7,8 @@ import de.corespace.shroud.AppContainer
 import de.corespace.shroud.core.lifecycle.AppPhaseMonitor
 import de.corespace.shroud.core.push.PushRegistration
 import de.corespace.shroud.core.transcription.VoiceTranscription
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Before
@@ -56,6 +58,26 @@ class WiringTest {
     fun wave3SeamsStartInert() {
         assertSame(PushRegistration.Inactive, container.push.registration)
         assertSame(VoiceTranscription.Unavailable, container.transcription.voice)
+    }
+
+    /** K2–K5: the four accessors exist, and a second read is the same instance. */
+    @Test
+    @Suppress("DEPRECATION")
+    fun uiSupportContractsAreStable() {
+        val onboarding = container.auth.onboarding
+        val devices = container.auth.devices
+        val photos = container.media.photoLibrary
+        val flags = container.keys.uiFlags
+        assertNotNull(onboarding)
+        assertNotNull(devices)
+        assertNotNull(photos)
+        assertNotNull(flags)
+        assertSame(onboarding, container.auth.onboarding)
+        assertSame(devices, container.auth.devices)
+        assertSame(photos, container.media.photoLibrary)
+        assertSame(flags, container.keys.uiFlags)
+        assertEquals(onboarding.hasScreenLock(), container.hasScreenLock())
+        assertEquals(onboarding.needsLocalNetworkPermission(), container.needsLocalNetworkPermission())
     }
 
     @Test
