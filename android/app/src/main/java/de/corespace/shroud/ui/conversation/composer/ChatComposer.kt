@@ -2,9 +2,11 @@ package de.corespace.shroud.ui.conversation.composer
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.SizeTransform
@@ -60,6 +62,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -73,7 +76,9 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.offset
 import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.core.voice.VoiceRecorder
 import de.corespace.shroud.ui.components.GlassStyle
@@ -171,7 +176,8 @@ internal fun ChatComposer(
                 transitionSpec = { riseSwap(reduce) },
                 label = "composerRow",
             ) { locked ->
-                val leaving = transition.targetState != locked
+                // A leaving bar must not keep a repeating animation (memory: stuck removal transition eats touches).
+                val leaving = transition.targetState == EnterExitState.PostExit
                 if (locked) {
                     VoiceLockedBar(
                         elapsedSeconds = recorder.elapsedSeconds,
@@ -208,7 +214,7 @@ internal fun ChatComposer(
 }
 
 /** `.transition(.move(edge: .bottom).combined(with: .opacity))` animated with `Motion.standard` (`:113-116, 137`). */
-private fun riseSwap(reduce: Boolean): ContentTransform =
+private fun AnimatedContentTransitionScope<Boolean>.riseSwap(reduce: Boolean): ContentTransform =
     if (reduce) {
         fadeIn(Motion.reduced()) togetherWith fadeOut(Motion.reduced()) using SizeTransform(clip = false)
     } else {
@@ -370,6 +376,7 @@ private fun Modifier.pointerInputFocus(focusRequester: FocusRequester, onFocus: 
 @Composable
 private fun TrailingControl(showsSend: Boolean, phase: ComposerPhase, level: Float, gesture: ComposerGesture, onSend: () -> Unit) {
     val reduce = ShroudTheme.reduceMotion
+    val dropPx = with(LocalDensity.current) { SEND_DROP.roundToPx() }
     Box(Modifier.size(ComposerMetrics.slotSize), contentAlignment = Alignment.Center) {
         AnimatedContent(
             targetState = showsSend,
@@ -378,11 +385,11 @@ private fun TrailingControl(showsSend: Boolean, phase: ComposerPhase, level: Flo
                     fadeIn(Motion.reduced()) togetherWith fadeOut(Motion.reduced())
                 } else {
                     val swap = Motion.iconSwap(Motion.bouncy())
-                    val drop = 6.dp
+                    // Send arrives with the swap plus a 6 dp drop (`Motion.iconSwap.combined(with: .offset(y: 6))`, `:258`).
                     if (targetState) {
-                        (swap.enter + slideInVertically(Motion.bouncy()) { with(density) { drop.roundToPx() } }) togetherWith swap.exit
+                        (swap.enter + slideInVertically(Motion.bouncy<IntOffset>()) { dropPx }) togetherWith swap.exit
                     } else {
-                        swap.enter togetherWith (swap.exit + slideOutVertically(Motion.bouncy()) { with(density) { drop.roundToPx() } })
+                        swap.enter togetherWith (swap.exit + slideOutVertically(Motion.bouncy<IntOffset>()) { dropPx })
                     }
                 }
             },
@@ -590,3 +597,6 @@ private fun ComposerStrip(
 
 /** The halo follows the level with `easeOut(0.12)` (`ChatComposerView.swift:290`). */
 private const val LEVEL_EASE_MS = 120
+
+/** Send's drop as it swaps in (`ChatComposerView.swift:258`). */
+private val SEND_DROP = 6.dp

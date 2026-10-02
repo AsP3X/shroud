@@ -26,6 +26,7 @@ import de.corespace.shroud.core.model.replyReference
 import de.corespace.shroud.core.net.wire.MessageReplyReference
 import de.corespace.shroud.core.voice.VoiceRecorderException
 import de.corespace.shroud.ui.components.Toast
+import de.corespace.shroud.ui.components.ToastState
 import de.corespace.shroud.ui.conversation.attach.ChatAttachOption
 import de.corespace.shroud.ui.conversation.bubble.ReplyQuoteContent
 import de.corespace.shroud.ui.conversation.pickers.PickerRequest
@@ -193,6 +194,13 @@ class ComposeController internal constructor(
     val coversComposer: Boolean
         get() = viewingMedia != null || viewingVideo != null || composeDraft != null || videoDraft != null || showsCamera
 
+    /**
+     * Toasts raised while a full-screen layer covers the composer: [ComposeMediaLayers] draws them on
+     * that layer at the screen's bottom edge (iOS drops its toasts to the bottom while
+     * `coversComposer`, CV:208-212); otherwise they go to the conversation's own toast host.
+     */
+    internal val coveredToasts = ToastState()
+
     // ---- Effects for the composable layer ---------------------------------------------------------
 
     private val mutableEffects = MutableSharedFlow<ComposeEffect>(extraBufferCapacity = 16, onBufferOverflow = BufferOverflow.DROP_OLDEST)
@@ -216,10 +224,10 @@ class ComposeController internal constructor(
             viewingVideo?.let { if (it.id == from) viewingVideo = it.copy(id = to) }
         }
     }
-    private val sinkRegistration: AutoCloseable = services.registerArtifactSink(artifactSink)
+    private var sinkRegistration: AutoCloseable? = services.registerArtifactSink(artifactSink)
 
     init {
-        scope.coroutineContext[Job]?.invokeOnCompletion { sinkRegistration.close() }
+        scope.coroutineContext[Job]?.invokeOnCompletion { closeSink() }
         scope.launch { gesture.phase.collect { updateRecording() } }
         scope.launch {
             services.recorderState.map { it.recording }.distinctUntilChanged().collect(::onRecorderRecording)
@@ -294,7 +302,7 @@ class ComposeController internal constructor(
     fun sendTodo() {
         val text = draft.text.toString().trim()
         if (text.isEmpty()) {
-            host.showToast(Toast.info("Type a todo, then tap Todo."))
+            showToast(Toast.info("Type a todo, then tap Todo."))
             return
         }
         services.sendTodo(text)
@@ -329,7 +337,7 @@ class ComposeController internal constructor(
             throw cancelled
         } catch (e: Exception) {
             if (!left) {
-                host.showToast(Toast.failure(recorderMessage(e)))
+                showToast(Toast.failure(recorderMessage(e)))
                 playHaptic(Haptic.Error)
             }
             return false
@@ -368,7 +376,7 @@ class ComposeController internal constructor(
                 updateRecording()
                 if (!isNotes) services.setRecording(peer, false)
                 if (!left) {
-                    host.showToast(Toast.failure(recorderMessage(e)))
+                    showToast(Toast.failure(recorderMessage(e)))
                     playHaptic(Haptic.Error)
                 }
                 return@launch
@@ -378,7 +386,7 @@ class ComposeController internal constructor(
             if (take == null) {
                 if (!isNotes) services.setRecording(peer, false)
                 if (!left) {
-                    host.showToast(Toast.info("Hold to record, release to send"))
+                    showToast(Toast.info("Hold to record, release to send"))
                     playHaptic(Haptic.Warning)
                 }
                 return@launch
@@ -415,7 +423,7 @@ class ComposeController internal constructor(
             )
             if (left) return@launch
             if (error != null) {
-                host.showToast(Toast.failure(error))
+                showToast(Toast.failure(error))
                 playHaptic(Haptic.Error)
             } else {
                 playHaptic(Haptic.Success)
@@ -481,11 +489,11 @@ class ComposeController internal constructor(
                 if (services.hasCamera()) {
                     mutableEffects.tryEmit(ComposeEffect.RequestCamera)
                 } else {
-                    host.showToast(Toast.failure("Camera is not available on this device."))
+                    showToast(Toast.failure("Camera is not available on this device."))
                 }
             }
             else -> {
-                host.showToast(Toast.info("${option.title} coming soon"))
+                showToast(Toast.info("${option.title} coming soon"))
                 playHaptic(Haptic.Light)
             }
         }
@@ -544,7 +552,7 @@ class ComposeController internal constructor(
             return
         }
         if (photos.isEmpty() && videos.isEmpty()) {
-            host.showToast(Toast.failure(if (uris.size > 1) "Could not load those items." else "Could not load that item."))
+            showToast(Toast.failure(if (uris.size > 1) "Could not load those items." else "Could not load that item."))
             return
         }
         val openVideos = videoDraft
@@ -597,10 +605,7 @@ class ComposeController internal constructor(
         val probe = services.probeVideo(movie.uri)
         if (probe == null || left) {
             movie.cleanup()
-            if (!left) {
-                host.showToast(Toast.failure("Could not load that video."))
-                playHaptic(Haptic.Error)
-            }
+            if (!left) showToast(Toast.failure("Could not load that video."))
             return
         }
         val poster = services.videoPoster(movie.uri, VIDEO_POSTER_MAX_EDGE)
@@ -609,10 +614,16 @@ class ComposeController internal constructor(
 
     // ---- Photo compose (CV:506-547, 1839-1843, 1875-1929) ----------------------------------------
 
+    /** The photo compose opens with [photos] (at most ten) (`presentMediaCompose`, CV:1839-1843). */
     fun presentMediaCompose(photos: List<PickedPhoto>) {
         if (photos.isEmpty()) return
+        photoComposeSent = false
         composeDraft = ComposeDraft(photos = photos.take(MAX_MEDIA_PER_SEND), peerName = peerName)
     }
+
+    /** The photo compose closed by Send: it leaves faster (`easeOut 0.15` vs `0.2`, CV:513, 521). */
+    internal var photoComposeSent: Boolean by mutableStateOf(false)
+        private set
 
     /** The compose screen's Back tool / back (CV:512-516). */
     fun cancelMediaCompose() {
@@ -635,6 +646,7 @@ class ComposeController internal constructor(
         val photos = composeDraft?.photos ?: return
         val reference = outgoingReplyReference
         clearReply()
+        photoComposeSent = true
         composeDraft = null
         services.sendScope.launch { sendPickedPhotos(photos, edits, caption, quality, reference) }
     }
@@ -670,7 +682,7 @@ class ComposeController internal constructor(
         val error = firstError
         if (error != null) {
             // Up longer, so the reason can be read.
-            host.showToast(Toast.failure(error, LONG_FAILURE_MS))
+            showToast(Toast.failure(error, LONG_FAILURE_MS))
             playHaptic(Haptic.Error)
         } else {
             playHaptic(Haptic.Success)
@@ -727,7 +739,7 @@ class ComposeController internal constructor(
         if (left || plans.isEmpty()) return
         val error = firstError
         if (error != null) {
-            host.showToast(Toast.failure(error, LONG_FAILURE_MS))
+            showToast(Toast.failure(error, LONG_FAILURE_MS))
             playHaptic(Haptic.Error)
         } else {
             playHaptic(Haptic.Success)
@@ -784,7 +796,7 @@ class ComposeController internal constructor(
                 if (left) return@launch
                 val live = services.threads.value[peer]?.firstOrNull { it.id == message.id }
                 if (live?.hasFullMedia != true) {
-                    host.showToast(Toast.failure(if (kind == ChatMessageKind.Image) "Could not download that photo." else "Could not download that video."))
+                    showToast(Toast.failure(if (kind == ChatMessageKind.Image) "Could not download that photo." else "Could not download that video."))
                     playHaptic(Haptic.Error)
                 } else {
                     playHaptic(Haptic.Light)
@@ -831,8 +843,10 @@ class ComposeController internal constructor(
         )
     }
 
+    /** The viewer's ✕, swipe down or Back; also the thread's delete performed from the viewer (CV:2270-2275). */
     fun closeMediaViewer() {
         viewingMedia = null
+        viewerDeleteId = null
     }
 
     fun closeVideoPlayer() {
@@ -846,17 +860,34 @@ class ComposeController internal constructor(
      */
     fun viewerItems(): List<ViewerItem> = viewerItems(thread, peerName)
 
-    /** The viewer's Delete: the thread's own "Delete message?" sheet (CV:490-496). */
+    /**
+     * The viewer's Delete: the thread's own "Delete message?" sheet with its scope choice
+     * (CV:490-496, [ComposeHost.requestDelete]). The viewer leaves once that photo is deleted, whichever
+     * page it was (iOS `performDelete` closes it first, CV:2270-2275; the thread calls [closeMediaViewer]).
+     */
     fun requestDeleteFromViewer(id: UUID) {
-        thread.firstOrNull { it.id == id }?.let(host::requestDelete)
+        val message = thread.firstOrNull { it.id == id } ?: return
+        viewerDeleteId = id
+        host.requestDelete(message)
     }
+
+    /** The photo the viewer asked to delete; the viewer closes when it is gone. */
+    private var viewerDeleteId: UUID? = null
 
     private fun onThreadChanged(messages: List<ChatMessage>) {
         thread = messages
         // The open photo or clip was deleted for everyone (or left the thread): its viewer goes with it (CV:182-187, 265-271).
-        viewingMedia?.let { id -> if (messages.none { it.id == id && !it.deleted }) viewingMedia = null }
-        viewingVideo?.let { video -> if (messages.none { it.id == video.id && !it.deleted }) viewingVideo = null }
+        viewingMedia?.let { id -> if (messages.isGone(id)) viewingMedia = null }
+        viewingVideo?.let { video -> if (messages.isGone(video.id)) viewingVideo = null }
+        viewerDeleteId?.let { id ->
+            if (messages.isGone(id)) {
+                viewerDeleteId = null
+                viewingMedia = null
+            }
+        }
     }
+
+    private fun List<ChatMessage>.isGone(id: UUID): Boolean = none { it.id == id && !it.deleted }
 
     // ---- Lifecycle (CV:363-388; conversation-compose-media §20, §22) ------------------------------
 
@@ -877,7 +908,22 @@ class ComposeController internal constructor(
         left = true
         linkComposer.reset()
         dropStaged()
-        sinkRegistration.close()
+        closeSink()
+    }
+
+    /**
+     * The composer is on screen (again): a controller kept after [onLeave] — the screen reused it —
+     * hears purges and locks again and speaks up again.
+     */
+    internal fun onShown() {
+        if (!left) return
+        left = false
+        if (sinkRegistration == null) sinkRegistration = services.registerArtifactSink(artifactSink)
+    }
+
+    private fun closeSink() {
+        sinkRegistration?.close()
+        sinkRegistration = null
     }
 
     /**
@@ -916,12 +962,18 @@ class ComposeController internal constructor(
         videoDraft = null
         viewingMedia = null
         viewingVideo = null
+        viewerDeleteId = null
+        coveredToasts.dismiss()
     }
 
     // ---- Helpers ---------------------------------------------------------------------------------
 
     private fun playHaptic(haptic: Haptic) {
         if (!left) mutableEffects.tryEmit(ComposeEffect.PlayHaptic(haptic))
+    }
+
+    private fun showToast(toast: Toast) {
+        if (coversComposer) coveredToasts.show(toast) else host.showToast(toast)
     }
 
     /** The recorder's live readout (elapsed, levels) for the recording bars. */
@@ -934,7 +986,7 @@ class ComposeController internal constructor(
 
     /** A refused permission: the design's dark toast with "Settings" (u3il8T; conversation-compose-media §4.7). */
     internal fun showPermissionToast(text: String, onSettings: () -> Unit) {
-        host.showToast(Toast.withAction(text, SETTINGS_ACTION, onSettings))
+        showToast(Toast.withAction(text, SETTINGS_ACTION, onSettings))
     }
 
     /** Decodes a Recents original for the attach sheet (W2-MEDIA-IMAGE). */

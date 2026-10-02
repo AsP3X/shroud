@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -83,7 +84,11 @@ fun ConversationComposeHost(controller: ComposeController, onComposerHeightChang
     val context = LocalContext.current
     val view = LocalView.current
     val density = LocalDensity.current
+    val focusManager = LocalFocusManager.current
     val reportHeight by rememberUpdatedState(onComposerHeightChanged)
+
+    // A controller the screen kept after `onLeave` speaks up again once it is drawn again.
+    LaunchedEffect(controller) { controller.onShown() }
 
     // Every draft change, typed or programmatic (CV:211-213, 309-318). The first value is the draft
     // as it already was (coming back from the profile), not a change.
@@ -128,7 +133,11 @@ fun ConversationComposeHost(controller: ComposeController, onComposerHeightChang
             recorder = recorder,
             phase = phase,
             gesture = controller.gesture,
-            onAttach = controller::openAttachSheet,
+            onAttach = {
+                // iOS sheets resign the first responder: the keyboard goes as the sheet comes (§3.3).
+                focusManager.clearFocus()
+                controller.openAttachSheet()
+            },
             onSend = controller::sendDraft,
             reply = controller.replyContent,
             onTapReply = controller::jumpToReplyTarget,
