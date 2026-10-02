@@ -65,7 +65,7 @@ class FakeShellScreens : ShellScreens {
 
     @Composable
     override fun TabRoot(tab: MainTab, navigator: ShellNavigator) {
-        remember(tab) { rootBuilds[tab] = (rootBuilds[tab] ?: 0) + 1 }
+        remember(tab) { ((rootBuilds[tab] ?: 0) + 1).also { rootBuilds[tab] = it } }
         val seen = LocalTabBarClearance.current
         SideEffect {
             clearance = seen
