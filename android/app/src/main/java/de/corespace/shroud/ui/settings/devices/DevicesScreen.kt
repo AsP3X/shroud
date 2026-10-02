@@ -32,7 +32,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -48,14 +47,12 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import de.corespace.shroud.core.auth.DeviceNameSync
-import de.corespace.shroud.core.devices.DeviceKind
+import de.corespace.shroud.core.devices.DeviceRow
 import de.corespace.shroud.core.devices.DeviceNoun
 import de.corespace.shroud.core.messaging.ChatListFormatting
 import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.core.model.Ids
 import de.corespace.shroud.core.net.DEVICE_LIMIT
-import de.corespace.shroud.core.net.LinkedDeviceDto
 import de.corespace.shroud.ui.LocalAppContainer
 import de.corespace.shroud.ui.components.ActionSheet
 import de.corespace.shroud.ui.components.ActionSheetItem
@@ -100,26 +97,23 @@ fun DevicesScreen(onBack: () -> Unit, onCount: ((Int) -> Unit)? = null) {
     val container = LocalAppContainer.current
     val context = LocalContext.current
     val view = LocalView.current
-    val screenScope = rememberCoroutineScope()
     val toasts = rememberToastState()
     val currentOnCount by rememberUpdatedState(onCount)
     val model = remember(container) {
-        val session = container.auth.sessionController.session
         DevicesViewModel(
-            backend = ShroudApiDevicesBackend(container.net.api),
-            token = { session.value?.token },
-            currentDeviceId = { Ids.parse(session.value?.deviceId) },
-            names = CryptoDeviceNames(container.keys.cryptoController) { session.value?.userId },
-            currentKind = { DeviceNameSync.currentLabel(context).kind },
-            scope = screenScope,
+            devices = container.auth.devices,
             actionScope = container.appScope,
             haptic = { view.perform(it) },
             toast = toasts::show,
-            onCount = { currentOnCount?.invoke(it) },
         )
     }
-    LaunchedEffect(model) { model.load() }
-    val state by model.state.collectAsState()
+    LaunchedEffect(model) { model.refresh() }
+    val devicesState by model.devicesState.collectAsState()
+    val removals by model.removals.collectAsState()
+    val state = DevicesUiState(devicesState, removals)
+    // The Settings row's value after every load and removal (`onCount`, `DevicesView.swift:13-14`).
+    val count = state.rows?.size
+    LaunchedEffect(count) { count?.let { currentOnCount?.invoke(it) } }
     val noun = remember(context) { DeviceNoun.current(context) }
     val clock = container.clock
     val is24h = DateFormat.is24HourFormat(context)
@@ -127,11 +121,11 @@ fun DevicesScreen(onBack: () -> Unit, onCount: ((Int) -> Unit)? = null) {
     val locale = LocalConfiguration.current.locales[0]
     val timeLabel: (Instant) -> String = { ChatListFormatting.timeLabel(it, clock.now(), ZoneId.systemDefault(), locale, is24h) }
 
-    var pendingRevoke by remember { mutableStateOf<LinkedDeviceDto?>(null) }
+    var pendingRevoke by remember { mutableStateOf<DeviceRow?>(null) }
     var showRevokeAllConfirm by remember { mutableStateOf(false) }
-    var detail by remember { mutableStateOf<LinkedDeviceDto?>(null) }
+    var detail by remember { mutableStateOf<DeviceRow?>(null) }
     // Remove in the details: the confirmation waits until the sheet has gone (`DevicesView.swift:30-32, 110-113`).
-    var revokeAfterSheet by remember { mutableStateOf<LinkedDeviceDto?>(null) }
+    var revokeAfterSheet by remember { mutableStateOf<DeviceRow?>(null) }
     LaunchedEffect(revokeAfterSheet, detail) {
         val target = revokeAfterSheet ?: return@LaunchedEffect
         if (detail != null) return@LaunchedEffect
@@ -146,7 +140,7 @@ fun DevicesScreen(onBack: () -> Unit, onCount: ((Int) -> Unit)? = null) {
                 state = state,
                 noun = noun,
                 timeLabel = timeLabel,
-                onRetry = { model.load() },
+                onRetry = { model.refresh() },
                 onOpen = { detail = it },
                 onRemove = { pendingRevoke = it },
                 onRemoveAll = { showRevokeAllConfirm = true },
@@ -155,20 +149,15 @@ fun DevicesScreen(onBack: () -> Unit, onCount: ((Int) -> Unit)? = null) {
         ToastHost(toasts)
     }
 
-    val shownDevice = detail
+    // The newest copy of the open device: a rename or reload shows at once (`DevicesView.swift:575-576`).
+    val shownDevice = detail?.let(model::latest)
     DeviceDetailSheet(
         device = shownDevice,
-        label = shownDevice?.let(state::label),
-        isCurrent = shownDevice?.let(state::isCurrent) ?: false,
         isRevoking = shownDevice?.let(state::isRevoking) ?: false,
         noun = noun,
         lastActive = { DevicesCopy.lastActive(it, timeLabel) },
         formatDate = ::longDateTime,
-        onRename = { device, name ->
-            val error = model.rename(device, name)
-            if (error == null && detail?.id == device.id) detail = model.latest(device)
-            error
-        },
+        onRename = model::rename,
         onCopyId = { device -> copyDeviceId(context, device) },
         onRevoke = { device ->
             revokeAfterSheet = device
@@ -201,12 +190,12 @@ fun DevicesScreen(onBack: () -> Unit, onCount: ((Int) -> Unit)? = null) {
  */
 @Composable
 internal fun DevicesContent(
-    state: DevicesState,
+    state: DevicesUiState,
     noun: String,
     timeLabel: (Instant) -> String,
     onRetry: suspend () -> Unit,
-    onOpen: (LinkedDeviceDto) -> Unit,
-    onRemove: (LinkedDeviceDto) -> Unit,
+    onOpen: (DeviceRow) -> Unit,
+    onRemove: (DeviceRow) -> Unit,
     onRemoveAll: () -> Unit,
 ) {
     val reduceMotion = ShroudTheme.reduceMotion
@@ -217,7 +206,7 @@ internal fun DevicesContent(
             .padding(top = 8.dp)
             .animateContentSize(Motion.respecting(reduceMotion, Motion.standard())),
     ) {
-        val devices = state.devices
+        val devices = state.rows
         val loadError = state.loadError
         when {
             devices != null -> LoadedDevices(state, devices, noun, timeLabel, onOpen, onRemove, onRemoveAll)
@@ -247,12 +236,12 @@ private fun LoadingCard() {
 
 @Composable
 private fun LoadedDevices(
-    state: DevicesState,
-    devices: List<LinkedDeviceDto>,
+    state: DevicesUiState,
+    devices: List<DeviceRow>,
     noun: String,
     timeLabel: (Instant) -> String,
-    onOpen: (LinkedDeviceDto) -> Unit,
-    onRemove: (LinkedDeviceDto) -> Unit,
+    onOpen: (DeviceRow) -> Unit,
+    onRemove: (DeviceRow) -> Unit,
     onRemoveAll: () -> Unit,
 ) {
     val colors = ShroudTheme.colors
@@ -262,7 +251,7 @@ private fun LoadedDevices(
     DevicesHeader(DevicesCopy.THIS_DEVICE)
     SettingsCard {
         if (current != null) {
-            DeviceRow(current, state, noun, timeLabel, onOpen, onRemove)
+            DeviceListRow(current, state, noun, timeLabel, onOpen, onRemove)
         } else {
             // The server always lists the calling device; a miss means the list is stale (`:158-165`).
             ShroudText(
@@ -307,7 +296,7 @@ private fun LoadedDevices(
         } else {
             others.forEachIndexed { index, device ->
                 key(device.id) {
-                    DeviceRow(device, state, noun, timeLabel, onOpen, onRemove)
+                    DeviceListRow(device, state, noun, timeLabel, onOpen, onRemove)
                     if (index < others.lastIndex) InsetDivider(56.dp)
                 }
             }
@@ -380,17 +369,17 @@ internal fun InfoTitle(text: String) {
  * the others a Remove button (48 dp target) or a spinner while removing. Trailing padding 14.
  */
 @Composable
-private fun DeviceRow(
-    device: LinkedDeviceDto,
-    state: DevicesState,
+private fun DeviceListRow(
+    device: DeviceRow,
+    state: DevicesUiState,
     noun: String,
     timeLabel: (Instant) -> String,
-    onOpen: (LinkedDeviceDto) -> Unit,
-    onRemove: (LinkedDeviceDto) -> Unit,
+    onOpen: (DeviceRow) -> Unit,
+    onRemove: (DeviceRow) -> Unit,
 ) {
     val colors = ShroudTheme.colors
     val view = LocalView.current
-    val current = state.isCurrent(device)
+    val current = device.isThisDevice
     val name = state.displayName(device)
     Row(
         Modifier
@@ -415,7 +404,7 @@ private fun DeviceRow(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            DeviceTile(DeviceKind.of(state.label(device)), 30.dp)
+            DeviceTile(device.kind, 30.dp)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 ShroudText(name, inter(16f), colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (current) {
@@ -524,7 +513,7 @@ private fun longDateTime(instant: Instant): String =
     android.icu.text.DateFormat.getDateTimeInstance(android.icu.text.DateFormat.LONG, android.icu.text.DateFormat.SHORT).format(Date.from(instant))
 
 /** Copies the lower-case id; the sheet confirms it (`copyID`, `DevicesView.swift:581-585`). */
-private fun copyDeviceId(context: Context, device: LinkedDeviceDto) {
+private fun copyDeviceId(context: Context, device: DeviceRow) {
     val clipboard = context.getSystemService(ClipboardManager::class.java) ?: return
     clipboard.setPrimaryClip(ClipData.newPlainText(DevicesCopy.DEVICE_ID, Ids.wire(device.id)))
 }

@@ -1,282 +1,270 @@
 package de.corespace.shroud.ui.settings.devices
 
 import de.corespace.shroud.core.crypto.DeviceNameSeal
+import de.corespace.shroud.core.devices.DeviceKind
+import de.corespace.shroud.core.devices.DeviceRow
+import de.corespace.shroud.core.devices.DevicesController
+import de.corespace.shroud.core.devices.DevicesState
+import de.corespace.shroud.core.devices.RemoveOutcome
 import de.corespace.shroud.core.model.Haptic
-import de.corespace.shroud.core.net.ApiError
-import de.corespace.shroud.core.net.LinkedDeviceDto
 import de.corespace.shroud.ui.components.Toast
-import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Instant
 import java.util.UUID
 
 /**
- * Settings › Devices' logic (iOS `DevicesView`, `ios/shroud/Features/Main/DevicesView.swift:436-586`;
- * settings-lock §18.3 `DevicesViewModelTest`): sorting, this phone by flag or id, removals with the
- * 404 rule and the partial-failure line, the capacity copy, and the rename kind fallback. Names are
- * really sealed (the `DeviceNameSealTests` key and device id), so the sealed rename opens back.
+ * Settings › Devices on a fake of core's K3 [DevicesController] (iOS `DevicesView`,
+ * `ios/shroud/Features/Main/DevicesView.swift:436-586`; settings-lock §18.3 `DevicesViewModelTest`).
+ * Sorting, this-phone detection, the 404 rule, the kind kept on a rename and the failure sentences
+ * are core's and tested there (`DevicesControllerTest`); this covers what the screen adds: the load
+ * error versus the line under the list, the row spinners, the haptics and toasts, the names it
+ * shows (a locked phone's rows carry no label) and the Android copy.
  */
 class DevicesViewModelTest {
-    private val historyKey = ByteArray(32) { it.toByte() }
     private val thisPhone = UUID.fromString("0f8fad5b-d9cb-469f-a165-70867728950e")
     private val laptop = UUID.fromString("11111111-1111-4111-8111-111111111111")
     private val tablet = UUID.fromString("22222222-2222-4222-8222-222222222222")
     private val oldPhone = UUID.fromString("33333333-3333-4333-8333-333333333333")
 
-    private fun device(id: UUID, created: String, lastSeen: String? = null, current: Boolean = false, label: DeviceNameSeal.Label? = null) =
-        LinkedDeviceDto(
+    private fun row(id: UUID, created: String, lastSeen: String? = null, current: Boolean = false, label: DeviceNameSeal.Label? = null) =
+        DeviceRow(
             id = id,
-            sealedName = label?.let { DeviceNameSeal.seal(it, id, historyKey) },
+            label = label,
+            kind = DeviceKind.of(label),
+            isThisDevice = current,
             createdAt = Instant.parse(created),
             lastSeenAt = lastSeen?.let(Instant::parse),
-            isCurrent = current,
         )
 
-    private val phoneRow = device(thisPhone, "2026-09-20T10:15:00Z", "2026-10-01T08:00:00Z", current = true, label = DeviceNameSeal.Label("Pixel 9a", DeviceNameSeal.Kind.Android))
-    private val laptopRow = device(laptop, "2026-09-21T10:15:00Z", "2026-09-23T08:00:00Z", label = DeviceNameSeal.Label("Chrome on Mac", DeviceNameSeal.Kind.Web))
-    private val tabletRow = device(tablet, "2026-09-22T10:15:00Z", "2026-09-30T08:00:00Z", label = DeviceNameSeal.Label("Küchen-iPad ✨", DeviceNameSeal.Kind.IPad))
-    private val oldPhoneRow = device(oldPhone, "2026-09-25T10:15:00Z")
+    private val phoneRow = row(thisPhone, "2026-09-20T10:15:00Z", "2026-10-01T08:00:00Z", current = true, label = DeviceNameSeal.Label("Pixel 9a", DeviceNameSeal.Kind.Android))
+    private val tabletRow = row(tablet, "2026-09-22T10:15:00Z", "2026-09-30T08:00:00Z", label = DeviceNameSeal.Label("Küchen-iPad ✨", DeviceNameSeal.Kind.IPad))
+    private val oldPhoneRow = row(oldPhone, "2026-09-25T10:15:00Z")
+    private val laptopRow = row(laptop, "2026-09-21T10:15:00Z", "2026-09-23T08:00:00Z", label = DeviceNameSeal.Label("Chrome on Mac", DeviceNameSeal.Kind.Web))
 
-    private class FakeBackend(var devices: List<LinkedDeviceDto>) : DevicesBackend {
-        val revoked = ArrayList<UUID>()
-        val failures = HashMap<UUID, Exception>()
-        var listFailure: Exception? = null
-        var listCalls = 0
-        val names = ArrayList<Pair<UUID, String>>()
-        var nameFailure: Exception? = null
+    /** Core's order: this phone, then by last activity (`DevicesView.swift:41-46`). */
+    private val all = listOf(phoneRow, tabletRow, oldPhoneRow, laptopRow)
 
-        override suspend fun list(token: String): List<LinkedDeviceDto> {
-            listCalls++
-            listFailure?.let { throw it }
-            return devices
+    /** A K3 fake: [refresh] publishes [next] (or [nextError]); removals and renames answer as set. */
+    private class FakeDevices : DevicesController {
+        val mutable = MutableStateFlow(DevicesState())
+        override val state: StateFlow<DevicesState> = mutable
+
+        var next: List<DeviceRow> = emptyList()
+        var nextError: String? = null
+        var refreshes = 0
+        val removed = ArrayList<UUID>()
+        var removeOutcome: RemoveOutcome = RemoveOutcome.Removed
+        var removeAllOutcome: RemoveOutcome = RemoveOutcome.Removed
+        var removeAllCalls = 0
+        val renames = ArrayList<Pair<UUID, String>>()
+        var renameAnswer: String? = null
+
+        override suspend fun refresh() {
+            refreshes++
+            val error = nextError
+            mutable.value = if (error != null) {
+                mutable.value.copy(isLoading = false, error = error)
+            } else {
+                DevicesState(rows = next, isLoading = false, hasLoaded = true, error = null, capacity = 5)
+            }
         }
 
-        override suspend fun revoke(token: String, deviceId: UUID) {
-            failures[deviceId]?.let { throw it }
-            revoked += deviceId
-            devices = devices.filterNot { it.id == deviceId }
+        override suspend fun rename(id: UUID, name: String): String? {
+            renames += id to name
+            return renameAnswer
         }
 
-        override suspend fun putName(token: String, deviceId: UUID, sealedName: String) {
-            nameFailure?.let { throw it }
-            names += deviceId to sealedName
+        override suspend fun remove(id: UUID): RemoveOutcome {
+            removed += id
+            if (removeOutcome == RemoveOutcome.Removed) next = next.filterNot { it.id == id }
+            (removeOutcome as? RemoveOutcome.Failed)?.let { nextError = it.message }
+            refresh()
+            return removeOutcome
         }
-    }
 
-    /** [DeviceNames] on a fixed history key; [locked] = the chats are locked. */
-    private inner class KeyNames(var locked: Boolean = false) : DeviceNames {
-        override fun open(device: LinkedDeviceDto): DeviceNameSeal.Label? =
-            if (locked) null else DeviceNameSeal.open(device.sealedName, device.id, historyKey)
-
-        override fun seal(label: DeviceNameSeal.Label, deviceId: UUID): String? =
-            if (locked) null else DeviceNameSeal.seal(label, deviceId, historyKey)
+        override suspend fun removeAllOthers(): RemoveOutcome {
+            removeAllCalls++
+            return removeAllOutcome
+        }
     }
 
     private class Recorder {
         val haptics = ArrayList<Haptic>()
         val toasts = ArrayList<Toast>()
-        val counts = ArrayList<Int>()
     }
 
-    private fun TestScope.model(
-        backend: FakeBackend,
-        names: DeviceNames = KeyNames(),
-        recorder: Recorder = Recorder(),
-        token: String? = "tok",
-        currentId: UUID? = thisPhone,
-        scope: CoroutineScope = this,
-    ) = DevicesViewModel(
-        backend = backend,
-        token = { token },
-        currentDeviceId = { currentId },
-        names = names,
-        currentKind = { DeviceNameSeal.Kind.Android },
-        scope = scope,
-        haptic = { recorder.haptics += it },
-        toast = { recorder.toasts += it },
-        onCount = { recorder.counts += it },
-    )
-
-    private fun notFound() = ApiError.Server(code = "NOT_FOUND", serverMessage = "Device not found.", status = 404)
-
-    private fun serverDown() = ApiError.Server(code = "INTERNAL", serverMessage = "Something went wrong.", status = 500)
+    private fun TestScope.model(devices: FakeDevices, recorder: Recorder = Recorder()) =
+        DevicesViewModel(devices, actionScope = this, haptic = { recorder.haptics += it }, toast = { recorder.toasts += it })
 
     @Test
-    fun othersAreSortedByLastActivityAndThisPhoneByFlagOrId() = runTest {
-        val backend = FakeBackend(listOf(laptopRow, phoneRow, oldPhoneRow, tabletRow))
-        val recorder = Recorder()
-        val vm = model(backend, recorder = recorder)
-        vm.load()
-        val state = vm.state.value
+    fun theListIsCoresWithThisPhoneFirst() = runTest {
+        val devices = FakeDevices().apply { next = all }
+        val vm = model(devices)
+        // Before the first list: neither rows nor an error, so the loading card shows.
+        assertNull(vm.state.rows)
+        assertNull(vm.state.loadError)
+        vm.refresh()
+        val state = vm.state
         assertEquals(thisPhone, state.current?.id)
-        // tablet seen 30 Sep, the old phone only linked 25 Sep, the laptop seen 23 Sep (`DevicesView.swift:42-46`).
         assertEquals(listOf(tablet, oldPhone, laptop), state.others.map { it.id })
-        assertEquals(listOf(4), recorder.counts)
+        assertEquals(4, state.rows?.size)
+        assertSame(devices.state, vm.devicesState)
         assertEquals("Pixel 9a", state.displayName(phoneRow))
         assertEquals("Unnamed device", state.displayName(oldPhoneRow))
 
-        // The server's flag missing: the session's device id still makes it this phone (`:436-438`).
-        val unflagged = FakeBackend(listOf(phoneRow.copy(isCurrent = false), laptopRow))
-        val byId = model(unflagged)
-        byId.load()
-        assertEquals(thisPhone, byId.state.value.current?.id)
-        assertEquals(listOf(laptop), byId.state.value.others.map { it.id })
+        // The server list without this phone: "This phone is missing from the list".
+        devices.next = listOf(laptopRow)
+        vm.refresh()
+        assertNull(vm.state.current)
+    }
 
-        // Neither: the list is stale ("This phone is missing from the list").
-        val stale = model(FakeBackend(listOf(laptopRow)), currentId = null)
-        stale.load()
-        assertNull(stale.state.value.current)
+    @Test
+    fun aLockedPhoneShowsTheKindNounOrUnnamed() {
+        // K3: `label` is null while the chats are locked; a kind core still knows names the row.
+        val locked = phoneRow.copy(label = null, kind = DeviceKind.Android)
+        assertEquals("Android app", DevicesCopy.displayName(locked))
+        assertEquals("Unnamed device", DevicesCopy.displayName(tabletRow.copy(label = null, kind = DeviceKind.Unknown)))
+        assertEquals("Unnamed device", DevicesCopy.displayName(row(laptop, "2026-09-21T10:15:00Z", label = DeviceNameSeal.Label("  ", DeviceNameSeal.Kind.Other))))
     }
 
     @Test
     fun loadErrorsBeforeAndAfterTheFirstList() = runTest {
-        val signedOut = model(FakeBackend(emptyList()), token = null)
-        signedOut.load()
-        assertEquals("Sign in to see your devices.", signedOut.state.value.loadError)
-
-        val backend = FakeBackend(listOf(phoneRow))
-        backend.listFailure = serverDown()
-        val vm = model(backend)
-        vm.load()
-        assertEquals("Something went wrong.", vm.state.value.loadError)
-        assertNull(vm.state.value.devices)
-
-        backend.listFailure = null
-        vm.load()
-        assertNull(vm.state.value.loadError)
-        val first = vm.state.value.devices
-
-        // Once loaded, a failure is a line under the list; the list stays.
-        backend.listFailure = serverDown()
-        vm.load()
-        assertEquals("Something went wrong.", vm.state.value.actionError)
-        assertNull(vm.state.value.loadError)
-        assertTrue(first === vm.state.value.devices)
-
-        // A pull starts clean.
-        backend.listFailure = null
+        val devices = FakeDevices().apply { nextError = "Sign in to see your devices." }
+        val vm = model(devices)
         vm.refresh()
-        assertNull(vm.state.value.actionError)
-        // The same list is not replaced (`if devices != list`, `:469`).
-        assertTrue(first === vm.state.value.devices)
+        assertEquals("Sign in to see your devices.", vm.state.loadError)
+        assertNull(vm.state.actionError)
+        assertNull(vm.state.rows)
+
+        devices.nextError = null
+        devices.next = all
+        vm.refresh()
+        assertNull(vm.state.loadError)
+        val first = vm.state.rows
+
+        // Once loaded, core keeps the rows and its sentence is a line under the list.
+        devices.nextError = "Something went wrong."
+        vm.refresh()
+        assertEquals("Something went wrong.", vm.state.actionError)
+        assertNull(vm.state.loadError)
+        assertEquals(first, vm.state.rows)
+        assertEquals(3, devices.refreshes)
     }
 
     @Test
     fun removingADevice() = runTest {
-        val backend = FakeBackend(listOf(phoneRow, laptopRow, tabletRow))
+        val devices = FakeDevices().apply { next = listOf(phoneRow, tabletRow, laptopRow) }
         val recorder = Recorder()
-        val vm = model(backend, recorder = recorder)
-        vm.load()
+        val vm = model(devices, recorder)
+        vm.refresh()
         vm.revoke(laptopRow)
-        assertTrue(vm.state.value.isRevoking(laptopRow))
-        assertTrue(vm.state.value.isRemoving)
+        assertTrue(vm.state.isRevoking(laptopRow))
+        assertTrue(vm.state.isRemoving)
+        // A second tap while it runs does nothing.
+        vm.revoke(laptopRow)
         advanceUntilIdle()
-        assertEquals(listOf(laptop), backend.revoked)
-        assertEquals(listOf(thisPhone, tablet), vm.state.value.devices?.map { it.id })
-        assertFalse(vm.state.value.isRemoving)
+        assertEquals(listOf(laptop), devices.removed)
+        assertEquals(listOf(thisPhone, tablet), vm.state.rows?.map { it.id })
+        assertFalse(vm.state.isRemoving)
         assertEquals(listOf(Haptic.Success), recorder.haptics)
         assertEquals("Chrome on Mac removed", recorder.toasts.single().message)
         assertEquals(Toast.Style.Success, recorder.toasts.single().style)
-        // After the load, the removal's count, the reload's count.
-        assertEquals(listOf(3, 2, 2), recorder.counts)
 
         // This phone is never removed here: that is Log Out.
         vm.revoke(phoneRow)
         advanceUntilIdle()
-        assertEquals(listOf(laptop), backend.revoked)
-    }
-
-    /** A 404 means it is gone already: removed here, an info toast (`DevicesView.swift:142-146, 497-499`). */
-    @Test
-    fun aDeviceRemovedElsewhereCountsAsRemoved() = runTest {
-        val backend = FakeBackend(listOf(phoneRow, laptopRow))
-        backend.failures[laptop] = notFound()
-        val recorder = Recorder()
-        val vm = model(backend, recorder = recorder)
-        vm.load()
-        backend.devices = listOf(phoneRow)
-        vm.revoke(laptopRow)
-        advanceUntilIdle()
-        assertEquals(listOf(thisPhone), vm.state.value.devices?.map { it.id })
-        assertEquals("Chrome on Mac was already removed", recorder.toasts.single().message)
-        assertEquals(Toast.Style.Info, recorder.toasts.single().style)
-        assertTrue(recorder.haptics.isEmpty())
-        assertNull(vm.state.value.actionError)
+        assertEquals(listOf(laptop), devices.removed)
     }
 
     @Test
     fun aFailedRemovalSaysWhyUnderTheList() = runTest {
-        val backend = FakeBackend(listOf(phoneRow, laptopRow))
-        backend.failures[laptop] = serverDown()
+        val devices = FakeDevices().apply {
+            next = listOf(phoneRow, laptopRow)
+            removeOutcome = RemoveOutcome.Failed("Something went wrong.")
+        }
         val recorder = Recorder()
-        val vm = model(backend, recorder = recorder)
-        vm.load()
+        val vm = model(devices, recorder)
+        vm.refresh()
         vm.revoke(laptopRow)
         advanceUntilIdle()
-        assertEquals("Something went wrong.", vm.state.value.actionError)
+        assertEquals("Something went wrong.", vm.state.actionError)
         assertEquals(listOf(Haptic.Error), recorder.haptics)
         assertTrue(recorder.toasts.isEmpty())
-        assertEquals(listOf(thisPhone, laptop), vm.state.value.devices?.map { it.id })
+        assertFalse(vm.state.isRevoking(laptopRow))
     }
 
-    /** One `DELETE` each, past failures; a 404 counts as removed (`DevicesView.swift:508-544`). */
+    /** One `DELETE` each, past failures, is core's; the screen adds the spinner, haptic and toast (`DevicesView.swift:508-544`). */
     @Test
-    fun removeAllOthersWithAPartialFailure() = runTest {
-        val backend = FakeBackend(listOf(phoneRow, laptopRow, tabletRow, oldPhoneRow))
-        backend.failures[laptop] = serverDown()
-        backend.failures[oldPhone] = notFound()
+    fun removeAllOthers() = runTest {
+        val devices = FakeDevices().apply { next = listOf(phoneRow, laptopRow, tabletRow) }
         val recorder = Recorder()
-        val vm = model(backend, recorder = recorder)
-        vm.load()
+        val vm = model(devices, recorder)
+        vm.refresh()
         vm.revokeAllOthers()
-        assertTrue(vm.state.value.isRevokingAll)
-        assertTrue(vm.state.value.isRevoking(laptopRow))
-        advanceUntilIdle()
-        assertFalse(vm.state.value.isRevokingAll)
-        assertEquals(listOf(tablet), backend.revoked)
-        assertEquals("1 of 3 devices could not be removed. Something went wrong.", vm.state.value.actionError)
-        assertEquals(listOf(Haptic.Error), recorder.haptics)
-        assertTrue(recorder.toasts.isEmpty())
-    }
-
-    @Test
-    fun removeAllOthersSucceeding() = runTest {
-        val backend = FakeBackend(listOf(phoneRow, laptopRow, tabletRow))
-        val recorder = Recorder()
-        val vm = model(backend, recorder = recorder)
-        vm.load()
+        assertTrue(vm.state.isRevokingAll)
+        assertTrue(vm.state.isRevoking(laptopRow))
         vm.revokeAllOthers()
         advanceUntilIdle()
-        assertEquals(setOf(laptop, tablet), backend.revoked.toSet())
-        assertEquals(listOf(thisPhone), vm.state.value.devices?.map { it.id })
+        assertEquals(1, devices.removeAllCalls)
+        assertFalse(vm.state.isRevokingAll)
         assertEquals("2 devices removed", recorder.toasts.single().message)
         assertEquals(listOf(Haptic.Success), recorder.haptics)
+
+        devices.removeAllOutcome = RemoveOutcome.Partial(removed = 1, failed = 1)
+        vm.revokeAllOthers()
+        advanceUntilIdle()
+        assertEquals(listOf(Haptic.Success, Haptic.Error), recorder.haptics)
+        assertEquals(1, recorder.toasts.size)
+
+        devices.removeAllOutcome = RemoveOutcome.Failed("The device could not be removed. Something went wrong.")
+        vm.revokeAllOthers()
+        advanceUntilIdle()
+        assertEquals(Haptic.Error, recorder.haptics.last())
+        assertEquals(1, recorder.toasts.size)
+
+        // Nothing to remove: nothing asked.
+        devices.next = listOf(phoneRow)
+        vm.refresh()
+        vm.revokeAllOthers()
+        advanceUntilIdle()
+        assertEquals(3, devices.removeAllCalls)
     }
 
     @Test
-    fun removeAllWithOneOtherDevice() = runTest {
-        val backend = FakeBackend(listOf(phoneRow, laptopRow))
-        backend.failures[laptop] = serverDown()
-        val vm = model(backend)
-        vm.load()
-        vm.revokeAllOthers()
-        advanceUntilIdle()
-        assertEquals("The device could not be removed. Something went wrong.", vm.state.value.actionError)
-
-        backend.failures.clear()
+    fun renameForwardsAndShowsCoresSentence() = runTest {
+        val devices = FakeDevices().apply { next = listOf(phoneRow, tabletRow) }
         val recorder = Recorder()
-        val again = model(backend, recorder = recorder)
-        again.load()
-        again.revokeAllOthers()
-        advanceUntilIdle()
-        assertEquals("1 device removed", recorder.toasts.single().message)
+        val vm = model(devices, recorder)
+        vm.refresh()
+        assertNull(vm.rename(tabletRow, "Kitchen"))
+        assertEquals(tablet to "Kitchen", devices.renames.single())
+        assertEquals(listOf(Haptic.Light), recorder.haptics)
+        devices.renameAnswer = "Unlock Shroud to rename devices."
+        assertEquals("Unlock Shroud to rename devices.", vm.rename(tabletRow, "Kitchen"))
+        assertEquals(listOf(Haptic.Light), recorder.haptics)
+    }
+
+    @Test
+    fun latestCopyAfterARename() = runTest {
+        val devices = FakeDevices().apply { next = listOf(phoneRow, tabletRow) }
+        val vm = model(devices)
+        vm.refresh()
+        val renamed = tabletRow.copy(label = DeviceNameSeal.Label("Kitchen", DeviceNameSeal.Kind.IPad, true))
+        devices.next = listOf(phoneRow, renamed)
+        vm.refresh()
+        assertEquals(renamed, vm.latest(tabletRow))
+        assertEquals("Kitchen", vm.state.displayName(vm.latest(tabletRow)))
+        assertEquals(oldPhoneRow, vm.latest(oldPhoneRow))
     }
 
     @Test
@@ -305,6 +293,8 @@ class DevicesViewModelTest {
         assertTrue(DevicesCopy.isFull(5))
         assertEquals("Other devices", DevicesCopy.otherDevicesHeader(0))
         assertEquals("Other devices — 3", DevicesCopy.otherDevicesHeader(3))
+        assertEquals("1 device removed", DevicesCopy.removedCount(1))
+        assertEquals("2 devices removed", DevicesCopy.removedCount(2))
     }
 
     @Test
@@ -325,72 +315,9 @@ class DevicesViewModelTest {
         assertEquals("Remove this device?", DevicesCopy.confirmTitle(null))
         assertEquals("Remove 2", DevicesCopy.confirmAllButton(2))
         assertEquals("Unnamed device", DevicesCopy.displayName(DeviceNameSeal.Label("   ", DeviceNameSeal.Kind.Other)))
-        assertEquals("Unnamed device", DevicesCopy.displayName(null))
+        assertEquals("Unnamed device", DevicesCopy.displayName(null as DeviceNameSeal.Label?))
         val labels = { _: Instant -> "9:37" }
         assertEquals("Last active 9:37", DevicesCopy.lastActive(laptopRow, labels))
         assertEquals("Linked 9:37", DevicesCopy.lastActive(oldPhoneRow, labels))
     }
-
-    /** The stored kind is kept; without a label this phone's own kind, else "other"; always custom (`DevicesView.swift:553-579`). */
-    @Test
-    fun renameKeepsTheKind() = runTest {
-        val backend = FakeBackend(listOf(phoneRow, tabletRow, oldPhoneRow, phoneRow.copy(id = laptop, isCurrent = false, sealedName = null)))
-        val recorder = Recorder()
-        val vm = model(backend, recorder = recorder)
-        vm.load()
-
-        assertNull(vm.rename(tabletRow, "Kitchen"))
-        assertEquals(DeviceNameSeal.Label("Kitchen", DeviceNameSeal.Kind.IPad, custom = true), opened(backend.names.last()))
-
-        assertNull(vm.rename(oldPhoneRow, "Old phone"))
-        assertEquals(DeviceNameSeal.Label("Old phone", DeviceNameSeal.Kind.Other, custom = true), opened(backend.names.last()))
-
-        // This phone without a readable label: its own kind (Android, P4).
-        val unnamedThisPhone = phoneRow.copy(sealedName = null)
-        backend.devices = listOf(unnamedThisPhone)
-        vm.load()
-        assertNull(vm.rename(unnamedThisPhone, "My phone"))
-        assertEquals(DeviceNameSeal.Label("My phone", DeviceNameSeal.Kind.Android, custom = true), opened(backend.names.last()))
-        assertEquals(Haptic.Light, recorder.haptics.last())
-        assertTrue(backend.listCalls >= 5)
-    }
-
-    @Test
-    fun renameFailures() = runTest {
-        val backend = FakeBackend(listOf(phoneRow, tabletRow))
-        val names = KeyNames()
-        val vm = model(backend, names = names)
-        vm.load()
-        assertEquals("Enter a name.", vm.rename(tabletRow, "   "))
-        backend.nameFailure = ApiError.Server(code = "RATE_LIMITED", serverMessage = "Too many requests. Try again later.", status = 429)
-        assertEquals("Too many requests. Try again later.", vm.rename(tabletRow, "Kitchen"))
-        names.locked = true
-        assertEquals("Unlock Shroud to rename devices.", vm.rename(tabletRow, "Kitchen"))
-        assertEquals("Unlock Shroud to rename devices.", model(backend, token = null).rename(tabletRow, "Kitchen"))
-        assertTrue(backend.names.isEmpty())
-    }
-
-    @Test
-    fun latestCopyAfterARename() = runTest {
-        val backend = FakeBackend(listOf(phoneRow, tabletRow))
-        val vm = model(backend)
-        vm.load()
-        val renamed = tabletRow.copy(sealedName = DeviceNameSeal.seal(DeviceNameSeal.Label("Kitchen", DeviceNameSeal.Kind.IPad, true), tablet, historyKey))
-        backend.devices = listOf(phoneRow, renamed)
-        vm.load()
-        assertEquals(renamed, vm.latest(tabletRow))
-        assertEquals("Kitchen", vm.state.value.displayName(renamed))
-        val gone = device(UUID.randomUUID(), "2026-09-20T10:15:00Z")
-        assertEquals(gone, vm.latest(gone))
-    }
-
-    @Test
-    fun aLockedPhoneShowsNoNames() = runTest {
-        val vm = model(FakeBackend(listOf(phoneRow, tabletRow)), names = KeyNames(locked = true))
-        vm.load()
-        assertEquals("Unnamed device", vm.state.value.displayName(tabletRow))
-        assertNull(vm.state.value.label(tabletRow))
-    }
-
-    private fun opened(entry: Pair<UUID, String>): DeviceNameSeal.Label? = DeviceNameSeal.open(entry.second, entry.first, historyKey)
 }

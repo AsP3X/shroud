@@ -1,15 +1,14 @@
 package de.corespace.shroud.ui.settings.devices
 
-import de.corespace.shroud.core.auth.SessionController
-import de.corespace.shroud.core.crypto.CryptoController
 import de.corespace.shroud.core.crypto.DeviceNameSeal
+import de.corespace.shroud.core.devices.DeviceKind
+import de.corespace.shroud.core.devices.DeviceRow
+import de.corespace.shroud.core.devices.DevicesController
+import de.corespace.shroud.core.devices.DevicesState
+import de.corespace.shroud.core.devices.RemoveOutcome
 import de.corespace.shroud.core.model.Haptic
-import de.corespace.shroud.core.net.ApiError
 import de.corespace.shroud.core.net.DEVICE_LIMIT
-import de.corespace.shroud.core.net.LinkedDeviceDto
-import de.corespace.shroud.core.net.ShroudApi
 import de.corespace.shroud.ui.components.Toast
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -19,99 +18,48 @@ import kotlinx.coroutines.launch
 import java.time.Instant
 import java.util.UUID
 
-/** The server calls of Settings › Devices (iOS `DevicesService`; api-realtime §5.2, settings-lock §4.4). */
-interface DevicesBackend {
-    /** `GET /devices`. */
-    suspend fun list(token: String): List<LinkedDeviceDto>
-
-    /** `DELETE /devices/{id}`; a 404 means it is gone already (`DevicesView.swift:142-146`). */
-    suspend fun revoke(token: String, deviceId: UUID)
-
-    /** `PUT /devices/{id}/name` with the sealed name (settings-lock §5.2). */
-    suspend fun putName(token: String, deviceId: UUID, sealedName: String)
-}
-
-/** [DevicesBackend] on the app's [ShroudApi]. */
-class ShroudApiDevicesBackend(private val api: ShroudApi) : DevicesBackend {
-    override suspend fun list(token: String): List<LinkedDeviceDto> = api.devices(token)
-
-    override suspend fun revoke(token: String, deviceId: UUID) = api.revokeDevice(token, deviceId)
-
-    override suspend fun putName(token: String, deviceId: UUID, sealedName: String) {
-        api.putDeviceName(token, deviceId, sealedName)
-    }
-}
-
-/**
- * Device names opened and sealed with this account's history key (iOS `DevicesView.label`,
- * `DevicesView.swift:440-444`, and `rename`, `:556-568`; settings-lock §5.1). Names never leave this
- * object in the clear except as the label the screen shows; nothing here logs them (invariant 13).
- */
-interface DeviceNames {
-    /** The label sealed with [device], or null while the chats are locked or it does not open. */
-    fun open(device: LinkedDeviceDto): DeviceNameSeal.Label?
-
-    /**
-     * [label] sealed for [deviceId], or null while the chats are locked. Throws
-     * [DeviceNameSeal.SealError.EmptyName] when nothing is left of the name.
-     */
-    fun seal(label: DeviceNameSeal.Label, deviceId: UUID): String?
-}
-
-/**
- * [DeviceNames] on the unlocked key material. Sealing refuses keys of another account than the
- * session's (a sign-in in between): other devices could not open that name (as
- * `AuthModule.syncDeviceName` does).
- */
-class CryptoDeviceNames(
-    private val crypto: CryptoController,
-    private val sessionUserId: () -> String?,
-) : DeviceNames {
-    override fun open(device: LinkedDeviceDto): DeviceNameSeal.Label? =
-        crypto.withMaterial { DeviceNameSeal.open(device.sealedName, device.id, it.historyKey) }
-
-    override fun seal(label: DeviceNameSeal.Label, deviceId: UUID): String? {
-        val user = sessionUserId() ?: return null
-        if (!user.equals(crypto.unlockedUserId.value, ignoreCase = true)) return null
-        return crypto.withMaterial { DeviceNameSeal.seal(label, deviceId, it.historyKey) }
-    }
-}
+/** The removals the screen has running: their rows show a spinner (`DevicesView.swift:25-26, 284-285`). */
+data class DeviceRemovals(
+    val revokingIds: Set<UUID> = emptySet(),
+    val isRevokingAll: Boolean = false,
+)
 
 /**
  * What Settings › Devices shows (iOS `DevicesView` state, `DevicesView.swift:21-46`; settings-lock
- * §4.1). [devices] null = not loaded yet; [labels] holds the names that opened (a device without one
- * reads "Unnamed device").
+ * §4.1): core's K3 [DevicesState] (`auth.devices`: rows sorted this device first, then by last
+ * activity; names opened only while the chats are unlocked) plus the removals this screen runs.
+ *
+ * Before the first list [rows] is null: a [loadError] then replaces the list, otherwise the loading
+ * card shows. Once loaded, core's error is the line under the list ([actionError]) and the rows stay.
  */
-data class DevicesState(
-    val devices: List<LinkedDeviceDto>? = null,
-    val labels: Map<UUID, DeviceNameSeal.Label> = emptyMap(),
-    val loadError: String? = null,
-    /** The last removal failure, under the list; the toast only confirms successes (`:23-24`). */
-    val actionError: String? = null,
-    val revokingIds: Set<UUID> = emptySet(),
-    val isRevokingAll: Boolean = false,
-    /** This phone's device id from the session (`isCurrent`, `:436-438`). */
-    val currentDeviceId: UUID? = null,
+data class DevicesUiState(
+    val devices: DevicesState = DevicesState(),
+    val removals: DeviceRemovals = DeviceRemovals(),
 ) {
-    /** The server's flag, or this session's device id (`DevicesView.swift:436-438`). */
-    fun isCurrent(device: LinkedDeviceDto): Boolean = device.isCurrent || device.id == currentDeviceId
+    /** The loaded list, or null before the first one. */
+    val rows: List<DeviceRow>? get() = devices.rows.takeIf { devices.hasLoaded }
+
+    /** No list yet and loading it failed ("Sign in to see your devices.", an offline sentence, …). */
+    val loadError: String? get() = devices.error.takeIf { !devices.hasLoaded }
+
+    /** A failed reload or removal under the loaded list (`DevicesView.swift:23-24, 531-536`). */
+    val actionError: String? get() = devices.error.takeIf { devices.hasLoaded }
 
     /** This phone's row; null when the server list lacks it (a stale list, `:157-166`). */
-    val current: LinkedDeviceDto? get() = devices?.firstOrNull(::isCurrent)
+    val current: DeviceRow? get() = rows?.firstOrNull { it.isThisDevice }
 
-    /** Every other device, most recently active first, so a stale one sinks (`:41-46`). */
-    val others: List<LinkedDeviceDto>
-        get() = devices.orEmpty().filterNot(::isCurrent).sortedByDescending { it.lastSeenAt ?: it.createdAt }
+    /** Every other device, most recently active first (core's order, `:41-46`). */
+    val others: List<DeviceRow> get() = rows.orEmpty().filterNot { it.isThisDevice }
 
-    fun label(device: LinkedDeviceDto): DeviceNameSeal.Label? = labels[device.id]
-
-    fun displayName(device: LinkedDeviceDto): String = DevicesCopy.displayName(labels[device.id])
+    val isRevokingAll: Boolean get() = removals.isRevokingAll
 
     /** A removal is running: Remove All waits (`DevicesView.swift:354`). */
-    val isRemoving: Boolean get() = isRevokingAll || revokingIds.isNotEmpty()
+    val isRemoving: Boolean get() = removals.isRevokingAll || removals.revokingIds.isNotEmpty()
 
-    /** [device]'s removal is running (its own, or all of them, `:284-285`). */
-    fun isRevoking(device: LinkedDeviceDto): Boolean = isRevokingAll || device.id in revokingIds
+    /** [row]'s removal is running (its own, or all of them, `:284-285`). */
+    fun isRevoking(row: DeviceRow): Boolean = removals.isRevokingAll || row.id in removals.revokingIds
+
+    fun displayName(row: DeviceRow): String = DevicesCopy.displayName(row)
 }
 
 /**
@@ -124,7 +72,6 @@ object DevicesCopy {
     const val UNNAMED = "Unnamed device"
     const val LOADING = "Loading devices…"
     const val LOAD_ERROR_TITLE = "Can't load devices"
-    const val SIGN_IN = "Sign in to see your devices."
     const val THIS_DEVICE = "This device"
     const val OTHER_DEVICES = "Other devices"
     const val DEVICE_LIMIT_HEADER = "Device limit"
@@ -143,8 +90,6 @@ object DevicesCopy {
     const val CONFIRM_MESSAGE_ALL =
         "They are signed out right away and erase everything of your account on them: messages, keys and files, as soon as they are online or next opened. What they already sent stays in your chats. Signing in there again takes your password and 12-word phrase."
     const val CONFIRM_ALL_TITLE = "Remove all other devices?"
-    const val UNLOCK_TO_RENAME = "Unlock Shroud to rename devices."
-    const val ENTER_A_NAME = "Enter a name."
 
     // Device Details (`DevicesView.swift:590-780`).
     const val DETAILS_PANE = "Device details"
@@ -167,8 +112,15 @@ object DevicesCopy {
     /** A label's trimmed name, or "Unnamed device" (`DevicesView.swift:450-453`). */
     fun displayName(label: DeviceNameSeal.Label?): String = label?.name?.trim()?.ifEmpty { null } ?: UNNAMED
 
+    /**
+     * A row's name: its label's, else — the chats locked or the name unreadable, so core's
+     * [DeviceRow.label] is null — the kind noun core still knows ("Android app"), else "Unnamed device".
+     */
+    fun displayName(row: DeviceRow): String =
+        row.label?.name?.trim()?.ifEmpty { null } ?: row.kind.takeIf { it != DeviceKind.Unknown }?.label ?: UNNAMED
+
     /** "Last active 9:37" / "Linked Yesterday" (`DevicesView.swift:455-460`); [timeLabel] = `ChatListFormatting.timeLabel`. */
-    fun lastActive(device: LinkedDeviceDto, timeLabel: (Instant) -> String): String =
+    fun lastActive(device: DeviceRow, timeLabel: (Instant) -> String): String =
         device.lastSeenAt?.let { "Last active ${timeLabel(it)}" } ?: "Linked ${timeLabel(device.createdAt)}"
 
     /** "OTHER DEVICES" or "OTHER DEVICES — n" before upper-casing (`DevicesView.swift:176`). */
@@ -222,202 +174,102 @@ object DevicesCopy {
 
     fun removed(name: String): String = "$name removed"
 
-    fun alreadyRemoved(name: String): String = "$name was already removed"
-
     /** The toast after Remove All (`DevicesView.swift:540`). */
     fun removedCount(count: Int): String = if (count == 1) "1 device removed" else "$count devices removed"
-
-    /** The line under the list when Remove All partly failed (`DevicesView.swift:531-536`). */
-    fun removeAllFailure(failed: Int, total: Int, message: String): String {
-        val lead = if (total == 1) "The device could not be removed. " else "$failed of $total devices could not be removed. "
-        return lead + message
-    }
 }
 
 /**
- * Settings › Devices (iOS `DevicesView`, `ios/shroud/Features/Main/DevicesView.swift:12-586`;
- * settings-lock §4.1, §4.4, §4.6): loads the linked devices, opens their sealed names, removes one or
- * all of the others and renames a device.
+ * Settings › Devices' actions (iOS `DevicesView`, `ios/shroud/Features/Main/DevicesView.swift:462-579`;
+ * settings-lock §4.1, §4.4, §4.6) over core's [DevicesController] (K3, `auth.devices`). The list, its
+ * order, this phone, the sealed names, the kind kept on a rename, the 404-is-removed rule and every
+ * failure sentence are core's; this adds only what the screen does around them — the row spinners,
+ * the haptics and the confirmation toasts.
  *
- * Main-confined like the iOS view: every member runs on the main thread ([scope] is the screen's).
- * [haptic] and [toast] are the screen's; [onCount] tells the Settings row the new count after every
- * load or removal (`DevicesView.swift:13-14`). A removal or rename keeps running on [actionScope] if
- * the screen closes meanwhile (an iOS `Task` in a button action is not cancelled with the view).
+ * Main-confined like the iOS view. [haptic] and [toast] are the screen's. A removal keeps running on
+ * [actionScope] if the screen closes meanwhile (an iOS `Task` in a button action is not cancelled
+ * with the view).
  */
 class DevicesViewModel(
-    private val backend: DevicesBackend,
-    private val token: () -> String?,
-    private val currentDeviceId: () -> UUID?,
-    private val names: DeviceNames,
-    private val currentKind: () -> DeviceNameSeal.Kind,
-    private val scope: CoroutineScope,
-    private val actionScope: CoroutineScope = scope,
+    private val devices: DevicesController,
+    private val actionScope: CoroutineScope,
     private val haptic: (Haptic) -> Unit = {},
     private val toast: (Toast) -> Unit = {},
-    private val onCount: (Int) -> Unit = {},
 ) {
-    private val mutableState = MutableStateFlow(DevicesState(currentDeviceId = currentDeviceId()))
-    val state: StateFlow<DevicesState> = mutableState.asStateFlow()
+    private val mutableRemovals = MutableStateFlow(DeviceRemovals())
+
+    /** The removals running now; the screen combines them with [devicesState]. */
+    val removals: StateFlow<DeviceRemovals> = mutableRemovals.asStateFlow()
+
+    /** Core's list (`auth.devices.state`). */
+    val devicesState: StateFlow<DevicesState> get() = devices.state
+
+    /** What the screen shows now. */
+    val state: DevicesUiState get() = DevicesUiState(devices.state.value, mutableRemovals.value)
 
     /**
-     * Loads the list (`load`, `DevicesView.swift:462-483`): assigned only when it changed; a failure
-     * before anything loaded is the screen's error, after it a line under the list. A cancelled load
-     * (the pull released early, the screen left) shows nothing.
+     * Loads the list (`load`, `DevicesView.swift:462-483`); a pull starts clean (`:73-77`). Core keeps
+     * the rows on a failure and shares a load already running.
      */
-    suspend fun load() {
-        val bearer = token()
-        if (bearer == null) {
-            mutableState.update { it.copy(loadError = DevicesCopy.SIGN_IN) }
-            return
-        }
-        try {
-            val list = backend.list(bearer)
-            val labels = buildMap { for (device in list) names.open(device)?.let { put(device.id, it) } }
-            mutableState.update {
-                it.copy(
-                    devices = if (it.devices == list) it.devices else list,
-                    labels = labels,
-                    loadError = null,
-                    currentDeviceId = currentDeviceId() ?: it.currentDeviceId,
-                )
-            }
-            onCount(list.size)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            val message = SessionController.userMessage(e)
-            mutableState.update { if (it.devices == null) it.copy(loadError = message) else it.copy(actionError = message) }
-        }
-    }
-
-    /** A pull to refresh starts clean; a failure sets the error again (`DevicesView.swift:73-77`). */
-    suspend fun refresh() {
-        mutableState.update { it.copy(actionError = null) }
-        load()
-    }
+    suspend fun refresh() = devices.refresh()
 
     /**
-     * Removes [device] (`revoke`, `DevicesView.swift:485-506`): never this phone (that is Log Out).
-     * Success → removed here, success haptic, "<name> removed"; 404 → it was gone already, removed
-     * here, "<name> was already removed"; else the error under the list and an error haptic. Then
-     * the list reloads; the row's spinner lasts until it has.
+     * Removes [row] (`revoke`, `DevicesView.swift:485-506`): never this phone (that is Log Out).
+     * Removed → success haptic and "<name> removed"; a failure → error haptic, and core's sentence
+     * under the list. The row's spinner lasts until core has reloaded the list.
      */
-    fun revoke(device: LinkedDeviceDto) {
-        if (mutableState.value.isCurrent(device)) return
-        val bearer = token() ?: return
-        mutableState.update { it.copy(actionError = null, revokingIds = it.revokingIds + device.id) }
+    fun revoke(row: DeviceRow) {
+        if (row.isThisDevice || row.id in mutableRemovals.value.revokingIds) return
+        val name = DevicesCopy.displayName(row)
+        mutableRemovals.update { it.copy(revokingIds = it.revokingIds + row.id) }
         actionScope.launch {
             try {
-                try {
-                    backend.revoke(bearer, device.id)
-                    val name = mutableState.value.displayName(device)
-                    removeLocally(listOf(device.id))
-                    haptic(Haptic.Success)
-                    toast(Toast.success(DevicesCopy.removed(name)))
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    if (isAlreadyRemoved(e)) {
-                        val name = mutableState.value.displayName(device)
-                        removeLocally(listOf(device.id))
-                        toast(Toast.info(DevicesCopy.alreadyRemoved(name)))
-                    } else {
-                        mutableState.update { it.copy(actionError = SessionController.userMessage(e)) }
-                        haptic(Haptic.Error)
+                when (devices.remove(row.id)) {
+                    RemoveOutcome.Removed -> {
+                        haptic(Haptic.Success)
+                        toast(Toast.success(DevicesCopy.removed(name)))
                     }
+                    is RemoveOutcome.Partial, is RemoveOutcome.Failed -> haptic(Haptic.Error)
                 }
-                load()
             } finally {
-                mutableState.update { it.copy(revokingIds = it.revokingIds - device.id) }
+                mutableRemovals.update { it.copy(revokingIds = it.revokingIds - row.id) }
             }
         }
     }
 
     /**
-     * Removes every other device (`revokeAllOthers`, `DevicesView.swift:508-544`). There is no bulk
-     * endpoint: one `DELETE` per device, carrying on past failures so one stale row does not leave
-     * the rest signed in; a 404 counts as removed.
+     * Removes every other device (`revokeAllOthers`, `DevicesView.swift:508-544`): all removed →
+     * success haptic and "n devices removed"; any failure → error haptic and core's "1 of 3 devices
+     * could not be removed. …" line under the list.
      */
     fun revokeAllOthers() {
-        val bearer = token() ?: return
-        val targets = mutableState.value.others
-        if (targets.isEmpty()) return
-        mutableState.update { it.copy(actionError = null, isRevokingAll = true) }
+        val count = state.others.size
+        if (count == 0 || mutableRemovals.value.isRevokingAll) return
+        mutableRemovals.update { it.copy(isRevokingAll = true) }
         actionScope.launch {
-            val removed = ArrayList<UUID>()
-            var lastError: Exception? = null
             try {
-                for (device in targets) {
-                    try {
-                        backend.revoke(bearer, device.id)
-                        removed += device.id
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        if (isAlreadyRemoved(e)) removed += device.id else lastError = e
+                when (devices.removeAllOthers()) {
+                    RemoveOutcome.Removed -> {
+                        haptic(Haptic.Success)
+                        toast(Toast.success(DevicesCopy.removedCount(count)))
                     }
+                    is RemoveOutcome.Partial, is RemoveOutcome.Failed -> haptic(Haptic.Error)
                 }
             } finally {
-                removeLocally(removed)
-                mutableState.update { it.copy(isRevokingAll = false) }
+                mutableRemovals.update { it.copy(isRevokingAll = false) }
             }
-            val error = lastError
-            if (error != null) {
-                val message = DevicesCopy.removeAllFailure(targets.size - removed.size, targets.size, SessionController.userMessage(error))
-                mutableState.update { it.copy(actionError = message) }
-                haptic(Haptic.Error)
-            } else {
-                haptic(Haptic.Success)
-                toast(Toast.success(DevicesCopy.removedCount(removed.size)))
-            }
-            load()
         }
     }
 
     /**
-     * Seals [name] for [device] — marked as typed by a person, so a phone keeps it instead of its own —
-     * and reloads (`rename`, `DevicesView.swift:553-579`). The stored kind is kept, so renaming an
-     * Android device keeps kind 4; with no label, this phone's own kind, else "other". Null once
-     * saved, else the line to show under the details.
+     * Renames [row] (`rename`, `DevicesView.swift:553-579`): core seals the name keeping the stored
+     * kind and reloads. Null once saved (a light haptic), else core's sentence for the sheet.
      */
-    suspend fun rename(device: LinkedDeviceDto, name: String): String? {
-        val bearer = token() ?: return DevicesCopy.UNLOCK_TO_RENAME
-        val current = mutableState.value
-        val kind = current.label(device)?.kind
-            ?: if (current.isCurrent(device)) currentKind() else DeviceNameSeal.Kind.Other
-        try {
-            val sealed = names.seal(DeviceNameSeal.Label(name, kind, custom = true), device.id)
-                ?: return DevicesCopy.UNLOCK_TO_RENAME
-            backend.putName(bearer, device.id, sealed)
-        } catch (_: DeviceNameSeal.SealError.EmptyName) {
-            return DevicesCopy.ENTER_A_NAME
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            return SessionController.userMessage(e)
-        }
-        load()
-        haptic(Haptic.Light)
-        return null
+    suspend fun rename(row: DeviceRow, name: String): String? {
+        val error = devices.rename(row.id, name)
+        if (error == null) haptic(Haptic.Light)
+        return error
     }
 
-    /** The newest copy of [device] after a load (the open details show the new name, `DevicesView.swift:575-576`). */
-    fun latest(device: LinkedDeviceDto): LinkedDeviceDto = mutableState.value.devices?.firstOrNull { it.id == device.id } ?: device
-
-    private fun removeLocally(ids: List<UUID>) {
-        if (ids.isEmpty()) return
-        var count: Int? = null
-        mutableState.update { state ->
-            val list = state.devices ?: return@update state
-            val kept = list.filterNot { it.id in ids }
-            count = kept.size
-            state.copy(devices = kept)
-        }
-        count?.let(onCount)
-    }
-
-    companion object {
-        /** A 404 means the device is gone already (removed elsewhere meanwhile): the goal is met (`DevicesView.swift:142-146`). */
-        fun isAlreadyRemoved(error: Throwable): Boolean = (error as? ApiError)?.isNotFound == true
-    }
+    /** The newest copy of [row] (the open details show the new name, `DevicesView.swift:575-576`). */
+    fun latest(row: DeviceRow): DeviceRow = devices.state.value.rows.firstOrNull { it.id == row.id } ?: row
 }

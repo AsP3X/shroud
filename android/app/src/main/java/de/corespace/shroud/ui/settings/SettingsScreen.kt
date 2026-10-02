@@ -75,11 +75,6 @@ import de.corespace.shroud.ui.theme.ShroudTheme
 import de.corespace.shroud.ui.theme.TilePalette
 import de.corespace.shroud.ui.theme.inter
 import dev.chrisbanes.haze.rememberHazeState
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 
 /**
  * The Settings tab root (iOS `SettingsView`, `ios/shroud/Features/Main/SettingsView.swift:16-575`;
@@ -106,20 +101,16 @@ fun SettingsScreen(onOpenCalls: (() -> Unit)?) {
     val authorization by notifications.authorization.collectAsState()
     val notificationPrefs by notifications.preferences.state.collectAsState()
     val loggingOut by actions.isLoggingOut.collectAsState()
-    val devicesGeneration by SettingsRefresh.devicesGeneration.collectAsState()
-    var deviceCount by rememberSaveable { mutableStateOf<Int?>(null) }
+    val devices = container.auth.devices
+    val devicesState by devices.state.collectAsState()
+    // Core's list (K3): Devices' loads and removals show here at once (iOS `DevicesView(onCount:)`,
+    // `SettingsView.swift:209-210`), and a failed reload keeps the rows, so the count stays what was shown.
+    val deviceCount = devicesState.rows.size.takeIf { devicesState.hasLoaded }
     val token = session?.token
-    LaunchedEffect(token, devicesGeneration) {
+    LaunchedEffect(token) {
         if (token == null) return@LaunchedEffect
-        // `loadDeviceCount` (`SettingsView.swift:553-559`): best effort; a failure keeps what is shown.
-        val count = try {
-            container.net.api.devices(token).size
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Exception) {
-            null
-        }
-        if (count != null) deviceCount = count
+        // `loadDeviceCount` (`SettingsView.swift:553-559`): best effort, once per appearance.
+        devices.refresh()
     }
     val state = SettingsRootState(
         username = session?.username,
@@ -192,22 +183,6 @@ object SettingsCopy {
 
     /** The id under "Signed in as", lower-case like iOS's `uuidString.lowercased()` (`SettingsView.swift:394`). */
     fun userIdLine(userId: String): String = Ids.parse(userId)?.let(Ids::wire) ?: userId.lowercase()
-}
-
-/**
- * Asks the Settings root to reload its device count when Devices closes: iOS's `DevicesView`
- * reports every load through `onCount` (`SettingsView.swift:210`); the Android Devices screen has
- * no such callback, so [SettingsDestination] signals its exit here and the root reloads (plain UI
- * state, no account data).
- */
-internal object SettingsRefresh {
-    private val devices = MutableStateFlow(0L)
-
-    val devicesGeneration: StateFlow<Long> = devices.asStateFlow()
-
-    fun devicesClosed() {
-        devices.update { it + 1 }
-    }
 }
 
 /**

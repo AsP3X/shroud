@@ -22,9 +22,8 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import de.corespace.shroud.core.crypto.DeviceNameSeal
-import de.corespace.shroud.core.devices.DeviceKind
+import de.corespace.shroud.core.devices.DeviceRow
 import de.corespace.shroud.core.model.Ids
-import de.corespace.shroud.core.net.LinkedDeviceDto
 import de.corespace.shroud.ui.components.AlertButton
 import de.corespace.shroud.ui.components.AlertField
 import de.corespace.shroud.ui.components.InsetDivider
@@ -48,11 +47,12 @@ import java.time.Instant
 
 /** What the details sheet shows of one device, kept while the sheet animates out. */
 private data class DeviceDetail(
-    val device: LinkedDeviceDto,
-    val label: DeviceNameSeal.Label?,
-    val isCurrent: Boolean,
+    val device: DeviceRow,
     val isRevoking: Boolean,
-)
+) {
+    val label: DeviceNameSeal.Label? get() = device.label
+    val isCurrent: Boolean get() = device.isThisDevice
+}
 
 /** The last shown detail (not state: written while the sheet is up only). */
 private class ShownDetail {
@@ -72,20 +72,18 @@ private class ShownDetail {
  */
 @Composable
 internal fun DeviceDetailSheet(
-    device: LinkedDeviceDto?,
-    label: DeviceNameSeal.Label?,
-    isCurrent: Boolean,
+    device: DeviceRow?,
     isRevoking: Boolean,
     noun: String,
-    lastActive: (LinkedDeviceDto) -> String,
+    lastActive: (DeviceRow) -> String,
     formatDate: (Instant) -> String,
-    onRename: suspend (LinkedDeviceDto, String) -> String?,
-    onCopyId: (LinkedDeviceDto) -> Unit,
-    onRevoke: (LinkedDeviceDto) -> Unit,
+    onRename: suspend (DeviceRow, String) -> String?,
+    onCopyId: (DeviceRow) -> Unit,
+    onRevoke: (DeviceRow) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val shown = remember { ShownDetail() }
-    if (device != null) shown.value = DeviceDetail(device, label, isCurrent, isRevoking)
+    if (device != null) shown.value = DeviceDetail(device, isRevoking)
     val toasts = rememberToastState()
     val scope = rememberCoroutineScope()
     val deviceId = shown.value?.device?.id
@@ -95,8 +93,9 @@ internal fun DeviceDetailSheet(
     // The draft name lives in memory only (never saved state: names are sealed everywhere else).
     var draft by remember(deviceId) { mutableStateOf("") }
 
-    fun saveName(target: LinkedDeviceDto) {
-        val name = DeviceNameSeal.normalize(draft)
+    // Core normalises and seals the name (K3 `rename`); an empty result comes back as "Enter a name.".
+    fun saveName(target: DeviceRow) {
+        val name = draft.trim()
         if (name.isEmpty()) return
         isSavingName = true
         renameError = null
@@ -151,7 +150,7 @@ internal fun DeviceDetailSheet(
             placeholder = DevicesCopy.NAME,
             capitalization = KeyboardCapitalization.Words,
         ),
-        primary = AlertButton(DevicesCopy.SAVE, enabled = DeviceNameSeal.normalize(draft).isNotEmpty()) {
+        primary = AlertButton(DevicesCopy.SAVE, enabled = draft.isNotBlank()) {
             renaming?.let(::saveName)
         },
         onDismiss = { isRenaming = false },
@@ -163,7 +162,7 @@ internal fun DeviceDetailSheet(
 private fun ColumnScope.DeviceDetailContent(
     detail: DeviceDetail,
     noun: String,
-    lastActive: (LinkedDeviceDto) -> String,
+    lastActive: (DeviceRow) -> String,
     formatDate: (Instant) -> String,
     isSavingName: Boolean,
     renameError: String?,
@@ -173,8 +172,8 @@ private fun ColumnScope.DeviceDetailContent(
 ) {
     val colors = ShroudTheme.colors
     val device = detail.device
-    val name = DevicesCopy.displayName(detail.label)
-    val kind = DeviceKind.of(detail.label)
+    val name = DevicesCopy.displayName(device)
+    val kind = device.kind
 
     // Hero: tile 64, the name, the status line (`:610-621`; top 24 less the sheet's own 8).
     Column(

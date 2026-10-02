@@ -1,7 +1,6 @@
 package de.corespace.shroud.ui.settings
 
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import de.corespace.shroud.core.model.NOTES_DISPLAY_NAME
 import de.corespace.shroud.core.model.NOTES_PEER_ID
 import de.corespace.shroud.ui.conversation.ConversationScreen
@@ -24,8 +23,8 @@ import de.corespace.shroud.ui.shell.SettingsRoute
  *   Devices → W3-SETTINGS-B's screens; Delivery → W3-PUSH's screen (Android only).
  * - Saved Messages → the Notes conversation, "Notes to me" (`:213-217`).
  *
- * Leaving Devices asks the root to reload its device count ([SettingsRefresh]; iOS updates it
- * through `DevicesView(onCount:)`, `:209-210`).
+ * The root's device count follows core's device list (`auth.devices`, K3), which Devices updates, as
+ * iOS updates it through `DevicesView(onCount:)` (`:209-210`).
  */
 @Composable
 fun SettingsDestination(route: SettingsRoute, onBack: () -> Unit) {
@@ -35,10 +34,7 @@ fun SettingsDestination(route: SettingsRoute, onBack: () -> Unit) {
         SettingsRoute.Transcription -> TranscriptionScreen(onBack)
         SettingsRoute.Appearance -> AppearanceScreen(onBack)
         SettingsRoute.SavedMessages -> ConversationScreen(NOTES_PEER_ID, NOTES_DISPLAY_NAME, onBack)
-        SettingsRoute.Devices -> {
-            DisposableEffect(Unit) { onDispose { SettingsRefresh.devicesClosed() } }
-            DevicesScreen(onBack)
-        }
+        SettingsRoute.Devices -> DevicesScreen(onBack)
         SettingsRoute.Notifications -> NotificationsSettingsScreen(onBack, onOpenSound = { navigation.push(SettingsRoute.NotificationSound) })
         SettingsRoute.NotificationSound -> NotificationSoundScreen(onBack)
         SettingsRoute.PrivacySecurity -> PrivacySecurityScreen(onBack)
