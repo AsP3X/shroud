@@ -101,7 +101,7 @@ class QrFrameAnalyzerTest {
     }
 
     /** A Y plane: the QR modules at [scale] px each inside a 4-module white margin, rows padded by [rowPadding]. */
-    private class Frame(val bytes: ByteArray, val width: Int, val height: Int, val rowStride: Int, val rowPadding: Int) {
+    internal class Frame(val bytes: ByteArray, val width: Int, val height: Int, val rowStride: Int, val rowPadding: Int) {
         fun buffer(): ByteBuffer = ByteBuffer.wrap(bytes)
 
         companion object {

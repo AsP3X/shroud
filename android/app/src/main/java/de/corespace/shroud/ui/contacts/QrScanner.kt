@@ -1,7 +1,6 @@
 package de.corespace.shroud.ui.contacts
 
 import android.Manifest
-import android.content.pm.PackageManager
 import android.util.Size
 import androidx.activity.compose.BackHandler
 import androidx.camera.compose.CameraXViewfinder
@@ -73,7 +72,6 @@ import de.corespace.shroud.ui.components.rememberOverlayTransition
 import de.corespace.shroud.ui.permissions.findActivity
 import de.corespace.shroud.ui.permissions.openAppSettings
 import de.corespace.shroud.ui.permissions.rememberPermissionGranted
-import de.corespace.shroud.ui.permissions.rememberPermissionRequest
 import de.corespace.shroud.ui.theme.Motion
 import de.corespace.shroud.ui.theme.ShroudIcons
 import de.corespace.shroud.ui.theme.ShroudTheme
@@ -86,9 +84,6 @@ import java.util.concurrent.Executors
  * contacts §5.5 [AND], design oGuCt).
  */
 enum class ScannerPhase {
-    /** The camera permission's system dialog is up (black, with the chrome). */
-    Asking,
-
     /** The camera runs. */
     Live,
 
@@ -101,14 +96,27 @@ enum class ScannerPhase {
 
 /** The pure transitions of [ScannerPhase], tested on the JVM. */
 object ScannerPhases {
-    /** On opening: no camera → [ScannerPhase.NoCamera]; allowed → live; else the system dialog. */
-    fun initial(hasCamera: Boolean, granted: Boolean): ScannerPhase = when {
-        !hasCamera -> ScannerPhase.NoCamera
-        granted -> ScannerPhase.Live
-        else -> ScannerPhase.Asking
+    /** What "Scan QR code" does first. */
+    sealed interface Start {
+        /** The camera permission's system dialog, over the Add Contact sheet (design w6957). */
+        data object AskFirst : Start
+
+        /** The scanner, straight away, in [phase]. */
+        data class Open(val phase: ScannerPhase) : Start
     }
 
-    /** The dialog's answer; a denial (first or "don't ask again") shows the denied screen. */
+    /**
+     * "Scan QR code" tapped: no camera → the scanner with the no-camera hint; allowed → the live
+     * scanner; else the system dialog first, over the sheet, as w6957 draws it (iOS asks with the
+     * cover already up, `:50-61`; the Android design keeps the sheet behind the dialog).
+     */
+    fun onScanTapped(hasCamera: Boolean, granted: Boolean): Start = when {
+        !hasCamera -> Start.Open(ScannerPhase.NoCamera)
+        granted -> Start.Open(ScannerPhase.Live)
+        else -> Start.AskFirst
+    }
+
+    /** The dialog's answer opens the scanner; a denial (first or "don't ask again") on the denied screen. */
     fun afterRequest(granted: Boolean): ScannerPhase = if (granted) ScannerPhase.Live else ScannerPhase.Denied
 
     /** Back from Settings (`ON_RESUME`): access granted there starts the camera; nothing else changes. */
@@ -128,16 +136,28 @@ object ScannerPhases {
  * designed denied screen offers Settings or "Enter code instead"; access granted in Settings starts
  * the camera on return. Without a camera the hint says to paste the link instead.
  *
- * Agent: Drawn in the [OverlayLayer] above the sheet; back (also predictive) cancels. The camera is
- * bound to the activity's lifecycle (it stops in the background) and unbound when the scanner
- * closes or a code was read; the status and navigation bar icons are light while it shows.
- * [onCancel]'s flag asks the sheet to focus its field ("Enter code instead").
+ * Agent: Up while [phase] is set (the sheet asked for the camera first, [ScannerPhases.onScanTapped]);
+ * drawn in the [OverlayLayer] above the sheet; back (also predictive) cancels. The camera is bound
+ * to the activity's lifecycle (it stops in the background) and unbound when the scanner closes or
+ * before a read code is handed on ([QrScanHandoff]); the status and navigation bar icons are light
+ * while it shows. [onPhaseChange] reports a camera that could not be opened and access granted in
+ * Settings; [onCancel]'s flag asks the sheet to focus its field ("Enter code instead").
  */
 @Composable
-internal fun QrScannerOverlay(visible: Boolean, onCode: (String) -> Unit, onCancel: (focusField: Boolean) -> Unit) {
+internal fun QrScannerOverlay(
+    phase: ScannerPhase?,
+    onPhaseChange: (ScannerPhase) -> Unit,
+    onCode: (String) -> Unit,
+    onCancel: (focusField: Boolean) -> Unit,
+) {
+    val visible = phase != null
     val visibility = rememberOverlayTransition(visible)
     val currentOnCancel by rememberUpdatedState(onCancel)
     val currentOnCode by rememberUpdatedState(onCode)
+    val currentOnPhaseChange by rememberUpdatedState(onPhaseChange)
+    // The last phase shown, kept while the overlay slides away.
+    var shown by remember { mutableStateOf(phase ?: ScannerPhase.Live) }
+    if (phase != null) shown = phase
     OverlayLayer(active = visibility.isOverlayUp) {
         val transition = rememberTransition(visibility, label = "qrScanner")
         val reduceMotion = ShroudTheme.reduceMotion
@@ -151,7 +171,9 @@ internal fun QrScannerOverlay(visible: Boolean, onCode: (String) -> Unit, onCanc
             ShroudTheme(dark = true) {
                 LightSystemBars()
                 QrScannerContent(
+                    phase = shown,
                     active = visible,
+                    onPhaseChange = { currentOnPhaseChange(it) },
                     onCode = { currentOnCode(it) },
                     onCancel = { currentOnCancel(it) },
                 )
@@ -179,17 +201,20 @@ private fun LightSystemBars() {
 }
 
 @Composable
-private fun QrScannerContent(active: Boolean, onCode: (String) -> Unit, onCancel: (focusField: Boolean) -> Unit) {
+private fun QrScannerContent(
+    phase: ScannerPhase,
+    active: Boolean,
+    onPhaseChange: (ScannerPhase) -> Unit,
+    onCode: (String) -> Unit,
+    onCancel: (focusField: Boolean) -> Unit,
+) {
     val context = LocalContext.current
-    val hasCamera = remember(context) { context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY) }
     val granted by rememberPermissionGranted(Manifest.permission.CAMERA)
-    var phase by remember { mutableStateOf(ScannerPhases.initial(hasCamera, granted)) }
-    val request = rememberPermissionRequest(Manifest.permission.CAMERA) { ok, _ -> phase = ScannerPhases.afterRequest(ok) }
-    LaunchedEffect(Unit) {
-        // The system dialog over the sheet as soon as the scanner opens (design w6957).
-        if (phase == ScannerPhase.Asking) request()
+    // Back from Settings with access on: the camera starts (contacts §5.5 [AND], ON_RESUME).
+    LaunchedEffect(granted) {
+        val next = ScannerPhases.onResume(phase, granted)
+        if (active && next != phase) onPhaseChange(next)
     }
-    LaunchedEffect(granted) { phase = ScannerPhases.onResume(phase, granted) }
 
     when (phase) {
         ScannerPhase.Denied -> CameraDeniedScreen(
@@ -199,7 +224,7 @@ private fun QrScannerContent(active: Boolean, onCode: (String) -> Unit, onCancel
         )
         else -> Box(Modifier.fillMaxSize().background(Color.Black)) {
             if (phase == ScannerPhase.Live && active) {
-                CameraPreview(onCode = onCode, onUnavailable = { phase = ScannerPhases.onBindFailure(phase) })
+                CameraPreview(onCode = onCode, onUnavailable = { if (active) onPhaseChange(ScannerPhases.onBindFailure(phase)) })
             }
             ScannerChrome(
                 hint = if (phase == ScannerPhase.NoCamera) ContactsCopy.SCANNER_NO_CAMERA else ContactsCopy.SCANNER_HINT,
@@ -277,22 +302,18 @@ private fun CameraPreview(onCode: (String) -> Unit, onUnavailable: () -> Unit) {
             )
             .build()
         var bound = false
-        // False once this effect ends: a code read just before the scanner closed is dropped.
-        var live = true
-        analysis.setAnalyzer(
-            executor,
-            QrFrameAnalyzer { text ->
-                main.execute {
-                    if (!live) return@execute
-                    // Stop the camera first, then hand the code on (`:213-216`).
-                    if (bound) {
-                        provider.unbind(preview, analysis)
-                        bound = false
-                    }
-                    currentOnCode(text)
+        // Stops the camera, then hands the first code on; closed once this effect ends, so a code
+        // read just before the scanner closed is dropped.
+        val handoff = QrScanHandoff(
+            unbind = {
+                if (bound) {
+                    provider.unbind(preview, analysis)
+                    bound = false
                 }
             },
+            onCode = { currentOnCode(it) },
         )
+        analysis.setAnalyzer(executor, QrFrameAnalyzer { text -> main.execute { handoff.deliver(text) } })
         try {
             val selector = cameraSelector(provider)
             if (selector == null) {
@@ -307,7 +328,7 @@ private fun CameraPreview(onCode: (String) -> Unit, onUnavailable: () -> Unit) {
         } catch (e: IllegalStateException) {
             currentOnUnavailable()
         } finally {
-            live = false
+            handoff.close()
             if (bound) provider.unbind(preview, analysis)
             analysis.clearAnalyzer()
             executor.shutdown()
@@ -317,6 +338,35 @@ private fun CameraPreview(onCode: (String) -> Unit, onUnavailable: () -> Unit) {
 
     surfaceRequest?.let { request ->
         CameraXViewfinder(surfaceRequest = request, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+    }
+}
+
+/**
+ * The scanner's one hand-over of a read code (iOS `metadataOutput(_:didOutput:from:)`,
+ * `QRCodeScannerView.swift:202-217`): the first code [deliver]ed stops the camera ([unbind]) and
+ * only then goes to [onCode] — the cover's dismissal never waits on a running camera; every later
+ * code, and any after [close] (the scanner left), is dropped. Main thread only. The analyzer
+ * ([QrFrameAnalyzer]) already emits once per bind; this guards the hop to the main thread, where a
+ * frame read during the close could otherwise still land.
+ */
+internal class QrScanHandoff(private val unbind: () -> Unit, private val onCode: (String) -> Unit) {
+    private var done = false
+
+    /** True once a code went out or the scanner closed. */
+    val isClosed: Boolean get() = done
+
+    /** Hands [text] on if it is the first; false when it was dropped. */
+    fun deliver(text: String): Boolean {
+        if (done || text.isEmpty()) return false
+        done = true
+        unbind()
+        onCode(text)
+        return true
+    }
+
+    /** The scanner left: nothing more is handed on. */
+    fun close() {
+        done = true
     }
 }
 
