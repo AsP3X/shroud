@@ -161,7 +161,8 @@ internal fun MyQrCodeContent(
                     .weight(1f)
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
-                    .padding(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 24.dp),
+                    // iOS `.padding(24)` (`:79`); the design's 16 on top loses to the code (contacts §5.6).
+                    .padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
@@ -236,7 +237,8 @@ private fun InviteBlock(label: String, value: String, copyLabel: String, onCopy:
                     autoSize = TextAutoSize.StepBased(minFontSize = (14f * 0.7f).sp, maxFontSize = 14.sp, stepSize = 0.25.sp),
                 )
             }
-            Spacer(Modifier.width(10.dp))
+            // HStack spacing 10 on both sides of a `Spacer(minLength: 8)`: at least 28 dp (`:112-119`).
+            Spacer(Modifier.width(28.dp))
             Box(
                 Modifier
                     .size(24.dp)

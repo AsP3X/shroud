@@ -226,20 +226,22 @@ internal fun AddContactContent(
         }
     }
 
-    // Scan (`:20-29`): design 48 dp capsule, `textPrimary` @ 6 %, QR glyph 22 + 17 Medium in `accent`.
+    // Scan (`:20-29`): design 48 dp capsule, `textPrimary` @ 6 %, viewfinder glyph 22 (Lucide `scan` for SF
+    // `qrcode.viewfinder`) + 17 Medium in `accent`.
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(
             Modifier
                 .fillMaxWidth()
+                // Before the fill, so the whole capsule presses, not only its label.
+                .pressable(scale = 0.98f, onClick = onScan)
                 .heightIn(min = 48.dp)
                 .clip(CircleShape)
                 .background(colors.textPrimary.copy(alpha = 0.06f))
-                .pressable(scale = 0.98f, onClick = onScan)
                 .padding(horizontal = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ShroudIcon(ShroudIcons.QrCode, colors.accent, size = 22.dp)
+            ShroudIcon(ShroudIcons.Scan, colors.accent, size = 22.dp)
             ShroudText(ContactsCopy.SCAN_QR_CODE, inter(17f, FontWeight.Medium), colors.accent, maxLines = 1)
         }
         ShroudText(ContactsCopy.SCAN_FOOTER, inter(13f), colors.textSecondary, Modifier.padding(horizontal = 4.dp))
