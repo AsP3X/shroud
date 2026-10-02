@@ -104,6 +104,7 @@ internal fun CallControlButton(
     modifier: Modifier = Modifier,
     accessibilityLabel: String = label,
     enabled: Boolean = true,
+    interactive: Boolean = true,
 ) {
     val reduceMotion = ShroudTheme.reduceMotion
     val interaction = remember { MutableInteractionSource() }
@@ -117,11 +118,15 @@ internal fun CallControlButton(
         animationSpec = if (pressed) Motion.press() else Motion.release(),
         label = "callControlSwell",
     )
-    val fill by animateColorAsState(tint ?: Color.Transparent, Motion.snappy(), label = "callControlTint")
+    // Off fades the last tint out rather than through black.
+    val lastTint = remember { TintMemory() }
+    if (tint != null) lastTint.color = tint
+    val fill by animateColorAsState(tint ?: lastTint.color.copy(alpha = 0f), Motion.snappy(), label = "callControlTint")
     Column(
         modifier
             .graphicsLayer { alpha = if (enabled) 1f else DISABLED_ALPHA }
-            .clickable(interactionSource = interaction, indication = null, enabled = enabled, role = Role.Button, onClick = onClick)
+            // Stepped aside (ending, over their screen): not even hit, so a tap reaches their screen below.
+            .then(if (interactive) Modifier.clickable(interactionSource = interaction, indication = null, enabled = enabled, role = Role.Button, onClick = onClick) else Modifier)
             .clearAndSetSemantics {
                 contentDescription = accessibilityLabel
                 role = Role.Button
@@ -153,6 +158,11 @@ internal fun CallControlButton(
 }
 
 internal const val CONTROL_SIZE = 60
+
+/** The tint a control had last, read during composition only. */
+private class TintMemory {
+    var color: Color = Color.White
+}
 private const val DISABLED_ALPHA = 0.45f
 
 /**

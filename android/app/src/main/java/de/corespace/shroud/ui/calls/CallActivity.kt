@@ -25,7 +25,6 @@ import de.corespace.shroud.core.calls.system.CallIntents
 import de.corespace.shroud.ui.components.OverlayHost
 import de.corespace.shroud.ui.theme.ShroudTheme
 import java.util.UUID
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**

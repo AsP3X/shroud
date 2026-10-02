@@ -342,7 +342,8 @@ private fun CallScreenContent(
                     .padding(bottom = CallScreenMetrics.CONTROLS_BOTTOM.dp)
                     // Ending, the row goes at once but keeps its room (:205-211).
                     .graphicsLayer { alpha = if (flags.ending) 0f else chromeAlpha }
-                    .then(if (rowHidden) Modifier.clearAndSetSemantics {}.blockTouches() else Modifier),
+                    .then(if (rowHidden) Modifier.clearAndSetSemantics {} else Modifier),
+                interactive = !rowHidden,
             )
         }
         // 6. Share and the pictures in the top-trailing corner (:286-347).
@@ -375,12 +376,13 @@ private fun CallScreenContent(
                 exit = if (flags.ending) ExitTransition.None else scaleOut(Motion.standard(), 0.6f, TransformOrigin(0f, 0f)) + fadeOut(Motion.standard()),
                 modifier = Modifier
                     .graphicsLayer { alpha = chromeAlpha }
-                    .then(if (flags.chromeAway) Modifier.clearAndSetSemantics {}.blockTouches() else Modifier),
+                    .then(if (flags.chromeAway) Modifier.clearAndSetSemantics {} else Modifier),
             ) {
                 SafetyBadge(
                     name = call.peerUsername,
                     closed = safetyClosedFor == call.id,
                     onOpen = { safetyShownFor = call.id },
+                    interactive = !flags.chromeAway,
                     modifier = Modifier.onGloballyPositioned { badgeBounds = it.boundsInRoot() },
                 )
             }
@@ -414,13 +416,6 @@ private fun CallScreenContent(
         CallAnnouncer(announcement, Modifier.align(Alignment.BottomStart))
     }
 }
-
-/** Swallows every touch, for chrome that keeps its room while it is gone. */
-private fun Modifier.blockTouches(): Modifier = this.clickable(
-    interactionSource = MutableInteractionSource(),
-    indication = null,
-    onClick = {},
-)
 
 /**
  * The shade from the very top to below the docked name (`topShade(drop:)`, :613-643): keeps the
@@ -643,7 +638,14 @@ private fun StatusLine(call: ActiveCall, shadow: Shadow) {
  * Accept while it rings in; 22 dp apart. Any press keeps the controls up ([onTouch]).
  */
 @Composable
-private fun ControlRow(call: ActiveCall, speakerOn: Boolean, ports: CallPorts, onTouch: () -> Unit, modifier: Modifier = Modifier) {
+private fun ControlRow(
+    call: ActiveCall,
+    speakerOn: Boolean,
+    ports: CallPorts,
+    onTouch: () -> Unit,
+    modifier: Modifier = Modifier,
+    interactive: Boolean = true,
+) {
     val reduceMotion = ShroudTheme.reduceMotion
     val colors = ShroudTheme.colors
     val scope = rememberCoroutineScope()
@@ -664,14 +666,15 @@ private fun ControlRow(call: ActiveCall, speakerOn: Boolean, ports: CallPorts, o
             verticalAlignment = Alignment.Top,
         ) {
             if (ringingIn) {
-                CallControlButton(ShroudIcons.PhoneDisconnectFill, "Decline", colors.danger, act { ports.rejectIncoming() })
-                CallControlButton(ShroudIcons.PhoneFill, "Accept", colors.online, act { ports.acceptIncoming() })
+                CallControlButton(ShroudIcons.PhoneDisconnectFill, "Decline", colors.danger, act { ports.rejectIncoming() }, interactive = interactive)
+                CallControlButton(ShroudIcons.PhoneFill, "Accept", colors.online, act { ports.acceptIncoming() }, interactive = interactive)
             } else {
                 CallControlButton(
                     icon = if (call.isMuted) ShroudIcons.MicrophoneSlashFill else ShroudIcons.MicrophoneFill,
                     label = if (call.isMuted) "Unmute" else "Mute",
                     tint = if (call.isMuted) colors.danger else null,
                     onClick = act { ports.toggleMute() },
+                    interactive = interactive,
                 )
                 CallControlButton(
                     icon = if (call.isVideoEnabled) ShroudIcons.VideoCameraFill else ShroudIcons.VideoCameraSlashFill,
@@ -680,6 +683,7 @@ private fun ControlRow(call: ActiveCall, speakerOn: Boolean, ports: CallPorts, o
                     accessibilityLabel = if (call.isVideoEnabled) "Turn video off" else "Turn video on",
                     enabled = CallScreenRules.videoAvailable(call),
                     onClick = act { ports.toggleVideo() },
+                    interactive = interactive,
                 )
                 CallControlButton(
                     icon = if (speakerOn) ShroudIcons.SpeakerSimpleHighFill else ShroudIcons.SpeakerSimpleNoneFill,
@@ -690,8 +694,9 @@ private fun ControlRow(call: ActiveCall, speakerOn: Boolean, ports: CallPorts, o
                         onTouch()
                         ports.toggleSpeaker()
                     },
+                    interactive = interactive,
                 )
-                CallControlButton(ShroudIcons.PhoneDisconnectFill, "End", colors.danger, act { ports.hangup() })
+                CallControlButton(ShroudIcons.PhoneDisconnectFill, "End", colors.danger, act { ports.hangup() }, interactive = interactive)
             }
         }
     }
@@ -744,7 +749,8 @@ private fun Tiles(
                     modifier = Modifier
                         // Ending, it goes at once; over their screen it fades (:292-301).
                         .graphicsLayer { alpha = if (flags.ending) 0f else chromeAlpha() }
-                        .then(if (away) Modifier.clearAndSetSemantics {}.blockTouches() else Modifier),
+                        .then(if (away) Modifier.clearAndSetSemantics {} else Modifier),
+                    interactive = !away,
                 )
             }
             val theirs = state.remoteVideoTrack

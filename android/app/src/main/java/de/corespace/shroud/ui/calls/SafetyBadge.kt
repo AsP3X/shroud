@@ -76,7 +76,7 @@ import kotlinx.coroutines.delay
  * (200 ms) and blur 3 dp ahead of it (no blur with reduce motion). A tap opens the number.
  */
 @Composable
-internal fun SafetyBadge(name: String, closed: Boolean, onOpen: () -> Unit, modifier: Modifier = Modifier) {
+internal fun SafetyBadge(name: String, closed: Boolean, onOpen: () -> Unit, modifier: Modifier = Modifier, interactive: Boolean = true) {
     val reduceMotion = ShroudTheme.reduceMotion
     val narrow by animateFloatAsState(
         targetValue = if (closed) 1f else 0f,
@@ -109,7 +109,7 @@ internal fun SafetyBadge(name: String, closed: Boolean, onOpen: () -> Unit, modi
         },
         modifier = modifier
             .callGlass(CircleShape, tint = tint.copy(alpha = 0.12f))
-            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onOpen)
+            .then(if (interactive) Modifier.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onOpen) else Modifier)
             .clearAndSetSemantics {
                 contentDescription = "Not verified"
                 role = Role.Button

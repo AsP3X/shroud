@@ -2,6 +2,7 @@ package de.corespace.shroud.ui.calls
 
 import android.app.Activity
 import android.content.Context
+import android.content.ActivityNotFoundException
 import android.content.ContextWrapper
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -55,6 +56,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import de.corespace.shroud.core.calls.ActiveCall
 import de.corespace.shroud.core.calls.CallPermissionPrompt
 import de.corespace.shroud.core.calls.CallPhase
@@ -233,35 +235,46 @@ private const val PILL_HEIGHT = 32
 /**
  * Registers the controller's permission prompt for this window (`AndroidCallPermissions.prompt`,
  * `CallsModule`): the microphone before placing or answering, the camera for video (calls §6.8).
- * The system dialog shows over the lock screen too, from `CallActivity`. One request at a time; a
- * window that goes away answers a pending request with "refused".
+ * The window in front holds it: it is installed again on every resume, so `MainActivity` takes it
+ * back after `CallActivity` (whose system dialog shows over the lock screen) goes. One request at
+ * a time; a window that goes away answers a pending request with "refused".
  */
 @Composable
 internal fun CallPermissionPromptHost(ports: CallPorts) {
-    var pending by remember { mutableStateOf<CompletableDeferred<Boolean>?>(null) }
+    val pending = remember { PendingPermission() }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        pending?.complete(granted)
-        pending = null
+        pending.request?.complete(granted)
+        pending.request = null
     }
-    DisposableEffect(ports, launcher) {
-        val prompt = CallPermissionPrompt { permission ->
-            pending?.complete(false)
+    val prompt = remember(launcher) {
+        CallPermissionPrompt { permission ->
+            pending.request?.complete(false)
             val request = CompletableDeferred<Boolean>()
-            pending = request
+            pending.request = request
             try {
                 launcher.launch(permission)
-            } catch (_: android.content.ActivityNotFoundException) {
+            } catch (_: ActivityNotFoundException) {
                 request.complete(false)
             }
             request.await()
         }
+    }
+    LifecycleResumeEffect(ports, prompt) {
         ports.permissionPrompt = prompt
+        onPauseOrDispose { }
+    }
+    DisposableEffect(ports, prompt) {
         onDispose {
             if (ports.permissionPrompt === prompt) ports.permissionPrompt = null
-            pending?.complete(false)
-            pending = null
+            pending.request?.complete(false)
+            pending.request = null
         }
     }
+}
+
+/** The permission request waiting for the system dialog's answer. */
+private class PendingPermission {
+    var request: CompletableDeferred<Boolean>? = null
 }
 
 /**

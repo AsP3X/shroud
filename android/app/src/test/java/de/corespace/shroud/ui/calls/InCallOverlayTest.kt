@@ -71,6 +71,16 @@ class InCallOverlayTest {
     }
 
     @Test
+    fun theWindowGivesThePermissionPromptBackWhenItGoes() {
+        val ports = FakeCallPorts()
+        val ui = overlay(ports)
+        assertNotNull(ports.permissionPrompt)
+        ui.close()
+        harness = null
+        assertNull(ports.permissionPrompt)
+    }
+
+    @Test
     fun aRingInOffersDeclineAndAccept() {
         val ports = FakeCallPorts(CallFixtures.call(CallPhase.IncomingRinging, CallModality.Video))
         val ui = overlay(ports)

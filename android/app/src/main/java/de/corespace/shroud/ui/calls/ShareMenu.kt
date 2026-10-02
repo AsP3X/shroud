@@ -42,6 +42,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.dismiss
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.isTraversalGroup
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.paneTitle
@@ -86,6 +87,7 @@ internal fun ShareControl(
     onQuality: (ScreenShareQuality) -> Unit,
     onTouch: () -> Unit,
     modifier: Modifier = Modifier,
+    interactive: Boolean = true,
 ) {
     val colors = ShroudTheme.colors
     val sharing = call.isSharingScreen || call.screenShareStarting
@@ -102,7 +104,13 @@ internal fun ShareControl(
             .size(CallScreenMetrics.SHARE_CONTROL.dp)
             .onGloballyPositioned { bounds = it.boundsInRoot() }
             .callGlass(CircleShape, tint = tint.takeIf { it.alpha > 0f })
-            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, role = Role.Button, onClick = open)
+            .then(
+                if (interactive) {
+                    Modifier.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, role = Role.Button, onClick = open)
+                } else {
+                    Modifier
+                },
+            )
             .clearAndSetSemantics {
                 contentDescription = CallScreenRules.shareLabel(sharing)
                 stateDescription = CallScreenRules.shareValue(sharing, quality) +
@@ -243,7 +251,7 @@ private fun MenuSection(title: String) {
         title,
         inter(13f, FontWeight.Medium),
         colors.textSecondary,
-        Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 2.dp).semantics { },
+        Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 2.dp).semantics { heading() },
         maxLines = 1,
     )
 }

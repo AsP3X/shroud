@@ -133,7 +133,6 @@ fun CallsScreen() {
     var expanded by rememberSaveable { mutableStateOf(emptySet<String>()) }
     val content = CallsTabRules.content(history)
     val runs = remember(history.recent) { CallHistory.runs(history.recent) }
-    val view = LocalView.current
 
     // Calls of our other devices, or from while the socket was down, show on every visit (:106-112).
     LifecycleResumeEffect(ports) {
@@ -151,62 +150,63 @@ fun CallsScreen() {
     Box(Modifier.fillMaxSize()) {
         // The entrance replays when rows replace an empty list (`listEntranceHost(resetOn:)`, :117).
         ListEntranceHost(key = runs.isEmpty()) {
-        CallsScaffold(onRefresh = { ports.refreshHistory() }) {
-            when (content) {
-                CallsTabContent.Skeleton -> item(key = "skeleton", contentType = "state") {
-                    SkeletonChatList(modifier = Modifier.animateItem(Motion.fade(), null, Motion.fade()))
-                }
-                CallsTabContent.Error -> item(key = "error", contentType = "state") {
-                    ListLoadError(
-                        title = CallsTabRules.ERROR_TITLE,
-                        message = history.error.orEmpty(),
-                        onRetry = { ports.refreshHistory() },
-                        modifier = Modifier.animateItem(Motion.fade(), null, Motion.fade()),
-                    )
-                }
-                CallsTabContent.Empty -> item(key = "empty", contentType = "state") {
-                    EmptyState(
-                        icon = ShroudIcons.PhoneFill,
-                        title = CallsTabRules.EMPTY_TITLE,
-                        message = CallsTabRules.EMPTY_MESSAGE,
-                        modifier = Modifier.animateItem(Motion.fade(), null, Motion.fade()),
-                    )
-                }
-                CallsTabContent.List -> {
-                    itemsIndexed(runs, key = { _, run -> run.id.toString() }, contentType = { _, run -> if (run.calls.size == 1) "call" else "run" }) { index, run ->
-                        val key = run.id.toString()
-                        Column(
-                            Modifier
-                                .animateItem(Motion.fade(), Motion.standard(), Motion.fade())
-                                .entranceRow(index),
-                        ) {
-                            if (run.calls.size == 1) {
-                                RecentRow(run.latest, formats, onCall = call)
-                            } else {
-                                RunSection(
-                                    run = run,
-                                    expanded = key in expanded,
-                                    formats = formats,
-                                    onToggle = {
-                                        view.perform(Haptic.Light)
-                                        expanded = if (key in expanded) expanded - key else expanded + key
-                                    },
-                                    onCall = call,
-                                )
-                            }
-                            Separator()
-                        }
-                        // The last row asks for the next older page (:74-79).
-                        if (index == runs.lastIndex) {
-                            LaunchedEffect(run.id) { ports.loadOlderHistory() }
-                        }
+            CallsScaffold(onRefresh = { ports.refreshHistory() }) {
+                when (content) {
+                    CallsTabContent.Skeleton -> item(key = "skeleton", contentType = "state") {
+                        SkeletonChatList(modifier = Modifier.animateItem(Motion.fade(), null, Motion.fade()))
                     }
-                    item(key = "footer", contentType = "footer") {
-                        Footer(CallsTabRules.footer(history), onLoadOlder = { scope.launch { ports.loadOlderHistory() } })
+                    CallsTabContent.Error -> item(key = "error", contentType = "state") {
+                        ListLoadError(
+                            title = CallsTabRules.ERROR_TITLE,
+                            message = history.error.orEmpty(),
+                            onRetry = { ports.refreshHistory() },
+                            modifier = Modifier.animateItem(Motion.fade(), null, Motion.fade()),
+                        )
+                    }
+                    CallsTabContent.Empty -> item(key = "empty", contentType = "state") {
+                        EmptyState(
+                            icon = ShroudIcons.PhoneFill,
+                            title = CallsTabRules.EMPTY_TITLE,
+                            message = CallsTabRules.EMPTY_MESSAGE,
+                            modifier = Modifier.animateItem(Motion.fade(), null, Motion.fade()),
+                        )
+                    }
+                    CallsTabContent.List -> {
+                        itemsIndexed(
+                            runs,
+                            key = { _, run -> run.id.toString() },
+                            contentType = { _, run -> if (run.calls.size == 1) "call" else "run" },
+                        ) { index, run ->
+                            val key = run.id.toString()
+                            Column(
+                                Modifier
+                                    .animateItem(Motion.fade(), Motion.standard(), Motion.fade())
+                                    .entranceRow(index),
+                            ) {
+                                if (run.calls.size == 1) {
+                                    RecentRow(run.latest, formats, onCall = call)
+                                } else {
+                                    RunSection(
+                                        run = run,
+                                        expanded = key in expanded,
+                                        formats = formats,
+                                        onToggle = { expanded = if (key in expanded) expanded - key else expanded + key },
+                                        onCall = call,
+                                    )
+                                }
+                                Separator()
+                            }
+                            // The last row asks for the next older page (:74-79).
+                            if (index == runs.lastIndex) {
+                                LaunchedEffect(run.id) { ports.loadOlderHistory() }
+                            }
+                        }
+                        item(key = "footer", contentType = "footer") {
+                            Footer(CallsTabRules.footer(history), onLoadOlder = { scope.launch { ports.loadOlderHistory() } })
+                        }
                     }
                 }
             }
-        }
         }
         ToastHost(toast, bottomInset = LocalTabBarClearance.current)
     }
@@ -367,7 +367,7 @@ private fun RunSection(
         Row(
             Modifier
                 .fillMaxWidth()
-                .highlightRow(onClick = onToggle, haptic = Haptic.None)
+                .highlightRow(onClick = onToggle)
                 .clearAndSetSemantics {
                     contentDescription = CallsTabRules.runHeaderLabel(run)
                     stateDescription = CallsTabRules.expandedValue(expanded)
