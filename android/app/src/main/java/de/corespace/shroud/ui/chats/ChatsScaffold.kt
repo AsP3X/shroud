@@ -127,7 +127,8 @@ object ChatsLayout {
      * The extra `bottomInset` the screen's toast needs so it floats 20 dp over the tab bar
      * (`ToastBanner.swift:97`): `ToastHost` does not read the clearance yet (its TODO), so it is
      * passed in — the clearance minus the system inset `ToastHost` adds itself. 0 without a bar.
-     * When `ToastHost` reads `LocalTabBarClearance` (contract change request), this returns 0.
+     * The screen hides the clearance from `ToastHost` (provides 0), so this stays right after C3
+     * makes `ToastHost` read `LocalTabBarClearance`; then both go and the screen calls `ToastHost(toasts)`.
      */
     fun toastLift(tabBarClearance: Dp, systemBottom: Dp): Dp =
         if (tabBarClearance > systemBottom) tabBarClearance - systemBottom else 0.dp

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -180,7 +181,13 @@ internal fun ChatsTab(
                 item(key = BOTTOM_KEY, contentType = BOTTOM_KEY) { Spacer(Modifier.fillMaxWidth().height(16.dp)) }
             }
         }
-        ToastHost(toasts, bottomInset = ChatsLayout.toastLift(clearance, systemBottom))
+        // `ToastHost` does not read `LocalTabBarClearance` on this base yet (C3 adds it), so the lift
+        // over the floating tab bar is passed in. Hiding the clearance from it keeps the toast 20 dp
+        // over the bar either way: the lift is never counted twice once `ToastHost` reads it too.
+        // After C3 lands this collapses to `ToastHost(toasts)`.
+        CompositionLocalProvider(LocalTabBarClearance provides 0.dp) {
+            ToastHost(toasts, bottomInset = ChatsLayout.toastLift(clearance, systemBottom))
+        }
     }
 
     menu?.let { target ->

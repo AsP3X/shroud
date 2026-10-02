@@ -380,6 +380,10 @@ class ChatsScreensRenderTest {
         ui.clickText("Delete for me and Jane Cooper")
         assertTrue(ui.describe(), ui.nodesWithText("Deleted · Jane Cooper keeps their own messages").isNotEmpty())
         render(ui, "12-chats-toast-deleted")
+        // The capsule floats 20 dp over the tab bar (`ToastBanner.swift:97`): the bar's clearance is
+        // 20 + 64 dp from the screen's bottom, so the capsule ends 104 dp up.
+        val capsule = ui.nodes().single { SemanticsProperties.LiveRegion in it.config }
+        assertEquals((ui.root.height - px(ui, 104f)).toFloat(), capsule.boundsInRoot.bottom, 2f)
     }
 
     @Test
