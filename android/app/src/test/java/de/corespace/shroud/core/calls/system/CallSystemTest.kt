@@ -7,6 +7,8 @@ import android.app.PendingIntent
 import android.content.Intent
 import androidx.core.app.NotificationCompat
 import androidx.test.core.app.ApplicationProvider
+import de.corespace.shroud.core.calls.CallAudioRoute
+import de.corespace.shroud.core.calls.CallAudioRouteType
 import de.corespace.shroud.core.calls.CallEndCause
 import de.corespace.shroud.core.model.Ids
 import de.corespace.shroud.core.notifications.SystemNotifier
@@ -30,6 +32,21 @@ import java.util.UUID
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
 class CallSystemTest {
+    @Test
+    fun speakerAndSelectRouteUpdateTheCurrentRoute() {
+        val world = World()
+        assertEquals(CallAudioRouteType.Earpiece, world.system.currentRoute.value?.type)
+        assertEquals(2, world.system.audioRoutes.value.size)
+
+        world.system.setSpeaker(true)
+        assertEquals(CallAudioRouteType.Speaker, world.system.currentRoute.value?.type)
+
+        val earpiece = world.system.audioRoutes.value.first { it.type == CallAudioRouteType.Earpiece }
+        world.system.selectRoute(earpiece)
+        assertEquals(CallAudioRouteType.Earpiece, world.system.currentRoute.value?.type)
+        assertTrue(world.system.isOnEarpiece.value)
+    }
+
     @Test
     fun reportIncomingPostsTheNotificationBeforeStartingTheForegroundService() {
         val world = World()
@@ -225,6 +242,7 @@ class CallSystemTest {
         override fun answer(video: Boolean) {}
         override fun setActive() {}
         override fun setSpeaker(on: Boolean) {}
+        override fun selectRoute(route: CallAudioRoute) {}
         override fun disconnect(cause: CallEndCause) {}
         override fun clear() {}
     }

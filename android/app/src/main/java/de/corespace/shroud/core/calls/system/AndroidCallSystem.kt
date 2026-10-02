@@ -7,6 +7,8 @@ import android.content.pm.ServiceInfo
 import android.os.Handler
 import android.os.Looper
 import androidx.core.app.ServiceCompat
+import de.corespace.shroud.core.calls.CallAudioRoute
+import de.corespace.shroud.core.calls.CallAudioRouteType
 import de.corespace.shroud.core.calls.CallEndCause
 import de.corespace.shroud.core.calls.CallSystem
 import de.corespace.shroud.core.calls.CallTexts
@@ -41,6 +43,12 @@ internal class AndroidCallSystem(
 ) : CallSystem, CallScreenHooks {
     private val main = Handler(Looper.getMainLooper())
     private val earpiece = MutableStateFlow(true)
+    private val phoneEarpiece = CallAudioRoute(CallAudioRouteType.Earpiece, "Earpiece", "earpiece")
+    private val phoneSpeaker = CallAudioRoute(CallAudioRouteType.Speaker, "Speaker", "speaker")
+    private val routes = MutableStateFlow(listOf(phoneEarpiece, phoneSpeaker))
+    private val currentRouteFlow = MutableStateFlow<CallAudioRoute?>(phoneEarpiece)
+    private var telecomRoutes: List<CallAudioRoute> = emptyList()
+    private var telecomCurrent: CallAudioRoute? = null
     private val endedIds = ArrayDeque<UUID>()
 
     private var session: Session? = null
@@ -59,6 +67,8 @@ internal class AndroidCallSystem(
     private var lastId: UUID? = null
 
     override val isOnEarpiece: StateFlow<Boolean> = earpiece
+    override val audioRoutes: StateFlow<List<CallAudioRoute>> = routes
+    override val currentRoute: StateFlow<CallAudioRoute?> = currentRouteFlow
 
     init {
         telecom.listener = object : CallTelecomListener {
@@ -87,6 +97,15 @@ internal class AndroidCallSystem(
                 val current = session ?: return@onMain
                 if (current.id != callId || current.style == Style.Incoming || audioOn) return@onMain
                 startAudio()
+            }
+
+            override fun onAudioRoutes(callId: UUID, routes: List<CallAudioRoute>, current: CallAudioRoute?) = onMain {
+                if (session?.id != callId) return@onMain
+                telecomRoutes = routes
+                telecomCurrent = current
+                if (current != null) earpiece.value = current.type == CallAudioRouteType.Earpiece
+                publishRoutes()
+                refreshProximity()
             }
         }
     }
@@ -199,7 +218,26 @@ internal class AndroidCallSystem(
         } else {
             earpiece.value = !on
         }
+        publishRoutes()
         refreshProximity()
+    }
+
+    override fun selectRoute(route: CallAudioRoute) {
+        val known = telecom.tracksCall && telecomRoutes.any { it.id == route.id || it == route }
+        if (known) {
+            speakerOn = route.type == CallAudioRouteType.Speaker
+            earpiece.value = route.type == CallAudioRouteType.Earpiece
+            telecomCurrent = telecomRoutes.firstOrNull { it.id == route.id } ?: route
+            telecom.selectRoute(route)
+            publishRoutes()
+            refreshProximity()
+            return
+        }
+        when (route.type) {
+            CallAudioRouteType.Speaker -> setSpeaker(true)
+            CallAudioRouteType.Earpiece -> setSpeaker(false)
+            else -> Unit
+        }
     }
 
     @Suppress("UNUSED_PARAMETER")
@@ -290,6 +328,7 @@ internal class AndroidCallSystem(
             same.video = video
             speakerOn = video
             earpiece.value = !video
+            publishRoutes()
             return
         }
         session = Session(
@@ -302,9 +341,12 @@ internal class AndroidCallSystem(
         lastId = callId
         speakerOn = video
         earpiece.value = !video
+        telecomRoutes = emptyList()
+        telecomCurrent = null
         telecomActivated = false
         screenShown = false
         foregroundRefused = false
+        publishRoutes()
     }
 
     private fun postCurrent() {
@@ -347,6 +389,9 @@ internal class AndroidCallSystem(
         telecomActivated = false
         speakerOn = false
         earpiece.value = true
+        telecomRoutes = emptyList()
+        telecomCurrent = null
+        publishRoutes()
         if (ending != null && cause != null) telecom.disconnect(cause)
         cancelBoth(ending?.id ?: lastId)
         stopService()
@@ -361,7 +406,18 @@ internal class AndroidCallSystem(
         if (telecom.tracksCall || audioOn) return
         earpiece.value = audio.start(speakerOn)
         audioOn = true
+        publishRoutes()
         refreshProximity()
+    }
+
+    private fun publishRoutes() {
+        if (telecom.tracksCall && telecomRoutes.isNotEmpty()) {
+            routes.value = telecomRoutes
+            currentRouteFlow.value = telecomCurrent ?: telecomRoutes.firstOrNull()
+            return
+        }
+        routes.value = listOf(phoneEarpiece, phoneSpeaker)
+        currentRouteFlow.value = if (earpiece.value) phoneEarpiece else phoneSpeaker
     }
 
     private fun refreshProximity() {

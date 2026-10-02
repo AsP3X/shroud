@@ -1,5 +1,7 @@
 package de.corespace.shroud.e2e
 
+import de.corespace.shroud.core.calls.CallAudioRoute
+import de.corespace.shroud.core.calls.CallAudioRouteType
 import de.corespace.shroud.core.calls.CallEndCause
 import de.corespace.shroud.core.calls.CallMediaCallbacks
 import de.corespace.shroud.core.calls.CallMediaEngine
@@ -183,6 +185,10 @@ class E2eCallSystem : CallSystem {
     val log: MutableList<String> = Collections.synchronizedList(ArrayList())
     val ended: MutableList<Pair<UUID, CallEndCause>> = Collections.synchronizedList(ArrayList())
     override val isOnEarpiece = MutableStateFlow(true)
+    private val phoneEarpiece = CallAudioRoute(CallAudioRouteType.Earpiece, "Earpiece", "earpiece")
+    private val phoneSpeaker = CallAudioRoute(CallAudioRouteType.Speaker, "Speaker", "speaker")
+    override val audioRoutes = MutableStateFlow(listOf(phoneEarpiece, phoneSpeaker))
+    override val currentRoute = MutableStateFlow<CallAudioRoute?>(phoneEarpiece)
 
     override fun reportIncoming(callId: UUID, peerName: String, video: Boolean) {
         log += "incoming"
@@ -216,6 +222,12 @@ class E2eCallSystem : CallSystem {
 
     override fun setSpeaker(on: Boolean) {
         isOnEarpiece.value = !on
+        currentRoute.value = if (on) phoneSpeaker else phoneEarpiece
+    }
+
+    override fun selectRoute(route: CallAudioRoute) {
+        currentRoute.value = route
+        isOnEarpiece.value = route.type == CallAudioRouteType.Earpiece
     }
 
     override fun postMissedCall(callId: UUID, peerUserId: UUID?, peerName: String?, video: Boolean) {
