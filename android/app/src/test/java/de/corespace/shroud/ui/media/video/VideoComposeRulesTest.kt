@@ -1,5 +1,6 @@
 package de.corespace.shroud.ui.media.video
 
+import android.app.Application
 import android.net.Uri
 import de.corespace.shroud.core.media.video.VideoPlanError
 import de.corespace.shroud.core.media.video.VideoPlanner
@@ -26,7 +27,9 @@ import java.util.UUID
  * not fit at Original.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+// A plain Application: these screens run on fakes, and ShroudApplication would start the whole
+// container (network, push) for every test, which piles up in the one test JVM.
+@Config(sdk = [35], application = Application::class)
 class VideoComposeRulesTest {
     private fun probe(seconds: Double, width: Int, height: Int, bytes: Long, hasAudio: Boolean = true, ext: String = "mp4") =
         VideoProbe(seconds, width, height, bytes, hasAudio, ext, "video/avc", if (hasAudio) "audio/mp4a-latm" else null)

@@ -1,5 +1,6 @@
 package de.corespace.shroud.ui.media.viewer
 
+import android.app.Application
 import android.content.ClipDescription
 import android.content.Intent
 import android.net.Uri
@@ -19,7 +20,9 @@ import org.robolectric.annotation.Config
  * on Android 13+ only; "Copied" only where Android does not confirm a copy itself.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+// A plain Application: these screens run on fakes, and ShroudApplication would start the whole
+// container (network, push) for every test, which piles up in the one test JVM.
+@Config(sdk = [35], application = Application::class)
 class MediaShareIntentsTest {
     private val uri = Uri.parse("content://de.corespace.shroud.media/0b6f")
 

@@ -1,5 +1,6 @@
 package de.corespace.shroud.ui.media.video
 
+import android.app.Application
 import android.graphics.Bitmap
 import android.net.Uri
 import androidx.compose.ui.semantics.SemanticsActions
@@ -36,7 +37,9 @@ import org.robolectric.annotation.GraphicsMode
  * and Remove from a clip's long press.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+// A plain Application: these screens run on fakes, and ShroudApplication would start the whole
+// container (network, push) for every test, which piles up in the one test JVM.
+@Config(sdk = [35], application = Application::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class VideoComposeStateTest {
     @get:Rule

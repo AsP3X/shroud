@@ -2,6 +2,7 @@ package de.corespace.shroud.ui.camera
 
 import android.Manifest
 import android.app.Activity
+import android.app.Application
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -42,7 +43,9 @@ import java.io.File
  * camera, shows the designed denied state, and unbinds when it leaves.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+// A plain Application: these screens run on fakes, and ShroudApplication would start the whole
+// container (network, push) for every test, which piles up in the one test JVM.
+@Config(sdk = [35], application = Application::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class CameraCaptureStateTest {
     @get:Rule

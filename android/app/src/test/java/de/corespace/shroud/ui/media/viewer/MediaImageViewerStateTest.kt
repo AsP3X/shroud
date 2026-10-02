@@ -1,5 +1,6 @@
 package de.corespace.shroud.ui.media.viewer
 
+import android.app.Application
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
@@ -36,7 +37,9 @@ import java.util.UUID
  * and every grant revoked when the viewer leaves.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+// A plain Application: these screens run on fakes, and ShroudApplication would start the whole
+// container (network, push) for every test, which piles up in the one test JVM.
+@Config(sdk = [35], application = Application::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class MediaImageViewerStateTest {
     @get:Rule
