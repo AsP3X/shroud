@@ -21,9 +21,15 @@ import de.corespace.shroud.core.auth.OnboardingService
 import de.corespace.shroud.core.auth.Session
 import de.corespace.shroud.core.auth.SessionController
 import de.corespace.shroud.core.crypto.Bip39
+import de.corespace.shroud.ui.shell.HoldWindowProtection
+import de.corespace.shroud.ui.shell.LocalWindowProtectionGuard
+import de.corespace.shroud.ui.shell.WindowProtection
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.withContext
 
 /**
  * What Sign Up and Log In need from the rest of the app — the session, the phrase helpers, the
@@ -69,24 +75,34 @@ interface OnboardingServices {
      * ([OnboardingService.accountHasNoKey]); Log In reads that as "has a key" ([LogInActions.accountHasNoKey]).
      */
     suspend fun accountHasNoKey(session: Session): Boolean
+
+    /**
+     * This phone holds [userId]'s identity (`keys.cryptoController.hasLocalIdentity`, K1; read off the
+     * main thread). Signed in with it, the shell's root is the lock screen (`needsChatUnlock`,
+     * `RootView.swift:391-399`), so a Log In opened signed in sits on top of the lock screen.
+     */
+    suspend fun hasLocalIdentity(userId: String): Boolean
 }
 
 /**
  * The production [OnboardingServices]: forwards 1:1 to [onboarding] (core `auth.onboarding`, K2),
- * with the session from `auth.sessionController`, the word list from `keys.bip39` and the app scope
- * (rule R4: no logic here).
+ * with the session from `auth.sessionController`, the word list from `keys.bip39`, the identity
+ * check from `keys.cryptoController` (on [io]) and the app scope (rule R4: no logic here).
  */
 class ContainerOnboardingServices(
     private val onboarding: OnboardingService,
     override val session: StateFlow<Session?>,
     override val bip39: Bip39,
     override val appScope: CoroutineScope,
+    private val localIdentity: (userId: String) -> Boolean,
+    private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : OnboardingServices {
     constructor(container: AppContainer) : this(
         onboarding = container.auth.onboarding,
         session = container.auth.sessionController.session,
         bip39 = container.keys.bip39,
         appScope = container.appScope,
+        localIdentity = container.keys.cryptoController::hasLocalIdentity,
     )
 
     override fun hasScreenLock(): Boolean = onboarding.hasScreenLock()
@@ -97,6 +113,7 @@ class ContainerOnboardingServices(
     override suspend fun establishFromSignup(words: List<String>, session: Session) = onboarding.establishFromSignup(words, session)
     override suspend fun unlockWithPhrase(words: List<String>, session: Session) = onboarding.unlockWithPhrase(words, session)
     override suspend fun accountHasNoKey(session: Session): Boolean = onboarding.accountHasNoKey(session)
+    override suspend fun hasLocalIdentity(userId: String): Boolean = withContext(io) { localIdentity(userId) }
 }
 
 /** Screen tests provide their fake here; the app leaves it null and the screens use [ContainerOnboardingServices]. */
@@ -142,9 +159,18 @@ fun rememberLocalNetworkAccess(needsPermission: () -> Boolean): LocalNetworkAcce
  * Keeps the phrase out of the Recents thumbnail while a phrase screen is shown. Android 13+ can
  * drop just the thumbnail; older versions need `FLAG_SECURE`, which also blocks screenshots of
  * this screen.
+ *
+ * Inside the app it is a hold on the activity's reference-counted window guard
+ * ([HoldWindowProtection] with [WindowProtection.phrase], shell-chats §3.8), so leaving the phrase
+ * does not undo the unlocked shell's own protection (or the other way round). Without a guard (an
+ * activity that does not provide one) it writes the window flags itself.
  */
 @Composable
 fun HidePhraseFromRecents() {
+    if (LocalWindowProtectionGuard.current != null) {
+        HoldWindowProtection(PHRASE_PROTECTION, WindowProtection.phrase())
+        return
+    }
     val activity = LocalContext.current.findActivity() ?: return
     DisposableEffect(activity) {
         if (Build.VERSION.SDK_INT >= 33) {
@@ -161,6 +187,9 @@ fun HidePhraseFromRecents() {
         }
     }
 }
+
+/** The phrase screens' reason on the window guard. */
+internal const val PHRASE_PROTECTION = "phrase"
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this

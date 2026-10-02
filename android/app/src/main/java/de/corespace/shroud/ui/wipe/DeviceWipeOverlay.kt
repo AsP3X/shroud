@@ -1,8 +1,5 @@
 package de.corespace.shroud.ui.wipe
 
-import android.view.View
-import android.view.accessibility.AccessibilityEvent
-import android.view.accessibility.AccessibilityManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
@@ -60,10 +57,13 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.isTraversalGroup
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -107,7 +107,12 @@ import kotlin.math.pow
  * **last non-idle phase** and starts nothing repeating, so a leaving overlay never redraws as
  * running inside its exit fade and never eats a touch meant for Welcome (`:17-30`, `:64-68`;
  * memory `stuck-removal-transition-eats-touches`). Each step's TalkBack announcement and the end's
- * haptic come from `DeviceWipeController.feedback`.
+ * haptic come from `DeviceWipeController.feedback` (iOS `AccessibilityNotification.Announcement`,
+ * `DeviceWipeController.swift:150-160, 173-202`): the announcement is the text of the overlay's
+ * polite live region, so every new one reaches TalkBack as the `AccessibilityEvent`
+ * `TYPE_WINDOW_CONTENT_CHANGED` (`CONTENT_CHANGE_TYPE_CONTENT_DESCRIPTION`) of that node — the
+ * current replacement of the deprecated `View.announceForAccessibility` / `TYPE_ANNOUNCEMENT`
+ * (handover §2.6, settings-lock §14.2 "the row is a polite live region").
  */
 @Composable
 fun DeviceWipeOverlay() {
@@ -121,10 +126,11 @@ fun DeviceWipeOverlay() {
     val handle by wipe.handle.collectAsState()
     val presented by wipe.isPresented.collectAsState()
     val view = LocalView.current
+    var announcement by remember { mutableStateOf<String?>(null) }
     // TalkBack hears each step and the end; the end plays its haptic (`DeviceWipeController.feedback`).
     LaunchedEffect(wipe, view) {
         wipe.feedback.collect { feedback ->
-            view.speak(feedback.announcement)
+            announcement = feedback.announcement
             view.perform(feedback.haptic)
         }
     }
@@ -134,6 +140,7 @@ fun DeviceWipeOverlay() {
         noun = DeviceNoun.current(LocalContext.current),
         onRetry = wipe::retry,
         onContinue = wipe::continueAfterFailure,
+        announcement = announcement,
     )
 }
 
@@ -152,6 +159,9 @@ data class WipeOverlayState(
 /**
  * [DeviceWipeOverlay] on explicit state, for screen tests. [presented] false is the leaving
  * overlay: no touches, no Back, hidden from TalkBack, nothing repeating, the last phase kept.
+ * [announcement] is the latest `DeviceWipeController.feedback` sentence, spoken through the
+ * overlay's polite live region; the pane keeps one title ("Clearing this phone") for the whole
+ * wipe, so the end is spoken once — by the announcement — not again as a pane change.
  */
 @Composable
 internal fun DeviceWipeOverlayContent(
@@ -160,6 +170,7 @@ internal fun DeviceWipeOverlayContent(
     noun: String,
     onRetry: () -> Unit,
     onContinue: () -> Unit,
+    announcement: String? = null,
 ) {
     val colors = ShroudTheme.colors
     val reduce = ShroudTheme.reduceMotion
@@ -183,7 +194,7 @@ internal fun DeviceWipeOverlayContent(
             .then(
                 if (presented) {
                     Modifier.semantics {
-                        paneTitle = title
+                        paneTitle = WipeOverlayText.paneTitle(noun)
                         isTraversalGroup = true
                     }
                 } else {
@@ -218,8 +229,30 @@ internal fun DeviceWipeOverlayContent(
         ) {
             Footer(phase, presented, onRetry, onContinue, Modifier.widthIn(max = 520.dp).fillMaxWidth())
         }
+        if (presented) Announcer(announcement ?: title)
     }
 }
+
+/**
+ * The overlay's TalkBack voice: a 1 dp polite live region whose label is the latest announcement
+ * (before the first one, the title). Compose turns every change of it into a
+ * `TYPE_WINDOW_CONTENT_CHANGED` event on this node, which TalkBack reads out without moving focus.
+ */
+@Composable
+private fun Announcer(text: String) {
+    Box(
+        Modifier
+            .size(1.dp)
+            .semantics {
+                liveRegion = LiveRegionMode.Polite
+                contentDescription = text
+            }
+            .testTag(ANNOUNCER_TAG),
+    )
+}
+
+/** The announcer's test tag. */
+internal const val ANNOUNCER_TAG = "wipe.announcement"
 
 /** Takes every pointer event so nothing under the overlay reacts. */
 private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.swallowEveryTouch() {
@@ -443,20 +476,6 @@ private fun WipeParticles(color: Color) {
     }
 }
 
-/** TalkBack announcement. `View.announceForAccessibility` and `TYPE_ANNOUNCEMENT` are deprecated. */
-private fun View.speak(text: CharSequence) {
-    val event = AccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED).apply {
-        contentChangeTypes = AccessibilityEvent.CONTENT_CHANGE_TYPE_CONTENT_DESCRIPTION
-        this.text.add(text)
-        contentDescription = text
-        className = this@speak.javaClass.name
-        packageName = context.packageName
-    }
-    if (parent?.requestSendAccessibilityEvent(this, event) == true) return
-    val manager = context.getSystemService(AccessibilityManager::class.java) ?: return
-    if (manager.isEnabled) manager.sendAccessibilityEvent(event)
-}
-
 /**
  * Try Again / Continue when it failed; otherwise the reassurance — a small spinner and "Taking you
  * to the welcome screen…" once done (`footer`, `:197-226`). Failed slides up from the bottom with a
@@ -517,6 +536,13 @@ internal object WipeOverlayText {
         WipePhase.Done -> "This $noun is clear"
         else -> "Clearing this $noun"
     }
+
+    /**
+     * The modal pane's name for TalkBack (iOS `.isModal`, `:62-64`): the running title for the whole
+     * wipe. A pane title that followed the phase would be spoken as a pane change on top of the
+     * controller's own announcement of the same moment.
+     */
+    fun paneTitle(noun: String): String = title(WipePhase.Running, noun)
 
     /**
      * The line under the title (`subtitle`, `:102-118`): why and for whom while running ("Your
