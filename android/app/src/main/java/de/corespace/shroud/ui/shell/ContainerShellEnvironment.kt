@@ -14,12 +14,10 @@ import de.corespace.shroud.core.storage.AutoLockDelay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import java.util.UUID
 
 /**
  * [ShellEnvironment] over the process's [AppContainer] (`di/ShellModule`). Every port reaches the
@@ -138,7 +136,8 @@ class ContainerShellEnvironment(private val container: AppContainer) : ShellEnvi
 
     /**
      * Names for notifications announced while the chats are locked (W2-NOTIF; the cache writes only
-     * while names are on): chats first, then requests, then contacts win. Moved from W2's interim root.
+     * while names are on): forwards to core's `NotificationNameCache.follow` (chats first, then
+     * requests, then contacts win), which replaced the shell's own `combine` (GAPS #7).
      */
     override fun feedNotificationNames(on: Boolean) {
         namesFeed?.cancel()
@@ -146,16 +145,11 @@ class ContainerShellEnvironment(private val container: AppContainer) : ShellEnvi
         if (!on) return
         val contacts = container.contacts.controller
         val messaging = container.messaging.controller
-        namesFeed = container.appScope.launch {
-            combine(contacts.contacts, contacts.incomingRequests, messaging.conversations) { roster, requests, chats ->
-                buildMap<UUID, String> {
-                    chats.forEach { put(it.peer.id, it.peer.username) }
-                    requests.forEach { request -> request.user?.let { put(request.fromUserId, it.username) } }
-                    roster.forEach { put(it.userId, it.username) }
-                }
-            }.distinctUntilChanged().collect { names ->
-                if (names.isNotEmpty()) container.notifications.nameCache.rememberAll(names)
-            }
-        }
+        namesFeed = container.notifications.nameCache.follow(
+            scope = container.appScope,
+            contacts = contacts.contacts,
+            incomingRequests = contacts.incomingRequests,
+            conversations = messaging.conversations,
+        )
     }
 }
