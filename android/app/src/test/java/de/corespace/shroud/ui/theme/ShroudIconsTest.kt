@@ -63,6 +63,8 @@ class ShroudIconsTest {
                 "video-camera-slash-fill", "phone-disconnect-fill", "stop-fill", "camera-rotate-fill", "shield-warning-fill",
                 "lock-simple-fill", "lock-simple-open-fill", "arrow-u-up-left", "magic-wand", "chats-teardrop-fill",
                 "download-simple", "users-fill", "export-bold", "caret-right-bold", "warning-fill",
+                // settings-lock §4.5 device tiles, notifications-push §5.14.2 background card.
+                "laptop-fill", "desktop-fill", "battery-warning-fill",
             ),
         )
         required.getValue("lucide").forEach { assertTrue("Lucide $it", it in lucide) }
