@@ -68,15 +68,11 @@ class CallMediaEngine(context: Context) : Engine {
 
     private var audioSource: AudioSource? = null
     private var audioTrack: AudioTrack? = null
-    private var audioSender: RtpSender? = null
     private var cameraSource: VideoSource? = null
     private var screenVideoSource: VideoSource? = null
     private var camera: CallCamera? = null
     private var screenCapture: ScreenCaptureSource? = null
 
-    private var videoTransceiver: RtpTransceiver? = null
-    private var screenTransceiver: RtpTransceiver? = null
-    private var screenSoundTransceiver: RtpTransceiver? = null
     private var screenTrack: VideoTrack? = null
     private var cameraOn = false
     private var screenOn = false
@@ -132,24 +128,23 @@ class CallMediaEngine(context: Context) : Engine {
         val audio = factory.createAudioTrack("shroud-audio", audioSource)
         this.audioSource = audioSource
         audioTrack = audio
-        audioSender = connection.addTrack(audio, listOf(STREAM))
+        connection.addTrack(audio, listOf(STREAM))
 
         remoteFrames.arm()
         if (video) {
             val track = makeVideoTrack()
             if (track != null) {
                 connection.addTrack(track, listOf(STREAM))
-                videoTransceiver = firstVideo(connection)
                 startCapture(track)
             } else if (offering) {
-                videoTransceiver = addSendRecv(connection, MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO, listOf(STREAM))
+                addSendRecv(connection, MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO, listOf(STREAM))
             }
         } else if (offering) {
-            videoTransceiver = addSendRecv(connection, MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO, listOf(STREAM))
+            addSendRecv(connection, MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO, listOf(STREAM))
         }
         if (offering) {
-            screenTransceiver = addSendRecv(connection, MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO, listOf(SCREEN_STREAM))
-            screenSoundTransceiver = addSendRecv(connection, MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO, listOf(SCREEN_STREAM))
+            addSendRecv(connection, MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO, listOf(SCREEN_STREAM))
+            addSendRecv(connection, MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO, listOf(SCREEN_STREAM))
         }
         tuneSenders()
     }
@@ -203,10 +198,10 @@ class CallMediaEngine(context: Context) : Engine {
         get() = peer?.signalingState() == PeerConnection.SignalingState.STABLE
 
     override val canSendVideo: Boolean
-        get() = sends(videoTransceiver)
+        get() = sends(sectionTransceiver(MediaSection.CAMERA))
 
     override val canSendScreen: Boolean
-        get() = sends(screenTransceiver)
+        get() = sends(sectionTransceiver(MediaSection.SCREEN))
 
     override fun addRemoteCandidates(candidates: List<IceCandidatePayload>) {
         val connection = peer ?: return
@@ -227,7 +222,7 @@ class CallMediaEngine(context: Context) : Engine {
 
     override suspend fun localAudioLevel(): Float? {
         val connection = peer ?: return null
-        val sender = audioSender ?: return null
+        val sender = microphoneSender() ?: return null
         return suspendCancellableCoroutine { cont ->
             val finished = AtomicBoolean(false)
             cont.invokeOnCancellation { finished.set(true) }
@@ -262,7 +257,7 @@ class CallMediaEngine(context: Context) : Engine {
 
     override fun startCamera(): Boolean {
         val connection = peer ?: return false
-        val video = videoTransceiver ?: return false
+        val video = sectionTransceiver(MediaSection.CAMERA) ?: return false
         if (!sends(video)) return false
         val track = localVideo ?: makeVideoTrack() ?: return false
         try {
@@ -280,7 +275,7 @@ class CallMediaEngine(context: Context) : Engine {
         cameraOn = false
         localFrames.disarm()
         try {
-            videoTransceiver?.sender?.setTrack(null, false)
+            sectionTransceiver(MediaSection.CAMERA)?.sender?.setTrack(null, false)
         } catch (_: RuntimeException) {
         }
         localVideo?.setEnabled(false)
@@ -308,7 +303,7 @@ class CallMediaEngine(context: Context) : Engine {
 
     override fun startScreen(grant: ScreenCaptureGrant): Boolean {
         val connection = peer ?: return false
-        val screen = screenTransceiver ?: return false
+        val screen = sectionTransceiver(MediaSection.SCREEN) ?: return false
         if (!sends(screen)) return false
         val track = screenTrack ?: makeScreenTrack()
         val observer = screenVideoSource?.capturerObserver ?: return false
@@ -343,7 +338,7 @@ class CallMediaEngine(context: Context) : Engine {
         screenCapture?.stop()
         if (!wasOn) return
         try {
-            screenTransceiver?.sender?.setTrack(null, false)
+            sectionTransceiver(MediaSection.SCREEN)?.sender?.setTrack(null, false)
         } catch (_: RuntimeException) {
         }
         screenTrack?.setEnabled(false)
@@ -382,9 +377,6 @@ class CallMediaEngine(context: Context) : Engine {
         remoteScreen?.let { runCatching { it.removeSink(remoteScreenFrames) } }
         val hadRemote = remoteVideo != null
         val hadScreen = remoteScreen != null
-        videoTransceiver = null
-        screenTransceiver = null
-        screenSoundTransceiver = null
         screenTrack = null
         // Drop the connection before closing it. "closed" and late candidates must not land on the next call.
         val connection = peer
@@ -399,7 +391,6 @@ class CallMediaEngine(context: Context) : Engine {
         screenVideoSource = null
         audioSource = null
         audioTrack = null
-        audioSender = null
         localVideo = null
         remoteVideo = null
         remoteScreen = null
@@ -458,7 +449,7 @@ class CallMediaEngine(context: Context) : Engine {
         if (peer == null || !screenOn) return
         screenOn = false
         try {
-            screenTransceiver?.sender?.setTrack(null, false)
+            sectionTransceiver(MediaSection.SCREEN)?.sender?.setTrack(null, false)
         } catch (_: RuntimeException) {
         }
         screenTrack?.setEnabled(false)
@@ -475,16 +466,40 @@ class CallMediaEngine(context: Context) : Engine {
         RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_RECV, streams),
     )
 
-    private fun firstVideo(connection: PeerConnection): RtpTransceiver? =
-        connection.transceivers.firstOrNull { it.mediaType == MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO }
+    /**
+     * The live Java wrapper for [section]. `getTransceivers` drops the previous wrappers, so a
+     * transceiver saved earlier throws once it is read again — and a throw on the signaling thread
+     * aborts the process. Look the section up at the moment it is used.
+     */
+    private fun sectionTransceiver(section: MediaSection): RtpTransceiver? {
+        val connection = peer ?: return null
+        return try {
+            sections(connection).firstOrNull { it.first == section }?.second
+        } catch (_: RuntimeException) {
+            null
+        }
+    }
+
+    private fun microphoneSender(): RtpSender? {
+        val connection = peer ?: return null
+        return try {
+            connection.senders.firstOrNull { sender ->
+                trackId(try {
+                    sender.track()
+                } catch (_: RuntimeException) {
+                    null
+                }) == "shroud-audio"
+            }
+        } catch (_: RuntimeException) {
+            null
+        }
+    }
 
     private fun adoptOfferedSections(connection: PeerConnection) {
         for ((section, transceiver) in sections(connection)) {
             if (transceiver.isStopped) continue
             when (section) {
-                MediaSection.CAMERA -> if (videoTransceiver == null) videoTransceiver = bothWays(transceiver)
-                MediaSection.SCREEN -> if (screenTransceiver == null) screenTransceiver = bothWays(transceiver)
-                MediaSection.SCREEN_SOUND -> if (screenSoundTransceiver == null) screenSoundTransceiver = bothWays(transceiver)
+                MediaSection.CAMERA, MediaSection.SCREEN, MediaSection.SCREEN_SOUND -> bothWays(transceiver)
                 MediaSection.MIC -> Unit
             }
         }
@@ -562,7 +577,9 @@ class CallMediaEngine(context: Context) : Engine {
             } catch (_: RuntimeException) {
                 null
             } ?: continue
-            val tune = senderTune(track.id(), track.kind(), screenOn, screenQuality) ?: continue
+            val id = trackId(track) ?: continue
+            val kind = trackKind(track) ?: continue
+            val tune = senderTune(id, kind, screenOn, screenQuality) ?: continue
             val parameters = sender.parameters
             val encoding = parameters.encodings.firstOrNull() ?: continue
             encoding.maxBitrateBps = tune.maxBitrateBps
@@ -587,7 +604,11 @@ class CallMediaEngine(context: Context) : Engine {
         } catch (_: RuntimeException) {
             return
         }
-        if (track?.id() == remoteVideo?.id()) return
+        // A transceiver's Java track can already be disposed when this runs on the signaling
+        // thread (onAddTrack). id() then throws, and an exception leaving a WebRTC callback aborts
+        // the process, so a dead track is ignored until the next refresh.
+        if (track != null && trackId(track) == null) return
+        if (trackId(track) == trackId(remoteVideo)) return
         remoteVideo?.let { runCatching { it.removeSink(remoteFrames) } }
         remoteVideo = track
         track?.addSink(remoteFrames)
@@ -601,11 +622,27 @@ class CallMediaEngine(context: Context) : Engine {
         } catch (_: RuntimeException) {
             return
         }
-        if (track?.id() == remoteScreen?.id()) return
+        if (track != null && trackId(track) == null) return
+        if (trackId(track) == trackId(remoteScreen)) return
         remoteScreen?.let { runCatching { it.removeSink(remoteScreenFrames) } }
         remoteScreen = track
         track?.addSink(remoteScreenFrames)
         callbacks?.onRemoteScreen(track)
+    }
+
+    private fun trackId(track: MediaStreamTrack?): String? {
+        if (track == null) return null
+        return try {
+            track.id()
+        } catch (_: RuntimeException) {
+            null
+        }
+    }
+
+    private fun trackKind(track: MediaStreamTrack): String? = try {
+        track.kind()
+    } catch (_: RuntimeException) {
+        null
     }
 
     private fun publishLink() {
@@ -669,26 +706,40 @@ class CallMediaEngine(context: Context) : Engine {
 
         override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {
             if (!sameConnection()) return
-            noteIce(state)
+            try {
+                noteIce(state)
+            } catch (_: RuntimeException) {
+            }
         }
 
         override fun onConnectionChange(state: PeerConnection.PeerConnectionState) {
             if (!sameConnection()) return
-            notePeer(state)
+            try {
+                notePeer(state)
+            } catch (_: RuntimeException) {
+            }
         }
 
         override fun onIceCandidate(candidate: IceCandidate) {
             if (!sameConnection()) return
-            callbacks?.onLocalCandidate(
-                IceCandidatePayload(candidate.sdp, candidate.sdpMid, candidate.sdpMLineIndex),
-            )
+            try {
+                callbacks?.onLocalCandidate(
+                    IceCandidatePayload(candidate.sdp, candidate.sdpMid, candidate.sdpMLineIndex),
+                )
+            } catch (_: RuntimeException) {
+            }
         }
 
         override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {
             if (!sameConnection()) return
-            refreshRemoteVideo()
-            refreshRemoteScreen()
+            try {
+                refreshRemoteVideo()
+                refreshRemoteScreen()
+            } catch (_: RuntimeException) {
+            }
         }
+
+        /** WebRTC aborts the process when a callback throws. Track ids throw once the native track is gone. */
 
         private fun sameConnection(): Boolean = liveToken === token
     }

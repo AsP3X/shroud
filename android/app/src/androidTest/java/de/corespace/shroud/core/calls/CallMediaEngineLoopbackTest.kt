@@ -69,8 +69,8 @@ class CallMediaEngineLoopbackTest {
         assertTrue(CallSdp.fingerprint(offer) != null)
 
         val answer = callee.answer(offer)
-        assertTrue(callee.canSendVideo)
-        assertTrue(callee.canSendScreen)
+        assertTrue(directions(answer), callee.canSendVideo)
+        assertTrue(directions(answer), callee.canSendScreen)
         assertTrue(callee.hasRemoteDescription)
         assertTrue(caller.applyAnswer(answer))
         assertFalse("a second answer is glare", caller.applyAnswer(answer))
@@ -153,5 +153,15 @@ class CallMediaEngineLoopbackTest {
 
         private fun connected(states: ConcurrentLinkedQueue<String>): Boolean =
             states.any { it == "connected" || it == "completed" }
+
+        /** m-lines and direction attributes, so a failed send check shows the negotiated sections. */
+        private fun directions(sdp: String): String =
+            sdp.replace("\r\n", "\n").lineSequence()
+                .map { it.trim() }
+                .filter { line ->
+                    val lower = line.lowercase()
+                    lower.startsWith("m=") || lower.startsWith("a=send") || lower.startsWith("a=recv") || lower.startsWith("a=inactive")
+                }
+                .joinToString(" | ")
     }
 }
