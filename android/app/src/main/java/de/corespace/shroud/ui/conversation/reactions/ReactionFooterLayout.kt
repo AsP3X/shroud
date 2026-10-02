@@ -63,12 +63,13 @@ private class FooterPolicy(private val spacing: Dp, private val rowSpacing: Dp, 
         val laidWidth = max(ceil(arrangement.size.width).toInt(), width ?: 0).coerceIn(constraints.minWidth, constraints.maxWidth)
         val laidHeight = ceil(arrangement.size.height).toInt().coerceIn(constraints.minHeight, constraints.maxHeight)
         return layout(laidWidth, laidHeight) {
+            // Relative placement: chips flow from the start edge, the time sits at the end (mirrored in RTL).
             chips.forEachIndexed { index, chip ->
                 val frame = arrangement.frames[index]
-                chip.place(frame.left.toInt(), frame.top.toInt())
+                chip.placeRelative(frame.left.toInt(), frame.top.toInt())
             }
             val metaFrame = arrangement.frames.last()
-            meta.place(laidWidth - meta.width, metaFrame.top.toInt())
+            meta.placeRelative(laidWidth - meta.width, metaFrame.top.toInt())
         }
     }
 

@@ -121,12 +121,19 @@ private fun BubbleBody(row: MessageRowModel, context: BubbleContext, services: B
     val reportBounds = if (row.isMenuHero) Modifier else Modifier.onGloballyPositioned { context.reportBubbleBounds(message.id, it.boundsInRoot()) }
     val maxBubble = Dp(MessageBubbleMetrics.maxBubbleWidth(rowWidth.value))
     val parts = BubbleParts(row, handlers, chips, onReaction, time, maxBubble, rowWidth, reportBounds)
-    when (BubbleKind.of(message)) {
-        BubbleKind.Text -> TextMessageBubble(parts, services, modifier)
-        BubbleKind.Photo -> PhotoMessageBubble(parts, context, services, modifier)
-        BubbleKind.Video -> VideoMessageBubble(parts, context, services, modifier)
-        BubbleKind.Voice -> VoiceMessageBubble(parts, context, services, modifier)
-        BubbleKind.Todo -> TodoMessageBubble(parts, context, modifier)
+    // A reaction flying in lands on this row's chip: its emoji reports where it is (`ReactionFlightFrameKey`,
+    // `MessageReactionChips.swift:179-189`). The hero's chips are no landing place.
+    val flightReporter = remember(context, message.id, row.isMenuHero) {
+        if (row.isMenuHero) null else context.flightReporter(message.id)
+    }
+    CompositionLocalProvider(LocalFlightReporter provides flightReporter) {
+        when (BubbleKind.of(message)) {
+            BubbleKind.Text -> TextMessageBubble(parts, services, modifier)
+            BubbleKind.Photo -> PhotoMessageBubble(parts, context, services, modifier)
+            BubbleKind.Video -> VideoMessageBubble(parts, context, services, modifier)
+            BubbleKind.Voice -> VoiceMessageBubble(parts, context, services, modifier)
+            BubbleKind.Todo -> TodoMessageBubble(parts, context, modifier)
+        }
     }
 }
 

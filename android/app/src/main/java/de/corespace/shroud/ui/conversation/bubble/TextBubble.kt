@@ -13,7 +13,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.FirstBaseline
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.Measurable
 import androidx.compose.ui.layout.MeasurePolicy
@@ -329,7 +328,6 @@ private class PlainCorePolicy(
                 trailing = MessageBubbleMetrics.metaTrailingPad.roundToPx(),
             )
             if (compact <= cap) {
-                val metaBaseline = meta[FirstBaseline].takeIf { it != androidx.compose.ui.layout.AlignmentLine.Unspecified }
                 val rows = PlainBubbleMath.compactRows(
                     textHeight = single.size.height,
                     textBaseline = single.firstBaseline,
@@ -345,7 +343,6 @@ private class PlainCorePolicy(
                 val metaX = leading + textWidth + COMPACT_SPACING.roundToPx()
                 return layout(compact, height) {
                     meta.place(if (ltr) metaX else compact - metaX - meta.width, vertical + rows.metaTop)
-                    @Suppress("UNUSED_EXPRESSION") metaBaseline
                 }
             }
         }

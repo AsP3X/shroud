@@ -59,7 +59,8 @@ class MediaBubbleMathTest {
         assertSize(MediaSize(180f, 180f), MediaBubbleMath.photoSize(cap, 100, -1, wide = false))
         // A caption or a reply widens it to the cap, keeping the height.
         assertSize(MediaSize(268f, 320f), MediaBubbleMath.photoSize(cap, 3000, 4000, wide = true))
-        assertSize(MediaSize(268f, 180f), MediaBubbleMath.photoSize(cap, 0, 0, wide = true))
+        // Nonsense sizes return before the caption rule, as iOS's `guard` does (`:80`).
+        assertSize(MediaSize(180f, 180f), MediaBubbleMath.photoSize(cap, 0, 0, wide = true))
     }
 
     @Test
@@ -116,8 +117,9 @@ class MediaBubbleMathTest {
         assertEquals("812 KB", TransferCopy.value(TransferMode.Idle(812_000)))
         assertEquals("", TransferCopy.value(TransferMode.Idle(null)))
         assertEquals("Compressing", TransferCopy.value(TransferMode.Busy(MediaTransfer(MediaTransfer.Phase.Preparing, true, 0.5))))
-        // Upload: 0.3 + 0.5 × 0.7 = 0.65 → 65.
-        assertEquals("65 percent", TransferCopy.value(TransferMode.Busy(MediaTransfer(MediaTransfer.Phase.Transferring, true, 0.5))))
+        // Upload: 0.3 + 0.5 × 0.7 is 0.6499… in doubles; Swift's `Int(_:)` truncates it to 64 too.
+        assertEquals("64 percent", TransferCopy.value(TransferMode.Busy(MediaTransfer(MediaTransfer.Phase.Transferring, true, 0.5))))
+        assertEquals("50 percent", TransferCopy.value(TransferMode.Busy(MediaTransfer(MediaTransfer.Phase.Transferring, false, 0.5))))
         assertEquals("Finishing", TransferCopy.value(TransferMode.Busy(MediaTransfer(MediaTransfer.Phase.Finishing, false))))
     }
 

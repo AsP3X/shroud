@@ -49,7 +49,7 @@ private class EmojiFlowPolicy(private val spacing: Dp) : MeasurePolicy {
         return layout(width, height) {
             placeables.forEachIndexed { index, placeable ->
                 val frame = arrangement.frames[index]
-                placeable.place(frame.left.toInt(), frame.top.toInt())
+                placeable.placeRelative(frame.left.toInt(), frame.top.toInt())
             }
         }
     }

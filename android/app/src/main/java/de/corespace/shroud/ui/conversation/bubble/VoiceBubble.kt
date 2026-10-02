@@ -508,9 +508,12 @@ internal fun VoiceMessageBubble(parts: BubbleParts, context: BubbleContext, serv
                                 onScrub = { scrubProgress = it },
                                 onSeek = { fraction ->
                                     scrubProgress = null
-                                    handlers.haptic(Haptic.Light)
-                                    // Only the active note scrubs, so the player has its audio already.
-                                    services.playback.seek(id, ByteArray(0), fraction)
+                                    // Only the active note scrubs, so the player has its audio already; a note
+                                    // another one replaced mid-drag is left alone (its bytes are not at hand).
+                                    if (services.playback.isActive(id)) {
+                                        handlers.haptic(Haptic.Light)
+                                        services.playback.seek(id, ByteArray(0), fraction)
+                                    }
                                 },
                             )
                             if (showsTranscriptButton) {
