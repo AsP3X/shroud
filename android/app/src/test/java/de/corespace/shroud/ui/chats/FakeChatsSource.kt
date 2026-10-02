@@ -10,6 +10,7 @@ import de.corespace.shroud.ui.shell.ChatRoute
 import de.corespace.shroud.ui.shell.MainTab
 import de.corespace.shroud.ui.shell.SettingsRoute
 import de.corespace.shroud.ui.shell.ShellNavigation
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -29,6 +30,9 @@ class FakeChatsSource(
     var mutes = HashMap<UUID, ChatMuteDto?>()
     var deleteOutcome: ChatDeleteOutcome = ChatDeleteOutcome.ClearedForMe
 
+    /** When set, a refresh waits for it (the pull-to-refresh spinner stays up meanwhile). */
+    var refreshGate: CompletableDeferred<Unit>? = null
+
     override val changes: Flow<Unit> = this.chats.map { }
     override fun snapshot(): ChatsSnapshot = chats.value
     override val contactChanges: Flow<Unit> = this.roster.map { }
@@ -36,6 +40,7 @@ class FakeChatsSource(
 
     override suspend fun refreshConversations(force: Boolean) {
         log += "refreshConversations:$force"
+        refreshGate?.await()
     }
 
     override suspend fun refreshContacts(force: Boolean) {

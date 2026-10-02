@@ -33,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.layout
@@ -77,6 +78,7 @@ import de.corespace.shroud.ui.components.pressable
 import de.corespace.shroud.ui.components.rememberGlassBackdrop
 import de.corespace.shroud.ui.shell.LocalTabBarClearance
 import de.corespace.shroud.ui.theme.Motion
+import de.corespace.shroud.ui.theme.ShroudColors
 import de.corespace.shroud.ui.theme.ShroudIcons
 import de.corespace.shroud.ui.theme.ShroudTheme
 import de.corespace.shroud.ui.theme.inter
@@ -126,6 +128,7 @@ internal fun NewChatSheet(
         showsHandle = false,
         cornerRadius = 38.dp,
         scrim = colors.sheetScrim,
+        color = NewChatLook.sheetFill(colors),
     ) {
         CompositionLocalProvider(LocalTabBarClearance provides 0.dp) {
             NewChatBody(source, clock, onDismiss, onSelect)
@@ -378,6 +381,17 @@ private fun Modifier.touchArea(visible: Int, touch: Int): Modifier = layout { me
     val visiblePx = visible.dp.roundToPx()
     val placeable = measurable.measure(Constraints.fixed(touchPx, touchPx))
     layout(visiblePx, visiblePx) { placeable.place((visiblePx - touchPx) / 2, (visiblePx - touchPx) / 2) }
+}
+
+/** New Chat's colours that differ from the app's defaults. Pure. */
+internal object NewChatLook {
+    /**
+     * The sheet's fill: iOS draws the sheet's plain list on `systemBackground`, white in light mode
+     * and the elevated `#1C1C1E` in dark mode — "this sheet's elevated row background", the reason
+     * its rows press in `systemGray5` (`NewChatSheet.swift:77-81`). The app's black `background`
+     * would melt into the dimmed screen behind it; `backgroundGrouped` is that `#1C1C1E`.
+     */
+    fun sheetFill(colors: ShroudColors): Color = if (colors.isDark) colors.backgroundGrouped else colors.background
 }
 
 /** The design's Cancel capsule is 88 dp wide. */

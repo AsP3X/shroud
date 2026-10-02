@@ -310,6 +310,25 @@ class ChatsScreenTest {
     }
 
     @Test
+    fun talkBacksMuteActionOpensOnTheDurations() {
+        val source = listed(jane to "jane", unread = mapOf(jane to 3))
+        source.mutes[jane] = ChatMuteDto(until = null)
+        val ui = screen(source)
+        val row = ui.node("jane, Ok, 3 unread")
+        row.config[SemanticsActions.CustomActions].first { it.label == "Mute" }.action()
+        ui.settle()
+        val texts = ui.texts()
+        assertTrue(ui.describe(), texts.containsAll(listOf("For 1 Hour", "For 8 Hours", "For 1 Day", "For 7 Days", "Until I Turn It Back On")))
+        // Straight to the choice: not the menu's first list again.
+        assertTrue(ui.describe(), "Mark as Read" !in texts && "Delete Chat" !in texts)
+        assertTrue(ui.describe(), ui.nodes().any { it.config.getOrNull(SemanticsProperties.PaneTitle) == "Mute" })
+        ui.clickText("For 1 Hour")
+        ui.settle()
+        assertEquals("muteChat:$jane:Hour", source.log.last())
+        assertTrue(ui.describe(), ui.nodesWithText("Muted").isNotEmpty())
+    }
+
+    @Test
     fun pullToRefreshForcesAFetch() {
         val source = listed(jane to "jane")
         val ui = screen(source)
