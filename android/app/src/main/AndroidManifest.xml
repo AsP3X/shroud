@@ -160,7 +160,7 @@
             android:exported="false"
             android:foregroundServiceType="phoneCall|microphone|mediaProjection" />
 
-        <!-- Opt-in background connection (P1, 00-plan §1.7.10); stub until W3-PUSH. -->
+        <!-- Opt-in background connection (P1, 00-plan §1.7.10). -->
         <service
             android:name=".core.push.backgroundconnection.BackgroundConnectionService"
             android:exported="false"
@@ -173,7 +173,7 @@
         <!--
           UnifiedPush (AND_3): distributors must reach this receiver, so it is exported; every
           intent is checked against the stored connection token and must decrypt (RFC 8291) under
-          keys only this phone and the Shroud server hold (00-plan §1.7.10). Stub until W3-PUSH.
+          keys only this phone and the Shroud server hold (00-plan §1.7.10).
         -->
         <receiver
             android:name=".core.push.unifiedpush.UnifiedPushReceiver"
@@ -184,10 +184,24 @@
                 <action android:name="org.unifiedpush.android.connector.REGISTRATION_FAILED" />
                 <action android:name="org.unifiedpush.android.connector.UNREGISTERED" />
                 <action android:name="org.unifiedpush.android.connector.MESSAGE" />
+                <action android:name="org.unifiedpush.android.connector.TEMP_UNAVAILABLE" />
             </intent-filter>
         </receiver>
 
-        <!-- Restarts the background connection after a reboot (first unlock); stub until W3-PUSH. -->
+        <!--
+          AND_3.1.0: a distributor may bind this for five seconds while delivering, so a
+          backgrounded process can raise a foreground service. The binder does no work.
+        -->
+        <service
+            android:name=".core.push.unifiedpush.UnifiedPushForegroundService"
+            android:exported="true"
+            tools:ignore="ExportedService">
+            <intent-filter>
+                <action android:name="org.unifiedpush.android.connector.RAISE_TO_FOREGROUND" />
+            </intent-filter>
+        </service>
+
+        <!-- Restarts the background connection after a reboot, once the user is unlocked. -->
         <receiver
             android:name=".core.push.BootCompletedReceiver"
             android:exported="false">

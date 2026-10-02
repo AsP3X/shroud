@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application
+        android:label="Shroud UP stub"
+        android:icon="@android:drawable/ic_dialog_info"
+        android:theme="@android:style/Theme.DeviceDefault">
+        <receiver
+            android:name=".DistributorReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="org.unifiedpush.android.distributor.REGISTER" />
+                <action android:name="org.unifiedpush.android.distributor.UNREGISTER" />
+                <action android:name="org.unifiedpush.android.distributor.MESSAGE_ACK" />
+                <action android:name="de.corespace.shroud.upstub.INJECT" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

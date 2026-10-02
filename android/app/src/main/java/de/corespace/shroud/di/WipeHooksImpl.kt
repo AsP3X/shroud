@@ -28,6 +28,7 @@ class WipeHooksImpl(private val container: AppContainer) : WipeHooks {
         container.messaging.controllerIfBuilt?.haltForDeviceWipe()
         container.calls.controllerIfBuilt?.clearLocalState()
         container.voice.haltForWipe()
+        container.push.stopBackgroundSynchronously()
     }
 
     /**
@@ -46,7 +47,9 @@ class WipeHooksImpl(private val container: AppContainer) : WipeHooks {
     }
 
     /** `push.stop()` + `forgetRegistration()`: UNREGISTER, DELETE subscription, background service off (W3-PUSH, wired by W3-INT). */
-    override suspend fun forgetPush() = Unit
+    override suspend fun forgetPush() {
+        container.push.registration.forgetRegistration()
+    }
 
     /** Preferences, cached names and every posted notification (`NotificationsController.forgetAccount()`); main-confined. */
     override fun forgetNotifications() {
