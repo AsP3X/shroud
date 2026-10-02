@@ -54,6 +54,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
@@ -223,9 +224,9 @@ internal data class CallTimeFormats(val zone: ZoneId, val locale: Locale, val is
 
 @Composable
 private fun rememberCallTimeFormats(): CallTimeFormats {
-    val context = LocalContext.current
-    val locale = context.resources.configuration.locales[0] ?: Locale.getDefault()
-    val is24h = DateFormat.is24HourFormat(context)
+    // The configuration's locale, observed: a language change re-formats the rows.
+    val locale = LocalConfiguration.current.locales[0] ?: Locale.ROOT
+    val is24h = DateFormat.is24HourFormat(LocalContext.current)
     return remember(locale, is24h) {
         CallTimeFormats(ZoneId.systemDefault(), locale, is24h, DateFormat.getBestDateTimePattern(locale, "dMMM"))
     }
