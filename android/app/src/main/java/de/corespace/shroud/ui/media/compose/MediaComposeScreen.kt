@@ -133,8 +133,8 @@ import kotlinx.coroutines.launch
  * the registered `MediaEditRenderer`). [onAddMore] opens the picker again (unusable once ten
  * photos are staged), [onRemove] drops a photo from the draft by index, [onClose] is Back.
  *
- * **Owner W3-MEDIA-EDIT** (C12). The recipient's name comes from the open chat
- * (`messaging.controller`); the previews and filter names from `images.editRenderer` (K11).
+ * **Owner W3-MEDIA-EDIT** (C12). The recipient is [ComposeDraft.peerName] ("Sending to {peer}");
+ * the previews and filter names come from `images.editRenderer` (K11).
  */
 @Composable
 fun MediaComposeScreen(
@@ -144,13 +144,9 @@ fun MediaComposeScreen(
     onRemove: (Int) -> Unit,
     onClose: () -> Unit,
 ) {
-    val container = LocalAppContainer.current
-    val messaging = container.messaging.controller
-    val peerName = messaging.activePeerId.value?.let { messaging.username(it) }.orEmpty()
     MediaComposeContent(
         draft = draft,
-        peerName = peerName,
-        renderer = container.images.editRenderer,
+        renderer = LocalAppContainer.current.images.editRenderer,
         onSend = onSend,
         onAddMore = onAddMore,
         onRemove = onRemove,
@@ -169,11 +165,10 @@ internal const val TOOL_BANNER_MS = 1_600L
 /** The 40 ms pause that lets slider scrubs settle before a render (`MediaComposeOverlay.swift:798-800`). */
 internal const val RENDER_DEBOUNCE_MS = 40L
 
-/** [MediaComposeScreen] with its dependencies passed in: [peerName] and the [renderer] (K11). */
+/** [MediaComposeScreen] with the [renderer] (K11) passed in. */
 @Composable
 internal fun MediaComposeContent(
     draft: ComposeDraft,
-    peerName: String,
     renderer: MediaEditRenderer,
     onSend: (caption: String, quality: MediaComposeQuality, edits: List<MediaEdits>) -> Unit,
     onAddMore: () -> Unit,
@@ -243,7 +238,7 @@ internal fun MediaComposeContent(
             Column(Modifier.fillMaxSize()) {
                 val topAlpha by animateFloatAsState(if (focused) 0.35f else 1f, Motion.scrim(), label = "topChrome")
                 TopChrome(
-                    peerName = peerName,
+                    peerName = draft.peerName,
                     canAddMore = state.canAddMore,
                     modifier = Modifier.alpha(topAlpha),
                 ) {

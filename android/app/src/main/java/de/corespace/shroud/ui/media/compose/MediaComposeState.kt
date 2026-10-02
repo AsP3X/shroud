@@ -9,11 +9,9 @@ import androidx.compose.runtime.setValue
 import de.corespace.shroud.core.media.MediaComposeQuality
 import de.corespace.shroud.core.media.edit.MediaEdits
 import de.corespace.shroud.ui.media.ComposeDraft
+import de.corespace.shroud.ui.media.MAX_MEDIA_PER_SEND
 import de.corespace.shroud.ui.media.PickedPhoto
 import java.util.UUID
-
-/** An album holds at most ten photos (Telegram's cap, `ConversationView.swift:667-668`). */
-internal const val MAX_PHOTOS_PER_SEND = 10
 
 /** The editor open over the compose screen (`MediaComposeOverlay.swift:119-122`). */
 internal enum class ComposeEditor { Crop, Draw, Text }
@@ -26,7 +24,7 @@ internal enum class ComposeEditor { Crop, Draw, Text }
  */
 @Stable
 internal class MediaComposeState(draft: ComposeDraft) {
-    var photos: List<PickedPhoto> by mutableStateOf(draft.photos.take(MAX_PHOTOS_PER_SEND))
+    var photos: List<PickedPhoto> by mutableStateOf(draft.photos.take(MAX_MEDIA_PER_SEND))
         private set
     var caption by mutableStateOf(draft.caption)
     var quality by mutableStateOf(draft.quality)
@@ -52,7 +50,7 @@ internal class MediaComposeState(draft: ComposeDraft) {
      * `:776-782`). Called on every composition of the screen; writes only when the list changed.
      */
     fun syncPhotos(next: List<PickedPhoto>) {
-        val capped = next.take(MAX_PHOTOS_PER_SEND)
+        val capped = next.take(MAX_MEDIA_PER_SEND)
         val ids = capped.map { it.id }
         if (ids == syncedIds) return
         syncedIds = ids
@@ -73,7 +71,7 @@ internal class MediaComposeState(draft: ComposeDraft) {
     val displayed: Bitmap? get() = current?.let { rendered[it.id] ?: it.preview }
 
     /** Add stays usable until the album is full (`ConversationView.swift:534-537`). */
-    val canAddMore: Boolean get() = photos.size < MAX_PHOTOS_PER_SEND
+    val canAddMore: Boolean get() = photos.size < MAX_MEDIA_PER_SEND
 
     fun select(id: UUID) {
         selectedId = id

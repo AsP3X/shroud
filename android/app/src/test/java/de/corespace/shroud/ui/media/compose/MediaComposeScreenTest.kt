@@ -73,7 +73,7 @@ class MediaComposeScreenTest {
     }
 
     private class Screen(photos: List<PickedPhoto>, val renderer: FakeEditRenderer) {
-        var draft by mutableStateOf(ComposeDraft(photos))
+        var draft by mutableStateOf(ComposeDraft(photos, peerName = "Jane Cooper"))
         val sent = mutableListOf<Sent>()
         val removed = mutableListOf<Int>()
         var addMore = 0
@@ -87,7 +87,6 @@ class MediaComposeScreenTest {
             OverlayHost {
                 MediaComposeContent(
                     draft = draft,
-                    peerName = "Jane Cooper",
                     renderer = renderer,
                     onSend = { caption, quality, edits -> sent += Sent(caption, quality, edits) },
                     onAddMore = { addMore++ },
