@@ -126,6 +126,7 @@ class PushModule(container: AppContainer) : AppModule(container) {
             scheduleRemoval = { DeviceRemovalWorker.enqueue(app) },
             nameFor = { id -> container.notifications.nameCache.name(id) },
             selfUserId = { container.auth.sessionController.session.value?.userId },
+            rememberName = { id, name -> container.notifications.nameCache.remember(id, name) },
         )
         return PushRegistrar(
             scope = container.appScope,

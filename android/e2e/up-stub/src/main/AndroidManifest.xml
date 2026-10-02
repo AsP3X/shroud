@@ -1,10 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
     <application
         android:label="Shroud UP stub"
         android:icon="@android:drawable/ic_dialog_info"
-        android:theme="@android:style/Theme.DeviceDefault">
+        android:theme="@android:style/Theme.DeviceDefault"
+        android:usesCleartextTraffic="true">
         <receiver
             android:name=".DistributorReceiver"
             android:exported="true">
@@ -13,7 +21,30 @@
                 <action android:name="org.unifiedpush.android.distributor.UNREGISTER" />
                 <action android:name="org.unifiedpush.android.distributor.MESSAGE_ACK" />
                 <action android:name="de.corespace.shroud.upstub.INJECT" />
+                <action android:name="de.corespace.shroud.upstub.CONFIG" />
             </intent-filter>
         </receiver>
+        <receiver
+            android:name=".ForwarderService$Boot"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+        <activity
+            android:name=".StarterActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay" />
+        <!-- specialUse: dataSync is refused when the start is still attributed to BOOT_COMPLETED. -->
+        <service
+            android:name=".ForwarderService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Forwards UnifiedPush messages from the local test distributor" />
+        </service>
     </application>
 </manifest>
