@@ -1,6 +1,7 @@
 package de.corespace.shroud.ui.components
 
 import android.os.Looper
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
@@ -20,6 +21,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
@@ -75,6 +77,12 @@ class ChatRowFontScaleTest {
     private fun measureHeightDp(fontScale: Float, content: @Composable () -> Unit): Float {
         var heightPx = -1
         var density = 1f
+        // Reduce motion, as ComposeHarness does. With motion on, the typing label asks for every
+        // frame (`TypingLabel.frameSeconds`) and Robolectric delivers each vsync at once, so the
+        // idle() below ran frames for minutes; Robolectric's trace log kept two strings per frame
+        // and the full unit-test run ran out of heap. Motion changes no height measured here.
+        val resolver = RuntimeEnvironment.getApplication().contentResolver
+        Settings.Global.putFloat(resolver, Settings.Global.ANIMATOR_DURATION_SCALE, 0f)
         val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
         activity.setContent {
             val base = LocalDensity.current
