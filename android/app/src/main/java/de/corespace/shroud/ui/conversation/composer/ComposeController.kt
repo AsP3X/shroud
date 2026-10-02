@@ -14,6 +14,7 @@ import de.corespace.shroud.core.links.LinkPreviewComposer
 import de.corespace.shroud.core.media.MediaComposeQuality
 import de.corespace.shroud.core.media.MediaImageSource
 import de.corespace.shroud.core.media.edit.MediaEdits
+import de.corespace.shroud.core.media.library.LibraryAccess
 import de.corespace.shroud.core.media.video.VideoSendPlan
 import de.corespace.shroud.core.messaging.MessageArtifactSinks
 import de.corespace.shroud.core.model.ChatMessage
@@ -28,6 +29,8 @@ import de.corespace.shroud.core.voice.VoiceRecorderException
 import de.corespace.shroud.ui.components.Toast
 import de.corespace.shroud.ui.components.ToastState
 import de.corespace.shroud.ui.conversation.attach.ChatAttachOption
+import de.corespace.shroud.ui.conversation.attach.RecentPhoto
+import de.corespace.shroud.ui.conversation.attach.RecentPhotos
 import de.corespace.shroud.ui.conversation.bubble.ReplyQuoteContent
 import de.corespace.shroud.ui.conversation.pickers.PickerRequest
 import de.corespace.shroud.ui.media.ComposeDraft
@@ -994,6 +997,12 @@ class ComposeController internal constructor(
     internal suspend fun decodePreview(source: MediaImageSource, maxEdge: Int): Bitmap? = services.decodePreview(source, maxEdge)
 
     internal fun photoAccessRequested(): Boolean = services.photoAccessRequested()
+
+    /** The photo library's grant for the Recents strip (K4). */
+    internal fun photoLibraryAccess(): LibraryAccess = services.photoLibraryAccess()
+
+    /** The Recents strip's tiles: the newest images with their thumbnails (K4). */
+    internal suspend fun loadRecentPhotos(): List<RecentPhoto> = RecentPhotos.load(services::recentPhotos, services::photoThumbnail)
 
     internal fun markPhotoAccessRequested() = services.markPhotoAccessRequested()
 

@@ -9,6 +9,8 @@ import de.corespace.shroud.core.links.LinkPreviewException
 import de.corespace.shroud.core.media.MediaComposeQuality
 import de.corespace.shroud.core.media.MediaImageSource
 import de.corespace.shroud.core.media.edit.MediaEdits
+import de.corespace.shroud.core.media.library.LibraryAccess
+import de.corespace.shroud.core.media.library.LibraryItem
 import de.corespace.shroud.core.media.video.VideoProbe
 import de.corespace.shroud.core.media.video.VideoSendPlan
 import de.corespace.shroud.core.messaging.MessageArtifactSinks
@@ -200,6 +202,14 @@ internal class FakeComposeServices(override val sendScope: CoroutineScope) : Com
     val probes = HashMap<Uri, VideoProbe>()
     override suspend fun probeVideo(uri: Uri): VideoProbe? = probes[uri]
     override suspend fun videoPoster(uri: Uri, maxEdge: Int): Bitmap? = null
+
+    var libraryAccess: LibraryAccess = LibraryAccess.None
+    val library = ArrayList<LibraryItem>()
+    val unthumbnailable = HashSet<Uri>()
+    override fun photoLibraryAccess(): LibraryAccess = libraryAccess
+    override suspend fun recentPhotos(limit: Int): List<LibraryItem> = library.take(limit)
+    override suspend fun photoThumbnail(uri: Uri, maxEdge: Int): Bitmap? =
+        if (uri in unthumbnailable) null else Bitmap.createBitmap(maxEdge, maxEdge, Bitmap.Config.ARGB_8888)
 
     var photoAccessAsked = false
     override fun photoAccessRequested(): Boolean = photoAccessAsked

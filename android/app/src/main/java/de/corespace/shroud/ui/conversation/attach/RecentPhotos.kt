@@ -1,19 +1,12 @@
 package de.corespace.shroud.ui.conversation.attach
 
-import android.content.ContentResolver
-import android.content.ContentUris
 import android.graphics.Bitmap
 import android.net.Uri
-import android.os.Bundle
-import android.provider.MediaStore
-import android.util.Size
 import de.corespace.shroud.core.media.MediaImageSource
+import de.corespace.shroud.core.media.library.LibraryItem
 import de.corespace.shroud.ui.media.PickedPhoto
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.withContext
-import kotlin.coroutines.coroutineContext
 
 /** A tile of the Recents strip: a cheap thumbnail and the image it came from (`ChatAttachSheet.swift:12-19`). */
 class RecentPhoto(val uri: Uri, val thumbnail: Bitmap) {
@@ -23,10 +16,10 @@ class RecentPhoto(val uri: Uri, val thumbnail: Bitmap) {
 
 /**
  * The newest images on the phone for the Recents strip (`loadRecentPhotos`,
- * `ChatAttachSheet.swift:225-270`; conversation-compose-media §7.4). MediaStore, newest
- * `DATE_ADDED` first (iOS sorts by capture date; `DATE_TAKEN` is often missing for downloads),
- * at most [LIMIT], 192 px thumbnails. Never asks for `ACCESS_MEDIA_LOCATION`, so MediaStore redacts
- * GPS from anything read here. With partial access MediaStore lists only the chosen images.
+ * `ChatAttachSheet.swift:225-270`; conversation-compose-media §7.4), from core's photo library (K4
+ * `media.photoLibrary`: images only, newest `DATE_ADDED` first, no `ACCESS_MEDIA_LOCATION`, only the
+ * chosen images under partial access, empty when it cannot be read): at most [LIMIT], 192 px
+ * thumbnails.
  */
 object RecentPhotos {
     /** `fetchLimit = 12` (`ChatAttachSheet.swift:238`). */
@@ -35,47 +28,22 @@ object RecentPhotos {
     /** `targetSize 192` (`ChatAttachSheet.swift:250`). */
     const val THUMBNAIL_PX = 192
 
-    /** The collection the strip reads. */
-    val collection: Uri get() = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
-
-    /** The query: ids only, newest added first, at most [limit]. */
-    fun queryArgs(limit: Int = LIMIT): Bundle = Bundle().apply {
-        putStringArray(ContentResolver.QUERY_ARG_SORT_COLUMNS, arrayOf(MediaStore.Images.Media.DATE_ADDED))
-        putInt(ContentResolver.QUERY_ARG_SORT_DIRECTION, ContentResolver.QUERY_SORT_DIRECTION_DESCENDING)
-        putInt(ContentResolver.QUERY_ARG_LIMIT, limit)
-    }
-
     /**
-     * The newest images with their thumbnails; one that cannot be thumbnailed is skipped, and a
-     * library that cannot be read (access revoked meanwhile) reads as empty. Off the main thread.
+     * The newest images with their thumbnails ([recent] = `PhotoLibrary.recent`, [thumbnail] =
+     * `PhotoLibrary.thumbnail`, both off main in core). One that cannot be thumbnailed is skipped.
      */
-    suspend fun load(resolver: ContentResolver, limit: Int = LIMIT): List<RecentPhoto> = withContext(Dispatchers.IO) {
-        val uris = ArrayList<Uri>(limit)
-        try {
-            resolver.query(collection, arrayOf(MediaStore.Images.Media._ID), queryArgs(limit), null)?.use { cursor ->
-                val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-                while (cursor.moveToNext() && uris.size < limit) {
-                    uris += ContentUris.withAppendedId(collection, cursor.getLong(idColumn))
-                }
-            }
-        } catch (_: SecurityException) {
-            return@withContext emptyList()
-        } catch (_: IllegalArgumentException) {
-            return@withContext emptyList()
+    suspend fun load(
+        recent: suspend (limit: Int) -> List<LibraryItem>,
+        thumbnail: suspend (uri: Uri, maxEdge: Int) -> Bitmap?,
+        limit: Int = LIMIT,
+    ): List<RecentPhoto> {
+        val items = recent(limit)
+        val photos = ArrayList<RecentPhoto>(items.size)
+        for (item in items) {
+            currentCoroutineContext().ensureActive()
+            thumbnail(item.uri, THUMBNAIL_PX)?.let { photos += RecentPhoto(item.uri, it) }
         }
-        val photos = ArrayList<RecentPhoto>(uris.size)
-        for (uri in uris) {
-            coroutineContext.ensureActive()
-            val thumbnail = try {
-                resolver.loadThumbnail(uri, Size(THUMBNAIL_PX, THUMBNAIL_PX), null)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                null
-            }
-            if (thumbnail != null) photos += RecentPhoto(uri, thumbnail)
-        }
-        photos
+        return photos
     }
 
     /**

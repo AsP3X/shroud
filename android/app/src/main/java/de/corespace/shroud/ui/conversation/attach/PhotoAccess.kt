@@ -3,8 +3,6 @@ package de.corespace.shroud.ui.conversation.attach
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
-import android.content.Context
-import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -16,10 +14,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import de.corespace.shroud.core.media.library.LibraryAccess
 
 /**
  * What the Recents strip may show (conversation-compose-media §7.4; P9 decided: images only,
@@ -56,27 +54,16 @@ object PhotoAccessRules {
         else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
     }
 
-    /** The strip's state from the grants and whether the sheet asked before (a refusal looks the same as "never asked" to Android). */
-    fun access(sdk: Int, isGranted: (String) -> Boolean, requestedBefore: Boolean): PhotoAccess {
-        val full = if (sdk >= Build.VERSION_CODES.TIRAMISU) {
-            isGranted(Manifest.permission.READ_MEDIA_IMAGES)
-        } else {
-            isGranted(Manifest.permission.READ_EXTERNAL_STORAGE)
-        }
-        return when {
-            full -> PhotoAccess.Full
-            sdk >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && isGranted(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) -> PhotoAccess.Partial
-            requestedBefore -> PhotoAccess.Denied
-            else -> PhotoAccess.NotAsked
-        }
+    /**
+     * The strip's state from core's grant (K4 `PhotoLibrary.access()`, which reads the permissions
+     * per API level) and whether the sheet asked before: no access reads as refused once asked (a
+     * refusal looks the same as "never asked" to Android), else the sheet asks as it opens.
+     */
+    fun access(library: LibraryAccess, requestedBefore: Boolean): PhotoAccess = when (library) {
+        LibraryAccess.Full -> PhotoAccess.Full
+        LibraryAccess.Partial -> PhotoAccess.Partial
+        LibraryAccess.None -> if (requestedBefore) PhotoAccess.Denied else PhotoAccess.NotAsked
     }
-
-    /** [access] on this device now. */
-    fun current(context: Context, requestedBefore: Boolean): PhotoAccess = access(
-        sdk = Build.VERSION.SDK_INT,
-        isGranted = { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED },
-        requestedBefore = requestedBefore,
-    )
 
     /** The Recents header (`ChatAttachSheet.swift:45`; design Sy9qO). */
     fun header(access: PhotoAccess): String = if (access == PhotoAccess.Partial) "SELECTED PHOTOS" else "RECENTS"

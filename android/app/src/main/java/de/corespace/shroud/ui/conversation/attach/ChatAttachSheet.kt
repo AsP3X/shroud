@@ -52,6 +52,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import de.corespace.shroud.core.media.MediaImageSource
+import de.corespace.shroud.core.media.library.LibraryAccess
 import de.corespace.shroud.ui.components.ListEntranceHost
 import de.corespace.shroud.ui.components.SheetStyle
 import de.corespace.shroud.ui.components.ShroudIcon
@@ -83,7 +84,9 @@ import kotlinx.coroutines.launch
  *
  * @param onSelect an option was tapped (the host closes the sheet and acts, CV:1723-1738).
  * @param onPickImage a Recents tile's photo is ready for compose (CV:396-399).
- * @param accessRequested whether the photo permission was asked for before (a device fact).
+ * @param libraryAccess the photo library's grant now (K4 `media.photoLibrary.access()`).
+ * @param loadRecents the strip's tiles (K4 `recent` + `thumbnail`, [RecentPhotos.load]).
+ * @param accessRequested whether the photo permission was asked for before (K5 UI flag).
  */
 @Composable
 fun ChatAttachSheet(
@@ -92,6 +95,8 @@ fun ChatAttachSheet(
     onCancel: () -> Unit,
     onPickImage: (PickedPhoto) -> Unit,
     decodePreview: suspend (MediaImageSource, Int) -> Bitmap?,
+    libraryAccess: () -> LibraryAccess,
+    loadRecents: suspend () -> List<RecentPhoto>,
     accessRequested: () -> Boolean,
     markAccessRequested: () -> Unit,
 ) {
@@ -102,6 +107,8 @@ fun ChatAttachSheet(
             onCancel = onCancel,
             onPickImage = onPickImage,
             decodePreview = decodePreview,
+            libraryAccess = libraryAccess,
+            loadRecents = loadRecents,
             accessRequested = accessRequested,
             markAccessRequested = markAccessRequested,
         )
@@ -115,6 +122,8 @@ private fun AttachSheetContent(
     onCancel: () -> Unit,
     onPickImage: (PickedPhoto) -> Unit,
     decodePreview: suspend (MediaImageSource, Int) -> Bitmap?,
+    libraryAccess: () -> LibraryAccess,
+    loadRecents: suspend () -> List<RecentPhoto>,
     accessRequested: () -> Boolean,
     markAccessRequested: () -> Unit,
 ) {
@@ -124,14 +133,15 @@ private fun AttachSheetContent(
     val currentOnPickImage by rememberUpdatedState(onPickImage)
     val currentDecode by rememberUpdatedState(decodePreview)
 
-    var access by remember { mutableStateOf(PhotoAccessRules.current(context, accessRequested())) }
+    val currentLoadRecents by rememberUpdatedState(loadRecents)
+    var access by remember { mutableStateOf(PhotoAccessRules.access(libraryAccess(), accessRequested())) }
     var photos by remember { mutableStateOf<List<RecentPhoto>>(emptyList()) }
     var loaded by remember { mutableStateOf(false) }
     var loadingUri by remember { mutableStateOf<Uri?>(null) }
     val jobs = remember { AttachJobs() }
 
     fun refresh() {
-        access = PhotoAccessRules.current(context, accessRequested())
+        access = PhotoAccessRules.access(libraryAccess(), accessRequested())
         if (!access.showsPhotos) {
             jobs.load?.cancel()
             photos = emptyList()
@@ -139,7 +149,7 @@ private fun AttachSheetContent(
         }
         jobs.load?.cancel()
         jobs.load = scope.launch {
-            val newest = RecentPhotos.load(context.contentResolver)
+            val newest = currentLoadRecents()
             photos = newest
             loaded = true
         }
@@ -148,7 +158,7 @@ private fun AttachSheetContent(
     var askedFromCard by remember { mutableStateOf(false) }
     val requestAccess = rememberPhotoAccessRequest { _, dialogShown ->
         // The system no longer asks: the card's tap goes to Settings instead (§7.4).
-        if (askedFromCard && !dialogShown && !PhotoAccessRules.current(context, true).showsPhotos) openAppSettings(context)
+        if (askedFromCard && !dialogShown && !PhotoAccessRules.access(libraryAccess(), true).showsPhotos) openAppSettings(context)
         askedFromCard = false
         refresh()
     }
@@ -194,7 +204,7 @@ private fun AttachSheetContent(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                val now = PhotoAccessRules.current(context, accessRequested())
+                val now = PhotoAccessRules.access(libraryAccess(), accessRequested())
                 if (now != access) refresh()
             }
         }

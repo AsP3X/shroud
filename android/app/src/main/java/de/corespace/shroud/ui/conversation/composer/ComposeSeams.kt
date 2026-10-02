@@ -166,6 +166,8 @@ fun ConversationComposeHost(controller: ComposeController, onComposerHeightChang
         onCancel = controller::closeAttachSheet,
         onPickImage = controller::pickRecentPhoto,
         decodePreview = controller::decodePreview,
+        libraryAccess = controller::photoLibraryAccess,
+        loadRecents = controller::loadRecentPhotos,
         accessRequested = controller::photoAccessRequested,
         markAccessRequested = controller::markPhotoAccessRequested,
     )

@@ -1,17 +1,17 @@
 package de.corespace.shroud.ui.conversation.composer
 
-import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
-import androidx.core.content.edit
 import de.corespace.shroud.AppContainer
-import de.corespace.shroud.core.storage.PrefsFiles
 import de.corespace.shroud.core.links.LinkPreviewAttachment
 import de.corespace.shroud.core.links.LinkPreviewComposer
 import de.corespace.shroud.core.media.MediaComposeQuality
 import de.corespace.shroud.core.media.MediaImageSource
 import de.corespace.shroud.core.media.edit.MediaEdits
+import de.corespace.shroud.core.media.library.LibraryAccess
+import de.corespace.shroud.core.media.library.LibraryItem
+import de.corespace.shroud.core.media.library.PhotoLibrary
 import de.corespace.shroud.core.media.video.VideoProbe
 import de.corespace.shroud.core.media.video.VideoSendPlan
 import de.corespace.shroud.core.messaging.MessageArtifactSinks
@@ -120,9 +120,18 @@ internal interface ComposeServices {
     /** The first frame, ≤ [maxEdge] px (off main). */
     suspend fun videoPoster(uri: Uri, maxEdge: Int): Bitmap?
 
-    // ---- The Recents strip's one device fact (conversation-compose-media §7.4, §22) ----
+    // ---- The Recents strip (conversation-compose-media §7.4, §22; K4 `media.photoLibrary`, K5 `keys.uiFlags`) ----
 
-    /** The photo permission was asked for once (plain prefs `shroud.device`, kept across Log Out like the grant itself). */
+    /** What the photo library grants now ([PhotoLibrary.access]). */
+    fun photoLibraryAccess(): LibraryAccess
+
+    /** The newest [limit] images, newest first; empty without access or on failure ([PhotoLibrary.recent]). */
+    suspend fun recentPhotos(limit: Int): List<LibraryItem>
+
+    /** A tile thumbnail of at most [maxEdge] px, or null ([PhotoLibrary.thumbnail]). */
+    suspend fun photoThumbnail(uri: Uri, maxEdge: Int): Bitmap?
+
+    /** The photo permission was asked for once (the UI flag [PHOTO_ACCESS_REQUESTED_FLAG]; cleared by Log Out). */
     fun photoAccessRequested(): Boolean
     fun markPhotoAccessRequested()
 }
@@ -210,18 +219,18 @@ internal class ContainerComposeServices(private val container: AppContainer) : C
 
     override suspend fun videoPoster(uri: Uri, maxEdge: Int): Bitmap? = withContext(Dispatchers.IO) { container.video.media.poster(uri, maxEdge) }
 
-    private val devicePrefs get() = container.appContext.getSharedPreferences(PrefsFiles.DEVICE, Context.MODE_PRIVATE)
+    override fun photoLibraryAccess(): LibraryAccess = container.media.photoLibrary.access()
 
-    override fun photoAccessRequested(): Boolean = devicePrefs.getBoolean(PHOTO_ACCESS_REQUESTED_KEY, false)
+    override suspend fun recentPhotos(limit: Int): List<LibraryItem> = container.media.photoLibrary.recent(limit)
 
-    override fun markPhotoAccessRequested() {
-        // Every prefs writer stops during a wipe (plan §1.4).
-        if (container.storageSeal.isSealed) return
-        devicePrefs.edit { putBoolean(PHOTO_ACCESS_REQUESTED_KEY, true) }
-    }
+    override suspend fun photoThumbnail(uri: Uri, maxEdge: Int): Bitmap? = container.media.photoLibrary.thumbnail(uri, maxEdge)
+
+    override fun photoAccessRequested(): Boolean = container.keys.uiFlags.get(PHOTO_ACCESS_REQUESTED_FLAG)
+
+    override fun markPhotoAccessRequested() = container.keys.uiFlags.set(PHOTO_ACCESS_REQUESTED_FLAG, true)
 
     companion object {
-        /** `shroud.device` key: the Recents strip asked for photo access once (a device fact, like `notifications.permissionAsked`). */
-        const val PHOTO_ACCESS_REQUESTED_KEY = "photos.permissionRequested"
+        /** K5 UI flag (`shroud.ui`, prefix "ui."): the Recents strip asked for photo access once. */
+        const val PHOTO_ACCESS_REQUESTED_FLAG = "ui.photos.permissionRequested"
     }
 }

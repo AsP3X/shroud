@@ -1,16 +1,27 @@
 package de.corespace.shroud.ui.conversation.attach
 
 import android.Manifest
+import android.graphics.Bitmap
+import android.net.Uri
+import de.corespace.shroud.core.media.library.LibraryAccess
+import de.corespace.shroud.core.media.library.LibraryItem
+import de.corespace.shroud.ui.conversation.composer.ContainerComposeServices
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 /**
  * The Recents strip's permission states on Android (conversation-compose-media §7.4; P9: images
  * only, `READ_MEDIA_IMAGES` + `READ_MEDIA_VISUAL_USER_SELECTED`, `READ_EXTERNAL_STORAGE` up to 32).
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35])
 class PhotoAccessRulesTest {
     private val images = Manifest.permission.READ_MEDIA_IMAGES
     private val selected = Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
@@ -31,25 +42,39 @@ class PhotoAccessRulesTest {
     }
 
     @Test
-    fun `full access lists every image`() {
-        assertEquals(PhotoAccess.Full, PhotoAccessRules.access(30, { it == storage }, requestedBefore = true))
-        assertEquals(PhotoAccess.Full, PhotoAccessRules.access(33, { it == images }, requestedBefore = false))
-        assertEquals(PhotoAccess.Full, PhotoAccessRules.access(35, { it == images || it == selected }, requestedBefore = true))
+    fun `core's grant decides the strip, asked-before turns no access into denied (K4)`() {
+        // `PhotoLibrary.access()` reads the permissions per API level (core); the sheet maps it.
+        assertEquals(PhotoAccess.Full, PhotoAccessRules.access(LibraryAccess.Full, requestedBefore = true))
+        assertEquals(PhotoAccess.Full, PhotoAccessRules.access(LibraryAccess.Full, requestedBefore = false))
+        // Android 14 "Select photos" (design Sy9qO).
+        assertEquals(PhotoAccess.Partial, PhotoAccessRules.access(LibraryAccess.Partial, requestedBefore = true))
+        assertEquals(PhotoAccess.Denied, PhotoAccessRules.access(LibraryAccess.None, requestedBefore = true))
+        assertEquals(PhotoAccess.NotAsked, PhotoAccessRules.access(LibraryAccess.None, requestedBefore = false))
     }
 
     @Test
-    fun `Android 14 'Select photos' is partial access (design Sy9qO)`() {
-        assertEquals(PhotoAccess.Partial, PhotoAccessRules.access(34, { it == selected }, requestedBefore = true))
-        // The partial grant does not exist below 34.
-        assertEquals(PhotoAccess.Denied, PhotoAccessRules.access(33, { it == selected }, requestedBefore = true))
+    fun `the strip shows the twelve newest with thumbnails and skips one that has none`() = runTest {
+        val uris = List(14) { Uri.parse("content://media/external/images/media/$it") }
+        val items = uris.map { LibraryItem(it, isVideo = false, dateTaken = null, durationMs = null) }
+        val asked = ArrayList<Int>()
+        val edges = HashSet<Int>()
+        val photos = RecentPhotos.load(
+            recent = { limit -> asked += limit; items.take(limit) },
+            thumbnail = { uri, edge ->
+                edges += edge
+                if (uri == uris[3]) null else Bitmap.createBitmap(edge, edge, Bitmap.Config.ARGB_8888)
+            },
+        )
+        assertEquals(listOf(12), asked)
+        assertEquals(setOf(192), edges)
+        assertEquals(uris.take(12) - uris[3], photos.map { it.uri })
+        assertTrue(RecentPhotos.load(recent = { emptyList() }, thumbnail = { _, _ -> null }).isEmpty())
     }
 
     @Test
-    fun `nothing granted - asked before reads as denied, else it is asked when the sheet opens`() {
-        assertEquals(PhotoAccess.Denied, PhotoAccessRules.access(34, { false }, requestedBefore = true))
-        assertEquals(PhotoAccess.NotAsked, PhotoAccessRules.access(34, { false }, requestedBefore = false))
-        // The storage grant means nothing on 33+.
-        assertEquals(PhotoAccess.NotAsked, PhotoAccessRules.access(33, { it == storage }, requestedBefore = false))
+    fun `the asked-once fact is a K5 UI flag`() {
+        // K5 `keys.uiFlags`: keys are Claude's, prefixed "ui."; Log Out clears them with the other non-kept prefs.
+        assertEquals("ui.photos.permissionRequested", ContainerComposeServices.PHOTO_ACCESS_REQUESTED_FLAG)
     }
 
     @Test
