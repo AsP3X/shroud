@@ -18,9 +18,12 @@ import de.corespace.shroud.ui.components.Toast
 import de.corespace.shroud.ui.conversation.DecodedImageCache
 import de.corespace.shroud.ui.conversation.LinkPreviewImageCache
 import de.corespace.shroud.ui.conversation.links.MessageLinkText
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.launch
 import java.util.UUID
+import java.util.concurrent.Executor
 
 /**
  * What a bubble needs from the engines beyond its row and the screen's [de.corespace.shroud.ui.conversation.BubbleContext]:
@@ -89,8 +92,15 @@ interface BubbleServices {
     val context: Context
 
     companion object {
-        /** The services of the running app. */
-        fun forContainer(container: AppContainer): BubbleServices = ContainerBubbleServices(container)
+        private val byContainer = java.util.WeakHashMap<AppContainer, BubbleServices>()
+
+        /**
+         * The services of the running app: one instance per container, so every bubble of every chat
+         * shares it and [BubbleMemory] registers its sink with messaging once, not once per row.
+         */
+        @Synchronized
+        fun forContainer(container: AppContainer): BubbleServices =
+            byContainer.getOrPut(container) { ContainerBubbleServices(container) }
 
         /**
          * Names for [transcriptionHints]: [peerName] and [contacts], de-duplicated, sorted, at most 50
@@ -231,11 +241,17 @@ object BubbleMemory {
  * reaction set (decision D3b, P16c). The manifest removes emoji2's startup initializer, which would ask
  * the Google downloadable-font provider; this installs [BundledEmojiCompatConfig] instead — a font in
  * the APK, no provider, no network. Compose text picks EmojiCompat up once it is configured.
- * Idempotent; W3-INT also calls it at process start (contract change request).
+ *
+ * The font's metadata loads on [loader] (the IO pool), never on the main thread; the constructor
+ * without an executor is deprecated. Idempotent; W3-INT also calls it at process start (contract
+ * change request).
  */
 object BubbleEmoji {
     @Volatile
     private var installed = false
+
+    /** Where the bundled font's metadata is read. */
+    private val loader: Executor = Dispatchers.IO.asExecutor()
 
     fun install(context: Context) {
         if (installed) return
@@ -243,7 +259,7 @@ object BubbleEmoji {
             if (installed) return
             installed = true
             if (EmojiCompat.isConfigured()) return
-            val config = BundledEmojiCompatConfig(context.applicationContext)
+            val config = BundledEmojiCompatConfig(context.applicationContext, loader)
                 // Only replace what the system font cannot draw: newer phones keep their own emoji.
                 .setReplaceAll(false)
             EmojiCompat.init(config)
