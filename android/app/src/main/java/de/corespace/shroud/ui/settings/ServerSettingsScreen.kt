@@ -21,6 +21,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,7 +39,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -64,6 +67,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -101,8 +105,6 @@ import de.corespace.shroud.ui.theme.ShroudIcons
 import de.corespace.shroud.ui.theme.ShroudTheme
 import de.corespace.shroud.ui.theme.inter
 import de.corespace.shroud.ui.theme.rememberHaptics
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.SideEffect
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -289,6 +291,16 @@ fun ServerSettingsPage(
         haptic(Haptic.Soft)
         draft = draft.copy(mode = mode)
         errorMessage = null
+    }
+
+    // A drag on the form puts the keyboard away (`.scrollDismissesKeyboard(.interactively)`,
+    // `:88`). Only the user's drags count: the scroll that brings a focused field into view
+    // above the keyboard is not a drag and must not close it again.
+    val focusManager = LocalFocusManager.current
+    LaunchedEffect(scrollState) {
+        scrollState.interactionSource.interactions.collect { interaction ->
+            if (interaction is DragInteraction.Start) focusManager.clearFocus()
+        }
     }
 
     // Every failed Save brings the error line into view, centred under the bar, a frame later

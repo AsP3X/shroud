@@ -1,5 +1,8 @@
 package de.corespace.shroud.ui.settings
 
+import android.os.SystemClock
+import android.view.MotionEvent
+import android.view.View
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -249,5 +252,34 @@ class SettingsScreensUiTest {
         assertEquals(local, saved)
         assertEquals(1, popped)
         assertTrue(ui.nodesWithText("Change server?").isEmpty())
+    }
+
+    @Test
+    fun aDragOnTheServerFormPutsTheKeyboardAway() {
+        val local = ServerConfiguration.localDevelopment("10.0.2.2", 8080)
+        val ui = ComposeHarness {
+            ServerSettingsPage(local, local, signedIn = true, save = {}, onSignOut = {}, onBack = {}, pause = {})
+        }
+        fun focused() = ui.nodes().any { it.config.getOrNull(SemanticsProperties.Focused) == true }
+        val host = ui.nodes().single { it.config.getOrNull(SemanticsProperties.EditableText)?.text == "10.0.2.2" }
+        host.config[SemanticsActions.RequestFocus].action!!.invoke()
+        ui.idle()
+        assertTrue("the host field has the focus", focused())
+        // A finger drags the form up from the mode cards (`.scrollDismissesKeyboard(.interactively)`).
+        drag(ui.root, x = ui.root.width / 2f, fromY = ui.root.height * 0.45f, toY = ui.root.height * 0.1f)
+        ui.idle()
+        assertFalse("the drag put the keyboard away", focused())
+    }
+
+    private fun drag(view: View, x: Float, fromY: Float, toY: Float) {
+        val down = SystemClock.uptimeMillis()
+        fun send(action: Int, at: Long, y: Float) {
+            val event = MotionEvent.obtain(down, at, action, x, y, 0)
+            view.dispatchTouchEvent(event)
+            event.recycle()
+        }
+        send(MotionEvent.ACTION_DOWN, down, fromY)
+        for (step in 1..12) send(MotionEvent.ACTION_MOVE, down + step * 16L, fromY + (toY - fromY) * step / 12f)
+        send(MotionEvent.ACTION_UP, down + 13 * 16L, toY)
     }
 }
