@@ -50,6 +50,10 @@ object ChatRowMenu {
         }
     }
 
+    /** The five durations in `MuteDuration` order with iOS's titles (NM:124-153), each muting for its time. */
+    fun muteActions(onMute: (MuteDuration) -> Unit): List<MenuAction> =
+        MuteDuration.entries.map { duration -> MenuAction(duration.title, onClick = { onMute(duration) }) }
+
     /**
      * The menu card for [row]: "Mute" carries the five durations as a submenu, in `MuteDuration`
      * order with iOS's titles ("For 1 Hour" … "Until I Turn It Back On", NM:124-153); the card
@@ -64,11 +68,7 @@ object ChatRowMenu {
     ): List<MenuAction> = items(row).map { item ->
         when (item) {
             ChatRowMenuItem.MarkAsRead -> MenuAction(item.title, item.icon, onClick = onMarkRead)
-            ChatRowMenuItem.Mute -> MenuAction(
-                item.title,
-                item.icon,
-                submenu = MuteDuration.entries.map { duration -> MenuAction(duration.title, onClick = { onMute(duration) }) },
-            )
+            ChatRowMenuItem.Mute -> MenuAction(item.title, item.icon, submenu = muteActions(onMute))
             ChatRowMenuItem.Unmute -> MenuAction(item.title, item.icon, onClick = onUnmute)
             ChatRowMenuItem.DeleteChat, ChatRowMenuItem.DeleteAllNotes ->
                 MenuAction(item.title, item.icon, destructive = true, onClick = onDelete)

@@ -1,5 +1,6 @@
 package de.corespace.shroud.ui.conversation.composer
 
+import android.app.Application
 import android.view.inputmethod.EditorInfo
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.text.input.TextFieldState
@@ -13,7 +14,6 @@ import androidx.compose.ui.semantics.getOrNull
 import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.core.voice.VoiceRecorder
 import de.corespace.shroud.core.voice.VoiceTimeFormat
-import de.corespace.shroud.ui.components.ComposeHarness
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -37,13 +37,22 @@ import org.robolectric.annotation.GraphicsMode
  * keyboard flags (plan P5: no personalised learning; Enter is a newline).
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+// A plain Application, and every host closed: these screens run on fakes, and a started container
+// or an activity left alive per test piles up in the one test JVM.
+@Config(sdk = [35], application = Application::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class ComposerSemanticsTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val hosts = ArrayList<ComposerTestHost>()
 
     @After
-    fun tearDown() = scope.cancel()
+    fun tearDown() {
+        // The scope first: work it ends (a send's `finally`) writes state the hosts' close must still drain.
+        scope.cancel()
+        hosts.forEach { it.close() }
+    }
+
+    private fun host(content: @Composable () -> Unit): ComposerTestHost = ComposerTestHost(content = content).also { hosts += it }
 
     private class Host : ComposerGesture.Host {
         val start = CompletableDeferred<Boolean>()
@@ -104,7 +113,7 @@ class ComposerSemanticsTest {
         val host = Host()
         val gesture = ComposerGesture(scope, host)
         var attaches = 0
-        val ui = ComposeHarness { Composer(TextFieldState(), gesture, onAttach = { attaches++ }) }
+        val ui = host { Composer(TextFieldState(), gesture, onAttach = { attaches++ }) }
 
         val attach = ui.node("Attach")
         assertEquals(Role.Button, attach.config[SemanticsProperties.Role])
@@ -123,7 +132,7 @@ class ComposerSemanticsTest {
         // TalkBack cannot hold and slide: its activation starts a hands-free take.
         mic.config[SemanticsActions.OnClick].action!!.invoke()
         host.start.complete(true)
-        ui.idle()
+        ui.settle()
         assertEquals(1, host.starts)
         assertEquals(ComposerPhase.Locked, gesture.phase.value)
         assertNotNull(ui.node("Discard recording"))
@@ -134,7 +143,7 @@ class ComposerSemanticsTest {
         val gesture = ComposerGesture(scope, Host())
         val draft = TextFieldState("Hello")
         var sends = 0
-        val ui = ComposeHarness { Composer(draft, gesture, onSend = { sends++ }) }
+        val ui = host { Composer(draft, gesture, onSend = { sends++ }) }
         val send = ui.node("Send")
         assertEquals(Role.Button, send.config[SemanticsProperties.Role])
         send.config[SemanticsActions.OnClick].action!!.invoke()
@@ -145,10 +154,10 @@ class ComposerSemanticsTest {
     @Test
     fun theComposerFieldNeverTeachesTheKeyboardAndEnterIsANewline() {
         val gesture = ComposerGesture(scope, Host())
-        val ui = ComposeHarness { Composer(TextFieldState(), gesture) }
+        val ui = host { Composer(TextFieldState(), gesture) }
         val field = ui.nodes().first { SemanticsActions.SetText in it.config }
         (field.config.getOrNull(SemanticsActions.RequestFocus) ?: field.config[SemanticsActions.OnClick]).action!!.invoke()
-        ui.idle()
+        ui.settle()
         val info = EditorInfo()
         assertNotNull("the focused field opened an input connection", ui.root.onCreateInputConnection(info))
         assertTrue(info.imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING != 0)
@@ -160,10 +169,10 @@ class ComposerSemanticsTest {
     fun theFingerDownBarIsOneSpokenNode() {
         val host = Host()
         val gesture = ComposerGesture(scope, host)
-        val ui = ComposeHarness { Composer(TextFieldState(), gesture, recorder = VoiceRecorder.RecState(recording = true, elapsedSeconds = 7.32)) }
+        val ui = host { Composer(TextFieldState(), gesture, recorder = VoiceRecorder.RecState(recording = true, elapsedSeconds = 7.32)) }
         gesture.pointer(0f, 0f)
         host.start.complete(true)
-        ui.idle()
+        ui.settle()
         assertTrue(gesture.phase.value is ComposerPhase.Recording)
         val bar = ui.node("Recording, 7 seconds. Release to send, slide left to cancel.")
         assertTrue("the timer is folded into the bar: ${ui.describe()}", ui.nodesWithText("0:07").isEmpty())
@@ -176,19 +185,19 @@ class ComposerSemanticsTest {
     fun theLockedBarNamesItsButtonsAndReadsTheElapsedTimeAsItsValue() {
         val host = Host()
         val gesture = ComposerGesture(scope, host)
-        val ui = ComposeHarness {
+        val ui = host {
             Composer(TextFieldState(), gesture, recorder = VoiceRecorder.RecState(recording = true, elapsedSeconds = 95.0, liveLevels = listOf(0.2f, 0.5f)))
         }
         gesture.startLocked()
         host.start.complete(true)
-        ui.idle()
+        ui.settle()
         val readout = ui.node("Recording")
         assertEquals(VoiceTimeFormat.spoken(95.0), readout.config[SemanticsProperties.StateDescription])
         assertFalse("not a live region (VRU 155-157)", SemanticsProperties.LiveRegion in readout.config)
         assertEquals(Role.Button, ui.node("Discard recording").config[SemanticsProperties.Role])
         val send = ui.node("Send recording")
         send.config[SemanticsActions.OnClick].action!!.invoke()
-        ui.idle()
+        ui.settle()
         assertEquals(1, host.sends)
         assertEquals(ComposerPhase.Idle, gesture.phase.value)
     }
@@ -197,7 +206,7 @@ class ComposerSemanticsTest {
     fun theLinkStripNamesThePreviewItsOptionsAndItsClose() {
         val gesture = ComposerGesture(scope, Host())
         var removed = 0
-        val ui = ComposeHarness {
+        val ui = host {
             Composer(TextFieldState("see komoot.com/tour/1"), gesture, linkBar = ChatLinkBarState.Loading("komoot.com/tour/1"), onRemoveLink = { removed++ })
         }
         val preview = ui.node("Loading link preview for komoot.com/tour/1")
@@ -211,7 +220,7 @@ class ComposerSemanticsTest {
     @Test
     fun theReplyStripCloseIsCancelReply() {
         var cancels = 0
-        val ui = ComposeHarness {
+        val ui = host {
             ChatReplyBar(
                 content = de.corespace.shroud.ui.conversation.bubble.ReplyQuoteContent("Jane", "Where?", isStandIn = false, thumbnail = null, symbol = null),
                 onTapPreview = {},
@@ -227,7 +236,7 @@ class ComposerSemanticsTest {
     @Test
     fun notesTodoIsOneButtonCalledAddAsTodo() {
         var todos = 0
-        val ui = ComposeHarness { Column { NotesTodoBar(onTodo = { todos++ }) } }
+        val ui = host { Column { NotesTodoBar(onTodo = { todos++ }) } }
         val todo = ui.node("Add as todo")
         assertEquals(Role.Button, todo.config[SemanticsProperties.Role])
         assertTrue("the label replaces the visible word: ${ui.describe()}", ui.nodesWithText("Todo").isEmpty())

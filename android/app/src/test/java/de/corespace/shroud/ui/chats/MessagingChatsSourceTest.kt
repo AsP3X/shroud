@@ -24,6 +24,7 @@ import de.corespace.shroud.core.messaging.RosterSnapshot
 import de.corespace.shroud.core.messaging.testSession
 import de.corespace.shroud.core.model.ChatDeleteOutcome
 import de.corespace.shroud.core.model.ChatMessage
+import de.corespace.shroud.core.model.ChatPeerActivity
 import de.corespace.shroud.core.model.ContactsListState
 import de.corespace.shroud.core.model.MuteDuration
 import de.corespace.shroud.core.model.NOTES_PEER_ID
@@ -31,12 +32,14 @@ import de.corespace.shroud.core.net.ChatMuteDto
 import de.corespace.shroud.core.net.ContactItemDto
 import de.corespace.shroud.core.net.ConversationDeleteScope
 import de.corespace.shroud.core.net.PresenceDto
+import de.corespace.shroud.core.realtime.RealtimeEvent
 import de.corespace.shroud.testing.FakeAppClock
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -65,6 +68,7 @@ class MessagingChatsSourceTest {
     private val store = FakeMessagingStore()
     private val contacts = FakeContacts()
     private val clock = FakeAppClock()
+    private val socket = FakeSocket()
 
     @After
     fun tearDown() = scopes.cancelAll()
@@ -84,7 +88,7 @@ class MessagingChatsSourceTest {
                 scope = scopes.create(testScheduler),
                 session = session,
                 backend = backend,
-                socket = FakeSocket(),
+                socket = socket,
                 keys = FakeKeys(),
                 opener = FakeOpener(),
                 peerLocks = PeerLocks(),
@@ -173,6 +177,38 @@ class MessagingChatsSourceTest {
         runCurrent()
         assertTrue("a list that changed must reach the screen", emissions > before)
         assertEquals(listOf(jane), source.snapshot().conversations.map { it.peer.id })
+        collector.cancel()
+        controller.stop(wipeDisk = false)
+    }
+
+    @Test
+    fun aPeersTypingAndRecordingReachTheRowUntilTheyLapse() = engineTest {
+        // `peerActivities` (messaging-core §17): recording wins over typing, a `true` lapses 6 s on.
+        backend.conversationList = listOf(Dtos.conversation(jane, janeChat, username = "jane"))
+        val controller = controller()
+        controller.start()
+        runCurrent()
+        val source = MessagingChatsSource(controller, contacts)
+        var emissions = 0
+        val collector = backgroundScope.launch { source.changes.collect { emissions++ } }
+        runCurrent()
+        assertTrue(source.snapshot().activities.isEmpty())
+
+        var before = emissions
+        socket.eventsFlow.tryEmit(RealtimeEvent.Typing(jane, true))
+        runCurrent()
+        assertEquals(mapOf(jane to ChatPeerActivity.Typing), source.snapshot().activities)
+        assertTrue("a typing peer must reach the list", emissions > before)
+
+        before = emissions
+        socket.eventsFlow.tryEmit(RealtimeEvent.Recording(jane, true))
+        runCurrent()
+        assertEquals(mapOf(jane to ChatPeerActivity.Recording), source.snapshot().activities)
+        assertTrue(emissions > before)
+
+        advanceTimeBy(6_001)
+        runCurrent()
+        assertTrue(source.snapshot().activities.isEmpty())
         collector.cancel()
         controller.stop(wipeDisk = false)
     }

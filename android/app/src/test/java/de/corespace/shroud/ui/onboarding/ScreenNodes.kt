@@ -1,5 +1,9 @@
 package de.corespace.shroud.ui.onboarding
 
+import android.view.ViewGroup
+import android.view.inputmethod.EditorInfo
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.node.RootForTest
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
@@ -81,6 +85,45 @@ internal fun ComposeHarness.imeAction(node: SemanticsNode) {
 }
 
 internal val SemanticsNode.editableText: String get() = config.getOrNull(SemanticsProperties.EditableText)?.text.orEmpty()
+
+/** The editor attributes the focused text field hands the keyboard (what an IME reads in `onStartInput`). */
+internal fun ComposeHarness.editorInfoOf(node: SemanticsNode): EditorInfo {
+    node.config[SemanticsActions.RequestFocus].action!!.invoke()
+    idle()
+    val info = EditorInfo()
+    checkNotNull(root.onCreateInputConnection(info)) { "no input connection for node #${node.id}" }
+    return info
+}
+
+/** The autofill hint of a field (`Modifier.contentType`), or null. */
+internal val SemanticsNode.autofillType: ContentType? get() = config.getOrNull(SemanticsProperties.ContentType)
+
+/**
+ * Builds harnesses and takes them down after each test: removing the views disposes the
+ * compositions, which cancels their real-time `delay`s — a post landing after a test's last idle
+ * would otherwise leave Compose's main-thread dispatcher waiting in every later test of the sandbox
+ * (`ChatsScreenTest.tearDown`).
+ */
+internal class HarnessHosts {
+    private val hosts = ArrayList<ComposeHarness>()
+
+    fun host(dark: Boolean = false, reduceMotion: Boolean = true, content: @Composable () -> Unit): ComposeHarness =
+        ComposeHarness(dark, reduceMotion, content).also { hosts += it }
+
+    fun disposeAll() {
+        hosts.forEach { host ->
+            host.activity.findViewById<ViewGroup>(android.R.id.content).removeAllViews()
+            host.idle()
+        }
+        Thread.sleep(SETTLE_MS)
+        hosts.firstOrNull()?.idle()
+        hosts.clear()
+    }
+
+    private companion object {
+        const val SETTLE_MS = 60L
+    }
+}
 
 /**
  * Idles until [condition] holds. Coroutine `delay`s inside compositions run on real time here (the

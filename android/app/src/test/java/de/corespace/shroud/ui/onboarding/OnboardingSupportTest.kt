@@ -9,6 +9,7 @@ import de.corespace.shroud.core.net.ServerConfiguration
 import de.corespace.shroud.core.net.ServerConnectionMode
 import de.corespace.shroud.ui.components.badgePulses
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
@@ -36,7 +37,15 @@ class OnboardingSupportTest {
         val core = FakeOnboardingService()
         val sessions = MutableStateFlow<Session?>(null)
         val scope = CoroutineScope(Job())
-        val services = ContainerOnboardingServices(core, sessions, TestWordlist.bip39, scope)
+        val identities = mutableListOf<String>()
+        val services = ContainerOnboardingServices(
+            core,
+            sessions,
+            TestWordlist.bip39,
+            scope,
+            localIdentity = { userId -> identities += userId; userId == FakeOnboardingServices.USER },
+            io = Dispatchers.Unconfined,
+        )
         assertSame(sessions, services.session)
         assertSame(TestWordlist.bip39, services.bip39)
         assertSame(scope, services.appScope)
@@ -65,6 +74,10 @@ class OnboardingSupportTest {
             listOf("register:Alice:pw-1", "login:alice:pw-2", "establish:a b", "unlock:c", "identity", "identity"),
             core.calls,
         )
+        // `keys.cryptoController.hasLocalIdentity` (K1), as asked.
+        assertTrue(services.hasLocalIdentity(FakeOnboardingServices.USER))
+        assertFalse(services.hasLocalIdentity("someone-else"))
+        assertEquals(listOf(FakeOnboardingServices.USER, "someone-else"), identities)
     }
 
     /** A fake of core's K2 [OnboardingService]. */

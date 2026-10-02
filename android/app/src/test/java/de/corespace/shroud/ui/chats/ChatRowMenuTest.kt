@@ -68,13 +68,25 @@ class ChatRowMenuTest {
             mute.submenu!!.map { it.title },
         )
         actions[0].onClick()
-        mute.submenu!!.forEach { it.onClick() }
+        mute.submenu.forEach { it.onClick() }
         actions[2].onClick()
         assertEquals(
             listOf("read") + MuteDuration.entries.map { "mute:${it.name}" } + "delete",
             log,
         )
         assertTrue(actions[2].destructive)
+    }
+
+    @Test
+    fun theDurationsAloneAreTheSubmenusRows() {
+        // TalkBack's "Mute" on the row opens the card on these (no second "Mute" to find).
+        val muted = ArrayList<MuteDuration>()
+        val durations = ChatRowMenu.muteActions { muted += it }
+        val submenu = ChatRowMenu.actions(row, {}, {}, {}, {}).single { it.title == "Mute" }.submenu!!
+        assertEquals(submenu.map { it.title }, durations.map { it.title })
+        assertTrue(durations.none { it.submenu != null || it.icon != null || it.destructive })
+        durations.forEach { it.onClick() }
+        assertEquals(MuteDuration.entries, muted)
     }
 
     @Test

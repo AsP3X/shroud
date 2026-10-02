@@ -120,7 +120,11 @@ fun LockScreen(router: LockScreenRouter) {
     )
 }
 
-/** [LockScreen] on explicit dependencies, for screen tests. */
+/**
+ * [LockScreen] on explicit dependencies, for screen tests. [driven] replaces the screen's own
+ * [LockScreenModel] when a test steps the choreography itself (its phases on virtual time); the
+ * screen's haptics and toasts are then the test's.
+ */
 @Composable
 internal fun LockScreenContent(
     router: LockScreenRouter,
@@ -128,6 +132,7 @@ internal fun LockScreenContent(
     server: StateFlow<ServerConfiguration>,
     saveServer: (ServerConfiguration) -> Unit,
     switchServer: (ServerConfiguration) -> Unit,
+    driven: LockScreenModel? = null,
 ) {
     val colors = ShroudTheme.colors
     val reduce = ShroudTheme.reduceMotion
@@ -135,7 +140,7 @@ internal fun LockScreenContent(
     val scope = rememberCoroutineScope()
     val toast = rememberToastState()
     val haptics = rememberHaptics()
-    val model = remember(ports, router) {
+    val model = driven ?: remember(ports, router) {
         LockScreenModel(ports, router, haptic = haptics, showToast = { if (it == null) toast.dismiss() else toast.show(it) })
     }
     val session by ports.session.collectAsState()
@@ -440,9 +445,10 @@ private fun PhraseFallbackRow(lead: String, enabled: Boolean, onClick: () -> Uni
                 layout(placeable.width, (placeable.height - trim).coerceAtLeast(0)) { placeable.place(0, 0) }
             }
             .heightIn(min = 48.dp)
+            // Before the clear: a tag after `clearAndSetSemantics` is cleared with the rest (iOS `lock.usePhrase`).
+            .testTag("lock.usePhrase")
             .pressable(enabled = enabled, role = Role.Button, onClick = onClick)
-            .clearAndSetSemantics { contentDescription = LockCopy.USE_PHRASE }
-            .testTag("lock.usePhrase"),
+            .clearAndSetSemantics { contentDescription = LockCopy.USE_PHRASE },
         horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically,
     ) {

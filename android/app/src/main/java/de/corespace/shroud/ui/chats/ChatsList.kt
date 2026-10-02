@@ -6,8 +6,12 @@ import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.FiniteAnimationSpec
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
@@ -23,6 +27,7 @@ import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -79,29 +84,82 @@ object ChatsCopy {
 
 /**
  * The header that scrolls away under the bar (`ChatsView.swift:65-79`): the offline banner (h 16,
- * sliding in from the top with a fade, `Motion.fade`) above the header [SearchField] (h 16, bottom
- * 10), which fades out while the tab bar's search is open (`isTabBarSearchActive`, CV:72-77) —
- * both fields edit the shell's one query.
+ * sliding in from the top with a fade, `Motion.fade`, CV:70, 79) above the header [SearchField]
+ * (h 16, bottom 10), which fades out while the tab bar's search is open (`isTabBarSearchActive`,
+ * CV:72-77; the tab bar flips it inside `withAnimation(Motion.gentle)`, `FloatingTabBar.swift:244,
+ * 299`) — both fields edit the shell's one query.
+ *
+ * As in SwiftUI, the rows below move with the header instead of jumping when a part comes or goes
+ * (each part grows and shrinks with its own animation), and the `VStack(spacing: 8)` gap stands
+ * only between the two parts: with the tab bar's search open the banner sits alone, no gap under it.
  */
 @Composable
 internal fun ChatsHeader(isOffline: Boolean, tabBarSearchActive: Boolean, query: String, onQueryChange: (String) -> Unit) {
     val reduceMotion = ShroudTheme.reduceMotion
+    val fieldShown = !tabBarSearchActive
+    // The gap belongs to the banner and follows the field in and out with the field's animation.
+    val gap by animateDpAsState(
+        targetValue = ChatsHeaderLayout.gapUnderBanner(fieldShown),
+        animationSpec = ChatsHeaderTransitions.fieldSpec(reduceMotion),
+        label = "chatsHeaderGap",
+    )
     Column(Modifier.fillMaxWidth()) {
         AnimatedVisibility(
             visible = isOffline,
-            enter = if (reduceMotion) fadeIn(Motion.reduced()) else slideInVertically(Motion.fade()) { -it } + fadeIn(Motion.fade()),
-            exit = if (reduceMotion) fadeOut(Motion.reduced()) else slideOutVertically(Motion.fade()) { -it } + fadeOut(Motion.fade()),
+            enter = ChatsHeaderTransitions.bannerEnter(reduceMotion),
+            exit = ChatsHeaderTransitions.bannerExit(reduceMotion),
         ) {
-            // `VStack(spacing: 8)`: the gap rides with the banner, so no gap stays behind without it.
             Column {
                 OfflineBanner(Modifier.padding(horizontal = 16.dp))
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(gap))
             }
         }
-        AnimatedVisibility(visible = !tabBarSearchActive, enter = fadeIn(Motion.fade()), exit = fadeOut(Motion.fade())) {
+        AnimatedVisibility(
+            visible = fieldShown,
+            enter = ChatsHeaderTransitions.fieldEnter(reduceMotion),
+            exit = ChatsHeaderTransitions.fieldExit(reduceMotion),
+        ) {
             SearchField(query, onQueryChange, modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 10.dp))
         }
     }
+}
+
+/** The header's spacing (`ChatsView.swift:66`). Pure. */
+object ChatsHeaderLayout {
+    /** `VStack(spacing: 8)`: 8 dp under the banner while the field follows it, none when the banner is alone. */
+    fun gapUnderBanner(fieldShown: Boolean): Dp = if (fieldShown) 8.dp else 0.dp
+}
+
+/**
+ * How the header's parts come and go. The banner: `.move(edge: .top)` + opacity at `Motion.fade`
+ * (CV:70, 79). The field: opacity at the tab bar's `Motion.gentle` (FTB:244, 299). Both grow and
+ * shrink their space unclipped, so the list follows smoothly. Reduce motion: fades in
+ * `Motion.reduced`, no slide.
+ */
+internal object ChatsHeaderTransitions {
+    fun bannerEnter(reduceMotion: Boolean): EnterTransition =
+        if (reduceMotion) {
+            fadeIn(Motion.reduced()) + expandVertically(Motion.reduced(), expandFrom = Alignment.Top, clip = false)
+        } else {
+            expandVertically(Motion.fade(), expandFrom = Alignment.Top, clip = false) +
+                slideInVertically(Motion.fade()) { -it } + fadeIn(Motion.fade())
+        }
+
+    fun bannerExit(reduceMotion: Boolean): ExitTransition =
+        if (reduceMotion) {
+            fadeOut(Motion.reduced()) + shrinkVertically(Motion.reduced(), shrinkTowards = Alignment.Top, clip = false)
+        } else {
+            shrinkVertically(Motion.fade(), shrinkTowards = Alignment.Top, clip = false) +
+                slideOutVertically(Motion.fade()) { -it } + fadeOut(Motion.fade())
+        }
+
+    fun <T> fieldSpec(reduceMotion: Boolean): FiniteAnimationSpec<T> = Motion.respecting(reduceMotion, Motion.gentle())
+
+    fun fieldEnter(reduceMotion: Boolean): EnterTransition =
+        fadeIn(fieldSpec(reduceMotion)) + expandVertically(fieldSpec(reduceMotion), expandFrom = Alignment.Top, clip = false)
+
+    fun fieldExit(reduceMotion: Boolean): ExitTransition =
+        fadeOut(fieldSpec(reduceMotion)) + shrinkVertically(fieldSpec(reduceMotion), shrinkTowards = Alignment.Top, clip = false)
 }
 
 /**
@@ -141,7 +199,7 @@ internal class RowAnchor {
  * opens the row menu ([onMenu] with the row's bounds) and the 1 dp `separator` line inset 80
  * (16 + 52 + 12) under it when [separator] (CV:146-148, 364-369). Reordering animates with
  * `Motion.standard` (CV:170-171). TalkBack gets the menu's items as custom actions ([onMenuItem];
- * "Mute" opens the row menu, whose Mute row holds the five durations).
+ * "Mute" opens the menu card on the five durations).
  */
 @Composable
 internal fun LazyItemScope.ChatListRow(
@@ -255,13 +313,17 @@ internal fun ChatsEmptyState(isSearching: Boolean, onNewChat: () -> Unit) {
     )
 }
 
-/** How the list's state block changes (CV:171-173, LLE:64, CV:405). */
+/**
+ * How the list's state block changes (CV:171-173, LLE:64, CV:405). The block's height follows at
+ * the same `Motion.fade` as its content (`.animation(Motion.fade, value: showsSkeleton)`,
+ * `.animation(Motion.fade, value: chatsError)`), so the space under the rows never springs.
+ */
 internal object ChatsBlockTransitions {
     fun between(from: ChatsListBlock, to: ChatsListBlock, risePx: Int, reduceMotion: Boolean): ContentTransform =
         ContentTransform(
             targetContentEnter = enter(to, risePx, reduceMotion),
             initialContentExit = exit(from, risePx, reduceMotion),
-            sizeTransform = SizeTransform(clip = false),
+            sizeTransform = SizeTransform(clip = false) { _, _ -> if (reduceMotion) Motion.reduced() else Motion.fade() },
         )
 
     private fun rises(block: ChatsListBlock): Boolean = block is ChatsListBlock.LoadError || block is ChatsListBlock.Empty
