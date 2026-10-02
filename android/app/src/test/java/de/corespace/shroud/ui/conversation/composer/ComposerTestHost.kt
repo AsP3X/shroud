@@ -69,6 +69,17 @@ internal class ComposerTestHost(dark: Boolean = false, content: @Composable () -
         (root as RootForTest).measureAndLayoutForTest()
     }
 
+    /**
+     * [settle], after the staggered entrance's waits (`entranceRow`: up to 8 × 30 ms) passed in real
+     * time: Compose's UI dispatcher has no `Delay`, so an effect's `delay` runs on kotlinx's own
+     * timer, which Robolectric's clock does not move. Without it a render catches rows still hidden.
+     */
+    fun settleEntrances() {
+        settle()
+        Thread.sleep(ENTRANCE_WAIT_MS)
+        settle()
+    }
+
     /** The Compose root view. */
     val root: View get() = findRoot(activity.window.decorView) ?: error("no Compose root in the activity")
 
@@ -203,6 +214,9 @@ internal class ComposerTestHost(dark: Boolean = false, content: @Composable () -
     private companion object {
         const val FRAME_MS = 16L
         const val IME_ANIMATION_MS = 250L
+
+        /** Past the longest entrance wait (8 steps of 30 ms) with room for a busy test machine. */
+        const val ENTRANCE_WAIT_MS = 400L
     }
 
     private fun findRoot(view: View): View? {

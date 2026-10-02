@@ -89,6 +89,12 @@ class ComposerScreensRenderTest {
         return ui
     }
 
+    /** The attach sheet, with its staggered entrance played out. */
+    private fun openSheet(ui: ComposerTestHost) {
+        controller.openAttachSheet()
+        ui.settleEntrances()
+    }
+
     private fun type(ui: ComposerTestHost, text: String) {
         controller.draft.setTextAndPlaceCursorAtEnd(text)
         ui.settle()
@@ -346,7 +352,7 @@ class ComposerScreensRenderTest {
             recentsGate = CompletableDeferred()
         }
         val ui = stage()
-        controller.openAttachSheet()
+        openSheet(ui)
         ui.render("attach-loading")
         assertTrue(ui.has("Loading recent photos"))
     }
@@ -359,7 +365,7 @@ class ComposerScreensRenderTest {
             colourfulTiles()
         }
         val ui = stage()
-        controller.openAttachSheet()
+        openSheet(ui)
         ui.render("attach-recents")
         assertTrue(ui.has("Recent photo 1 of 12"))
         assertTrue(ui.nodesWithText("All Photos").isNotEmpty())
@@ -373,7 +379,7 @@ class ComposerScreensRenderTest {
             colourfulTiles()
         }
         val ui = stage(dark = true)
-        controller.openAttachSheet()
+        openSheet(ui)
         ui.render("attach-recents-dark")
         assertTrue(ui.has("Recent photo 1 of 12"))
     }
@@ -387,7 +393,7 @@ class ComposerScreensRenderTest {
             decodeGate = CompletableDeferred()
         }
         val ui = stage()
-        controller.openAttachSheet()
+        openSheet(ui)
         ui.settle()
         ui.click("Recent photo 2 of 12")
         ui.render("attach-tile-loading")
@@ -398,7 +404,7 @@ class ComposerScreensRenderTest {
     fun attachEmpty() {
         prepare { libraryAccess = LibraryAccess.Full }
         val ui = stage()
-        controller.openAttachSheet()
+        openSheet(ui)
         ui.render("attach-empty")
         assertTrue(ui.nodesWithText("No recent photos").isNotEmpty())
     }
@@ -410,7 +416,7 @@ class ComposerScreensRenderTest {
             photoAccessAsked = true
         }
         val ui = stage()
-        controller.openAttachSheet()
+        openSheet(ui)
         ui.render("attach-denied")
         assertTrue(ui.nodesWithText("Recent photos are hidden").isNotEmpty())
         assertTrue(ui.nodesWithText("Allow Access").isNotEmpty())
@@ -424,7 +430,7 @@ class ComposerScreensRenderTest {
             colourfulTiles()
         }
         val ui = stage()
-        controller.openAttachSheet()
+        openSheet(ui)
         ui.render("attach-partial")
         assertTrue(ui.nodesWithText("SELECTED PHOTOS").isNotEmpty())
         assertTrue(ui.nodesWithText("Manage").isNotEmpty())
