@@ -7,6 +7,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -43,6 +44,7 @@ import de.corespace.shroud.ui.components.ToastHost
 import de.corespace.shroud.ui.components.rememberToastState
 import de.corespace.shroud.ui.lock.LockScreen
 import de.corespace.shroud.ui.onboarding.LogInScreen
+import de.corespace.shroud.ui.onboarding.ProvideOnboardingHero
 import de.corespace.shroud.ui.onboarding.ServerSettingsContent
 import de.corespace.shroud.ui.onboarding.SignUpScreen
 import de.corespace.shroud.ui.onboarding.WelcomeScreen
@@ -194,8 +196,9 @@ private fun MainShellLayer(router: AppRouter, unlocked: Boolean, hiddenFromAcces
 /**
  * The signed-out / locked stack (`onboardingStack`, `RootView.swift:401-423`): Welcome, or the lock
  * screen when this account's keys are stored here ([AppShellController.needsChatUnlock]), cross-fading
- * between them ([Motion.fade]); Sign Up and Log In are pushed above with the iOS push slide. Each
- * route keeps its saveable state while it is under another (Welcome's arrival plays once).
+ * between them ([Motion.fade]); Sign Up and Log In zoom out of the root's brand mark and replace each
+ * other with the push slide ([OnboardingRouteHost]). Each route keeps its saveable state while it is
+ * under another (Welcome's arrival plays once).
  */
 @Composable
 private fun OnboardingStack(shell: AppShellController) {
@@ -226,11 +229,7 @@ private fun OnboardingStack(shell: AppShellController) {
     BackHandler(enabled = router.canPop && !showsServerSettings) { router.pop() }
 
     Box(Modifier.fillMaxSize()) {
-        AnimatedContent(
-            targetState = router.top,
-            transitionSpec = { onboardingPushPop(router.lastWasPush, reduce) },
-            label = "onboarding",
-        ) { route ->
+        OnboardingRouteHost(top = router.top, lastWasPush = { router.lastWasPush }, reduceMotion = reduce) { route ->
             saveable.SaveableStateProvider(route?.name ?: ROOT_ROUTE_KEY) {
                 when (route) {
                     null -> Crossfade(needsUnlock, animationSpec = Motion.respecting(reduce, Motion.fade()), label = "onboardingRoot") { lock ->
@@ -295,9 +294,66 @@ private fun NotificationPermissionOnFirstUnlock(unlocked: Boolean) {
     }
 }
 
+/**
+ * The onboarding stack's animated host, iOS `RootView`'s `NavigationStack` with its
+ * `onboardingNamespace` (`RootView.swift:51, 120, 401-423`; `OnboardingHeroTransition.swift`): one
+ * [SharedTransitionLayout] around the routes' [AnimatedContent], and each route's [content] inside
+ * [ProvideOnboardingHero], so Welcome's and the lock screen's brand mark (`onboardingHeroSource`)
+ * and the Sign Up / Log In screen (`onboardingHeroDestination`) zoom into each other (W8, H.2
+ * option A). The content transition itself is [OnboardingTransition.between]'s: a plain fade under
+ * the zoom, the push slide between Sign Up and Log In; under Reduce Motion the hero modifiers do
+ * nothing and every change is the reduced fade.
+ */
+@Composable
+internal fun OnboardingRouteHost(
+    top: OnboardingRoute?,
+    lastWasPush: () -> Boolean,
+    reduceMotion: Boolean,
+    modifier: Modifier = Modifier,
+    content: @Composable (OnboardingRoute?) -> Unit,
+) {
+    SharedTransitionLayout(modifier) {
+        AnimatedContent(
+            targetState = top,
+            transitionSpec = { onboardingTransition(OnboardingTransition.between(initialState, targetState), lastWasPush(), reduceMotion) },
+            label = "onboarding",
+        ) { route ->
+            ProvideOnboardingHero(this@SharedTransitionLayout, this@AnimatedContent) { content(route) }
+        }
+    }
+}
+
+/** How the onboarding stack moves from one route to the next ([OnboardingRouteHost]). */
+internal enum class OnboardingTransition {
+    /**
+     * The root (Welcome or the lock screen) ↔ Sign Up / Log In: a plain fade; the hero zoom out of
+     * the brand mark carries the motion (`navigationTransition(.zoom)`, `OnboardingHeroTransition.swift:46-56`).
+     */
+    Zoom,
+
+    /** Sign Up ↔ Log In: the push slide (the addendum: a slide reads better than iOS's second zoom). */
+    Slide,
+    ;
+
+    companion object {
+        /** The transition from [from] to [to]; null is the root. */
+        fun between(from: OnboardingRoute?, to: OnboardingRoute?): OnboardingTransition =
+            if (from.isAuthScreen && to.isAuthScreen) Slide else Zoom
+
+        private val OnboardingRoute?.isAuthScreen: Boolean
+            get() = this == OnboardingRoute.SignUp || this == OnboardingRoute.LogIn
+    }
+}
+
+/** [kind]'s content transform; [push] picks the slide's direction. */
+private fun onboardingTransition(kind: OnboardingTransition, push: Boolean, reduce: Boolean): ContentTransform = when {
+    reduce -> fadeIn(Motion.reduced()) togetherWith fadeOut(Motion.reduced())
+    kind == OnboardingTransition.Zoom -> fadeIn(Motion.fade()) togetherWith fadeOut(Motion.fade())
+    else -> onboardingPushPop(push)
+}
+
 /** The iOS push: the new screen slides in from the end, the old one drifts back a third (`ShroudApp.kt` interim). */
-private fun onboardingPushPop(push: Boolean, reduce: Boolean): ContentTransform {
-    if (reduce) return fadeIn(Motion.reduced()) togetherWith fadeOut(Motion.reduced())
+private fun onboardingPushPop(push: Boolean): ContentTransform {
     return if (push) {
         (slideInHorizontally(Motion.standard()) { it } + fadeIn(Motion.fade())) togetherWith
             (slideOutHorizontally(Motion.standard()) { -it / 3 } + fadeOut(Motion.fade()))
