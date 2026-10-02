@@ -36,11 +36,23 @@ class MediaComposeStateTest {
      * then posts its apply notification to the main looper. Run it before Robolectric resets the
      * looper, or the dropped post strands Compose's shared main-thread dispatcher and every later
      * Compose test in this JVM stops recomposing.
+     *
+     * Bounded on purpose: an endless animation in a composition another class left alive would
+     * keep a plain `idle()` running frames forever (Robolectric delivers each vsync at once).
      */
     @After
     fun drainMainLooper() {
         Snapshot.sendApplyNotifications()
-        shadowOf(Looper.getMainLooper()).idle()
+        val looper = shadowOf(Looper.getMainLooper())
+        repeat(MAX_DRAIN_TASKS) {
+            if (looper.isIdle) return
+            looper.runOneTask()
+        }
+    }
+
+    private companion object {
+        /** Far more than the one apply notification needs; a cap, not a count. */
+        const val MAX_DRAIN_TASKS = 64
     }
 
     @Test
