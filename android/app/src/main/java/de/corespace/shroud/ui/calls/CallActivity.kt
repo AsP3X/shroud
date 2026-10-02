@@ -18,14 +18,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import de.corespace.shroud.ShroudApplication
 import de.corespace.shroud.core.calls.CallPhase
 import de.corespace.shroud.core.calls.system.CallIntents
 import de.corespace.shroud.ui.components.OverlayHost
 import de.corespace.shroud.ui.theme.ShroudTheme
 import java.util.UUID
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 
 /**
  * The lock-screen host of the call screen (K8; calls §6.9): the full-screen intent of a ring and
@@ -38,7 +40,8 @@ import kotlinx.coroutines.launch
  *   must never run the session glue, the shell or `finishInterruptedWipeIfNeeded` (Grok §4: a
  *   pending wipe would delete the session). It never builds the shell either way.
  * - **No call** for a valid intent (the ring ended, or a process restart lost it): finishes.
- * - **Answer** (once per intent): `CallController.acceptIncoming()` for the call that rings.
+ * - **Answer** (once per intent): `CallController.acceptIncoming()` for the call that rings, from
+ *   the screen once its permission prompt is installed (the microphone dialog shows over the keyguard).
  * - **Hooks:** `callsSystem.screenHooks.onCallScreenShown(callId)` in [onResume] (it may start the
  *   phoneCall service an earlier start was refused), `onCallScreenHidden()` in [onPause].
  * - **Back** leaves the call screen (P17b): the task goes back, the call goes on.
@@ -49,6 +52,13 @@ import kotlinx.coroutines.launch
 class CallActivity : ComponentActivity() {
     private var ports: CallPorts? = null
     private var callId: UUID? = null
+
+    /**
+     * The ringing call the notification's Answer asked for. Accepted from the screen's composition,
+     * once its permission prompt is installed: answering may need the microphone dialog, which must
+     * show here, over the keyguard.
+     */
+    private val pendingAnswer = MutableStateFlow<UUID?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -73,7 +83,7 @@ class CallActivity : ComponentActivity() {
         // A recreation (rotation is handled in place, process death is not) must not answer twice.
         if (savedInstanceState == null) handleAction(ports, parsed)
         setContent {
-            CallActivityContent(ports, onGone = ::finish, onBack = { moveTaskToBack(true) })
+            CallActivityContent(ports, pendingAnswer, onGone = ::finish, onBack = { moveTaskToBack(true) })
         }
     }
 
@@ -103,7 +113,7 @@ class CallActivity : ComponentActivity() {
         if (action != ACTION_ANSWER) return
         val active = ports.ui.value.active ?: return
         if (active.id != id || active.phase != CallPhase.IncomingRinging) return
-        lifecycleScope.launch { ports.acceptIncoming() }
+        pendingAnswer.value = id
     }
 
     private fun portsFor(): CallPorts {
@@ -127,18 +137,30 @@ private const val ACTION_ANSWER = "answer"
  * the call (and its "Call ended") is over.
  */
 @Composable
-private fun CallActivityContent(ports: CallPorts, onGone: () -> Unit, onBack: () -> Unit) {
+private fun CallActivityContent(ports: CallPorts, pendingAnswer: MutableStateFlow<UUID?>, onGone: () -> Unit, onBack: () -> Unit) {
     CompositionLocalProvider(LocalCallPorts provides ports) {
         ShroudTheme(dark = true) {
             OverlayHost {
                 CallPermissionPromptHost(ports)
                 val state by ports.ui.collectAsState()
                 val call = state.active
+                val answer by pendingAnswer.collectAsState()
+                val lifecycle = LocalLifecycleOwner.current.lifecycle
+                // Once resumed, a frame on: the prompt above is installed by then, and answering may
+                // ask for the microphone.
+                LaunchedEffect(answer) {
+                    val id = answer ?: return@LaunchedEffect
+                    lifecycle.currentStateFlow.first { it.isAtLeast(Lifecycle.State.RESUMED) }
+                    withFrameNanos { }
+                    pendingAnswer.value = null
+                    val ringing = ports.ui.value.active
+                    if (ringing != null && ringing.id == id && ringing.phase == CallPhase.IncomingRinging) ports.acceptIncoming()
+                }
                 val focus = remember { FocusRequester() }
                 LaunchedEffect(call == null) {
                     if (call == null) onGone()
                 }
-                LaunchedEffect(call?.id) {
+                LaunchedEffect(call == null) {
                     if (call == null) return@LaunchedEffect
                     // Once the screen is laid out (a frame), so the focus target is attached.
                     withFrameNanos { }

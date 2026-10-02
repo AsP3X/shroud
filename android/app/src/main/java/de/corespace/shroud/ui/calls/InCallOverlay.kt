@@ -138,11 +138,14 @@ fun InCallOverlay(modifier: Modifier = Modifier) {
             }
         }
     }
-    // A new call shows in full, and TalkBack moves onto it.
+    // Another call shows in full.
     LaunchedEffect(call?.id) {
-        val id = call?.id ?: return@LaunchedEffect
-        InCallPresentation.onCall(id)
-        // Once the screen is laid out (a frame), so the focus target is attached.
+        call?.id?.let(InCallPresentation::onCall)
+    }
+    // TalkBack moves onto a call that appears (`RootView.swift:240-245`: from none, not when an
+    // outgoing call's id becomes the server's), once the screen is laid out (a frame).
+    LaunchedEffect(call == null) {
+        if (call == null) return@LaunchedEffect
         withFrameNanos { }
         runCatching { focus.requestFocus() }
     }
