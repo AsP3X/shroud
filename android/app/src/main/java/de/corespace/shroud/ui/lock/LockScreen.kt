@@ -139,6 +139,7 @@ internal fun LockScreenContent(
         LockScreenModel(ports, router, haptic = haptics, showToast = { if (it == null) toast.dismiss() else toast.show(it) })
     }
     val session by ports.session.collectAsState()
+    val savedServer by server.collectAsState()
     var showServerSettings by remember { mutableStateOf(false) }
     // Survives a push to the phrase step and back, as the iOS view stays in the stack (`:37`, `:104-109`).
     var hasArrived by rememberSaveable { mutableStateOf(false) }
@@ -274,7 +275,7 @@ internal fun LockScreenContent(
         // session on the server that issued it, and only then is the new server saved (`:134-142`).
         ShroudSheet(visible = showServerSettings, onDismiss = { showServerSettings = false }, paneTitle = "Server") {
             ServerSettingsContent(
-                initial = server.value,
+                initial = savedServer,
                 onSave = { draft ->
                     saveServer(draft)
                     showServerSettings = false

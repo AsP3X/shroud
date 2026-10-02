@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -129,7 +130,7 @@ fun SwipeToReplyRow(
     val haptic = rememberHaptics()
     val scope = rememberCoroutineScope()
     val offset = remember { Animatable(0f) }
-    var progress by remember { mutableStateOf(0f) }
+    var progress by remember { mutableFloatStateOf(0f) }
     var armed by remember { mutableStateOf(false) }
     var swiping by remember { mutableStateOf(false) }
     val currentEnabled by rememberUpdatedState(enabled)

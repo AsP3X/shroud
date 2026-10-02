@@ -82,7 +82,8 @@ internal fun ChatsTab(
     layout: WindowLayout = LocalWindowLayout.current,
 ) {
     val context = LocalContext.current
-    val locale: Locale = LocalConfiguration.current.locales[0] ?: Locale.getDefault()
+    // The app's locale as Compose observes it (lint NonObservableLocale): a language change re-renders.
+    val locale: Locale = LocalConfiguration.current.locales[0] ?: Locale.ROOT
     val is24h = DateFormat.is24HourFormat(context)
     val zone = ZoneId.systemDefault()
     val live = rememberChatsSnapshot(source, clock)

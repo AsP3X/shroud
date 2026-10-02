@@ -84,11 +84,11 @@ enum class BubbleKind {
 @Composable
 fun MessageBubble(row: MessageRowModel, context: BubbleContext, modifier: Modifier = Modifier) {
     val services = rememberBubbleServices()
+    // Idempotent: the first bubble wires the caches to messaging and the bundled emoji font, before it draws.
     remember(services) {
-        // Idempotent: the first bubble wires the caches to messaging and the bundled emoji font.
         BubbleMemory.install(services)
         BubbleEmoji.install(services.context)
-        Unit
+        services
     }
     val rowWidth = LocalChatRowWidth.current
     if (rowWidth.isSpecified) {

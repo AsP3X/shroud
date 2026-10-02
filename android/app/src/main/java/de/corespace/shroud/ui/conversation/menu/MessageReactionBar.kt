@@ -158,10 +158,11 @@ internal fun ReactionCell(
     selected: Boolean,
     onClick: () -> Unit,
     onPositioned: (Rect) -> Unit,
+    modifier: Modifier = Modifier,
     glyphModifier: Modifier = Modifier,
 ) {
     Box(
-        Modifier
+        modifier
             .size(cellSize.dp)
             .pressable(scale = 0.78f, dimming = 0f, role = Role.Button, onClick = onClick)
             .semantics {

@@ -40,8 +40,8 @@ fun MessageReceiptIcon(
     receipt: ReceiptStatus,
     metaColor: Color,
     readColor: Color,
-    failedColor: Color = ShroudTheme.colors.danger,
     modifier: Modifier = Modifier,
+    failedColor: Color = ShroudTheme.colors.danger,
 ) {
     val swap = Motion.iconSwap.respecting(ShroudTheme.reduceMotion)
     AnimatedContent(
@@ -110,13 +110,13 @@ fun BubbleMetaRow(
     receipt: ReceiptStatus?,
     metaColor: Color,
     readColor: Color,
+    modifier: Modifier = Modifier,
     failedColor: Color = ShroudTheme.colors.danger,
     timeColor: Color = metaColor,
     style: TextStyle = MessageBubbleMetrics.metaStyle,
-    modifier: Modifier = Modifier,
 ) {
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(MessageBubbleMetrics.metaSpacing), verticalAlignment = Alignment.CenterVertically) {
         BasicText(time, style = style.copy(color = timeColor), maxLines = 1, softWrap = false)
-        if (receipt != null) MessageReceiptIcon(receipt, metaColor, readColor, failedColor)
+        if (receipt != null) MessageReceiptIcon(receipt, metaColor, readColor, failedColor = failedColor)
     }
 }

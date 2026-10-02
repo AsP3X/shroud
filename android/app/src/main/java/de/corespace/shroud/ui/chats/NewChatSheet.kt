@@ -136,7 +136,8 @@ internal fun NewChatSheet(
 @Composable
 private fun NewChatBody(source: ChatsSource, clock: AppClock, onDismiss: () -> Unit, onSelect: (UUID, String) -> Unit) {
     val context = LocalContext.current
-    val locale: Locale = LocalConfiguration.current.locales[0] ?: Locale.getDefault()
+    // The app's locale as Compose observes it (lint NonObservableLocale): a language change re-renders.
+    val locale: Locale = LocalConfiguration.current.locales[0] ?: Locale.ROOT
     val is24h = DateFormat.is24HourFormat(context)
     val zone = ZoneId.systemDefault()
     var query by remember { mutableStateOf("") }

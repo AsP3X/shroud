@@ -2,6 +2,7 @@ package de.corespace.shroud.ui.media
 
 import android.graphics.Bitmap
 import android.net.Uri
+import androidx.core.graphics.scale
 import de.corespace.shroud.core.media.MediaComposeQuality
 import de.corespace.shroud.core.media.MediaImageSource
 import de.corespace.shroud.core.media.video.VideoProbe
@@ -43,7 +44,7 @@ class PickedPhoto(val id: UUID = UUID.randomUUID(), val preview: Bitmap, val sou
             val preview = if (width == image.width && height == image.height) {
                 image
             } else {
-                Bitmap.createScaledBitmap(image, width, height, true).also { it.setHasAlpha(false) }
+                image.scale(width, height, filter = true).also { it.setHasAlpha(false) }
             }
             return PickedPhoto(preview = preview, source = MediaImageSource.Decoded(image))
         }

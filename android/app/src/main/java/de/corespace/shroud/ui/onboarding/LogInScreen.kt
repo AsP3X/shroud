@@ -29,6 +29,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -203,7 +204,8 @@ internal fun LogInContent(
     val canSubmitCredentials = username.isNotBlank() && password.isNotEmpty() && !submitting
     val canUnlock = LogInRules.canUnlock(submitting, creatingPhrase, words, newPhrase, revealed, wroteDownNewPhrase)
     val revealInProgress = revealed < Bip39.WORD_COUNT && words.any { it.isNotEmpty() }
-    val signedInName = LogInRules.signedInName(services.session.value?.username, username)
+    val signedInSession by services.session.collectAsState()
+    val signedInName = LogInRules.signedInName(signedInSession?.username, username)
 
     // Autofill (L7): the password manager is offered the login once it worked; left without one,
     // the screen's fields are dropped from the save prompt.
