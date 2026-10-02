@@ -60,14 +60,17 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         val container = container
+        // A recreated activity (process death) must not replay the tap or link that launched it.
+        // Handed over before the shell starts: the launch sequence then drops a tap that cold-started
+        // a signed-out app (`RootView.swift:169-170`) — the app scope runs it at once, up to its
+        // first suspension, which on a signed-out phone is past that check.
+        if (savedInstanceState == null) handleIntent(intent)
         // The shell starts with the first MainActivity, not with the process (`ShellModule.startShell`).
         val shell = container.shell.startShell()
         protection = WindowProtectionGuard(WindowControls.of(this))
         lifecycleScope.launch {
             shell.windowProtection.collect { protection.hold(WindowProtectionGuard.SHELL, it) }
         }
-        // A recreated activity (process death) must not replay the tap or link that launched it.
-        if (savedInstanceState == null) handleIntent(intent)
         setContent {
             val theme by container.auth.colorTheme.theme.collectAsState()
             val dark = when (theme) {

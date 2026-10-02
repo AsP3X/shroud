@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import de.corespace.shroud.ui.shell.LocalTabBarClearance
 import de.corespace.shroud.ui.theme.DarkColors
 import de.corespace.shroud.ui.theme.MediaColors
 import de.corespace.shroud.ui.theme.Motion
@@ -152,10 +153,12 @@ fun rememberToastState(): ToastState = remember { ToastState() }
  * Floats the current toast over the bottom of the screen and clears it after its duration
  * (`ToastBanner.swift:85-112`, shell-chats §10.15).
  *
- * - Bottom padding = 20 dp + the floating tab bar's clearance when there is one, else the system
- *   bottom inset (navigation bar, or the keyboard while it is up — iOS overlays sit inside the
- *   keyboard safe area) + [bottomInset], the extra lift over chrome the host draws itself (a chat's
- *   composer) ([toastBottomPadding]).
+ * - Bottom padding = 20 dp + the floating tab bar's clearance ([LocalTabBarClearance], the full
+ *   distance from the screen bottom to the bar's top, published by the shell over a tab root) when
+ *   there is one, else the system bottom inset (navigation bar, or the keyboard while it is up —
+ *   iOS overlays sit inside the keyboard safe area) + [bottomInset], the extra lift over chrome the
+ *   host draws itself (a chat's composer) ([toastBottomPadding]). Pushed screens and sheets see a
+ *   clearance of 0.
  * - Enters with `Motion.riseFromBottom` on [Motion.bouncy] ("a toast should feel like it landed",
  *   `:103-104`); Reduce Motion fades. Consecutive toasts swap their content in place.
  * - Informational toasts are not hit-testable: taps go through to the controls underneath
@@ -179,8 +182,8 @@ fun ToastHost(state: ToastState, bottomInset: Dp = 0.dp) {
     var shown by remember { mutableStateOf<Toast?>(null) }
     if (toast != null) shown = toast
     val systemBottom = WindowInsets.navigationBars.union(WindowInsets.ime).asPaddingValues().calculateBottomPadding()
-    // TODO(W2-INT): read `LocalTabBarClearance.current` (plan §1.7.13) here once ui/shell publishes it.
-    val bottom = toastBottomPadding(tabBarClearance = 0.dp, systemBottom = systemBottom, bottomInset = bottomInset)
+    // Over a tab root the toast floats 20 dp above the floating tab bar (`ToastBanner.swift:97`).
+    val bottom = toastBottomPadding(tabBarClearance = LocalTabBarClearance.current, systemBottom = systemBottom, bottomInset = bottomInset)
     val transition = Motion.riseFromBottom.respecting(reduce)
     Box(
         Modifier
