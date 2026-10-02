@@ -11,6 +11,7 @@ import androidx.emoji2.text.EmojiCompat
 import de.corespace.shroud.AppContainer
 import de.corespace.shroud.core.messaging.MessageArtifactSinks
 import de.corespace.shroud.core.model.ChatMessage
+import de.corespace.shroud.core.transcription.TranscribeException
 import de.corespace.shroud.core.transcription.VoiceTranscription
 import de.corespace.shroud.core.voice.VoicePlaybackCoordinator
 import de.corespace.shroud.ui.LocalAppContainer
@@ -19,6 +20,7 @@ import de.corespace.shroud.ui.conversation.DecodedImageCache
 import de.corespace.shroud.ui.conversation.LinkPreviewImageCache
 import de.corespace.shroud.ui.conversation.links.MessageLinkText
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -72,6 +74,16 @@ interface BubbleServices {
 
     /** Shares a transcript made here as an annotation, in the background (`ConversationView.swift:1617-1623`). */
     fun shareTranscript(transcript: String, voiceMessageId: UUID, peer: UUID)
+
+    /**
+     * The voice bubble's "→A" on a note nobody shared a transcript for — iOS `onRequestTranscript`
+     * (`ConversationView.swift:1607-1632`): transcribes the decrypted audio on this phone with
+     * [transcriptionHints], shares a non-empty result in the background ([shareTranscript]) and returns
+     * it (blank: no speech). Runs in the process scope, so a bubble scrolled away mid-way does not
+     * cancel the share. Throws [de.corespace.shroud.core.transcription.TranscribeException] with a
+     * user-facing message.
+     */
+    suspend fun transcribe(message: ChatMessage, peerName: String): String
 
     /** Purges, locks and re-keys reach the bubble caches through this ([BubbleMemory]). */
     fun registerArtifactSink(sink: MessageArtifactSinks): AutoCloseable
@@ -153,8 +165,28 @@ private class ContainerBubbleServices(private val container: AppContainer) : Bub
         container.appScope.launch { messaging.shareTranscript(transcript, voiceMessageId, peer) }
     }
 
+    override suspend fun transcribe(message: ChatMessage, peerName: String): String =
+        container.appScope.async {
+            val audio = messaging.mediaBytes(message.id) ?: throw TranscribeException(NOT_DOWNLOADED)
+            val text = container.transcription.voice.transcribe(
+                audio = audio,
+                // The decoder sniffs WAV itself; everything else goes through MediaExtractor.
+                mime = VOICE_MIME,
+                hints = transcriptionHints(peerName),
+                conversationId = message.peerUserId,
+                tracking = message.id,
+            ).trim()
+            if (text.isNotEmpty()) shareTranscript(text, message.id, message.peerUserId)
+            text
+        }.await()
+
     override fun registerArtifactSink(sink: MessageArtifactSinks): AutoCloseable = messaging.registerArtifactSink(sink)
     override val context: Context get() = container.appContext
+
+    private companion object {
+        const val VOICE_MIME = "audio/mp4"
+        const val NOT_DOWNLOADED = "This voice message isn’t on this phone yet."
+    }
 }
 
 /**
