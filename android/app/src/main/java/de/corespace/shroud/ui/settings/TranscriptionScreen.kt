@@ -29,6 +29,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import de.corespace.shroud.core.transcription.TranscriptionInstallState
+import de.corespace.shroud.core.transcription.VoiceTranscription
 import de.corespace.shroud.ui.LocalAppContainer
 import de.corespace.shroud.ui.components.InsetDivider
 import de.corespace.shroud.ui.components.PushedScreen
@@ -55,11 +56,18 @@ import kotlin.math.roundToInt
  * wiped at Log Out) and `install`.
  */
 @Composable
-fun TranscriptionScreen(onBack: () -> Unit) {
-    val voice = LocalAppContainer.current.transcription.voice
+fun TranscriptionScreen(onBack: () -> Unit) = TranscriptionScreen(LocalAppContainer.current.transcription.voice, onBack)
+
+/** [TranscriptionScreen] on a given [voice] (K7); [deviceLanguageTags] are the phone's languages, most preferred first. */
+@Composable
+internal fun TranscriptionScreen(
+    voice: VoiceTranscription,
+    onBack: () -> Unit,
+    deviceLanguageTags: () -> List<String> = TranscriptionPicker::deviceLanguageTags,
+) {
     val install by voice.install.collectAsState()
     // Read once on appear, as iOS does in `onAppear` (`:40-43`).
-    val available = remember(voice) { TranscriptionPicker.order(voice.availableLocales(), TranscriptionPicker.deviceLanguageTags()) }
+    val available = remember(voice) { TranscriptionPicker.order(voice.availableLocales(), deviceLanguageTags()) }
     var selection by remember(voice) { mutableStateOf(voice.languageOverride) }
     TranscriptionContent(
         install = install,

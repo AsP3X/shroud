@@ -28,6 +28,47 @@ class SettingsCopyTest {
         assertEquals("Istanbul", SettingsIdentity.displayName("istanbul"))
     }
 
+    /**
+     * Name, handle and hero initials against the iOS code itself: `SettingsView.swift:155-175` and
+     * `AvatarView.swift:67-79` copied verbatim into a Swift script and run with Apple Swift 6.4 on
+     * 2026-10-03. Swift's `uppercased()` / `lowercased()` are full, locale-free case mappings (ß → SS,
+     * ﬁ → FI, ǆ → Ǆ) and `prefix(1)` is one grapheme cluster (a decomposed é, a skin-toned emoji).
+     */
+    @Test
+    fun displayNameHandleAndInitialsMatchSwift() {
+        val swift = listOf(
+            // input, display name, handle, initials
+            listOf(null, "Shroud User", "@user", "SU"),
+            listOf("", "Shroud User", "@user", "SU"),
+            listOf("niklas_v", "Niklas V", "@niklas_v", "NV"),
+            listOf("NOAH_vorberg", "Noah Vorberg", "@NOAH_vorberg", "NV"),
+            listOf("alice", "Alice", "@alice", "AL"),
+            listOf("a__b", "A B", "@a__b", "AB"),
+            listOf("McDonald", "Mcdonald", "@McDonald", "MC"),
+            listOf("_lead_", "Lead", "@_lead_", "LE"),
+            listOf("___", "", "@___", "?"),
+            listOf("élodie", "Élodie", "@élodie", "ÉL"),
+            listOf("élodie", "Élodie", "@élodie", "ÉL"),
+            listOf("istanbul", "Istanbul", "@istanbul", "IS"),
+            listOf("ǆemal", "Ǆemal", "@ǆemal", "ǄE"),
+            listOf("ßtraße", "SStraße", "@ßtraße", "SS"),
+            listOf("o'brien", "O'brien", "@o'brien", "O'"),
+            listOf("anne-marie", "Anne-marie", "@anne-marie", "AN"),
+            listOf("x", "X", "@x", "X"),
+            listOf("émile_zola", "Émile Zola", "@émile_zola", "ÉZ"),
+            listOf("日本_太郎", "日本 太郎", "@日本_太郎", "日太"),
+            listOf("👍🏽cool", "👍🏽cool", "@👍🏽cool", "👍🏽C"),
+            listOf("dž_x", "Dž X", "@dž_x", "DX"),
+            listOf("ﬁnn", "FInn", "@ﬁnn", "FI"),
+        )
+        for ((input, name, handle, initials) in swift) {
+            val shown = SettingsIdentity.displayName(input)
+            assertEquals("name of $input", name, shown)
+            assertEquals("handle of $input", handle, SettingsIdentity.handle(input))
+            assertEquals("initials of $input", initials, SettingsIdentity.initials(shown))
+        }
+    }
+
     @Test
     fun noUsernameIsShroudUser() {
         assertEquals("Shroud User", SettingsIdentity.displayName(null))

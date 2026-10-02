@@ -7,6 +7,7 @@ import androidx.compose.animation.BoundsTransform
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
@@ -83,6 +84,7 @@ import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.core.net.ServerConfiguration
+import de.corespace.shroud.core.net.ServerConfigurationStore
 import de.corespace.shroud.core.net.ServerConnectionMode
 import de.corespace.shroud.ui.LocalAppContainer
 import de.corespace.shroud.ui.components.ActionSheet
@@ -98,6 +100,7 @@ import de.corespace.shroud.ui.components.ShroudTextField
 import de.corespace.shroud.ui.components.ShroudToggle
 import de.corespace.shroud.ui.components.Spinner
 import de.corespace.shroud.ui.components.pressable
+import de.corespace.shroud.ui.shell.AppActions
 import de.corespace.shroud.ui.shell.LocalAppActions
 import de.corespace.shroud.ui.shell.LocalPushedBackGate
 import de.corespace.shroud.ui.theme.Motion
@@ -126,18 +129,32 @@ import kotlin.math.roundToInt
 @Composable
 fun ServerSettingsScreen(onBack: () -> Unit) {
     val container = LocalAppContainer.current
-    val store = container.serverConfiguration
-    val saved by store.configuration.collectAsState()
     val session by container.auth.sessionController.session.collectAsState()
-    val actions = LocalAppActions.current
+    ServerSettingsScreen(container.serverConfiguration, signedIn = session != null, actions = LocalAppActions.current, onBack = onBack)
+}
+
+/**
+ * [ServerSettingsScreen] on a given [store], sign-in state and shell [actions]: a plain save writes
+ * [store]; a sign-out saves nothing and hands the draft to `AppActions.logOut(switchingTo)`.
+ */
+@Composable
+internal fun ServerSettingsScreen(
+    store: ServerConfigurationStore,
+    signedIn: Boolean,
+    actions: AppActions,
+    onBack: () -> Unit,
+    pause: suspend (Long) -> Unit = { delay(it) },
+) {
+    val saved by store.configuration.collectAsState()
     val initial = remember(store) { store.configuration.value }
     ServerSettingsPage(
         initial = initial,
         saved = saved,
-        signedIn = session != null,
+        signedIn = signedIn,
         save = { draft -> store.save(draft) },
         onSignOut = { draft -> actions.logOut(switchingTo = draft) },
         onBack = onBack,
+        pause = pause,
     )
 }
 
@@ -344,7 +361,7 @@ fun ServerSettingsPage(
                 )
                 ErrorLine(errorMessage, reduceMotion, Modifier.onGloballyPositioned { positions.error = it })
                 SignedInWarning()
-                InfoCard(draft.mode)
+                InfoCard(draft.mode, reduceMotion)
             }
             // `.allowsHitTesting(!isBusy)` (`:93`): nothing in the form takes a touch while saving.
             if (isBusy) {
@@ -650,13 +667,18 @@ private fun SignedInWarning() {
     }
 }
 
-/** The info card (`infoCard`, `:399-416`): `accent` glyph, `accentText` copy on `accentSoft`. */
+/**
+ * The info card (`infoCard`, `:399-416`): `accent` glyph, `accentText` copy on `accentSoft`. Its
+ * height follows the copy of the mode with the screen's spring (`.animation(spring, value: draft.mode)`,
+ * `:415`; a fade's timing under Reduce Motion).
+ */
 @Composable
-private fun InfoCard(mode: ServerConnectionMode) {
+private fun InfoCard(mode: ServerConnectionMode, reduceMotion: Boolean) {
     val colors = ShroudTheme.colors
     Row(
         Modifier
             .fillMaxWidth()
+            .animateContentSize(Motion.respecting(reduceMotion, Motion.standard()))
             .clip(RoundedCornerShape(14.dp))
             .background(colors.accentSoft)
             .semantics(mergeDescendants = true) {}
