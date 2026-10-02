@@ -129,14 +129,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity-alias>
-        <!-- W3-SETTINGS-A adds @mipmap/ic_launcher_simple; until then both styles share one icon. -->
         <activity-alias
             android:name=".LauncherSimple"
             android:targetActivity=".MainActivity"
             android:enabled="false"
             android:exported="true"
-            android:icon="@mipmap/ic_launcher"
-            android:roundIcon="@mipmap/ic_launcher">
+            android:icon="@mipmap/ic_launcher_simple"
+            android:roundIcon="@mipmap/ic_launcher_simple">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

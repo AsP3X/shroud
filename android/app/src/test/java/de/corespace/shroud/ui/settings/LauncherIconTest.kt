@@ -20,7 +20,6 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
-import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -76,11 +75,6 @@ class LauncherIconTest {
         assertEquals(BrandLogoStyle.Detailed, BrandLogoPreference(context).style.value)
     }
 
-    /**
-     * Change request CR-1 (W3-INT, manifest owner): `.LauncherSimple` still names
-     * `@mipmap/ic_launcher`. Remove the `@Ignore` once it names `@mipmap/ic_launcher_simple`.
-     */
-    @Ignore("CR-1: the manifest's .LauncherSimple alias must name @mipmap/ic_launcher_simple (W3-INT)")
     @Test
     fun eachAliasCarriesItsOwnIcon() {
         val detailed = packageManager.getActivityInfo(alias(BrandLogoStyle.Detailed), PackageManager.MATCH_DISABLED_COMPONENTS)
