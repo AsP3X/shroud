@@ -51,8 +51,9 @@ const val MESSAGE_LONG_PRESS_MS = 250L
  *
  * Agent: [onLongPress] gets the row's unclipped root frame (px) and runs on the gesture thread
  * (main); [onHoldReleased] runs when the finger that opened the menu lifts. [onDoubleTap] gets the
- * second tap's point in root px. Disabled ([enabled] false — the row whose menu is open): no
- * detection at all. No `combinedClickable` (its 400 ms timeout consumes, and it would claim the row).
+ * second tap's point in root px. Disabled ([enabled] false — the row whose menu is open): no new
+ * press is detected, but a hold already recognised keeps swallowing until its finger lifts. No
+ * `combinedClickable` (its 400 ms timeout consumes, and it would claim the row).
  */
 fun Modifier.messageGestures(
     press: RowPress,
@@ -64,6 +65,7 @@ fun Modifier.messageGestures(
     onDoubleTap: ((pointInRoot: Offset) -> Unit)?,
 ): Modifier = composed {
     val view = LocalView.current
+    val isEnabled by rememberUpdatedState(enabled)
     val longPress by rememberUpdatedState(onLongPress)
     val released by rememberUpdatedState(onHoldReleased)
     val tap by rememberUpdatedState(onTap)
@@ -75,11 +77,13 @@ fun Modifier.messageGestures(
             // Unclipped: a row half under the bar still lifts from where it really is.
             press.boundsInRoot = Rect(coordinates.positionInRoot(), coordinates.size.toSize())
         }
-        .pointerInput(enabled) {
-            if (!enabled) return@pointerInput
+        // Not keyed on [enabled]: the row disables itself the moment its menu opens, while the finger
+        // that opened it is still down — restarting here would stop swallowing that hold's release.
+        .pointerInput(Unit) {
             awaitEachGesture {
                 // Initial pass, nothing consumed: children and the list see the touch exactly as before.
                 val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                if (!isEnabled) return@awaitEachGesture
                 // Every new press starts clean (iOS clears `PressMemory` on touch-down, MLP:110-112).
                 press.longPressed = false
                 press.swiping = false

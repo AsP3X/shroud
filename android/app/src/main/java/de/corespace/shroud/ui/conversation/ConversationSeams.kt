@@ -75,9 +75,10 @@ interface BubbleContext {
     fun reportBubbleBounds(messageId: UUID, boundsInRoot: Rect)
 
     /**
-     * A reaction chip's bounds in the root, for reaction flights. While `LocalReactionFlightTarget`
-     * names this message and an emoji of the chip, the chip reports that emoji's exact frame under
-     * `ReactionFlightPath.emojiFrameId(emoji)` (ui/conversation/reactions/ReactionFlight.kt).
+     * A reaction chip's bounds in the root, for reaction flights. While a flight is on its way to
+     * [messageId], the chip holding the flying emoji draws that emoji hidden and reports **the
+     * emoji's** frame here, as it lays out (iOS `ReactionFlightFrameKey`, `MessageReactionChips.swift:
+     * 96-103, 179-189`); the conversation lands the flight on it (`ReactionFlightState.land`).
      */
     fun reportChipBounds(messageId: UUID, chipId: String, boundsInRoot: Rect)
 

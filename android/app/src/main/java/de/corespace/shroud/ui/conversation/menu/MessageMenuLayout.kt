@@ -131,6 +131,20 @@ object MessageMenuLayout {
         return Rect(left, row.top, left + width, row.top + height)
     }
 
+    /**
+     * Width of the slot the lifted bubble is drawn in: the thread's row width when known (the bubble
+     * then sizes from the same width as in the list and sits on its side of the slot), else the
+     * bubble's own width plus [HERO_SLACK] (`heroSlack`, MAM:745-751).
+     */
+    fun heroSlotWidth(heroWidth: Float, rowWidth: Float): Float =
+        if (rowWidth > 0f) max(rowWidth, heroWidth + HERO_SLACK) else heroWidth + HERO_SLACK
+
+    /**
+     * One spare dp for the lifted bubble: the list reports frames rounded to the pixel grid, a hair
+     * narrower than the bubble's ideal width; offered exactly that, a one-line bubble would re-wrap.
+     */
+    const val HERO_SLACK = 1f
+
     /** Linear interpolation of two rects (`MessageMenuOverlay.lerp`, `MessageActionMenu.swift:776-783`). */
     fun lerp(a: Rect, b: Rect, t: Float): Rect {
         val left = a.left + (b.left - a.left) * t

@@ -54,6 +54,9 @@ const val MESSAGE_MENU_PANE_TITLE = "Message options"
  *
  * Agent: [sourceInRoot] is the bubble's slot in root px when the hold began. The host animates
  * [progress] and owns what the buttons do; [hero] and [card] are drawn in slots of the planned size.
+ * [rowWidth] (dp, 0 when unknown) is the thread's row width: the hero gets a slot that wide, pinned to
+ * the bubble's side, so it sizes itself from the same width as the list bubble and cannot re-wrap
+ * (iOS passes `chatRowWidth` to the hero and offers it the bubble's width + 1, MAM:745-761).
  * The bubble is never interactive (its taps are the backdrop's), the card only above progress 0.5.
  * Reads the window insets (keyboard included) on every layout. Modal for TalkBack, announced as
  * [MESSAGE_MENU_PANE_TITLE]; TalkBack's dismiss is [onBackdropTap].
@@ -68,6 +71,7 @@ fun MessageMenuOverlay(
     selectedReactions: Set<String>,
     showsReactions: Boolean,
     onBackdropTap: () -> Unit,
+    rowWidth: Float = 0f,
     hero: @Composable () -> Unit,
     card: @Composable () -> Unit,
 ) {
@@ -142,6 +146,7 @@ fun MessageMenuOverlay(
                         progress = progress,
                         dimmed = showsAllReactions,
                         onBackdropTap = onBackdropTap,
+                        rowWidth = rowWidth,
                         heroContent = hero,
                         cardContent = card,
                     )
@@ -155,6 +160,7 @@ fun MessageMenuOverlay(
                 progress = progress,
                 dimmed = showsAllReactions,
                 onBackdropTap = onBackdropTap,
+                rowWidth = rowWidth,
                 heroContent = hero,
                 cardContent = card,
             )
@@ -178,14 +184,6 @@ fun MessageMenuOverlay(
     }
 }
 
-/**
- * Extra width offered to the lifted bubble beyond its measured frame (`heroSlack`, MAM:745-751): the
- * list reports a bubble's frame rounded to the pixel grid, which can be a hair narrower than the
- * bubble's ideal width; offered exactly that, a one-line bubble would re-wrap onto two lines the
- * moment the menu opens. One spare dp, pinned to the bubble's side, keeps the list's layout.
- */
-const val MESSAGE_MENU_HERO_SLACK = 1f
-
 /** The lifted bubble and the card, placed in one coordinate space (MAM:753-774). Rects in dp. */
 @Composable
 private fun BubbleAndCard(
@@ -195,10 +193,11 @@ private fun BubbleAndCard(
     progress: Float,
     dimmed: Boolean,
     onBackdropTap: () -> Unit,
+    rowWidth: Float,
     heroContent: @Composable () -> Unit,
     cardContent: @Composable () -> Unit,
 ) {
-    val slotWidth = hero.width + MESSAGE_MENU_HERO_SLACK
+    val slotWidth = MessageMenuLayout.heroSlotWidth(hero.width, rowWidth)
     val slotLeft = if (isMine) hero.right - slotWidth else hero.left
     // Behind the grown panel the message and its actions step back into the dimmed thread.
     Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (dimmed) 0.35f else 1f }) {

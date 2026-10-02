@@ -9,8 +9,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.ProvidableCompositionLocal
-import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -29,6 +28,9 @@ import androidx.compose.ui.unit.dp
 import de.corespace.shroud.ui.components.OverlayLayer
 import de.corespace.shroud.ui.conversation.menu.EmojiGlyph
 import de.corespace.shroud.ui.theme.Motion
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.UUID
 import kotlin.math.hypot
 import kotlin.math.min
@@ -38,13 +40,11 @@ import kotlin.math.roundToInt
  * An emoji on its way from where it was picked (the menu's bar, a double tap) to the chip it becomes
  * (`ReactionFlight`, `ReactionFlight.swift:1-25`; conversation-thread §14.6).
  *
- * Human: the chip is laid out first with its emoji hidden ([LocalReactionFlightTarget]), reports
- * where that emoji sits, and the flying copy arcs there and hands over without a seam: same place,
- * same size, then the chip's own emoji shows.
+ * Human: the chip is laid out first with its emoji hidden, reports where that emoji sits, and the
+ * flying copy arcs there and hands over without a seam: same place, same size, then the chip's own
+ * emoji shows.
  *
- * Agent: rects are root px. The conversation screen owns the state: sets [to] from the chip's
- * report, animates the landing, clears the flight when it lands — or fades it out ([fading]) when the
- * chip never shows up (scrolled away, the save refused at once) after [ReactionFlightPath.TIMEOUT_MS].
+ * Agent: rects are root px. [ReactionFlightState] owns it. Never prints the emoji.
  */
 @Immutable
 data class ReactionFlight(
@@ -53,39 +53,80 @@ data class ReactionFlight(
     val messageId: UUID,
     /** Root frame the emoji leaves from. */
     val from: Rect,
-    /** Scale at the start, relative to [ReactionFlightPath.FONT_SIZE] (a double tap starts big). */
+    /** Scale at the start, relative to [ReactionFlightPath.FONT_SIZE] (a double tap starts big, 1.6). */
     val fromScale: Float = 1f,
-    /** Root frame of the chip's emoji, once it is laid out. */
+    /** Root frame of the chip's emoji, once the chip reported it. */
     val to: Rect? = null,
     /** The chip never appeared: the flight fades where it is. */
     val fading: Boolean = false,
 ) {
-    val target: ReactionFlightTarget get() = ReactionFlightTarget(messageId, emoji)
-
-    /** Never prints the emoji. */
     override fun toString(): String = "ReactionFlight(id=$id, landed=${to != null}, fading=$fading)"
 }
 
-/** Which chip a flight lands on; that chip hides its emoji until the flight is over (`:27-31`). */
-@Immutable
-data class ReactionFlightTarget(val messageId: UUID, val emoji: String) {
-    override fun toString(): String = "ReactionFlightTarget(messageId=$messageId)"
+/**
+ * The conversation's one flight at a time (`reactionFlight`, `ConversationView.swift:31-32,
+ * 2149-2177`).
+ *
+ * Human: a pick starts a flight; the chip that receives it reports where its emoji is drawn
+ * ([land]) and the layer animates the landing, then hands over ([landed]). A chip that never shows
+ * up — the bubble scrolled away, the save refused at once — lets the flight fade after 1.2 s.
+ *
+ * Agent: main thread. [scope] only runs the timeout (no frame clock needed). While [flight] is set,
+ * the thread tells the chips which (message, emoji) to keep hidden — W3-THREAD-BUBBLES' chips read
+ * `LocalReactionFlightTarget` and answer through `BubbleContext.reportChipBounds`, which calls
+ * [land]. Snapshot state: the layer and the thread recompose on a change.
+ */
+@Stable
+class ReactionFlightState(private val scope: CoroutineScope) {
+    var flight: ReactionFlight? by mutableStateOf(null)
+        private set
+
+    private var nextId = 0L
+
+    /** Starts a flight of [emoji] onto [messageId]'s chip from [from] (`beginReactionFlight`, CV:2149-2160). */
+    fun begin(emoji: String, messageId: UUID, from: Rect, scale: Float = 1f) {
+        val started = ReactionFlight(id = ++nextId, emoji = emoji, messageId = messageId, from = from, fromScale = scale)
+        flight = started
+        scope.launch {
+            delay(ReactionFlightPath.TIMEOUT_MS)
+            val current = flight
+            if (current?.id != started.id || current.to != null) return@launch
+            // `withAnimation(Motion.fade) { reactionFlight = nil }`: fade where it is, then let go.
+            flight = current.copy(fading = true)
+            delay(FADE_MS)
+            if (flight?.id == started.id) flight = null
+        }
+    }
+
+    /**
+     * The landing chip of [messageId] reported where its emoji sits (root px): fly there; a later
+     * report while in the air re-aims (the thread moved under it) (`landReactionFlight`, CV:2162-2177).
+     */
+    fun land(messageId: UUID, frame: Rect) {
+        val current = flight ?: return
+        if (current.messageId != messageId || current.fading || current.to == frame) return
+        flight = current.copy(to = frame)
+    }
+
+    /** The landing animation of flight [id] finished: the chip's own emoji shows from here. */
+    fun landed(id: Long) {
+        if (flight?.id == id) flight = null
+    }
+
+    /** Drops any flight at once (the chat closed or locked). */
+    fun clear() {
+        flight = null
+    }
+
+    private companion object {
+        /** `Motion.fade` (0.18 s ease-out) plus a frame. */
+        const val FADE_MS = 200L
+    }
 }
 
 /**
- * The flight in progress, for the reaction chips (`reactionFlightTarget` environment, `:33-35`).
- *
- * Contract for the chips (W3-THREAD-BUBBLES): while this equals (message, emoji), that emoji is drawn
- * invisible and reports its exact root frame through
- * `BubbleContext.reportChipBounds(messageId, ReactionFlightPath.emojiFrameId(emoji), bounds)`. A chip
- * that only reports its own bounds (any other chip id) still gets a landing, on the emoji's place
- * by the chip metrics ([ReactionFlightPath.approximateEmojiFrame]).
- */
-val LocalReactionFlightTarget: ProvidableCompositionLocal<ReactionFlightTarget?> = compositionLocalOf { null }
-
-/**
  * The arc of a flight (`ReactionFlightPath`, `ReactionFlight.swift:79-108`). Pure; coordinates in
- * px, [maxLift] the 90 pt bow cap in px.
+ * px, `maxLift` the 90 pt bow cap in px.
  */
 object ReactionFlightPath {
     /** Emoji size in flight at scale 1 — the bar's size, so a pick lifts off unchanged (`:59`). */
@@ -106,6 +147,10 @@ object ReactionFlightPath {
     /** A spring may overshoot a little (`:93`). */
     const val MAX_PROGRESS = 1.15f
 
+    /** The double tap's start: a 44 dp square around the finger, at 1.6× (`quickReact`, CV:2139-2147). */
+    const val QUICK_START_SIDE_DP = 44f
+    const val QUICK_START_SCALE = 1.6f
+
     /** Point on the quadratic curve bowed upward: `P = u²F + 2utC + t²T` (`:92-102`). */
     fun point(progress: Float, from: Offset, to: Offset?, maxLift: Float): Offset {
         val end = to ?: from
@@ -124,20 +169,6 @@ object ReactionFlightPath {
     fun scale(progress: Float, fromScale: Float, toScale: Float = LANDED_SCALE): Float {
         val t = progress.coerceIn(0f, MAX_PROGRESS)
         return fromScale + (toScale - fromScale) * min(t, 1f)
-    }
-
-    /** The chip id under which a chip reports the exact frame of [emoji] while a flight targets it. */
-    fun emojiFrameId(emoji: String): String = "emoji:$emoji"
-
-    /**
-     * Where the [index]-th emoji of a chip sits, from the chip's frame and the chip metrics
-     * (conversation-thread §14.2: leading padding 6, each emoji a 20 dp box with 2 dp padding on both
-     * sides, 2 dp between emoji buttons, vertically centred in the 30 dp chip). [dp] = px per dp.
-     */
-    fun approximateEmojiFrame(chip: Rect, index: Int, dp: Float): Rect {
-        val left = chip.left + (6f + index * (24f + 2f) + 2f) * dp
-        val top = chip.center.y - 10f * dp
-        return Rect(left, top, left + 20f * dp, top + 20f * dp)
     }
 }
 
