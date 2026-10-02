@@ -23,10 +23,12 @@ import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.core.model.MediaTransfer
 import de.corespace.shroud.core.model.ReactionFailure
 import de.corespace.shroud.core.model.canBeQuoted
+import de.corespace.shroud.core.model.presentedKind
 import de.corespace.shroud.core.net.CallModality
 import de.corespace.shroud.core.net.ConversationDeleteScope
 import de.corespace.shroud.core.net.MessageDeleteScope
 import de.corespace.shroud.core.net.PresenceDto
+import de.corespace.shroud.ui.components.AvatarPalette
 import de.corespace.shroud.ui.components.Toast
 import de.corespace.shroud.ui.components.ToastState
 import de.corespace.shroud.ui.conversation.gestures.TapClaim
@@ -46,6 +48,9 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import java.time.Instant
+import java.time.ZoneId
+import java.util.Locale
 import java.util.UUID
 
 /**
@@ -59,8 +64,11 @@ interface ConversationBackend {
     val myUserId: UUID?
     fun isNotesChat(peer: UUID): Boolean
 
-    /** Thread key → messages, oldest first (`MessagingController.threads`). */
+    /** Thread key → messages, oldest first (`MessagingController.threads`); read for the opening value. */
     val threads: StateFlow<Map<UUID, List<ChatMessage>>>
+
+    /** One thread as it changes, oldest first (`MessagingController.thread(peer)`). */
+    fun thread(peer: UUID): Flow<List<ChatMessage>> = threads.map { it[peer].orEmpty() }.distinctUntilChanged()
     val presence: StateFlow<Map<UUID, PresenceDto>>
     val peerActivities: StateFlow<Map<UUID, ChatPeerActivity>>
     val isOffline: StateFlow<Boolean>
@@ -123,6 +131,7 @@ private class ContainerConversationBackend(
     override val myUserId: UUID? get() = messaging.myUserId
     override fun isNotesChat(peer: UUID): Boolean = messaging.isNotesChat(peer)
     override val threads get() = messaging.threads
+    override fun thread(peer: UUID): Flow<List<ChatMessage>> = messaging.thread(peer)
     override val presence get() = container.contacts.controller.presence
     override val peerActivities get() = messaging.peerActivities
     override val isOffline get() = messaging.isOffline
@@ -192,6 +201,15 @@ interface ConversationCompose {
     /** Discards a voice take in progress (thread D9 = compose Q10; call media starting, CV:380-383). */
     fun cancelVoiceTake()
 
+    /** The photo viewer is open (`viewingMedia != nil`, CV:2270-2275). */
+    val isViewingMedia: Boolean
+
+    /** Closes the photo viewer: a delete asked from it closes it first (CV:2270-2275). */
+    fun closeMediaViewer()
+
+    /** The bubble's ring ✕: stops the download, which then ends without a failure toast (CV:2386-2394). */
+    fun cancelDownload(message: ChatMessage)
+
     /** Nothing to compose with (previews, tests). */
     object None : ConversationCompose {
         override val isRecording: Boolean = false
@@ -199,6 +217,9 @@ interface ConversationCompose {
         override fun handleMediaTap(message: ChatMessage) = Unit
         override fun onLeave(profilePushed: Boolean) = Unit
         override fun cancelVoiceTake() = Unit
+        override val isViewingMedia: Boolean = false
+        override fun closeMediaViewer() = Unit
+        override fun cancelDownload(message: ChatMessage) = Unit
     }
 }
 
@@ -315,11 +336,18 @@ class ConversationViewModel(
     var showsNotesDeleteConfirm: Boolean by mutableStateOf(false)
         private set
 
-    /** The contact's profile was pushed over the chat: leaving keeps the draft's preview (CV:57, 367-368). */
+    /**
+     * The contact's profile was pushed over the chat: leaving keeps the draft's preview (CV:57,
+     * 367-368). Like iOS `profileDestination`, it stays set while the chat shows again under a back
+     * gesture that may still be cancelled; the chat closing for good ([close]) leaves completely.
+     */
     var profilePushed: Boolean = false
         private set
 
-    private var visible = false
+    /** The chat is on screen (placed by the stack, not covered by a pushed screen). */
+    var isVisible: Boolean = false
+        private set
+    private var closed = false
     private var openTask: Job? = null
 
     /** The bubble whose hold opened (or is opening) a menu and whose finger is still down. */
@@ -361,9 +389,7 @@ class ConversationViewModel(
     private val sinkRegistration: AutoCloseable = backend.registerArtifactSink(sink)
 
     init {
-        scope.launch {
-            backend.threads.map { it[peer].orEmpty() }.distinctUntilChanged().collect(::onThreadChanged)
-        }
+        scope.launch { backend.thread(peer).collect(::onThreadChanged) }
         scope.launch {
             backend.peerActivities.map { if (isNotes) null else it[peer] }.distinctUntilChanged().collect { peerActivity = it }
         }
@@ -420,9 +446,8 @@ class ConversationViewModel(
      * loads (reconciles) the thread.
      */
     fun onAppear() {
-        if (visible) return
-        visible = true
-        profilePushed = false
+        if (isVisible || closed) return
+        isVisible = true
         backend.setActivePeer(peer)
         // Opening a chat always starts at the newest message (Telegram/Signal/WhatsApp).
         if (!didOpen) pinToBottomToken++
@@ -449,8 +474,8 @@ class ConversationViewModel(
      * reads incoming messages as they land.
      */
     fun onDisappear() {
-        if (!visible) return
-        visible = false
+        if (!isVisible) return
+        isVisible = false
         openTask?.cancel()
         openTask = null
         highlightJob?.cancel()
@@ -464,10 +489,20 @@ class ConversationViewModel(
         if (backend.activePeerId.value == peer) backend.setActivePeer(null)
     }
 
-    /** The screen is gone for good. */
+    /**
+     * The screen is gone for good (popped, replaced, or the chats locked): everything the composer
+     * staged goes too, whether the chat was on screen or covered by the profile.
+     */
     fun close() {
+        if (closed) return
+        val wasVisible = isVisible
+        profilePushed = false
         onDisappear()
+        // Hidden under the profile, the composer kept its draft's preview; the chat is gone now.
+        if (!wasVisible) compose.onLeave(profilePushed = false)
+        closed = true
         flights.clear()
+        menu.clear()
         sinkRegistration.close()
     }
 
@@ -652,6 +687,8 @@ class ConversationViewModel(
     /** Deletes with the scope picked in the sheet (CV:2266-2285). */
     fun performDelete(message: ChatMessage, scope: MessageDeleteScope) {
         pendingDelete = null
+        // Asked from the photo viewer: it leaves before the photo does, whichever the scope (CV:2270-2275).
+        if (compose.isViewingMedia) compose.closeMediaViewer()
         this.scope.launch {
             val error = backend.deleteMessage(message, scope)
             if (error != null) {
@@ -685,7 +722,25 @@ class ConversationViewModel(
         }
     }
 
-    // ---- Header (CV:821-833) --------------------------------------------------------------------------
+    // ---- Header (CV:154-200, 703-833) ------------------------------------------------------------------
+
+    /** The peer is online; never in Notes (`isOnline`, CV:162-164). */
+    val isOnline: Boolean get() = !isNotes && presence?.online == true
+
+    /** The top bar's contents at [now] in the device's zone, locale and clock (`presenceLabel`, CV:167-175). */
+    fun headerState(now: Instant, zone: ZoneId, locale: Locale, is24h: Boolean): ConversationHeaderState {
+        val activity = peerActivity
+        return ConversationHeaderState(
+            title = username,
+            avatarSeed = AvatarPalette.seed(username, peer),
+            isNotes = isNotes,
+            subtitle = ConversationPresence.label(isNotes, activity, presence, isOffline, now, zone, locale, is24h),
+            subtitleIsAccent = ConversationPresence.isAccent(isNotes, activity, presence),
+            isOnline = isOnline,
+            activity = activity,
+        )
+    }
+
 
     /** Places a call; a failure shows as a toast (CV:821-833). */
     fun startCall(modality: CallModality) {
@@ -693,6 +748,16 @@ class ConversationViewModel(
             backend.startCall(peer, username, modality)?.let { toasts.show(Toast.failure(it)) }
         }
     }
+
+    // ---- Row gestures (CV:921-945) ---------------------------------------------------------------------
+
+    /** A photo or video row opens (or downloads) on a single tap (CV:924-928). */
+    fun opensOnTap(message: ChatMessage): Boolean =
+        message.presentedKind == ChatMessageKind.Image || message.presentedKind == ChatMessageKind.Video
+
+    /** A text row that can take a reaction answers a double tap with ❤️ (CV:929-934). */
+    fun reactsOnDoubleTap(message: ChatMessage): Boolean =
+        message.presentedKind == ChatMessageKind.Text && backend.canReact(message)
 
     // ---- BubbleContext (plan §1.7.13; CV:1509-1677) ---------------------------------------------------
 
@@ -711,7 +776,7 @@ class ConversationViewModel(
     /** The ring's X: stops the download; claims the tap so the row doesn't start it again (CV:2386-2394). */
     override fun onCancelDownload(message: ChatMessage) {
         tapClaim.claim()
-        backend.cancelMediaDownload(message.id)
+        compose.cancelDownload(message)
     }
 
     /** A failed photo or video upload, again (CV:1534-1548, 1572-1585). */
