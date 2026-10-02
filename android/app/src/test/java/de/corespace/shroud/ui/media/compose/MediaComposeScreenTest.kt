@@ -1,13 +1,11 @@
 package de.corespace.shroud.ui.media.compose
 
 import android.graphics.Canvas
-import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.semantics.SemanticsActions
@@ -25,16 +23,14 @@ import de.corespace.shroud.core.media.edit.FilterRecipe
 import de.corespace.shroud.core.media.edit.MediaEdits
 import de.corespace.shroud.core.media.edit.MediaFilter
 import de.corespace.shroud.core.media.edit.TextOverlay
-import de.corespace.shroud.ui.components.ComposeHarness
-import de.corespace.shroud.ui.components.OverlayHost
 import de.corespace.shroud.ui.media.ComposeDraft
 import de.corespace.shroud.ui.media.FakeEditRenderer
+import de.corespace.shroud.ui.media.MediaHarness
 import de.corespace.shroud.ui.media.PickedPhoto
 import de.corespace.shroud.ui.media.pickedPhoto
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -59,17 +55,10 @@ class MediaComposeScreenTest {
     private fun screen(photos: List<PickedPhoto>, renderer: FakeEditRenderer = FakeEditRenderer()): Screen =
         Screen(photos, renderer).also { screens += it }
 
-    /**
-     * Leaves no composition running into the next test: a focused field's cursor, a banner's timer
-     * or a debounced render still pending when Robolectric resets the main looper strands Compose's
-     * shared main-thread dispatcher, and later tests in the same JVM stop recomposing.
-     */
+    /** Destroys every screen's activity, so nothing of a test outlives it (see [MediaHarness]). */
     @After
-    fun disposeScreens() {
-        for (screen in screens) {
-            screen.ui.activity.setContent {}
-            screen.settle()
-        }
+    fun closeScreens() {
+        screens.forEach { it.ui.close() }
     }
 
     private class Screen(photos: List<PickedPhoto>, val renderer: FakeEditRenderer) {
@@ -83,49 +72,38 @@ class MediaComposeScreenTest {
             override val canvasHeight = 10f
             override fun draw(canvas: Canvas, outWidth: Int, outHeight: Int) = Unit
         }
-        val ui = ComposeHarness {
-            OverlayHost {
-                MediaComposeContent(
-                    draft = draft,
-                    renderer = renderer,
-                    onSend = { caption, quality, edits -> sent += Sent(caption, quality, edits) },
-                    onAddMore = { addMore++ },
-                    onRemove = { index ->
-                        removed += index
-                        draft = draft.copy(photos = draft.photos.filterIndexed { i, _ -> i != index })
-                    },
-                    onClose = { closed++ },
-                    drawEditor = { _, edits, _, onDone ->
-                        Box(
-                            Modifier.size(10.dp).semantics {
-                                contentDescription = "Stand-in draw editor"
-                                onClick {
-                                    onDone(edits.copy(drawing = fakeDrawing))
-                                    true
-                                }
-                            },
-                        )
-                    },
-                )
-            }
+        val ui = MediaHarness {
+            MediaComposeContent(
+                draft = draft,
+                renderer = renderer,
+                onSend = { caption, quality, edits -> sent += Sent(caption, quality, edits) },
+                onAddMore = { addMore++ },
+                onRemove = { index ->
+                    removed += index
+                    draft = draft.copy(photos = draft.photos.filterIndexed { i, _ -> i != index })
+                },
+                onClose = { closed++ },
+                drawEditor = { _, edits, _, onDone ->
+                    Box(
+                        Modifier.size(10.dp).semantics {
+                            contentDescription = "Stand-in draw editor"
+                            onClick {
+                                onDone(edits.copy(drawing = fakeDrawing))
+                                true
+                            }
+                        },
+                    )
+                },
+            )
         }
 
-        fun has(description: String): Boolean = ui.nodes().any { it.config.getOrNull(SemanticsProperties.ContentDescription)?.contains(description) == true }
+        fun has(description: String): Boolean = ui.has(description)
 
-        fun click(description: String) = click(ui.node(description))
+        fun click(description: String) = ui.click(description)
 
-        fun clickText(text: String) = click(ui.nodesWithText(text).single())
+        fun clickText(text: String) = ui.clickText(text)
 
-        fun click(node: SemanticsNode) {
-            node.config[SemanticsActions.OnClick].action!!.invoke()
-            settle()
-        }
-
-        /** What compose-ui-test's idling does: hand the action's state writes to the recomposer, then run frames. */
-        fun settle() {
-            Snapshot.sendApplyNotifications()
-            ui.idle()
-        }
+        fun settle() = ui.settle()
 
         /** The preview render waits [RENDER_DEBOUNCE_MS] on the coroutine timer, which runs on the wall clock. */
         fun awaitRender() {
@@ -135,9 +113,9 @@ class MediaComposeScreenTest {
             }
         }
 
-        fun selected(description: String): Boolean = ui.node(description).config.getOrNull(SemanticsProperties.Selected) == true
+        fun selected(description: String): Boolean = ui.selected(description)
 
-        fun disabled(description: String): Boolean = SemanticsProperties.Disabled in ui.node(description).config
+        fun disabled(description: String): Boolean = ui.disabled(description)
 
         fun stateOf(description: String): String? = ui.node(description).config.getOrNull(SemanticsProperties.StateDescription)
 
@@ -401,6 +379,6 @@ class MediaComposeScreenTest {
         val screen = screen(listOf(pickedPhoto()))
         screen.click("Back")
         assertEquals(1, screen.closed)
-        assertNotNull(screen.ui.root)
+        assertTrue(screen.has("Send"))
     }
 }
