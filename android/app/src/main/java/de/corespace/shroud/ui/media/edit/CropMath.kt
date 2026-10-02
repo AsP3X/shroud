@@ -61,9 +61,16 @@ object CropMath {
         fun contains(px: Float, py: Float): Boolean = px >= x && px <= maxX && py >= y && py <= maxY
     }
 
-    /** [MediaEdits.cropRect][de.corespace.shroud.core.media.edit.MediaEdits.cropRect] as a [NormRect]. */
-    fun of(rect: Rect): NormRect =
-        NormRect(rect.left.toDouble(), rect.top.toDouble(), (rect.right - rect.left).toDouble(), (rect.bottom - rect.top).toDouble())
+    /**
+     * [MediaEdits.cropRect][de.corespace.shroud.core.media.edit.MediaEdits.cropRect] as a [NormRect].
+     * The sizes are taken in `Double`, where the difference of two floats is exact, so [toRect]
+     * gives back the very same rect: re-opening the crop and tapping Done changes nothing.
+     */
+    fun of(rect: Rect): NormRect {
+        val left = rect.left.toDouble()
+        val top = rect.top.toDouble()
+        return NormRect(left, top, rect.right.toDouble() - left, rect.bottom.toDouble() - top)
+    }
 
     /**
      * The photo aspect-fitted into [canvas], centred (`imageFrame(for:in:)`, `MediaCropEditor.swift:150-161`).
@@ -142,10 +149,15 @@ object CropMath {
     /**
      * A rect from its edges, clamped to the photo with at least [MIN_SIDE] per side
      * (`rect(minX:minY:maxX:maxY:)`, `MediaCropEditor.swift:375-381`).
+     *
+     * One guard iOS lacks: a trailing or bottom edge dragged past the opposite side of the photo
+     * (`maxX < MIN_SIDE`) pushed iOS's origin below 0, a window off the photo that the renderer
+     * then ignores while the photo still counts as cropped. The origin stays ≥ 0 here, so that
+     * drag ends in the thinnest window at the photo's edge.
      */
     fun rect(minX: Double, minY: Double, maxX: Double, maxY: Double): NormRect {
-        val x0 = min(max(0.0, minX), maxX - MIN_SIDE)
-        val y0 = min(max(0.0, minY), maxY - MIN_SIDE)
+        val x0 = max(0.0, min(max(0.0, minX), maxX - MIN_SIDE))
+        val y0 = max(0.0, min(max(0.0, minY), maxY - MIN_SIDE))
         val x1 = max(min(1.0, maxX), x0 + MIN_SIDE)
         val y1 = max(min(1.0, maxY), y0 + MIN_SIDE)
         return NormRect(x0, y0, x1 - x0, y1 - y0)

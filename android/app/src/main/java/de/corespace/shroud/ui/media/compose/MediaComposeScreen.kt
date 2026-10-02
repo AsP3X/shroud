@@ -341,7 +341,7 @@ internal fun MediaComposeContent(
 }
 
 /** Android's emoji hint (P14 decided; iOS says "use the globe key", `MediaComposeOverlay.swift:523`). */
-internal const val EMOJI_BANNER = "Emoji keyboard: use your keyboard's emoji key"
+internal const val EMOJI_BANNER = "Emoji keyboard: use your keyboard’s emoji key"
 
 private fun Bitmap.longEdge(): Int = max(width, height).coerceAtLeast(1)
 
