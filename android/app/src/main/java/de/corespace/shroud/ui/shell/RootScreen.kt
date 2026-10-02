@@ -35,6 +35,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.zIndex
 import de.corespace.shroud.ui.LocalAppContainer
 import de.corespace.shroud.ui.calls.InCallOverlay
+import de.corespace.shroud.ui.calls.callCoversApp
 import de.corespace.shroud.ui.components.OverlayHost
 import de.corespace.shroud.ui.components.ShroudSheet
 import de.corespace.shroud.ui.components.Toast
@@ -79,8 +80,10 @@ object RootLayers {
  * | 150 | [PrivacyCover] | [AppShellController.showsPrivacyCover] |
  * | 200 | `DeviceWipeOverlay` | while a wipe runs |
  *
- * The shell is out of TalkBack's reach while locked, under the capture cover and under a call; the
- * lock screen while a call is up (a call answered on a locked phone covers it). Unlocking fades the
+ * The shell is out of TalkBack's reach while locked, under the capture cover and under the full call
+ * screen; the lock screen while the call screen is up (a call answered on a locked phone covers it).
+ * A call minimised to its pill covers nothing ([callCoversApp]). `InCallOverlay` is always composed:
+ * it also hosts the call permission prompt, with or without a call. Unlocking fades the
  * shell in ([Motion.gentle]) while the onboarding layer fades out over it; the shell is not scaled
  * here — its tab content rises from 0.96 inside [MainShell], the tab bar stays put (`:55-58, 71`).
  * Locking hides the shell at once (iOS fades it): on Android a lock usually lands while the app is
@@ -98,6 +101,9 @@ fun RootScreen(shell: AppShellController) {
     val unlocked by router.isUnlockedFlow.collectAsState()
     val mountsShell by router.mountsMainShell.collectAsState()
     val callActive by shell.callActive.collectAsState()
+    // The full call screen covers the app: false while the call is minimised to its pill (C14), so
+    // TalkBack reaches the app again after Back; `callActive` alone stays true for the whole call.
+    val callCovers = callCoversApp(callActive)
     val coversCapture by shell.coversForScreenCapture.collectAsState()
     val showsCover by shell.showsPrivacyCover.collectAsState()
     val callAboveCover by shell.callAboveCaptureCover.collectAsState()
@@ -124,7 +130,7 @@ fun RootScreen(shell: AppShellController) {
                     MainShellLayer(
                         router = router,
                         unlocked = unlocked,
-                        hiddenFromAccessibility = !unlocked || coversCapture || callActive,
+                        hiddenFromAccessibility = !unlocked || coversCapture || callCovers,
                         reduceMotion = reduce,
                     )
                 }
@@ -132,7 +138,7 @@ fun RootScreen(shell: AppShellController) {
                     visible = !unlocked,
                     enter = fadeIn(Motion.respecting(reduce, Motion.gentle())),
                     exit = fadeOut(Motion.respecting(reduce, Motion.gentle())),
-                    modifier = Modifier.zIndex(RootLayers.ONBOARDING).hiddenFromAccessibility(callActive),
+                    modifier = Modifier.zIndex(RootLayers.ONBOARDING).hiddenFromAccessibility(callCovers),
                 ) {
                     OnboardingStack(shell)
                 }
@@ -141,13 +147,13 @@ fun RootScreen(shell: AppShellController) {
                         banner = banner,
                         onOpen = notifications::openBanner,
                         onDismiss = { notifications.dismissBanner(it.id) },
-                        modifier = Modifier.zIndex(RootLayers.BANNER).hiddenFromAccessibility(coversCapture || callActive),
+                        modifier = Modifier.zIndex(RootLayers.BANNER).hiddenFromAccessibility(coversCapture || callCovers),
                     )
                 }
                 InCallOverlay(Modifier.zIndex(if (callAboveCover) RootLayers.CALL_ABOVE_CAPTURE_COVER else RootLayers.CALL))
                 if (showsCover) {
                     // Under a call's screen TalkBack stays on the call (`:102`).
-                    PrivacyCover(Modifier.zIndex(RootLayers.PRIVACY_COVER).hiddenFromAccessibility(callAboveCover && callActive))
+                    PrivacyCover(Modifier.zIndex(RootLayers.PRIVACY_COVER).hiddenFromAccessibility(callAboveCover && callCovers))
                 }
                 // Above everything, calls included — the switch to Welcome happens under it (`:106-111`).
                 AnimatedVisibility(
