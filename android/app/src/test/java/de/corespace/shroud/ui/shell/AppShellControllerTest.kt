@@ -199,6 +199,27 @@ class AppShellControllerTest {
         assertEquals(true, shell.needsChatUnlock.value)
     }
 
+    @Test
+    fun inFrontAnUnreadableRecordIsReadAgainEverySecond() = runTest(UnconfinedTestDispatcher()) {
+        // A slow first Keystore read after an update must neither show Welcome nor leave the root blank.
+        val env = FakeShellEnvironment()
+        env.signIn()
+        env.phase.value = AppPhase.Inactive
+        env.phase.value = AppPhase.Active
+        env.identity = IdentityPresence.Unavailable
+        val shell = shell(env)
+        assertNull(shell.needsChatUnlock.value)
+        advanceTimeBy(AppShellController.IDENTITY_RETRY_MS * 3 + 1)
+        assertNull(shell.needsChatUnlock.value)
+        env.identity = IdentityPresence.Present
+        advanceTimeBy(AppShellController.IDENTITY_RETRY_MS + 1)
+        assertEquals(true, shell.needsChatUnlock.value)
+        // Readable now: no more reads until something changes.
+        env.identity = IdentityPresence.Absent
+        advanceTimeBy(AppShellController.IDENTITY_RETRY_MS * 5)
+        assertEquals(true, shell.needsChatUnlock.value)
+    }
+
     // ---- Auto-lock (RootView.swift:257-276, 315-330; shell-chats §3.7, D12) ----
 
     @Test

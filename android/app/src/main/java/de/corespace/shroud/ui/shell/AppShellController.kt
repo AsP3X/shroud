@@ -418,23 +418,32 @@ class AppShellController(
      * auto-lock firing in the background), and the identity record is unreadable then
      * ([IdentityPresence.Unavailable]). That answer keeps the last one instead of turning the lock
      * screen into Welcome, and the return to the front, which needs an unlocked phone, reads the
-     * record again (C3 device check: a notification tapped on the lock screen landed on Welcome).
+     * record again — every [IDENTITY_RETRY_MS] while it stays unreadable in front (C3 device check:
+     * a notification tapped on the lock screen landed on Welcome).
      */
     private fun observeIdentity() {
         scope.launch {
             val inFront = env.phase.map { it == AppPhase.Active }.distinctUntilChanged()
             combine(env.session, env.unlockedUserId, env.wipePresented, inFront) { session, _, _, _ -> session }
                 .collectLatest { session ->
-                    needsUnlock.value = if (session == null) false else withContext(io) { needsUnlockFor(session.userId, needsUnlock.value) }
+                    if (session == null) {
+                        needsUnlock.value = false
+                        return@collectLatest
+                    }
+                    while (true) {
+                        val presence = withContext(io) { env.identityPresence(session.userId) }
+                        needsUnlock.value = when (presence) {
+                            IdentityPresence.Present -> true
+                            IdentityPresence.Absent -> false
+                            IdentityPresence.Unavailable -> needsUnlock.value
+                        }
+                        // In front the phone is unlocked: an unreadable record is a passing failure
+                        // (a slow first Keystore read after an update), so it is read again.
+                        if (presence != IdentityPresence.Unavailable || env.phase.value != AppPhase.Active) return@collectLatest
+                        delay(IDENTITY_RETRY_MS)
+                    }
                 }
         }
-    }
-
-    /** `hasLocalIdentity(for:)` (`RootView.swift:391-399`), with [previous] kept while the record cannot be read. */
-    private fun needsUnlockFor(userId: String, previous: Boolean?): Boolean? = when (env.identityPresence(userId)) {
-        IdentityPresence.Present -> true
-        IdentityPresence.Absent -> false
-        IdentityPresence.Unavailable -> previous
     }
 
     /**
@@ -488,6 +497,9 @@ class AppShellController(
 
         /** After the vault prompt ends, how long the activity gets to come back before a background lock proceeds. */
         const val PROMPT_RETURN_GRACE_MS = 1_000L
+
+        /** In front, an unreadable identity record is read again after this (Android only). */
+        const val IDENTITY_RETRY_MS = 1_000L
 
         /** `RootView.swift:154` ("this \(UIDevice.current.model)"; Platform Notes: "this phone"). */
         fun interruptedWipeToast(noun: String): String = "Signed out · this $noun was cleared"
