@@ -8,8 +8,10 @@ import de.corespace.shroud.core.net.ErrorCodes
 import de.corespace.shroud.core.net.LinkedDeviceDto
 import de.corespace.shroud.testing.MainDispatcherRule
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -194,13 +196,13 @@ class DevicesControllerTest {
     }
 
     @Test
-    fun aMissingDeviceCountsAsRemovedAndThisPhoneIsNotRemoved() = runTest(main.dispatcher) {
+    fun aMissingDeviceIsAlreadyRemovedAndThisPhoneIsNotRemoved() = runTest(main.dispatcher) {
         val harness = harness()
         harness.controller.refresh()
         harness.revokeError = { id ->
             if (id == laptop) ApiError.Server(ErrorCodes.NOT_FOUND, "Not found.", 404) else null
         }
-        assertEquals(RemoveOutcome.Removed, harness.controller.remove(laptop))
+        assertEquals(RemoveOutcome.AlreadyRemoved, harness.controller.remove(laptop))
         assertTrue(harness.revoked.isEmpty())
         assertTrue(harness.controller.state.value.rows.none { it.id == laptop })
         assertNull(harness.controller.state.value.error)
@@ -247,6 +249,76 @@ class DevicesControllerTest {
             outcome,
         )
         assertTrue(harness.controller.state.value.rows.any { it.id == laptop })
+    }
+
+    @Test
+    fun removeAllOthersCountsEvery404AsRemoved() = runTest(main.dispatcher) {
+        val harness = harness()
+        harness.controller.refresh()
+        harness.revokeError = { ApiError.Server(ErrorCodes.NOT_FOUND, "Gone.", 404) }
+        assertEquals(RemoveOutcome.Removed, harness.controller.removeAllOthers())
+        assertEquals(listOf(thisPhone), harness.controller.state.value.rows.map { it.id })
+        assertNull(harness.controller.state.value.error)
+    }
+
+    @Test
+    fun clearDropsRowsAndAnOlderRefreshDoesNotRestoreThem() = runTest(main.dispatcher) {
+        val harness = harness()
+        harness.controller.refresh()
+        val gate = CompletableDeferred<Unit>()
+        harness.listGate = gate
+        val older = launch { harness.controller.refresh() }
+        assertEquals(2, harness.listCalls)
+        harness.controller.clear()
+        assertEquals(DevicesState(), harness.controller.state.value)
+
+        val newer = launch { harness.controller.refresh() }
+        assertEquals(3, harness.listCalls)
+        gate.complete(Unit)
+        older.join()
+        newer.join()
+        assertTrue(harness.controller.state.value.hasLoaded)
+        assertEquals(4, harness.controller.state.value.rows.size)
+        assertNull(harness.controller.state.value.error)
+    }
+
+    @Test
+    fun aFailedRefreshThatStartedBeforeClearDoesNotSetTheError() = runTest(main.dispatcher) {
+        val harness = harness()
+        harness.controller.refresh()
+        val gate = CompletableDeferred<Unit>()
+        harness.listGate = gate
+        val older = launch { harness.controller.refresh() }
+        harness.listError = ApiError.Server(ErrorCodes.INTERNAL_ERROR, "Could not load devices.", 500)
+        harness.controller.clear()
+        gate.complete(Unit)
+        older.join()
+        assertEquals(DevicesState(), harness.controller.state.value)
+    }
+
+    @Test
+    fun clearIsSafeOffTheMainThreadAndDropsTheSealedNameCache() = runTest(main.dispatcher) {
+        val harness = harness()
+        harness.controller.refresh()
+        withContext(Dispatchers.Default) { harness.controller.clear() }
+        assertEquals(DevicesState(), harness.controller.state.value)
+        assertNull(harness.controller.rename(tablet, "Kitchen"))
+        assertEquals(DeviceNameSeal.Kind.Other, opened(tablet, harness).kind)
+    }
+
+    @Test
+    fun aRemovalThatStartedBeforeClearDoesNotRestoreTheList() = runTest(main.dispatcher) {
+        val harness = harness()
+        harness.controller.refresh()
+        val gate = CompletableDeferred<Unit>()
+        harness.listGate = gate
+        val removing = launch { harness.controller.remove(laptop) }
+        assertEquals(listOf(laptop), harness.revoked)
+        assertEquals(2, harness.listCalls)
+        harness.controller.clear()
+        gate.complete(Unit)
+        removing.join()
+        assertEquals(DevicesState(), harness.controller.state.value)
     }
 
     @Test

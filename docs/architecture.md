@@ -144,8 +144,11 @@ The iPhone app asks nothing: it uses the phone's own name (the model, such as "i
 while iOS hands out only the generic "iPhone") and seals it after each unlock when it has changed,
 unless someone renamed it, which it then keeps. A browser asks in a dialog when the app opens after
 a login or sign-up, and whenever it has no name its account can read ("Not now" keeps a guess such
-as "Safari on iPhone"). Settings → Devices renames any device, on both clients. Login and register
-carry no name; a plaintext `device_name` from an older build is ignored.
+as "Safari on iPhone"). The Android app asks nothing either: it seals the phone's own name
+(`Settings.Global.DEVICE_NAME`, otherwise the manufacturer and model) with kind 4 after an unlock
+when the sealed name has changed. A name someone typed is kept, except that a custom name an older
+client saved with kind 0 is sealed again with kind 4. Settings → Devices renames any device
+on iOS and web. Login and register carry no name; a plaintext `device_name` from an older build is ignored.
 
 ## Message envelopes and sender authentication
 
@@ -258,6 +261,13 @@ content to send.
   address is globally routable, the push connecting only to the addresses checked. Google's push
   hosts are never accepted for Android, whatever is configured: the app is Google-free, and an
   "embedded FCM distributor" would route its pushes through Google.
+- **Android** has no FCM client and no separate push-name key. A UnifiedPush distributor the user
+  installed receives RFC 8291 ciphertext (`PUT /push/web/subscription`, `client: "android"`); the
+  phone decrypts it. Separately, an opt-in background connection (default off) is a `specialUse`
+  foreground service that keeps the WebSocket open with `background: true`, so contacts do not see
+  the phone as online. Either path can deliver while the app is closed. With neither, nothing
+  arrives until the app is open. If exactly one distributor is installed, the app registers it; if
+  several are, it waits until one is chosen.
 - **Sounds** are generated (`scripts/gen_notification_sounds.py`) and shared by both apps.
 
 ## Security invariants
@@ -267,7 +277,7 @@ content to send.
 3. Server stores ciphertext envelopes, encrypted media references, and minimal delivery metadata.
 4. **Local at-rest:** chats, notes, media, and decrypt caches on disk are AES-256-GCM sealed with the BIP39-derived `historyKey` (HKDF `shroud-history-aes`). Files are excluded from backups. Without the history key, sealed blobs are unreadable.
 5. **History key vault:** raw `historyKey` is **never** stored in the identity Keychain. It is AES-GCM wrapped under a device wrap key gated by **userPresence** (Face ID / Touch ID / passcode) via `HistoryKeyVault`. Phrase unlock re-derives and re-vaults the key. Backgrounding clears history key + decrypted threads from RAM.
-6. Voice transcription is **on-device** for v1 (no server transcript APIs yet).
+6. Voice transcription is **on-device** for v1 (no server transcript APIs yet). Android runs whisper.cpp in the app. Per-chat language stats are sealed with the history key (`shroud-local-language-stats-v1` at `language-stats.sealed`) and stay on the device; a locked history key still transcribes, and skips the write.
 7. Contact requests and blocks are enforced on the server before full messaging.
 8. Push payloads carry **ids and a kind only** — no content or keys. A sender's name goes only to a device that asks for it, sealed so the relay (Apple, or the browser's push service) cannot read it.
 9. Sessions are **device-bound opaque tokens** with no time-based logout (revoke on logout / device remove / password change of other devices). Logout also forgets the device's push tokens, Web Push subscription and notification settings, so a logged-out device stops receiving the account's pushes.
@@ -334,7 +344,7 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 | Voice messages | **done** — record/upload/play; on-device Whisper on iOS and web (pluggable engines) |
 | Replies | **done** — swipe left (or the context menu) to quote; the quote is sealed **inside** the plaintext, never server metadata |
 | Links & link previews | **done** — links are tappable (in-app browser), Telegram-style preview block; the sender builds the preview (the iPhone directly, the browser through the link relay) and seals it, recipients never contact the site; toggle in Privacy & Security |
-| Calls UI / WebRTC | **done** — signaling + WKWebView WebRTC + CallKit; voice & video |
+| Calls UI / WebRTC | **done** — signaling + native WebRTC + CallKit; voice & video |
 | Notifications | **done** — alert pushes named by the notification service extension; in-app banner, sound and haptic while in front; Settings → Notifications and Sounds (per-device toggles, sound picker, badge, muted chats, test notification); mute from the chat list or contact info; icon badge from server unread counts; a tap opens the chat. PushKit rings calls when the app is backgrounded or locked, and a `call_ended` VoIP push stops the ring |
 | Sealed messaging v2 | **done** — dual-seal (peer + self) so sender devices can decrypt history |
 | Sealed messaging (live) | **v3 Double Ratchet** (default) + self dual-seal; first message from non-initiator uses **v2** |

@@ -14,7 +14,7 @@ object PrefsFiles {
     /** Server configuration — kept across Log Out (`ServerConfigurationStore`, exists). */
     const val SERVER = "shroud.server"
 
-    /** Device facts such as `notifications.permissionAsked` — kept across Log Out (W2-NOTIF). */
+    /** Device facts such as `notifications.permissionAsked` and [UiFlags.kept] — kept across Log Out (W2-NOTIF, K5). */
     const val DEVICE = "shroud.device"
 
     /** `shroud.deviceWipe.pending` — cleared after a clean verify (W2-AUTH-WIPE). */

@@ -149,10 +149,12 @@ class AppContainer(
      * `cacheDir/shroud-*` files nobody wrote to for ten minutes are swept (plan §1.1 rule 7, §1.5).
      * Android does not end the process at lock, so without the sweep a leaked temp file would live
      * until the next cold start. The interim ON_STOP lock calls this; W3-SHELL's auto-lock
-     * (AppShellController) must keep calling it when it replaces that lock.
+     * (AppShellController) must keep calling it when it replaces that lock. Decrypted device
+     * labels are dropped too, without building the device list if nothing has read it yet.
      */
     suspend fun lockChatsInMemory() {
         messaging.controllerIfBuilt?.lockSensitiveMemory()
+        auth.devicesIfBuilt?.clear()
         keys.cryptoController.lock()
         media.sharingIfBuilt?.revokeAll()
         withContext(Dispatchers.IO) { keys.sensitiveTempFiles.sweep(SensitiveTempFiles.STALE_AGE_MS) }

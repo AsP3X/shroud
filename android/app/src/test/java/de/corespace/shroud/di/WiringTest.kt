@@ -4,14 +4,17 @@ import android.app.Application
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.corespace.shroud.AppContainer
+import de.corespace.shroud.core.keys.BiometricLabel
 import de.corespace.shroud.core.lifecycle.AppPhaseMonitor
 import de.corespace.shroud.core.push.PushRegistration
 import de.corespace.shroud.core.transcription.VoiceTranscription
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -80,6 +83,18 @@ class WiringTest {
         assertSame(devices, container.auth.devices)
         assertSame(photos, container.media.photoLibrary)
         assertSame(flags, container.keys.uiFlags)
+        assertNotSame(flags, flags.kept)
+        assertSame(flags.kept, flags.kept.kept)
+    }
+
+    /** K1 probes the lock screen and Privacy call. No biometric prompt; no vault is stored. */
+    @Test
+    fun lockScreenKeyProbesArePublic() = runBlocking {
+        val keys = container.keys
+        keys.deviceSecurity.strongBiometricAvailable()
+        assertTrue(keys.deviceSecurity.biometricLabel() in BiometricLabel.entries)
+        assertNull(keys.historyVault.keySecurity())
+        assertNull(keys.cryptoController.vaultKeySecurity())
     }
 
     @Test
@@ -87,5 +102,6 @@ class WiringTest {
         container.wipeHooks.haltWriters()
         assertNull(container.messaging.controllerIfBuilt)
         assertNull(container.calls.controllerIfBuilt)
+        assertNull(container.auth.devicesIfBuilt)
     }
 }
