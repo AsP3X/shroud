@@ -143,7 +143,7 @@
             </intent-filter>
         </activity-alias>
 
-        <!-- Lock-screen host of the call screen (calls §6.9); stub until W3-CALLS-SYSTEM. -->
+        <!-- Lock-screen host of the call screen (calls §6.9). The activity class is the UI stub; full-screen and answer intents target it. -->
         <activity
             android:name=".ui.calls.CallActivity"
             android:exported="false"
@@ -154,7 +154,7 @@
             android:turnScreenOn="true"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|density|uiMode" />
 
-        <!-- The whole call, ring to end (calls §6.1, §6.7); stub until W3-CALLS-SYSTEM. -->
+        <!-- The phoneCall foreground service, ring to end (calls §6.1, §6.7). Notification first; this service second. -->
         <service
             android:name=".core.calls.system.CallService"
             android:exported="false"
