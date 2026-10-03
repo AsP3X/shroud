@@ -71,6 +71,16 @@ files still show that switch until a design pass.
   - Verified 2026-10-03: accounts appear by ID only, with neutral avatars and day-level "last
     active"; the share code is left out of the console. The saved file contains no username,
     including layer names.
+- [ ] **0.6 Sync contact names between the account's own devices.** A name arrives only when
+  that contact's updated app uploads a seal, so the web (which kept no contact list to carry
+  over) shows most people as "Contact · 7f3c". The phones already know these names.
+  - Change: each device seals its name book with the account key (like device names) and
+    stores it as one opaque blob (`PUT/GET /users/me/contact-names`); devices merge on unlock.
+    The server can't read it.
+  - Where: a new route and table on the server; `web/src/contactNames.ts`,
+    `ios/shroud/Services/Contacts/ContactNames.swift`, `android/.../core/contacts/ContactNames.kt`.
+  - Done when: a browser signed in fresh shows every name the account's phone knows, including
+    contacts on old builds; a DB dump shows only ciphertext.
 
 ---
 

@@ -45,8 +45,16 @@ export function contactName(ownerId: string, peerId: string): string | null {
   return name && NAME_RE.test(name) ? name : null;
 }
 
+/**
+ * Shown until a name opens: "Contact · 7f3c", the start of the account ID, so chats with
+ * different people can be told apart. The ID is already on this browser; no name is guessed.
+ */
+export function placeholderName(peerId: string): string {
+  return `${CONTACT_PLACEHOLDER} · ${peerId.replace(/-/g, "").slice(0, 4).toLowerCase()}`;
+}
+
 export function displayContactName(ownerId: string, peerId: string): string {
-  return contactName(ownerId, peerId) ?? CONTACT_PLACEHOLDER;
+  return contactName(ownerId, peerId) ?? placeholderName(peerId);
 }
 
 export function rememberContactName(ownerId: string, peerId: string, name: string) {

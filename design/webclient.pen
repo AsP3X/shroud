@@ -28148,7 +28148,7 @@
                 {
                   "type": "frame",
                   "id": "d4K4p",
-                  "name": "Row Albert Flores",
+                  "name": "Row Contact · 3a7c",
                   "width": "fill_container",
                   "cornerRadius": 12,
                   "gap": 12,
@@ -28202,7 +28202,7 @@
                               "id": "Lnigv",
                               "name": "Initials",
                               "fill": "#FFFFFF",
-                              "content": "AF",
+                              "content": "C3",
                               "fontFamily": "$font-ui",
                               "fontSize": 15,
                               "fontWeight": "600"
@@ -28231,7 +28231,7 @@
                               "id": "K9S081",
                               "name": "Name",
                               "fill": "$text-primary",
-                              "content": "Albert Flores",
+                              "content": "Contact · 3a7c",
                               "fontFamily": "$font-ui",
                               "fontSize": 15,
                               "fontWeight": "600"

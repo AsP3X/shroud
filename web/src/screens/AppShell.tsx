@@ -34,7 +34,7 @@ import { Thread } from "../components/Thread";
 import { listTimestamp, presenceLabel, type Presence } from "../format";
 import { acceptChangedPeerKey, isPeerKeyBlocked, onPeerKeyBlocked, PEER_KEY_CHANGED } from "../crypto/peerIdentity";
 import { loadIdentity } from "../crypto/store";
-import { CONTACT_PLACEHOLDER, displayContactName, syncContactNames } from "../contactNames";
+import { displayContactName, placeholderName, syncContactNames } from "../contactNames";
 import {
   clearFreshSignIn,
   currentDeviceLabel,
@@ -2267,7 +2267,7 @@ export function AppShell({ session }: { session: Session }) {
     : undefined;
   const requests = incoming.map((request) => ({
     id: request.id,
-    username: CONTACT_PLACEHOLDER,
+    username: placeholderName(request.from_user_id),
   }));
   const mutedChats = conversations
     .filter((c) => isMuted(c.mute))
