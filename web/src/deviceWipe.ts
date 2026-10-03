@@ -65,6 +65,7 @@ const ACCOUNT_PREFIXES = [
   ...MESSAGE_PREFIXES,
   ...KEY_PREFIXES,
   "shroud.device-anchor",
+  "shroud.contact-names.",
   "transcription.languageStats",
 ];
 const SESSION_KEY = "shroud.session";

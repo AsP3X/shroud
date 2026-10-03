@@ -86,75 +86,41 @@ class InviteLookupTest {
     }
 
     @Test
-    fun aShareCodeThatIsNotFoundIsTriedAsAUsername() = runTest {
-        val card = UserCardDto(UUID.randomUUID(), "niklasvorberg", "QWERTY2345")
+    fun aMissingShareCodeIsNotLookedUpAsAUsername() = runTest {
+        val notFound = ApiError.Server("NOT_FOUND", "User not found.", 404)
         val calls = mutableListOf<String>()
-        val found = InviteLookup.lookUpShareCode(
-            "NIKLASVORBERG",
-            byCode = { code ->
+        try {
+            InviteLookup.lookUpShareCode("NIKLASVORBERG") { code ->
                 calls += "by-code/$code"
-                throw ApiError.Server("NOT_FOUND", "User not found.", 404)
-            },
-            byUsername = { name ->
-                calls += "by-username/$name"
-                card
-            },
-        )
-        assertEquals(card, found)
-        assertEquals(listOf("by-code/NIKLASVORBERG", "by-username/niklasvorberg"), calls)
+                throw notFound
+            }
+            fail("expected not found")
+        } catch (e: ApiError) {
+            assertSame(notFound, e)
+        }
+        assertEquals(listOf("by-code/NIKLASVORBERG"), calls)
     }
 
     @Test
-    fun aFoundShareCodeIsNeverTriedAsAUsername() = runTest {
+    fun aFoundShareCodeIsTheAccount() = runTest {
         val card = UserCardDto(UUID.randomUUID(), "jane_cooper", "ABCD234567")
         val calls = mutableListOf<String>()
-        val found = InviteLookup.lookUpShareCode(
-            "ABCD234567",
-            byCode = { code ->
-                calls += "by-code/$code"
-                card
-            },
-            byUsername = { name ->
-                calls += "by-username/$name"
-                throw ApiError.Server("NOT_FOUND", "User not found.", 404)
-            },
-        )
+        val found = InviteLookup.lookUpShareCode("ABCD234567") { code ->
+            calls += "by-code/$code"
+            card
+        }
         assertEquals(card, found)
         assertEquals(listOf("by-code/ABCD234567"), calls)
     }
 
-    /** Offline, a rate limit or a server error is the answer; a code that cannot be a username keeps its 404. */
     @Test
-    fun onlyANotFoundWithAUsernameShapeFallsBack() = runTest {
-        val offline = ApiError.Transport("The Internet connection appears to be offline.")
-        val limited = ApiError.Server("RATE_LIMITED", "Too many requests. Try again later.", 429)
-        val notFound = ApiError.Server("NOT_FOUND", "User not found.", 404)
-        for ((code, error) in listOf("NIKLASVORBERG" to offline, "NIKLASVORBERG" to limited, "MÜLLERHANS" to notFound)) {
-            val calls = mutableListOf<String>()
-            try {
-                InviteLookup.lookUpShareCode(
-                    code,
-                    byCode = { throw error },
-                    byUsername = { name ->
-                        calls += "by-username/$name"
-                        throw notFound
-                    },
-                )
-                fail("expected $error")
-            } catch (e: ApiError) {
-                assertSame(error, e)
-            }
-            assertTrue(calls.isEmpty())
-        }
-    }
-
-    /** web-parity §22.3: `by-code/NIKLASVORBERG` 404 → `by-username/niklasvorberg` 200 → the card. */
-    @Test
-    fun theFallbackGoesOverTheWire() = runTest {
+    fun aMissingShareCodeStaysMissingOnTheWire() = runTest {
         val backend = ShroudContactsBackend(api())
-        val card = InviteLookup.card(backend, "tok", ContactInviteParser.Invite.ShareCode("NIKLASVORBERG"))
-        assertEquals(UUID.fromString(niklas), card.id)
-        assertEquals(listOf("GET users/by-code/NIKLASVORBERG", "GET users/by-username/niklasvorberg"), paths.toList())
+        val error = runCatching {
+            InviteLookup.card(backend, "tok", ContactInviteParser.Invite.ShareCode("NIKLASVORBERG"))
+        }.exceptionOrNull() as ApiError.Server
+        assertEquals(404, error.status)
+        assertEquals(listOf("GET users/by-code/NIKLASVORBERG"), paths.toList())
     }
 
     /** Add Contact end to end on the real wire: lookup, fallback, request body, the refresh after it. */
@@ -173,17 +139,9 @@ class InviteLookupTest {
                 usernameOrder = icuOrder(),
             )
             val outcome = runBlocking { contacts.add("niklasvorberg") }
-            assertEquals(AddContactOutcome.Requested("niklasvorberg"), outcome)
-            assertEquals(
-                listOf("GET users/by-code/NIKLASVORBERG", "GET users/by-username/niklasvorberg", "POST contacts/requests"),
-                paths.take(3),
-            )
-            assertEquals(setOf("GET contacts", "GET contacts/requests"), paths.drop(3).toSet())
-            server.takeRequest() // by-code
-            server.takeRequest() // by-username
-            val post = server.takeRequest()
-            assertEquals("POST", post.method)
-            assertEquals(niklas, Json.parseToJsonElement(post.body!!.utf8()).jsonObject["user_id"]!!.jsonPrimitive.content)
+            assertEquals(AddContactOutcome.Failed("User not found."), outcome)
+            assertEquals(listOf("GET users/by-code/NIKLASVORBERG"), paths.toList())
+            server.takeRequest()
         } finally {
             scope.cancel()
             mainThread.close()

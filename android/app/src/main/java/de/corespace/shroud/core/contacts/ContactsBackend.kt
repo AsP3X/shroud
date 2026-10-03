@@ -24,7 +24,6 @@ interface ContactsBackend {
     suspend fun incomingRequests(token: String): List<ContactRequestDto>
 
     suspend fun user(token: String, userId: UUID): UserCardDto
-    suspend fun userByUsername(token: String, username: String): UserCardDto
     suspend fun userByShareCode(token: String, code: String): UserCardDto
 
     /** 201 pending, or 200 accepted when they had asked us already. */
@@ -53,7 +52,6 @@ class ShroudContactsBackend(private val api: ShroudApi) : ContactsBackend {
     override suspend fun contacts(token: String) = api.contacts(token)
     override suspend fun incomingRequests(token: String) = api.contactRequests(token)
     override suspend fun user(token: String, userId: UUID) = api.user(token, userId)
-    override suspend fun userByUsername(token: String, username: String) = api.userByUsername(token, username)
     override suspend fun userByShareCode(token: String, code: String) = api.userByShareCode(token, code)
     override suspend fun createContactRequest(token: String, userId: UUID) = api.createContactRequest(token, userId)
     override suspend fun acceptContactRequest(token: String, requestId: UUID) = api.acceptContactRequest(token, requestId)

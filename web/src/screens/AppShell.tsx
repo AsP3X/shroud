@@ -34,6 +34,7 @@ import { Thread } from "../components/Thread";
 import { listTimestamp, presenceLabel, type Presence } from "../format";
 import { acceptChangedPeerKey, isPeerKeyBlocked, onPeerKeyBlocked, PEER_KEY_CHANGED } from "../crypto/peerIdentity";
 import { loadIdentity } from "../crypto/store";
+import { CONTACT_PLACEHOLDER, displayContactName, syncContactNames } from "../contactNames";
 import {
   clearFreshSignIn,
   currentDeviceLabel,
@@ -533,8 +534,17 @@ export function AppShell({ session }: { session: Session }) {
     const nextConv = conv.status === "fulfilled" ? withLocalState(conv.value.conversations) : null;
     if (nextConv) setConversations(nextConv);
     else errors.push(conv.status === "rejected" && conv.reason instanceof ApiError ? conv.reason.message : "chats");
-    if (roster.status === "fulfilled") setContacts(roster.value.contacts);
-    else errors.push(roster.status === "rejected" && roster.reason instanceof ApiError ? roster.reason.message : "contacts");
+    if (roster.status === "fulfilled") {
+      const named = await syncContactNames(
+        session.token,
+        session.user.id,
+        session.user.username,
+        roster.value.contacts,
+        loadIdentity(session.user.id),
+      );
+      if (!alive.current) return conversationsRef.current;
+      setContacts(named);
+    } else errors.push(roster.status === "rejected" && roster.reason instanceof ApiError ? roster.reason.message : "contacts");
     if (requests.status === "fulfilled") setIncoming(requests.value.requests);
     else errors.push(requests.status === "rejected" && requests.reason instanceof ApiError ? requests.reason.message : "requests");
     setError(errors.length === 3 ? errors[0] : null);
@@ -862,7 +872,9 @@ export function AppShell({ session }: { session: Session }) {
     const key = pendingOpen.peer.toLowerCase();
     const conv = conversations.find((c) => c.peer.id.toLowerCase() === key);
     const contact = contacts.find((c) => c.user_id.toLowerCase() === key);
-    const username = conv?.peer.username ?? contact?.username;
+    const username = conv?.peer.deleted
+      ? "Deleted account"
+      : contact?.username || displayContactName(session.user.id, pendingOpen.peer);
     if (username) {
       setPendingOpen(null);
       setSelected({ id: conv?.peer.id ?? contact?.user_id ?? pendingOpen.peer, username });
@@ -1280,14 +1292,7 @@ export function AppShell({ session }: { session: Session }) {
             : null;
         },
         peerKey: (userId) => peerIdentityForSending(session.token, userId),
-        peerName: (userId) => {
-          const key = userId.toLowerCase();
-          return (
-            contactsRef.current.find((c) => c.user_id.toLowerCase() === key)?.username ??
-            conversationsRef.current.find((c) => c.peer.id.toLowerCase() === key)?.peer.username ??
-            null
-          );
-        },
+        peerName: (userId) => displayContactName(session.user.id, userId),
       }),
     [session.token, session.user.id, session.device.id],
   );
@@ -1421,7 +1426,7 @@ export function AppShell({ session }: { session: Session }) {
                   kind: "message",
                   tag: dto.conversation_id,
                   peer,
-                  sender: conv?.peer.username ?? "New message",
+                  sender: conv?.peer.deleted ? "Deleted account" : displayContactName(session.user.id, peer),
                   text: previewCopy(msg),
                   muted: isMuted(conv?.mute),
                   lookingAtThis: lookingAtRef.current === peer.toLowerCase(),
@@ -1477,7 +1482,7 @@ export function AppShell({ session }: { session: Session }) {
               kind: "reaction",
               tag: reactionTag(conv.id),
               peer: conv.peer.id,
-              sender: conv.peer.username,
+              sender: conv.peer.deleted ? "Deleted account" : displayContactName(session.user.id, conv.peer.id),
               text: null,
               muted: isMuted(conv.mute),
               lookingAtThis: looking === conv.peer.id.toLowerCase(),
@@ -1534,7 +1539,7 @@ export function AppShell({ session }: { session: Session }) {
               kind: "contact_request",
               tag: "contacts",
               peer: request.from_user_id,
-              sender: request.user?.username ?? "Someone",
+              sender: "Someone",
               text: null,
               muted: false,
               lookingAtThis: false,
@@ -1636,7 +1641,7 @@ export function AppShell({ session }: { session: Session }) {
     return conversations
       .map((c) => ({
         id: c.peer.id,
-        username: c.peer.username,
+        username: c.peer.deleted ? "Deleted account" : displayContactName(session.user.id, c.peer.id),
         subtitle: previewLine(session.user.id, c.peer.id),
         timestamp: listTimestamp(c.last_message_at),
         online: Boolean(presenceByUser[c.peer.id.toLowerCase()]?.online),
@@ -1653,17 +1658,18 @@ export function AppShell({ session }: { session: Session }) {
           entry.username.toLowerCase().includes(q) ||
           entry.subtitle.toLowerCase().includes(q),
       );
-  }, [conversations, presenceByUser, previewRev, query, session.user.id, typingPeers, recordingPeers, selected?.id]);
+  }, [conversations, contacts, presenceByUser, previewRev, query, session.user.id, typingPeers, recordingPeers, selected?.id]);
 
   const contactEntries = useMemo<ListEntry[]>(() => {
     const q = query.trim().toLowerCase();
     return contacts
-      .filter((c) => !q || c.username.toLowerCase().includes(q))
-      .map((c) => {
+      .map((c) => ({ contact: c, name: c.username || displayContactName(session.user.id, c.user_id) }))
+      .filter(({ name }) => !q || name.toLowerCase().includes(q))
+      .map(({ contact: c, name }) => {
         const presence = presenceByUser[c.user_id.toLowerCase()];
         return {
           id: c.user_id,
-          username: c.username,
+          username: name,
           subtitle: presenceLabel(presence) || "Contact",
           online: Boolean(presence?.online),
           activity: activityFor(c.user_id, typingPeers, recordingPeers),
@@ -2261,14 +2267,24 @@ export function AppShell({ session }: { session: Session }) {
     : undefined;
   const requests = incoming.map((request) => ({
     id: request.id,
-    username: request.user?.username ?? "Unknown",
+    username: CONTACT_PLACEHOLDER,
   }));
   const mutedChats = conversations
     .filter((c) => isMuted(c.mute))
-    .map((c) => ({ peerId: c.peer.id, username: c.peer.username, mute: c.mute as ChatMute }));
+    .map((c) => ({
+      peerId: c.peer.id,
+      username: c.peer.deleted ? "Deleted account" : displayContactName(session.user.id, c.peer.id),
+      mute: c.mute as ChatMute,
+    }));
   const selectedConversation = selected
     ? conversations.find((c) => c.peer.id.toLowerCase() === selected.id.toLowerCase())
     : undefined;
+  const selectedLabel = !selected
+    ? ""
+    : selectedConversation?.peer.deleted
+      ? "Deleted account"
+      : displayContactName(session.user.id, selected.id);
+  const selectedPeer = selected ? { ...selected, username: selectedLabel } : null;
   /** Offered once, until notifications are on, turned down, or the offer closed. */
   const offerNotifications =
     tab === "chats" &&
@@ -2378,7 +2394,7 @@ export function AppShell({ session }: { session: Session }) {
             {selected ? (
               <Thread
                 key={selected.id}
-                peer={selected}
+                peer={selectedPeer ?? selected}
                 presence={presenceLabel(selectedPresence)}
                 online={Boolean(selectedPresence?.online)}
                 activity={selectedActivity ?? null}
@@ -2560,12 +2576,12 @@ export function AppShell({ session }: { session: Session }) {
         <Modal title="Contact info" onClose={() => setShowInfo(false)}>
           <div className="info-sheet">
             <Avatar
-              name={selected.username}
+              name={selectedLabel}
               seed={selected.id}
               size="lg"
               online={Boolean(selectedPresence?.online)}
             />
-            <strong>{selected.username}</strong>
+            <strong>{selectedLabel}</strong>
             {selectedActivity ? (
               <TypingLabel word={selectedActivity} />
             ) : (
@@ -2599,7 +2615,7 @@ export function AppShell({ session }: { session: Session }) {
               disabled={!selectedConversation}
               onClick={(event) => {
                 const rect = event.currentTarget.getBoundingClientRect();
-                openChatMenu(selected.id, selected.username, { x: rect.right - 12, y: rect.bottom }, event.currentTarget);
+                openChatMenu(selected.id, selectedLabel, { x: rect.right - 12, y: rect.bottom }, event.currentTarget);
               }}
             >
               <span className="set-tile" style={{ background: "#e64a72" }} aria-hidden="true">

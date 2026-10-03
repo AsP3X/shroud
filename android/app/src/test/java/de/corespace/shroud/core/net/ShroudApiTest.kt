@@ -106,7 +106,11 @@ class ShroudApiTest {
         val (response, request) = exchange(ok(session, 201)) { api.register("noah", "secret") }
         request.assertRoute("POST", "auth/register")
         request.assertToken(null)
-        assertEquals(setOf("username", "password"), jsonOf(request).jsonObject.keys)
+        assertEquals(setOf("username_hash", "password"), jsonOf(request).jsonObject.keys)
+        assertEquals(
+            de.corespace.shroud.core.auth.UsernameHash.digest("noah"),
+            jsonOf(request).jsonObject["username_hash"]!!.jsonPrimitive.content,
+        )
         assertEquals("tok", response.token)
         assertEquals("ABCDEFGHJK", response.user.shareCode)
         // Upper-case ids from the wire become UUIDs; their wire form is lower-case.
@@ -215,10 +219,6 @@ class ShroudApiTest {
         val (byId, idRequest) = exchange(ok(userCard)) { api.user("tok", user) }
         idRequest.assertRoute("GET", "users/$userWire")
         assertEquals("alice", byId.username)
-        val (_, byName) = exchange(ok(userCard)) { api.userByUsername("tok", "a b") }
-        byName.assertRoute("GET", "users/by-username/a%20b")
-        val (_, slash) = exchange(ok(userCard)) { api.userByUsername("tok", "x/../config?y") }
-        slash.assertRoute("GET", "users/by-username/x%2F%2E%2E%2Fconfig%3Fy")
         // Normalized like ContactInviteParser.normalizeShareCode (ContactInviteParser.swift:38-44).
         val (_, byCode) = exchange(ok(userCard)) { api.userByShareCode("tok", "  @abcd-2345 67  ") }
         byCode.assertRoute("GET", "users/by-code/ABCD234567")

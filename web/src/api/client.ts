@@ -1,4 +1,5 @@
 import { apiBase } from "../config";
+import { normalizeUsername, usernameHashB64 } from "../crypto/username";
 import type { Invite } from "../invite";
 
 const UUID_RE =
@@ -33,7 +34,7 @@ export type Session = {
 
 export type Conversation = {
   id: string;
-  peer: { id: string; username: string };
+  peer: { id: string; username?: string; /** The account was deleted. This is not a name. */ deleted?: boolean };
   created_at: string;
   last_message_at: string | null;
   /** The chat's latest reaction change (see `reactions.ts`); absent from older servers. */
@@ -67,8 +68,11 @@ export type TestPushOutcome = {
 
 export type Contact = {
   user_id: string;
-  username: string;
   created_at: string;
+  /** The contact's username, sealed to this account. Absent until they have published it. */
+  sealed_name?: string | null;
+  /** Filled on this device after the seal opens. The server does not send it. */
+  username?: string;
 };
 
 export type ContactRequest = {
@@ -77,7 +81,7 @@ export type ContactRequest = {
   to_user_id: string;
   status: string;
   created_at: string;
-  user?: { id: string; username: string } | null;
+  user?: { id: string } | null;
 };
 
 export type Device = {
@@ -91,7 +95,8 @@ export type Device = {
 
 export type BlockItem = {
   user_id: string;
-  username: string;
+  /** A name this device already knew. Absent from the server. */
+  username?: string;
   created_at: string;
 };
 
@@ -103,13 +108,15 @@ export type PrivacySettings = {
   send_typing: boolean;
   /** Contacts see "online" / "last seen", and you see theirs. */
   share_presence: boolean;
-  /** Someone who only knows your username can find you (else only QR / share code, and contacts). */
-  discoverable_by_username: boolean;
+  /**
+   * Unused. A username is not a way to find an account. Older settings objects still
+   * carry the field.
+   */
+  discoverable_by_username?: boolean;
 };
 
 export type UserCard = {
   id: string;
-  username: string;
   share_code?: string;
 };
 
@@ -118,16 +125,18 @@ export type CallModality = "voice" | "video";
 /** `ringing`, `active`, then how it ended (see docs/calls.md for what each side shows). */
 export type CallStatus = "ringing" | "active" | "rejected" | "missed" | "cancelled" | "ended";
 
-/** A call as the server tells it (docs/calls.md). Usernames are null for a deleted account. */
+/** A call as the server tells it (docs/calls.md). It carries no username. */
 export type CallInfo = {
   id: string;
   caller_user_id: string;
   caller_device_id: string;
-  caller_username: string | null;
+  caller_username?: string | null;
+  caller_deleted?: boolean;
   callee_user_id: string;
   /** The callee device that answered; absent until then. */
   callee_device_id?: string | null;
-  callee_username: string | null;
+  callee_username?: string | null;
+  callee_deleted?: boolean;
   modality: CallModality;
   status: CallStatus;
   ended_reason?: string | null;
@@ -327,23 +336,34 @@ async function putBytes(path: string, token: string, data: Uint8Array): Promise<
   }
 }
 
+/** The name stays on this device. The register and login answers do not include it. */
+function withLocalUsername(session: Session, username: string): Session {
+  return { ...session, user: { ...session.user, username } };
+}
+
 export const api = {
   health: () => request<{ status: string }>("/health/live"),
-  /** No device name here: it is sealed once the phrase is known (`deviceNaming.ts`). */
-  register: (username: string, password: string) =>
-    request<Session>("/auth/register", {
+  /** No device name here: it is sealed once the phrase is known (`deviceNaming.ts`). The username is hashed on this device. */
+  register: async (username: string, password: string) => {
+    const name = normalizeUsername(username);
+    const session = await request<Session>("/auth/register", {
       method: "POST",
-      body: JSON.stringify({ username, password }),
-    }),
-  login: (username: string, password: string, deviceId?: string | null) =>
-    request<Session>("/auth/login", {
+      body: JSON.stringify({ username_hash: usernameHashB64(name), password }),
+    });
+    return withLocalUsername(session, name);
+  },
+  login: async (username: string, password: string, deviceId?: string | null) => {
+    const name = normalizeUsername(username);
+    const session = await request<Session>("/auth/login", {
       method: "POST",
       body: JSON.stringify({
-        username,
+        username_hash: usernameHashB64(name),
         password,
         ...(deviceId && UUID_RE.test(deviceId) ? { device_id: deviceId } : {}),
       }),
-    }),
+    });
+    return withLocalUsername(session, name);
+  },
   me: (token: string) => request<{ user: Session["user"]; device: Session["device"] }>("/auth/me", { token }),
   logout: (token: string) => request<void>("/auth/logout", { method: "POST", token }),
   /**
@@ -387,28 +407,25 @@ export const api = {
       { token },
     ),
   lookupUser: async (token: string, invite: Invite) => {
+    if (invite.kind === "username") {
+      throw new ApiError(
+        "NOT_FOUND",
+        "Add someone with their QR code or share code.",
+        404,
+      );
+    }
     if (invite.kind === "userId") {
       return request<UserCard>(`/users/${invite.value}`, { token });
     }
-    if (invite.kind === "shareCode") {
-      try {
-        return await request<UserCard>(`/users/by-code/${encodeURIComponent(invite.value)}`, {
-          token,
-        });
-      } catch (err) {
-        const asName = invite.value.toLowerCase();
-        if (
-          err instanceof ApiError &&
-          err.status === 404 &&
-          /^[a-z0-9_]{3,32}$/.test(asName)
-        ) {
-          return request<UserCard>(`/users/by-username/${encodeURIComponent(asName)}`, { token });
-        }
-        throw err;
-      }
-    }
-    return request<UserCard>(`/users/by-username/${encodeURIComponent(invite.value)}`, { token });
+    return request<UserCard>(`/users/by-code/${encodeURIComponent(invite.value)}`, { token });
   },
+  /** This account's username, sealed to a mutual contact. The server cannot read it. */
+  putContactName: (token: string, userId: string, sealed: string) =>
+    request<void>(`/contacts/${encodeURIComponent(userId.toLowerCase())}/sealed-name`, {
+      method: "PUT",
+      token,
+      body: JSON.stringify({ sealed }),
+    }),
   createContactRequest: (token: string, userId: string) =>
     request<ContactRequest>("/contacts/requests", {
       method: "POST",

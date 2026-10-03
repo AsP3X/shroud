@@ -804,10 +804,11 @@ final class MessagingController {
             async let listTask = contactsService.listContacts(token: token)
             async let requestsTask = contactsService.listIncomingRequests(token: token)
             // Await both before publishing so a half-failed refresh never lands.
-            let sorted = try await listTask.sorted {
+            let listed = try await listTask
+            let sorted = await applyContactNames(listed).sorted {
                 $0.username.localizedCaseInsensitiveCompare($1.username) == .orderedAscending
             }
-            let requests = try await requestsTask
+            let requests = (try await requestsTask).map(redactedRequest)
             let rosterChanged = contacts.map(\.userId) != sorted.map(\.userId)
             let changed = contacts != sorted || incomingRequests != requests
             if contacts != sorted { contacts = sorted }
@@ -897,7 +898,7 @@ final class MessagingController {
             return .failed("Not signed in.")
         }
         guard let invite = ContactInviteParser.parse(raw) else {
-            return .failed("Enter a share code, username, link, or user ID.")
+            return .failed("Enter a share code, link, or user ID.")
         }
         do {
             let card: UserCardDTO
@@ -905,14 +906,9 @@ final class MessagingController {
             case let .userID(id):
                 card = try await contactsService.getUser(userID: id, token: token)
             case let .shareCode(code):
-                let service = contactsService
-                card = try await Self.lookUpShareCode(
-                    code,
-                    byCode: { try await service.getUserByShareCode($0, token: token) },
-                    byUsername: { try await service.getUserByUsername($0, token: token) }
-                )
-            case let .username(name):
-                card = try await contactsService.getUserByUsername(name, token: token)
+                card = try await contactsService.getUserByShareCode(code, token: token)
+            case .username:
+                return .failed("Add someone with their QR code or share code.")
             }
             if card.id == sessionController?.userID {
                 return .failed("You can't add yourself.")
@@ -925,28 +921,12 @@ final class MessagingController {
         }
     }
 
-    /// Looks a share code up, and on a 404 tries it as a username.
-    ///
-    /// Human: `ContactInviteParser` reads any 8–16 letters and digits as a share code, so a
-    /// username like `noahvorberg` (no underscore) could never be added by name: the server
-    /// answered "User not found." for the code. The server never has both readings for one
-    /// input, so when no share code matches, the same text lower-cased is tried as a username
-    /// — what the web client does (`web/src/api/client.ts:389-411`; android-port decision P10a,
-    /// contacts §8.2). Only a 404 falls back; offline, rate limits and server errors surface.
-    /// Agent: Pure apart from the two lookups, for `ContactInviteParserTests`.
+    /// Looks a share code up. A username is not a way to find an account, so a miss stays a miss.
     nonisolated static func lookUpShareCode(
         _ code: String,
-        byCode: @Sendable (String) async throws -> UserCardDTO,
-        byUsername: @Sendable (String) async throws -> UserCardDTO
+        byCode: @Sendable (String) async throws -> UserCardDTO
     ) async throws -> UserCardDTO {
-        do {
-            return try await byCode(code)
-        } catch let error as APIError {
-            guard case let .server(_, _, statusCode) = error, statusCode == 404,
-                  let name = usernameFallback(forShareCode: code)
-            else { throw error }
-            return try await byUsername(name)
-        }
+        try await byCode(code)
     }
 
     /// The username a share code may really be: the (already normalized) code lower-cased, when
@@ -1028,7 +1008,7 @@ final class MessagingController {
         do {
             let list = applyingLocalChatState(
                 applyingLocalReactionSeen(try await messagesService.listConversations(token: token))
-            )
+            ).map(namedConversation)
             // Same-value writes still invalidate observers — only publish real changes.
             let changed = conversations != list
             if changed { conversations = list }
@@ -5905,6 +5885,90 @@ extension MessagingController {
         guard hasLoadedChats else { return }
         let preferences = NotificationsController.shared.preferences
         NotificationsController.shared.setBadge(unreadTotal(includeMuted: preferences.badgeIncludesMuted))
+    }
+
+    /// Opens the seals contacts made for us and publishes our name, sealed to each of them.
+    private func applyContactNames(_ contacts: [ContactItemDTO]) async -> [ContactItemDTO] {
+        guard let owner = sessionController?.userID else { return contacts }
+        let still = Set(contacts.map(\.userId))
+        for previous in self.contacts where still.contains(previous.userId) && previous.username != ContactNames.placeholder {
+            ContactNames.remember(previous.username, peer: previous.userId, owner: owner)
+        }
+        ContactNames.retain(peers: contacts.map(\.userId), owner: owner)
+        if let token = sessionController?.bearerToken,
+           let username = sessionController?.username,
+           let material = cryptoController?.material {
+            for contact in contacts {
+                let peer = contact.userId
+                do {
+                    let theirPublic = try await peerIdentityForSending(peerUserID: peer, token: token)
+                    if let sealed = contact.sealedName,
+                       let opened = MessageCrypto.openContactName(
+                           sealed,
+                           ourPrivate: material.agreementPrivateKey,
+                           senderIdentityPublic: theirPublic,
+                           recipientIdentityPublic: material.identityPublicKeyData
+                       ) {
+                        ContactNames.remember(opened, peer: peer, owner: owner)
+                    }
+                    let fingerprint = UsernameHash.digest(username + "." + theirPublic.base64EncodedString())
+                    if ContactNames.publishedFingerprint(peer: peer, owner: owner) == fingerprint { continue }
+                    let sealed = try MessageCrypto.sealContactName(
+                        username,
+                        senderPrivate: material.agreementPrivateKey,
+                        senderIdentityPublic: material.identityPublicKeyData,
+                        recipientIdentityPublic: theirPublic
+                    )
+                    try await contactsService.putSealedName(userID: peer, sealed: sealed, token: token)
+                    ContactNames.rememberPublished(fingerprint, peer: peer, owner: owner)
+                } catch {
+                    // No key yet, or a key change waiting to be trusted.
+                }
+            }
+        }
+        let named = contacts.map { contact in
+            ContactItemDTO(
+                userId: contact.userId,
+                username: ContactNames.display(peer: contact.userId, owner: owner),
+                createdAt: contact.createdAt,
+                sealedName: contact.sealedName
+            )
+        }
+        let nextChats = conversations.map(namedConversation)
+        if nextChats != conversations { conversations = nextChats }
+        return named
+    }
+
+    /// A request is not a contact yet, so it carries no name.
+    private func redactedRequest(_ request: ContactRequestDTO) -> ContactRequestDTO {
+        ContactRequestDTO(
+            id: request.id,
+            fromUserId: request.fromUserId,
+            toUserId: request.toUserId,
+            status: request.status,
+            createdAt: request.createdAt,
+            respondedAt: request.respondedAt,
+            user: request.user.map {
+                UserCardDTO(id: $0.id, username: ContactNames.placeholder, shareCode: $0.shareCode)
+            }
+        )
+    }
+
+    private func namedConversation(_ item: ConversationItemDTO) -> ConversationItemDTO {
+        let owner = sessionController?.userID
+        let name = item.peer.deleted
+            ? "Deleted account"
+            : ContactNames.display(peer: item.peer.id, owner: owner)
+        return ConversationItemDTO(
+            id: item.id,
+            peer: ConversationPeerDTO(id: item.peer.id, username: name, deleted: item.peer.deleted),
+            createdAt: item.createdAt,
+            lastMessageAt: item.lastMessageAt,
+            reactionSeq: item.reactionSeq,
+            unseenReactions: item.unseenReactions,
+            unreadCount: item.unreadCount,
+            mute: item.mute
+        )
     }
 
     /// Who a peer is, for a banner: the chat list, then contacts.

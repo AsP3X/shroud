@@ -85,7 +85,7 @@ async fn register(addr: SocketAddr) -> String {
     let response = reqwest::Client::new()
         .post(format!("http://{addr}/api/v1/auth/register"))
         .json(&json!({
-            "username": format!("r_{id}"),
+            "username_hash": shroud_server::auth::username_hash_b64(format!("r_{id}")),
             "password": "correct-horse-battery",
             "device_name": "Relay Test"
         }))

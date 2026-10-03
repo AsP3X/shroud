@@ -17,7 +17,8 @@ import java.util.UUID
 @Serializable
 data class UserCardDto(
     val id: UUID,
-    val username: String,
+    /** A name this device already has. The server does not send one. */
+    val username: String = "Contact",
     /** Present on the `GET /users/…` lookups; absent on contact-request peer cards. */
     @SerialName("share_code") val shareCode: String? = null,
 )
@@ -52,8 +53,11 @@ data class ContactRequestsResponse(val requests: List<ContactRequestDto>)
 @Serializable
 data class ContactItemDto(
     @SerialName("user_id") val userId: UUID,
-    val username: String,
+    /** Filled on this phone after a seal opens. The server does not send it. */
+    val username: String = "Contact",
     @SerialName("created_at") val createdAt: Instant,
+    /** The contact's username, sealed to this account. Absent until they publish it. */
+    @SerialName("sealed_name") val sealedName: String? = null,
 )
 
 /** `GET /contacts` (`ContactsListResponse`, `ContactModels.swift:53-55`). */
@@ -63,6 +67,10 @@ data class ContactsResponse(val contacts: List<ContactItemDto>)
 /** `POST /contacts/requests` and `POST /blocks` (`CreateContactRequestBody`, `BlockUserBody`). */
 @Serializable
 data class UserIdBody(@SerialName("user_id") val userId: UUID)
+
+/** `PUT /contacts/{id}/sealed-name`. Opaque to the server. */
+@Serializable
+data class PutContactNameRequest(val sealed: String)
 
 /** `POST /users/me/share-code` — the account's new share code (`ShareCodeDTO`, `PrivacyModels.swift:79-85`). */
 @Serializable

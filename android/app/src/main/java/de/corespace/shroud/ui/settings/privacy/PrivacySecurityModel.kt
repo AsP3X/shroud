@@ -75,6 +75,8 @@ object PrivacyCopy {
     const val LOADING = "Loading your privacy settings…"
     const val VISIBILITY = "Visibility"
     const val VISIBILITY_FOOTNOTE = "These work both ways: when you hide yours, you won't see your contacts' either."
+    const val FINDING_YOU =
+        "People add you with your QR code or share code. Your username is shared only with people you have both added, and the server never sees it."
     const val RESET_QR = "Reset QR code"
     const val RESET_QR_DETAIL = "Makes a new QR code and invite link. The old ones stop working."
     const val RESET_QR_TITLE = "Reset your QR code?"

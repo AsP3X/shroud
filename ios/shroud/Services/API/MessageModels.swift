@@ -172,7 +172,35 @@ extension MessageDTO {
 
 struct ConversationPeerDTO: Codable, Equatable, Sendable, Identifiable {
     let id: UUID
-    let username: String
+    var username: String
+    /// The account was deleted. This is not a name.
+    var deleted: Bool
+
+    init(id: UUID, username: String, deleted: Bool = false) {
+        self.id = id
+        self.username = username
+        self.deleted = deleted
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case username
+        case deleted
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        username = try container.decodeIfPresent(String.self, forKey: .username) ?? ContactNames.placeholder
+        deleted = try container.decodeIfPresent(Bool.self, forKey: .deleted) ?? false
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(username, forKey: .username)
+        try container.encode(deleted, forKey: .deleted)
+    }
 }
 
 struct ConversationItemDTO: Codable, Equatable, Sendable, Identifiable {

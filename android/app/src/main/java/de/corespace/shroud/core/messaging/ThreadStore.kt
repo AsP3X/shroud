@@ -241,7 +241,9 @@ class ThreadStore(
     /** The chat list, then contacts (`username(for:)`, `MessagingController.swift:5850-5854`). */
     fun username(storePeer: UUID): String? =
         conversationsFlow.value.firstOrNull { it.peer.id == storePeer }?.peer?.username
+            ?.takeIf { it.isNotEmpty() && it != "Contact" }
             ?: roster().first.firstOrNull { it.userId == storePeer }?.username
+                ?.takeIf { it.isNotEmpty() && it != "Contact" }
 
     /**
      * The chat's list row still counts reactions to our messages nobody here has seen

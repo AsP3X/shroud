@@ -83,7 +83,7 @@ export function Auth() {
       markFreshSignIn();
       setPhase("phrase");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Something went wrong.");
+      setError(err instanceof ApiError || err instanceof Error && err.name === "UsernameError" ? err.message : "Something went wrong.");
     } finally {
       setBusy(false);
     }

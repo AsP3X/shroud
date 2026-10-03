@@ -65,7 +65,7 @@ async fn websocket_auth_ok_with_valid_token() {
     let register = client
         .post(format!("http://{addr}/api/v1/auth/register"))
         .json(&json!({
-            "username": username,
+            "username_hash": shroud_server::auth::username_hash_b64(username),
             "password": password,
             "device_name": "WS Test"
         }))
@@ -168,7 +168,7 @@ async fn register_as(
 ) -> (String, String) {
     let response = client
         .post(format!("http://{addr}/api/v1/auth/register"))
-        .json(&json!({ "username": username, "password": PASSWORD }))
+        .json(&json!({ "username_hash": shroud_server::auth::username_hash_b64(username), "password": PASSWORD }))
         .send()
         .await
         .expect("register");
@@ -378,7 +378,7 @@ async fn log_in(
 ) -> (String, String) {
     let response = client
         .post(format!("http://{addr}/api/v1/auth/login"))
-        .json(&json!({ "username": username, "password": PASSWORD, "device_id": device_id }))
+        .json(&json!({ "username_hash": shroud_server::auth::username_hash_b64(username), "password": PASSWORD, "device_id": device_id }))
         .send()
         .await
         .expect("login");
@@ -802,7 +802,7 @@ async fn removing_a_device_closes_its_socket_via_redis() {
 async fn login(client: &reqwest::Client, addr: std::net::SocketAddr, username: &str) -> String {
     let response = client
         .post(format!("http://{addr}/api/v1/auth/login"))
-        .json(&json!({ "username": username, "password": "correct-horse-battery" }))
+        .json(&json!({ "username_hash": shroud_server::auth::username_hash_b64(username), "password": "correct-horse-battery" }))
         .send()
         .await
         .expect("login");
@@ -813,23 +813,6 @@ async fn login(client: &reqwest::Client, addr: std::net::SocketAddr, username: &
     );
     let body: Value = response.json().await.expect("json");
     body["token"].as_str().unwrap().to_string()
-}
-
-async fn username_of(client: &reqwest::Client, addr: std::net::SocketAddr, token: &str) -> String {
-    let body: Value = client
-        .get(format!("http://{addr}/api/v1/auth/me"))
-        .bearer_auth(token)
-        .send()
-        .await
-        .expect("me")
-        .json()
-        .await
-        .expect("json");
-    body["username"]
-        .as_str()
-        .or_else(|| body["user"]["username"].as_str())
-        .expect("username")
-        .to_string()
 }
 
 /// Human: `message.reaction` goes to the reactor's other devices and to the other participant
@@ -846,11 +829,13 @@ async fn websocket_reaction_events_reach_who_can_see_the_message() {
     };
     let (addr, shutdown, server) = spawn_app(pool).await;
     let client = reqwest::Client::new();
-    let (token_a, user_a) = register(&client, addr).await;
-    let (token_b, user_b) = register(&client, addr).await;
+    let name_a = unique_username();
+    let name_b = unique_username();
+    let (token_a, user_a) = register_as(&client, addr, &name_a).await;
+    let (token_b, user_b) = register_as(&client, addr, &name_b).await;
     become_contacts(&client, addr, (&token_a, &user_a), (&token_b, &user_b)).await;
-    let token_a2 = login(&client, addr, &username_of(&client, addr, &token_a).await).await;
-    let token_b2 = login(&client, addr, &username_of(&client, addr, &token_b).await).await;
+    let token_a2 = login(&client, addr, &name_a).await;
+    let token_b2 = login(&client, addr, &name_b).await;
 
     let mut a1 = connect_authed(addr, &token_a).await;
     let mut a2 = connect_authed(addr, &token_a2).await;

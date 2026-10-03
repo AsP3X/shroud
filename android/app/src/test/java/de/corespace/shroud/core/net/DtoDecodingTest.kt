@@ -78,7 +78,7 @@ class DtoDecodingTest {
     fun loginSendsAnExplicitNullDeviceIdAndLowerCaseIds() {
         // The container Json writes null on purpose (iOS LoginRequest encodes `device_id: null`).
         val fresh = encodeObject(json, LoginRequest.serializer(), LoginRequest("alice", "pw", null))
-        assertEquals(setOf("username", "password", "device_id"), fresh.keys)
+        assertEquals(setOf("username_hash", "password", "device_id"), fresh.keys)
         assertEquals(JsonNull, fresh["device_id"])
         val again = encodeObject(json, LoginRequest.serializer(), LoginRequest("alice", "pw", uuid("ABCDEF01-2345-4678-9ABC-DEF012345678")))
         assertEquals("abcdef01-2345-4678-9abc-def012345678", again["device_id"]!!.jsonPrimitive.content)
@@ -747,7 +747,8 @@ class DtoDecodingTest {
             PeerDeviceBundle.serializer(), PeerKeyBundlesResponse.serializer(), PostOtpkRequest.serializer(),
             // Users, contacts, blocks
             UserCardDto.serializer(), ContactRequestDto.serializer(), ContactRequestsResponse.serializer(),
-            ContactItemDto.serializer(), ContactsResponse.serializer(), UserIdBody.serializer(), ShareCodeResponse.serializer(),
+            ContactItemDto.serializer(), ContactsResponse.serializer(), UserIdBody.serializer(),
+            PutContactNameRequest.serializer(), ShareCodeResponse.serializer(),
             BlockItemDto.serializer(), BlocksResponse.serializer(),
             // Messages, conversations, reactions
             SendMessageRequest.serializer(), MessageDto.serializer(), ListMessagesResponse.serializer(),

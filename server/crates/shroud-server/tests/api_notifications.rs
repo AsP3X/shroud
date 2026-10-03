@@ -112,24 +112,24 @@ async fn auth(app: &axum::Router, path: &str, body: Value) -> Value {
     serde_json::from_slice(&bytes).expect("json")
 }
 
-fn account(body: &Value) -> Account {
+fn account(body: &Value, username: &str) -> Account {
     Account {
         token: body["token"].as_str().unwrap().to_string(),
         user_id: body["user"]["id"].as_str().unwrap().to_string(),
         device_id: body["device"]["id"].as_str().unwrap().parse().unwrap(),
-        username: body["user"]["username"].as_str().unwrap().to_string(),
+        username: username.to_string(),
     }
 }
 
 async fn register(app: &axum::Router) -> Account {
-    let id = &Uuid::new_v4().simple().to_string()[..12];
+    let name = format!("n_{}", &Uuid::new_v4().simple().to_string()[..12]);
     let body = auth(
         app,
         "/api/v1/auth/register",
-        json!({ "username": format!("n_{id}"), "password": "correct-horse-battery" }),
+        json!({ "username_hash": shroud_server::auth::username_hash_b64(&name), "password": "correct-horse-battery" }),
     )
     .await;
-    account(&body)
+    account(&body, &name)
 }
 
 /// The same account on a second device.
@@ -137,10 +137,10 @@ async fn login_again(app: &axum::Router, who: &Account) -> Account {
     let body = auth(
         app,
         "/api/v1/auth/login",
-        json!({ "username": who.username, "password": "correct-horse-battery" }),
+        json!({ "username_hash": shroud_server::auth::username_hash_b64(&who.username), "password": "correct-horse-battery" }),
     )
     .await;
-    account(&body)
+    account(&body, &who.username)
 }
 
 async fn become_contacts(app: &axum::Router, a: &Account, b: &Account) {
@@ -581,8 +581,8 @@ async fn a_message_pushes_to_the_recipients_closed_devices() {
     assert_eq!(payload["shroud"]["m"], message);
     assert_eq!(payload["shroud"]["p"], a.user_id);
     assert_eq!(payload["aps"]["thread-id"], payload["shroud"]["c"]);
-    // The name is sealed for the phone; Apple never sees it.
-    assert!(payload["shroud"]["e"].is_string());
+    // The server has no name to seal. The phone fills one from a contact's seal.
+    assert!(payload["shroud"].get("e").is_none());
     assert!(!payload.to_string().contains(&a.username));
 
     let browser = pushes_to(&state, b_web.device_id);
@@ -590,8 +590,8 @@ async fn a_message_pushes_to_the_recipients_closed_devices() {
     let (channel, payload) = &browser[0];
     assert_eq!(*channel, PushChannel::Web);
     assert_eq!(payload["kind"], "message");
-    // Web Push is encrypted to the browser; the name travels inside.
-    assert_eq!(payload["sender"], a.username);
+    // The server does not know the sender's name, so the push does not carry one.
+    assert!(payload.get("sender").is_none());
     assert_eq!(payload["badge"], 1);
 
     assert_eq!(payload["tag"], payload["conversation_id"]);
@@ -1128,7 +1128,7 @@ async fn a_call_rings_by_pushkit_and_notifies_closed_devices() {
     assert_eq!(payload["aps"]["alert"]["body"], "Incoming video call");
     assert_eq!(payload["aps"]["thread-id"], "calls");
     assert_eq!(payload["shroud"]["call"], body["id"]);
-    assert!(payload["shroud"]["e"].is_string());
+    assert!(payload["shroud"].get("e").is_none());
 
     // The browser: a Web Push.
     let browser = pushes_to(&state, b_web.device_id);
@@ -1138,7 +1138,7 @@ async fn a_call_rings_by_pushkit_and_notifies_closed_devices() {
     assert_eq!(browser[0].1["tag"], "calls");
     assert_eq!(browser[0].1["call_id"], body["id"]);
 
-    // The current iPhone rings by PushKit although its app is open, with its name sealed.
+    // The current iPhone rings by PushKit although its app is open. The name stays on the phone.
     let rings: Vec<_> = state
         .push
         .recorded()
@@ -1153,7 +1153,7 @@ async fn a_call_rings_by_pushkit_and_notifies_closed_devices() {
     assert_eq!(voip["shroud"]["call"], body["id"]);
     assert_eq!(voip["shroud"]["p"], a.user_id);
     assert!(!voip.to_string().contains(&a.username));
-    assert!(voip["shroud"]["e"].is_string());
+    assert!(voip["shroud"].get("e").is_none());
     let _ = key;
 
     // Tapping a notification opens the app, which connects: it gets the ring then.
@@ -1817,7 +1817,7 @@ async fn an_android_app_gets_pushes_through_its_distributor() {
     assert_eq!(push.payload["kind"], "message");
     assert_eq!(push.payload["message_id"], message);
     assert_eq!(push.payload["peer_user_id"], a.user_id);
-    assert_eq!(push.payload["sender"], a.username);
+    assert!(push.payload.get("sender").is_none());
     assert_eq!(push.payload["badge"], 1);
     assert_eq!(push.payload["tag"], push.payload["conversation_id"]);
     assert_eq!(
@@ -1970,7 +1970,7 @@ async fn an_android_app_rings_even_in_front_and_hears_the_ring_end() {
         assert_eq!(push.payload["kind"], "video_call");
         assert_eq!(push.payload["call_id"], ring["id"]);
         assert_eq!(push.payload["peer_user_id"], a.user_id);
-        assert_eq!(push.payload["sender"], a.username);
+        assert!(push.payload.get("sender").is_none());
         assert_eq!(push.payload["tag"], "calls");
         assert_eq!(options_of(push), (60, Urgency::High, topic(&ring["id"])));
     }

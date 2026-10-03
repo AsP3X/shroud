@@ -16,7 +16,7 @@ import java.util.UUID
 @Serializable
 data class BlockItemDto(
     @SerialName("user_id") val userId: UUID,
-    val username: String,
+    val username: String = "Contact",
     @SerialName("created_at") val createdAt: Instant,
 )
 

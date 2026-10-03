@@ -56,7 +56,7 @@ async fn auth_login_rate_limited_by_ip_sets_retry_after() {
 
     let ip = format!("203.0.113.{}", Uuid::new_v4().as_u128() % 250 + 1);
     let body = json!({
-        "username": "does_not_exist_rl",
+        "username_hash": shroud_server::auth::username_hash_b64("does_not_exist_rl"),
         "password": "wrong-password-here"
     })
     .to_string();
@@ -137,7 +137,7 @@ async fn untrusted_forwarded_headers_share_unknown_ip_bucket() {
         .with_state(state);
 
     let body = json!({
-        "username": "does_not_exist_xff",
+        "username_hash": shroud_server::auth::username_hash_b64("does_not_exist_xff"),
         "password": "wrong-password-here"
     })
     .to_string();
@@ -189,7 +189,7 @@ async fn message_send_rate_limited_per_user() {
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from(
                         json!({
-                            "username": username,
+                            "username_hash": shroud_server::auth::username_hash_b64(&username),
                             "password": password,
                             "device_name": "RL"
                         })

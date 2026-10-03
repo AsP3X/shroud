@@ -21,7 +21,8 @@ struct CallHistoryTests {
         reason: String? = nil,
         answered: String? = nil,
         ended: String? = "2026-09-30T09:45:00.123456Z",
-        calleeName: String? = "anna"
+        calleeName: String? = "anna",
+        calleeDeleted: Bool = false
     ) -> CallDTO {
         var fields: [String] = [
             #""id": "11111111-1111-1111-1111-111111111111""#,
@@ -35,6 +36,7 @@ struct CallHistoryTests {
             #""created_at": "2026-09-30T09:41:00.5Z""#,
         ]
         fields.append(calleeName.map { #""callee_username": "\#($0)""# } ?? #""callee_username": null"#)
+        if calleeDeleted { fields.append(#""callee_deleted": true"#) }
         if let calleeDevice { fields.append(#""callee_device_id": "\#(calleeDevice.uuidString.lowercased())""#) }
         if let reason { fields.append(#""ended_reason": "\#(reason)""#) }
         if let answered { fields.append(#""answered_at": "\#(answered)""#) }
@@ -123,7 +125,7 @@ struct CallHistoryTests {
     @Test func aDeletedAccountHasNoNameAndNoCallBack() throws {
         let dto = call(
             caller: me, callerDevice: myPhone, callee: them, calleeDevice: nil,
-            status: "cancelled", reason: "cancelled", calleeName: nil
+            status: "cancelled", reason: "cancelled", calleeName: nil, calleeDeleted: true
         )
         let row = try #require(CallController.recentCall(from: dto, me: me, myDevice: myPhone, connectedHere: nil))
         #expect(row.peerDeleted)

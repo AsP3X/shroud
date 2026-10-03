@@ -14,12 +14,15 @@ import java.util.UUID
 
 /** `POST /auth/register` (`AuthModels.swift:6-9`). No device name: it is sealed later. */
 @Serializable
-data class RegisterRequest(val username: String, val password: String)
+data class RegisterRequest(
+    @SerialName("username_hash") val usernameHash: String,
+    val password: String,
+)
 
 /** `POST /auth/login` (`AuthModels.swift:12-22`). */
 @Serializable
 data class LoginRequest(
-    val username: String,
+    @SerialName("username_hash") val usernameHash: String,
     val password: String,
     /** The device this phone had on the account, so a re-login reuses its row; `null` is sent as `null`. */
     @SerialName("device_id") val deviceId: UUID?,
@@ -29,7 +32,8 @@ data class LoginRequest(
 @Serializable
 data class UserDto(
     val id: UUID,
-    val username: String,
+    /** Absent. The name stays on the device that typed it. */
+    val username: String? = null,
     /** Short public code for QR / links (not a secret). iOS requires it; the server always sends it. */
     @SerialName("share_code") val shareCode: String? = null,
 )

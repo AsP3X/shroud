@@ -22,26 +22,24 @@ nonisolated struct AuthService: Sendable {
     /// Registers a new account and stores the session in Keychain.
     /// No device name goes with it: `DeviceNameSync` seals the name once the phrase is in.
     func register(username: String, password: String) async throws -> SessionStore.Session {
-        let body = RegisterRequest(
-            username: username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
-            password: password
-        )
+        let name = try UsernameHash.normalize(username)
+        let body = RegisterRequest(usernameHash: UsernameHash.digest(name), password: password)
         let response: AuthSessionResponse = try await client.post(
             "auth/register",
             body: body,
             as: AuthSessionResponse.self
         )
-        return try persist(response)
+        return try persist(response, username: name)
     }
 
     /// Logs in and stores the session; reuses `device_id` when Keychain still has one.
     func login(username: String, password: String) async throws -> SessionStore.Session {
-        let normalizedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalizedUsername = try UsernameHash.normalize(username)
         let existing = sessionStore.load()
         let reusedDeviceID = existing?.deviceID
             ?? sessionStore.loadDeviceID(matchingUsername: normalizedUsername)
         let body = LoginRequest(
-            username: normalizedUsername,
+            usernameHash: UsernameHash.digest(normalizedUsername),
             password: password,
             deviceId: reusedDeviceID
         )
@@ -50,7 +48,7 @@ nonisolated struct AuthService: Sendable {
             body: body,
             as: AuthSessionResponse.self
         )
-        return try persist(response)
+        return try persist(response, username: normalizedUsername)
     }
 
     /// Clears the Keychain session immediately, then best-effort server revoke in the background.
@@ -75,11 +73,11 @@ nonisolated struct AuthService: Sendable {
 
     // MARK: - Private
 
-    private func persist(_ response: AuthSessionResponse) throws -> SessionStore.Session {
+    private func persist(_ response: AuthSessionResponse, username: String) throws -> SessionStore.Session {
         let session = SessionStore.Session(
             token: response.token,
             userID: response.user.id,
-            username: response.user.username,
+            username: username,
             shareCode: response.user.shareCode,
             deviceID: response.device.id
         )
@@ -96,7 +94,7 @@ nonisolated struct AuthService: Sendable {
         let updated = SessionStore.Session(
             token: session.token,
             userID: me.user.id,
-            username: me.user.username,
+            username: session.username,
             shareCode: me.user.shareCode,
             deviceID: me.device.id
         )

@@ -275,7 +275,12 @@ internal fun PrivacyContent(
         }
 
         SettingsCard {
-            ServerToggle(PrivacySwitch.Discoverable, state, settings, hasLoaded, callbacks.onFlip)
+            ShroudText(
+                PrivacyCopy.FINDING_YOU,
+                inter(13f),
+                colors.textSecondary,
+                Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+            )
             InsetDivider(14.dp)
             Column(
                 Modifier

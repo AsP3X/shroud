@@ -27,7 +27,6 @@ pub struct BlocksListResponse {
 #[derive(Debug, Serialize)]
 pub struct BlockItem {
     pub user_id: Uuid,
-    pub username: String,
     pub created_at: DateTime<Utc>,
 }
 
@@ -148,13 +147,12 @@ pub async fn list_blocks(
     #[derive(FromRow)]
     struct Row {
         blocked_id: Uuid,
-        username: String,
         created_at: DateTime<Utc>,
     }
 
     let rows = sqlx::query_as::<_, Row>(
         r#"
-        SELECT b.blocked_id, u.username, b.created_at
+        SELECT b.blocked_id, b.created_at
         FROM blocks b
         INNER JOIN users u ON u.id = b.blocked_id AND u.deleted_at IS NULL
         WHERE b.blocker_id = $1
@@ -171,7 +169,6 @@ pub async fn list_blocks(
             .into_iter()
             .map(|row| BlockItem {
                 user_id: row.blocked_id,
-                username: row.username,
                 created_at: row.created_at,
             })
             .collect(),

@@ -1,16 +1,22 @@
 package de.corespace.shroud.di
 
+import android.content.Context
 import de.corespace.shroud.AppContainer
 import de.corespace.shroud.AppModule
 import de.corespace.shroud.core.auth.Session
+import de.corespace.shroud.core.contacts.ContactNameBook
 import de.corespace.shroud.core.contacts.Contacts
 import de.corespace.shroud.core.contacts.ContactsBackend
 import de.corespace.shroud.core.contacts.ContactsController
+import de.corespace.shroud.core.contacts.MutualContactNames
 import de.corespace.shroud.core.contacts.PeerIdentities
 import de.corespace.shroud.core.contacts.PeerIdentityController
 import de.corespace.shroud.core.contacts.Privacy
 import de.corespace.shroud.core.contacts.PrivacyController
 import de.corespace.shroud.core.contacts.ShroudContactsBackend
+import de.corespace.shroud.core.contacts.agreementKeys
+import de.corespace.shroud.core.model.Ids
+import de.corespace.shroud.core.storage.PrefsFiles
 
 /**
  * Contacts, peer identity, privacy (00-plan §1.7.8, C6). Owner: W2-CONTACTS. Nobody else constructs
@@ -39,6 +45,16 @@ class ContactsModule(container: AppContainer) : AppModule(container) {
             scope = container.appScope,
             clock = container.clock,
             listeners = { listOf(privacyController, peerIdentityController) },
+            names = MutualContactNames(
+                book = ContactNameBook(
+                    container.appContext.getSharedPreferences(PrefsFiles.PREFERENCES, Context.MODE_PRIVATE),
+                ),
+                owner = { Ids.parse(session()?.userId) },
+                username = { session()?.username },
+                keys = { container.keys.cryptoController.withMaterial { it.agreementKeys() } },
+                peerKey = { peerIdentityController.publicKeyForSending(it) },
+                publish = { token, peer, sealed -> container.net.api.putContactName(token, peer, sealed) },
+            ),
         )
     }
 

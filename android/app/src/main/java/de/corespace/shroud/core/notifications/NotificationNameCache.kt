@@ -77,9 +77,13 @@ class NotificationNameCache(
     ): Job = scope.launch {
         combine(contacts, incomingRequests, conversations) { roster, requests, chats ->
             buildMap {
-                chats.forEach { put(it.peer.id, it.peer.username) }
-                requests.forEach { request -> request.user?.let { put(request.fromUserId, it.username) } }
-                roster.forEach { put(it.userId, it.username) }
+                fun keep(id: UUID, name: String?) {
+                    val usable = name?.takeIf { it.isNotBlank() && it != "Contact" } ?: return
+                    put(id, usable)
+                }
+                chats.forEach { keep(it.peer.id, if (it.peer.deleted) "Deleted account" else it.peer.username) }
+                requests.forEach { request -> request.user?.let { keep(request.fromUserId, it.username) } }
+                roster.forEach { keep(it.userId, it.username) }
             }
         }.distinctUntilChanged().collect { names ->
             if (names.isNotEmpty()) rememberAll(names)

@@ -67,7 +67,7 @@ async fn register_push_token() {
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     json!({
-                        "username": username,
+                        "username_hash": shroud_server::auth::username_hash_b64(username),
                         "password": "correct-horse-battery"
                     })
                     .to_string(),
@@ -129,7 +129,7 @@ async fn logout_forgets_the_devices_push_token() {
                 .uri("/api/v1/auth/register")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
-                    json!({ "username": username, "password": "correct-horse-battery" })
+                    json!({ "username_hash": shroud_server::auth::username_hash_b64(username), "password": "correct-horse-battery" })
                         .to_string(),
                 ))
                 .expect("request"),
@@ -228,7 +228,7 @@ async fn sign_up(app: &axum::Router) -> (String, Uuid) {
                 .uri("/api/v1/auth/register")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
-                    json!({ "username": username, "password": "correct-horse-battery" })
+                    json!({ "username_hash": shroud_server::auth::username_hash_b64(username), "password": "correct-horse-battery" })
                         .to_string(),
                 ))
                 .expect("request"),
@@ -790,8 +790,8 @@ async fn a_ring_reaches_a_local_ntfy_within_a_second() {
         .merge(routes::router())
         .with_state(state.clone());
 
-    let (caller_token, caller_id, _) = sign_up_user(&app).await;
-    let (phone_token, phone_user, phone_device) = sign_up_user(&app).await;
+    let (caller_token, caller_id, _, _) = sign_up_user(&app).await;
+    let (phone_token, phone_user, phone_device, phone_name) = sign_up_user(&app).await;
     for (token, peer) in [(&caller_token, &phone_user), (&phone_token, &caller_id)] {
         let (status, _) = post_json(
             &app,
@@ -802,27 +802,6 @@ async fn a_ring_reaches_a_local_ntfy_within_a_second() {
         .await;
         assert!(status.is_success());
     }
-    let username = |token: String| {
-        let app = app.clone();
-        async move {
-            let response = app
-                .oneshot(
-                    Request::builder()
-                        .uri("/api/v1/auth/me")
-                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                        .body(Body::empty())
-                        .expect("request"),
-                )
-                .await
-                .expect("response");
-            json_body(response).await["user"]["username"]
-                .as_str()
-                .unwrap()
-                .to_string()
-        }
-    };
-    let caller_name = username(caller_token.clone()).await;
-
     // The phone subscribes with its distributor's endpoint (a fresh ntfy topic) and its keys.
     let rng = SystemRandom::new();
     let phone_key = EphemeralPrivateKey::generate(&ECDH_P256, &rng).unwrap();
@@ -842,7 +821,7 @@ async fn a_ring_reaches_a_local_ntfy_within_a_second() {
     assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
 
     // A second phone of the same account, whose "distributor" shows the request it got.
-    let (second_token, _) = log_in_again(&app, &phone_token).await;
+    let (second_token, _) = log_in_again(&app, &phone_name).await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind");
@@ -913,7 +892,7 @@ async fn a_ring_reaches_a_local_ntfy_within_a_second() {
     assert_eq!(ring["kind"], "video_call");
     assert_eq!(ring["call_id"], call["id"]);
     assert_eq!(ring["peer_user_id"], caller_id);
-    assert_eq!(ring["sender"], caller_name);
+    assert!(ring.get("sender").is_none());
     eprintln!(
         "ntfy {}: {} bytes of aes128gcm on /{topic_name}/json {} ms after POST /calls",
         message["event"],
@@ -983,8 +962,8 @@ fn rand_bytes<const N: usize>(rng: &SystemRandom) -> [u8; N] {
     bytes
 }
 
-/// Registers a fresh account; returns (token, user id, device id).
-async fn sign_up_user(app: &axum::Router) -> (String, String, Uuid) {
+/// Registers a fresh account; returns (token, user id, device id, the name the test chose).
+async fn sign_up_user(app: &axum::Router) -> (String, String, Uuid, String) {
     let username = format!("up_{}", &Uuid::new_v4().simple().to_string()[..12]);
     let reg = app
         .clone()
@@ -994,7 +973,7 @@ async fn sign_up_user(app: &axum::Router) -> (String, String, Uuid) {
                 .uri("/api/v1/auth/register")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
-                    json!({ "username": username, "password": "correct-horse-battery" })
+                    json!({ "username_hash": shroud_server::auth::username_hash_b64(&username), "password": "correct-horse-battery" })
                         .to_string(),
                 ))
                 .expect("request"),
@@ -1007,26 +986,12 @@ async fn sign_up_user(app: &axum::Router) -> (String, String, Uuid) {
         body["token"].as_str().unwrap().to_string(),
         body["user"]["id"].as_str().unwrap().to_string(),
         body["device"]["id"].as_str().unwrap().parse().unwrap(),
+        username,
     )
 }
 
-/// The account `token` belongs to, signed in on a second device: (token, device id).
-async fn log_in_again(app: &axum::Router, token: &str) -> (String, Uuid) {
-    let me = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/auth/me")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::empty())
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    let username = json_body(me).await["user"]["username"]
-        .as_str()
-        .unwrap()
-        .to_string();
+/// The account `username` belongs to, signed in on a second device: (token, device id).
+async fn log_in_again(app: &axum::Router, username: &str) -> (String, Uuid) {
     let login = app
         .clone()
         .oneshot(
@@ -1035,7 +1000,7 @@ async fn log_in_again(app: &axum::Router, token: &str) -> (String, Uuid) {
                 .uri("/api/v1/auth/login")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
-                    json!({ "username": username, "password": "correct-horse-battery" })
+                    json!({ "username_hash": shroud_server::auth::username_hash_b64(username), "password": "correct-horse-battery" })
                         .to_string(),
                 ))
                 .expect("request"),

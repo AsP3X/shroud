@@ -145,64 +145,28 @@ struct ContactInviteParserTests {
     }
 
     @Test @MainActor
-    func aShareCodeThatIsNotFoundIsTriedAsAUsername() async throws {
-        let card = UserCardDTO(id: UUID(), username: "niklasvorberg", shareCode: "QWERTY2345")
+    func aMissingShareCodeIsNotLookedUpAsAUsername() async {
+        let notFound = APIError.server(code: "NOT_FOUND", message: "User not found.", statusCode: 404)
         let calls = LookupLog()
-        let found = try await MessagingController.lookUpShareCode(
-            "NIKLASVORBERG",
-            byCode: { code in
+        await #expect(throws: notFound) {
+            try await MessagingController.lookUpShareCode("NIKLASVORBERG") { code in
                 await calls.add("by-code/\(code)")
-                throw APIError.server(code: "NOT_FOUND", message: "User not found.", statusCode: 404)
-            },
-            byUsername: { name in
-                await calls.add("by-username/\(name)")
-                return card
+                throw notFound
             }
-        )
-        #expect(found == card)
-        #expect(await calls.entries == ["by-code/NIKLASVORBERG", "by-username/niklasvorberg"])
+        }
+        #expect(await calls.entries == ["by-code/NIKLASVORBERG"])
     }
 
     @Test @MainActor
-    func aFoundShareCodeIsNeverTriedAsAUsername() async throws {
+    func aFoundShareCodeIsTheAccount() async throws {
         let card = UserCardDTO(id: UUID(), username: "jane_cooper", shareCode: "ABCD234567")
         let calls = LookupLog()
-        let found = try await MessagingController.lookUpShareCode(
-            "ABCD234567",
-            byCode: { code in
-                await calls.add("by-code/\(code)")
-                return card
-            },
-            byUsername: { name in
-                await calls.add("by-username/\(name)")
-                throw APIError.server(code: "NOT_FOUND", message: "User not found.", statusCode: 404)
-            }
-        )
+        let found = try await MessagingController.lookUpShareCode("ABCD234567") { code in
+            await calls.add("by-code/\(code)")
+            return card
+        }
         #expect(found == card)
         #expect(await calls.entries == ["by-code/ABCD234567"])
-    }
-
-    /// Offline, a rate limit or a server error is the answer; only "not found" falls back. A
-    /// code that cannot be a username keeps its 404.
-    @Test @MainActor
-    func onlyANotFoundWithAUsernameShapeFallsBack() async {
-        let offline = APIError.transport("The Internet connection appears to be offline.")
-        let limited = APIError.server(code: "RATE_LIMITED", message: "Too many requests. Try again later.", statusCode: 429)
-        let notFound = APIError.server(code: "NOT_FOUND", message: "User not found.", statusCode: 404)
-        for (code, error) in [("NIKLASVORBERG", offline), ("NIKLASVORBERG", limited), ("MÜLLERHANS", notFound)] {
-            let calls = LookupLog()
-            await #expect(throws: error) {
-                try await MessagingController.lookUpShareCode(
-                    code,
-                    byCode: { _ in throw error },
-                    byUsername: { name in
-                        await calls.add("by-username/\(name)")
-                        throw notFound
-                    }
-                )
-            }
-            #expect(await calls.entries.isEmpty)
-        }
     }
 }
 

@@ -65,7 +65,7 @@ async fn register(app: &axum::Router) -> (String, String) {
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     json!({
-                        "username": username,
+                        "username_hash": shroud_server::auth::username_hash_b64(&username),
                         "password": password,
                         "device_name": "Keys Test"
                     })
@@ -385,7 +385,7 @@ async fn list_bundles_returns_all_devices_and_consumes_otpk_each() {
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     json!({
-                        "username": username,
+                        "username_hash": shroud_server::auth::username_hash_b64(&username),
                         "password": password,
                         "device_name": "Device One"
                     })
@@ -410,7 +410,7 @@ async fn list_bundles_returns_all_devices_and_consumes_otpk_each() {
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     json!({
-                        "username": username,
+                        "username_hash": shroud_server::auth::username_hash_b64(&username),
                         "password": password,
                         "device_name": "Device Two"
                     })

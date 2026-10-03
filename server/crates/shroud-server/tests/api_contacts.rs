@@ -56,7 +56,7 @@ async fn register(app: &axum::Router) -> (String, String) {
                 .uri("/api/v1/auth/register")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
-                    json!({ "username": username, "password": password }).to_string(),
+                    json!({ "username_hash": shroud_server::auth::username_hash_b64(&username), "password": password }).to_string(),
                 ))
                 .expect("request"),
         )
@@ -81,7 +81,7 @@ async fn register_full(app: &axum::Router) -> (String, String, String, String) {
                 .uri("/api/v1/auth/register")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
-                    json!({ "username": username, "password": password }).to_string(),
+                    json!({ "username_hash": shroud_server::auth::username_hash_b64(&username), "password": password }).to_string(),
                 ))
                 .expect("request"),
         )
@@ -92,7 +92,7 @@ async fn register_full(app: &axum::Router) -> (String, String, String, String) {
     (
         body["token"].as_str().unwrap().to_string(),
         body["user"]["id"].as_str().unwrap().to_string(),
-        body["user"]["username"].as_str().unwrap().to_string(),
+        username.to_string(),
         body["user"]["share_code"].as_str().unwrap().to_string(),
     )
 }
@@ -118,11 +118,7 @@ async fn lookup_user_by_username_and_share_code() {
         )
         .await
         .expect("response");
-    assert_eq!(by_name.status(), StatusCode::OK);
-    let name_json = json_body(by_name).await;
-    assert_eq!(name_json["id"], id_b);
-    assert_eq!(name_json["username"], name_b);
-    assert_eq!(name_json["share_code"], code_b);
+    assert_eq!(by_name.status(), StatusCode::NOT_FOUND);
 
     let by_code = app
         .clone()
@@ -139,6 +135,7 @@ async fn lookup_user_by_username_and_share_code() {
     let code_json = json_body(by_code).await;
     assert_eq!(code_json["id"], id_b);
     assert_eq!(code_json["share_code"], code_b);
+    assert!(code_json.get("username").is_none());
 
     let missing = app
         .oneshot(
@@ -151,6 +148,115 @@ async fn lookup_user_by_username_and_share_code() {
         .await
         .expect("response");
     assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_name_is_sealed_only_for_a_contact() {
+    let Some(app) = test_app().await else {
+        eprintln!("skipping a_name_is_sealed_only_for_a_contact: no DATABASE_URL");
+        return;
+    };
+
+    let (token_a, id_a, _, _) = register_full(&app).await;
+    let (token_b, id_b, _, _) = register_full(&app).await;
+    let (token_c, _, _, _) = register_full(&app).await;
+    let sealed = "ek.ct.t.opaque";
+
+    let stranger = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/contacts/{id_b}/sealed-name"))
+                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({ "sealed": sealed }).to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(stranger.status(), StatusCode::NOT_FOUND);
+
+    for (token, peer) in [(&token_a, &id_b), (&token_b, &id_a)] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/contacts/requests")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(json!({ "user_id": peer }).to_string()))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert!(response.status().is_success(), "{}", response.status());
+    }
+
+    let saved = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/contacts/{id_b}/sealed-name"))
+                .header(header::AUTHORIZATION, format!("Bearer {token_a}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({ "sealed": sealed }).to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(saved.status(), StatusCode::NO_CONTENT);
+
+    let listed = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/contacts")
+                .header(header::AUTHORIZATION, format!("Bearer {token_b}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(listed.status(), StatusCode::OK);
+    let body = json_body(listed).await;
+    let row = body["contacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["user_id"] == id_a.as_str())
+        .expect("B lists A");
+    assert!(row.get("username").is_none());
+    assert_eq!(row["sealed_name"], sealed);
+
+    let outsider = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/contacts")
+                .header(header::AUTHORIZATION, format!("Bearer {token_c}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let outsider = json_body(outsider).await;
+    assert!(outsider["contacts"].as_array().unwrap().is_empty());
+
+    let removed = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/contacts/{id_a}"))
+                .header(header::AUTHORIZATION, format!("Bearer {token_b}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(removed.status(), StatusCode::NO_CONTENT);
 }
 
 #[tokio::test]

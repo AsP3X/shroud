@@ -535,7 +535,7 @@ extension LocalMessageStore.CachedContactRequest {
             status: status,
             createdAt: createdAt,
             respondedAt: respondedAt,
-            user: username.map { UserCardDTO(id: fromUserId, username: $0, shareCode: nil) }
+            user: UserCardDTO(id: fromUserId, username: ContactNames.placeholder, shareCode: nil)
         )
     }
 }

@@ -30,7 +30,8 @@ pub struct PrivacySettings {
     pub send_typing: bool,
     /// Contacts see "online" / "last seen", and this user sees theirs.
     pub share_presence: bool,
-    /// People who only know the username can find this account (`GET /users/by-username`).
+    /// Unused. Usernames are not a way to find an account. The column stays so older
+    /// clients can still read the settings object.
     pub discoverable_by_username: bool,
 }
 

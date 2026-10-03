@@ -78,7 +78,7 @@ async fn register(app: &axum::Router) -> (String, String) {
                 .uri("/api/v1/auth/register")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
-                    json!({ "username": format!("r_{id}"), "password": "correct-horse-battery" })
+                    json!({ "username_hash": shroud_server::auth::username_hash_b64(format!("r_{id}")), "password": "correct-horse-battery" })
                         .to_string(),
                 ))
                 .expect("request"),

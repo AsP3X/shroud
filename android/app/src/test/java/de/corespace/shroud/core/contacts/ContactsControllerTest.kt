@@ -84,7 +84,7 @@ class ContactsControllerTest {
         val contacts = controller()
         contacts.refresh()
         assertEquals(listOf("alice", "bob", "Zed_9"), contacts.contacts.value.map { it.username })
-        assertEquals(listOf(request), contacts.incomingRequests.value)
+        assertEquals(listOf(request.copy(user = request.user?.copy(username = CONTACT_PLACEHOLDER))), contacts.incomingRequests.value)
         assertEquals(false, contacts.listState.value.isLoading)
         assertTrue(contacts.listState.value.hasLoaded)
         assertNull(contacts.listState.value.error)
@@ -294,41 +294,40 @@ class ContactsControllerTest {
     @Test
     fun addingSendsARequestAndSaysWhatBecameOfIt() = runTest(main.dispatcher) {
         val card = UserCardDto(alice.userId, "alice", "QWERTY2345")
-        backend.onByUsername = { card }
+        backend.onByCode = { card }
         backend.onCreateRequest = { pendingRequest(from = me, to = it, name = "me").copy(status = "pending") }
         val contacts = controller()
-        assertEquals(AddContactOutcome.Requested("alice"), contacts.add("@Alice"))
-        assertEquals(listOf("by-username alice", "create ${alice.userId}", "contacts", "requests"), backend.calls.take(4))
+        assertEquals(AddContactOutcome.Requested("alice"), contacts.add("QWERTY2345"))
+        assertEquals(listOf("by-code QWERTY2345", "create ${alice.userId}", "contacts", "requests"), backend.calls.take(4))
 
         // They had asked us already: the server accepts both at once (200).
         backend.onCreateRequest = { pendingRequest(from = it, to = me, name = "me").copy(status = "accepted") }
-        assertEquals(AddContactOutcome.Added("alice"), contacts.add("alice"))
+        assertEquals(AddContactOutcome.Added("alice"), contacts.add("QWERTY2345"))
     }
 
     @Test
-    fun addingByAShareCodeThatIsReallyAUsernameFallsBack() = runTest(main.dispatcher) {
-        backend.onByCode = { throw notFound() }
-        backend.onByUsername = { UserCardDto(bob.userId, "niklasvorberg") }
-        backend.onCreateRequest = { pendingRequest(from = me, to = it, name = null) }
+    fun aUsernameIsNotAWayToAddSomeone() = runTest(main.dispatcher) {
         val contacts = controller()
-        assertEquals(AddContactOutcome.Requested("niklasvorberg"), contacts.add("NiklasVorberg"))
-        assertEquals(listOf("by-code NIKLASVORBERG", "by-username niklasvorberg"), backend.calls.take(2))
+        assertEquals(
+            AddContactOutcome.Failed("Add someone with their QR code or share code."),
+            contacts.add("@alice"),
+        )
+        assertEquals(emptyList<String>(), backend.calls)
     }
 
     @Test
     fun addingFailsWithTheIosTexts() = runTest(main.dispatcher) {
         val contacts = controller()
-        assertEquals(AddContactOutcome.Failed("Enter a share code, username, link, or user ID."), contacts.add("!!!"))
+        assertEquals(AddContactOutcome.Failed("Enter a share code, link, or user ID."), contacts.add("!!!"))
         backend.onUser = { UserCardDto(me, "me") }
         assertEquals(AddContactOutcome.Failed("You can't add yourself."), contacts.add(me.toString().uppercase()))
-        backend.onByUsername = { UserCardDto(alice.userId, "alice") }
-        backend.onCreateRequest = { throw ApiError.Server(ErrorCodes.ALREADY_EXISTS, "A pending contact request already exists.", 409) }
-        assertEquals(AddContactOutcome.Failed("A pending contact request already exists."), contacts.add("alice"))
-        backend.onByUsername = { throw notFound() }
-        assertEquals(AddContactOutcome.Failed("User not found."), contacts.add("nobody_here"))
+        backend.onByCode = { throw ApiError.Server(ErrorCodes.ALREADY_EXISTS, "A pending contact request already exists.", 409) }
+        assertEquals(AddContactOutcome.Failed("A pending contact request already exists."), contacts.add("ABCD234567"))
+        backend.onByCode = { throw notFound() }
+        assertEquals(AddContactOutcome.Failed("User not found."), contacts.add("ZZZZZZZZ"))
         assertEquals(0, backend.count("contacts"))
         currentSession = null
-        assertEquals(AddContactOutcome.Failed("Not signed in."), contacts.add("alice"))
+        assertEquals(AddContactOutcome.Failed("Not signed in."), contacts.add("ABCD234567"))
     }
 
     // ---- Accept / reject (`:969-998`) ----
@@ -427,11 +426,12 @@ class ContactsControllerTest {
         val event = RealtimeEvent.ContactChanged(RealtimeEvent.ContactChanged.Kind.Request, fresh, null, null)
         events.emit(event)
         runCurrent()
-        assertEquals(listOf(fresh, older), contacts.incomingRequests.value)
-        assertEquals(listOf(fresh), hooks.announced)
+        val unnamed = listOf(fresh, older).map { it.copy(user = it.user?.copy(username = CONTACT_PLACEHOLDER)) }
+        assertEquals(unnamed, contacts.incomingRequests.value)
+        assertEquals(listOf(unnamed.first()), hooks.announced)
         events.emit(event)
         runCurrent()
-        assertEquals(listOf(fresh, older), contacts.incomingRequests.value)
+        assertEquals(unnamed, contacts.incomingRequests.value)
         assertEquals(1, hooks.announced.size)
         // The start's refresh and one per event.
         assertEquals(3, backend.count("contacts"))

@@ -5,6 +5,7 @@ import { setPrivacySettings, usePrivacySettings } from "../../privacy";
 import { lockOnHidden, saveShareCode, setLockOnHidden } from "../../session";
 import { generatesLinkPreviews, setGeneratesLinkPreviews } from "../../linkPreview/settings";
 import { alwaysRelaysCalls, setAlwaysRelaysCalls } from "../../calls/relay";
+import { CONTACT_PLACEHOLDER, displayContactName } from "../../contactNames";
 import { Avatar } from "../Avatar";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { SettingsCard, SettingsGroup, SettingsNote, SettingsRow, Switch } from "./SettingsRow";
@@ -183,11 +184,9 @@ export function PrivacyView({
       </SettingsNote>
 
       <SettingsGroup title="Finding you">
-        {serverSwitch(
-          "discoverable_by_username",
-          "Find me by username",
-          "People who know your username can find you and send a request. Off, they need your QR code or share code; your contacts can still find you.",
-        )}
+        <SettingsNote>
+          People add you with your QR code or share code. Your username is shared only with people you have both added, and the server never sees it.
+        </SettingsNote>
         <SettingsRow
           title="Reset QR code"
           subtitle="Makes a new QR code and invite link. The old ones stop working."
@@ -235,9 +234,9 @@ export function PrivacyView({
         <SettingsGroup title="Blocked">
           {blocked.map((item) => (
             <div key={item.user_id} className="set-row">
-              <Avatar name={item.username} seed={item.user_id} size="sm" />
+              <Avatar name={displayContactName(session.user.id, item.user_id)} seed={item.user_id} size="sm" />
               <span className="set-row-copy">
-                <strong>{item.username}</strong>
+                <strong>{item.username || displayContactName(session.user.id, item.user_id) || CONTACT_PLACEHOLDER}</strong>
                 <span>Blocked</span>
               </span>
               <button

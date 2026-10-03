@@ -71,7 +71,7 @@ async fn register(app: &axum::Router) -> String {
         "POST",
         "/api/v1/auth/register",
         None,
-        json!({ "username": username, "password": "correct-horse-battery" }),
+        json!({ "username_hash": shroud_server::auth::username_hash_b64(&username), "password": "correct-horse-battery" }),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);

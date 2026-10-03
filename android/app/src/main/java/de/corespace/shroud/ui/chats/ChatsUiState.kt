@@ -110,7 +110,7 @@ data class ChatsUiState(
                 conversations
             } else {
                 conversations.filter { item ->
-                    ChatsSearch.matches(item.peer.username, trimmed, locale) ||
+                    ChatsSearch.matches(titleOf(snapshot, item), trimmed, locale) ||
                         ChatsSearch.matches(preview(snapshot, item.peer.id), trimmed, locale)
                 }
             }
@@ -155,21 +155,29 @@ data class ChatsUiState(
             timeLabel: (Instant?) -> String,
         ): ChatRowModel {
             val peer = item.peer.id
+            val title = titleOf(snapshot, item)
             return ChatRowModel(
                 peerId = peer,
-                title = item.peer.username,
+                title = title,
                 subtitle = preview(snapshot, peer),
                 time = timeLabel(item.lastMessageAt).ifEmpty { null },
                 unreadCount = snapshot.unread[peer]?.takeIf { it > 0 },
                 hasUnseenReactions = peer in snapshot.unseenReactions,
                 isMuted = snapshot.mutedUntil.containsKey(peer),
                 activity = snapshot.activities[peer],
-                avatarSeed = AvatarPalette.seed(item.peer.username, peer),
+                avatarSeed = AvatarPalette.seed(title, peer),
                 selected = selectedPeer == peer,
             )
         }
 
         /** `ChatListFormatting.preview`'s fallbacks when the engine said nothing for [peer] (CLF:27-28). */
+        private fun titleOf(snapshot: ChatsSnapshot, item: ConversationItemDto): String {
+            if (item.peer.deleted) return "Deleted account"
+            val known = snapshot.contactNames[item.peer.id]?.takeIf { it.isNotBlank() && it != "Contact" }
+            val listed = item.peer.username.takeIf { it.isNotBlank() && it != "Contact" }
+            return known ?: listed ?: "Contact"
+        }
+
         private fun preview(snapshot: ChatsSnapshot, peer: UUID): String =
             snapshot.previews[peer] ?: if (peer == NOTES_PEER_ID) EMPTY_NOTES else EMPTY_CHAT
 

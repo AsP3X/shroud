@@ -46,15 +46,31 @@ class ShroudApi(internal val client: ApiClient) {
     // ---- Auth (`AuthService.swift`) ----
 
     /** `POST /auth/register` (`AuthService.swift:22-35`). No token: a failure never touches a stored session. */
-    suspend fun register(username: String, password: String): AuthSessionResponse =
-        client.post("auth/register", null, RegisterRequest(username, password), RegisterRequest.serializer(), AuthSessionResponse.serializer())
+    suspend fun register(username: String, password: String): AuthSessionResponse {
+        val name = de.corespace.shroud.core.auth.UsernameHash.normalize(username)
+        return client.post(
+            "auth/register",
+            null,
+            RegisterRequest(de.corespace.shroud.core.auth.UsernameHash.digest(name), password),
+            RegisterRequest.serializer(),
+            AuthSessionResponse.serializer(),
+        )
+    }
 
     /**
      * `POST /auth/login` (`AuthService.swift:37-54`). [deviceId]: this phone's earlier device row on
      * the account (the anchor), or null for a new one — sent as JSON `null`.
      */
-    suspend fun login(username: String, password: String, deviceId: UUID?): AuthSessionResponse =
-        client.post("auth/login", null, LoginRequest(username, password, deviceId), LoginRequest.serializer(), AuthSessionResponse.serializer())
+    suspend fun login(username: String, password: String, deviceId: UUID?): AuthSessionResponse {
+        val name = de.corespace.shroud.core.auth.UsernameHash.normalize(username)
+        return client.post(
+            "auth/login",
+            null,
+            LoginRequest(de.corespace.shroud.core.auth.UsernameHash.digest(name), password, deviceId),
+            LoginRequest.serializer(),
+            AuthSessionResponse.serializer(),
+        )
+    }
 
     /** `GET /auth/me` (`AuthService.swift:72-74`). */
     suspend fun me(token: String): MeResponse = client.get("auth/me", token, MeResponse.serializer())
@@ -94,9 +110,14 @@ class ShroudApi(internal val client: ApiClient) {
     suspend fun user(token: String, userId: UUID): UserCardDto =
         client.get("users/${Ids.wire(userId)}", token, UserCardDto.serializer())
 
-    /** `GET /users/by-username/{name}`, the name path-encoded (`ContactsService.swift:71-78`). */
-    suspend fun userByUsername(token: String, username: String): UserCardDto =
-        client.get("users/by-username/${ApiClient.pathSegment(username)}", token, UserCardDto.serializer())
+    /** `PUT /contacts/{id}/sealed-name` → 204. The body is an opaque sealed box. */
+    suspend fun putContactName(token: String, userId: UUID, sealed: String) =
+        client.putUnit(
+            "contacts/${Ids.wire(userId)}/sealed-name",
+            token,
+            PutContactNameRequest(sealed),
+            PutContactNameRequest.serializer(),
+        )
 
     /** `GET /users/by-code/{code}`: normalized first, then path-encoded (`ContactsService.swift:80-88`). */
     suspend fun userByShareCode(token: String, code: String): UserCardDto =

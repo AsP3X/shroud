@@ -13,8 +13,8 @@ use uuid::Uuid;
 
 use crate::auth::session::AuthContext;
 use crate::auth::{
-    MAX_DEVICES_PER_USER, generate_share_code, hash_password, issue_session_token,
-    normalize_username, verify_password,
+    MAX_DEVICES_PER_USER, decode_username_hash, generate_share_code, hash_password,
+    issue_session_token, parse_username_hash, verify_password,
 };
 use crate::error::AppError;
 use crate::rate_limit::budgets;
@@ -31,7 +31,6 @@ pub struct AuthSessionResponse {
 #[derive(Debug, Serialize)]
 pub struct UserDto {
     pub id: Uuid,
-    pub username: String,
     pub share_code: String,
 }
 
@@ -54,14 +53,16 @@ pub struct MeResponse {
 /// are sealed, see `routes::devices::put_device_name`).
 #[derive(Debug, Deserialize)]
 pub struct RegisterRequest {
-    pub username: String,
+    /// Standard Base64 of SHA-256 over the case-folded username. The name is not sent.
+    pub username_hash: String,
     pub password: String,
 }
 
 /// A plaintext `device_name` from older builds is ignored, as for [`RegisterRequest`].
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
-    pub username: String,
+    /// Standard Base64 of SHA-256 over the case-folded username. The name is not sent.
+    pub username_hash: String,
     pub password: String,
     pub device_id: Option<Uuid>,
 }
@@ -75,7 +76,6 @@ pub struct PasswordChangeRequest {
 #[derive(Debug, FromRow)]
 struct UserAuthRow {
     id: Uuid,
-    username: String,
     password_hash: String,
     share_code: String,
 }
@@ -92,10 +92,10 @@ pub async fn register(
         .check_budget("auth_ip", &ip, budgets::AUTH_IP)
         .await?;
 
-    let username = normalize_username(&body.username)?;
+    let username_hash = decode_username_hash(&body.username_hash)?;
     state
         .rate_limiter
-        .check_budget("auth_user", &username, budgets::AUTH_USERNAME)
+        .check_budget("auth_user", &body.username_hash, budgets::AUTH_USERNAME)
         .await?;
 
     let password_hash = hash_password(&body.password)?;
@@ -112,12 +112,12 @@ pub async fn register(
     for _ in 0..12 {
         let insert = sqlx::query(
             r#"
-            INSERT INTO users (id, username, password_hash, share_code)
+            INSERT INTO users (id, username_hash, password_hash, share_code)
             VALUES ($1, $2, $3, $4)
             "#,
         )
         .bind(user_id)
-        .bind(&username)
+        .bind(username_hash.as_slice())
         .bind(&password_hash)
         .bind(&share_code)
         .execute(&mut *tx)
@@ -129,7 +129,7 @@ pub async fn register(
                 break;
             }
             Err(sqlx::Error::Database(db_err))
-                if db_err.constraint() == Some("users_username_key") =>
+                if db_err.constraint() == Some("users_username_hash_uidx") =>
             {
                 return Err(AppError::username_taken());
             }
@@ -172,7 +172,6 @@ pub async fn register(
 
     tracing::info!(
         user_id = %user_id,
-        username = %username,
         device_id = %device_id,
         "auth.register ok"
     );
@@ -183,7 +182,6 @@ pub async fn register(
             token,
             user: UserDto {
                 id: user_id,
-                username,
                 share_code,
             },
             device: DeviceDto {
@@ -206,20 +204,20 @@ pub async fn login(
         .check_budget("auth_ip", &ip, budgets::AUTH_IP)
         .await?;
 
-    let username =
-        normalize_username(&body.username).map_err(|_| AppError::invalid_credentials())?;
+    let username_hash =
+        parse_username_hash(&body.username_hash).map_err(|_| AppError::invalid_credentials())?;
     // Count failed and successful attempts so password guessing burns the budget.
     state
         .rate_limiter
-        .check_budget("auth_user", &username, budgets::AUTH_USERNAME)
+        .check_budget("auth_user", &body.username_hash, budgets::AUTH_USERNAME)
         .await?;
 
     let user = sqlx::query_as::<_, UserAuthRow>(
         r#"
-        SELECT id, username, password_hash, share_code FROM users WHERE username = $1
+        SELECT id, password_hash, share_code FROM users WHERE username_hash = $1
         "#,
     )
-    .bind(&username)
+    .bind(username_hash.as_slice())
     .fetch_optional(&state.pool)
     .await
     .map_err(|err| AppError::Internal(format!("login user lookup failed: {err}")))?;
@@ -283,7 +281,6 @@ pub async fn login(
 
     tracing::info!(
         user_id = %user.id,
-        username = %user.username,
         device_id = %device_id,
         "auth.login ok"
     );
@@ -292,7 +289,6 @@ pub async fn login(
         token,
         user: UserDto {
             id: user.id,
-            username: user.username,
             share_code: user.share_code,
         },
         device: DeviceDto {
@@ -412,7 +408,6 @@ pub async fn me(auth: AuthContext) -> Result<Json<MeResponse>, AppError> {
     Ok(Json(MeResponse {
         user: UserDto {
             id: auth.user_id,
-            username: auth.username,
             share_code: auth.share_code,
         },
         device: DeviceDto {
@@ -555,6 +550,7 @@ pub async fn delete_account(
         ("reaction_reads", "user_id = $1"),
         ("conversation_reads", "user_id = $1"),
         ("chat_mutes", "user_id = $1 OR peer_user_id = $1"),
+        ("contact_sealed_names", "owner_id = $1 OR peer_id = $1"),
     ] {
         sqlx::query(&format!("DELETE FROM {table} WHERE {filter}"))
             .bind(user_id)
@@ -578,7 +574,7 @@ pub async fn delete_account(
     sqlx::query(
         r#"
         UPDATE users
-        SET username = NULL,
+        SET username_hash = NULL,
             share_code = NULL,
             password_hash = NULL,
             allow_peer_chat_delete = false,

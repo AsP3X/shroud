@@ -56,9 +56,13 @@ nonisolated struct CallDTO: Decodable, Equatable, Sendable, Identifiable {
     let callerUserId: UUID
     let callerDeviceId: UUID
     let callerUsername: String?
+    /// The caller's account was deleted. This is not a name.
+    let callerDeleted: Bool?
     let calleeUserId: UUID
     let calleeDeviceId: UUID?
     let calleeUsername: String?
+    /// The callee's account was deleted. This is not a name.
+    let calleeDeleted: Bool?
     let modality: String
     let status: String
     let endedReason: String?
@@ -76,9 +80,11 @@ nonisolated struct CallDTO: Decodable, Equatable, Sendable, Identifiable {
         case callerUserId = "caller_user_id"
         case callerDeviceId = "caller_device_id"
         case callerUsername = "caller_username"
+        case callerDeleted = "caller_deleted"
         case calleeUserId = "callee_user_id"
         case calleeDeviceId = "callee_device_id"
         case calleeUsername = "callee_username"
+        case calleeDeleted = "callee_deleted"
         case modality
         case status
         case endedReason = "ended_reason"

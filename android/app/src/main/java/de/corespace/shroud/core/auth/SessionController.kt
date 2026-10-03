@@ -105,8 +105,10 @@ class SessionController(
     }
 
     /** Creates the account (`register`, `:74-78`). The phrase never goes to the server — only these two fields. */
-    suspend fun register(username: String, password: String): Session =
-        adopt(api.register(normalize(username), password))
+    suspend fun register(username: String, password: String): Session {
+        val name = UsernameHash.normalize(username)
+        return adopt(api.register(name, password), name)
+    }
 
     /**
      * Signs in (`login`, `:80-84`; `AuthService.swift:38-54`), reusing this phone's device row on the
@@ -114,10 +116,10 @@ class SessionController(
      * not sent: the server then makes a new row.
      */
     suspend fun login(username: String, password: String): Session {
-        val name = normalize(username)
+        val name = UsernameHash.normalize(username)
         val anchor = state.value?.takeIf { it.username == name }?.deviceId
             ?: withContext(io) { store.anchorFor(name) }
-        return adopt(api.login(name, password, Ids.parse(anchor)))
+        return adopt(api.login(name, password, Ids.parse(anchor)), name)
     }
 
     /** What [validate] found. */
@@ -136,7 +138,7 @@ class SessionController(
             val me = api.me(current.token)
             // A logout or another login during the request owns the session now (`:120-122`).
             if (state.value != current) return Validation.Offline
-            val refreshed = current.copy(username = me.user.username, shareCode = me.user.shareCode ?: current.shareCode)
+            val refreshed = current.copy(shareCode = me.user.shareCode ?: current.shareCode)
             if (refreshed != current) {
                 withContext(io) { store.save(refreshed) }
                 if (state.value == current) state.value = refreshed
@@ -260,11 +262,11 @@ class SessionController(
     }
 
     /** The persisted [Session] keeps lower-case String ids (plan C1); read them back as UUIDs via `userUuid` / `deviceUuid`. */
-    private suspend fun adopt(response: AuthSessionResponse): Session {
+    private suspend fun adopt(response: AuthSessionResponse, username: String): Session {
         val session = Session(
             token = response.token,
             userId = Ids.wire(response.user.id),
-            username = response.user.username,
+            username = username,
             shareCode = response.user.shareCode,
             deviceId = Ids.wire(response.device.id),
         )
@@ -286,14 +288,7 @@ class SessionController(
          * The server's username rule (`auth/username.rs`), checked before Sign Up leaves its first
          * step. Reserved names are left to the server. Null when the name is acceptable.
          */
-        fun usernameProblem(username: String): String? {
-            val name = username.trim()
-            if (name.length !in 3..32) return "Username must be between 3 and 32 characters."
-            if (!name.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '_' }) {
-                return "Username may only contain letters, digits, and underscores."
-            }
-            return null
-        }
+        fun usernameProblem(username: String): String? = UsernameHash.problem(username)
 
         /** `userMessage(for:)` (`SessionController.swift:209-225`). */
         fun userMessage(error: Throwable): String = when (error) {

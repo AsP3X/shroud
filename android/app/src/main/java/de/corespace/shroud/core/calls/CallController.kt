@@ -219,7 +219,7 @@ class CallController(
             // A newer load already answered, or the account signed out meanwhile.
             if (epoch != historyEpoch || request <= historyApplied) return
             historyApplied = request
-            val rows = page.mapNotNull { CallHistory.recentCall(it, me, myDevice, connectedHere[it.id]) }
+            val rows = page.mapNotNull { CallHistory.recentCall(it, me, myDevice, connectedHere[it.id], ::localCallName) }
             val full = page.size >= CallHistory.PAGE_SIZE
             val oldest = page.lastOrNull()?.createdAt
             val cursor = historyCursor
@@ -269,7 +269,7 @@ class CallController(
             if (epoch != historyEpoch || historyCursor != before) return
             val ids = historyRows.mapTo(HashSet()) { it.id }
             historyRows = historyRows + page.mapNotNull { call ->
-                if (call.id in ids) null else CallHistory.recentCall(call, me, myDevice, connectedHere[call.id])
+                if (call.id in ids) null else CallHistory.recentCall(call, me, myDevice, connectedHere[call.id], ::localCallName)
             }
             historyCursor = page.lastOrNull()?.createdAt ?: before
             historyState.update { it.copy(hasMore = page.size >= CallHistory.PAGE_SIZE) }
@@ -1817,10 +1817,13 @@ class CallController(
         system?.update(callId, name, video)
     }
 
-    /** The call's caller name, else the roster's, else "Unknown" (CC:2024-2030). */
+    /** A name this phone already opened for a contact. */
+    private fun localCallName(peer: UUID): String? = peers.contactUsername(peer)
+
+    /** The call's caller name, else the roster's, else "Contact" (CC:2024-2030). */
     private fun callerName(call: CallDto): String {
-        call.callerUsername?.takeIf { it.isNotEmpty() }?.let { return it }
-        return peers.contactUsername(call.callerUserId) ?: CallTexts.UNKNOWN_CALLER
+        peers.contactUsername(call.callerUserId)?.takeIf { it.isNotEmpty() && it != "Contact" }?.let { return it }
+        return "Contact"
     }
 
     /** The last 20 call ids that ended here (CC:2032-2037). */

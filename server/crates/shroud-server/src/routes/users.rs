@@ -10,12 +10,9 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::auth::session::AuthContext;
-use crate::auth::{
-    generate_share_code, is_valid_share_code_format, normalize_share_code, normalize_username,
-};
+use crate::auth::{generate_share_code, is_valid_share_code_format, normalize_share_code};
 use crate::error::AppError;
 use crate::rate_limit::budgets;
-use crate::routes::contacts::{are_contacts, pending_exists};
 use crate::state::AppState;
 
 async fn limit_user_lookup(state: &AppState, headers: &HeaderMap) -> Result<(), AppError> {
@@ -29,7 +26,6 @@ async fn limit_user_lookup(state: &AppState, headers: &HeaderMap) -> Result<(), 
 #[derive(Debug, Serialize, FromRow)]
 pub struct UserCard {
     pub id: Uuid,
-    pub username: String,
     pub share_code: String,
 }
 
@@ -44,7 +40,7 @@ pub async fn get_user(
 
     // A deleted account keeps its row (migration 021) but has no card to show.
     let row = sqlx::query_as::<_, UserCard>(
-        r#"SELECT id, username, share_code FROM users WHERE id = $1 AND deleted_at IS NULL"#,
+        r#"SELECT id, share_code FROM users WHERE id = $1 AND deleted_at IS NULL"#,
     )
     .bind(user_id)
     .fetch_optional(&state.pool)
@@ -53,62 +49,6 @@ pub async fn get_user(
     .ok_or_else(|| AppError::not_found("User not found."))?;
 
     Ok(Json(row))
-}
-
-/// `GET /users/by-username/:username` — lookup by username (case-insensitive).
-///
-/// An account with `discoverable_by_username` off is "not found" — the same answer as a name
-/// nobody has — except to itself, its contacts, and anyone it has a pending request with.
-pub async fn get_user_by_username(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    auth: AuthContext,
-    Path(username): Path<String>,
-) -> Result<Json<UserCard>, AppError> {
-    limit_user_lookup(&state, &headers).await?;
-
-    let username =
-        normalize_username(&username).map_err(|_| AppError::not_found("User not found."))?;
-
-    #[derive(FromRow)]
-    struct Row {
-        id: Uuid,
-        username: String,
-        share_code: String,
-        discoverable_by_username: bool,
-    }
-
-    let row = sqlx::query_as::<_, Row>(
-        r#"
-        SELECT id, username, share_code, discoverable_by_username
-        FROM users WHERE username = $1
-        "#,
-    )
-    .bind(&username)
-    .fetch_optional(&state.pool)
-    .await
-    .map_err(|err| AppError::Internal(format!("user lookup by username failed: {err}")))?
-    .ok_or_else(|| AppError::not_found("User not found."))?;
-
-    if !row.discoverable_by_username
-        && row.id != auth.user_id
-        && !knows_already(&state.pool, auth.user_id, row.id).await?
-    {
-        return Err(AppError::not_found("User not found."));
-    }
-
-    Ok(Json(UserCard {
-        id: row.id,
-        username: row.username,
-        share_code: row.share_code,
-    }))
-}
-
-/// Contacts, or a pending request either way: they have each other's id already.
-async fn knows_already(pool: &sqlx::PgPool, a: Uuid, b: Uuid) -> Result<bool, AppError> {
-    Ok(are_contacts(pool, a, b).await?
-        || pending_exists(pool, a, b).await?
-        || pending_exists(pool, b, a).await?)
 }
 
 #[derive(Debug, Serialize)]
@@ -180,14 +120,13 @@ pub async fn get_user_by_share_code(
         return Err(AppError::not_found("User not found."));
     }
 
-    let row = sqlx::query_as::<_, UserCard>(
-        r#"SELECT id, username, share_code FROM users WHERE share_code = $1"#,
-    )
-    .bind(&code)
-    .fetch_optional(&state.pool)
-    .await
-    .map_err(|err| AppError::Internal(format!("user lookup by share code failed: {err}")))?
-    .ok_or_else(|| AppError::not_found("User not found."))?;
+    let row =
+        sqlx::query_as::<_, UserCard>(r#"SELECT id, share_code FROM users WHERE share_code = $1"#)
+            .bind(&code)
+            .fetch_optional(&state.pool)
+            .await
+            .map_err(|err| AppError::Internal(format!("user lookup by share code failed: {err}")))?
+            .ok_or_else(|| AppError::not_found("User not found."))?;
 
     Ok(Json(row))
 }

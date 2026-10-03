@@ -52,7 +52,6 @@ internal class FakeContactsBackend : ContactsBackend {
     var onContacts: suspend () -> List<ContactItemDto> = { emptyList() }
     var onRequests: suspend () -> List<ContactRequestDto> = { emptyList() }
     var onUser: suspend (UUID) -> UserCardDto = { throw notFound() }
-    var onByUsername: suspend (String) -> UserCardDto = { throw notFound() }
     var onByCode: suspend (String) -> UserCardDto = { throw notFound() }
     var onCreateRequest: suspend (UUID) -> ContactRequestDto = { error("no request scripted") }
     var onAccept: suspend (UUID) -> ContactRequestDto = { error("no accept scripted") }
@@ -72,7 +71,6 @@ internal class FakeContactsBackend : ContactsBackend {
     override suspend fun contacts(token: String): List<ContactItemDto> = log("contacts").let { onContacts() }
     override suspend fun incomingRequests(token: String): List<ContactRequestDto> = log("requests").let { onRequests() }
     override suspend fun user(token: String, userId: UUID): UserCardDto = log("user $userId").let { onUser(userId) }
-    override suspend fun userByUsername(token: String, username: String): UserCardDto = log("by-username $username").let { onByUsername(username) }
     override suspend fun userByShareCode(token: String, code: String): UserCardDto = log("by-code $code").let { onByCode(code) }
     override suspend fun createContactRequest(token: String, userId: UUID): ContactRequestDto = log("create $userId").let { onCreateRequest(userId) }
     override suspend fun acceptContactRequest(token: String, requestId: UUID): ContactRequestDto = log("accept $requestId").let { onAccept(requestId) }

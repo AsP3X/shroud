@@ -6,8 +6,7 @@ import de.corespace.shroud.core.net.UserCardDto
 /**
  * Finds the account an invite names (`MessagingController.addContact`,
  * `ios/shroud/Services/Messaging/MessagingController.swift:895-923`): a user id → `GET /users/{id}`,
- * a username → `GET /users/by-username/{name}`, a share code → `GET /users/by-code/{code}` and, when
- * no such code exists, the same text as a username ([lookUpShareCode], P10a, plan C15).
+ * a share code → `GET /users/by-code/{code}`. A username is not a way to find an account.
  */
 object InviteLookup {
     private const val USERNAME_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789_"
@@ -15,33 +14,19 @@ object InviteLookup {
     /** The card [invite] names; the backend's errors propagate (the caller shows their message). */
     suspend fun card(backend: ContactsBackend, token: String, invite: ContactInviteParser.Invite): UserCardDto = when (invite) {
         is ContactInviteParser.Invite.UserId -> backend.user(token, invite.id)
-        is ContactInviteParser.Invite.Username -> backend.userByUsername(token, invite.name)
-        is ContactInviteParser.Invite.ShareCode -> lookUpShareCode(
-            invite.code,
-            byCode = { backend.userByShareCode(token, it) },
-            byUsername = { backend.userByUsername(token, it) },
+        is ContactInviteParser.Invite.Username -> throw ApiError.Server(
+            "NOT_FOUND",
+            "Add someone with their QR code or share code.",
+            404,
         )
+        is ContactInviteParser.Invite.ShareCode -> backend.userByShareCode(token, invite.code)
     }
 
-    /**
-     * Looks a share code up, and on a 404 tries it as a username (`lookUpShareCode`,
-     * `MessagingController.swift:928-950`; web `web/src/api/client.ts:389-411`). The parser reads any
-     * 8–16 letters and digits as a share code, so a username such as `noahvorberg` could never be
-     * added by name otherwise; the server never has both readings for one input. Only a 404
-     * ([ApiError.isNotFound]) with a username-shaped code falls back — offline, a rate limit or a
-     * server error is the answer, and a code that cannot be a username keeps its 404.
-     */
+    /** Looks a share code up. A miss stays a miss: the name is not sent anywhere. */
     suspend fun lookUpShareCode(
         code: String,
         byCode: suspend (String) -> UserCardDto,
-        byUsername: suspend (String) -> UserCardDto,
-    ): UserCardDto = try {
-        byCode(code)
-    } catch (e: ApiError) {
-        val name = if (e.isNotFound) usernameFallback(code) else null
-        if (name == null) throw e
-        byUsername(name)
-    }
+    ): UserCardDto = byCode(code)
 
     /**
      * The username a share code may really be (`usernameFallback(forShareCode:)`,

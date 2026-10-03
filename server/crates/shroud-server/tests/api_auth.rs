@@ -74,7 +74,7 @@ async fn register_login_me_logout_flow() {
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     json!({
-                        "username": username,
+                        "username_hash": shroud_server::auth::username_hash_b64(&username),
                         "password": password,
                         "device_name": "iPhone Test"
                     })
@@ -89,7 +89,7 @@ async fn register_login_me_logout_flow() {
     let registered = json_body(register).await;
     let token = registered["token"].as_str().expect("token");
     let device_id = registered["device"]["id"].as_str().expect("device id");
-    assert_eq!(registered["user"]["username"], username);
+    assert!(registered["user"].get("username").is_none());
     // An older build's plaintext `device_name` is dropped, not stored or echoed.
     assert!(registered["device"].get("name").is_none());
     assert!(registered["device"].get("sealed_name").is_none());
@@ -112,7 +112,7 @@ async fn register_login_me_logout_flow() {
         .expect("response");
     assert_eq!(me.status(), StatusCode::OK);
     let me_json = json_body(me).await;
-    assert_eq!(me_json["user"]["username"], username);
+    assert!(me_json["user"].get("username").is_none());
     assert_eq!(me_json["user"]["share_code"], share_code);
     assert_eq!(me_json["device"]["id"], device_id);
 
@@ -152,7 +152,7 @@ async fn register_login_me_logout_flow() {
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     json!({
-                        "username": username,
+                        "username_hash": shroud_server::auth::username_hash_b64(username),
                         "password": password,
                         "device_id": device_id,
                         "device_name": "iPhone Test"
@@ -187,7 +187,7 @@ async fn register_rejects_reserved_and_common_password() {
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     json!({
-                        "username": "admin",
+                        "username_hash": shroud_server::auth::username_hash_b64("admin"),
                         "password": "correct-horse-battery"
                     })
                     .to_string(),
@@ -208,7 +208,7 @@ async fn register_rejects_reserved_and_common_password() {
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     json!({
-                        "username": format!("ok_{}", &Uuid::new_v4().simple().to_string()[..10]),
+                        "username_hash": shroud_server::auth::username_hash_b64(format!("ok_{}", &Uuid::new_v4().simple().to_string()[..10])),
                         "password": "password"
                     })
                     .to_string(),
@@ -239,7 +239,7 @@ async fn purge_revoked_sessions_deletes_old_rows() {
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     json!({
-                        "username": username,
+                        "username_hash": shroud_server::auth::username_hash_b64(username),
                         "password": password,
                         "device_name": "Purge Test"
                     })
@@ -308,7 +308,7 @@ async fn login_reuses_device_and_lists_devices() {
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     json!({
-                        "username": username,
+                        "username_hash": shroud_server::auth::username_hash_b64(&username),
                         "password": password,
                         "device_name": "Phone A"
                     })
@@ -348,7 +348,7 @@ async fn login_reuses_device_and_lists_devices() {
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     json!({
-                        "username": username,
+                        "username_hash": shroud_server::auth::username_hash_b64(username),
                         "password": password,
                         "device_name": "Phone B"
                     })
@@ -396,7 +396,7 @@ async fn delete_account_requires_password_and_removes_user() {
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     json!({
-                        "username": username,
+                        "username_hash": shroud_server::auth::username_hash_b64(&username),
                         "password": password,
                     })
                     .to_string(),
@@ -469,7 +469,7 @@ async fn delete_account_requires_password_and_removes_user() {
     let share_code = registered["user"]["share_code"].as_str().unwrap();
     let scrubbed: bool = sqlx::query_scalar(
         r#"
-        SELECT deleted_at IS NOT NULL AND username IS NULL AND share_code IS NULL
+        SELECT deleted_at IS NOT NULL AND username_hash IS NULL AND share_code IS NULL
                AND password_hash IS NULL
         FROM users WHERE id = $1
         "#,
@@ -531,7 +531,7 @@ async fn login_request(
                 .uri("/api/v1/auth/login")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
-                    json!({ "username": username, "password": password }).to_string(),
+                    json!({ "username_hash": shroud_server::auth::username_hash_b64(username), "password": password }).to_string(),
                 ))
                 .expect("request"),
         )
@@ -560,7 +560,7 @@ async fn login_at_device_cap_reclaims_an_idle_device() {
         .clone()
         .oneshot(auth_request(
             "/api/v1/auth/register",
-            json!({ "username": username, "password": password }),
+            json!({ "username_hash": shroud_server::auth::username_hash_b64(&username), "password": password }),
         ))
         .await
         .expect("response");
@@ -575,7 +575,7 @@ async fn login_at_device_cap_reclaims_an_idle_device() {
             .clone()
             .oneshot(auth_request(
                 "/api/v1/auth/login",
-                json!({ "username": username, "password": password }),
+                json!({ "username_hash": shroud_server::auth::username_hash_b64(&username), "password": password }),
             ))
             .await
             .expect("response");
@@ -587,7 +587,7 @@ async fn login_at_device_cap_reclaims_an_idle_device() {
         .clone()
         .oneshot(auth_request(
             "/api/v1/auth/login",
-            json!({ "username": username, "password": password }),
+            json!({ "username_hash": shroud_server::auth::username_hash_b64(&username), "password": password }),
         ))
         .await
         .expect("response");
@@ -654,7 +654,7 @@ async fn login_at_device_cap_reclaims_an_idle_device() {
         .clone()
         .oneshot(auth_request(
             "/api/v1/auth/login",
-            json!({ "username": username, "password": password, "device_name": "Browser" }),
+            json!({ "username_hash": shroud_server::auth::username_hash_b64(username), "password": password, "device_name": "Browser" }),
         ))
         .await
         .expect("response");
@@ -757,7 +757,7 @@ async fn device_names_are_kept_sealed_only() {
                 .uri("/api/v1/auth/login")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
-                    json!({ "username": username, "password": password, "device_id": browser })
+                    json!({ "username_hash": shroud_server::auth::username_hash_b64(username), "password": password, "device_id": browser })
                         .to_string(),
                 ))
                 .expect("request"),
@@ -863,7 +863,7 @@ async fn removing_a_device_keeps_what_it_sent() {
         .clone()
         .oneshot(auth_request(
             "/api/v1/auth/register",
-            json!({ "username": alice, "password": password, "device_name": "Phone" }),
+            json!({ "username_hash": shroud_server::auth::username_hash_b64(&alice), "password": password, "device_name": "Phone" }),
         ))
         .await
         .expect("response");
@@ -876,7 +876,7 @@ async fn removing_a_device_keeps_what_it_sent() {
         .clone()
         .oneshot(auth_request(
             "/api/v1/auth/login",
-            json!({ "username": alice, "password": password, "device_name": "Laptop" }),
+            json!({ "username_hash": shroud_server::auth::username_hash_b64(&alice), "password": password, "device_name": "Laptop" }),
         ))
         .await
         .expect("response");
@@ -890,7 +890,7 @@ async fn removing_a_device_keeps_what_it_sent() {
         .clone()
         .oneshot(auth_request(
             "/api/v1/auth/register",
-            json!({ "username": bob, "password": bob_password }),
+            json!({ "username_hash": shroud_server::auth::username_hash_b64(&bob), "password": bob_password }),
         ))
         .await
         .expect("response");
@@ -1088,7 +1088,7 @@ async fn removing_a_device_keeps_what_it_sent() {
     let relogin = app
         .oneshot(auth_request(
             "/api/v1/auth/login",
-            json!({ "username": alice, "password": password, "device_id": laptop_id }),
+            json!({ "username_hash": shroud_server::auth::username_hash_b64(&alice), "password": password, "device_id": laptop_id }),
         ))
         .await
         .expect("response");
@@ -1111,7 +1111,7 @@ async fn register_user(
                 .uri("/api/v1/auth/register")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
-                    json!({ "username": username, "password": password }).to_string(),
+                    json!({ "username_hash": shroud_server::auth::username_hash_b64(username), "password": password }).to_string(),
                 ))
                 .expect("request"),
         )
@@ -1431,7 +1431,8 @@ async fn deleting_an_account_deletes_each_chat_for_both() {
         .find(|chat| chat["id"] == conversation_id.as_str())
         .expect("Bob still lists the chat");
     assert_eq!(chat["peer"]["id"], alice_id.as_str());
-    assert_eq!(chat["peer"]["username"], "Deleted account");
+    assert!(chat["peer"].get("username").is_none());
+    assert_eq!(chat["peer"]["deleted"], true);
     // Her reaction left his heart badge, and the chat says catch-up has something new.
     assert_eq!(chat["unseen_reactions"], 0);
     assert_eq!(chat["reaction_seq"], caught_up["next_seq"]);

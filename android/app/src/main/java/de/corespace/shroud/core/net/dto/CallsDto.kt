@@ -99,11 +99,13 @@ data class CallDto(
     @SerialName("caller_device_id") val callerDeviceId: UUID,
     /** Null once that account is deleted. */
     @SerialName("caller_username") val callerUsername: String? = null,
+    @SerialName("caller_deleted") val callerDeleted: Boolean = false,
     @SerialName("callee_user_id") val calleeUserId: UUID,
     /** Absent until a device of the callee answered. */
     @SerialName("callee_device_id") val calleeDeviceId: UUID? = null,
     /** Null once that account is deleted. */
     @SerialName("callee_username") val calleeUsername: String? = null,
+    @SerialName("callee_deleted") val calleeDeleted: Boolean = false,
     /** [CallModality.wire]; read through [callModality]. */
     val modality: String,
     /** [CallStatus.wire]; read through [callStatus]. */

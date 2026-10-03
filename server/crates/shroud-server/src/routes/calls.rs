@@ -47,16 +47,18 @@ const SIGNAL_TYPES: [&str; 5] = [
 const HISTORY_DEFAULT_LIMIT: i64 = 50;
 const HISTORY_MAX_LIMIT: i64 = 100;
 
-/// A call row joined with both people's usernames; `c` is `calls` or a CTE over it.
+/// A call row plus whether each account is deleted. `c` is `calls` or a CTE over it.
+/// Names are not selected.
 const CALL_FIELDS: &str = r#"
     c.id, c.caller_user_id, c.caller_device_id, c.callee_user_id, c.callee_device_id,
     c.modality, c.status, c.ended_reason, c.created_at, c.answered_at, c.ended_at, c.protocol,
     c.caller_media_state, c.callee_media_state,
-    cu.username AS caller_username, ce.username AS callee_username
+    COALESCE(cu.deleted_at IS NOT NULL, false) AS caller_deleted,
+    COALESCE(pu.deleted_at IS NOT NULL, false) AS callee_deleted
 "#;
 const CALL_JOINS: &str = r#"
     LEFT JOIN users cu ON cu.id = c.caller_user_id
-    LEFT JOIN users ce ON ce.id = c.callee_user_id
+    LEFT JOIN users pu ON pu.id = c.callee_user_id
 "#;
 /// Part of every `SET` that ends a call: the kept media states go with it.
 const CLEAR_MEDIA_STATES: &str = "caller_media_state = NULL, callee_media_state = NULL";
@@ -94,12 +96,18 @@ pub struct CallResponse {
     pub id: Uuid,
     pub caller_user_id: Uuid,
     pub caller_device_id: Uuid,
-    /// `null` once the account is deleted.
+    /// Kept absent. A name is not on this server.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub caller_username: Option<String>,
+    /// The caller's account was deleted. This is not a name.
+    pub caller_deleted: bool,
     pub callee_user_id: Uuid,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub callee_device_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub callee_username: Option<String>,
+    /// The callee's account was deleted. This is not a name.
+    pub callee_deleted: bool,
     pub modality: String,
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -149,8 +157,8 @@ struct CallRow {
     protocol: i16,
     caller_media_state: Option<String>,
     callee_media_state: Option<String>,
-    caller_username: Option<String>,
-    callee_username: Option<String>,
+    caller_deleted: bool,
+    callee_deleted: bool,
 }
 
 impl CallRow {
@@ -894,10 +902,12 @@ fn call_to_response(row: &CallRow) -> CallResponse {
         id: row.id,
         caller_user_id: row.caller_user_id,
         caller_device_id: row.caller_device_id,
-        caller_username: row.caller_username.clone(),
+        caller_username: None,
+        caller_deleted: row.caller_deleted,
         callee_user_id: row.callee_user_id,
         callee_device_id: row.callee_device_id,
-        callee_username: row.callee_username.clone(),
+        callee_username: None,
+        callee_deleted: row.callee_deleted,
         modality: row.modality.clone(),
         status: row.status.clone(),
         ended_reason: row.ended_reason.clone(),
@@ -1077,8 +1087,8 @@ mod tests {
             protocol: CALL_PROTOCOL,
             caller_media_state: Some("c1.caller".into()),
             callee_media_state: Some("c1.callee".into()),
-            caller_username: None,
-            callee_username: None,
+            caller_deleted: false,
+            callee_deleted: false,
         }
     }
 

@@ -88,7 +88,7 @@ async fn call(
     (status, value)
 }
 
-async fn auth(app: &axum::Router, path: &str, body: Value) -> Account {
+async fn auth(app: &axum::Router, path: &str, username: &str, body: Value) -> Account {
     let response = app
         .clone()
         .oneshot(
@@ -117,16 +117,17 @@ async fn auth(app: &axum::Router, path: &str, body: Value) -> Account {
         token: body["token"].as_str().unwrap().to_string(),
         user_id: body["user"]["id"].as_str().unwrap().to_string(),
         device_id: body["device"]["id"].as_str().unwrap().parse().unwrap(),
-        username: body["user"]["username"].as_str().unwrap().to_string(),
+        username: username.to_string(),
     }
 }
 
 async fn register(app: &axum::Router) -> Account {
-    let id = &Uuid::new_v4().simple().to_string()[..12];
+    let name = format!("c_{}", &Uuid::new_v4().simple().to_string()[..12]);
     auth(
         app,
         "/api/v1/auth/register",
-        json!({ "username": format!("c_{id}"), "password": "correct-horse-battery" }),
+        &name,
+        json!({ "username_hash": shroud_server::auth::username_hash_b64(&name), "password": "correct-horse-battery" }),
     )
     .await
 }
@@ -136,7 +137,8 @@ async fn login_again(app: &axum::Router, who: &Account) -> Account {
     auth(
         app,
         "/api/v1/auth/login",
-        json!({ "username": who.username, "password": "correct-horse-battery" }),
+        &who.username,
+        json!({ "username_hash": shroud_server::auth::username_hash_b64(&who.username), "password": "correct-horse-battery" }),
     )
     .await
 }
@@ -338,8 +340,8 @@ async fn contacts_only_and_busy_codes() {
     let ringing = place_call(&app, &a, &b, "voice").await;
     assert_eq!(ringing["status"], "ringing");
     assert_eq!(ringing["protocol"], 2);
-    assert_eq!(ringing["caller_username"], a.username);
-    assert_eq!(ringing["callee_username"], b.username);
+    assert!(ringing.get("caller_username").is_none());
+    assert!(ringing.get("callee_username").is_none());
 
     // B is ringing: C gets "busy".
     let (status, body) = call(
@@ -405,7 +407,7 @@ async fn answering_on_one_device_and_signals_between_the_two_in_the_call() {
     ] {
         let ring = next_event(events, "call.ring").await;
         assert_eq!(ring["call"]["id"], id.as_str());
-        assert_eq!(ring["call"]["caller_username"], a.username);
+        assert!(ring["call"].get("caller_username").is_none());
         assert!(ring.get("sdp_offer").is_none());
     }
     assert!(
@@ -867,7 +869,7 @@ async fn history_lists_both_directions_newest_first() {
     assert_eq!(calls.len(), 2);
     assert_eq!(calls[0]["id"], second_id);
     assert_eq!(calls[0]["status"], "cancelled");
-    assert_eq!(calls[0]["caller_username"], b.username);
+    assert!(calls[0].get("caller_username").is_none());
     assert_eq!(calls[1]["id"], first_id);
     assert_eq!(calls[1]["status"], "rejected");
 

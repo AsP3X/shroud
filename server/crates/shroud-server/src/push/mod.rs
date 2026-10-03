@@ -546,7 +546,6 @@ impl PushService {
         let muted = matches!(kind, NotificationKind::Message | NotificationKind::Reaction)
             && self.is_muted(recipient, from).await;
         let targets = self.targets(recipient, None, false).await;
-        let mut sender_name: Option<Option<String>> = None;
         let mut badges = BadgeCache::default();
         for target in targets {
             if self
@@ -586,14 +585,8 @@ impl PushService {
             if !wanted {
                 continue;
             }
-            let name = if settings.show_sender {
-                if sender_name.is_none() {
-                    sender_name = Some(self.username(from).await);
-                }
-                sender_name.clone().flatten()
-            } else {
-                None
-            };
+            // The sender's name is not on this server. The phone fills it in from the
+            // seal it already opened, once the two people have added each other.
             // Left out when it cannot be counted: a wrong 0 would clear the icon.
             let badge = if settings.badge {
                 badges
@@ -608,7 +601,7 @@ impl PushService {
                 peer_user_id: Some(from),
                 message_id,
                 call_id: None,
-                sender_name: name,
+                sender_name: None,
                 badge,
             };
             self.send_notification(&target, &settings, &notification)
@@ -740,27 +733,18 @@ impl PushService {
         } else {
             NotificationKind::Call
         };
-        let mut caller_name: Option<Option<String>> = None;
         for target in self.targets(recipient, None, true).await {
             let settings = target.settings();
             if !settings.enabled {
                 continue;
             }
-            let name = if settings.show_sender {
-                if caller_name.is_none() {
-                    caller_name = Some(self.username(caller).await);
-                }
-                caller_name.clone().flatten()
-            } else {
-                None
-            };
             let notification = Notification {
                 kind,
                 conversation_id: None,
                 peer_user_id: Some(caller),
                 message_id: None,
                 call_id: Some(call_id),
-                sender_name: name,
+                sender_name: None,
                 badge: None,
             };
             if let (Some(token), Some(environment)) = (&target.voip_token, &target.voip_environment)
@@ -811,7 +795,6 @@ impl PushService {
         call_id: Uuid,
         except_device: Option<Uuid>,
     ) {
-        let mut caller_name: Option<Option<String>> = None;
         for target in self.targets(recipient, None, true).await {
             if except_device == Some(target.device_id) {
                 continue;
@@ -827,21 +810,13 @@ impl PushService {
             if !settings.enabled {
                 continue;
             }
-            let name = if settings.show_sender {
-                if caller_name.is_none() {
-                    caller_name = Some(self.username(caller).await);
-                }
-                caller_name.clone().flatten()
-            } else {
-                None
-            };
             let notification = Notification {
                 kind: NotificationKind::CallEnded,
                 conversation_id: None,
                 peer_user_id: Some(caller),
                 message_id: None,
                 call_id: Some(call_id),
-                sender_name: name,
+                sender_name: None,
                 badge: None,
             };
             let Some((token, environment)) = voip else {
@@ -872,7 +847,6 @@ impl PushService {
     /// one (same APNs collapse id, same Web Push tag). iPhones that rang through PushKit get
     /// a `call_ended` VoIP push instead and dismiss CallKit themselves.
     async fn notify_missed_call(&self, recipient: Uuid, caller: Uuid, call_id: Uuid) {
-        let mut caller_name: Option<Option<String>> = None;
         for target in self.targets(recipient, None, true).await {
             if target.voip_token.is_some() {
                 continue;
@@ -892,21 +866,13 @@ impl PushService {
             {
                 continue;
             }
-            let name = if settings.show_sender {
-                if caller_name.is_none() {
-                    caller_name = Some(self.username(caller).await);
-                }
-                caller_name.clone().flatten()
-            } else {
-                None
-            };
             let notification = Notification {
                 kind: NotificationKind::MissedCall,
                 conversation_id: None,
                 peer_user_id: Some(caller),
                 message_id: None,
                 call_id: Some(call_id),
-                sender_name: name,
+                sender_name: None,
                 badge: None,
             };
             self.send_notification(&target, &settings, &notification)
@@ -1210,16 +1176,6 @@ impl PushService {
         .fetch_one(&self.inner.pool)
         .await
         .unwrap_or(false)
-    }
-
-    async fn username(&self, user_id: Uuid) -> Option<String> {
-        sqlx::query_scalar::<_, Option<String>>(r#"SELECT username FROM users WHERE id = $1"#)
-            .bind(user_id)
-            .fetch_optional(&self.inner.pool)
-            .await
-            .ok()
-            .flatten()
-            .flatten()
     }
 }
 

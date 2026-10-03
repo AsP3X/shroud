@@ -77,7 +77,7 @@ impl Server {
         let response = self
             .client
             .post(self.url("/auth/register"))
-            .json(&json!({ "username": username, "password": "correct-horse-battery" }))
+            .json(&json!({ "username_hash": shroud_server::auth::username_hash_b64(&username), "password": "correct-horse-battery" }))
             .send()
             .await
             .expect("register");
@@ -604,86 +604,44 @@ async fn typing_hidden_both_ways() {
     server.stop().await;
 }
 
-/// Human: With "find me by username" off, a name is only a way in for people already connected;
-/// strangers need the QR code or share code, and get the same "not found" as for a free name.
+/// A username is not a way to find an account. Strangers, contacts, and the account itself
+/// all get the same not-found. A share code still resolves, and it does not include a name.
 #[tokio::test]
-async fn username_lookup_obeys_discoverability() {
+async fn a_username_is_not_a_way_to_find_an_account() {
     let Some(pool) = test_pool().await else {
-        eprintln!("skipping username_lookup_obeys_discoverability: DATABASE_URL unavailable");
+        eprintln!("skipping a_username_is_not_a_way_to_find_an_account: DATABASE_URL unavailable");
         return;
     };
     let server = Server::start(pool).await;
     let alice = server.user().await;
     let friend = server.user().await;
-    let asker = server.user().await;
     let stranger = server.user().await;
     server.befriend(&alice, &friend).await;
     let me = server.me(&alice).await;
-    let name = me["user"]["username"].as_str().unwrap().to_string();
+    assert!(me["user"].get("username").is_none());
     let code = me["user"]["share_code"].as_str().unwrap().to_string();
-    let by_name = format!("/users/by-username/{name}");
+    let by_name = "/users/by-username/pv_not_a_directory";
 
-    assert_eq!(
-        server.lookup(&stranger, &by_name).await,
-        reqwest::StatusCode::OK
-    );
+    for viewer in [&stranger, &friend, &alice] {
+        assert_eq!(
+            server.lookup(viewer, by_name).await,
+            reqwest::StatusCode::NOT_FOUND
+        );
+    }
 
-    server
-        .settings(&alice, Some(json!({ "discoverable_by_username": false })))
-        .await;
-    assert_eq!(
-        server.lookup(&stranger, &by_name).await,
-        reqwest::StatusCode::NOT_FOUND
-    );
-    let free = format!(
-        "/users/by-username/pv_{}",
-        &Uuid::new_v4().simple().to_string()[..12]
-    );
-    assert_eq!(
-        server.lookup(&stranger, &free).await,
-        reqwest::StatusCode::NOT_FOUND,
-        "same answer as a free name"
-    );
-    assert_eq!(
-        server.lookup(&friend, &by_name).await,
-        reqwest::StatusCode::OK,
-        "contacts still find her"
-    );
-    assert_eq!(
-        server.lookup(&alice, &by_name).await,
-        reqwest::StatusCode::OK,
-        "and so does she"
-    );
-    assert_eq!(
-        server
-            .lookup(&stranger, &format!("/users/by-code/{code}"))
-            .await,
-        reqwest::StatusCode::OK,
-        "the share code still works"
-    );
-
-    // A pending request either way counts as knowing each other.
-    let request = server
+    let found = server
         .client
-        .post(server.url("/contacts/requests"))
-        .bearer_auth(&alice.token)
-        .json(&json!({ "user_id": asker.id }))
+        .get(server.url(&format!("/users/by-code/{code}")))
+        .bearer_auth(&stranger.token)
         .send()
         .await
-        .expect("request");
-    assert!(request.status().is_success());
-    assert_eq!(
-        server.lookup(&asker, &by_name).await,
-        reqwest::StatusCode::OK
-    );
-
-    server
-        .settings(&alice, Some(json!({ "discoverable_by_username": true })))
-        .await;
-    assert_eq!(
-        server.lookup(&stranger, &by_name).await,
-        reqwest::StatusCode::OK
-    );
+        .expect("lookup")
+        .json::<Value>()
+        .await
+        .expect("json");
+    assert_eq!(found["id"], alice.id.as_str());
+    assert_eq!(found["share_code"], code.as_str());
+    assert!(found.get("username").is_none());
 
     server.stop().await;
 }

@@ -40,6 +40,7 @@ class CallHistoryTest {
         answered: String? = null,
         ended: String? = "2026-09-30T09:45:00.123456Z",
         calleeName: String? = "anna",
+        calleeDeleted: Boolean = false,
     ): CallDto {
         val fields = mutableListOf(
             """"id": "11111111-1111-1111-1111-111111111111"""",
@@ -53,6 +54,7 @@ class CallHistoryTest {
             """"created_at": "2026-09-30T09:41:00.5Z"""",
         )
         fields += if (calleeName != null) """"callee_username": "$calleeName"""" else """"callee_username": null"""
+        if (calleeDeleted) fields += """"callee_deleted": true"""
         if (calleeDevice != null) fields += """"callee_device_id": "$calleeDevice""""
         if (reason != null) fields += """"ended_reason": "$reason""""
         if (answered != null) fields += """"answered_at": "$answered""""
@@ -130,7 +132,7 @@ class CallHistoryTest {
 
     @Test
     fun aDeletedAccountHasNoNameAndNoCallBack() {
-        val dto = call(me, myPhone, them, null, "cancelled", reason = "cancelled", calleeName = null)
+        val dto = call(me, myPhone, them, null, "cancelled", reason = "cancelled", calleeName = null, calleeDeleted = true)
         val row = CallHistory.recentCall(dto, me, myPhone, connectedHere = null)!!
         assertTrue(row.peerDeleted)
         assertEquals("Deleted account", row.peerUsername)

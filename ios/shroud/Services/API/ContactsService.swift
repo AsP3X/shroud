@@ -68,11 +68,12 @@ struct ContactsService: Sendable {
         )
     }
 
-    func getUserByUsername(_ username: String, token: String) async throws -> UserCardDTO {
-        let encoded = username.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? username
-        return try await client.get(
-            "users/by-username/\(encoded)",
-            as: UserCardDTO.self,
+    /// This account's username, sealed to a mutual contact. The server cannot read it.
+    func putSealedName(userID: UUID, sealed: String, token: String) async throws {
+        struct Body: Encodable { let sealed: String }
+        try await client.putNoContent(
+            path: "contacts/\(userID.uuidString.lowercased())/sealed-name",
+            body: Body(sealed: sealed),
             bearerToken: token
         )
     }

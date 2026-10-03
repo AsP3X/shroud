@@ -45,6 +45,6 @@ function withDefaults(settings: PrivacySettings): PrivacySettings {
     send_read_receipts: settings.send_read_receipts ?? true,
     send_typing: settings.send_typing ?? true,
     share_presence: settings.share_presence ?? true,
-    discoverable_by_username: settings.discoverable_by_username ?? true,
+    discoverable_by_username: settings.discoverable_by_username ?? false,
   };
 }

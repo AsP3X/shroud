@@ -77,7 +77,7 @@ async fn user_with_upload(app: &axum::Router, size: usize) -> (String, String) {
                 .uri("/api/v1/auth/register")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
-                    json!({ "username": format!("mg_{id}"), "password": "correct-horse-battery" })
+                    json!({ "username_hash": shroud_server::auth::username_hash_b64(format!("mg_{id}")), "password": "correct-horse-battery" })
                         .to_string(),
                 ))
                 .expect("request"),

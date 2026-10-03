@@ -82,6 +82,7 @@ class ContactsController(
     private val main: CoroutineContext = Dispatchers.Main.immediate,
     private val usernameOrder: Comparator<String> = ContactsSorting.collator(),
     private val listeners: () -> List<ContactsLifecycleListener> = { emptyList() },
+    private val names: ContactNameExchange = ContactNameExchange.KEEP_LOCAL,
 ) : Contacts {
     private val contactsState = MutableStateFlow<List<ContactItemDto>>(emptyList())
     override val contacts: StateFlow<List<ContactItemDto>> = contactsState.asStateFlow()
@@ -274,11 +275,15 @@ class ContactsController(
                 contactsCall.await() to requestsCall.await()
             }
             if (gen != generation) return
-            val sorted = list.sortedWith(compareBy(usernameOrder) { it.username })
+            val named = names.apply(bearer, list, contactsState.value)
+            val sorted = named.sortedWith(compareBy(usernameOrder) { it.username })
+            val redacted = requests.map { request ->
+                request.copy(user = request.user?.copy(username = CONTACT_PLACEHOLDER))
+            }
             val rosterChanged = contactsState.value.map { it.userId } != sorted.map { it.userId }
-            val changed = contactsState.value != sorted || requestsState.value != requests
+            val changed = contactsState.value != sorted || requestsState.value != redacted
             contactsState.value = sorted
-            requestsState.value = requests
+            requestsState.value = redacted
             // Rows are publishable now; presence does not hold the skeleton up.
             listStateFlow.update { it.copy(error = null, hasLoaded = true) }
             hooks?.setLastError(null)
@@ -493,12 +498,13 @@ class ContactsController(
     private fun onContactEvent(event: RealtimeEvent.ContactChanged) {
         val request = event.request
         val me = myUserId()
-        if (event.kind == RealtimeEvent.ContactChanged.Kind.Request && request != null && me != null &&
-            request.toUserId == me && request.status == ContactRequestStatus.PENDING &&
-            requestsState.value.none { it.id == request.id }
+        val shown = request?.copy(user = request.user?.copy(username = CONTACT_PLACEHOLDER))
+        if (event.kind == RealtimeEvent.ContactChanged.Kind.Request && shown != null && me != null &&
+            shown.toUserId == me && shown.status == ContactRequestStatus.PENDING &&
+            requestsState.value.none { it.id == shown.id }
         ) {
-            requestsState.value = listOf(request) + requestsState.value
-            hooks?.announceContactRequest(request)
+            requestsState.value = listOf(shown) + requestsState.value
+            hooks?.announceContactRequest(shown)
         }
         scope.launch(main) { refresh() }
     }
@@ -519,7 +525,7 @@ class ContactsController(
         const val PRESENCE_SWEEP_INTERVAL_MS = 30_000L
 
         const val NOT_SIGNED_IN = "Not signed in."
-        const val UNREADABLE_INVITE = "Enter a share code, username, link, or user ID."
+        const val UNREADABLE_INVITE = "Enter a share code, link, or user ID."
         const val CANNOT_ADD_YOURSELF = "You can't add yourself."
     }
 }

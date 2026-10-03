@@ -24,9 +24,6 @@ use crate::push::PushEvent;
 use crate::routes::notifications::MuteState;
 use crate::state::AppState;
 
-/// `peer.username` for a chat whose peer deleted their account (migration 021 clears it).
-const DELETED_ACCOUNT_NAME: &str = "Deleted account";
-
 /// Unread counts stop here: a badge reads "999+" long before anyone counts further, and the
 /// count walks the unread messages themselves.
 pub const UNREAD_COUNT_CAP: i64 = 999;
@@ -78,7 +75,8 @@ pub struct ConversationItem {
 #[derive(Debug, Serialize)]
 pub struct PeerCard {
     pub id: Uuid,
-    pub username: String,
+    /// The account was deleted. This is not a name.
+    pub deleted: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -109,7 +107,7 @@ pub async fn list_conversations(
     struct Row {
         id: Uuid,
         peer_id: Uuid,
-        peer_username: String,
+        peer_deleted: bool,
         created_at: DateTime<Utc>,
         last_message_at: Option<DateTime<Utc>>,
         reaction_seq: i64,
@@ -119,14 +117,14 @@ pub async fn list_conversations(
         muted_until: Option<DateTime<Utc>>,
     }
 
-    // Human: Join peer username; use denormalized last_message_at (no correlated subquery).
+    // Human: Use denormalized last_message_at (no correlated subquery). The peer's name is not
+    // on this server.
     // The unseen-reaction count is one range of the partial unseen index per chat: the other
     // person's live reactions to the caller's messages with `added_seq > seen_seq`, so it only
     // walks what the caller has not seen (a clear marks everything seen). The unread count is
     // the same kind of range, from the caller's read marker on.
     // A chat the caller cleared stays hidden until something newer than their watermark
-    // arrives, which is what makes the next message read as a brand-new chat. A deleted
-    // account has no username left; both apps require one, so it is named here.
+    // arrives, which is what makes the next message read as a brand-new chat.
     // Agent: SELECT conversations JOIN users LEFT JOIN conversation_clears, conversation_reads,
     // chat_mutes; RETURNS ConversationItem list.
     let sql = format!(
@@ -134,10 +132,7 @@ pub async fn list_conversations(
         SELECT
             c.id,
             CASE WHEN c.user_a_id = $1 THEN c.user_b_id ELSE c.user_a_id END AS peer_id,
-            COALESCE(
-                CASE WHEN c.user_a_id = $1 THEN ub.username ELSE ua.username END,
-                $2
-            ) AS peer_username,
+            CASE WHEN c.user_a_id = $1 THEN ub.deleted_at IS NOT NULL ELSE ua.deleted_at IS NOT NULL END AS peer_deleted,
             c.created_at,
             c.last_message_at,
             COALESCE(rs.seq, 0) AS reaction_seq,
@@ -184,7 +179,6 @@ pub async fn list_conversations(
     );
     let rows = sqlx::query_as::<_, Row>(&sql)
         .bind(auth.user_id)
-        .bind(DELETED_ACCOUNT_NAME)
         .fetch_all(&state.pool)
         .await
         .map_err(|err| AppError::Internal(format!("list conversations failed: {err}")))?;
@@ -195,7 +189,7 @@ pub async fn list_conversations(
             id: row.id,
             peer: PeerCard {
                 id: row.peer_id,
-                username: row.peer_username,
+                deleted: row.peer_deleted,
             },
             created_at: row.created_at,
             last_message_at: row.last_message_at,

@@ -44,7 +44,6 @@ pub struct ContactRequestResponse {
 #[derive(Debug, Serialize)]
 pub struct PeerUser {
     pub id: Uuid,
-    pub username: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -60,8 +59,10 @@ pub struct ContactsListResponse {
 #[derive(Debug, Serialize)]
 pub struct ContactItem {
     pub user_id: Uuid,
-    pub username: String,
     pub created_at: DateTime<Utc>,
+    /// The contact's username, sealed to this account. Absent until they have published it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sealed_name: Option<String>,
 }
 
 #[derive(Debug, FromRow)]
@@ -339,17 +340,16 @@ pub async fn list_requests(
         } else {
             row.to_user_id
         };
-        let username: Option<String> =
-            sqlx::query_scalar(r#"SELECT username FROM users WHERE id = $1"#)
+        let alive: Option<Uuid> =
+            sqlx::query_scalar(r#"SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL"#)
                 .bind(peer_id)
-                .fetch_one(&state.pool)
+                .fetch_optional(&state.pool)
                 .await
-                .map_err(|err| AppError::Internal(format!("peer username failed: {err}")))?;
-        // A deleted account has no username (migration 021). Account deletion drops its
-        // requests; this only skips one written while that deletion was running.
-        let Some(username) = username else {
+                .map_err(|err| AppError::Internal(format!("peer lookup failed: {err}")))?;
+        // Account deletion drops its requests; this only skips one written while that ran.
+        if alive.is_none() {
             continue;
-        };
+        }
 
         requests.push(ContactRequestResponse {
             id: row.id,
@@ -358,10 +358,7 @@ pub async fn list_requests(
             status: row.status,
             created_at: row.created_at,
             responded_at: row.responded_at,
-            user: Some(PeerUser {
-                id: peer_id,
-                username,
-            }),
+            user: Some(PeerUser { id: peer_id }),
         });
     }
 
@@ -553,17 +550,19 @@ pub async fn list_contacts(
     #[derive(FromRow)]
     struct Row {
         contact_user_id: Uuid,
-        username: String,
         created_at: DateTime<Utc>,
+        sealed_name: Option<String>,
     }
 
     let rows = sqlx::query_as::<_, Row>(
         r#"
-        SELECT c.contact_user_id, u.username, c.created_at
+        SELECT c.contact_user_id, c.created_at, n.sealed AS sealed_name
         FROM contacts c
         INNER JOIN users u ON u.id = c.contact_user_id AND u.deleted_at IS NULL
+        LEFT JOIN contact_sealed_names n
+            ON n.owner_id = c.contact_user_id AND n.peer_id = c.user_id
         WHERE c.user_id = $1
-        ORDER BY u.username ASC
+        ORDER BY c.created_at ASC
         "#,
     )
     .bind(auth.user_id)
@@ -576,12 +575,54 @@ pub async fn list_contacts(
             .into_iter()
             .map(|row| ContactItem {
                 user_id: row.contact_user_id,
-                username: row.username,
                 created_at: row.created_at,
+                sealed_name: row.sealed_name,
             })
             .collect(),
     }))
 }
+
+/// `PUT /contacts/:user_id/sealed-name` — this account's username, sealed to that contact.
+///
+/// The body is opaque. Only the two of them can open it, and only after they have added
+/// each other. Anyone else, including this server, learns nothing from it.
+pub async fn put_sealed_name(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path(peer_id): Path<Uuid>,
+    Json(body): Json<SealedNameBody>,
+) -> Result<StatusCode, AppError> {
+    if peer_id == auth.user_id {
+        return Err(AppError::validation("Choose someone else."));
+    }
+    if body.sealed.len() > SEALED_NAME_MAX || body.sealed.trim().is_empty() {
+        return Err(AppError::validation("That sealed name is not usable."));
+    }
+    if !are_contacts(&state.pool, auth.user_id, peer_id).await? {
+        return Err(AppError::not_found("Contact not found."));
+    }
+    sqlx::query(
+        r#"
+        INSERT INTO contact_sealed_names (owner_id, peer_id, sealed)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (owner_id, peer_id) DO UPDATE SET sealed = EXCLUDED.sealed
+        "#,
+    )
+    .bind(auth.user_id)
+    .bind(peer_id)
+    .bind(body.sealed.trim())
+    .execute(&state.pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("save sealed name failed: {err}")))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SealedNameBody {
+    pub sealed: String,
+}
+
+const SEALED_NAME_MAX: usize = 2048;
 
 /// `DELETE /contacts/:user_id` — unfriend both directions.
 pub async fn delete_contact(
@@ -605,6 +646,16 @@ pub async fn delete_contact(
     if result.rows_affected() == 0 {
         return Err(AppError::not_found("Contact not found."));
     }
+    let _ = sqlx::query(
+        r#"
+        DELETE FROM contact_sealed_names
+        WHERE (owner_id = $1 AND peer_id = $2) OR (owner_id = $2 AND peer_id = $1)
+        "#,
+    )
+    .bind(auth.user_id)
+    .bind(peer_id)
+    .execute(&state.pool)
+    .await;
 
     let event = serde_json::json!({
         "type": "contact.removed",
@@ -703,13 +754,13 @@ async fn respond_as_recipient(
 
 /// Loads a minimal peer card for contact-request WS/API payloads.
 async fn load_peer_user(pool: &sqlx::PgPool, user_id: Uuid) -> Result<Option<PeerUser>, AppError> {
-    let row: Option<(Uuid, String)> =
-        sqlx::query_as(r#"SELECT id, username FROM users WHERE id = $1"#)
+    let row: Option<Uuid> =
+        sqlx::query_scalar(r#"SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL"#)
             .bind(user_id)
             .fetch_optional(pool)
             .await
             .map_err(|err| AppError::Internal(format!("load peer user failed: {err}")))?;
-    Ok(row.map(|(id, username)| PeerUser { id, username }))
+    Ok(row.map(|id| PeerUser { id }))
 }
 
 /// Publishes a contact-related realtime event to one or more users.

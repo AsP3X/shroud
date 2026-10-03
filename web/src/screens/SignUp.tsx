@@ -68,7 +68,7 @@ export function SignUp() {
       navigate(hasPin(session.user.id) ? "/app" : "/unlock", { replace: true });
     } catch (err) {
       if (err instanceof PhraseError) setError(err.message);
-      else if (err instanceof ApiError) setError(err.message);
+      else if (err instanceof ApiError || (err instanceof Error && err.name === "UsernameError")) setError(err.message);
       else setError("Something went wrong.");
       setStepIndex(0);
     } finally {

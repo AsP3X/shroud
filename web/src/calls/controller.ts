@@ -1010,7 +1010,7 @@ export class CallController {
     if (this.call && (sameId(this.call.id, id) || this.busy())) return;
     const peer = {
       id: info.caller_user_id.toLowerCase(),
-      username: info.caller_username ?? account.peerName(info.caller_user_id) ?? "Unknown",
+      username: account.peerName(info.caller_user_id) ?? "Contact",
     };
     const call = this.open({
       role: "callee",

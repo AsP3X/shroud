@@ -22,7 +22,6 @@ const SESSION_TOUCH_THROTTLE_SECS: i64 = 5 * 60;
 #[derive(Debug, Clone)]
 pub struct AuthContext {
     pub user_id: Uuid,
-    pub username: String,
     pub share_code: String,
     pub device_id: Uuid,
     /// Sealed by the account's devices; only echoed back by `/auth/me`.
@@ -36,7 +35,6 @@ struct AuthRow {
     device_id: Uuid,
     device_sealed_name: Option<Vec<u8>>,
     user_id: Uuid,
-    username: String,
     share_code: String,
 }
 
@@ -72,7 +70,6 @@ impl FromRequestParts<AppState> for AuthContext {
                 d.id AS device_id,
                 d.sealed_name AS device_sealed_name,
                 u.id AS user_id,
-                u.username AS username,
                 u.share_code AS share_code
             FROM sessions s
             INNER JOIN devices d ON d.id = s.device_id
@@ -122,7 +119,6 @@ impl FromRequestParts<AppState> for AuthContext {
 
         Ok(AuthContext {
             user_id: row.user_id,
-            username: row.username,
             share_code: row.share_code,
             device_id: row.device_id,
             device_sealed_name: row.device_sealed_name,

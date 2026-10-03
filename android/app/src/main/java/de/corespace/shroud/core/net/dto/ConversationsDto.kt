@@ -16,7 +16,13 @@ import java.util.UUID
 
 /** The other participant of a chat (`MessageModels.swift:173-176`). */
 @Serializable
-data class ConversationPeerDto(val id: UUID, val username: String)
+data class ConversationPeerDto(
+    val id: UUID,
+    /** Filled on this phone. The server does not send a name. */
+    val username: String = "Contact",
+    /** The account was deleted. This is not a name. */
+    val deleted: Boolean = false,
+)
 
 /**
  * One row of `GET /conversations` (`MessageModels.swift:178-202`). Older servers send none of the

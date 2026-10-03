@@ -61,10 +61,20 @@ object CallHistory {
      * What this phone saw ([connectedHere]) beats the server's "answered", but only for the device
      * that ran the call.
      */
-    fun recentCall(call: CallDto, me: UUID, myDevice: UUID?, connectedHere: Boolean?): RecentCall? {
+    fun recentCall(
+        call: CallDto,
+        me: UUID,
+        myDevice: UUID?,
+        connectedHere: Boolean?,
+        nameOf: (UUID) -> String? = { null },
+    ): RecentCall? {
         if (call.isLive) return null
         val outgoing = call.callerUserId == me
-        val peerName = if (outgoing) call.calleeUsername else call.callerUsername
+        val peerId = if (outgoing) call.calleeUserId else call.callerUserId
+        val deleted = if (outgoing) call.calleeDeleted else call.callerDeleted
+        val serverName = if (outgoing) call.calleeUsername else call.callerUsername
+        val known = nameOf(peerId)?.takeIf { it.isNotBlank() && it != "Contact" }
+        val peerName = if (deleted) DELETED_ACCOUNT else known ?: serverName
         val ranHere = myDevice != null && (call.callerDeviceId == myDevice || call.calleeDeviceId == myDevice)
         val connected = (if (ranHere) connectedHere else null) ?: (call.answeredAt != null)
         val answered = call.answeredAt
@@ -77,8 +87,8 @@ object CallHistory {
         return RecentCall(
             id = call.id,
             peerUserId = if (outgoing) call.calleeUserId else call.callerUserId,
-            peerUsername = peerName ?: DELETED_ACCOUNT,
-            peerDeleted = peerName == null,
+            peerUsername = if (deleted) DELETED_ACCOUNT else peerName ?: "Contact",
+            peerDeleted = deleted,
             modality = call.callModality,
             isOutgoing = outgoing,
             status = recentStatus(call.status, call.endedReason),

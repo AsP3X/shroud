@@ -47,6 +47,8 @@ data class ChatsSnapshot(
     val mutedUntil: Map<UUID, Instant?> = emptyMap(),
     val activities: Map<UUID, ChatPeerActivity> = emptyMap(),
     val activePeer: UUID? = null,
+    /** Names this phone has for contacts. A chat's own username is only a fallback. */
+    val contactNames: Map<UUID, String> = emptyMap(),
 )
 
 /**
@@ -116,6 +118,7 @@ class MessagingChatsSource(
             messaging.unreadCounts,
             messaging.peerActivities,
             messaging.activePeerId,
+            contacts.contacts,
         ),
     ) { }
 
@@ -146,6 +149,7 @@ class MessagingChatsSource(
             mutedUntil = muted,
             activities = activities,
             activePeer = messaging.activePeerId.value,
+            contactNames = contacts.contacts.value.associate { it.userId to it.username },
         )
     }
 

@@ -64,10 +64,6 @@ pub fn router() -> Router<AppState> {
             .route("/keys/identity/{user_id}", get(keys::get_identity))
             .route("/keys/status", get(keys::keys_status))
             .route("/keys/otpk", post(keys::post_otpk))
-            .route(
-                "/users/by-username/{username}",
-                get(users::get_user_by_username),
-            )
             .route("/users/by-code/{code}", get(users::get_user_by_share_code))
             .route("/users/me/share-code", post(users::rotate_share_code))
             .route("/users/{user_id}", get(users::get_user))
@@ -86,6 +82,10 @@ pub fn router() -> Router<AppState> {
                 post(contacts::cancel_request),
             )
             .route("/contacts", get(contacts::list_contacts))
+            .route(
+                "/contacts/{user_id}/sealed-name",
+                axum::routing::put(contacts::put_sealed_name),
+            )
             .route("/contacts/{user_id}", delete(contacts::delete_contact))
             .route("/blocks", post(blocks::create_block))
             .route("/blocks", get(blocks::list_blocks))

@@ -19,7 +19,7 @@ struct PrivacySecurityView: View {
     @State private var isSavingChatDeleteConsent = false
     /// Visibility switches with a server write in flight.
     @State private var savingVisibility: Set<VisibilitySwitch> = []
-    @State private var isSavingDiscoverable = false
+
     @State private var confirmingShareCodeReset = false
     @State private var isResettingShareCode = false
     /// Unblock calls in flight, so a row can't be tapped twice.
@@ -28,7 +28,7 @@ struct PrivacySecurityView: View {
     /// back and forth again. Cleared when the request ends; the server value then takes over,
     /// which reverts the switch if the write failed.
     @State private var pendingVisibility: [VisibilitySwitch: Bool] = [:]
-    @State private var pendingDiscoverable: Bool?
+
     @State private var pendingChatDelete: Bool?
     /// The last load of the server switches failed; they stay disabled until a retry works.
     @State private var privacyLoadFailed = false
@@ -461,51 +461,15 @@ struct PrivacySecurityView: View {
         }
     }
 
-    /// Who can find this account, and a way to retire a QR code that reached the wrong people.
-    ///
-    /// Human: Off, a username is only a way in for contacts and pending requests; everyone else
-    /// needs the QR code or share code, and gets the same "not found" as for a free name.
-    /// Agent: READS/WRITES messaging.privacySettings.discoverableByUsername (HTTP PUT);
-    /// CALLS rotateShareCode (HTTP POST /users/me/share-code).
+    /// People find this account with a QR code or share code. A username is not a directory.
     private var findingYouSection: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Toggle(isOn: Binding(
-                get: { pendingDiscoverable ?? messaging.privacySettings.discoverableByUsername },
-                set: { newValue in
-                    guard newValue != messaging.privacySettings.discoverableByUsername else { return }
-                    pendingDiscoverable = newValue
-                    isSavingDiscoverable = true
-                    Task {
-                        let error = await messaging.updatePrivacySettings(
-                            UpdatePrivacySettingsBody(discoverableByUsername: newValue)
-                        )
-                        isSavingDiscoverable = false
-                        withAnimation(Motion.respecting(reduceMotion, Motion.snappy)) {
-                            pendingDiscoverable = nil
-                        }
-                        if let error {
-                            toast = .failure(error)
-                            Haptics.notification(.error)
-                        } else {
-                            Haptics.impact(.light)
-                        }
-                    }
-                }
-            )) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Find me by username")
-                        .font(.system(size: 16))
-                        .foregroundStyle(Theme.textPrimary)
-                    Text("People who know your username can find you and send a request. Off, they need your QR code or share code; your contacts can still find you.")
-                        .font(.system(size: 13))
-                        .foregroundStyle(Theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .tint(Theme.accent)
-            .disabled(isSavingDiscoverable || !messaging.hasLoadedPrivacySettings)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
+            Text("People add you with your QR code or share code. Your username is shared only with people you have both added, and the server never sees it.")
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
 
             Rectangle()
                 .fill(Theme.separator)

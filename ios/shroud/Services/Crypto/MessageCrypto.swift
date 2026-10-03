@@ -625,6 +625,55 @@ enum MessageCrypto {
         return try AES.GCM.open(sealed, using: symmetric)
     }
 
+    /// This account's username, sealed to one contact. The server stores the JSON and cannot read it.
+    static func sealContactName(
+        _ name: String,
+        senderPrivate: Curve25519.KeyAgreement.PrivateKey,
+        senderIdentityPublic: Data,
+        recipientIdentityPublic: Data
+    ) throws -> String {
+        let box = try sealBox(
+            plaintext: Data(name.utf8),
+            senderPrivate: senderPrivate,
+            senderIdentityPublic: senderIdentityPublic,
+            recipientIdentityPublic: recipientIdentityPublic
+        )
+        let data = try JSONEncoder().encode(box)
+        guard let text = String(data: data, encoding: .utf8) else { throw CryptoError.sealingFailed }
+        return text
+    }
+
+    /// The username a contact sealed for this account, or nil when the box is not theirs.
+    static func openContactName(
+        _ sealed: String,
+        ourPrivate: Curve25519.KeyAgreement.PrivateKey,
+        senderIdentityPublic: Data,
+        recipientIdentityPublic: Data
+    ) -> String? {
+        guard let data = sealed.data(using: .utf8),
+              let box = try? JSONDecoder().decode(SealedBox.self, from: data),
+              box.t != nil
+        else { return nil }
+        do {
+            guard try verifyBoxTag(
+                box,
+                with: ourPrivate,
+                senderIdentityPublic: senderIdentityPublic,
+                recipientIdentityPublic: recipientIdentityPublic
+            ) else { return nil }
+            let plain = try openBox(
+                box,
+                with: ourPrivate,
+                senderIdentityPublic: senderIdentityPublic,
+                recipientIdentityPublic: recipientIdentityPublic
+            )
+            guard let name = String(data: plain, encoding: .utf8), ContactNames.isUsername(name) else { return nil }
+            return name
+        } catch {
+            return nil
+        }
+    }
+
     private static func deriveMessageKey(
         sharedSecret: SharedSecret,
         ephemeralPublic: Data,

@@ -381,8 +381,24 @@ final class CallController {
         guard epoch == historyEpoch, historyCursor == before else { return }
         let ids = Set(history.map(\.id))
         history += page.compactMap { call in
-            ids.contains(call.id) ? nil
-                : Self.recentCall(from: call, me: me, myDevice: myDevice, connectedHere: connectedHere[call.id])
+            guard !ids.contains(call.id),
+                  var row = Self.recentCall(from: call, me: me, myDevice: myDevice, connectedHere: connectedHere[call.id])
+            else { return nil }
+            if !row.peerDeleted {
+                row = RecentCall(
+                    id: row.id,
+                    peerUserID: row.peerUserID,
+                    peerUsername: ContactNames.display(peer: row.peerUserID, owner: me),
+                    peerDeleted: false,
+                    modality: row.modality,
+                    isOutgoing: row.isOutgoing,
+                    status: row.status,
+                    connected: row.connected,
+                    duration: row.duration,
+                    at: row.at
+                )
+            }
+            return row
         }
         historyCursor = page.last?.createdAt ?? before
         historyHasMore = page.count >= Self.historyPageSize
@@ -394,7 +410,10 @@ final class CallController {
     static func recentCall(from call: CallDTO, me: UUID, myDevice: UUID?, connectedHere: Bool?) -> RecentCall? {
         guard !call.isLive else { return nil }
         let outgoing = call.callerUserId == me
-        let peerName = outgoing ? call.calleeUsername : call.callerUsername
+        let peerID = outgoing ? call.calleeUserId : call.callerUserId
+        let deleted = outgoing ? call.calleeDeleted == true : call.callerDeleted == true
+        let serverName = outgoing ? call.calleeUsername : call.callerUsername
+        let peerName = deleted ? "Deleted account" : (serverName?.isEmpty == false ? serverName! : "Contact")
         // What this phone saw beats the server's "answered", but only for the device that answered.
         let ranHere = myDevice != nil && (call.callerDeviceId == myDevice || call.calleeDeviceId == myDevice)
         let connected = (ranHere ? connectedHere : nil) ?? (call.answeredAt != nil)
@@ -404,9 +423,9 @@ final class CallController {
         }
         return RecentCall(
             id: call.id,
-            peerUserID: outgoing ? call.calleeUserId : call.callerUserId,
-            peerUsername: peerName ?? "Deleted account",
-            peerDeleted: peerName == nil,
+            peerUserID: peerID,
+            peerUsername: peerName,
+            peerDeleted: deleted,
             modality: call.callModality,
             isOutgoing: outgoing,
             status: recentStatus(call.status, reason: call.endedReason),
@@ -2022,11 +2041,15 @@ final class CallController {
     }
 
     private func callerName(_ call: CallDTO) -> String {
-        if let name = call.callerUsername, !name.isEmpty { return name }
-        if let contact = messagingController?.contacts.first(where: { same($0.userId, call.callerUserId) }) {
+        if let contact = messagingController?.contacts.first(where: { same($0.userId, call.callerUserId) }),
+           contact.username != ContactNames.placeholder {
             return contact.username
         }
-        return "Unknown"
+        if let owner = sessionController?.userID {
+            let known = ContactNames.display(peer: call.callerUserId, owner: owner)
+            if known != ContactNames.placeholder { return known }
+        }
+        return "Contact"
     }
 
     private func rememberFinished(_ id: UUID) {
