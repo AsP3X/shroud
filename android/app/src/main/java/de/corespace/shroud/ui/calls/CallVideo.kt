@@ -74,18 +74,39 @@ internal class CallTextureRenderer(context: Context) : TextureView(context), Tex
         isOpaque = false
     }
 
-    /** Starts drawing [newTrack] once an EGL context exists; replaces the track drawn before. */
+    /**
+     * Starts drawing [newTrack] once an EGL context exists; replaces the track drawn before.
+     * A track WebRTC already disposed is skipped: [VideoTrack.addSink] throws and that throw
+     * leaves Compose and kills the process.
+     */
     fun attach(eglContext: EglBase.Context?, newTrack: VideoTrack?) {
+        val next = newTrack?.takeUnless { it.isDisposed }
         if (!initialized && eglContext != null) {
             renderer.init(eglContext, EglBase.CONFIG_PLAIN, GlRectDrawer())
             initialized = true
             surfaceTexture?.let { renderer.createEglSurface(it) }
-            track?.addSink(this)
         }
-        if (track === newTrack) return
-        track?.removeSink(this)
-        track = newTrack
-        if (initialized) newTrack?.addSink(this)
+        if (track === next) return
+        removeSinkQuietly(track)
+        track = next
+        if (initialized) addSinkQuietly(next)
+    }
+
+    private fun removeSinkQuietly(video: VideoTrack?) {
+        if (video == null || video.isDisposed) return
+        try {
+            video.removeSink(this)
+        } catch (_: IllegalStateException) {
+        }
+    }
+
+    private fun addSinkQuietly(video: VideoTrack?) {
+        if (video == null || video.isDisposed) return
+        try {
+            video.addSink(this)
+        } catch (_: IllegalStateException) {
+            if (track === video) track = null
+        }
     }
 
     fun setMirror(mirror: Boolean) {
@@ -98,7 +119,7 @@ internal class CallTextureRenderer(context: Context) : TextureView(context), Tex
     }
 
     fun release() {
-        track?.removeSink(this)
+        removeSinkQuietly(track)
         track = null
         if (initialized) renderer.release()
         initialized = false

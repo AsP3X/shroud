@@ -94,6 +94,15 @@ class CallMediaEngine(context: Context) : Engine {
     private var remoteVideo: VideoTrack? = null
     private var remoteScreen: VideoTrack? = null
 
+    /**
+     * The last [PeerConnection.getTransceivers] result. A second call disposes those wrappers,
+     * and disposing a receiver disposes the [VideoTrack] the call screen is drawing. Later lookups
+     * reuse this list. It is dropped when the remote description changes, then read once.
+     */
+    private var sectionCache: List<Pair<MediaSection, RtpTransceiver>>? = null
+    /** True once [sectionCache] was read for the remote description now applied. */
+    private var sectionsMatchRemote = false
+
     override var screenQuality: ScreenShareQuality = ScreenShareQuality.Standard
         set(value) {
             if (field == value) return
@@ -170,7 +179,11 @@ class CallMediaEngine(context: Context) : Engine {
 
     override suspend fun answer(offerSdp: String): String {
         val connection = peer ?: throw CallMediaException("The call's media is not ready.")
+        // onAddTrack runs inside setRemoteDescription and reads the transceivers once. Clearing
+        // the flag first makes that read happen; the refresh below then keeps the same wrappers.
+        sectionsMatchRemote = false
         if (!applyDescription { connection.setRemoteDescription(it, SessionDescription(SessionDescription.Type.OFFER, offerSdp)) }) {
+            sectionsMatchRemote = sectionCache != null
             throw CallMediaException("The offer could not be applied.")
         }
         adoptOfferedSections(connection)
@@ -180,20 +193,20 @@ class CallMediaEngine(context: Context) : Engine {
             throw CallMediaException("The local description could not be set.")
         }
         tuneSenders()
-        refreshRemoteVideo()
-        refreshRemoteScreen()
+        refreshRemoteMedia()
         return tuned
     }
 
     override suspend fun applyAnswer(sdp: String): Boolean {
         val connection = peer ?: return false
         if (connection.signalingState() != PeerConnection.SignalingState.HAVE_LOCAL_OFFER) return false
+        sectionsMatchRemote = false
         if (!applyDescription { connection.setRemoteDescription(it, SessionDescription(SessionDescription.Type.ANSWER, sdp)) }) {
+            sectionsMatchRemote = sectionCache != null
             return false
         }
         tuneSenders()
-        refreshRemoteVideo()
-        refreshRemoteScreen()
+        refreshRemoteMedia()
         return true
     }
 
@@ -400,6 +413,8 @@ class CallMediaEngine(context: Context) : Engine {
         localVideo = null
         remoteVideo = null
         remoteScreen = null
+        sectionCache = null
+        sectionsMatchRemote = false
         hasTurn = false
         triedRelay = false
         relayOnly = false
@@ -473,9 +488,8 @@ class CallMediaEngine(context: Context) : Engine {
     )
 
     /**
-     * The live Java wrapper for [section]. `getTransceivers` drops the previous wrappers, so a
-     * transceiver saved earlier throws once it is read again — and a throw on the signaling thread
-     * aborts the process. Look the section up at the moment it is used.
+     * The live Java wrapper for [section]. [PeerConnection.getTransceivers] disposes the previous
+     * wrappers, and that disposes their tracks, so the list is cached in [sections].
      */
     private fun sectionTransceiver(section: MediaSection): RtpTransceiver? {
         val connection = peer ?: return null
@@ -545,14 +559,18 @@ class CallMediaEngine(context: Context) : Engine {
         }
     }
 
-    private fun sections(connection: PeerConnection): List<Pair<MediaSection, RtpTransceiver>> {
+    private fun sections(connection: PeerConnection): List<Pair<MediaSection, RtpTransceiver>> =
+        sectionCache ?: loadSections(connection)
+
+    /** One [PeerConnection.getTransceivers] call. A second call would dispose [sectionCache]. */
+    private fun loadSections(connection: PeerConnection): List<Pair<MediaSection, RtpTransceiver>> {
         var audio = 0
         var video = 0
         val out = ArrayList<Pair<MediaSection, RtpTransceiver>>()
         val transceivers = try {
             connection.transceivers
         } catch (_: RuntimeException) {
-            return emptyList()
+            return sectionCache ?: emptyList()
         }
         for (transceiver in transceivers) {
             when (transceiver.mediaType) {
@@ -567,7 +585,20 @@ class CallMediaEngine(context: Context) : Engine {
                 else -> Unit
             }
         }
+        sectionCache = out
         return out
+    }
+
+    /**
+     * Reads both remote tracks from one transceiver list. [onAddTrack] and the description that
+     * caused it both call this; the second call keeps the list the first one cached.
+     */
+    private fun refreshRemoteMedia() {
+        val connection = peer ?: return
+        if (!sectionsMatchRemote) sectionCache = null
+        refreshRemoteVideo()
+        refreshRemoteScreen()
+        if (sectionCache != null) sectionsMatchRemote = true
     }
 
     private fun tuneSenders() {
@@ -604,21 +635,11 @@ class CallMediaEngine(context: Context) : Engine {
     private fun refreshRemoteVideo() {
         val connection = peer ?: return
         val track = try {
-            connection.transceivers
-                .firstOrNull { it.mediaType == MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO }
-                ?.receiver?.track() as? VideoTrack
+            sections(connection).firstOrNull { it.first == MediaSection.CAMERA }?.second?.receiver?.track() as? VideoTrack
         } catch (_: RuntimeException) {
             return
         }
-        // A transceiver's Java track can already be disposed when this runs on the signaling
-        // thread (onAddTrack). id() then throws, and an exception leaving a WebRTC callback aborts
-        // the process, so a dead track is ignored until the next refresh.
-        if (track != null && trackId(track) == null) return
-        if (trackId(track) == trackId(remoteVideo)) return
-        remoteVideo?.let { runCatching { it.removeSink(remoteFrames) } }
-        remoteVideo = track
-        track?.addSink(remoteFrames)
-        callbacks?.onRemoteVideo(track)
+        remoteVideo = retarget(remoteVideo, track, remoteFrames) { callbacks?.onRemoteVideo(it) }
     }
 
     private fun refreshRemoteScreen() {
@@ -628,12 +649,27 @@ class CallMediaEngine(context: Context) : Engine {
         } catch (_: RuntimeException) {
             return
         }
-        if (track != null && trackId(track) == null) return
-        if (trackId(track) == trackId(remoteScreen)) return
-        remoteScreen?.let { runCatching { it.removeSink(remoteScreenFrames) } }
-        remoteScreen = track
-        track?.addSink(remoteScreenFrames)
-        callbacks?.onRemoteScreen(track)
+        remoteScreen = retarget(remoteScreen, track, remoteScreenFrames) { callbacks?.onRemoteScreen(it) }
+    }
+
+    /**
+     * Points [sink] at [next] when it is a different live track. A disposed track is ignored:
+     * [VideoTrack.id] throws once the native track is gone, and a throw on the signaling thread
+     * aborts the process. Returns the track now held.
+     */
+    private fun retarget(held: VideoTrack?, next: VideoTrack?, sink: VideoSink, publish: (VideoTrack?) -> Unit): VideoTrack? {
+        val incoming = next?.takeUnless { it.isDisposed || trackId(it) == null }
+        val current = held?.takeUnless { it.isDisposed }
+        if (incoming == null && current == null) {
+            // The screen may still hold the disposed track. Tell it to let go once.
+            if (held != null) publish(null)
+            return null
+        }
+        if (incoming != null && current != null && trackId(incoming) == trackId(current)) return held
+        if (current != null && incoming !== current) runCatching { current.removeSink(sink) }
+        if (incoming != null) runCatching { incoming.addSink(sink) }
+        publish(incoming)
+        return incoming
     }
 
     private fun trackId(track: MediaStreamTrack?): String? {
@@ -739,8 +775,9 @@ class CallMediaEngine(context: Context) : Engine {
         override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {
             if (!sameConnection()) return
             try {
-                refreshRemoteVideo()
-                refreshRemoteScreen()
+                // The receiver argument's track is disposed with that wrapper. Read the cached
+                // transceiver list instead, once per remote description.
+                refreshRemoteMedia()
             } catch (_: RuntimeException) {
             }
         }

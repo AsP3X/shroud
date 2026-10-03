@@ -47,6 +47,9 @@ internal class NotificationManagerShade(private val context: Context) : CallShad
         try {
             if (tag == null) manager.notify(id, notification) else manager.notify(tag, id, notification)
         } catch (_: SecurityException) {
+        } catch (_: IllegalArgumentException) {
+            // API 35+ throws when CallStyle is posted with no foreground service and no
+            // full-screen intent. Swallowing keeps the process up; the service posts it.
         }
     }
 

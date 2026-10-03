@@ -1,9 +1,11 @@
 package de.corespace.shroud.core.calls.system
 
+import android.app.Notification
 import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import androidx.core.app.ServiceCompat
@@ -23,8 +25,11 @@ import java.util.UUID
  * Telecom, the phoneCall foreground service, CallStyle notifications, the ringer, the audio
  * route and the proximity lock (calls §6).
  *
- * A ring posts the incoming notification first, then adds the Telecom call when Telecom is
- * available, then starts [CallService]. A refused foreground start leaves the notification ringing.
+ * A background ring posts the incoming notification first (it carries a full-screen intent),
+ * then adds the Telecom call when Telecom is available, then starts [CallService]. On Android 15
+ * and later a CallStyle notification without that intent is posted by the service: notifying it
+ * directly throws and kills the process. A refused foreground start leaves a notification that
+ * was already posted still ringing.
  * Session fields are touched on the main thread. Nothing here logs a caller name.
  */
 internal class AndroidCallSystem(
@@ -352,9 +357,25 @@ internal class AndroidCallSystem(
     private fun postCurrent() {
         val current = session ?: return
         shade.ensureChannels()
-        shade.post(null, SystemNotifier.ID_CALL, notificationFor(current))
+        val notification = notificationFor(current)
+        val host = service
+        if (promoted && host != null) {
+            // Once the phoneCall service owns the notification, startForeground is the only
+            // legal way to replace a CallStyle entry on Android 15+.
+            bringToForeground(host)
+        } else if (canNotifyCallStyle(notification)) {
+            shade.post(null, SystemNotifier.ID_CALL, notification)
+        }
         shade.cancel(SystemNotifier.callTag(current.id), SystemNotifier.ID_CALL)
     }
+
+    /**
+     * Android 15 (API 35) throws from [android.app.NotificationManager.notify] when a CallStyle
+     * notification has no full-screen intent and is not yet the phoneCall foreground-service
+     * notification. The service posts that one from [bringToForeground].
+     */
+    private fun canNotifyCallStyle(notification: Notification): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM || notification.fullScreenIntent != null
 
     private fun notificationFor(current: Session) = when (current.style) {
         Style.Incoming -> notices.incoming(current.id, current.name, current.video, fullScreen = fullScreenNow(current))

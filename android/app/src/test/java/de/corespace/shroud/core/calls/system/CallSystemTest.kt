@@ -142,6 +142,67 @@ class CallSystemTest {
     }
 
     @Test
+    @Config(sdk = [35])
+    fun foregroundIncomingCallStyleWaitsForThePhoneCallService() {
+        val world = World(inForeground = true)
+        val id = UUID.randomUUID()
+        world.system.reportIncoming(id, "Ada", video = false)
+
+        assertEquals(-1, world.order.indexOf("notification"))
+        assertNull(world.shade.active["${SystemNotifier.ID_CALL}"])
+        assertTrue(world.order.contains("fgs"))
+
+        val host = Robolectric.buildService(CallService::class.java).create().get()
+        world.system.onServiceStart(host, CallService.promoteIntent(host, id), 7)
+
+        assertEquals(SystemNotifier.ID_CALL, shadowOf(host).lastForegroundNotificationId)
+        val notification = shadowOf(host).lastForegroundNotification
+        assertNotNull(notification)
+        assertNull(notification!!.fullScreenIntent)
+        assertEquals(CallChannels.ONGOING, notification.channelId)
+        assertEquals("Incoming voice call", notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString())
+    }
+
+    @Test
+    @Config(sdk = [35])
+    fun foregroundOutgoingCallStyleWaitsForThePhoneCallService() {
+        val world = World(inForeground = true)
+        val id = UUID.randomUUID()
+        world.system.reportOutgoing(id, "Ada", video = true)
+
+        assertEquals(-1, world.order.indexOf("notification"))
+        assertNull(world.shade.active["${SystemNotifier.ID_CALL}"])
+
+        world.system.reportConnected(id)
+        assertNull(world.shade.active["${SystemNotifier.ID_CALL}"])
+
+        val host = Robolectric.buildService(CallService::class.java).create().get()
+        world.system.onServiceStart(host, CallService.promoteIntent(host, id), 7)
+
+        assertEquals(SystemNotifier.ID_CALL, shadowOf(host).lastForegroundNotificationId)
+        val notification = shadowOf(host).lastForegroundNotification
+        assertNotNull(notification)
+        assertNull(notification!!.fullScreenIntent)
+        assertEquals("Ongoing video call", notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString())
+    }
+
+    @Test
+    @Config(sdk = [35])
+    fun backgroundRingStillPostsCallStyleBeforeTheForegroundService() {
+        val world = World()
+        val id = UUID.randomUUID()
+        world.system.reportIncoming(id, "", video = false)
+
+        val posted = world.order.indexOf("notification")
+        val started = world.order.indexOf("fgs")
+        assertTrue(posted >= 0 && started > posted)
+        val notification = world.shade.active["${SystemNotifier.ID_CALL}"]
+        assertNotNull(notification)
+        assertNotNull(notification!!.fullScreenIntent)
+        assertEquals(CallChannels.INCOMING, notification.channelId)
+    }
+
+    @Test
     fun telecomUnavailableStillPostsTheNotification() {
         val world = World()
         world.telecom.available = false
@@ -163,7 +224,7 @@ class CallSystemTest {
         return pending.map { shadowOf(it).savedIntent }.firstOrNull { it.getStringExtra(CallIntents.EXTRA_ACTION) == action }
     }
 
-    private class World {
+    private class World(inForeground: Boolean = false) {
         val order = mutableListOf<String>()
         val shade = RecordingShade(order)
         val starter = FakeStarter(order)
@@ -194,7 +255,7 @@ class CallSystemTest {
                 override fun onToggleSpeaker() {}
             },
             missedChannelId = { "calls.missed.test" },
-            appInForeground = { false },
+            appInForeground = { inForeground },
         )
     }
 
