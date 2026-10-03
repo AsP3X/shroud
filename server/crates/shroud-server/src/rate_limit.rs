@@ -66,6 +66,25 @@ struct MemoryWindow {
     reset_at: Instant,
 }
 
+/// In-process windows, and when finished ones are next dropped. A key is an IP, a user id or a
+/// username hash, so it must not outlive its window by more than one sweep.
+struct MemoryState {
+    windows: HashMap<String, MemoryWindow>,
+    next_sweep: Instant,
+}
+
+/// How often finished windows are dropped from [`MemoryState`].
+const MEMORY_SWEEP_EVERY: Duration = Duration::from_secs(60);
+
+impl MemoryState {
+    fn new() -> Self {
+        Self {
+            windows: HashMap::new(),
+            next_sweep: Instant::now() + MEMORY_SWEEP_EVERY,
+        }
+    }
+}
+
 /// Shared rate limiter (cheap to clone via [`Arc`]).
 #[derive(Clone)]
 pub struct RateLimiter {
@@ -76,7 +95,7 @@ struct RateLimiterInner {
     /// When false, every check succeeds (test apps).
     enabled: bool,
     redis: RwLock<Option<ConnectionManager>>,
-    memory: RwLock<HashMap<String, MemoryWindow>>,
+    memory: RwLock<MemoryState>,
 }
 
 impl RateLimiter {
@@ -86,7 +105,7 @@ impl RateLimiter {
             inner: Arc::new(RateLimiterInner {
                 enabled: true,
                 redis: RwLock::new(None),
-                memory: RwLock::new(HashMap::new()),
+                memory: RwLock::new(MemoryState::new()),
             }),
         }
     }
@@ -97,7 +116,7 @@ impl RateLimiter {
             inner: Arc::new(RateLimiterInner {
                 enabled: false,
                 redis: RwLock::new(None),
-                memory: RwLock::new(HashMap::new()),
+                memory: RwLock::new(MemoryState::new()),
             }),
         }
     }
@@ -133,9 +152,10 @@ impl RateLimiter {
                 Err(err) => {
                     // Human: Degrade to in-process windows — do not fail open under Redis outage.
                     // Agent: FALLBACK memory_check on Redis error; still enforces per-process budgets.
+                    // The key holds an IP, a user id or a username hash: log the scope only.
                     tracing::warn!(
                         error = %err,
-                        %key,
+                        scope,
                         "rate limit redis failed; falling back to in-process window"
                     );
                 }
@@ -177,17 +197,24 @@ async fn redis_check(
 }
 
 async fn memory_check(
-    memory: &RwLock<HashMap<String, MemoryWindow>>,
+    memory: &RwLock<MemoryState>,
     key: &str,
     limit: u64,
     window: Duration,
 ) -> Result<(), AppError> {
     let now = Instant::now();
-    let mut map = memory.write().await;
-    let entry = map.entry(key.to_string()).or_insert_with(|| MemoryWindow {
-        count: 0,
-        reset_at: now + window,
-    });
+    let mut state = memory.write().await;
+    if now >= state.next_sweep {
+        state.windows.retain(|_, w| now < w.reset_at);
+        state.next_sweep = now + MEMORY_SWEEP_EVERY;
+    }
+    let entry = state
+        .windows
+        .entry(key.to_string())
+        .or_insert_with(|| MemoryWindow {
+            count: 0,
+            reset_at: now + window,
+        });
 
     if now >= entry.reset_at {
         entry.count = 0;
@@ -236,6 +263,22 @@ pub fn client_ip(headers: &HeaderMap, trust_forwarded: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn finished_windows_are_dropped_at_the_next_sweep() {
+        let memory = RwLock::new(MemoryState::new());
+        memory_check(&memory, "rl:test:203.0.113.7", 5, Duration::from_millis(1))
+            .await
+            .expect("allowed");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        memory.write().await.next_sweep = Instant::now();
+        memory_check(&memory, "rl:test:other", 5, Duration::from_secs(60))
+            .await
+            .expect("allowed");
+        let state = memory.read().await;
+        assert!(!state.windows.contains_key("rl:test:203.0.113.7"));
+        assert!(state.windows.contains_key("rl:test:other"));
+    }
 
     #[tokio::test]
     async fn memory_allows_under_limit() {

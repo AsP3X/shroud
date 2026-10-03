@@ -3,8 +3,10 @@
 //! Human: coturn runs with `--use-auth-secret`: it shares a secret with this API and accepts any
 //! login the API derived from it until the login's expiry. Nobody holds a standing password, so
 //! nothing in the repository or `.env.example` opens the relay.
-//! Agent: username = `<expiry unix>:<user id>`, credential = base64(HMAC-SHA1(secret, username))
-//! (coturn's TURN REST API). READS ICE_SERVERS_JSON, TURN_URLS, TURN_SECRET,
+//! The login's name is random, so coturn's records of a relay never name the account.
+//! Agent: username = `<expiry unix>:<random hex>`, credential = base64(HMAC-SHA1(secret, username))
+//! (coturn's TURN REST API). With nothing configured there are no ICE servers: no third party
+//! sees a call's addresses. READS ICE_SERVERS_JSON, TURN_URLS, TURN_SECRET,
 //! TURN_CREDENTIAL_TTL_SECS, and the legacy fixed TURN_USERNAME / TURN_CREDENTIAL.
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
@@ -14,8 +16,6 @@ use uuid::Uuid;
 use crate::config::IceServer;
 use crate::error::AppError;
 
-/// Google's public STUN server: the default when no TURN server is configured.
-const DEFAULT_STUN_URL: &str = "stun:stun.l.google.com:19302";
 /// How long a minted TURN login works. A call keeps using the login it started with (TURN
 /// refreshes its allocation every few minutes), so this bounds the longest call over TURN.
 pub const DEFAULT_TURN_CREDENTIAL_TTL_SECS: u64 = 12 * 60 * 60;
@@ -53,9 +53,13 @@ impl TurnConfig {
         }
     }
 
-    /// A login for `user_id` that coturn accepts until `now_unix + ttl_secs`.
-    pub fn credential_for(&self, user_id: Uuid, now_unix: u64) -> IceServer {
-        let username = format!("{}:{user_id}", now_unix + self.ttl_secs);
+    /// A login coturn accepts until `now_unix + ttl_secs`. Its name is random, not the account.
+    pub fn credential_for(&self, now_unix: u64) -> IceServer {
+        self.credential_named(now_unix, &Uuid::new_v4().simple().to_string())
+    }
+
+    fn credential_named(&self, now_unix: u64, nonce: &str) -> IceServer {
+        let username = format!("{}:{nonce}", now_unix + self.ttl_secs);
         let key = hmac::Key::new(hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY, self.secret.as_bytes());
         let tag = hmac::sign(&key, username.as_bytes());
         IceServer {
@@ -76,11 +80,13 @@ pub struct IceConfig {
 /// Reads the ICE settings.
 ///
 /// - `ICE_SERVERS_JSON`: a JSON array of `{urls, username?, credential?}` handed out as is. It
-///   replaces the default STUN server and the fixed `TURN_USERNAME` login, not a minted one.
+///   replaces the fixed `TURN_USERNAME` login, not a minted one.
 /// - `TURN_URLS` + `TURN_SECRET`: TURN with minted logins. With no `ICE_SERVERS_JSON`, STUN is
 ///   asked of the same coturn (it answers binding requests on its TURN port), not Google.
 /// - `TURN_URLS` + `TURN_USERNAME` / `TURN_CREDENTIAL`: one fixed login for everyone, for a
 ///   hosted TURN service that works that way. Never use it with the bundled coturn.
+/// - None of these: no ICE servers. Calls connect only where a direct path exists, and no
+///   outside STUN server learns either person's address.
 pub fn ice_config(lookup: &dyn Fn(&str) -> Option<String>) -> Result<IceConfig, AppError> {
     let value = |name: &str| {
         lookup(name)
@@ -161,11 +167,7 @@ pub fn ice_config(lookup: &dyn Fn(&str) -> Option<String>) -> Result<IceConfig, 
         (Some(custom), _) => custom,
         (None, Some(turn)) => stun_servers_of(&turn.urls),
         (None, None) => {
-            let mut servers = vec![IceServer {
-                urls: vec![DEFAULT_STUN_URL.into()],
-                username: None,
-                credential: None,
-            }];
+            let mut servers = Vec::new();
             if !turn_urls.is_empty() {
                 servers.push(IceServer {
                     urls: turn_urls,
@@ -224,11 +226,10 @@ mod tests {
     }
 
     #[test]
-    fn without_turn_clients_get_google_stun() {
+    fn without_turn_no_outside_server_is_handed_out() {
         let ice = config(&[]).expect("config");
         assert!(ice.turn.is_none());
-        assert_eq!(ice.servers.len(), 1);
-        assert_eq!(ice.servers[0].urls, vec![DEFAULT_STUN_URL.to_string()]);
+        assert!(ice.servers.is_empty());
     }
 
     #[test]
@@ -262,8 +263,7 @@ mod tests {
             "test-turn-secret-0123456789".into(),
             3600,
         );
-        let user = Uuid::parse_str("0190a3b4-0000-7000-8000-000000000001").unwrap();
-        let server = turn.credential_for(user, 1_767_222_000);
+        let server = turn.credential_named(1_767_222_000, "0190a3b4-0000-7000-8000-000000000001");
         assert_eq!(
             server.username.as_deref(),
             Some("1767225600:0190a3b4-0000-7000-8000-000000000001")
@@ -285,7 +285,29 @@ mod tests {
     fn a_secret_without_urls_leaves_turn_off() {
         let ice = config(&[("TURN_SECRET", "test-turn-secret-0123456789")]).expect("config");
         assert!(ice.turn.is_none());
-        assert_eq!(ice.servers[0].urls, vec![DEFAULT_STUN_URL.to_string()]);
+        assert!(ice.servers.is_empty());
+    }
+
+    #[test]
+    fn minted_logins_never_carry_an_account_id() {
+        let turn = TurnConfig::new(
+            vec!["turn:turn.example.com:3478".into()],
+            "test-turn-secret-0123456789".into(),
+            3600,
+        );
+        let first = turn
+            .credential_for(1_767_222_000)
+            .username
+            .expect("username");
+        let second = turn
+            .credential_for(1_767_222_000)
+            .username
+            .expect("username");
+        assert_ne!(first, second);
+        let (expiry, nonce) = first.split_once(':').expect("expiry:nonce");
+        assert_eq!(expiry, "1767225600");
+        assert_eq!(nonce.len(), 32);
+        assert!(nonce.bytes().all(|b| b.is_ascii_hexdigit()));
     }
 
     #[test]
@@ -317,7 +339,7 @@ mod tests {
     #[test]
     fn broken_custom_ice_servers_fall_back_to_the_defaults() {
         let ice = config(&[("ICE_SERVERS_JSON", "{not json")]).expect("config");
-        assert_eq!(ice.servers[0].urls, vec![DEFAULT_STUN_URL.to_string()]);
+        assert!(ice.servers.is_empty());
     }
 
     #[test]
@@ -329,8 +351,8 @@ mod tests {
         ])
         .expect("config");
         assert!(ice.turn.is_none());
-        assert_eq!(ice.servers.len(), 2);
-        assert_eq!(ice.servers[1].username.as_deref(), Some("hosted-user"));
+        assert_eq!(ice.servers.len(), 1);
+        assert_eq!(ice.servers[0].username.as_deref(), Some("hosted-user"));
     }
 
     #[test]

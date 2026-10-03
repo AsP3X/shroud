@@ -69,6 +69,7 @@ $NOS_JWT_SECRET = New-Secret
 $NEBULAR_ACCESS_KEY_ID = "SHRD" + (New-Secret -Bytes 8).ToUpperInvariant()
 $NEBULAR_SECRET_ACCESS_KEY = New-Secret
 $NOS_METRICS_TOKEN = New-Secret
+$REDIS_PASSWORD = New-Secret
 Write-Host "  Nebular OS secret and the API's access key: generated" -ForegroundColor Green
 # Reused like the Postgres password: a new one only ends the TURN logins already handed out.
 $existingTurn = $null
@@ -109,6 +110,7 @@ if ($TURN_HOST) {
     "NEBULAR_ACCESS_KEY_ID=$NEBULAR_ACCESS_KEY_ID"
     "NEBULAR_SECRET_ACCESS_KEY=$NEBULAR_SECRET_ACCESS_KEY"
     "NOS_METRICS_TOKEN=$NOS_METRICS_TOKEN"
+    "REDIS_PASSWORD=$REDIS_PASSWORD"
     "COMPOSE_PROFILES=$COMPOSE_PROFILES"
     "TURN_URLS=$TURN_URLS"
     "TURN_SECRET=$TURN_SECRET"

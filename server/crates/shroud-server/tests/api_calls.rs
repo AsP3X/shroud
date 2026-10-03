@@ -271,8 +271,11 @@ async fn ice_servers_require_auth_and_mint_turn_logins() {
         .expect("a TURN server")
         .clone();
     let username = turn["username"].as_str().unwrap();
-    let (expiry, user) = username.split_once(':').expect("<expiry>:<user>");
-    assert_eq!(user, a.user_id);
+    let (expiry, nonce) = username.split_once(':').expect("<expiry>:<nonce>");
+    // The login is random: coturn's records must not name the account.
+    assert_ne!(nonce, a.user_id);
+    assert!(!username.contains(&a.user_id));
+    assert_eq!(nonce.len(), 32);
     let expiry: i64 = expiry.parse().unwrap();
     let now = chrono::Utc::now().timestamp();
     assert!(

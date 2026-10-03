@@ -130,6 +130,11 @@ impl Config {
         )?;
 
         let ice = crate::turn::ice_config(&|name| std::env::var(name).ok())?;
+        if ice.servers.is_empty() && ice.turn.is_none() {
+            tracing::warn!(
+                "no STUN or TURN server configured (TURN_URLS, ICE_SERVERS_JSON): calls connect only where a direct path exists"
+            );
+        }
         let cors_allowed_origins = cors_origins_from_env();
 
         // Human: Handed to clients by `GET /config`; the server can't count sealed emoji, so the

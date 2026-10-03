@@ -7,6 +7,10 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
+    # No access log: a line per request with the client's address and user agent would tie
+    # people to addresses once matched by time with the API's own log.
+    access_log off;
+
     absolute_redirect off;
     port_in_redirect off;
 

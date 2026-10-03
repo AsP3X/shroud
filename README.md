@@ -102,7 +102,7 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up -d postgres 
 cp server/.env.example server/.env
 # Point at host-mapped ports (defaults already do):
 # DATABASE_URL=postgres://shroud:shroud@127.0.0.1:5432/shroud
-# REDIS_URL=redis://127.0.0.1:6379
+# REDIS_URL=redis://:<REDIS_PASSWORD>@127.0.0.1:6379
 # NEBULAR_URL=http://127.0.0.1:9000
 # Nebular's access key: copy NEBULAR_ACCESS_KEY_ID / NEBULAR_SECRET_ACCESS_KEY from the
 # repository's .env into server/.env. Without NEBULAR_URL, media goes to MEDIA_DATA_DIR.

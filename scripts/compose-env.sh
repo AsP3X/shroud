@@ -89,12 +89,12 @@ shroud_set_env_value() {
   mv "$tmp" "$file"
 }
 
-# Nebular OS credentials an older .env lacks, generated once and never replaced: Nebular's own
-# secret, the API's access key (id + secret), and the /metrics token.
+# Credentials an older .env lacks, generated once and never replaced: Nebular's own secret, the
+# API's access key (id + secret), the /metrics token, and the Redis password.
 shroud_ensure_nebular_secrets() {
   local file="${SHROUD_REPO_ROOT}/.env" key value added=""
   [[ -f "$file" ]] || return 0
-  for key in NOS_JWT_SECRET NEBULAR_ACCESS_KEY_ID NEBULAR_SECRET_ACCESS_KEY NOS_METRICS_TOKEN; do
+  for key in NOS_JWT_SECRET NEBULAR_ACCESS_KEY_ID NEBULAR_SECRET_ACCESS_KEY NOS_METRICS_TOKEN REDIS_PASSWORD; do
     value="$(shroud_env_value "$key")"
     [[ -n "$value" && "$value" != "GENERATE_ME" ]] && continue
     if [[ "$key" == NEBULAR_ACCESS_KEY_ID ]]; then
@@ -106,7 +106,7 @@ shroud_ensure_nebular_secrets() {
     added="${added} ${key}"
   done
   if [[ -n "$added" ]]; then
-    echo "Added Nebular OS credentials to .env:${added}"
+    echo "Added generated credentials to .env:${added}"
   fi
 }
 

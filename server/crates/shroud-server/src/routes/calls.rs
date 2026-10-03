@@ -187,14 +187,15 @@ impl CallRow {
     }
 }
 
-/// `GET /calls/ice-servers` — STUN/TURN for WebRTC, with a TURN login minted for this user.
+/// `GET /calls/ice-servers` — STUN/TURN for WebRTC, with a fresh TURN login for a signed-in
+/// caller. The login is random, so it does not name the account.
 pub async fn ice_servers(
     State(state): State<AppState>,
-    auth: AuthContext,
+    _auth: AuthContext,
 ) -> Result<Json<IceServersResponse>, AppError> {
     let mut ice_servers = state.ice_servers.clone();
     if let Some(turn) = &state.turn {
-        ice_servers.push(turn.credential_for(auth.user_id, Utc::now().timestamp().unsigned_abs()));
+        ice_servers.push(turn.credential_for(Utc::now().timestamp().unsigned_abs()));
     }
     Ok(Json(IceServersResponse { ice_servers }))
 }

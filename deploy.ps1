@@ -58,14 +58,14 @@ function New-HexSecret {
     -join ($buffer | ForEach-Object { $_.ToString("x2") })
 }
 
-# Nebular OS credentials an older .env lacks, generated once and never replaced: Nebular's own
-# secret, the API's access key (id + secret), and the /metrics token.
+# Credentials an older .env lacks, generated once and never replaced: Nebular's own secret, the
+# API's access key (id + secret), the /metrics token, and the Redis password.
 function Add-NebularSecrets {
     $path = Join-Path $repoRoot ".env"
     if (-not (Test-Path -LiteralPath $path)) { return }
     $lines = [System.Collections.Generic.List[string]]@(Get-Content -LiteralPath $path)
     $added = @()
-    foreach ($key in @("NOS_JWT_SECRET", "NEBULAR_ACCESS_KEY_ID", "NEBULAR_SECRET_ACCESS_KEY", "NOS_METRICS_TOKEN")) {
+    foreach ($key in @("NOS_JWT_SECRET", "NEBULAR_ACCESS_KEY_ID", "NEBULAR_SECRET_ACCESS_KEY", "NOS_METRICS_TOKEN", "REDIS_PASSWORD")) {
         $current = Get-EnvValue $key
         if ($current -and $current -ne "GENERATE_ME") { continue }
         $value = if ($key -eq "NEBULAR_ACCESS_KEY_ID") { "SHRD" + (New-HexSecret -Bytes 8).ToUpperInvariant() } else { New-HexSecret }
@@ -76,7 +76,7 @@ function Add-NebularSecrets {
     }
     if ($added.Count -gt 0) {
         $lines | Set-Content -LiteralPath $path -Encoding ascii
-        Write-Line ("Added Nebular OS credentials to .env: " + ($added -join " ")) "Green"
+        Write-Line ("Added generated credentials to .env: " + ($added -join " ")) "Green"
     }
 }
 

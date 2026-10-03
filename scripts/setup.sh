@@ -108,6 +108,7 @@ NOS_JWT_SECRET="$(generate_secret)"
 NEBULAR_ACCESS_KEY_ID="SHRD$(generate_hex 8 | tr '[:lower:]' '[:upper:]')"
 NEBULAR_SECRET_ACCESS_KEY="$(generate_secret)"
 NOS_METRICS_TOKEN="$(generate_secret)"
+REDIS_PASSWORD="$(generate_secret)"
 echo "  Nebular OS secret and the API's access key: ${GREEN}generated${NC}"
 # Reused like the Postgres password: a new one only ends the TURN logins already handed out,
 # but there is no reason to.
@@ -159,6 +160,7 @@ NOS_JWT_SECRET=${NOS_JWT_SECRET}
 NEBULAR_ACCESS_KEY_ID=${NEBULAR_ACCESS_KEY_ID}
 NEBULAR_SECRET_ACCESS_KEY=${NEBULAR_SECRET_ACCESS_KEY}
 NOS_METRICS_TOKEN=${NOS_METRICS_TOKEN}
+REDIS_PASSWORD=${REDIS_PASSWORD}
 COMPOSE_PROFILES=${COMPOSE_PROFILES}
 TURN_URLS=${TURN_URLS}
 TURN_SECRET=${TURN_SECRET}
