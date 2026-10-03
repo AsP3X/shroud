@@ -290,7 +290,9 @@ struct ConversationView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Theme.backgroundChat)
             // Glass bars: the thread scrolls under both and the scroll edge effect fades it.
-            .glassTopBar {
+            // The header also gets a scrim: its presence line is too small to read over a
+            // bubble the edge effect has only half faded.
+            .glassTopBar(scrim: Theme.backgroundChat) {
                 topChrome
             }
             .glassBottomBar {
@@ -697,8 +699,8 @@ struct ConversationView: View {
     /// like a title, and it is centred like one. Video and Call fuse into one capsule, the way
     /// the system toolbar groups neighbouring items. A peer chat is deleted from the chat
     /// list's long-press menu, so its bar holds nothing else; Notes keeps a More menu because
-    /// that is the only place its notes can be cleared from inside the thread. There
-    /// is no backdrop: `glassTopBar` fades the thread under it.
+    /// that is the only place its notes can be cleared from inside the thread. The bar has
+    /// no backdrop of its own: `glassTopBar(scrim:)` blurs and covers the thread under it.
     /// Agent: RETURNS the bar row; presence animation lives on the centre block.
     private var topChrome: some View {
         // Notes has one control per side, so its centre may use the width the calls would take.

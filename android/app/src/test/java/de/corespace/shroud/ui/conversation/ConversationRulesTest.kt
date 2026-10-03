@@ -1,5 +1,6 @@
 package de.corespace.shroud.ui.conversation
 
+import androidx.compose.ui.graphics.Color
 import de.corespace.shroud.core.model.ChatMessageKind
 import de.corespace.shroud.core.net.wire.LinkPreview
 import de.corespace.shroud.core.model.ReceiptStatus
@@ -157,5 +158,25 @@ class ConversationRulesTest {
         assertTrue(claim.isClaimed())
         now += 1
         assertFalse(claim.isClaimed())
+    }
+
+    // ---- Header backdrop -------------------------------------------------------------------------------
+
+    @Test
+    fun theHeaderBackdropHoldsThroughTheBarAndEasesOutBelowIt() {
+        val stops = headerBackdropStops(hold = 0.75f, peak = HEADER_SCRIM_BLURRED, color = Color.Black)
+        assertEquals(0f to HEADER_SCRIM_BLURRED, stops.first().first to stops.first().second.alpha)
+        // Full strength down to the bar's bottom, where the presence line sits.
+        assertEquals(0.75f, stops[1].first, 0f)
+        assertEquals(HEADER_SCRIM_BLURRED, stops[1].second.alpha, 0.001f)
+        // Then down to clear at the end, never rising on the way.
+        assertEquals(1f, stops.last().first, 0f)
+        assertEquals(0f, stops.last().second.alpha, 0.001f)
+        stops.toList().zipWithNext().forEach { (a, b) ->
+            assertTrue(b.first >= a.first)
+            assertTrue(b.second.alpha <= a.second.alpha + 0.001f)
+        }
+        // Eased: the first step of the tail loses less than a linear ramp would.
+        assertTrue(stops[2].second.alpha > HEADER_SCRIM_BLURRED * (1f - 1f / (stops.size - 2)))
     }
 }

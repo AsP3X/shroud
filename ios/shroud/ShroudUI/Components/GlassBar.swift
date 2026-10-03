@@ -202,8 +202,8 @@ struct GlassBarGroup<Content: View>: View {
 /// inset by `sideReserve` on both sides (two fused controls plus the gap by default), so a
 /// long title truncates before it can overlap them, on any phone width.
 /// Agent: RETURNS a fixed-height row; the caller pins it with `glassTopBar`. No scroll
-/// tracking: legibility over passing content comes from the scroll edge effect, not from a
-/// backdrop here.
+/// tracking: legibility over passing content comes from the scroll edge effect (plus
+/// `glassTopBar(scrim:)` where it is not enough), not from a backdrop here.
 struct GlassBarRow<Leading: View, Center: View, Trailing: View>: View {
     var centersTitle = true
     /// Width kept free of the centre on each side, so it never runs under a cluster.
@@ -260,18 +260,88 @@ extension View {
     /// Pins a bar above scrolling content and lets the scroll edge effect fade what passes
     /// under it — the same treatment a system navigation bar gets.
     ///
-    /// Human: Use on the scroll view (or its wrapper). The bar itself carries no backdrop.
+    /// Human: Use on the scroll view (or its wrapper). The bar itself carries no backdrop,
+    /// unless `scrim` gives it one: the colour of the content's background, laid over the
+    /// edge effect's blur, for a bar whose plain text must read over busy content (the chat
+    /// header over bubbles). See `TopBarScrim`.
     /// Agent: `safeAreaBar` insets the scroll content; `scrollEdgeEffectStyle` applies to
     /// every scroll view inside.
-    func glassTopBar<Bar: View>(@ViewBuilder _ bar: @escaping () -> Bar) -> some View {
-        safeAreaBar(edge: .top, spacing: 0) { bar() }
-            .scrollEdgeEffectStyle(.soft, for: .top)
+    func glassTopBar<Bar: View>(
+        scrim: Color? = nil,
+        @ViewBuilder _ bar: @escaping () -> Bar
+    ) -> some View {
+        safeAreaBar(edge: .top, spacing: 0) {
+            bar()
+                .background {
+                    if let scrim {
+                        TopBarScrim(color: scrim)
+                    }
+                }
+        }
+        .scrollEdgeEffectStyle(.soft, for: .top)
     }
 
     /// Bottom counterpart, for the composer.
     func glassBottomBar<Bar: View>(@ViewBuilder _ bar: @escaping () -> Bar) -> some View {
         safeAreaBar(edge: .bottom, spacing: 0) { bar() }
             .scrollEdgeEffectStyle(.soft, for: .bottom)
+    }
+}
+
+// MARK: - Scrim
+
+/// The backdrop `glassTopBar(scrim:)` puts behind a bar.
+///
+/// Human: The soft edge effect blurs what passes under a bar but fades it across the bar's
+/// own height, so a subtitle near the bar's bottom sat on barely dimmed bubbles. The scrim
+/// holds `color` at `peak` from the screen's top edge through the whole bar and eases out
+/// over `tail` below it, with no visible seam. Drawn in the content's own background colour,
+/// it vanishes wherever nothing scrolls under the bar. Android draws the same profile
+/// (`ChatHeaderBackdrop`).
+/// Agent: A background of the bar row; reaches into the top safe area and `tail` past the
+/// row's bottom. Draws only; never takes touches or reaches VoiceOver.
+struct TopBarScrim: View {
+    let color: Color
+
+    /// Opacity through the bar: enough for 12 pt secondary text over any bubble, while the
+    /// blurred thread still shows through.
+    static let peak = 0.8
+    /// How far below the bar the scrim eases out.
+    static let tail: CGFloat = 28
+    /// Stops along the eased tail; a linear ramp would show a band where it meets the hold.
+    private static let falloffSteps = 8
+
+    var body: some View {
+        GeometryReader { proxy in
+            let height = proxy.size.height + Self.tail
+            LinearGradient(
+                stops: Self.stops(color: color, hold: proxy.size.height / max(height, 1)),
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(width: proxy.size.width, height: height)
+        }
+        .ignoresSafeArea(edges: .top)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    /// `color` at `peak` down to `hold` (the bar's bottom, as a fraction of the scrim's
+    /// height), then a smoothstep to clear at the end.
+    static func stops(color: Color, hold: CGFloat) -> [Gradient.Stop] {
+        let start = min(max(hold, 0), 1)
+        let tail = (1 ... falloffSteps).map { step in
+            let t = CGFloat(step) / CGFloat(falloffSteps)
+            let eased = t * t * (3 - 2 * t)
+            return Gradient.Stop(
+                color: color.opacity(peak * Double(1 - eased)),
+                location: start + (1 - start) * t
+            )
+        }
+        return [
+            Gradient.Stop(color: color.opacity(peak), location: 0),
+            Gradient.Stop(color: color.opacity(peak), location: start),
+        ] + tail
     }
 }
 

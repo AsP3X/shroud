@@ -253,13 +253,13 @@ private fun HeaderHost(vm: ConversationViewModel, onBack: () -> Unit, onOpenProf
     )
 }
 
-/** The soft fades under both bars while the thread has content under them. */
+/** The header's backdrop and the composer's soft fade while the thread has content under them. */
 @Composable
 private fun BoxScope.EdgeFades(list: LazyListState, headerHeight: () -> Dp, composerHeight: () -> Dp) {
     // Reversed list: forward is toward the older messages above, backward toward the newest below.
     val underTop by remember(list) { derivedStateOf { list.canScrollForward } }
     val underBottom by remember(list) { derivedStateOf { list.canScrollBackward } }
-    ChatEdgeFade(visible = underTop, height = headerHeight(), fromTop = true, modifier = Modifier.align(Alignment.TopCenter))
+    ChatHeaderBackdrop(visible = underTop, barHeight = headerHeight(), modifier = Modifier.align(Alignment.TopCenter))
     ChatEdgeFade(visible = underBottom, height = composerHeight(), fromTop = false, modifier = Modifier.align(Alignment.BottomCenter))
 }
 

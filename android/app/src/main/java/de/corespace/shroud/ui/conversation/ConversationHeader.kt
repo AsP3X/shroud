@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -49,6 +50,7 @@ import de.corespace.shroud.ui.components.GlassBarButton
 import de.corespace.shroud.ui.components.GlassBarGroup
 import de.corespace.shroud.ui.components.GlassBarMetrics
 import de.corespace.shroud.ui.components.GlassBarRow
+import de.corespace.shroud.ui.components.LocalGlassBackdrop
 import de.corespace.shroud.ui.components.MenuAction
 import de.corespace.shroud.ui.components.MenuStyle
 import de.corespace.shroud.ui.components.NameAvatar
@@ -56,11 +58,15 @@ import de.corespace.shroud.ui.components.PresenceDot
 import de.corespace.shroud.ui.components.ShroudText
 import de.corespace.shroud.ui.components.SymbolAvatar
 import de.corespace.shroud.ui.components.TypingLabel
+import de.corespace.shroud.ui.components.platformBlurs
 import de.corespace.shroud.ui.components.pressable
 import de.corespace.shroud.ui.theme.Motion
 import de.corespace.shroud.ui.theme.ShroudIcons
 import de.corespace.shroud.ui.theme.ShroudTheme
 import de.corespace.shroud.ui.theme.inter
+import dev.chrisbanes.haze.HazeInput
+import dev.chrisbanes.haze.blur.HazeBlurStyle
+import dev.chrisbanes.haze.blur.hazeBlur
 import java.time.Instant
 import java.time.ZoneId
 import java.util.Locale
@@ -139,7 +145,7 @@ object ConversationHeaderCopy {
  * are one heading and the right side holds a More menu whose only row clears every note.
  *
  * Agent: draws from [state]; the bar row sits under the status bar and the thread scrolls under it
- * (the caller fades the thread under it, [ChatEdgeFade]). The centre is inset by
+ * (the caller draws [ChatHeaderBackdrop] under it). The centre is inset by
  * `GlassBarMetrics.sideReserve(controls)` on both sides: 52 dp in Notes, 96 dp in a peer chat
  * (CV:705). Call buttons play a medium haptic. Presence changes animate with `Motion.snappy`.
  */
@@ -329,6 +335,83 @@ fun ChatEdgeFade(visible: Boolean, height: Dp, fromTop: Boolean, modifier: Modif
 
 /** The flat scroll-edge gradient's peak (`ScrollEdgeEffectSpec.FLAT_PEAK`). */
 private const val EDGE_PEAK = 0.95f
+
+/**
+ * The backdrop behind the chat's top bar (iOS `TopBarScrim`, `glassTopBar(scrim:)`): where the
+ * thread passes under the name and presence line, it is blurred (API 31+ under [LocalGlassBackdrop])
+ * and covered with `backgroundChat` at [HEADER_SCRIM_BLURRED], or at [HEADER_SCRIM_OPAQUE] where the
+ * platform cannot blur. Both hold through the whole bar ([barHeight], the status bar included) and
+ * ease out over [HEADER_BACKDROP_TAIL] below it, so the presence line never sits on a half-faded
+ * bubble the way it did on [ChatEdgeFade]'s linear ramp. Same colour as the chat, so it disappears
+ * over the empty background; faded in and out with `Motion.fade` while the thread has content under
+ * the bar ([visible]). Decorative.
+ */
+@Composable
+fun ChatHeaderBackdrop(visible: Boolean, barHeight: Dp, modifier: Modifier = Modifier) {
+    val reduceMotion = ShroudTheme.reduceMotion
+    val shown by animateFloatAsState(
+        if (visible) 1f else 0f,
+        Motion.respecting(reduceMotion, Motion.fade()),
+        label = "chatHeaderBackdrop",
+    )
+    if (shown <= 0f || barHeight <= 0.dp) return
+    val chat = ShroudTheme.colors.backgroundChat
+    val source = LocalGlassBackdrop.current
+    val blurs = source != null && platformBlurs
+    val height = barHeight + HEADER_BACKDROP_TAIL
+    val hold = barHeight / height
+    val scrim = remember(chat, blurs, hold) {
+        Brush.verticalGradient(*headerBackdropStops(hold, if (blurs) HEADER_SCRIM_BLURRED else HEADER_SCRIM_OPAQUE, chat))
+    }
+    var backdrop = modifier
+        .clearAndSetSemantics {}
+        .fillMaxWidth()
+        .height(height)
+        .graphicsLayer { alpha = shown }
+    if (blurs) {
+        val style = remember(chat, hold) {
+            val mask = Brush.verticalGradient(*headerBackdropStops(hold, 1f, Color.Black))
+            HazeBlurStyle {
+                blurRadius(HEADER_BLUR)
+                backgroundColor(chat)
+                noiseFactor(0f)
+                colorEffects(emptyList())
+                mask(mask)
+            }
+        }
+        backdrop = backdrop.hazeBlur(input = HazeInput.Sources(source), style = style)
+    }
+    Box(backdrop.background(scrim))
+}
+
+/**
+ * Gradient stops for [ChatHeaderBackdrop]: [color] at [peak] alpha from the top to [hold] (the bar's
+ * bottom as a fraction of the backdrop), then a smoothstep down to clear at the end, sampled at
+ * [HEADER_FALLOFF_STEPS] stops so the eased tail shows no band where a linear ramp would kink. Pure.
+ */
+internal fun headerBackdropStops(hold: Float, peak: Float, color: Color): Array<Pair<Float, Color>> {
+    val start = hold.coerceIn(0f, 1f)
+    val tail = List(HEADER_FALLOFF_STEPS) { index ->
+        val t = (index + 1f) / HEADER_FALLOFF_STEPS
+        val eased = t * t * (3f - 2f * t)
+        (start + (1f - start) * t) to color.copy(alpha = peak * (1f - eased))
+    }
+    return (listOf(0f to color.copy(alpha = peak), start to color.copy(alpha = peak)) + tail).toTypedArray()
+}
+
+/** How far the header backdrop reaches below the bar while it eases out. */
+private val HEADER_BACKDROP_TAIL = 28.dp
+
+/** The thread's blur under the bar: the design's `Soft` glass radius. */
+private val HEADER_BLUR = 20.dp
+
+/** `backgroundChat` over the blurred thread: enough that the 12 sp presence line reads over any bubble. */
+internal const val HEADER_SCRIM_BLURRED = 0.8f
+
+/** `backgroundChat` where nothing is blurred (API 30): sharp text behind must not show through. */
+internal const val HEADER_SCRIM_OPAQUE = 0.94f
+
+private const val HEADER_FALLOFF_STEPS = 8
 
 /** iOS passes 14 for the header's 40 pt avatar (CV:780-785). */
 private val AVATAR_FONT = 14.sp
