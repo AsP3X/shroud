@@ -13,6 +13,8 @@ data class NotificationPrefsState(
     val enabled: Boolean = true,
     val showSender: Boolean = true,
     val showPreview: Boolean = true,
+    /** The message text in the system notification. Off until asked. Local only. */
+    val showContent: Boolean = false,
     val reactions: Boolean = true,
     val contactRequests: Boolean = true,
     val sound: NotificationSound = NotificationSound.Standard,
@@ -38,7 +40,8 @@ data class NotificationPrefsState(
  * | --- | --- | --- |
  * | [enabled] | `notifications.enabled` | true |
  * | [showSender] | `notifications.showSender` | true |
- * | [showPreview] | `notifications.showPreview` | true (banners and the system notification; the text stays on this phone) |
+ * | [showPreview] | `notifications.showPreview` | true (in-app banners; the text stays on this phone) |
+ * | [showContent] | `notifications.showContent` | false (the system notification; Android only, off until asked) |
  * | [reactions] | `notifications.reactions` | true |
  * | [contactRequests] | `notifications.contactRequests` | true |
  * | [sound] | `notifications.sound` | `default` (an unknown value reads as `default`, `:63`) |
@@ -76,10 +79,18 @@ class NotificationPreferences(private val prefs: SharedPreferences, private val 
         get() = state.value.showSender
         set(value) = write(KEY_SHOW_SENDER, value) { copy(showSender = value) }
 
-    /** The decrypted message text in banners and system notifications. The server is not sent the text. */
+    /** The decrypted message text in banners. The server is not sent the text. */
     var showPreview: Boolean
         get() = state.value.showPreview
         set(value) = write(KEY_SHOW_PREVIEW, value) { copy(showPreview = value) }
+
+    /**
+     * The decrypted message text in the system notification. Off until the user asks. The server
+     * is not sent the text, and the preference is not part of [serverPatch].
+     */
+    var showContent: Boolean
+        get() = state.value.showContent
+        set(value) = write(KEY_SHOW_CONTENT, value) { copy(showContent = value) }
 
     var reactions: Boolean
         get() = state.value.reactions
@@ -179,6 +190,7 @@ class NotificationPreferences(private val prefs: SharedPreferences, private val 
             enabled = flag(KEY_ENABLED, defaults.enabled),
             showSender = flag(KEY_SHOW_SENDER, defaults.showSender),
             showPreview = flag(KEY_SHOW_PREVIEW, defaults.showPreview),
+            showContent = flag(KEY_SHOW_CONTENT, defaults.showContent),
             reactions = flag(KEY_REACTIONS, defaults.reactions),
             contactRequests = flag(KEY_CONTACT_REQUESTS, defaults.contactRequests),
             sound = NotificationSound.fromRaw(prefs.getString(KEY_SOUND, null)),
@@ -197,6 +209,9 @@ class NotificationPreferences(private val prefs: SharedPreferences, private val 
         const val KEY_ENABLED = "notifications.enabled"
         const val KEY_SHOW_SENDER = "notifications.showSender"
         const val KEY_SHOW_PREVIEW = "notifications.showPreview"
+
+        /** Android only. The system notification's message text. Absent means off. */
+        const val KEY_SHOW_CONTENT = "notifications.showContent"
         const val KEY_REACTIONS = "notifications.reactions"
         const val KEY_CONTACT_REQUESTS = "notifications.contactRequests"
         const val KEY_SOUND = "notifications.sound"
@@ -206,9 +221,9 @@ class NotificationPreferences(private val prefs: SharedPreferences, private val 
         const val KEY_BADGE = "notifications.badge"
         const val KEY_BADGE_INCLUDES_MUTED = "notifications.badgeIncludesMuted"
 
-        /** The eleven keys, in iOS order (`:35-47`). */
+        /** The iOS keys, in iOS order (`:35-47`), plus the Android-only [KEY_SHOW_CONTENT]. */
         val ALL_KEYS: List<String> = listOf(
-            KEY_ENABLED, KEY_SHOW_SENDER, KEY_SHOW_PREVIEW, KEY_REACTIONS, KEY_CONTACT_REQUESTS, KEY_SOUND,
+            KEY_ENABLED, KEY_SHOW_SENDER, KEY_SHOW_PREVIEW, KEY_SHOW_CONTENT, KEY_REACTIONS, KEY_CONTACT_REQUESTS, KEY_SOUND,
             KEY_IN_APP_BANNERS, KEY_IN_APP_SOUNDS, KEY_IN_APP_VIBRATE, KEY_BADGE, KEY_BADGE_INCLUDES_MUTED,
         )
     }

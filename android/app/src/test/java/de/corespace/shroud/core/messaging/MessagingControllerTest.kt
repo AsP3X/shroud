@@ -162,6 +162,46 @@ class MessagingControllerTest {
         controller.stop(wipeDisk = false)
     }
 
+    /** A notification uses text this phone already decrypted, and does not fetch the page again. */
+    @Test
+    fun notificationTextUsesTheThreadAndDoesNotFetch() = engineTest {
+        val id = UUID.fromString("11111111-1111-4111-8111-111111111111")
+        val cached = ChatMessage(id, peer, peer, "hello there", Instant.parse("2026-09-20T10:00:00Z"), isMine = false)
+        hydrateWith(mapOf(peer to listOf(cached)), listOf(cachedConversation()))
+        val controller = controller()
+        controller.start()
+        runCurrent()
+        assertEquals("hello there", controller.notificationText(peer, id))
+        assertTrue(backend.pageRequests.isEmpty())
+        controller.stop(wipeDisk = false)
+    }
+
+    /** Locked chats cannot open a push. A page that does not decrypt stays off the notification. */
+    @Test
+    fun notificationTextStaysEmptyWhenLockedOrUnreadable() = engineTest {
+        val controller = controller()
+        keys.unlocked = false
+        val id = UUID.fromString("22222222-2222-4222-8222-222222222222")
+        assertNull(controller.notificationText(peer, id))
+        assertTrue(backend.pageRequests.isEmpty())
+
+        keys.unlocked = true
+        backend.pages = {
+            ListMessagesResponse(messages = listOf(Dtos.message(id = id, sender = peer, conversation = conversation, ciphertext = null)), hasMore = false)
+        }
+        assertNull(controller.notificationText(peer, id))
+        assertEquals(1, backend.pageRequests.size)
+
+        backend.pages = {
+            ListMessagesResponse(
+                messages = listOf(Dtos.message(id = id, sender = peer, conversation = conversation, ciphertext = Dtos.sealed("see you there"))),
+                hasMore = false,
+            )
+        }
+        assertEquals("see you there", controller.notificationText(peer, id))
+        controller.stop(wipeDisk = false)
+    }
+
     @Test
     fun theFirstListAfterAnUnlockClosesSettledChatsOnce() = engineTest { // web-parity §7.6, web AppShell.tsx:802-812 (W2-INT)
         val read = UUID.fromString("0b6e1f2a-6c3d-4e8f-9a1b-2c3d4e5f6a7b")

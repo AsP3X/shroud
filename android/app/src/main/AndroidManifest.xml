@@ -188,9 +188,10 @@
         </receiver>
 
         <!--
-          The library's embedded receiver checks the sender after onReceive returns, so on
-          API 34+ Google Play registration never starts. This subclass holds the broadcast
-          open. The library component is removed so it cannot answer the same REGISTER.
+          The library receiver checks the sender after onReceive returns, so on API 34+
+          Google Play registration never starts and no failure comes back. This receiver
+          checks the sender on the broadcast thread and registers itself. The library
+          component is removed so it cannot answer the same REGISTER.
         -->
         <receiver
             android:name="org.unifiedpush.android.embedded_fcm_distributor.impl.UnifiedPushReceiver"

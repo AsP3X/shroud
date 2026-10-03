@@ -29,6 +29,7 @@ enum class NotificationSwitch(val server: Boolean, val badge: Boolean = false) {
     ContactRequests(server = true),
     InAppBanners(server = false),
     ShowPreview(server = false),
+    ShowContent(server = false),
     InAppSounds(server = false),
     InAppVibrate(server = false),
     Badge(server = true, badge = true),
@@ -42,6 +43,7 @@ enum class NotificationSwitch(val server: Boolean, val badge: Boolean = false) {
         ContactRequests -> state.contactRequests
         InAppBanners -> state.inAppBanners
         ShowPreview -> state.showPreview
+        ShowContent -> state.showContent
         InAppSounds -> state.inAppSounds
         InAppVibrate -> state.inAppVibrate
         Badge -> state.badge
@@ -56,6 +58,7 @@ enum class NotificationSwitch(val server: Boolean, val badge: Boolean = false) {
             ContactRequests -> preferences.contactRequests = value
             InAppBanners -> preferences.inAppBanners = value
             ShowPreview -> preferences.showPreview = value
+            ShowContent -> preferences.showContent = value
             InAppSounds -> preferences.inAppSounds = value
             InAppVibrate -> preferences.inAppVibrate = value
             Badge -> preferences.badge = value
@@ -127,7 +130,9 @@ object NotificationsCopy {
     const val IN_APP = "In-App Notifications"
     const val BANNERS = "Banners"
     const val MESSAGE_PREVIEW = "Message Preview"
-    const val MESSAGE_PREVIEW_DETAIL = "Show the message text in banners and notifications."
+    const val MESSAGE_PREVIEW_DETAIL = "Show the message text in banners."
+    const val SHOW_CONTENT = "Show Content"
+    const val SHOW_CONTENT_DETAIL = "The message text in notifications. Decrypted on this phone."
     const val SOUNDS = "Sounds"
     const val VIBRATE = "Vibrate"
     const val IN_APP_FOOTER =
@@ -159,7 +164,7 @@ object NotificationsCopy {
      * without any path no push arrives at all.
      */
     fun pushFooter(noun: String, unifiedPush: Boolean): String {
-        val first = "With Message Preview on, the text is decrypted on this $noun and shown here. It is not sent to the server or the push service. Off, a notification only says that a message arrived."
+        val first = "With Show Content on, the text is decrypted on this $noun and shown in the notification. It is not sent to the server or the push service. Off, a notification only says that a message arrived."
         return if (unifiedPush) {
             "$first With Show Sender on, the sender's name travels encrypted to this $noun, so your UnifiedPush service can't read it either."
         } else {

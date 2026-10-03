@@ -92,6 +92,17 @@ class NotificationsControllerPushTest {
         assertEquals(2, h.sounds.played.size)
     }
 
+    /** A push has no body. Message Preview uses the text this phone decrypted; off, the kind's line. */
+    @Test
+    fun aMessagePreviewReplacesTheGenericBannerLine() = runTest {
+        val h = ControllerHarness(this).signedInAndUnlocked()
+        assertTrue(h.controller.onPushWhileRunning(push(NotificationKind.Message), "alice", messageText = "  hello there  \n"))
+        assertEquals("hello there", h.controller.banner.value!!.body)
+        h.preferences.showPreview = false
+        assertTrue(h.controller.onPushWhileRunning(push(NotificationKind.Message), "alice", messageText = "hidden"))
+        assertEquals("New message", h.controller.banner.value!!.body)
+    }
+
     // ---- Banner lifetime (`:132-160`; §5.12.3) ----
 
     @Test

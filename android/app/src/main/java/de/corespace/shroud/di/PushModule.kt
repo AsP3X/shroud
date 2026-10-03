@@ -5,6 +5,9 @@ import android.content.Intent
 import androidx.core.app.NotificationManagerCompat
 import de.corespace.shroud.AppContainer
 import de.corespace.shroud.AppModule
+import de.corespace.shroud.core.notifications.NotificationKind
+import de.corespace.shroud.core.notifications.NotificationPreview
+import de.corespace.shroud.core.notifications.PushContents
 import de.corespace.shroud.core.notifications.PushDeliveryHooks
 import de.corespace.shroud.core.push.DeviceRemovalWorker
 import de.corespace.shroud.core.push.PushCopy
@@ -25,8 +28,10 @@ import de.corespace.shroud.core.realtime.RealtimeClient
 import de.corespace.shroud.core.storage.KeystoreSealer
 import de.corespace.shroud.core.storage.PrefsFiles
 import de.corespace.shroud.core.storage.SealedFile
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import java.io.File
+import java.util.UUID
 
 /**
  * Push (00-plan §1.7.10; decision record 2026-10-01: UnifiedPush and the opt-in background
@@ -72,8 +77,8 @@ class PushModule(container: AppContainer) : AppModule(container) {
         }
     }
 
-    /** Distributor → app, after the user is unlocked (the receiver drops direct boot). */
-    fun onDistributorEvent(event: DistributorEvent) = registrar().onDistributorEvent(event)
+    /** Distributor → app, after the user is unlocked (the receiver drops direct boot). A message waits for its preview. */
+    suspend fun onDistributorEvent(event: DistributorEvent) = registrar().onDistributorEvent(event)
 
     fun onBackgroundServiceStarted() = registrar().onBackgroundServiceStarted()
 
@@ -121,12 +126,19 @@ class PushModule(container: AppContainer) : AppModule(container) {
             clock = container.clock,
             post = { contents, name -> container.notifications.systemNotifier.post(contents, name) },
             cancelChat = { id -> container.notifications.systemNotifier.cancelChat(id) },
-            onPushWhileRunning = { contents, name -> container.notifications.controller.onPushWhileRunning(contents, name) },
+            onPushWhileRunning = { contents, name, messageText ->
+                container.notifications.controller.onPushWhileRunning(contents, name, messageText)
+            },
             calls = { push -> container.calls.controller.handleCallPush(push) },
             scheduleRemoval = { DeviceRemovalWorker.enqueue(app) },
             nameFor = { id -> container.notifications.nameCache.name(id) },
             selfUserId = { container.auth.sessionController.session.value?.userId },
             rememberName = { id, name -> container.notifications.nameCache.remember(id, name) },
+            rememberPreview = { id, text -> container.notifications.systemNotifier.rememberPreview(id, text) },
+            shadePreview = {
+                val prefs = container.notifications.preferences
+                prefs.enabled && prefs.showContent
+            },
         )
         return PushRegistrar(
             scope = container.appScope,
@@ -142,7 +154,47 @@ class PushModule(container: AppContainer) : AppModule(container) {
             },
             ourPackage = app.packageName,
             dispatcher = dispatcher,
+            messagePreview = { contents -> decryptedPreview(contents) },
         )
+    }
+
+    /**
+     * The clipped body of a message push. Null when Show Content is off, or the message cannot
+     * be opened. The text stays on this phone.
+     */
+    private suspend fun decryptedPreview(contents: PushContents): String? {
+        if (contents.kind != NotificationKind.Message) return null
+        if (!container.notifications.preferences.showContent) return null
+        val peer = contents.peerUserId ?: return null
+        val messageId = contents.messageId ?: return null
+        val text = try {
+            openNotificationText(peer, messageId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+        return NotificationPreview.clip(text)
+    }
+
+    /**
+     * The message body, decrypted here. Chats that are still unlocked open it directly. After
+     * auto-lock, Show Content's sealed history key opens them for this one message and is wiped
+     * again. The lock screen does not come down. Null when that key is absent or the phone itself
+     * is locked.
+     */
+    private suspend fun openNotificationText(peer: UUID, messageId: UUID): String? {
+        val crypto = container.keys.cryptoController
+        val messaging = container.messaging.controller
+        if (crypto.isUnlocked) return messaging.notificationText(peer, messageId)
+        val history = container.notifications.contentKey.open() ?: return null
+        return try {
+            crypto.withKeysForNotification(history) {
+                messaging.notificationText(peer, messageId)
+            }
+        } finally {
+            history.fill(0)
+        }
     }
 
     /** AFU alias `shroud.unifiedpush.v1`. The key is generated on the first seal, not here. */

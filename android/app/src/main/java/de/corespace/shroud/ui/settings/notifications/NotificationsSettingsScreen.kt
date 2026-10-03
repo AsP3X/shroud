@@ -249,6 +249,8 @@ internal fun NotificationsContent(
             // Not tied to Show Notifications: in-app banners name the sender by it too (`:152`).
             Toggle(NotificationSwitch.ShowSender, NotificationsCopy.SHOW_SENDER, NotificationsCopy.SHOW_SENDER_DETAIL, prefs, onSwitch)
             InsetDivider(14.dp)
+            Toggle(NotificationSwitch.ShowContent, NotificationsCopy.SHOW_CONTENT, NotificationsCopy.SHOW_CONTENT_DETAIL, prefs, onSwitch)
+            InsetDivider(14.dp)
             Row(
                 Modifier
                     .fillMaxWidth()

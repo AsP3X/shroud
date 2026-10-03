@@ -84,13 +84,15 @@ class NotificationsSettingsModelTest {
         val model = model()
         model.set(NotificationSwitch.InAppBanners, false)
         model.set(NotificationSwitch.ShowPreview, false)
+        model.set(NotificationSwitch.ShowContent, true)
         model.set(NotificationSwitch.InAppSounds, false)
         model.set(NotificationSwitch.InAppVibrate, false)
         advanceUntilIdle()
         assertTrue(saves.isEmpty())
         assertFalse(preferences.inAppBanners)
         assertFalse(preferences.showPreview)
-        assertEquals(4, haptics.size)
+        assertTrue(preferences.showContent)
+        assertEquals(5, haptics.size)
     }
 
     /** Show Badge and Include Muted Chats recount the badge and reach the server (`:398-399`). */
@@ -183,12 +185,12 @@ class NotificationsSettingsModelTest {
     @Test
     fun pushFooterByDeliveryPath() {
         assertEquals(
-            "With Message Preview on, the text is decrypted on this phone and shown here. It is not sent to the server or the push service. Off, a notification only says that a message arrived. " +
+            "With Show Content on, the text is decrypted on this phone and shown in the notification. It is not sent to the server or the push service. Off, a notification only says that a message arrived. " +
                 "With Show Sender on, the sender's name travels encrypted to this phone, so your UnifiedPush service can't read it either.",
             NotificationsCopy.pushFooter("phone", unifiedPush = true),
         )
         assertEquals(
-            "With Message Preview on, the text is decrypted on this tablet and shown here. It is not sent to the server or the push service. Off, a notification only says that a message arrived.",
+            "With Show Content on, the text is decrypted on this tablet and shown in the notification. It is not sent to the server or the push service. Off, a notification only says that a message arrived.",
             NotificationsCopy.pushFooter("tablet", unifiedPush = false),
         )
         assertEquals("New messages on this tablet while Shroud is closed or locked.", NotificationsCopy.showNotificationsDetail("tablet"))

@@ -16,6 +16,17 @@ import java.util.Base64
  */
 class WebPushDecryptorTest {
     @Test
+    fun aGeneratedSubscriptionKeyIsAUsableP256Pair() {
+        val keys = P256.generate()
+        assertEquals(32, keys?.privateKey?.size)
+        assertEquals(65, keys?.publicKey?.size)
+        assertEquals(0x04, keys?.publicKey?.get(0)?.toInt())
+        assertEquals(16, keys?.auth?.size)
+        val secret = P256.sharedSecret(keys!!.privateKey, keys.publicKey)
+        assertEquals(32, secret?.size)
+    }
+
+    @Test
     fun rfc8291AppendixAAndTheServerVector() {
         val plain = WebPushDecryptor.open(body(), uaPrivate(), uaPublic(), auth())
         assertEquals(PLAINTEXT, plain?.toString(Charsets.UTF_8))

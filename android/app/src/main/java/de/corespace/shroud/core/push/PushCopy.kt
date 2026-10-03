@@ -29,6 +29,8 @@ object PushCopy {
                 "This server doesn\u2019t send to that UnifiedPush distributor."
             NoPushReason.ServerHasNoWebPush ->
                 "This server is not set up to send notifications to Android phones."
+            NoPushReason.ServerUnreachable ->
+                "Shroud can\u2019t reach the server right now. Try again when it can."
             NoPushReason.NotificationsOff ->
                 "Notifications are off for Shroud. Turn them on in Android Settings."
             null -> GENERIC

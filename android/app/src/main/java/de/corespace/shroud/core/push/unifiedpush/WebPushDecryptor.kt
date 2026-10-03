@@ -8,7 +8,6 @@ import org.bouncycastle.crypto.params.ECDomainParameters
 import org.bouncycastle.crypto.params.ECKeyGenerationParameters
 import org.bouncycastle.crypto.params.ECPrivateKeyParameters
 import org.bouncycastle.crypto.params.ECPublicKeyParameters
-import org.bouncycastle.jce.provider.BouncyCastleProvider
 import java.math.BigInteger
 import java.security.SecureRandom
 import java.util.Base64
@@ -79,11 +78,15 @@ object WebPushDecryptor {
             (bytes[at + 3].toInt() and 0xFF)
 }
 
-/** P-256 subscription keys. Drawn from BouncyCastle's DRBG (`SecureRandom` provider `BC`). */
+/**
+ * P-256 subscription keys. Random bytes come from the platform CSPRNG.
+ * BouncyCastle's named `DEFAULT` DRBG is registered by reflection, and R8 removes it,
+ * so a release build cannot generate a key through that provider.
+ */
 internal object P256 {
     private val x9 = CustomNamedCurves.getByName("secp256r1")
     private val domain = x9?.let { ECDomainParameters(it.curve, it.g, it.n, it.h) }
-    private val random: SecureRandom by lazy { SecureRandom.getInstance("DEFAULT", BouncyCastleProvider()) }
+    private val random = SecureRandom()
 
     fun sharedSecret(privateKey: ByteArray, peerPublic: ByteArray): ByteArray? {
         val curve = x9 ?: return null

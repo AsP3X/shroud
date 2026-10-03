@@ -10,6 +10,7 @@ import de.corespace.shroud.core.notifications.AndroidChannelStore
 import de.corespace.shroud.core.notifications.AndroidNotificationSink
 import de.corespace.shroud.core.notifications.NotificationAuthorization
 import de.corespace.shroud.core.notifications.NotificationChannels
+import de.corespace.shroud.core.notifications.NotificationContentKey
 import de.corespace.shroud.core.notifications.NotificationNameCache
 import de.corespace.shroud.core.notifications.NotificationPermission
 import de.corespace.shroud.core.notifications.NotificationPreferences
@@ -22,7 +23,12 @@ import de.corespace.shroud.core.storage.PrefsFiles
 import de.corespace.shroud.core.storage.SealedFile
 import de.corespace.shroud.ui.components.AvatarBitmap
 import de.corespace.shroud.ui.components.AvatarPalette
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
 
@@ -57,6 +63,19 @@ class NotificationsModule(container: AppContainer) : AppModule(container) {
     val channels: NotificationChannels by lazy { NotificationChannels(AndroidChannelStore(app)) { preferences.state.value } }
 
     val soundPlayer: NotificationSoundPlayer by lazy { NotificationSoundPlayer(app) }
+
+    /**
+     * The history key for Show Content, sealed AFU. Absent until the switch is on and the chats
+     * have been unlocked once. Log Out deletes it ([NotificationsController.forgetAccount]).
+     */
+    val contentKey: NotificationContentKey by lazy {
+        val sealer = KeystoreSealer(CONTENT_KEY_ALIAS, unlockedDeviceRequired = false)
+        NotificationContentKey(
+            file = SealedFile(File(app.noBackupFilesDir, CONTENT_KEY_FILE), sealer),
+            seal = container.storageSeal,
+            deleteKey = { sealer.deleteKey() },
+        )
+    }
 
     val systemNotifier: SystemNotifier by lazy {
         SystemNotifier(AndroidNotificationSink(app, ::avatar), channels, container.storageSeal)
@@ -99,6 +118,7 @@ class NotificationsModule(container: AppContainer) : AppModule(container) {
             clock = container.clock,
             scope = container.appScope,
             pushHooks = { pushHooks() },
+            onForgotten = { runCatching { contentKey.clear() } },
         )
     }
 
@@ -117,6 +137,30 @@ class NotificationsModule(container: AppContainer) : AppModule(container) {
         container.appScope.launch {
             sessions.collect { notifications.isSignedIn = it != null }
         }
+        container.appScope.launch { keepContentKey() }
+    }
+
+    /**
+     * Show Content on, and the chats unlocked: seal the history key for later notifications.
+     * Off: delete that copy. Locking the chats does not delete it.
+     */
+    private suspend fun keepContentKey() {
+        combine(
+            preferences.state.map { it.showContent }.distinctUntilChanged(),
+            container.keys.cryptoController.unlockedUserId,
+        ) { on, user -> on to user }.collect { (on, user) ->
+            if (!on) {
+                withContext(Dispatchers.IO) { runCatching { contentKey.clear() } }
+                return@collect
+            }
+            if (user == null) return@collect
+            val history = container.keys.cryptoController.withMaterial { it.historyKey.copyOf() } ?: return@collect
+            try {
+                withContext(Dispatchers.IO) { runCatching { contentKey.save(history) } }
+            } finally {
+                history.fill(0)
+            }
+        }
     }
 
     /** The 40 dp gradient avatar of the shade (design *Notifications — Shade*), seeded like the app's (P15). */
@@ -126,5 +170,7 @@ class NotificationsModule(container: AppContainer) : AppModule(container) {
 
     private companion object {
         val NO_ID: UUID = UUID(0, 0)
+        const val CONTENT_KEY_ALIAS = "shroud.notification-content.v1"
+        const val CONTENT_KEY_FILE = "notification-content-key.sealed"
     }
 }

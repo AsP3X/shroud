@@ -148,6 +148,27 @@ class PushDispatcherTest {
         createdAtWire = "2026-10-02T00:00:00Z",
     )
 
+    @Test
+    fun aDecryptedPreviewIsRememberedBeforeTheNotificationAndShownInTheBanner() {
+        val fx = sink()
+        fx.dispatcher.dispatchPlaintext(
+            payload(NotificationKind.Message.wire, "\"message_id\":\"$msg\",\"conversation_id\":\"$conv\",\"peer_user_id\":\"$peer\",\"sender\":\"Ada\""),
+            messageText = "hello there",
+        )
+        assertEquals(listOf(conv to "hello there"), fx.previews)
+        assertEquals(listOf("hello there"), fx.bannerText)
+        assertEquals(1, fx.posted.size)
+
+        val open = sink(running = true)
+        open.dispatcher.dispatchPlaintext(
+            payload(NotificationKind.Message.wire, "\"message_id\":\"$msg\",\"conversation_id\":\"$conv\",\"peer_user_id\":\"$peer\",\"sender\":\"Ada\""),
+            messageText = "hello there",
+        )
+        assertEquals(listOf("hello there"), open.bannerText)
+        assertTrue(open.posted.isEmpty())
+        assertEquals(listOf(conv to "hello there"), open.previews)
+    }
+
     private class Sink(
         val dispatcher: PushDispatcher,
         val posted: MutableList<Pair<NotificationKind?, String?>>,
@@ -155,6 +176,8 @@ class PushDispatcherTest {
         val calls: MutableList<CallPush>,
         val removals: IntArray,
         val remembered: MutableList<Pair<UUID, String>>,
+        val previews: MutableList<Pair<UUID, String>>,
+        val bannerText: MutableList<String?>,
     )
 
     private fun sink(running: Boolean = false): Sink {
@@ -163,6 +186,8 @@ class PushDispatcherTest {
         val calls = mutableListOf<CallPush>()
         val removals = intArrayOf(0)
         val remembered = mutableListOf<Pair<UUID, String>>()
+        val previews = mutableListOf<Pair<UUID, String>>()
+        val bannerText = mutableListOf<String?>()
         val dispatcher = PushDispatcher(
             dedup = PushDedup(),
             clock = object : AppClock {
@@ -171,13 +196,17 @@ class PushDispatcherTest {
             },
             post = { contents, name -> posted += contents.kind to name },
             cancelChat = { cancelled += it },
-            onPushWhileRunning = { _, _ -> running },
+            onPushWhileRunning = { _, _, text ->
+                bannerText += text
+                running
+            },
             calls = { calls += it },
             scheduleRemoval = { removals[0]++ },
             nameFor = { "Cached" },
             selfUserId = { self.toString() },
             rememberName = { id, name -> remembered += id to name },
+            rememberPreview = { id, text -> previews += id to text },
         )
-        return Sink(dispatcher, posted, cancelled, calls, removals, remembered)
+        return Sink(dispatcher, posted, cancelled, calls, removals, remembered, previews, bannerText)
     }
 }

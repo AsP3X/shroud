@@ -1,9 +1,12 @@
 package de.corespace.shroud.core.push
 
+import android.util.Log
 import de.corespace.shroud.core.net.ApiError
 import de.corespace.shroud.core.net.ErrorCodes
 import de.corespace.shroud.core.net.ShroudApi
 import de.corespace.shroud.core.net.WebPushSubscriptionBody
+import de.corespace.shroud.core.notifications.NotificationKind
+import de.corespace.shroud.core.notifications.PushContents
 import de.corespace.shroud.core.push.backgroundconnection.BackgroundConnectionController
 import de.corespace.shroud.core.push.unifiedpush.DistributorDirectory
 import de.corespace.shroud.core.push.unifiedpush.DistributorEvent
@@ -20,6 +23,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * UnifiedPush registration and the background-connection switch (plan §1.7.10, contract K6).
@@ -38,6 +42,11 @@ class PushRegistrar(
     private val notificationsEnabled: () -> Boolean,
     private val ourPackage: String,
     private val dispatcher: PushDispatcher,
+    /**
+     * The decrypted text of a message push, clipped, or null. Called only for a message, and only
+     * while Message Preview is on. It must not prompt, and it must not send the text anywhere.
+     */
+    private val messagePreview: suspend (PushContents) -> String? = { null },
 ) : PushRegistration {
     private val deliveryState = MutableStateFlow(
         PushDelivery(UnifiedPushState.Unknown, backgroundConnection = false, batteryUnrestricted = false),
@@ -84,7 +93,12 @@ class PushRegistrar(
                 registerNow()
             } catch (e: CancellationException) {
                 throw e
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                if (!forgetting && internal is UnifiedPushState.Registering) {
+                    Log.e(TAG, "registration threw ${e.javaClass.simpleName}: ${e.message}")
+                    internal = UnifiedPushState.Unavailable(NoPushReason.DistributorFailed)
+                    publish()
+                }
             }
         }
     }
@@ -161,7 +175,7 @@ class PushRegistrar(
         }
     }
 
-    fun onDistributorEvent(event: DistributorEvent) {
+    suspend fun onDistributorEvent(event: DistributorEvent) {
         if (forgetting) return
         val record = runCatching { store().load() }.getOrNull()
         if (!UnifiedPushProtocol.tokenMatches(record?.token, event.token)) return
@@ -221,37 +235,48 @@ class PushRegistrar(
             }
             choice == null -> installed.single().also { prefs.distributorChoice = it.packageName }
             else -> installed.firstOrNull { it.packageName == choice } ?: run {
+                Log.e(TAG, "registration choice is not installed (${installed.size} distributors)")
                 internal = UnifiedPushState.Unavailable(NoPushReason.DistributorFailed)
                 publish()
                 return
             }
         }
         label = selected.label
+        // A previous attempt may have accepted an endpoint and then failed to save it.
+        // Leaving that flag set makes this wait return while the screen still says "Connecting…".
+        endpointAccepted = false
         internal = UnifiedPushState.Registering(selected.packageName)
         publish()
         val record = store().loadOrCreate(selected.packageName)
         val vapid = try {
             api.webPushKey(session).publicKey
         } catch (e: ApiError) {
-            internal = if (e.isNotFound) {
-                UnifiedPushState.Unavailable(NoPushReason.ServerHasNoWebPush)
-            } else {
-                UnifiedPushState.Unavailable(NoPushReason.DistributorFailed)
-            }
+            val reason = failureToFetchKey(e)
+            Log.e(TAG, "registration key ${describe(e)} -> $reason")
+            internal = UnifiedPushState.Unavailable(reason)
             publish()
             return
         }
         val extra = UnifiedPushProtocol.vapidExtra(vapid)
         if (extra == null) {
+            Log.e(TAG, "registration vapid rejected, length ${vapid.length}")
             internal = UnifiedPushState.Unavailable(NoPushReason.DistributorFailed)
             publish()
             return
         }
+        Log.e(TAG, "registration asking ${if (selected.embedded) "play" else "distributor"}")
         broadcast.register(selected.packageName, record.token, extra)
         delay(registrationWaitMs)
         if (forgetting || endpointAccepted || internal !is UnifiedPushState.Registering) return
+        Log.e(TAG, "registration timed out")
         internal = UnifiedPushState.Unavailable(NoPushReason.DistributorFailed)
         publish()
+    }
+
+    private fun describe(error: ApiError): String = when (error) {
+        is ApiError.Server -> "server ${error.status} ${error.code}"
+        is ApiError.Transport -> "transport"
+        is ApiError.Decoding -> "decoding"
     }
 
     private fun onNewEndpoint(record: UnifiedPushSubscriptionStore.Record, event: DistributorEvent) {
@@ -272,6 +297,11 @@ class PushRegistrar(
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
+                if (!forgetting && internal is UnifiedPushState.Registering) {
+                    endpointAccepted = false
+                    internal = UnifiedPushState.Unavailable(NoPushReason.DistributorFailed)
+                    publish()
+                }
             }
         }
     }
@@ -294,23 +324,54 @@ class PushRegistrar(
                 publish()
                 runCatching { broadcast.unregister(record.distributorPackage, record.token) }
             } else {
-                internal = UnifiedPushState.Unavailable(NoPushReason.DistributorFailed)
+                internal = UnifiedPushState.Unavailable(failureToSaveSubscription(e))
                 publish()
             }
-        } catch (_: ApiError) {
-            internal = UnifiedPushState.Unavailable(NoPushReason.DistributorFailed)
+        } catch (e: ApiError) {
+            internal = UnifiedPushState.Unavailable(failureToSaveSubscription(e))
             publish()
         }
     }
 
-    private fun onMessage(record: UnifiedPushSubscriptionStore.Record, event: DistributorEvent) {
+    /** A missing push key is the server. Anything else while asking for it is not the distributor. */
+    private fun failureToFetchKey(error: ApiError): NoPushReason = when {
+        error.isNotFound -> NoPushReason.ServerHasNoWebPush
+        error.serverUnreachable -> NoPushReason.ServerUnreachable
+        else -> NoPushReason.DistributorFailed
+    }
+
+    /** Saving the endpoint failed after Play answered. A dead server is not a distributor failure. */
+    private fun failureToSaveSubscription(error: ApiError): NoPushReason =
+        if (error.serverUnreachable) NoPushReason.ServerUnreachable else NoPushReason.DistributorFailed
+
+    private val ApiError.serverUnreachable: Boolean
+        get() = this is ApiError.Transport || (this is ApiError.Server && status >= 500)
+
+    private suspend fun onMessage(record: UnifiedPushSubscriptionStore.Record, event: DistributorEvent) {
         ack(record, event.id)
         val bytes = event.bytes ?: return
         val plain = WebPushDecryptor.open(bytes, record.privateKey, record.publicKey, record.authSecret) ?: return
         try {
-            dispatcher.dispatchPlaintext(plain)
+            dispatcher.dispatchPlaintext(plain, messageText(plain))
         } finally {
             plain.fill(0)
+        }
+    }
+
+    /**
+     * The body to show for this push, or null. A message push names the message and carries no
+     * text; this phone opens it when Message Preview is on and the chats are still unlocked.
+     * A slow fetch gives up and the notification keeps the generic line. The bytes are not logged.
+     */
+    private suspend fun messageText(plain: ByteArray): String? {
+        val contents = PushContents.fromWebPushJson(plain) ?: return null
+        if (contents.kind != NotificationKind.Message) return null
+        return try {
+            withTimeoutOrNull(PREVIEW_WAIT_MS) { messagePreview(contents) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -355,7 +416,11 @@ class PushRegistrar(
     }
 
     private companion object {
+        const val TAG = "ShroudPush"
         const val REGISTRATION_WAIT_MS = 25_000L
+
+        /** How long a notification will wait to open the message before showing the generic line. */
+        const val PREVIEW_WAIT_MS = 8_000L
     }
 
     private fun publish() {

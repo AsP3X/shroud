@@ -35,6 +35,7 @@ class PushDeliveryCopyTest {
             NoPushReason.DistributorCannotEncrypt to "That UnifiedPush distributor cannot encrypt notifications. Choose another, or turn on Background connection.",
             NoPushReason.ServerRefusedHost to "This server doesn’t send to that UnifiedPush distributor.",
             NoPushReason.ServerHasNoWebPush to "This server is not set up to send notifications to Android phones.",
+            NoPushReason.ServerUnreachable to "Shroud can’t reach the server right now. Try again when it can.",
             NoPushReason.NotificationsOff to "Notifications are off for Shroud. Turn them on in Android Settings.",
         )
         assertEquals("a sentence for every reason core has", NoPushReason.entries.toSet(), expected.keys)

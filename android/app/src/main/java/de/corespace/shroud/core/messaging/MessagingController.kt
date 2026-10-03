@@ -268,6 +268,45 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
     /** The list subtitle of a chat (`preview(forPeer:)`, `MessagingController.swift:4112-4118`). */
     fun preview(peer: UUID): String = ChatListFormatting.preview(peer, state.threads.value, isNotesChat(peer))
 
+    /**
+     * The text of one message, decrypted on this phone, for a notification. Null when the chats
+     * are locked, the message is gone, or it cannot be opened. Nothing here leaves the phone.
+     *
+     * A copy already in a thread is used as it is. Otherwise one newest page is fetched and opened
+     * through the same decoder as the socket, so the ratchet key is spent once and the later
+     * history sync reads the cache.
+     */
+    suspend fun notificationText(peerUserId: UUID, messageId: UUID): String? {
+        val held = state.threads.value.values.asSequence().flatten().firstOrNull { it.id == messageId }
+        if (held != null) {
+            if (held.deleted || ThreadMessageMerge.isFailedDecryptText(held.text)) return null
+            return held.text
+        }
+        if (!keys.isUnlocked) return null
+        val token = deps.session.value?.token ?: return null
+        val me = state.myUserId ?: return null
+        val generation = state.lockGeneration
+        val page = try {
+            deps.backend.messages(token, peerUserId, NOTIFICATION_PAGE, beforeCreatedAt = null, beforeId = null)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return null
+        }
+        if (generation != state.lockGeneration || !keys.isUnlocked) return null
+        val dto = page.messages.firstOrNull { it.id == messageId } ?: return null
+        if (dto.contentType == ContentType.ANNOTATION || dto.deletedForEveryone) return null
+        val decoded = try {
+            decoder.decode(dto, decodeContext(me), forcePeer = peerUserId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return null
+        }
+        if (generation != state.lockGeneration || decoded.deleted || ThreadMessageMerge.isFailedDecryptText(decoded.text)) return null
+        return decoded.text
+    }
+
     /** The last Notes activity, for the pinned row (`notesLastActivity`, `:4121-4123`). */
     fun notesLastActivity(): Instant? = state.threads.value[NOTES_PEER_ID]?.lastOrNull()?.createdAt
 
@@ -963,6 +1002,9 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
     companion object {
         /** The focus frame and the close each get this long to leave the radio (`MessagingController.swift:639, 652`). */
         const val RADIO_GRACE_MS = 200L
+
+        /** Newest page a notification may open to find the message the push named. */
+        private const val NOTIFICATION_PAGE = 20
     }
 }
 

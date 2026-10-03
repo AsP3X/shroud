@@ -43,6 +43,7 @@ object DeliveryCopy {
     const val NONE_CHOSEN = "Choose a UnifiedPush distributor, or turn on Background connection."
     const val CANNOT_ENCRYPT = "That UnifiedPush distributor cannot encrypt notifications. Choose another, or turn on Background connection."
     const val NO_WEB_PUSH = "This server is not set up to send notifications to Android phones."
+    const val SERVER_UNREACHABLE = "Shroud can\u2019t reach the server right now. Try again when it can."
     const val NOTIFICATIONS_OFF = "Notifications are off for Shroud. Turn them on in Android Settings."
 
     const val BATTERY = "Battery use"
@@ -77,6 +78,7 @@ object DeliveryCopy {
         NoPushReason.DistributorCannotEncrypt -> CANNOT_ENCRYPT
         NoPushReason.ServerRefusedHost -> REFUSED_HOST
         NoPushReason.ServerHasNoWebPush -> NO_WEB_PUSH
+        NoPushReason.ServerUnreachable -> SERVER_UNREACHABLE
         NoPushReason.NotificationsOff -> NOTIFICATIONS_OFF
     }
 

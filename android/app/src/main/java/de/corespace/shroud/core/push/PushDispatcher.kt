@@ -26,15 +26,21 @@ class PushDispatcher(
     private val clock: AppClock,
     private val post: (PushContents, String?) -> Unit,
     private val cancelChat: (UUID) -> Unit,
-    private val onPushWhileRunning: (PushContents, String?) -> Boolean,
+    private val onPushWhileRunning: (PushContents, String?, String?) -> Boolean,
     private val calls: (CallPush) -> Unit,
     private val scheduleRemoval: () -> Unit,
     private val nameFor: (UUID) -> String?,
     private val selfUserId: () -> String?,
     private val rememberName: (UUID, String) -> Unit = { _, _ -> },
+    private val rememberPreview: (UUID, String) -> Unit = { _, _ -> },
+    private val shadePreview: () -> Boolean = { true },
 ) {
-    /** Decrypted Web Push JSON. Null plaintext is ignored. */
-    fun dispatchPlaintext(bytes: ByteArray) {
+    /**
+     * Decrypted Web Push JSON. Null plaintext is ignored.
+     * [messageText] is the body this phone decrypted for a message push, already clipped.
+     * It is never part of the push. Null keeps the generic line.
+     */
+    fun dispatchPlaintext(bytes: ByteArray, messageText: String? = null) {
         try {
             val json = LenientJson.parseObject(bytes) ?: return
             if (PushContents.isDeviceRemoval(json)) {
@@ -42,7 +48,7 @@ class PushDispatcher(
                 return
             }
             val contents = PushContents.fromWebPushJson(json) ?: return
-            deliver(contents, contents.plainName, CallPush.Source.UnifiedPush)
+            deliver(contents, contents.plainName, CallPush.Source.UnifiedPush, messageText)
         } catch (_: Exception) {
         }
     }
@@ -152,7 +158,7 @@ class PushDispatcher(
         )
     }
 
-    private fun deliver(contents: PushContents, name: String?, source: CallPush.Source) {
+    private fun deliver(contents: PushContents, name: String?, source: CallPush.Source, messageText: String? = null) {
         val peer = contents.peerUserId
         if (source == CallPush.Source.UnifiedPush && peer != null && !name.isNullOrBlank()) rememberName(peer, name)
         if (!dedup.accept(key(contents), clock.elapsedMillis())) return
@@ -167,7 +173,11 @@ class PushDispatcher(
             return
         }
         if (kind == null) return
-        if (onPushWhileRunning(contents, name)) return
+        val chat = contents.conversationId
+        if (kind == NotificationKind.Message && chat != null && !messageText.isNullOrEmpty() && shadePreview()) {
+            rememberPreview(chat, messageText)
+        }
+        if (onPushWhileRunning(contents, name, messageText)) return
         post(contents, name)
     }
 

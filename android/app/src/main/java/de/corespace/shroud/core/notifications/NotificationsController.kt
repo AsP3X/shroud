@@ -90,6 +90,7 @@ class NotificationsController(
     private val clock: AppClock,
     private val scope: CoroutineScope,
     private val pushHooks: () -> PushDeliveryHooks? = { null },
+    private val onForgotten: () -> Unit = {},
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : MessageNotifier {
     /** The permission as the platform reports it (`NotificationPermission` with the top activity). */
@@ -276,10 +277,11 @@ class NotificationsController(
      * notification. W3-PUSH's dispatcher calls it after the call kinds went to Calls.
      *
      * Deliberate iOS parity: no quiet window, no vibration, no mute or preference checks (the server
-     * applied them), the body is always the kind's line (a push has no text). The test is always
-     * shown by the system, so the user sees it while still on the settings screen (`:186`).
+     * applied them). [messageText] is the body this phone decrypted for a message; a push itself
+     * has none. With Message Preview on, the banner shows it. The test is always shown by the
+     * system, so the user sees it while still on the settings screen (`:186`).
      */
-    fun onPushWhileRunning(contents: PushContents, name: String?): Boolean {
+    fun onPushWhileRunning(contents: PushContents, name: String?, messageText: String? = null): Boolean {
         if (!isSignedIn) return true
         if (!isResumed()) return false
         val kind = contents.kind ?: return false
@@ -292,7 +294,9 @@ class NotificationsController(
         }
         val prefs = preferences.state.value
         if (prefs.inAppBanners) {
-            show(InAppNotification(kind = kind, peerUserId = contents.peerUserId, username = name, title = name ?: SystemNotifier.APP_TITLE, body = kind.bodyLine))
+            val remembered = messageText ?: contents.conversationId?.let(systemNotifier::previewOf)
+            val body = messagePreview(prefs, kind, remembered) ?: kind.bodyLine
+            show(InAppNotification(kind = kind, peerUserId = contents.peerUserId, username = name, title = name ?: SystemNotifier.APP_TITLE, body = body))
         }
         if (prefs.inAppSounds) sounds.play(prefs.sound)
         return true
@@ -366,6 +370,7 @@ class NotificationsController(
         preferences.reset()
         nameCache?.deleteAll()
         systemNotifier.cancelAll()
+        runCatching { onForgotten() }
         runCatching { channels.ensure() }
     }
 

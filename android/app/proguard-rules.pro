@@ -20,6 +20,11 @@
 }
 -dontwarn org.jni_zero.JniZeroJni
 
+# Embedded FCM registers through Play Services Messenger IPC. The call starts in
+# EmbeddedFcmBridge and the incoming push starts at the manifest FirebaseReceiver.
+# Nothing else names those classes, and shrinking them leaves registration hanging.
+-keep class org.unifiedpush.android.embedded_fcm_distributor.** { *; }
+
 # whisper.cpp JNI (W2-WHISPER, media-voice-links §13.4): native methods and the segment class the
 # native side constructs.
 -keep class de.corespace.shroud.core.transcription.WhisperNative {

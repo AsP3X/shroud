@@ -153,6 +153,29 @@ class CryptoControllerTest {
         assertFalse(crypto.needsHistoryUnlock.value)
     }
 
+    /** Show Content opens one message after the chats lock, and the lock screen stays up. */
+    @Test
+    fun aNotificationOpensTheKeysWithoutUnlockingTheChats() = runBlocking<Unit> {
+        server.enqueue(keysRequired())
+        server.enqueue(MockResponse(code = 204))
+        crypto.unlockWithPhrase(words, session)
+        val history = crypto.withMaterial { it.historyKey.copyOf() }!!
+        crypto.lock()
+        assertFalse(crypto.isUnlocked)
+        assertNull(crypto.unlockedUserId.value)
+        var sawKeys = false
+        val opened = crypto.withKeysForNotification(history) {
+            sawKeys = crypto.isUnlocked && crypto.unlockedUserId.value == null && state.isUnlocked
+            "text"
+        }
+        history.fill(0)
+        assertEquals("text", opened)
+        assertTrue(sawKeys)
+        assertFalse("the keys leave memory again", crypto.isUnlocked)
+        assertFalse(state.isUnlocked)
+        assertNull(crypto.unlockedUserId.value)
+    }
+
     @Test
     fun matchingPhraseOnALaterDeviceUnlocks() = runBlocking<Unit> {
         server.enqueue(MockResponse(code = 200, body = identity(abandonKey)))

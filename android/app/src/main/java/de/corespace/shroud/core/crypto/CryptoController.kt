@@ -322,6 +322,57 @@ class CryptoController(
         suppressAutomaticVaultPrompt = false
     }
 
+    /**
+     * Runs [block] with the identity keys in memory, without unlocking the chats.
+     *
+     * Show Content keeps a copy of the history key so a notification can open one message after
+     * auto-lock. [unlockedUserId] stays null, so the lock screen stays up. If the chats are already
+     * unlocked, [block] just runs. A real unlock that lands during [block] is left in place.
+     * [historyKey] is not kept. Null when the identity cannot be opened (the phone is locked, or
+     * the key does not match).
+     */
+    suspend fun <T> withKeysForNotification(historyKey: ByteArray, block: suspend () -> T): T? {
+        if (historyKey.size != 32 || storageSeal.isSealed) return null
+        if (isUnlocked) return block()
+        val restored = try {
+            withContext(io) {
+                val stored = identityStore.load(historyKey) ?: return@withContext null
+                try {
+                    IdentityKeyMaterial.restore(stored, historyKey)
+                } finally {
+                    stored.wipe()
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return null
+        } ?: return null
+        val installed = rw.write {
+            if (material != null || storageSeal.isSealed) {
+                restored.wipe()
+                false
+            } else {
+                material = restored
+                sealedLocalState.unlock(restored.historyKey)
+                true
+            }
+        }
+        if (!installed) return if (isUnlocked) block() else null
+        return try {
+            block()
+        } finally {
+            rw.write {
+                if (unlocked.value == null && material === restored) {
+                    lockGeneration++
+                    material?.wipe()
+                    material = null
+                    sealedLocalState.lock()
+                }
+            }
+        }
+    }
+
     // ---- internals ----
 
     private suspend fun derive(words: List<String>, userId: String, oneTimePreKeyCount: Int): IdentityKeyMaterial =

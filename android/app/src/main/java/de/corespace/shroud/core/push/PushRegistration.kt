@@ -39,6 +39,9 @@ enum class NoPushReason {
     /** The server does not send to the distributor's host (`UNIFIEDPUSH_ALLOWED_HOSTS`, X1-SRV-UP). */
     ServerRefusedHost,
     ServerHasNoWebPush,
+
+    /** The push key or the subscription could not be reached: offline, a timeout, or the server answered 5xx. */
+    ServerUnreachable,
     NotificationsOff,
 }
 
@@ -49,7 +52,8 @@ enum class NoPushReason {
 object EmbeddedFcm {
     /**
      * Our receiver, not the library's. The library reads the sender after `onReceive` returns,
-     * which fails on API 34+, so this class holds the broadcast open. See [de.corespace.shroud.core.push.unifiedpush.EmbeddedFcmReceiver].
+     * which is empty on API 34+, so this class registers with Play Services itself.
+     * See [de.corespace.shroud.core.push.unifiedpush.EmbeddedFcmReceiver].
      */
     const val RECEIVER = "de.corespace.shroud.core.push.unifiedpush.EmbeddedFcmReceiver"
     const val LABEL = "Google Play"

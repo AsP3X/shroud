@@ -22,6 +22,7 @@ class NotificationPreferencesTest {
         assertTrue(preferences.enabled)
         assertTrue(preferences.showSender)
         assertTrue(preferences.showPreview)
+        assertFalse(preferences.showContent)
         assertTrue(preferences.reactions)
         assertTrue(preferences.contactRequests)
         assertTrue(preferences.inAppBanners)
@@ -73,6 +74,7 @@ class NotificationPreferencesTest {
         preferences.enabled = false
         preferences.showSender = false
         preferences.showPreview = false
+        preferences.showContent = true
         preferences.reactions = false
         preferences.contactRequests = false
         preferences.sound = NotificationSound.Pulse

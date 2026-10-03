@@ -87,6 +87,9 @@ class SystemNotifier(
         previews[conversationId] = text
     }
 
+    /** The text [rememberPreview] is holding for this chat, if Message Preview still has one. */
+    fun previewOf(conversationId: UUID): String? = previews[conversationId]
+
     /** Message Preview is off, or this arrival has no text: the next post uses the generic line. */
     fun forgetPreview(conversationId: UUID) {
         previews.remove(conversationId)

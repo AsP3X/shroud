@@ -122,7 +122,7 @@ class PushRegistrarTest {
     @After
     fun tearDown() {
         scope.cancel()
-        server.close()
+        runCatching { server.close() }
     }
 
     @Test
@@ -218,7 +218,7 @@ class PushRegistrarTest {
         reg.register()
         await("register sent") { broadcasts.registers.isNotEmpty() }
         val connection = broadcasts.registers.first().token
-        reg.onDistributorEvent(endpoint(connection))
+        runBlocking { reg.onDistributorEvent(endpoint(connection)) }
         await("refused") {
             reg.delivery.value.unifiedPush == UnifiedPushState.Unavailable(NoPushReason.ServerRefusedHost)
         }
@@ -241,7 +241,7 @@ class PushRegistrarTest {
         keyStatus = 500
         reg.register()
         await("key failed") {
-            reg.delivery.value.unifiedPush == UnifiedPushState.Unavailable(NoPushReason.DistributorFailed)
+            reg.delivery.value.unifiedPush == UnifiedPushState.Unavailable(NoPushReason.ServerUnreachable)
         }
         assertTrue(broadcasts.registers.isEmpty())
     }
@@ -267,14 +267,44 @@ class PushRegistrarTest {
     }
 
     @Test
+    fun aRetryAfterASaveErrorStillFinishes() {
+        putStatus = 500
+        reg.registrationWaitMs = 40
+        reg.register()
+        await("register sent") { broadcasts.registers.isNotEmpty() }
+        runBlocking { reg.onDistributorEvent(endpoint(broadcasts.registers.first().token)) }
+        await("put failed") {
+            reg.delivery.value.unifiedPush == UnifiedPushState.Unavailable(NoPushReason.ServerUnreachable)
+        }
+        reg.register()
+        await("registering again") {
+            broadcasts.registers.size >= 2 &&
+                reg.delivery.value.unifiedPush is UnifiedPushState.Registering
+        }
+        await("timed out again") {
+            reg.delivery.value.unifiedPush == UnifiedPushState.Unavailable(NoPushReason.DistributorFailed)
+        }
+    }
+
+    @Test
+    fun anUnreachableServerIsNotADistributorFailure() {
+        server.close()
+        reg.register()
+        await("unreachable") {
+            reg.delivery.value.unifiedPush == UnifiedPushState.Unavailable(NoPushReason.ServerUnreachable)
+        }
+        assertTrue(broadcasts.registers.isEmpty())
+    }
+
+    @Test
     fun aServerErrorWhileSavingTheEndpointIsReported() {
         putStatus = 500
         reg.register()
         await("register sent") { broadcasts.registers.isNotEmpty() }
         val connection = broadcasts.registers.first().token
-        reg.onDistributorEvent(endpoint(connection))
+        runBlocking { reg.onDistributorEvent(endpoint(connection)) }
         await("put failed") {
-            reg.delivery.value.unifiedPush == UnifiedPushState.Unavailable(NoPushReason.DistributorFailed)
+            reg.delivery.value.unifiedPush == UnifiedPushState.Unavailable(NoPushReason.ServerUnreachable)
         }
         assertTrue(broadcasts.unregisters.isEmpty())
     }
@@ -296,9 +326,11 @@ class PushRegistrarTest {
     @Test
     fun aForeignTokenIsIgnored() {
         val before = reg.delivery.value
-        reg.onDistributorEvent(
-            DistributorEvent(UnifiedPushProtocol.ACTION_NEW_ENDPOINT, "someone-else", "https://up.example/x", null, "1", null, null),
-        )
+        runBlocking {
+            reg.onDistributorEvent(
+                DistributorEvent(UnifiedPushProtocol.ACTION_NEW_ENDPOINT, "someone-else", "https://up.example/x", null, "1", null, null),
+            )
+        }
         assertEquals(before, reg.delivery.value)
         assertTrue(seen.isEmpty())
         assertTrue(broadcasts.acks.isEmpty())
@@ -308,7 +340,7 @@ class PushRegistrarTest {
         reg.register()
         await("register sent") { broadcasts.registers.isNotEmpty() }
         val connection = broadcasts.registers.first().token
-        reg.onDistributorEvent(endpoint(connection))
+        runBlocking { reg.onDistributorEvent(endpoint(connection)) }
         await("registered") {
             reg.delivery.value.unifiedPush == UnifiedPushState.Registered("org.example.distributor", "Example")
         }
@@ -342,7 +374,7 @@ class PushRegistrarTest {
         },
         post = { _, _ -> },
         cancelChat = {},
-        onPushWhileRunning = { _, _ -> false },
+        onPushWhileRunning = { _, _, _ -> false },
         calls = {},
         scheduleRemoval = {},
         nameFor = { null },
