@@ -16,6 +16,7 @@ import de.corespace.shroud.core.realtime.RealtimeEvent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -49,6 +50,9 @@ class PushRegistrar(
     private var endpointAccepted = false
     private var label: String = ""
     private var registerJob: Job? = null
+
+    /** How long a distributor may stay silent before "Connecting…" becomes a failure. Tests shorten it. */
+    internal var registrationWaitMs: Long = REGISTRATION_WAIT_MS
 
     init {
         background.onChanged = { publish() }
@@ -94,8 +98,10 @@ class PushRegistrar(
         runCatching { directory.distributors() }.getOrDefault(emptyList())
 
     override fun chooseDistributor(packageName: String?) {
+        // A finished registration is left alone. One still saying "Connecting…" is retried:
+        // the picker can be tapped again after a distributor that never answered.
         if (packageName != null && packageName == prefs.distributorChoice &&
-            (internal is UnifiedPushState.Registered || internal is UnifiedPushState.Registering)
+            internal is UnifiedPushState.Registered
         ) {
             return
         }
@@ -227,14 +233,25 @@ class PushRegistrar(
         val vapid = try {
             api.webPushKey(session).publicKey
         } catch (e: ApiError) {
-            if (e.isNotFound) {
-                internal = UnifiedPushState.Unavailable(NoPushReason.ServerHasNoWebPush)
-                publish()
+            internal = if (e.isNotFound) {
+                UnifiedPushState.Unavailable(NoPushReason.ServerHasNoWebPush)
+            } else {
+                UnifiedPushState.Unavailable(NoPushReason.DistributorFailed)
             }
+            publish()
             return
         }
-        val extra = UnifiedPushProtocol.vapidExtra(vapid) ?: return
+        val extra = UnifiedPushProtocol.vapidExtra(vapid)
+        if (extra == null) {
+            internal = UnifiedPushState.Unavailable(NoPushReason.DistributorFailed)
+            publish()
+            return
+        }
         broadcast.register(selected.packageName, record.token, extra)
+        delay(registrationWaitMs)
+        if (forgetting || endpointAccepted || internal !is UnifiedPushState.Registering) return
+        internal = UnifiedPushState.Unavailable(NoPushReason.DistributorFailed)
+        publish()
     }
 
     private fun onNewEndpoint(record: UnifiedPushSubscriptionStore.Record, event: DistributorEvent) {
@@ -276,7 +293,13 @@ class PushRegistrar(
                 endpointAccepted = false
                 publish()
                 runCatching { broadcast.unregister(record.distributorPackage, record.token) }
+            } else {
+                internal = UnifiedPushState.Unavailable(NoPushReason.DistributorFailed)
+                publish()
             }
+        } catch (_: ApiError) {
+            internal = UnifiedPushState.Unavailable(NoPushReason.DistributorFailed)
+            publish()
         }
     }
 
@@ -329,6 +352,10 @@ class PushRegistrar(
         val record = runCatching { store().load() }.getOrNull() ?: return
         if (record.token.isEmpty() || record.distributorPackage.isEmpty()) return
         broadcast.unregister(record.distributorPackage, record.token)
+    }
+
+    private companion object {
+        const val REGISTRATION_WAIT_MS = 25_000L
     }
 
     private fun publish() {

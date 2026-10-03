@@ -21,6 +21,32 @@ val shroudReleaseKeyPassword = providers.environmentVariable("SHROUD_RELEASE_KEY
 // Play's ABI offsets, so each release split can be installed and updated on its own.
 val abiSplitVersionOffset = mapOf("arm64-v8a" to 2, "x86_64" to 4)
 
+// ./apk.sh passes these. Unset, CI and e2e/repro-build.sh keep both CPUs and version 0.1.0 (1).
+val shroudAbis: List<String> = run {
+    val raw = providers.gradleProperty("shroudAbi").orNull?.trim().orEmpty()
+    val parsed = if (raw.isEmpty() || raw == "both") {
+        listOf("arm64-v8a", "x86_64")
+    } else {
+        raw.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+    }.distinct()
+    val allowed = setOf("arm64-v8a", "x86_64")
+    if (parsed.isEmpty() || parsed.any { it !in allowed }) {
+        throw GradleException("shroudAbi must be arm64-v8a, x86_64, or both (got '$raw')")
+    }
+    parsed
+}
+
+val shroudVersionCode: Int = providers.gradleProperty("shroudVersionCode").orNull?.trim()?.let { raw ->
+    val parsed = raw.toIntOrNull()
+    if (parsed == null || parsed <= 0) {
+        throw GradleException("shroudVersionCode must be a positive integer (got '$raw')")
+    }
+    parsed
+} ?: 1
+
+val shroudVersionName: String = providers.gradleProperty("shroudVersionName").orNull?.trim()?.takeIf { it.isNotEmpty() }
+    ?: "0.1.0"
+
 // One build: no product flavors, no Firebase/FCM BuildConfig fields, no google-services plugin
 // (decision record 2026-10-01, 00-plan §5.2). Shared file — one owner per wave (00-plan §2.6).
 android {
@@ -33,8 +59,8 @@ android {
         // design's "Glass — Without Blur" fallback). Keystore auth parameters need API 30.
         minSdk = 30
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = shroudVersionCode
+        versionName = shroudVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -78,7 +104,7 @@ android {
         abi {
             isEnable = true
             reset()
-            include("arm64-v8a", "x86_64")
+            include(*shroudAbis.toTypedArray())
             isUniversalApk = true
         }
     }
@@ -114,7 +140,7 @@ android {
     }
 
     // region native — whisper.cpp (00-plan §5.2): pinned ndkVersion, CMake 3.31.x,
-    // abiFilters arm64-v8a + x86_64, -O3, GGML_NATIVE=OFF. Filled by W2-WHISPER (W2),
+    // abiFilters arm64-v8a + x86_64 unless -PshroudAbi is set, -O3, GGML_NATIVE=OFF. Filled by W2-WHISPER (W2),
     // W3-TRANSCRIPTION (W3), W4-RELEASE (W4); nobody else edits between these markers.
     //
     // Pinned for reproducible builds: the NDK and CMake installed on the build machines (CMake
@@ -123,9 +149,8 @@ android {
     ndkVersion = "30.0.16248370"
     defaultConfig {
         ndk {
-            // The APK ships these two ABIs only (00-plan §5.2), for every native library: phones and
-            // tablets (arm64-v8a), emulators and Chromebooks (x86_64).
-            abiFilters += listOf("arm64-v8a", "x86_64")
+            // Both CPUs unless -PshroudAbi selects one (./apk.sh). CI leaves the property unset.
+            abiFilters += shroudAbis
         }
         externalNativeBuild {
             cmake {
@@ -420,8 +445,15 @@ androidComponents {
             }
             "release" -> variant.outputs.forEach { output ->
                 when (output.outputType) {
-                    VariantOutputConfiguration.OutputType.UNIVERSAL ->
+                    VariantOutputConfiguration.OutputType.UNIVERSAL -> {
+                        // AGP stamps this output's version into the main manifest, then a
+                        // one-ABI split copies that manifest. The phone offset keeps that
+                        // APK installable. A second ABI differs and is stamped on its own.
+                        val abi = shroudAbis.first()
+                        val offset = abiSplitVersionOffset.getValue(abi)
+                        output.versionCode.set(offset * 1000 + baseVersionCode)
                         output.enabled.set(false)
+                    }
                     VariantOutputConfiguration.OutputType.ONE_OF_MANY -> {
                         val abi = output.filters
                             .find { it.filterType == FilterConfiguration.FilterType.ABI }
@@ -430,8 +462,17 @@ androidComponents {
                             ?: throw GradleException("release split has no ABI version code: $abi")
                         output.versionCode.set(offset * 1000 + baseVersionCode)
                     }
-                    VariantOutputConfiguration.OutputType.SINGLE ->
-                        throw GradleException("release produced one APK; ABI splits did not apply")
+                    VariantOutputConfiguration.OutputType.SINGLE -> {
+                        // One selected CPU can come out as a single APK instead of a split.
+                        if (shroudAbis.size != 1) {
+                            throw GradleException("release produced one APK; ABI splits did not apply")
+                        }
+                        val abi = shroudAbis.single()
+                        val offset = abiSplitVersionOffset[abi]
+                            ?: throw GradleException("release split has no ABI version code: $abi")
+                        output.versionCode.set(offset * 1000 + baseVersionCode)
+                        output.outputFileName.set("app-$abi-release.apk")
+                    }
                 }
             }
         }

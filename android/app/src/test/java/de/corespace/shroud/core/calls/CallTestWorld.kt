@@ -275,8 +275,11 @@ internal class FakeSystem : CallSystem {
         log += "media:$withCamera"
     }
 
-    override fun screenShareStarted() {
+    var allowScreenShare = true
+
+    override fun screenShareStarted(): Boolean {
         log += "screen-on"
+        return allowScreenShare
     }
 
     override fun screenShareStopped() {

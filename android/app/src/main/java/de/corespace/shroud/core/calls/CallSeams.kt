@@ -129,7 +129,11 @@ interface CallSystem {
     fun update(callId: UUID, peerName: String, video: Boolean)
     fun answerFromApp(callId: UUID)
     fun mediaStarted(callId: UUID, withCamera: Boolean)
-    fun screenShareStarted()
+    /**
+     * Takes the mediaProjection foreground-service type before capture starts.
+     * False when that type is not running: capture must not start, or the system stops it at once.
+     */
+    fun screenShareStarted(): Boolean
     fun screenShareStopped()
     fun setSpeaker(on: Boolean)
 

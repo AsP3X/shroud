@@ -8,6 +8,7 @@ import android.media.Image
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
+import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
@@ -15,8 +16,7 @@ import android.view.WindowManager
 import de.corespace.shroud.core.calls.ScreenCaptureGrant
 import de.corespace.shroud.core.calls.ScreenShareQuality
 import de.corespace.shroud.core.calls.Standard
-import de.corespace.shroud.core.calls.maxSide
-import de.corespace.shroud.core.calls.screenWireSize
+import de.corespace.shroud.core.calls.screenOutput
 import org.webrtc.CapturerObserver
 import org.webrtc.JavaI420Buffer
 import org.webrtc.VideoFrame
@@ -29,23 +29,27 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * The shared screen, as frames on a screencast [org.webrtc.VideoSource] (calls §7.2).
  *
- * MediaProjection scales the display into a virtual display of [screenWireSize], so frames arrive
+ * MediaProjection scales the display into a virtual display of [screenOutput], so frames arrive
  * already at the size that goes out. A frame-rate gate drops the rest, and a still screen repeats
  * its last frame. WebRTC's `ScreenCapturerAndroid` does neither, and holding its one texture to
  * repeat would stall capture, so this source owns the `ImageReader`.
  *
- * [onEnded] runs when the projection stops by itself (the system chip, the lock, another
- * projection). [stop] — our own Stop — does not call it.
+ * [onFormat] runs when the outgoing size or frame rate changes, including a frame-rate-only
+ * change, before frames at that rate are delivered. [onEnded] runs when the projection stops by
+ * itself (the system chip, the lock, another projection). [stop] — our own Stop — does not call it.
  */
 internal class ScreenCaptureSource(
     context: Context,
     private val observer: CapturerObserver,
     private val onFirstFrame: () -> Unit,
     private val onEnded: () -> Unit,
+    private val onFormat: (width: Int, height: Int, frameRate: Int) -> Unit,
 ) {
     private val appContext = context.applicationContext
     private val lock = Any()
-    private var quality: ScreenShareQuality = ScreenShareQuality.Standard
+    private val main = Handler(Looper.getMainLooper())
+    @Volatile private var quality: ScreenShareQuality = ScreenShareQuality.Standard
+    @Volatile private var frameRate: Int = ScreenShareQuality.Standard.frameRate
     private var thread: HandlerThread? = null
     private var handler: Handler? = null
     private var projection: MediaProjection? = null
@@ -58,8 +62,8 @@ internal class ScreenCaptureSource(
     private var wireWidth = 0
     private var wireHeight = 0
     private var accepting = true
-    private var released = true
-    private var stoppingSelf = false
+    @Volatile private var released = true
+    @Volatile private var stoppingSelf = false
 
     /** [onEnded] stays quiet until [start] has returned a projection that is actually up. */
     private var armEnded = false
@@ -102,6 +106,7 @@ internal class ScreenCaptureSource(
         stop()
         if (grant.resultCode != android.app.Activity.RESULT_OK) return false
         this.quality = quality
+        this.frameRate = quality.frameRate
         val manager = appContext.getSystemService(MediaProjectionManager::class.java) ?: return false
         val projection = try {
             manager.getMediaProjection(grant.resultCode, grant.data)
@@ -138,55 +143,152 @@ internal class ScreenCaptureSource(
         return true
     }
 
+    /**
+     * A new resolution rebuilds the virtual display. A new frame rate keeps the display and still
+     * reaches [onFormat], so a share that started at 15 fps can move to 60.
+     */
     fun applyQuality(quality: ScreenShareQuality) {
         this.quality = quality
+        this.frameRate = quality.frameRate
         val handler = handler ?: return
         if (released) return
-        handler.post { resizeFrom(sourceWidth, sourceHeight) }
+        handler.post {
+            resizeFrom(sourceWidth, sourceHeight)
+            reportFormat()
+        }
     }
 
-    /** Our Stop, or the call ending. Does not report [onEnded]. */
+    /**
+     * Our Stop, or the call ending. Does not report [onEnded].
+     *
+     * The capture thread only stops delivering frames. The display is released and
+     * [MediaProjection.stop] runs on the caller, after that wait. Doing either while the caller
+     * is blocked makes the system kill the process: both call back onto the waiting thread.
+     */
     fun stop() {
-        stoppingSelf = true
         val handler = handler
         val thread = thread
-        if (handler == null || thread == null) {
+        if (handler == null || thread == null || released) {
             released = true
             return
         }
+        stoppingSelf = true
         if (Looper.myLooper() == thread.looper) {
             finish(notifyEnded = false)
             return
         }
         val done = CountDownLatch(1)
         handler.post {
-            finish(notifyEnded = false)
-            done.countDown()
+            try {
+                handler.removeCallbacksAndMessages(null)
+                try {
+                    reader?.setOnImageAvailableListener(null, null)
+                } catch (_: RuntimeException) {
+                }
+            } finally {
+                done.countDown()
+            }
         }
         try {
             done.await(2, TimeUnit.SECONDS)
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
         }
+        finish(notifyEnded = false)
     }
 
     private fun openDisplay(width: Int, height: Int): Boolean {
-        val (wireW, wireH) = screenWireSize(width, height, quality.resolution.maxSide)
-        if (wireW < 2 || wireH < 2) return false
-        sourceWidth = width
-        sourceHeight = height
+        val output = screenOutput(width, height, quality)
+        if (output.width < 2 || output.height < 2) return false
         val reader = try {
-            ImageReader.newInstance(wireW, wireH, PixelFormat.RGBA_8888, 2)
+            newReader(output.width, output.height)
         } catch (_: RuntimeException) {
             return false
         }
+        sourceWidth = width
+        sourceHeight = height
+        wireWidth = output.width
+        wireHeight = output.height
+        reportFormat()
         reader.setOnImageAvailableListener({ imageReader -> onImage(imageReader) }, handler)
+        val display = createDisplay(reader, output.width, output.height)
+        if (display == null) {
+            closeReaderSoon(reader)
+            wireWidth = 0
+            wireHeight = 0
+            return false
+        }
+        this.reader = reader
+        this.display = display
+        return true
+    }
+
+    private fun resizeFrom(width: Int, height: Int) {
+        if (released || stoppingSelf || width < 2 || height < 2) return
+        val output = screenOutput(width, height, quality)
+        sourceWidth = width
+        sourceHeight = height
+        if (output.width == wireWidth && output.height == wireHeight) return
+        // Android 14 throws if createVirtualDisplay runs a second time on this projection.
+        // The display from the consent is resized onto a new reader instead.
+        val next = try {
+            newReader(output.width, output.height)
+        } catch (_: RuntimeException) {
+            return
+        }
+        val current = display
+        val previous = reader
+        if (current == null || previous == null) {
+            closeReaderSoon(next)
+            return
+        }
+        next.setOnImageAvailableListener({ imageReader -> onImage(imageReader) }, handler)
         val dpi = appContext.resources.displayMetrics.densityDpi.coerceAtLeast(1)
-        val display = try {
+        try {
+            current.resize(output.width, output.height, dpi)
+            current.setSurface(next.surface)
+        } catch (_: RuntimeException) {
+            try {
+                current.resize(wireWidth, wireHeight, dpi)
+                current.setSurface(previous.surface)
+            } catch (_: RuntimeException) {
+            }
+            closeReaderSoon(next)
+            return
+        }
+        reader = next
+        wireWidth = output.width
+        wireHeight = output.height
+        reportFormat()
+        closeReaderSoon(previous)
+    }
+
+    private fun reportFormat() {
+        if (wireWidth < 2 || wireHeight < 2 || frameRate <= 0) return
+        try {
+            onFormat(wireWidth, wireHeight, frameRate)
+        } catch (_: RuntimeException) {
+        }
+    }
+
+    private fun newReader(width: Int, height: Int): ImageReader =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ImageReader.Builder(width, height)
+                .setMaxImages(MAX_IMAGES)
+                .setImageFormat(PixelFormat.RGBA_8888)
+                .build()
+        } else {
+            // ImageReader.Builder is API 33. This is the only way to open a reader on API 30–32.
+            ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, MAX_IMAGES)
+        }
+
+    private fun createDisplay(reader: ImageReader, width: Int, height: Int): VirtualDisplay? {
+        val dpi = appContext.resources.displayMetrics.densityDpi.coerceAtLeast(1)
+        return try {
             projection?.createVirtualDisplay(
                 "shroud-screen",
-                wireW,
-                wireH,
+                width,
+                height,
                 dpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                 reader.surface,
@@ -194,48 +296,23 @@ internal class ScreenCaptureSource(
                 handler,
             )
         } catch (_: RuntimeException) {
-            reader.close()
             null
-        } ?: return false
-        this.reader = reader
-        this.display = display
-        wireWidth = wireW
-        wireHeight = wireH
-        return true
+        }
     }
 
-    private fun resizeFrom(width: Int, height: Int) {
-        if (released || width < 2 || height < 2) return
-        val (wireW, wireH) = screenWireSize(width, height, quality.resolution.maxSide)
-        if (wireW == wireWidth && wireH == wireHeight) {
-            sourceWidth = width
-            sourceHeight = height
-            return
-        }
-        val next = try {
-            ImageReader.newInstance(wireW, wireH, PixelFormat.RGBA_8888, 2)
-        } catch (_: RuntimeException) {
-            return
-        }
-        next.setOnImageAvailableListener({ imageReader -> onImage(imageReader) }, handler)
-        val dpi = appContext.resources.displayMetrics.densityDpi.coerceAtLeast(1)
-        val display = display ?: run {
-            next.close()
-            return
-        }
+    /** The listener is cleared now. The reader itself closes on the main thread, after the display that owned its surface has released it. */
+    private fun closeReaderSoon(reader: ImageReader?) {
+        if (reader == null) return
         try {
-            display.resize(wireW, wireH, dpi)
-            display.surface = next.surface
+            reader.setOnImageAvailableListener(null, null)
         } catch (_: RuntimeException) {
-            next.close()
-            return
         }
-        reader?.close()
-        reader = next
-        sourceWidth = width
-        sourceHeight = height
-        wireWidth = wireW
-        wireHeight = wireH
+        main.post {
+            try {
+                reader.close()
+            } catch (_: RuntimeException) {
+            }
+        }
     }
 
     private fun onImage(imageReader: ImageReader) {
@@ -245,9 +322,10 @@ internal class ScreenCaptureSource(
             null
         } ?: return
         try {
-            if (released || !accepting) return
+            // A resize leaves one callback queued for the reader it just closed.
+            if (released || stoppingSelf || imageReader !== reader || !accepting) return
             val now = System.nanoTime()
-            if (!screenFrameDue(now, lastSentNs, quality.frameRate)) return
+            if (!screenFrameDue(now, lastSentNs, frameRate)) return
             val buffer = toI420(image) ?: return
             push(buffer, now)
             lastSentNs = now
@@ -363,49 +441,58 @@ internal class ScreenCaptureSource(
     }
 
     private fun finish(notifyEnded: Boolean) {
-        val notify = synchronized(lock) {
-            if (released) return
-            released = true
-            val tell = notifyEnded && !stoppingSelf && armEnded
-            armEnded = false
-            handler?.removeCallbacksAndMessages(null)
-            val listener = displayListener
-            displayListener = null
-            if (listener != null) {
+        stopProjection(releaseCapture(notifyEnded))
+    }
+
+    /**
+     * Drops the display and the reader. Returns the projection when the caller still has to stop
+     * it. A system [MediaProjection.Callback.onStop] is already stopping it, so that path returns
+     * null and is the only path that reports [onEnded].
+     */
+    private fun releaseCapture(notifyEnded: Boolean): MediaProjection? {
+        val ending = synchronized(lock) {
+            if (released) {
+                null
+            } else {
+                released = true
+                val tell = notifyEnded && !stoppingSelf && armEnded
+                armEnded = false
+                handler?.removeCallbacksAndMessages(null)
+                val listener = displayListener
+                displayListener = null
+                if (listener != null) {
+                    try {
+                        appContext.getSystemService(DisplayManager::class.java)?.unregisterDisplayListener(listener)
+                    } catch (_: RuntimeException) {
+                    }
+                }
+                val display = display
+                this.display = null
                 try {
-                    appContext.getSystemService(DisplayManager::class.java)?.unregisterDisplayListener(listener)
+                    display?.setSurface(null)
                 } catch (_: RuntimeException) {
                 }
-            }
-            try {
-                display?.release()
-            } catch (_: RuntimeException) {
-            }
-            display = null
-            try {
-                reader?.close()
-            } catch (_: RuntimeException) {
-            }
-            reader = null
-            val projection = projection
-            this.projection = null
-            try {
-                projection?.unregisterCallback(projectionCallback)
-            } catch (_: RuntimeException) {
-            }
-            if (!tell) {
                 try {
-                    projection?.stop()
+                    display?.release()
                 } catch (_: RuntimeException) {
                 }
+                val reader = reader
+                this.reader = null
+                closeReaderSoon(reader)
+                val projection = projection
+                this.projection = null
+                try {
+                    projection?.unregisterCallback(projectionCallback)
+                } catch (_: RuntimeException) {
+                }
+                lastBuffer?.release()
+                lastBuffer = null
+                lastSentNs = 0L
+                wireWidth = 0
+                wireHeight = 0
+                CaptureRelease(tell, if (tell) null else projection)
             }
-            lastBuffer?.release()
-            lastBuffer = null
-            lastSentNs = 0L
-            wireWidth = 0
-            wireHeight = 0
-            tell
-        }
+        } ?: return null
         try {
             observer.onCapturerStopped()
         } catch (_: RuntimeException) {
@@ -413,10 +500,22 @@ internal class ScreenCaptureSource(
         thread?.quitSafely()
         thread = null
         handler = null
-        if (notify) onEnded()
+        if (ending.tell) onEnded()
+        return ending.projection
     }
+
+    private fun stopProjection(projection: MediaProjection?) {
+        if (projection == null) return
+        try {
+            projection.stop()
+        } catch (_: Exception) {
+        }
+    }
+
+    private data class CaptureRelease(val tell: Boolean, val projection: MediaProjection?)
 
     companion object {
         private const val REPEAT_MS = 500L
+        private const val MAX_IMAGES = 2
     }
 }

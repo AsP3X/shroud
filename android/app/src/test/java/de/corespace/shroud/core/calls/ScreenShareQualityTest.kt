@@ -70,6 +70,27 @@ class ScreenShareQualityTest {
         assertEquals(listOf(1280, 1920, null), listOf(hd.maxSide, fullHd.maxSide, source.maxSide))
     }
 
+    /**
+     * Changing only the frame rate keeps the wire size and still reports the new rate.
+     * A resolution change reports a different size. The running share applies both
+     * (`ScreenCaptureSource`, `CallMediaEngine`).
+     */
+    @Test
+    fun aFrameRateChangeKeepsTheSizeAndAResolutionChangeDoesNot() {
+        val standard = screenOutput(1206, 2622, ScreenShareQuality.Standard)
+        val faster = screenOutput(1206, 2622, ScreenShareQuality(fullHd, 60))
+        assertEquals(standard.width, faster.width)
+        assertEquals(standard.height, faster.height)
+        assertEquals(15, standard.frameRate)
+        assertEquals(60, faster.frameRate)
+        val ownPixels = screenOutput(1206, 2622, ScreenShareQuality(source, 60))
+        assertTrue(ownPixels.height > faster.height)
+        assertEquals(60, ownPixels.frameRate)
+        val smaller = screenOutput(1206, 2622, ScreenShareQuality(hd, 30))
+        assertTrue(smaller.height < standard.height)
+        assertEquals(30, smaller.frameRate)
+    }
+
     /** `ScreenShareQuality.saved` (CallController.swift:2155-2162): each part falls back alone. */
     @Test
     fun aStoredChoiceReadsBackAndUnknownPartsFallBackAlone() {

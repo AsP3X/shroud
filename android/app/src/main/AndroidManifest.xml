@@ -188,6 +188,24 @@
         </receiver>
 
         <!--
+          The library's embedded receiver checks the sender after onReceive returns, so on
+          API 34+ Google Play registration never starts. This subclass holds the broadcast
+          open. The library component is removed so it cannot answer the same REGISTER.
+        -->
+        <receiver
+            android:name="org.unifiedpush.android.embedded_fcm_distributor.impl.UnifiedPushReceiver"
+            tools:node="remove" />
+        <receiver
+            android:name=".core.push.unifiedpush.EmbeddedFcmReceiver"
+            android:exported="false">
+            <intent-filter android:priority="-500">
+                <action android:name="org.unifiedpush.android.distributor.feature.BYTES_MESSAGE" />
+                <action android:name="org.unifiedpush.android.distributor.REGISTER" />
+                <action android:name="org.unifiedpush.android.distributor.UNREGISTER" />
+            </intent-filter>
+        </receiver>
+
+        <!--
           AND_3.1.0: a distributor may bind this for five seconds while delivering, so a
           backgrounded process can raise a foreground service. The binder does no work.
         -->

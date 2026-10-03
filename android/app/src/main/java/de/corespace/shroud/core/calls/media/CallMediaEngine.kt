@@ -7,7 +7,6 @@ import de.corespace.shroud.core.calls.IceCandidatePayload
 import de.corespace.shroud.core.calls.ScreenCaptureGrant
 import de.corespace.shroud.core.calls.ScreenShareQuality
 import de.corespace.shroud.core.calls.Standard
-import de.corespace.shroud.core.calls.keepsResolution
 import de.corespace.shroud.core.calls.signal.CallSdp
 import de.corespace.shroud.core.net.IceServerDto
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -107,7 +106,8 @@ class CallMediaEngine(context: Context) : Engine {
         set(value) {
             if (field == value) return
             field = value
-            screenVideoSource?.setIsScreencast(value.keepsResolution)
+            // The screen source stays a screencast for the whole share, at every frame rate.
+            screenVideoSource?.setIsScreencast(true)
             screenCapture?.applyQuality(value)
             tuneSenders()
         }
@@ -337,6 +337,12 @@ class CallMediaEngine(context: Context) : Engine {
             observer,
             onFirstFrame = { callbacks?.onScreenFirstFrame() },
             onEnded = { onScreenCaptureEnded() },
+            onFormat = { width, height, fps ->
+                try {
+                    screenVideoSource?.adaptOutputFormat(width, height, fps)
+                } catch (_: RuntimeException) {
+                }
+            },
         ).also { screenCapture = it }
         if (!capture.start(grant, screenQuality)) {
             try {
@@ -459,7 +465,7 @@ class CallMediaEngine(context: Context) : Engine {
 
     private fun makeScreenTrack(): VideoTrack {
         val source = screenVideoSource ?: factory.createVideoSource(true).also { screenVideoSource = it }
-        source.setIsScreencast(screenQuality.keepsResolution)
+        source.setIsScreencast(true)
         val track = factory.createVideoTrack(SCREEN_TRACK_ID, source)
         screenTrack = track
         return track
@@ -500,19 +506,14 @@ class CallMediaEngine(context: Context) : Engine {
         }
     }
 
-    private fun microphoneSender(): RtpSender? {
-        val connection = peer ?: return null
-        return try {
-            connection.senders.firstOrNull { sender ->
-                trackId(try {
-                    sender.track()
-                } catch (_: RuntimeException) {
-                    null
-                }) == "shroud-audio"
-            }
-        } catch (_: RuntimeException) {
-            null
-        }
+    /**
+     * The cached microphone sender. [PeerConnection.getSenders] disposes the wrappers it returned
+     * last time, including one whose [PeerConnection.getStats] is still in flight.
+     */
+    private fun microphoneSender(): RtpSender? = try {
+        sectionTransceiver(MediaSection.MIC)?.sender
+    } catch (_: RuntimeException) {
+        null
     }
 
     private fun adoptOfferedSections(connection: PeerConnection) {
@@ -601,14 +602,24 @@ class CallMediaEngine(context: Context) : Engine {
         if (sectionCache != null) sectionsMatchRemote = true
     }
 
+    /**
+     * The cached transceiver senders. [PeerConnection.getSenders] disposes the previous wrappers,
+     * so a quality change's [RtpSender.setParameters] would land on a sender that is already gone
+     * and the screen would stay at the rate from the first tune.
+     */
     private fun tuneSenders() {
         val connection = peer ?: return
-        val senders = try {
-            connection.senders
+        val sections = try {
+            sections(connection)
         } catch (_: RuntimeException) {
             return
         }
-        for (sender in senders) {
+        for ((_, transceiver) in sections) {
+            val sender = try {
+                transceiver.sender
+            } catch (_: RuntimeException) {
+                continue
+            }
             val track = try {
                 sender.track()
             } catch (_: RuntimeException) {
@@ -617,18 +628,30 @@ class CallMediaEngine(context: Context) : Engine {
             val id = trackId(track) ?: continue
             val kind = trackKind(track) ?: continue
             val tune = senderTune(id, kind, screenOn, screenQuality) ?: continue
+            val applied = applyTune(sender, tune) || applyTune(sender, tune)
+            if (!applied && id == SCREEN_TRACK_ID) {
+                Log.w(TAG, "Screen sender did not take the new quality")
+            }
+        }
+    }
+
+    /**
+     * False when the sender has no encoding yet, or [RtpSender.setParameters] refuses the update.
+     * The caller tries once more, which reads the parameters again.
+     */
+    private fun applyTune(sender: RtpSender, tune: SenderTune): Boolean {
+        return try {
             val parameters = sender.parameters
-            val encoding = parameters.encodings.firstOrNull() ?: continue
+            val encoding = parameters.encodings.firstOrNull() ?: return false
             encoding.maxBitrateBps = tune.maxBitrateBps
             encoding.maxFramerate = tune.maxFramerate
             if (tune.scaleResolutionDownBy != null) encoding.scaleResolutionDownBy = tune.scaleResolutionDownBy
             encoding.networkPriority = tune.networkPriority
             encoding.bitratePriority = tune.bitratePriority
             tune.degradation?.let { parameters.degradationPreference = degradation(it) }
-            try {
-                sender.setParameters(parameters)
-            } catch (_: RuntimeException) {
-            }
+            sender.setParameters(parameters)
+        } catch (_: RuntimeException) {
+            false
         }
     }
 

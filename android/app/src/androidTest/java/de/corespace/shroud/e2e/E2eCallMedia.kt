@@ -216,7 +216,7 @@ class E2eCallSystem : CallSystem {
         log += "media"
     }
 
-    override fun screenShareStarted() = Unit
+    override fun screenShareStarted(): Boolean = true
 
     override fun screenShareStopped() = Unit
 

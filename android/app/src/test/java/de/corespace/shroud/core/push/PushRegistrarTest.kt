@@ -237,6 +237,49 @@ class PushRegistrarTest {
     }
 
     @Test
+    fun aKeyLookupFailureIsReported() {
+        keyStatus = 500
+        reg.register()
+        await("key failed") {
+            reg.delivery.value.unifiedPush == UnifiedPushState.Unavailable(NoPushReason.DistributorFailed)
+        }
+        assertTrue(broadcasts.registers.isEmpty())
+    }
+
+    @Test
+    fun choosingTheSameDistributorAgainRetriesWhileItIsConnecting() {
+        reg.chooseDistributor("org.example.distributor")
+        await("first register") { broadcasts.registers.size == 1 }
+        assertTrue(reg.delivery.value.unifiedPush is UnifiedPushState.Registering)
+        reg.chooseDistributor("org.example.distributor")
+        await("second register") { broadcasts.registers.size == 2 }
+    }
+
+    @Test
+    fun aSilentDistributorBecomesAFailure() {
+        reg.registrationWaitMs = 30
+        reg.register()
+        await("timed out") {
+            reg.delivery.value.unifiedPush == UnifiedPushState.Unavailable(NoPushReason.DistributorFailed)
+        }
+        assertEquals(1, broadcasts.registers.size)
+        assertTrue(broadcasts.unregisters.isEmpty())
+    }
+
+    @Test
+    fun aServerErrorWhileSavingTheEndpointIsReported() {
+        putStatus = 500
+        reg.register()
+        await("register sent") { broadcasts.registers.isNotEmpty() }
+        val connection = broadcasts.registers.first().token
+        reg.onDistributorEvent(endpoint(connection))
+        await("put failed") {
+            reg.delivery.value.unifiedPush == UnifiedPushState.Unavailable(NoPushReason.DistributorFailed)
+        }
+        assertTrue(broadcasts.unregisters.isEmpty())
+    }
+
+    @Test
     fun forgetDeletesTheSubscriptionWhileTheTokenIsValid() {
         registerUntilAccepted()
         runBlocking { reg.forgetRegistration() }

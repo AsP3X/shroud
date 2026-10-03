@@ -185,6 +185,8 @@ installable APKs and no universal APK:
 | `app-arm64-v8a-release.apk` | phones and tablets | `2 * 1000 + versionCode` |
 | `app-x86_64-release.apk` | emulators and Chromebooks | `4 * 1000 + versionCode` |
 
+A phone test build is `./apk.sh` from the repository root. It saves options in `android/.apk.env` (not committed) and copies a signed APK to the folder you choose. `./apk.sh --edit` changes an option. `-PshroudAbi`, `-PshroudVersionCode`, and `-PshroudVersionName` override the same values for one Gradle run. Leave them unset and the build stays the CI default: both CPUs, version name `0.1.0`, version code `1`.
+
 Unsigned CI builds use the same names with `-unsigned` before `.apk`. Debug stays one file,
 `app/build/outputs/apk/debug/app-debug.apk`, which the e2e scripts install. `ndk.abiFilters` is
 still those two ABIs. AGP rejects that together with ABI splits unless a universal APK is

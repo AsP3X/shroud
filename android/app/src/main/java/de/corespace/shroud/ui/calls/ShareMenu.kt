@@ -179,22 +179,29 @@ internal fun ShareMenu(
                 .fillMaxSize()
                 .pointerInput(Unit) { detectTapGestures { onDismiss() } },
         ) { measurables, constraints ->
-            val cardWidth = ContextMenuDefaults.CardWidth.roundToPx()
-            val card = measurables.single().measure(Constraints(maxWidth = cardWidth, maxHeight = constraints.maxHeight))
-            val placement = ContextMenuPlacement.place(
-                anchor = anchor,
-                cardWidth = card.width.toFloat(),
-                cardHeight = card.height.toFloat(),
-                containerWidth = constraints.maxWidth.toFloat(),
-                containerHeight = constraints.maxHeight.toFloat(),
-                safeTop = statusTop.toPx(),
-                safeBottom = navigationBottom.toPx(),
-                gap = ContextMenuDefaults.AnchorGap.toPx(),
-                sideInset = ContextMenuDefaults.SideInset.toPx(),
-                topMargin = ContextMenuDefaults.TopMargin.toPx(),
-                bottomMargin = ContextMenuDefaults.BottomMargin.toPx(),
-            )
-            layout(constraints.maxWidth, constraints.maxHeight) { card.place(placement.x.toInt(), placement.y.toInt()) }
+            // AnimatedVisibility emits no child on the frame it is fully closed. single()
+            // then throws and the call process dies.
+            val measurable = measurables.firstOrNull()
+            if (measurable == null) {
+                layout(constraints.maxWidth, constraints.maxHeight) {}
+            } else {
+                val cardWidth = ContextMenuDefaults.CardWidth.roundToPx()
+                val card = measurable.measure(Constraints(maxWidth = cardWidth, maxHeight = constraints.maxHeight))
+                val placement = ContextMenuPlacement.place(
+                    anchor = anchor,
+                    cardWidth = card.width.toFloat(),
+                    cardHeight = card.height.toFloat(),
+                    containerWidth = constraints.maxWidth.toFloat(),
+                    containerHeight = constraints.maxHeight.toFloat(),
+                    safeTop = statusTop.toPx(),
+                    safeBottom = navigationBottom.toPx(),
+                    gap = ContextMenuDefaults.AnchorGap.toPx(),
+                    sideInset = ContextMenuDefaults.SideInset.toPx(),
+                    topMargin = ContextMenuDefaults.TopMargin.toPx(),
+                    bottomMargin = ContextMenuDefaults.BottomMargin.toPx(),
+                )
+                layout(constraints.maxWidth, constraints.maxHeight) { card.place(placement.x.toInt(), placement.y.toInt()) }
+            }
         }
     }
 }

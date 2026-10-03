@@ -711,6 +711,17 @@ class CallControllerTest {
     }
 
     @Test
+    fun screenShareDoesNotStartWhenTheProjectionTypeIsRefused() = world { world ->
+        val (alice, _) = connect(world)
+        alice.system.allowScreenShare = false
+        alice.controller.onScreenCaptureConsent(ScreenCaptureGrant(-1, Intent()))
+        assertFalse(alice.engine.screenOn)
+        assertFalse(alice.call!!.screenShareStarting)
+        assertFalse(alice.call!!.isSharingScreen)
+        assertEquals(CallTexts.SHARE_FAILED, alice.call!!.notice)
+    }
+
+    @Test
     fun shareSaysWhyItCannotWhileRinging() = world { world ->
         val alice = world.device("alice", world.aliceId)
         val bob = world.device("bob", world.bobId)

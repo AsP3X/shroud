@@ -47,7 +47,11 @@ enum class NoPushReason {
  * when Play Services is installed. Its endpoint is `https://fcm.googleapis.com/fcm/send/…`.
  */
 object EmbeddedFcm {
-    const val RECEIVER = "org.unifiedpush.android.embedded_fcm_distributor.impl.UnifiedPushReceiver"
+    /**
+     * Our receiver, not the library's. The library reads the sender after `onReceive` returns,
+     * which fails on API 34+, so this class holds the broadcast open. See [de.corespace.shroud.core.push.unifiedpush.EmbeddedFcmReceiver].
+     */
+    const val RECEIVER = "de.corespace.shroud.core.push.unifiedpush.EmbeddedFcmReceiver"
     const val LABEL = "Google Play"
     const val PLAY_SERVICES = "com.google.android.gms"
 }

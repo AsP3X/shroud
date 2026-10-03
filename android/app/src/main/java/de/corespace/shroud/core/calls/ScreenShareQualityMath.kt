@@ -96,3 +96,17 @@ fun screenWireSize(width: Int, height: Int, maxSide: Int? = 1920): Pair<Int, Int
     fun even(value: Int): Int = max(2, floor(value * scale).toInt() and 1.inv())
     return even(width) to even(height)
 }
+
+/** The picture size and frame rate a running share should send for [quality]. */
+data class ScreenOutput(val width: Int, val height: Int, val frameRate: Int)
+
+/**
+ * What goes out after a quality change. A frame-rate-only change keeps [width] and [height]
+ * (the virtual display does not need a new size) and still carries the new [frameRate]: the
+ * capturer and the encoder both have to take that rate, or a share that started at 15 fps
+ * stays there.
+ */
+fun screenOutput(width: Int, height: Int, quality: ScreenShareQuality): ScreenOutput {
+    val (wireW, wireH) = screenWireSize(width, height, quality.resolution.maxSide)
+    return ScreenOutput(wireW, wireH, quality.frameRate)
+}

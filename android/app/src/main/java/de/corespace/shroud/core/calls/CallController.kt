@@ -1660,7 +1660,12 @@ class CallController(
             return
         }
         // The foreground service takes the mediaProjection type before the projection exists (calls §7.2).
-        system?.screenShareStarted()
+        // Without that type the system stops the projection at once.
+        val system = this.system
+        if (system != null && !system.screenShareStarted()) {
+            note(CallTexts.SHARE_FAILED, m)
+            return
+        }
         if (!engine.startScreen(grant)) {
             system?.screenShareStopped()
             note(CallTexts.SHARE_FAILED, m)

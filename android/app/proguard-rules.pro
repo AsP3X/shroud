@@ -12,6 +12,13 @@
 
 # WebRTC (W3-CALLS-MEDIA): the native library calls back into Java by name (JNI).
 -keep class org.webrtc.** { *; }
+# JNI_OnLoad looks up org.jni_zero.JniZero and calls init(). Nothing in Java references
+# that class, so R8 removes it and accepting a call aborts with java_class == null.
+# JniZeroJni is a generated stub this AAR does not ship; only setJniClassLoader calls it.
+-keep class org.jni_zero.JniZero {
+    private static java.lang.Object[] init();
+}
+-dontwarn org.jni_zero.JniZeroJni
 
 # whisper.cpp JNI (W2-WHISPER, media-voice-links §13.4): native methods and the segment class the
 # native side constructs.

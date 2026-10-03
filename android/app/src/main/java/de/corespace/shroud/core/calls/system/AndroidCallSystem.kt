@@ -62,6 +62,9 @@ internal class AndroidCallSystem(
     private var screenShown = false
     private var foregroundRefused = false
     private var promoted = false
+
+    /** Types passed to the last successful [ServiceCompat.startForeground]. 0 when none is held. */
+    private var foregroundTypes: Int = 0
     private var telecomActivated = false
     private var service: Service? = null
     private var startId = 0
@@ -197,20 +200,31 @@ internal class AndroidCallSystem(
         refreshProximity()
     }
 
-    override fun screenShareStarted() {
-        val current = session ?: return
-        current.sharing = true
+    override fun screenShareStarted(): Boolean {
+        val current = session ?: return false
         val running = service
-        if (running != null && promoted) bringToForeground(running)
+        if (running == null || !promoted) return false
+        current.sharing = true
+        bringToForeground(running)
+        val held = (foregroundTypes and ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION) != 0
+        if (!held) current.sharing = false
         refreshProximity()
+        return held
     }
 
     override fun screenShareStopped() {
         val current = session ?: return
         current.sharing = false
-        val running = service
-        if (running != null && promoted) bringToForeground(running)
-        refreshProximity()
+        // MediaProjection.stop() has just returned on this thread. Dropping the
+        // mediaProjection type in the same turn makes the system kill the process:
+        // it still treats the projection as active. The next turn is after that
+        // call has unwound.
+        main.post {
+            if (session !== current || current.sharing) return@post
+            val running = service
+            if (running != null && promoted) bringToForeground(running)
+            refreshProximity()
+        }
     }
 
     override fun setSpeaker(on: Boolean) {
@@ -303,6 +317,7 @@ internal class AndroidCallSystem(
         val retry = session != null && promoted
         service = null
         promoted = false
+        foregroundTypes = 0
         foregroundStartPending = false
         if (retry) foregroundRefused = true
     }
@@ -351,6 +366,7 @@ internal class AndroidCallSystem(
         telecomActivated = false
         screenShown = false
         foregroundRefused = false
+        foregroundTypes = 0
         publishRoutes()
     }
 
@@ -461,35 +477,39 @@ internal class AndroidCallSystem(
     }
 
     private fun bringToForeground(host: Service) {
+        val microphone = session?.microphone == true
+        val sharing = session?.sharing == true
+        val note = notificationOrMinimal()
+        for (type in callForegroundTypeAttempts(microphone, sharing)) {
+            if (dropsHeldProjection(sharing, type)) continue
+            if (promote(host, note, type)) return
+        }
+        // The CallStyle notification itself can be what threw. A plain one keeps the call up.
+        // Never trade away a projection type that is already held: the system would stop the share.
+        if (sharing && (foregroundTypes and ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION) != 0) return
+        if (promote(host, notices.minimal(), ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)) return
+        if (!promoted) foregroundRefused = true
+    }
+
+    /** A later update must not remove mediaProjection while this call is still sharing. */
+    private fun dropsHeldProjection(sharing: Boolean, type: Int): Boolean {
+        if (!sharing) return false
+        val held = (foregroundTypes and ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION) != 0
+        return held && (type and ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION) == 0
+    }
+
+    private fun promote(host: Service, notification: Notification, type: Int): Boolean =
         try {
-            ServiceCompat.startForeground(host, SystemNotifier.ID_CALL, notificationOrMinimal(), types())
+            ServiceCompat.startForeground(host, SystemNotifier.ID_CALL, notification, type)
+            foregroundTypes = type
             promoted = true
             foregroundRefused = false
+            true
         } catch (_: Exception) {
-            try {
-                ServiceCompat.startForeground(
-                    host,
-                    SystemNotifier.ID_CALL,
-                    notices.minimal(),
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL,
-                )
-                promoted = true
-                foregroundRefused = false
-            } catch (_: Exception) {
-                foregroundRefused = true
-            }
+            false
         }
-    }
 
     private fun notificationOrMinimal() = session?.let(::notificationFor) ?: notices.minimal()
-
-    private fun types(): Int {
-        var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
-        val current = session
-        if (current?.microphone == true) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-        if (current?.sharing == true) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-        return type
-    }
 
     private fun stopService() {
         // startForegroundService without startForeground crashes the process. If the call
@@ -502,6 +522,7 @@ internal class AndroidCallSystem(
         val host = service
         val id = startId
         promoted = false
+        foregroundTypes = 0
         service = null
         if (host != null && id != 0) host.stopSelf(id)
         context.stopService(Intent(context, CallService::class.java))
@@ -546,6 +567,27 @@ internal class AndroidCallSystem(
         const val MAX_NAME = 64
         const val ENDED_LIMIT = 20
     }
+}
+
+/**
+ * Foreground-service types to try, first choice first.
+ *
+ * Sharing tries the projection type before any set that lacks it. A combined
+ * `phoneCall|microphone|mediaProjection` start can fail the microphone while-in-use check
+ * while the consent screen is closing; dropping the projection type there makes the system
+ * stop the capture immediately.
+ */
+internal fun callForegroundTypeAttempts(microphone: Boolean, sharing: Boolean): List<Int> {
+    val phone = ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
+    val mic = ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+    val projection = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+    val call = if (microphone) phone or mic else phone
+    val attempts = ArrayList<Int>(4)
+    attempts += if (sharing) call or projection else call
+    if (sharing && microphone) attempts += phone or projection
+    if (call !in attempts) attempts += call
+    if (phone !in attempts) attempts += phone
+    return attempts
 }
 
 /** [CallService] reaches the system through this, including before the activity container is readable. */

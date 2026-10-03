@@ -78,6 +78,20 @@ Postgres only hashes `POSTGRES_PASSWORD` the first time its volume is created. C
 
 Rebuild after server or web changes: `./deploy.sh --rebuild`.
 
+## Android test APK
+
+Same shape as `./deploy.sh`. The first run asks what to build and writes `android/.apk.env`. Later runs reuse those options.
+
+```bash
+./apk.sh            # build (wizard on the first run)
+./apk.sh --edit     # change an option
+./apk.sh --init     # ask again, then build
+./apk.sh --status   # show the saved options
+./apk.sh --clean    # this build only: clean first
+```
+
+The default is a signed phone release. It opens on the official server, and the APK is copied to `~/Desktop/Shroud`. The test key is created once at `~/.shroud/apk-test.p12` and reused, so the next file installs over the last one. The version code goes up by one after each build that works. `android/.apk.env` holds the options and the keystore password. It is not committed. Change it by hand, or use `--edit`.
+
 ## Server (native Cargo — optional)
 
 Useful for fast iteration without rebuilding the image. Keep Compose infra running with host ports:

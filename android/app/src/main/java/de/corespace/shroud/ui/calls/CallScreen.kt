@@ -270,6 +270,9 @@ private fun CallScreenContent(
         Motion.snappy(),
         label = "sharingInset",
     )
+    // snappy is underdamped, so the spring crosses below 0 on the way back. Padding throws
+    // IllegalArgumentException for a negative value and takes the whole call down with it.
+    val sharingPad = sharingInset.coerceAtLeast(0.dp)
     val chromeAlpha by animateFloatAsState(if (flags.chromeAway) 0f else 1f, Motion.easeOut(250), label = "chromeAlpha")
     val blockAlpha by animateFloatAsState(if (blockHidden) 0f else 1f, Motion.reduced(), label = "blockAlpha")
 
@@ -313,7 +316,7 @@ private fun CallScreenContent(
             Modifier
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(top = sharingInset),
+                .padding(top = sharingPad),
         ) {
             CallStageLayout(
                 progress = { progress.value },
@@ -359,14 +362,14 @@ private fun CallScreenContent(
             modifier = Modifier
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(top = sharingInset),
+                .padding(top = sharingPad),
         )
         // 7. "Not verified" in the top-leading corner (:219-233).
         Box(
             Modifier
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(top = sharingInset)
+                .padding(top = sharingPad)
                 .padding(top = CallScreenMetrics.INSET_TOP.dp, start = CallScreenMetrics.INSET_TRAILING.dp),
         ) {
             AnimatedVisibility(
