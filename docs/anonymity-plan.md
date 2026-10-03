@@ -64,10 +64,13 @@ files still show that switch until a design pass.
     same delay as success) for taken names. Fully hiding "taken" isn't possible while names are
     unique.
   - Done when: checking names from one client costs ≥ 1 s per name after the first few.
-- [ ] **0.5 Update `design/admin.pen`.** The Users and User detail frames show `@usernames` the
+- [x] **0.5 Update `design/admin.pen`.** The Users and User detail frames show `@usernames` the
   server can no longer know. Show user ids; decide whether the share code (itself an
   identifier) belongs in the console at all.
   - Done when: no admin frame shows a username; the user has saved the `.pen` file.
+  - Verified 2026-10-03: accounts appear by ID only, with neutral avatars and day-level "last
+    active"; the share code is left out of the console. The saved file contains no username,
+    including layer names.
 
 ---
 
